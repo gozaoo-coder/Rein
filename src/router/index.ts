@@ -14,14 +14,34 @@ const router = createRouter({
       component: () => import("@/pages/SportsPage.vue"),
     },
     {
+      path: "/sports/courses",
+      name: "courses-all",
+      component: () => import("@/pages/CourseListPage.vue"),
+    },
+    {
+      path: "/sports/courses/:id",
+      name: "course-detail",
+      component: () => import("@/pages/CourseEditPage.vue"),
+    },
+    {
+      path: "/sports/exercises",
+      name: "exercises",
+      component: () => import("@/pages/ExerciseLibraryPage.vue"),
+    },
+    {
+      path: "/sports/exercises/new",
+      name: "exercise-new",
+      component: () => import("@/pages/ExerciseEditPage.vue"),
+    },
+    {
+      path: "/sports/exercises/:id",
+      name: "exercise-edit",
+      component: () => import("@/pages/ExerciseEditPage.vue"),
+    },
+    {
       path: "/ai",
       name: "ai",
       component: () => import("@/pages/AIPage.vue"),
-    },
-    {
-      path: "/devices",
-      name: "devices",
-      component: () => import("@/pages/DevicesPage.vue"),
     },
     {
       path: "/profile",

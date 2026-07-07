@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import AppTopBar from "./AppTopBar.vue";
 import AppTabBar from "./AppTabBar.vue";
-import { useBreakpoint } from "@/composables/useBreakpoint";
-
-const { mode } = useBreakpoint();
 </script>
 
 <template>
@@ -11,8 +8,6 @@ const { mode } = useBreakpoint();
     <AppTopBar />
 
     <div class="app-body">
-      <slot name="sidebar" v-if="mode === 'desktop'" />
-
       <main class="app-main page-scroll">
         <div class="app-main-inner">
           <slot name="content" />
@@ -20,7 +15,7 @@ const { mode } = useBreakpoint();
       </main>
     </div>
 
-    <AppTabBar v-if="mode !== 'desktop'" />
+    <AppTabBar />
   </div>
 </template>
 

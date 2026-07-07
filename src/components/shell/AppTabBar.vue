@@ -13,7 +13,7 @@ const router = useRouter();
 const tabs = [
   { path: "/", label: "健康", icon: "health" },
   { path: "/sports", label: "运动", icon: "sports" },
-  { path: "/devices", label: "设备", icon: "devices" },
+  { path: "/ai", label: "AI", icon: "ai" },
   { path: "/profile", label: "我的", icon: "profile" },
 ];
 
@@ -56,10 +56,10 @@ const activeIndex = computed(() => {
             <path d="M10 21l2-6 3 2 3-5-3-1-3 3-3-1-3 5z" />
             <path d="M7 14l2-2" />
           </svg>
-          <!-- Devices: watch -->
-          <svg v-else-if="tab.icon === 'devices'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="6" y="6" width="12" height="12" rx="3" />
-            <path d="M9 6V4M15 6V4M9 20v-2M15 20v-2" />
+          <!-- AI: sparkles -->
+          <svg v-else-if="tab.icon === 'ai'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
+            <path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14z" />
           </svg>
           <!-- Profile: person -->
           <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">

@@ -39,6 +39,20 @@ registerCardComponents({
 });
 
 const app = createApp(App);
-app.use(createPinia());
+const pinia = createPinia();
+app.use(pinia);
 app.use(router);
-app.mount("#app");
+
+// 启动时加载持久化数据
+import { useCourseStore } from "@/stores/courseStore";
+import { useExerciseStore } from "@/stores/exerciseStore";
+import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
+
+const courseStore = useCourseStore(pinia);
+const exerciseStore = useExerciseStore(pinia);
+const statsStore = useWorkoutStatsStore(pinia);
+
+Promise.all([courseStore.load(), exerciseStore.load(), statsStore.load()]).finally(() => {
+  app.mount("#app");
+});
+

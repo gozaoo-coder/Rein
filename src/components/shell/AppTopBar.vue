@@ -14,14 +14,12 @@ const route = useRoute();
 const isPhone = computed(() => mode.value === "phone");
 
 const pageTitle = computed(() => {
-  const map: Record<string, string> = {
-    "/": "健康",
-    "/sports": "运动",
-    "/devices": "设备",
-    "/ai": "AI",
-    "/profile": "我的",
-  };
-  return map[route.path] || "Rein";
+  const p = route.path;
+  if (p === "/") return "健康";
+  if (p.startsWith("/sports")) return "运动";
+  if (p.startsWith("/ai")) return "AI";
+  if (p.startsWith("/profile")) return "我的";
+  return "Rein";
 });
 
 const showAction = computed(() =>

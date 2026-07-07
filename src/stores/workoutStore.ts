@@ -3,6 +3,10 @@ import { ref, computed } from "vue";
 import type { WorkoutPlan, WorkoutState, StepSubState, WorkoutStep } from "@/types/workout";
 import { StepType } from "@/types/workout";
 import { getTrainingSetCount } from "@/data/workoutBuilder";
+import { courseToWorkoutPlan } from "@/data/courseToWorkout";
+import type { Course } from "@/types/course";
+import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
+import { useCourseStore } from "@/stores/courseStore";
 
 export const useWorkoutStore = defineStore("workout", () => {
   const plan = ref<WorkoutPlan | null>(null);
@@ -16,6 +20,12 @@ export const useWorkoutStore = defineStore("workout", () => {
   const heartRateConnected = ref(false);
   const phaseCarouselIndex = ref(0);
   const completedSets = ref(0);
+
+  /** 当前训练对应的课程（用于记录写入与统计） */
+  const activeCourse = ref<Course | null>(null);
+  const startedAt = ref<number>(0);
+  /** 心率采样（用于统计 avg/max） */
+  const heartRateSamples = ref<number[]>([]);
 
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let carouselInterval: ReturnType<typeof setInterval> | null = null;
@@ -77,10 +87,18 @@ export const useWorkoutStore = defineStore("workout", () => {
     currentStepIndex.value = 0;
     workoutState.value = "running";
     subState.value = currentStep.value?.type === StepType.RESTING ? "resting" : "exercising";
+    startedAt.value = Date.now();
     initStep();
     startTimer();
     startCarousel();
     startHeartRateSimulation();
+  }
+
+  /** 从 Course 启动训练 */
+  function startCourse(course: Course) {
+    activeCourse.value = course;
+    const plan = courseToWorkoutPlan(course);
+    startWorkout(plan);
   }
 
   function initStep() {
@@ -137,11 +155,14 @@ export const useWorkoutStore = defineStore("workout", () => {
     stopHeartRateSimulation();
     heartRateConnected.value = true;
     heartRate.value = 72;
+    heartRateSamples.value = [72];
     hrSimulateInterval = setInterval(() => {
       if (workoutState.value !== "running") return;
       const base = subState.value === "resting" ? 80 : 130;
       const variance = Math.floor(Math.random() * 20) - 10;
-      heartRate.value = Math.max(60, Math.min(190, base + variance + Math.floor(totalElapsedSeconds.value / 60)));
+      const next = Math.max(60, Math.min(190, base + variance + Math.floor(totalElapsedSeconds.value / 60)));
+      heartRate.value = next;
+      heartRateSamples.value.push(next);
     }, 2000);
   }
 
@@ -199,10 +220,37 @@ export const useWorkoutStore = defineStore("workout", () => {
     stopTimer();
     stopCarousel();
     stopHeartRateSimulation();
+    writeRecord(true);
   }
 
   function terminateWorkout() {
-    finishWorkout();
+    workoutState.value = "finished";
+    stopTimer();
+    stopCarousel();
+    stopHeartRateSimulation();
+    writeRecord(false);
+  }
+
+  /** 写入运动记录到统计 store */
+  function writeRecord(finished: boolean) {
+    if (!activeCourse.value) return;
+    const statsStore = useWorkoutStatsStore();
+    const courseStore = useCourseStore();
+    const samples = heartRateSamples.value;
+    const avg = samples.length ? Math.round(samples.reduce((a, b) => a + b, 0) / samples.length) : undefined;
+    const max = samples.length ? Math.max(...samples) : undefined;
+    statsStore.recordSession(activeCourse.value, {
+      durationSec: totalElapsedSeconds.value,
+      caloriesBurned: caloriesBurned.value,
+      completedSets: completedSets.value,
+      totalSets: totalSets.value,
+      avgHeartRate: avg,
+      maxHeartRate: max,
+      finished,
+      startedAt: startedAt.value || Date.now(),
+      endedAt: Date.now(),
+    });
+    courseStore.markPracticed(activeCourse.value.id);
   }
 
   function reset() {
@@ -210,6 +258,9 @@ export const useWorkoutStore = defineStore("workout", () => {
     stopCarousel();
     stopHeartRateSimulation();
     plan.value = null;
+    activeCourse.value = null;
+    startedAt.value = 0;
+    heartRateSamples.value = [];
     currentStepIndex.value = 0;
     workoutState.value = "idle";
     subState.value = "exercising";
@@ -224,6 +275,8 @@ export const useWorkoutStore = defineStore("workout", () => {
 
   return {
     plan,
+    activeCourse,
+    startedAt,
     currentStepIndex,
     workoutState,
     subState,
@@ -243,6 +296,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     stepProgress,
     phaseColor,
     startWorkout,
+    startCourse,
     pause,
     resume,
     previousStep,
