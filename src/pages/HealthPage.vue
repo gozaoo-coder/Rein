@@ -2,12 +2,15 @@
 /**
  * HealthPage — Daily health overview.
  * Layout matches 华为健康 reference:
- *   1. Page title (from AppTopBar: "健康")
- *   2. Triple activity ring hero
- *   3. Daily summary card (calories / steps / exercise + activity count)
- *   4. 2x2 detail cards (sleep / heart rate / blood pressure / blood sugar)
+ *   1. Triple semi-ring hero (calories / steps / exercise)
+ *   2. Daily summary card (calories / steps / exercise + activity count)
+ *   3. 2x2 detail cards (sleep / heart rate / blood pressure / blood sugar)
+ *
+ * All mini-charts use reusable SVG components from @/components/charts.
  */
-import ActivityRing from "@/components/health/ActivityRing.vue";
+import SemiRingProgress from "@/components/charts/SemiRingProgress.vue";
+import RangeChart, { type ChartZone } from "@/components/charts/RangeChart.vue";
+import LevelIndicator, { type LevelSegment } from "@/components/charts/LevelIndicator.vue";
 import { computed } from "vue";
 
 const today = new Date();
@@ -29,41 +32,54 @@ const health = {
   sleepHours: 3,
   sleepMinutes: 54,
   sleepQuality: "有待提高",
+  sleepQualityValue: 0.15,
   heartRate: 60,
   heartRateTime: "19:41",
 };
-
-/* Heart rate mini-chart: deterministic bar pattern simulating 24h rhythm */
-const heartBars = computed(() => {
-  const pattern = [
-    0.2, 0.15, 0.1, 0.08, 0.12, 0.18, 0.25, 0.35,
-    0.5, 0.7, 0.85, 0.6, 0.45, 0.3, 0.25, 0.3,
-    0.55, 0.75, 0.9, 0.8, 0.6, 0.4, 0.3, 0.25,
-    0.2, 0.18, 0.15, 0.12, 0.1, 0.15,
-  ];
-  return pattern.map((p) => Math.round(55 + p * 50));
-});
-
-/* Sleep progress segments */
-const sleepSegments = [
-  { label: "深睡", width: 20, color: "#d0c8ff" },
-  { label: "浅睡", width: 35, color: "#b0a4ff" },
-  { label: "REM", width: 25, color: "#8f80ff" },
-  { label: "清醒", width: 20, color: "#6e5cf7" },
-];
 
 function sleepDurationLabel() {
   const h = health.sleepHours;
   const m = health.sleepMinutes;
   return `${h}时${m}分`;
 }
+
+/* ===== Heart rate 24h data + zones (RangeChart) =====
+ * Zones from bottom (resting) to top (peak), matching Huawei Health colors:
+ *   休息 <100, 热身 100-120, 燃脂 120-140, 有氧 140-160, 极限 160-190
+ */
+const hrZones: ChartZone[] = [
+  { from: 50,  to: 100, color: "#e8e0ff", label: "休息" },
+  { from: 100, to: 120, color: "#c8d8ff", label: "热身" },
+  { from: 120, to: 140, color: "#ffd0b0", label: "燃脂" },
+  { from: 140, to: 160, color: "#ff9a78", label: "有氧" },
+  { from: 160, to: 190, color: "#ff6a50", label: "极限" },
+];
+
+/* Deterministic 30-sample 24h heart rate pattern simulating day rhythm */
+const hrData = computed(() => {
+  const pattern = [
+    0.12, 0.10, 0.08, 0.08, 0.10, 0.14, 0.20, 0.28,
+    0.42, 0.60, 0.78, 0.55, 0.38, 0.26, 0.22, 0.28,
+    0.50, 0.68, 0.82, 0.70, 0.52, 0.34, 0.24, 0.20,
+    0.16, 0.14, 0.12, 0.10, 0.10, 0.12,
+  ];
+  return pattern.map((p) => Math.round(58 + p * 110));
+});
+
+/* ===== Sleep quality levels (LevelIndicator) ===== */
+const sleepLevels: LevelSegment[] = [
+  { color: "#f0a0a0", label: "有待提高" },
+  { color: "#f0c880" },
+  { color: "#b0d890" },
+  { color: "#7cc07c", label: "优" },
+];
 </script>
 
 <template>
   <div class="health-page">
-    <!-- ===== Activity Rings Hero ===== -->
+    <!-- ===== Activity Rings Hero (reusable SemiRingProgress) ===== -->
     <div class="hero-section">
-      <ActivityRing
+      <SemiRingProgress
         :calories="health.calories"
         :calories-goal="health.caloriesGoal"
         :steps="health.steps"
@@ -75,7 +91,6 @@ function sleepDurationLabel() {
 
     <!-- ===== Daily Summary Card ===== -->
     <div class="summary-card clean-card">
-      <!-- 3 metrics row -->
       <div class="metrics-row">
         <div class="metric-item">
           <div class="metric-head">
@@ -124,7 +139,6 @@ function sleepDurationLabel() {
 
       <hr class="divider summary-divider" />
 
-      <!-- Activity count row -->
       <div class="activity-row">
         <div class="activity-left">
           <svg class="activity-icon" width="20" height="20" viewBox="0 0 24 24" fill="#64BB5C">
@@ -142,7 +156,7 @@ function sleepDurationLabel() {
 
     <!-- ===== Detail Cards 2x2 Grid ===== -->
     <div class="detail-grid">
-      <!-- Sleep -->
+      <!-- Sleep: LevelIndicator (equal segments + triangle pointer) -->
       <div class="detail-card clean-card clean-card--interactive">
         <div class="detail-icon-wrap icon-circle--purple icon-circle">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -152,21 +166,17 @@ function sleepDurationLabel() {
         <div class="detail-title">睡眠</div>
         <div class="detail-value">{{ sleepDurationLabel() }}</div>
         <div class="detail-sub">{{ dateStr }} 睡眠质量{{ health.sleepQuality }}</div>
-        <div class="sleep-bar">
-          <div
-            v-for="(seg, i) in sleepSegments"
-            :key="i"
-            class="sleep-seg"
-            :style="{ width: seg.width + '%', background: seg.color }"
+        <div class="detail-chart">
+          <LevelIndicator
+            :segments="sleepLevels"
+            :value="health.sleepQualityValue"
+            :height="10"
+            :gap="2"
           />
-        </div>
-        <div class="sleep-labels">
-          <span>有待提高</span>
-          <span>优</span>
         </div>
       </div>
 
-      <!-- Heart Rate -->
+      <!-- Heart Rate: RangeChart (colored HR zones + 24h line) -->
       <div class="detail-card clean-card clean-card--interactive">
         <div class="detail-icon-wrap icon-circle--red icon-circle">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -176,17 +186,16 @@ function sleepDurationLabel() {
         <div class="detail-title">心率</div>
         <div class="detail-value">{{ health.heartRate }}<span class="detail-unit">次/分</span></div>
         <div class="detail-sub">{{ dateStr }} {{ health.heartRateTime }}</div>
-        <div class="hr-chart">
-          <div
-            v-for="(h, i) in heartBars"
-            :key="i"
-            class="hr-bar"
-            :style="{ height: ((h - 50) / 60) * 100 + '%' }"
+        <div class="detail-chart">
+          <RangeChart
+            :data="hrData"
+            :zones="hrZones"
+            :x-labels="['00:00', '06:00', '12:00', '18:00', '24:00']"
+            :height="52"
+            color="#e84040"
+            :stroke-width="1.6"
+            :smooth="true"
           />
-        </div>
-        <div class="hr-labels">
-          <span>00:00</span>
-          <span>24:00</span>
         </div>
       </div>
 
@@ -372,7 +381,7 @@ function sleepDurationLabel() {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  min-height: 170px;
+  min-height: 180px;
   position: relative;
 }
 
@@ -408,60 +417,9 @@ function sleepDurationLabel() {
   line-height: 1.3;
 }
 
-/* Sleep bar */
-.sleep-bar {
-  display: flex;
-  height: 12px;
-  border-radius: var(--radius-full);
-  overflow: hidden;
+.detail-chart {
   margin-top: auto;
-  gap: 2px;
-}
-
-.sleep-seg {
-  height: 100%;
-  border-radius: var(--radius-full);
-  transition: width 0.6s ease;
-}
-
-.sleep-seg:first-child {
-  border-radius: var(--radius-full) 0 0 var(--radius-full);
-}
-
-.sleep-seg:last-child {
-  border-radius: 0 var(--radius-full) var(--radius-full) 0;
-}
-
-.sleep-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-}
-
-/* Heart rate chart */
-.hr-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 48px;
-  margin-top: auto;
-}
-
-.hr-bar {
-  flex: 1;
-  min-width: 3px;
-  background: var(--color-danger);
-  border-radius: 2px 2px 0 0;
-  opacity: 0.7;
-  min-height: 3px;
-}
-
-.hr-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
+  width: 100%;
 }
 
 /* Row-style detail cards (BP / Blood Sugar) share same grid cell height */
