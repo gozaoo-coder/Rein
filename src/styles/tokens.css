@@ -1,0 +1,158 @@
+/* ============================================
+   Rein Design Tokens — Apple-inspired
+   ============================================ */
+
+:root {
+  /* --- Brand (Blue) --- */
+  --brand-50: #e5f1ff;
+  --brand-100: #ccebff;
+  --brand-200: #99d6ff;
+  --brand-300: #66b8ff;
+  --brand-400: #339eff;
+  --brand-500: #007aff;
+  --brand-600: #0062cc;
+  --brand-700: #004a99;
+  --brand-800: #003166;
+  --brand-900: #001933;
+
+  /* --- Success (Green) --- */
+  --success-500: #34c759;
+  --success-600: #28a745;
+
+  /* --- Warning (Amber) --- */
+  --warning-500: #ff9f0a;
+  --warning-600: #e08e00;
+
+  /* --- Danger (Red) --- */
+  --danger-500: #ff3b30;
+  --danger-600: #d63028;
+
+  /* --- Background --- */
+  --bg-50: #ffffff;
+  --bg-100: #f9f9fb;
+  --bg-200: #f2f2f7;
+  --bg-300: #e5e5ea;
+  --bg-400: #d1d1d6;
+  --bg-500: #aeaeb2;
+  --bg-600: #8e8e93;
+  --bg-700: #636366;
+  --bg-800: #48484a;
+  --bg-900: #1c1c1e;
+
+  /* --- Text --- */
+  --text-50: #ffffff;
+  --text-100: #f2f2f7;
+  --text-200: #e5e5ea;
+  --text-300: #d1d1d6;
+  --text-400: #aeaeb2;
+  --text-500: #8e8e93;
+  --text-600: #636366;
+  --text-700: #48484a;
+  --text-800: #3a3a3c;
+  --text-900: #1c1c1e;
+
+  /* --- Radius --- */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 19.2px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* --- Shadows --- */
+  --shadow-hairline: 0 0.5px 0 0 rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04), 0 1px 3px 0 rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.03);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.12);
+  --shadow-modal: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 25px 50px -12px rgba(0, 0, 0, 0.16);
+
+  /* --- Spacing (4px base) --- */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* --- Glass (Liquid Glass) --- */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-blur: 20px;
+  --glass-border: 1px solid rgba(255, 255, 255, 0.5);
+
+  /* --- Semantic aliases (light) --- */
+  --color-bg: var(--bg-50);
+  --color-bg-secondary: var(--bg-200);
+  --color-bg-elevated: var(--bg-50);
+  --color-text: var(--text-900);
+  --color-text-secondary: var(--text-600);
+  --color-text-tertiary: var(--text-400);
+  --color-primary: var(--brand-500);
+  --color-primary-text: var(--brand-50);
+  --color-divider: var(--bg-300);
+  --color-surface: var(--bg-50);
+}
+
+/* --- Dark Mode --- */
+.dark {
+  --brand-50: #001933;
+  --brand-100: #003166;
+  --brand-200: #004a99;
+  --brand-300: #0062cc;
+  --brand-400: #007aff;
+  --brand-500: #339eff;
+  --brand-600: #66b8ff;
+  --brand-700: #99d6ff;
+  --brand-800: #ccebff;
+  --brand-900: #e5f1ff;
+
+  --bg-50: #1c1c1e;
+  --bg-100: #2c2c2e;
+  --bg-200: #3a3a3c;
+  --bg-300: #48484a;
+  --bg-400: #636366;
+  --bg-500: #8e8e93;
+  --bg-600: #aeaeb2;
+  --bg-700: #d1d1d6;
+  --bg-800: #e5e5ea;
+  --bg-900: #f2f2f7;
+
+  --text-50: #1c1c1e;
+  --text-100: #3a3a3c;
+  --text-200: #48484a;
+  --text-300: #636366;
+  --text-400: #8e8e93;
+  --text-500: #aeaeb2;
+  --text-600: #d1d1d6;
+  --text-700: #e5e5ea;
+  --text-800: #f2f2f7;
+  --text-900: #ffffff;
+
+  --shadow-hairline: 0 0.5px 0 0 rgba(255, 255, 255, 0.06);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2), 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.35), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+
+  --glass-bg: rgba(44, 44, 46, 0.78);
+  --glass-border: 1px solid rgba(255, 255, 255, 0.08);
+
+  --color-bg: var(--bg-50);
+  --color-bg-secondary: var(--bg-100);
+  --color-bg-elevated: var(--bg-100);
+  --color-text: var(--text-900);
+  --color-text-secondary: var(--text-600);
+  --color-text-tertiary: var(--text-400);
+  --color-primary: var(--brand-500);
+  --color-primary-text: var(--brand-50);
+  --color-divider: var(--bg-300);
+  --color-surface: var(--bg-100);
+}
