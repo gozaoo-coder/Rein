@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
+import { useRouter } from "vue-router"
 import CardGrid from "@/components/cards/CardGrid.vue"
 import { useCardEditor } from "@/composables/useCardEditor"
 import { useCardLayoutStore } from "@/stores/cardLayoutStore"
 import type { CardConfig } from "@/types/card"
 
+const router = useRouter()
 const { isEditing, toggleEditMode, saveLayout } = useCardEditor()
 const layoutStore = useCardLayoutStore()
 
@@ -74,8 +76,16 @@ onMounted(() => {
   }
 })
 
-function onCardClick(_cardId: string) {
-  // placeholder: navigate to detail
+function onCardClick(cardId: string) {
+  if (cardId === "sport-strength") {
+    router.push("/workout")
+  }
+}
+
+function onStartMode(modeKey: string) {
+  if (modeKey === "strength") {
+    router.push("/workout")
+  }
 }
 
 function onAddCard() {
@@ -98,6 +108,7 @@ function onManageCourses() {
           v-for="mode in sportModes"
           :key="mode.key"
           class="sport-action-btn"
+          @click="onStartMode(mode.key)"
         >
           <span class="action-icon">
             <!-- Running -->
