@@ -113,19 +113,19 @@ const pointerPath = computed(() => {
         :fill="seg.color"
       />
 
-      <!-- Labels (first + last when set, optional middle) -->
+      <!-- Labels (only segments with label set) -->
       <template v-if="showLabels">
-        <text
-          v-for="(seg, i) in segments"
-          v-if="seg.label"
-          :key="'l' + i"
-          :x="segX(i) + segWidth() / 2"
-          :y="BAR_Y + height + 8"
-          class="level-label"
-          text-anchor="middle"
-        >
-          {{ seg.label }}
-        </text>
+        <template v-for="(seg, i) in segments" :key="'l' + i">
+          <text
+            v-if="seg.label"
+            :x="segX(i) + segWidth() / 2"
+            :y="BAR_Y + height + 8"
+            class="level-label"
+            text-anchor="middle"
+          >
+            {{ seg.label }}
+          </text>
+        </template>
       </template>
     </svg>
   </div>
