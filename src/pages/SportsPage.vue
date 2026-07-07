@@ -25,6 +25,7 @@ const defaultSportCards: CardConfig[] = [
     component: "RunningCard",
     size: "1x1",
     editable: true,
+    glow: "primary",
     props: { distance: 5.2, pace: "5'30\"", calories: 320 },
   },
   {
@@ -32,6 +33,7 @@ const defaultSportCards: CardConfig[] = [
     component: "CyclingCard",
     size: "1x1",
     editable: true,
+    glow: "accent",
     props: { distance: 15.8, speed: 22.5, time: "42:10" },
   },
   {
@@ -39,6 +41,7 @@ const defaultSportCards: CardConfig[] = [
     component: "YogaCard",
     size: "1x1",
     editable: true,
+    glow: "warning",
     props: { duration: 45, calories: 180 },
   },
   {
@@ -46,6 +49,7 @@ const defaultSportCards: CardConfig[] = [
     component: "StrengthCard",
     size: "1x1",
     editable: true,
+    glow: "danger",
     props: { totalSets: 24, totalReps: 168 },
   },
   {
@@ -53,6 +57,7 @@ const defaultSportCards: CardConfig[] = [
     component: "MyCoursesCard",
     size: "2x1",
     editable: true,
+    glow: "success",
     props: {
       courses: [
         { name: "晨跑5km", duration: "30min" },

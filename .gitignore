@@ -30,3 +30,6 @@ src-tauri/gen/
 
 # Testing
 coverage/
+
+# Extracted design resources (binaries; original zips tracked separately)
+rein-design/_extracted/

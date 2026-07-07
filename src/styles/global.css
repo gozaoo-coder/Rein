@@ -1,5 +1,18 @@
 @import "tailwindcss";
 
+/* ============================================
+   HarmonyOS Sans — Latin subset (brand identity)
+   SC/TC fall back to system fonts (PingFang SC, Microsoft YaHei)
+   to avoid bundling multi-MB CJK font files.
+   ============================================ */
+@font-face {
+  font-family: "HarmonyOS Sans";
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  src: url("@/assets/fonts/HarmonyOS_Sans.ttf") format("truetype");
+}
+
 /* --- Global Reset --- */
 *,
 *::before,
@@ -15,23 +28,21 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
-    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
   background: var(--color-bg);
   color: var(--color-text);
-  font-size: 16px;
-  line-height: 1.5;
+  font-size: var(--text-base);
+  line-height: var(--lh-base);
 }
 
 /* --- Base Typography --- */
 h1, h2, h3, h4, h5, h6 {
-  font-weight: 600;
-  line-height: 1.2;
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
   color: var(--color-text);
 }
 
@@ -54,11 +65,16 @@ button {
   cursor: pointer;
   border: none;
   background: none;
+  color: inherit;
 }
 
 input, textarea, select {
   font: inherit;
   color: inherit;
+}
+
+code, pre, kbd {
+  font-family: var(--font-mono);
 }
 
 /* --- Safe Area Padding --- */
@@ -88,14 +104,7 @@ input, textarea, select {
   display: none;
 }
 
-/* --- Utility Classes --- */
-.glass-surface {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
-  border: var(--glass-border);
-}
-
+/* --- Text Utilities --- */
 .text-ellipsis {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -116,20 +125,131 @@ input, textarea, select {
   overflow: hidden;
 }
 
-/* --- Liquid Glass Card --- */
+/* ============================================
+   Immersive Light — Material Tiers
+   5-tier glass elevation system (HarmonyOS-aligned).
+   Use .glass-{tier} on floating/elevated surfaces.
+   ============================================ */
+.glass-ultra-thin {
+  background: var(--material-ultra-thin-bg);
+  -webkit-backdrop-filter: blur(var(--material-ultra-thin-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-ultra-thin-blur)) saturate(180%);
+  box-shadow: var(--material-ultra-thin-shadow);
+}
+
+.glass-thin {
+  background: var(--material-thin-bg);
+  -webkit-backdrop-filter: blur(var(--material-thin-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-thin-blur)) saturate(180%);
+  box-shadow: var(--material-thin-shadow);
+}
+
+.glass-medium {
+  background: var(--material-medium-bg);
+  -webkit-backdrop-filter: blur(var(--material-medium-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-medium-blur)) saturate(180%);
+  box-shadow: var(--material-medium-shadow);
+}
+
+.glass-thick {
+  background: var(--material-thick-bg);
+  -webkit-backdrop-filter: blur(var(--material-thick-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-thick-blur)) saturate(180%);
+  box-shadow: var(--material-thick-shadow);
+}
+
+.glass-ultra-thick {
+  background: var(--material-ultra-thick-bg);
+  -webkit-backdrop-filter: blur(var(--material-ultra-thick-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-ultra-thick-blur)) saturate(180%);
+  box-shadow: var(--material-ultra-thick-shadow);
+}
+
+/* Default glass (backward-compat alias of medium) */
+.glass-surface,
 .glass-card {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
+  background: var(--color-glass-bg);
+  -webkit-backdrop-filter: blur(var(--color-glass-blur)) saturate(180%);
+  backdrop-filter: blur(var(--color-glass-blur)) saturate(180%);
   border: var(--glass-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--color-glass-shadow);
+}
+
+/* ============================================
+   Immersive Light — Radial Glow
+   Apply to glass surfaces to add colored ambient light.
+   Compose: class="glass-medium glow-primary"
+   ============================================ */
+.glow-primary {
+  background-image: radial-gradient(
+    97.75% 83.15% at 83% 104%,
+    var(--glow-primary) 0%,
+    var(--glow-transparent) 100%
+  );
+}
+
+.glow-success {
+  background-image: radial-gradient(
+    97.75% 83.15% at 83% 104%,
+    var(--glow-success) 0%,
+    var(--glow-transparent) 100%
+  );
+}
+
+.glow-warning {
+  background-image: radial-gradient(
+    97.75% 83.15% at 83% 104%,
+    var(--glow-warning) 0%,
+    var(--glow-transparent) 100%
+  );
+}
+
+.glow-danger {
+  background-image: radial-gradient(
+    97.75% 83.15% at 83% 104%,
+    var(--glow-danger) 0%,
+    var(--glow-transparent) 100%
+  );
+}
+
+.glow-accent {
+  background-image: radial-gradient(
+    97.75% 83.15% at 83% 104%,
+    var(--glow-accent) 0%,
+    var(--glow-transparent) 100%
+  );
+}
+
+/* ============================================
+   Immersive Light — Hover Halo
+   Signature light ring on glass surfaces.
+   Use on interactive glass cards/popovers.
+   ============================================ */
+.halo-hover {
+  position: relative;
+  isolation: isolate;
+}
+
+.halo-hover::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--radius-popover-halo);
+  background-color: var(--halo-transparent);
+  z-index: -1;
+  transition: background-color var(--dur-halo) var(--ease-immersive);
+  pointer-events: none;
+}
+
+.halo-hover:hover::after {
+  background-color: var(--halo-color);
 }
 
 /* --- Selection --- */
 ::selection {
   background: var(--brand-500);
-  color: var(--brand-50);
+  color: #ffffff;
 }
 
 /* --- Focus Ring --- */

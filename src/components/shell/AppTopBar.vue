@@ -1,22 +1,30 @@
 <script setup lang="ts">
+/**
+ * AppTopBar — Sticky top floating bar.
+ * Material: Ultra_Thin (HarmonyOS spec: top floating component).
+ */
+import ReinIcon from "@/components/ui/ReinIcon.vue";
+
 defineProps<{
   title?: string;
+  icon?: "plus" | "edit" | "settings";
 }>();
 
 const emit = defineEmits<{
-  (e: "add"): void;
+  (e: "action"): void;
 }>();
 </script>
 
 <template>
-  <header class="app-top-bar safe-area-top">
+  <header class="app-top-bar glass-ultra-thin safe-area-top">
     <div class="top-bar-inner">
-      <h1 class="top-bar-title">{{ title || 'Rein' }}</h1>
-      <button class="top-bar-action" aria-label="添加" @click="emit('add')">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
+      <h1 class="top-bar-title">{{ title || "Rein" }}</h1>
+      <button
+        class="top-bar-action"
+        aria-label="操作"
+        @click="emit('action')"
+      >
+        <ReinIcon :name="icon || 'plus'" :size="20" :stroke-width="2.4" />
       </button>
     </div>
   </header>
@@ -27,9 +35,6 @@ const emit = defineEmits<{
   position: sticky;
   top: 0;
   z-index: 100;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  backdrop-filter: blur(var(--glass-blur));
   border-bottom: 1px solid var(--color-divider);
 }
 
@@ -39,13 +44,13 @@ const emit = defineEmits<{
   justify-content: space-between;
   height: 52px;
   padding: 0 var(--space-5);
-  max-width: 100%;
 }
 
 .top-bar-title {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: var(--text-lg);
+  font-weight: var(--fw-semibold);
   color: var(--color-text);
+  letter-spacing: -0.01em;
 }
 
 .top-bar-action {
@@ -57,10 +62,13 @@ const emit = defineEmits<{
   border-radius: var(--radius-full);
   background: var(--color-primary);
   color: var(--color-primary-text);
-  transition: opacity 0.2s ease;
+  transition:
+    transform var(--dur-fast) var(--ease-immersive),
+    opacity var(--dur-fast) var(--ease-immersive);
 }
 
 .top-bar-action:active {
-  opacity: 0.7;
+  transform: scale(0.9);
+  opacity: 0.85;
 }
 </style>

@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * StaticCard — non-editable card surface using GlassCard.
+ * Tier: medium (default content card).
+ * Glow: derived from card config.glow if provided, else none.
+ */
+import GlassCard from "@/components/ui/GlassCard.vue";
 import { CARD_SIZE_MAP } from "@/types/card";
 import type { CardConfig } from "@/types/card";
 import { getCardComponent } from "./CardRegistry";
@@ -18,21 +24,30 @@ const sizeClass = computed(() => {
     "card-span-4-row": size.rows === 4,
   };
 });
+
+const glow = computed(() => props.config.glow ?? "none");
 </script>
 
 <template>
-  <div class="static-card glass-card" :class="sizeClass">
+  <GlassCard
+    tier="medium"
+    :glow="glow"
+    :hover-halo="true"
+    :interactive="true"
+    :padding="4"
+    :class="sizeClass"
+    class="static-card"
+  >
     <component v-if="resolvedComponent" :is="resolvedComponent" v-bind="config.props" />
     <div v-else class="card-placeholder">
       <span class="placeholder-text">{{ config.component }}</span>
     </div>
-  </div>
+  </GlassCard>
 </template>
 
 <style scoped>
 .static-card {
   min-height: 140px;
-  padding: var(--space-4);
 }
 
 .card-span-2-col {
@@ -56,7 +71,7 @@ const sizeClass = computed(() => {
 }
 
 .placeholder-text {
-  color: var(--text-400);
-  font-size: 13px;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-sm);
 }
 </style>

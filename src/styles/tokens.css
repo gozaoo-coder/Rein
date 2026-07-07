@@ -1,45 +1,69 @@
 /* ============================================
-   Rein Design Tokens — Apple-inspired
+   Rein Design Tokens — 沉浸光感 (Immersive Light)
+   Based on HarmonyOS visual style.
+   Two-layer architecture:
+     1. Primitive palette — brand/background/text each 10-step scale
+        (50 lightest → 900 darkest); state colors anchored on HarmonyOS.
+     2. Semantic tokens — :root (light) and .dark map roles onto primitives.
+   Components MUST only consume semantic tokens (var(--color-*), var(--glass-*),
+   var(--material-*), var(--glow-*)). Never hardcode hex in components.
    ============================================ */
 
 :root {
-  /* --- Brand (Blue) --- */
-  --brand-50: #e5f1ff;
-  --brand-100: #ccebff;
-  --brand-200: #99d6ff;
-  --brand-300: #66b8ff;
-  --brand-400: #339eff;
-  --brand-500: #007aff;
-  --brand-600: #0062cc;
-  --brand-700: #004a99;
-  --brand-800: #003166;
-  --brand-900: #001933;
+  /* ===== PRIMITIVE PALETTE ===== */
+
+  /* --- Brand (HarmonyOS Blue #0A59F7) --- */
+  --brand-50: #e8f1fe;
+  --brand-100: #d1e3fd;
+  --brand-200: #a3c7fb;
+  --brand-300: #6ba6f8;
+  --brand-400: #3486f5;
+  --brand-500: #0a59f7; /* @primary */
+  --brand-600: #0848c5;
+  --brand-700: #063894;
+  --brand-800: #042763;
+  --brand-900: #021532;
+
+  /* --- Glow palette (radial light stops, 20% alpha) --- */
+  --glow-blue: rgba(10, 89, 247, 0.2);
+  --glow-orange: rgba(247, 133, 10, 0.2);
+  --glow-purple: rgba(172, 73, 245, 0.2);
+  --glow-green: rgba(100, 187, 92, 0.2);
+  --glow-red: rgba(232, 64, 38, 0.2);
+  --glow-transparent: rgba(10, 89, 247, 0);
 
   /* --- Success (Green) --- */
-  --success-500: #34c759;
-  --success-600: #28a745;
+  --success-50: #e7f6e6;
+  --success-500: #64bb5c;
+  --success-600: #4a9c43;
 
-  /* --- Warning (Amber) --- */
-  --warning-500: #ff9f0a;
-  --warning-600: #e08e00;
+  /* --- Warning (Orange) --- */
+  --warning-50: #fef0e0;
+  --warning-500: #f7850a;
+  --warning-600: #c46908;
 
   /* --- Danger (Red) --- */
-  --danger-500: #ff3b30;
-  --danger-600: #d63028;
+  --danger-50: #fde4e0;
+  --danger-500: #e84026;
+  --danger-600: #b7331e;
 
-  /* --- Background --- */
+  /* --- Accent (Purple) --- */
+  --accent-500: #ac49f5;
+  --accent-600: #8a3bc4;
+
+  /* --- Background (10-step) --- */
   --bg-50: #ffffff;
-  --bg-100: #f9f9fb;
+  --bg-100: #f7f7fa;
   --bg-200: #f2f2f7;
   --bg-300: #e5e5ea;
   --bg-400: #d1d1d6;
   --bg-500: #aeaeb2;
   --bg-600: #8e8e93;
   --bg-700: #636366;
-  --bg-800: #48484a;
+  --bg-800: #3a3a3c;
   --bg-900: #1c1c1e;
 
-  /* --- Text --- */
+  /* --- Text (10-step) --- */
   --text-50: #ffffff;
   --text-100: #f2f2f7;
   --text-200: #e5e5ea;
@@ -51,23 +75,45 @@
   --text-800: #3a3a3c;
   --text-900: #1c1c1e;
 
-  /* --- Radius --- */
+  /* ===== TYPOGRAPHY ===== */
+  --font-sans: "HarmonyOS Sans", "HarmonyOSHans-Regular", "PingFang SC",
+    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", Consolas, ui-monospace, Menlo, monospace;
+
+  /* Type scale (HarmonyOS doc-aligned) */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 40px;
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-base: 1.5;
+  --lh-relaxed: 1.75;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ===== RADIUS ===== */
+  --radius-xs: 4px;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 19.2px;
   --radius-xl: 24px;
+  --radius-2xl: 32px;
   --radius-full: 9999px;
+  /* HarmonyOS pop-up spec: outer 24px, inner 23px, halo 26px */
+  --radius-popover: 24px;
+  --radius-popover-inner: 23px;
+  --radius-popover-halo: 26px;
+  --radius-pill: 50px;
 
-  /* --- Shadows --- */
-  --shadow-hairline: 0 0.5px 0 0 rgba(0, 0, 0, 0.06);
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04), 0 1px 3px 0 rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.03);
-  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.12);
-  --shadow-modal: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 25px 50px -12px rgba(0, 0, 0, 0.16);
-
-  /* --- Spacing (4px base) --- */
+  /* ===== SPACING (4px base) ===== */
   --space-0: 0px;
   --space-1: 4px;
   --space-2: 8px;
@@ -81,12 +127,61 @@
   --space-16: 64px;
   --space-20: 80px;
 
-  /* --- Glass (Liquid Glass) --- */
-  --glass-bg: rgba(255, 255, 255, 0.72);
-  --glass-blur: 20px;
-  --glass-border: 1px solid rgba(255, 255, 255, 0.5);
+  /* ===== SHADOWS ===== */
+  --shadow-hairline: 0 0.5px 0 0 rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04), 0 1px 3px 0 rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 2px 8px 0 rgba(0, 0, 0, 0.16);
+  --shadow-lg: 0 6px 12px 0 rgba(0, 0, 0, 0.17);
+  --shadow-xl: 0 6px 24px 0 rgba(0, 0, 0, 0.28);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.12);
+  --shadow-modal: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 25px 50px -12px rgba(0, 0, 0, 0.16);
 
-  /* --- Semantic aliases (light) --- */
+  /* ===== MOTION (HarmonyOS immersive rhythm) ===== */
+  --dur-fast: 0.3s;       /* state changes: hover, focus, active */
+  --dur-halo: 0.5s;       /* atmospheric: halo, border fade on glass */
+  --dur-dismiss: 1s;      /* dismiss / fade-out */
+  --ease-immersive: ease-in-out;
+  --ease-out: ease-out;
+
+  /* ===== GLASS / MATERIAL (5-tier elevation) =====
+     Mirrors HarmonyOS enum: Ultra_Thin → Ultra_Thick.
+     Each tier = blur radius + bg alpha + shadow.
+     Scene mapping:
+       Ultra_Thin  — top floating bars (sticky headers, top tabs)
+       Thin        — bottom floating bars (tab bars, bottom sheets)
+       Medium      — common elevated cards, FABs
+       Thick       — non-permanent popovers, dropdowns, toasts
+       Ultra_Thick — half-modals, large dialogs
+  */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: 1px solid rgba(255, 255, 255, 0.5);
+  --glass-blur: 20px;
+
+  --material-ultra-thin-bg: rgba(255, 255, 255, 0.55);
+  --material-ultra-thin-blur: 20px;
+  --material-ultra-thin-shadow: var(--shadow-sm);
+
+  --material-thin-bg: rgba(255, 255, 255, 0.70);
+  --material-thin-blur: 40px;
+  --material-thin-shadow: var(--shadow-md);
+
+  --material-medium-bg: rgba(255, 255, 255, 0.80);
+  --material-medium-blur: 80px;
+  --material-medium-shadow: var(--shadow-md);
+
+  --material-thick-bg: rgba(255, 255, 255, 0.90);
+  --material-thick-blur: 120px;
+  --material-thick-shadow: var(--shadow-lg);
+
+  --material-ultra-thick-bg: rgba(255, 255, 255, 0.96);
+  --material-ultra-thick-blur: 200px;
+  --material-ultra-thick-shadow: var(--shadow-xl);
+
+  /* ===== HALO (hover light ring) ===== */
+  --halo-color: rgba(10, 89, 247, 0.1);
+  --halo-transparent: rgba(10, 89, 247, 0);
+
+  /* ===== SEMANTIC ALIASES (light) ===== */
   --color-bg: var(--bg-50);
   --color-bg-secondary: var(--bg-200);
   --color-bg-elevated: var(--bg-50);
@@ -94,23 +189,48 @@
   --color-text-secondary: var(--text-600);
   --color-text-tertiary: var(--text-400);
   --color-primary: var(--brand-500);
-  --color-primary-text: var(--brand-50);
+  --color-primary-text: #ffffff;
+  --color-primary-soft: var(--brand-50);
+  --color-success: var(--success-500);
+  --color-warning: var(--warning-500);
+  --color-danger: var(--danger-500);
+  --color-accent: var(--accent-500);
   --color-divider: var(--bg-300);
   --color-surface: var(--bg-50);
+
+  /* Glass semantic defaults */
+  --color-glass-bg: var(--material-medium-bg);
+  --color-glass-blur: var(--material-medium-blur);
+  --color-glass-border: var(--glass-border);
+  --color-glass-shadow: var(--material-medium-shadow);
+
+  /* Glow semantic */
+  --glow-primary: var(--glow-blue);
+  --glow-success: var(--glow-green);
+  --glow-warning: var(--glow-orange);
+  --glow-danger: var(--glow-red);
+  --glow-accent: var(--glow-purple);
 }
 
-/* --- Dark Mode --- */
+/* ===== DARK MODE ===== */
 .dark {
-  --brand-50: #001933;
-  --brand-100: #003166;
-  --brand-200: #004a99;
-  --brand-300: #0062cc;
-  --brand-400: #007aff;
-  --brand-500: #339eff;
-  --brand-600: #66b8ff;
-  --brand-700: #99d6ff;
-  --brand-800: #ccebff;
-  --brand-900: #e5f1ff;
+  --brand-50: #021532;
+  --brand-100: #042763;
+  --brand-200: #063894;
+  --brand-300: #0848c5;
+  --brand-400: #0a59f7;
+  --brand-500: #3486f5;
+  --brand-600: #6ba6f8;
+  --brand-700: #a3c7fb;
+  --brand-800: #d1e3fd;
+  --brand-900: #e8f1fe;
+
+  --glow-blue: rgba(52, 134, 245, 0.22);
+  --glow-orange: rgba(247, 133, 10, 0.22);
+  --glow-purple: rgba(172, 73, 245, 0.22);
+  --glow-green: rgba(100, 187, 92, 0.22);
+  --glow-red: rgba(232, 64, 38, 0.22);
+  --glow-transparent: rgba(52, 134, 245, 0);
 
   --bg-50: #1c1c1e;
   --bg-100: #2c2c2e;
@@ -135,15 +255,24 @@
   --text-900: #ffffff;
 
   --shadow-hairline: 0 0.5px 0 0 rgba(255, 255, 255, 0.06);
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2), 0 1px 3px 0 rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.35), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.2);
-  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-  --shadow-modal: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3), 0 1px 3px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px 0 rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 6px 12px 0 rgba(0, 0, 0, 0.45);
+  --shadow-xl: 0 6px 24px 0 rgba(0, 0, 0, 0.6);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 25px 50px -12px rgba(0, 0, 0, 0.7);
 
-  --glass-bg: rgba(44, 44, 46, 0.78);
+  --glass-bg: rgba(44, 44, 46, 0.72);
   --glass-border: 1px solid rgba(255, 255, 255, 0.08);
+
+  --material-ultra-thin-bg: rgba(44, 44, 46, 0.55);
+  --material-thin-bg: rgba(44, 44, 46, 0.70);
+  --material-medium-bg: rgba(44, 44, 46, 0.80);
+  --material-thick-bg: rgba(28, 28, 30, 0.90);
+  --material-ultra-thick-bg: rgba(28, 28, 30, 0.96);
+
+  --halo-color: rgba(52, 134, 245, 0.14);
+  --halo-transparent: rgba(52, 134, 245, 0);
 
   --color-bg: var(--bg-50);
   --color-bg-secondary: var(--bg-100);
@@ -152,7 +281,11 @@
   --color-text-secondary: var(--text-600);
   --color-text-tertiary: var(--text-400);
   --color-primary: var(--brand-500);
-  --color-primary-text: var(--brand-50);
+  --color-primary-text: #021532;
+  --color-primary-soft: var(--brand-900);
   --color-divider: var(--bg-300);
   --color-surface: var(--bg-100);
+
+  --color-glass-bg: var(--material-medium-bg);
+  --color-glass-shadow: var(--material-medium-shadow);
 }
