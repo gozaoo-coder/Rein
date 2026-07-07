@@ -2,11 +2,25 @@
   "name": "rein",
   "private": true,
   "version": "0.1.0",
+  "description": "Rein — 健康与运动管理桌面应用",
+  "author": "",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tauri": "tauri dev",
     "build": "vue-tsc --noEmit && vite build",
+    "build:web": "vite build",
+    "build:tauri": "tauri build",
+    "build:tauri:debug": "tauri build --debug",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
+    "android:build:debug": "tauri android build --debug",
+    "android:run": "tauri android run",
+    "ios:dev": "tauri ios dev",
+    "ios:build": "tauri ios build",
     "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -14,6 +28,7 @@
     "vue-router": "^4.5.0",
     "pinia": "^2.3.0",
     "@vueuse/core": "^12.5.0",
+    "@tauri-apps/api": "^2.2.0",
     "marked": "^15.0.0"
   },
   "devDependencies": {

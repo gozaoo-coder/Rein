@@ -1,13 +1,13 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicbarker/tauri/v2.0.0/core/tauri-config-schema/schema.json",
+  "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
   "productName": "Rein",
   "version": "0.1.0",
   "identifier": "com.rein.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "withGlobalTauri": false,
@@ -38,11 +38,5 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
-  },
-  "android": {
-    "minSdkVersion": 24
-  },
-  "ios": {
-    "minimumSystemVersion": "15.0"
   }
 }
