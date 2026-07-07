@@ -7,6 +7,7 @@
  *   - 5-tier glass elevation (HarmonyOS Ultra_Thin → Ultra_Thick)
  *   - Optional radial colored glow (ambient light)
  *   - Optional hover halo (signature light ring)
+ *   - Specular top-edge highlight per tier
  *
  * Scene mapping (per HarmonyOS spec):
  *   tier="ultra-thin"  → sticky top bars, top floating components
@@ -37,18 +38,12 @@ type GlowColor =
 
 const props = withDefaults(
   defineProps<{
-    /** Material elevation tier. @default "medium" */
     tier?: MaterialTier;
-    /** Radial glow color. @default "none" */
     glow?: GlowColor;
-    /** Show hover halo (signature light ring). @default false */
     hoverHalo?: boolean;
-    /** Interactive (enables cursor pointer + active scale). @default false */
     interactive?: boolean;
-    /** Padding scale; use 0 to disable. @default 4 */
     padding?: 0 | 2 | 3 | 4 | 5 | 6;
-    /** Radius override; defaults to tier-appropriate value. */
-    radius?: "sm" | "md" | "lg" | "xl" | "2xl" | "full" | "pill";
+    radius?: "sm" | "md" | "lg" | "xl" | "2xl" | "full" | "pill" | "card";
   }>(),
   {
     tier: "medium",
@@ -74,13 +69,15 @@ const paddingVar = computed(() =>
 
 const radiusVar = computed(() => {
   if (props.radius) {
-    return props.radius === "pill"
-      ? "var(--radius-pill)"
-      : `var(--radius-${props.radius})`;
+    if (props.radius === "pill") return "var(--radius-pill)";
+    if (props.radius === "card") return "var(--card-radius)";
+    return `var(--radius-${props.radius})`;
   }
-  // Tier-appropriate defaults
   if (props.tier === "thick" || props.tier === "ultra-thick") {
     return "var(--radius-popover)";
+  }
+  if (props.tier === "thin" || props.tier === "ultra-thin") {
+    return "var(--radius-xl)";
   }
   return "var(--radius-lg)";
 });
@@ -108,16 +105,12 @@ const rootStyle = computed(() => ({
 <style scoped>
 .glass-card-root {
   position: relative;
-  border: var(--glass-border);
   border-radius: var(--card-radius);
   padding: var(--card-padding);
-  /* Background-image (glow) layers above background-color (glass) because
-     glow utility sets background-image while glass tier sets background-color.
-     Both compose natively. */
   transition:
     transform var(--dur-fast) var(--ease-immersive),
     box-shadow var(--dur-fast) var(--ease-immersive),
-    border-color var(--dur-halo) var(--ease-immersive);
+    background-color var(--dur-halo) var(--ease-immersive);
 }
 
 .glass-card-root.interactive {
@@ -128,8 +121,40 @@ const rootStyle = computed(() => ({
   transform: scale(0.97);
 }
 
-/* Border fade on hover (HarmonyOS pop-up signature) */
-.glass-card-root.interactive:hover {
-  border-color: transparent;
+/* ===== 5-tier material application ===== */
+.glass-ultra-thin {
+  background: var(--material-ultra-thin-bg);
+  -webkit-backdrop-filter: blur(var(--material-ultra-thin-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-ultra-thin-blur)) saturate(180%);
+  border: 1px solid var(--material-ultra-thin-border);
+  box-shadow: var(--material-ultra-thin-shadow);
+}
+.glass-thin {
+  background: var(--material-thin-bg);
+  -webkit-backdrop-filter: blur(var(--material-thin-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-thin-blur)) saturate(180%);
+  border: 1px solid var(--material-thin-border);
+  box-shadow: var(--material-thin-shadow);
+}
+.glass-medium {
+  background: var(--material-medium-bg);
+  -webkit-backdrop-filter: blur(var(--material-medium-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-medium-blur)) saturate(180%);
+  border: 1px solid var(--material-medium-border);
+  box-shadow: var(--material-medium-shadow);
+}
+.glass-thick {
+  background: var(--material-thick-bg);
+  -webkit-backdrop-filter: blur(var(--material-thick-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-thick-blur)) saturate(180%);
+  border: 1px solid var(--material-thick-border);
+  box-shadow: var(--material-thick-shadow);
+}
+.glass-ultra-thick {
+  background: var(--material-ultra-thick-bg);
+  -webkit-backdrop-filter: blur(var(--material-ultra-thick-blur)) saturate(180%);
+  backdrop-filter: blur(var(--material-ultra-thick-blur)) saturate(180%);
+  border: 1px solid var(--material-ultra-thick-border);
+  box-shadow: var(--material-ultra-thick-shadow);
 }
 </style>

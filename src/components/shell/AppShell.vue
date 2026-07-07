@@ -44,8 +44,8 @@ const { mode } = useBreakpoint();
 .app-main {
   flex: 1;
   min-width: 0;
-  /* padding-bottom reserves space for bottom tab bar (64px + safe-area) */
-  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--space-3));
+  /* padding-bottom reserves space for floating pill tab bar */
+  padding-bottom: calc(var(--pill-bar-height) + env(safe-area-inset-bottom, 0px) + var(--space-6));
 }
 
 .app-main-inner {

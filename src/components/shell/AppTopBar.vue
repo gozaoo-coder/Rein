@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * AppTopBar — Page header.
- * Phone: transparent bg, large bold title, outline circle + button.
- * Pad/Desktop: glass-ultra-thin sticky bar.
+ * AppTopBar — HarmonyOS 沉浸光感 sticky header.
+ * Ultra_Thin glass tier that tints content beneath; supports large title,
+ * circular icon actions, and an optional bottom slot for search/tabs.
  */
 import { computed } from "vue";
 import { useBreakpoint } from "@/composables/useBreakpoint";
@@ -17,13 +17,18 @@ const pageTitle = computed(() => {
   const map: Record<string, string> = {
     "/": "健康",
     "/sports": "运动",
+    "/devices": "设备",
     "/ai": "AI",
     "/profile": "我的",
   };
   return map[route.path] || "Rein";
 });
 
-const emit = defineEmits<{
+const showAction = computed(() =>
+  ["健康", "运动"].includes(pageTitle.value)
+);
+
+defineEmits<{
   (e: "action"): void;
 }>();
 </script>
@@ -31,54 +36,56 @@ const emit = defineEmits<{
 <template>
   <header
     class="app-top-bar safe-area-top"
-    :class="{ 'top-bar-phone': isPhone, 'top-bar-glass': !isPhone }"
+    :class="{ 'top-bar-phone': isPhone }"
   >
     <div class="top-bar-inner">
       <h1 class="top-bar-title" :class="{ 'title-phone': isPhone }">
         {{ pageTitle }}
       </h1>
-      <button
-        v-if="pageTitle === '健康' || pageTitle === '运动'"
-        class="top-bar-add"
-        :class="{ 'add-phone': isPhone, 'add-glass': !isPhone }"
-        aria-label="添加"
-        @click="emit('action')"
-      >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-      </button>
+      <div class="top-bar-actions">
+        <button
+          v-if="showAction"
+          class="top-bar-icon-btn"
+          :aria-label="pageTitle === '健康' ? '添加数据' : '开始运动'"
+          @click="$emit('action')"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      </div>
+    </div>
+    <!-- Optional bottom area: search bar, segmented tabs, etc. -->
+    <div v-if="$slots.default" class="top-bar-extra">
+      <slot />
     </div>
   </header>
 </template>
 
 <style scoped>
 .app-top-bar {
-  position: relative;
-  z-index: 50;
-  flex-shrink: 0;
-}
-
-.top-bar-glass {
   position: sticky;
   top: 0;
+  z-index: 50;
+  flex-shrink: 0;
   background: var(--material-ultra-thin-bg);
-  -webkit-backdrop-filter: blur(var(--material-ultra-thin-blur)) saturate(180%);
-  backdrop-filter: blur(var(--material-ultra-thin-blur)) saturate(180%);
-  border-bottom: 1px solid var(--color-divider);
+  -webkit-backdrop-filter: blur(var(--material-ultra-thin-blur)) var(--glass-blur-saturate);
+  backdrop-filter: blur(var(--material-ultra-thin-blur)) var(--glass-blur-saturate);
+  border-bottom: 1px solid transparent;
+  transition: background var(--dur-halo) var(--ease-immersive),
+              border-color var(--dur-halo) var(--ease-immersive);
 }
 
 .top-bar-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 52px;
+  height: 48px;
   padding: 0 var(--space-5);
 }
 
 .top-bar-phone .top-bar-inner {
-  height: 56px;
-  padding: 0 var(--space-5);
+  height: 52px;
 }
 
 .top-bar-title {
@@ -87,43 +94,49 @@ const emit = defineEmits<{
   color: var(--color-text);
   letter-spacing: -0.01em;
   margin: 0;
+  line-height: var(--lh-tight);
 }
 
 .title-phone {
-  font-size: var(--text-3xl);
+  font-size: var(--text-2xl);
   font-weight: var(--fw-bold);
   letter-spacing: -0.03em;
 }
 
-/* + Button — phone: outline circle */
-.top-bar-add {
+.top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Circular glass icon button */
+.top-bar-icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 36px;
   height: 36px;
   border-radius: var(--radius-full);
-  border: 2px solid var(--color-text);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   color: var(--color-text);
-  background: transparent;
+  cursor: pointer;
   transition:
     transform var(--dur-fast) var(--ease-immersive),
-    opacity var(--dur-fast) var(--ease-immersive),
-    background-color var(--dur-fast) var(--ease-immersive);
+    background-color var(--dur-fast) var(--ease-immersive),
+    opacity var(--dur-fast) var(--ease-immersive);
+  padding: 0;
 }
 
-.top-bar-add:active {
+.top-bar-icon-btn:active {
   transform: scale(0.9);
-  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.8);
+  opacity: 0.8;
 }
 
-/* + Button — glass: solid brand */
-.add-glass {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: var(--color-primary);
-  color: var(--color-primary-text);
-  border-radius: var(--radius-full);
+.top-bar-extra {
+  padding: 0 var(--space-5) var(--space-3);
 }
 </style>

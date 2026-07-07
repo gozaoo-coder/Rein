@@ -173,37 +173,58 @@
 
   /* ===== GLASS / MATERIAL (5-tier elevation) =====
      Mirrors HarmonyOS enum: Ultra_Thin → Ultra_Thick.
-     Each tier = blur radius + bg alpha + shadow.
+     Each tier = blur radius + bg alpha + border highlight + shadow.
      Scene mapping:
        Ultra_Thin  — top floating bars (sticky headers, top tabs)
-       Thin        — bottom floating bars (tab bars, bottom sheets)
-       Medium      — common elevated cards, FABs
-       Thick       — non-permanent popovers, dropdowns, toasts
-       Ultra_Thick — half-modals, large dialogs
+       Thin        — bottom floating bars (tab bars, bottom sheets, pill nav)
+       Medium      — common elevated cards, search bars, FABs
+       Thick       — non-permanent popovers, dropdowns, menus, toasts
+       Ultra_Thick — half-modals, large dialogs, action sheets
+
+     Visual progression (on light bg):
+       Ultra_Thin → most transparent, lightest blur, dark-tinted edge
+       Ultra_Thick → near-opaque white, heaviest blur, bright specular highlight
   */
-  --glass-bg: rgba(255, 255, 255, 0.72);
-  --glass-border: 1px solid rgba(255, 255, 255, 0.5);
-  --glass-blur: 20px;
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --glass-blur-saturate: saturate(180%);
 
-  --material-ultra-thin-bg: rgba(255, 255, 255, 0.55);
+  --material-ultra-thin-bg: rgba(255, 255, 255, 0.50);
   --material-ultra-thin-blur: 20px;
-  --material-ultra-thin-shadow: var(--shadow-sm);
+  --material-ultra-thin-border: rgba(255, 255, 255, 0.35);
+  --material-ultra-thin-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  --material-ultra-thin-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 
-  --material-thin-bg: rgba(255, 255, 255, 0.70);
+  --material-thin-bg: rgba(255, 255, 255, 0.68);
   --material-thin-blur: 40px;
-  --material-thin-shadow: var(--shadow-md);
+  --material-thin-border: rgba(255, 255, 255, 0.45);
+  --material-thin-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --material-thin-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 
-  --material-medium-bg: rgba(255, 255, 255, 0.80);
-  --material-medium-blur: 80px;
-  --material-medium-shadow: var(--shadow-md);
+  --material-medium-bg: rgba(255, 255, 255, 0.78);
+  --material-medium-blur: 60px;
+  --material-medium-border: rgba(255, 255, 255, 0.50);
+  --material-medium-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --material-medium-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
 
-  --material-thick-bg: rgba(255, 255, 255, 0.90);
-  --material-thick-blur: 120px;
-  --material-thick-shadow: var(--shadow-lg);
+  --material-thick-bg: rgba(255, 255, 255, 0.88);
+  --material-thick-blur: 80px;
+  --material-thick-border: rgba(255, 255, 255, 0.55);
+  --material-thick-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --material-thick-shadow: 0 12px 36px rgba(0, 0, 0, 0.14);
 
   --material-ultra-thick-bg: rgba(255, 255, 255, 0.96);
-  --material-ultra-thick-blur: 200px;
-  --material-ultra-thick-shadow: var(--shadow-xl);
+  --material-ultra-thick-blur: 120px;
+  --material-ultra-thick-border: rgba(255, 255, 255, 0.60);
+  --material-ultra-thick-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --material-ultra-thick-shadow: 0 20px 48px rgba(0, 0, 0, 0.18);
+
+  /* ===== FLOATING PILL BAR (bottom tab navigation) ===== */
+  --pill-bar-bg: var(--material-thin-bg);
+  --pill-bar-blur: var(--material-thin-blur);
+  --pill-bar-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --pill-bar-radius: var(--radius-pill);
+  --pill-bar-height: 58px;
+  --pill-bar-indicator-size: 40px;
 
   /* ===== HALO (hover light ring) ===== */
   --halo-color: rgba(10, 89, 247, 0.1);
@@ -238,8 +259,20 @@
   /* Glass semantic defaults */
   --color-glass-bg: var(--material-medium-bg);
   --color-glass-blur: var(--material-medium-blur);
-  --color-glass-border: var(--glass-border);
+  --color-glass-border: 1px solid var(--material-medium-border);
   --color-glass-shadow: var(--material-medium-shadow);
+  --color-glass-highlight: var(--material-medium-highlight);
+
+  /* Search bar (glass pill input) */
+  --search-bg: rgba(118, 118, 128, 0.12);
+  --search-placeholder: var(--text-500);
+  --search-text: var(--text-900);
+
+  /* Legacy glass aliases (kept for backward compat with existing components) */
+  --glass-bg: var(--material-medium-bg);
+  --glass-blur: var(--material-medium-blur);
+  --glass-border: 1px solid var(--material-medium-border);
+  --glass-highlight-legacy: var(--material-medium-highlight);
 
   /* Glow semantic */
   --glow-primary: var(--glow-blue);
