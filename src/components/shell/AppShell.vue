@@ -13,8 +13,10 @@ const { mode } = useBreakpoint();
     <div class="app-body">
       <slot name="sidebar" v-if="mode === 'desktop'" />
 
-      <main class="app-main scrollbar-hide">
-        <slot name="content" />
+      <main class="app-main page-scroll">
+        <div class="app-main-inner">
+          <slot name="content" />
+        </div>
       </main>
     </div>
 
@@ -29,6 +31,7 @@ const { mode } = useBreakpoint();
   height: 100%;
   width: 100%;
   overflow: hidden;
+  background: var(--color-bg);
 }
 
 .app-body {
@@ -40,9 +43,24 @@ const { mode } = useBreakpoint();
 
 .app-main {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: var(--space-4);
-  padding-bottom: 80px;
+  min-width: 0;
+  /* padding-bottom reserves space for bottom tab bar (64px + safe-area) */
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--space-3));
+}
+
+.app-main-inner {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--space-4);
+  padding-top: var(--space-2);
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .app-main-inner {
+    max-width: 520px;
+    padding: 0 var(--space-5);
+  }
 }
 </style>

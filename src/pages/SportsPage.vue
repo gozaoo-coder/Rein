@@ -166,14 +166,6 @@ function onManageCourses() {
       </div>
     </div>
 
-    <!-- Edit mode toggle (floating) -->
-    <button v-if="!isEditing" class="edit-toggle" @click="toggleEditMode">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-      </svg>
-    </button>
-
     <!-- Edit toolbar -->
     <div v-if="isEditing" class="edit-toolbar">
       <button class="edit-btn edit-btn-primary" @click="saveLayout">完成</button>
@@ -184,10 +176,11 @@ function onManageCourses() {
 
 <style scoped>
 .sports-page {
-  padding: 0;
+  padding: 0 0 calc(24px + env(safe-area-inset-bottom, 0px));
   position: relative;
   display: flex;
   flex-direction: column;
+  min-height: 100%;
 }
 
 .edit-mode .app-top-bar,
@@ -215,6 +208,7 @@ function onManageCourses() {
   overflow-x: auto;
   padding: var(--space-2) var(--space-4) var(--space-4);
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 .sport-actions-scroll::-webkit-scrollbar {
@@ -229,6 +223,7 @@ function onManageCourses() {
   flex-shrink: 0;
   width: 60px;
   border: none;
+  background: transparent;
   cursor: pointer;
   transition: opacity 0.2s ease;
 }
@@ -259,30 +254,6 @@ function onManageCourses() {
   white-space: nowrap;
 }
 
-/* Edit toggle */
-.edit-toggle {
-  position: fixed;
-  top: 64px;
-  right: var(--space-4);
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-full);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  border: var(--glass-border);
-  box-shadow: var(--shadow-md);
-  color: var(--color-text-secondary);
-  transition: opacity 0.2s ease;
-}
-
-.edit-toggle:active {
-  opacity: 0.6;
-}
-
 /* Edit toolbar */
 .edit-toolbar {
   position: fixed;
@@ -294,8 +265,10 @@ function onManageCourses() {
   justify-content: space-between;
   height: 52px;
   padding: 0 var(--space-5);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
+  padding-top: env(safe-area-inset-top, 0px);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--color-divider);
   z-index: 200;
 }

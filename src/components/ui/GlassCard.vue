@@ -55,7 +55,7 @@ const props = withDefaults(
     glow: "none",
     hoverHalo: false,
     interactive: false,
-    padding: 4,
+    padding: 0,
     radius: undefined,
   }
 );
