@@ -32,10 +32,8 @@ const shareContent = computed<ShareContent | null>(() => {
   return formatWorkoutEnd({
     courseName: store.activeCourse.name,
     durationSec: store.totalElapsedSeconds,
-    caloriesBurned: store.caloriesBurned,
     completedSets: store.completedSets,
     totalSets: store.totalSets,
-    avgHeartRate: store.heartRate || undefined,
     finished: true,
   });
 });
@@ -300,16 +298,6 @@ function handleJumpStep(idx: number) {
         <div class="fin-stat">
           <div class="fin-val">{{ store.totalSets }}</div>
           <div class="fin-lbl">完成组数</div>
-        </div>
-        <div class="fin-divider" />
-        <div class="fin-stat">
-          <div class="fin-val">{{ Math.round(store.caloriesBurned) }}</div>
-          <div class="fin-lbl">消耗kcal</div>
-        </div>
-        <div v-if="store.heartRate" class="fin-stat">
-          <div class="fin-divider" />
-          <div class="fin-val">{{ store.heartRate }}</div>
-          <div class="fin-lbl">平均心率</div>
         </div>
       </div>
       <button class="finish-btn" @click="goBackToSports">返回运动</button>

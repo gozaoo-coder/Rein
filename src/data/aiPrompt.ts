@@ -27,8 +27,8 @@ export function buildSystemPrompt(workoutCtx?: WorkoutPromptContext): string {
 - 当用户的请求涉及"创建/修改/删除/查询"课程、动作、待办、饮水、饮食、食品库、体征时，必须调用对应工具，不要凭空编造数据
 - 工具调用前可先简短说明你的计划（一两句话），随后立即调用工具
 - 工具返回后，基于真实结果给出自然语言总结
-- 创建课程时，自动估算 estimatedMinutes（按组数×平均90秒）与 estimatedCalories（按 MET 估算）
 - 创建动作时，category 取 bodyweight/equipment，muscleGroup 取对应部位
+- 当描述运动/动作/课程步骤时，必须仔细、详细给出：所需器械、动作描述及执行细节（起始姿势/动作路径/呼吸/节奏）、目标肌群、配重（如 20kg/自重/RM 60%）、注意事项/常见错误。不要泛泛而谈
 - 创建待办时，priority 取 low/normal/high；不传 dueDate 默认今日
 - 待办支持三种时间形态（必须正确传 kind 和对应字段）：
   * kind=all-day（整日待办）：仅需 dueDate（YYYY-MM-DD），不要传 dueTime/startTime/endTime
@@ -71,5 +71,5 @@ ${workoutCtx.summary}
 - 永久调整课程（写回课程库，影响后续训练）：调用 workout_course_adjust_permanent，需指定 stepIndex
 - 涉及配重、组数、休息时间的调整，默认询问用户是临时还是永久，再调用对应工具
 - 不擅自跳过或缩短用户正在进行的训练步，除非用户明确要求
-- 用户问"现在该怎么做"时，基于当前步骤的器械/肌群/配重给出具体执行建议`;
+- 用户问"现在该怎么做"时，基于当前步骤的器械/肌群/配重/注意事项给出具体执行建议`;
 }

@@ -376,8 +376,6 @@ function executeWorkoutCurrentGet(): ToolResult {
     inQuickRest: store.inQuickRest,
     stepSecondsRemaining: store.stepSecondsRemaining,
     totalElapsedSeconds: store.totalElapsedSeconds,
-    caloriesBurned: Math.round(store.caloriesBurned),
-    heartRate: store.heartRate,
     completedSets: store.completedSets,
     totalSets: store.totalSets,
     step: {
@@ -1236,7 +1234,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "course_create",
     label: "创建课程",
-    description: "创建新课程。会持久化到课程库。返回创建后的课程。",
+    description: "创建新课程。每个 step 必须仔细、详细填写 exerciseId/exerciseName/sets/reps/restSec/phase，以及 weight(配重) 和 cautions(注意事项)。会持久化到课程库。返回创建后的课程。",
     parameters: Type.Object({
       name: Type.String(),
       description: Type.Optional(Type.String()),
@@ -1252,7 +1250,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "course_update",
     label: "更新课程",
-    description: "更新已有课程。仅传需要修改的字段。返回更新后的课程。",
+    description: "更新已有课程。仅传需要修改的字段。涉及 step 时必须仔细、详细填写 exerciseId/exerciseName/sets/reps/restSec/phase，以及 weight(配重) 和 cautions(注意事项)。返回更新后的课程。",
     parameters: Type.Object({
       id: Type.String(),
       name: Type.Optional(Type.String()),
@@ -1288,7 +1286,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "exercise_create",
     label: "新增动作",
-    description: "新增自定义动作（含器械/目标肌群/动作要领/注意事项）。会持久化到动作库。",
+    description: "新增自定义动作。必须仔细、详细填写：所需器械、目标肌群、动作描述及执行细节（起始姿势/动作路径/呼吸/节奏）、注意事项/常见错误。会持久化到动作库。",
     parameters: Type.Object({
       name: Type.String(),
       category: ExerciseCategoryEnum,
@@ -1304,7 +1302,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "exercise_update",
     label: "更新动作",
-    description: "更新已有动作。仅传需要修改的字段。",
+    description: "更新已有动作。仅传需要修改的字段。必须仔细、详细填写：所需器械、目标肌群、动作描述及执行细节（起始姿势/动作路径/呼吸/节奏）、注意事项/常见错误。",
     parameters: Type.Object({
       id: Type.String(),
       name: Type.Optional(Type.String()),
@@ -1338,7 +1336,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "workout_current_get",
     label: "当前训练状态",
-    description: "获取当前进行中的训练的完整状态：课程名/当前步骤/器械/肌群/配重/组数/剩余时间/心率等。运动模式下询问动作细节时调用。",
+    description: "获取当前进行中的训练的完整状态：课程名/当前步骤/器械/肌群/配重/组数/剩余时间等。运动模式下询问动作细节时调用。",
     parameters: Type.Object({}),
     execute: wrapExecuteRich("workout_current_get"),
   },

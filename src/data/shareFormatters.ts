@@ -262,7 +262,7 @@ export function formatExerciseDetail(exercise: Exercise): ShareContent {
 export interface WorkoutEndPayload {
   courseName: string;
   durationSec: number;
-  caloriesBurned: number;
+  caloriesBurned?: number;
   completedSets: number;
   totalSets: number;
   avgHeartRate?: number;
@@ -279,7 +279,7 @@ export function formatWorkoutEnd(p: WorkoutEndPayload): ShareContent {
     `${status}！`,
     `课程：${p.courseName}`,
     `时长：${duration}`,
-    `消耗：${Math.round(p.caloriesBurned)} 千卡`,
+    p.caloriesBurned != null ? `消耗：${Math.round(p.caloriesBurned)} 千卡` : "",
     `组数：${p.completedSets}/${p.totalSets}`,
     p.avgHeartRate ? `平均心率：${p.avgHeartRate} BPM` : "",
     `\n我在 ${APP_BRAND} 完成了一次训练，继续坚持！`,
@@ -289,7 +289,7 @@ export function formatWorkoutEnd(p: WorkoutEndPayload): ShareContent {
 
   const cardLines = [
     `时长  ${duration}`,
-    `消耗  ${Math.round(p.caloriesBurned)} 千卡`,
+    p.caloriesBurned != null ? `消耗  ${Math.round(p.caloriesBurned)} 千卡` : "",
     `组数  ${p.completedSets}/${p.totalSets}`,
     p.avgHeartRate ? `心率  ${p.avgHeartRate} BPM` : "",
   ].filter(Boolean);
