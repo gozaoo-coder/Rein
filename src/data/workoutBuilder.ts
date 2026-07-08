@@ -46,6 +46,16 @@ class StepBuilder {
     return this;
   }
 
+  setSets(sets: number): this {
+    this._step.sets = sets;
+    return this;
+  }
+
+  setRestBetweenSets(seconds: number): this {
+    this._step.restBetweenSets = seconds;
+    return this;
+  }
+
   setTitle(title: string): this {
     if (this._step.details) {
       this._step.details.title = title;
@@ -126,7 +136,9 @@ export class WorkoutBuilder {
 }
 
 export function getTrainingSetCount(plan: WorkoutPlan): number {
-  return plan.steps.filter((s) => s.type === StepType.TRAINING).length;
+  return plan.steps
+    .filter((s) => s.type === StepType.TRAINING)
+    .reduce((sum, s) => sum + (s.sets ?? 1), 0);
 }
 
 export function createSampleWorkout(): WorkoutPlan {
@@ -140,46 +152,20 @@ export function createSampleWorkout(): WorkoutPlan {
       .setDetails("胸部拉伸", MediaType.MARKDOWN_TEXT, "1. 站立，双脚与肩同宽\n2. 双手交叉置于身后\n3. 缓慢抬起手臂感受胸部拉伸\n4. 保持呼吸均匀")
       .done()
 
-    .addRestingStep(15)
-      .setPhase("休息")
-      .setTitle("短暂休息")
-      .setGuide(MediaType.MARKDOWN_TEXT, "调整呼吸，准备开始正式训练")
-      .done()
-
     .addTrainingStep()
       .setPhase("充血")
-      .setReps(12)
-      .setDetails("哑铃卧推", MediaType.MARKDOWN_TEXT, "1. 平躺在卧推凳上\n2. 双手握哑铃，掌心朝前\n3. 推起哑铃至手臂伸直\n4. 缓慢下放至胸部两侧\n5. 完成12次")
-      .done()
-
-    .addRestingStep(60)
-      .setPhase("休息")
-      .setTitle("组间休息")
-      .setGuide(MediaType.MARKDOWN_TEXT, "深呼吸，补充水分，准备下一组")
+      .setReps(8)
+      .setSets(4)
+      .setRestBetweenSets(60)
+      .setDetails("哑铃卧推", MediaType.MARKDOWN_TEXT, "1. 平躺在卧推凳上\n2. 双手握哑铃，掌心朝前\n3. 推起哑铃至手臂伸直\n4. 缓慢下放至胸部两侧\n5. 完成8次")
       .done()
 
     .addTrainingStep()
       .setPhase("极限")
       .setReps(10)
-      .setDetails("哑铃卧推（加重）", MediaType.MARKDOWN_TEXT, "1. 增加哑铃重量\n2. 保持动作标准\n3. 推起时呼气，下放时吸气\n4. 完成10次，感受胸肌发力")
-      .done()
-
-    .addRestingStep(90)
-      .setPhase("休息")
-      .setTitle("长休息")
-      .setGuide(MediaType.MARKDOWN_TEXT, "充分休息，准备最后一组")
-      .done()
-
-    .addTrainingStep()
-      .setPhase("力量")
-      .setReps(8)
-      .setDetails("哑铃卧推（极限重量）", MediaType.MARKDOWN_TEXT, "1. 使用极限重量的80%\n2. 注意保护，必要时请人辅助\n3. 专注发力，控制节奏\n4. 完成8次，力竭为止")
-      .done()
-
-    .addRestingStep(60)
-      .setPhase("休息")
-      .setTitle("休息放松")
-      .setGuide(MediaType.MARKDOWN_TEXT, "慢慢放下哑铃，甩动手臂放松")
+      .setSets(3)
+      .setRestBetweenSets(90)
+      .setDetails("哑铃飞鸟", MediaType.MARKDOWN_TEXT, "1. 平躺在卧推凳上\n2. 双手握哑铃，掌心相对\n3. 缓慢展开双臂至胸部拉伸\n4. 收拢哑铃回到起始位置\n5. 完成10次")
       .done()
 
     .addTrainingStep()

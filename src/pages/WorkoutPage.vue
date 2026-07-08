@@ -30,13 +30,21 @@ const guideType = computed(() => store.currentStep?.details.guide.type);
 const isVideo = computed(() => guideType.value === MediaType.VIDEO);
 const isImage = computed(() => guideType.value === MediaType.IMAGE);
 const isMarkdown = computed(() => guideType.value === MediaType.MARKDOWN_TEXT);
-const isResting = computed(() => store.currentStep?.type === StepType.RESTING);
+const isResting = computed(() =>
+  store.currentStep?.type === StepType.RESTING || store.inSetRest
+);
 
 const hasTimer = computed(() => {
+  if (store.inSetRest) return true;
   return store.currentStep?.timer?.enabled && store.currentStep.timer.unit === "seconds";
 });
 
 const timerRingProgress = computed(() => {
+  if (store.inSetRest) {
+    const total = store.currentStep?.restBetweenSets ?? 30;
+    if (total <= 0) return 0;
+    return ((total - store.stepSecondsRemaining) / total) * 283;
+  }
   if (!hasTimer.value || !store.currentStep?.timer?.enabled) return 0;
   const total = store.currentStep.timer.value;
   if (total <= 0) return 0;
@@ -90,8 +98,15 @@ function goBackToSports() {
         <div class="header-text">
           <h1 class="workout-name">{{ store.plan?.name }}</h1>
           <div class="set-info-row">
-            <span class="set-badge" v-if="!isResting">
-              第 {{ store.currentTrainingSetNumber }} 组 / 共 {{ store.totalSets }} 组
+            <span class="set-badge" v-if="!isResting && store.currentStep?.type === 'training'">
+              第 {{ store.currentSetInStep }}/{{ store.currentStepSets }} 组
+            </span>
+            <span class="set-badge set-badge--rest" v-else-if="store.inSetRest">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              组间休息
             </span>
             <span class="set-badge set-badge--rest" v-else>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
@@ -142,9 +157,17 @@ function goBackToSports() {
         </div>
 
         <!-- Reps counter (manual mode) -->
-        <div v-else-if="store.currentStep?.timer?.unit === 'reps'" class="reps-display">
+        <div v-else-if="store.currentStep?.timer?.unit === 'reps' && !store.inSetRest" class="reps-display">
+          <div class="set-progress-dots" v-if="store.currentStepSets > 1">
+            <span
+              v-for="n in store.currentStepSets"
+              :key="n"
+              class="set-dot"
+              :class="{ 'is-done': n < store.currentSetInStep, 'is-current': n === store.currentSetInStep }"
+            />
+          </div>
           <div class="reps-number">{{ store.currentStep.timer.value }}</div>
-          <div class="reps-label">次</div>
+          <div class="reps-label">次 · 第 {{ store.currentSetInStep }}/{{ store.currentStepSets }} 组</div>
           <button class="manual-next-btn" @click="handleManualNext">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="9 18 15 12 9 6" />
@@ -488,6 +511,31 @@ function goBackToSports() {
   color: var(--color-text-secondary);
   font-weight: var(--fw-medium);
   margin-top: -8px;
+}
+
+/* Set progress dots */
+.set-progress-dots {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.set-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bg-300);
+  transition: all 0.3s ease;
+}
+
+.set-dot.is-done {
+  background: var(--color-warm);
+}
+
+.set-dot.is-current {
+  background: var(--color-warm);
+  transform: scale(1.4);
+  box-shadow: 0 0 8px rgba(255, 102, 51, 0.4);
 }
 
 .manual-next-btn {

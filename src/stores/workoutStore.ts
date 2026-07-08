@@ -20,6 +20,10 @@ export const useWorkoutStore = defineStore("workout", () => {
   const heartRateConnected = ref(false);
   const phaseCarouselIndex = ref(0);
   const completedSets = ref(0);
+  /** 当前步内第几组（1-indexed） */
+  const currentSetInStep = ref(1);
+  /** 是否处于组间休息（同一步内） */
+  const inSetRest = ref(false);
 
   /** 当前训练对应的课程（用于记录写入与统计） */
   const activeCourse = ref<Course | null>(null);
@@ -33,8 +37,13 @@ export const useWorkoutStore = defineStore("workout", () => {
 
   const totalSets = computed(() => {
     if (!plan.value) return 0;
-    return getTrainingSetCount(plan.value);
+    return plan.value.steps
+      .filter((s) => s.type === StepType.TRAINING)
+      .reduce((sum, s) => sum + (s.sets ?? 1), 0);
   });
+
+  /** 当前训练步的总组数 */
+  const currentStepSets = computed(() => currentStep.value?.sets ?? 1);
 
   const currentStep = computed<WorkoutStep | null>(() => {
     if (!plan.value) return null;
@@ -44,8 +53,12 @@ export const useWorkoutStore = defineStore("workout", () => {
   const currentTrainingSetNumber = computed(() => {
     if (!plan.value) return 0;
     let count = 0;
-    for (let i = 0; i <= currentStepIndex.value && i < plan.value.steps.length; i++) {
-      if (plan.value.steps[i].type === StepType.TRAINING) count++;
+    for (let i = 0; i < currentStepIndex.value; i++) {
+      const s = plan.value.steps[i];
+      if (s.type === StepType.TRAINING) count += s.sets ?? 1;
+    }
+    if (currentStep.value?.type === StepType.TRAINING) {
+      count += currentSetInStep.value;
     }
     return count;
   });
@@ -104,6 +117,8 @@ export const useWorkoutStore = defineStore("workout", () => {
   function initStep() {
     const step = currentStep.value;
     if (!step) return;
+    currentSetInStep.value = 1;
+    inSetRest.value = false;
     if (step.timer.enabled && step.timer.unit === "seconds") {
       stepSecondsRemaining.value = step.timer.value;
     } else {
@@ -117,6 +132,19 @@ export const useWorkoutStore = defineStore("workout", () => {
     timerInterval = setInterval(() => {
       if (workoutState.value !== "running") return;
       totalElapsedSeconds.value++;
+
+      // 组间休息倒计时（同一步内）
+      if (inSetRest.value) {
+        stepSecondsRemaining.value--;
+        if (heartRate.value) {
+          caloriesBurned.value += calculateCalorieIncrement(heartRate.value);
+        }
+        if (stepSecondsRemaining.value <= 0) {
+          exitSetRest();
+        }
+        return;
+      }
+
       const step = currentStep.value;
       if (step?.timer.enabled && step.timer.unit === "seconds") {
         stepSecondsRemaining.value--;
@@ -190,9 +218,26 @@ export const useWorkoutStore = defineStore("workout", () => {
 
   function advanceStep() {
     if (!plan.value) return;
-    if (currentStep.value?.type === StepType.TRAINING) {
+    const step = currentStep.value;
+    if (!step) return;
+
+    if (step.type === StepType.TRAINING) {
       completedSets.value++;
+      // 多组逻辑：当前步还有剩余组数
+      const totalSetsInStep = step.sets ?? 1;
+      if (currentSetInStep.value < totalSetsInStep) {
+        // 组间休息
+        if (step.restBetweenSets && step.restBetweenSets > 0) {
+          enterSetRest();
+        } else {
+          currentSetInStep.value++;
+          initStepForNextSet();
+        }
+        return;
+      }
     }
+
+    // 所有组数完成，进入下一步
     if (isLastStep.value) {
       finishWorkout();
       return;
@@ -201,13 +246,66 @@ export const useWorkoutStore = defineStore("workout", () => {
     initStep();
   }
 
+  /** 进入组间休息 */
+  function enterSetRest() {
+    inSetRest.value = true;
+    subState.value = "resting";
+    const step = currentStep.value;
+    stepSecondsRemaining.value = step?.restBetweenSets ?? 30;
+  }
+
+  /** 退出组间休息，进入下一组 */
+  function exitSetRest() {
+    inSetRest.value = false;
+    currentSetInStep.value++;
+    initStepForNextSet();
+  }
+
+  /** 重置当前步计时但保留组号 */
+  function initStepForNextSet() {
+    const step = currentStep.value;
+    if (!step) return;
+    if (step.timer.enabled && step.timer.unit === "seconds") {
+      stepSecondsRemaining.value = step.timer.value;
+    } else {
+      stepSecondsRemaining.value = 0;
+    }
+    subState.value = "exercising";
+  }
+
   function previousStep() {
+    // 先尝试在同一步内回退
+    if (currentSetInStep.value > 1 || inSetRest.value) {
+      if (inSetRest.value) {
+        exitSetRestBack();
+      } else {
+        currentSetInStep.value--;
+        if (completedSets.value > 0) completedSets.value--;
+        initStepForNextSet();
+      }
+      return;
+    }
     if (currentStepIndex.value > 0) {
       currentStepIndex.value--;
-      if (currentStep.value?.type === StepType.TRAINING && completedSets.value > 0) {
-        completedSets.value--;
+      const prevStep = currentStep.value;
+      if (prevStep?.type === StepType.TRAINING) {
+        const prevSets = prevStep.sets ?? 1;
+        currentSetInStep.value = prevSets;
+        completedSets.value = Math.max(0, completedSets.value - 1);
       }
-      initStep();
+      initStepForNextSet();
+    }
+  }
+
+  /** 从组间休息回退到上一组 */
+  function exitSetRestBack() {
+    inSetRest.value = false;
+    subState.value = "exercising";
+    const step = currentStep.value;
+    if (step?.timer.enabled && step.timer.unit === "seconds") {
+      stepSecondsRemaining.value = step.timer.value;
+    } else {
+      stepSecondsRemaining.value = 0;
     }
   }
 
@@ -271,6 +369,8 @@ export const useWorkoutStore = defineStore("workout", () => {
     heartRateConnected.value = false;
     phaseCarouselIndex.value = 0;
     completedSets.value = 0;
+    currentSetInStep.value = 1;
+    inSetRest.value = false;
   }
 
   return {
@@ -287,7 +387,10 @@ export const useWorkoutStore = defineStore("workout", () => {
     heartRateConnected,
     phaseCarouselIndex,
     completedSets,
+    currentSetInStep,
+    inSetRest,
     totalSets,
+    currentStepSets,
     currentStep,
     currentTrainingSetNumber,
     isLastStep,

@@ -33,6 +33,10 @@ export interface WorkoutStep {
   phase: string;
   timer: TimerConfig;
   details: StepDetails;
+  /** 训练步的组数（默认 1），resting 步忽略 */
+  sets?: number;
+  /** 同一步内组间休息秒数（默认 0 = 无休息） */
+  restBetweenSets?: number;
 }
 
 export interface WorkoutPlan {

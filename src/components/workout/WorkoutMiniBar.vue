@@ -10,8 +10,9 @@ const store = useWorkoutStore();
 
 const phaseText = computed(() => store.currentStep?.phase ?? "");
 const setLabel = computed(() => {
+  if (store.inSetRest) return "组间休息";
   if (store.currentStep?.type === "resting") return "休息中";
-  return `第 ${store.currentTrainingSetNumber} 组`;
+  return `第 ${store.currentSetInStep}/${store.currentStepSets} 组`;
 });
 
 const heartBeatClass = computed(() => ({

@@ -49,7 +49,7 @@ function stepGuide(step: CourseStep, exercise?: Exercise): string {
   return lines.join("\n");
 }
 
-/** 将 Course 转换为 WorkoutPlan：每个 CourseStep 展开为 [TRAINING, RESTING] 两步 */
+/** 将 Course 转换为 WorkoutPlan：每个 CourseStep 映射为一个带 sets 的训练步 */
 export function courseToWorkoutPlan(course: Course): WorkoutPlan {
   const exerciseStore = useExerciseStore();
   const steps: WorkoutStep[] = [];
@@ -58,11 +58,13 @@ export function courseToWorkoutPlan(course: Course): WorkoutPlan {
     const exercise = exerciseStore.getById(cs.exerciseId);
     const phase = phaseLabel(cs.phase);
 
-    // 训练步
+    // 训练步（含组数与组间休息，由 store 内部循环处理）
     steps.push({
       type: StepType.TRAINING,
       phase,
       timer: stepTimer(cs),
+      sets: cs.sets,
+      restBetweenSets: cs.restSec,
       details: {
         title: stepTitle(cs, exercise),
         guide: {
@@ -71,22 +73,6 @@ export function courseToWorkoutPlan(course: Course): WorkoutPlan {
         },
       },
     });
-
-    // 组间休息步（仅当休息时间 > 0）
-    if (cs.restSec > 0) {
-      steps.push({
-        type: StepType.RESTING,
-        phase: "休息",
-        timer: { enabled: true, unit: "seconds", value: cs.restSec },
-        details: {
-          title: "组间休息",
-          guide: {
-            type: MediaType.MARKDOWN_TEXT,
-            content: `休息 ${cs.restSec} 秒，调整呼吸。`,
-          },
-        },
-      });
-    }
   }
 
   return {
