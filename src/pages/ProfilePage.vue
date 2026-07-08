@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/userStore'
 
+const router = useRouter()
 const userStore = useUserStore()
 const profile = userStore.profile
 const bmi = userStore.bmi
@@ -41,6 +43,11 @@ const menuItems = [
     path: '/sports',
   },
   {
+    icon: 'todo',
+    title: '待办事项',
+    path: '/todo',
+  },
+  {
     icon: 'stats',
     title: '统计数据',
     path: '',
@@ -59,7 +66,7 @@ const menuItems = [
 
 function handleMenuClick(path: string) {
   if (!path) return
-  // Navigation would be handled by router, placeholder for now
+  router.push(path)
 }
 </script>
 
@@ -156,6 +163,11 @@ function handleMenuClick(path: string) {
             <!-- Stats icon -->
             <svg v-else-if="item.icon === 'stats'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            <!-- Todo icon -->
+            <svg v-else-if="item.icon === 'todo'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
             </svg>
             <!-- Settings icon -->
             <svg v-else-if="item.icon === 'settings'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -335,6 +347,11 @@ function handleMenuClick(path: string) {
 .menu-icon.stats {
   background: rgba(52, 199, 89, 0.12);
   color: var(--success-500);
+}
+
+.menu-icon.todo {
+  background: rgba(255, 102, 51, 0.12);
+  color: var(--warm-500);
 }
 
 .menu-icon.settings {
