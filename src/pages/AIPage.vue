@@ -16,6 +16,7 @@ import { useAiChatStore } from "@/stores/aiChatStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { useToast } from "@/composables/useToast";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
+import AiStreamingText from "@/components/ai/AiStreamingText.vue";
 import type { Citation, ChatMessage, ContentPart, Conversation } from "@/types/ai";
 
 const router = useRouter();
@@ -32,6 +33,21 @@ const sending = ref(false);
 /** 渲染窗口：默认仅渲染最近 N 条，防止超长对话卡顿 */
 const RENDER_LIMIT = 200;
 const showAll = ref(false);
+
+/** 堆叠工具卡片展开状态（按消息 id 记录） */
+const expandedStacks = ref<Set<string>>(new Set());
+function toggleStack(msgId: string) {
+  const s = new Set(expandedStacks.value);
+  if (s.has(msgId)) {
+    s.delete(msgId);
+  } else {
+    s.add(msgId);
+  }
+  expandedStacks.value = s;
+}
+function isStackExpanded(msgId: string): boolean {
+  return expandedStacks.value.has(msgId);
+}
 
 const allMessages = computed(() => store.active?.messages ?? []);
 const messages = computed(() => {
@@ -393,11 +409,18 @@ watch(
             <div class="msg-bubble" :class="[msg.role, { 'is-error': msg.error }]">
               <!-- 文本内容 -->
               <div
-                v-if="msg.role === 'assistant'"
+                v-if="msg.role === 'assistant' && textOf(msg)"
                 class="msg-content"
-                :class="{ pending: msg.pending }"
-                v-html="msg.pending ? '' : renderMarkdown(textOf(msg))"
-              />
+              >
+                <!-- 流式生成中：句子级动画 -->
+                <AiStreamingText
+                  v-if="msg.pending"
+                  :text="textOf(msg)"
+                  :is-pending="true"
+                />
+                <!-- 已完成：渲染 markdown -->
+                <div v-else v-html="renderMarkdown(textOf(msg))" />
+              </div>
               <div v-else class="msg-content">
                 <p v-if="textOf(msg)">{{ textOf(msg) }}</p>
                 <div v-if="imagesOf(msg).length" class="msg-images">
@@ -436,16 +459,56 @@ watch(
               </div>
             </div>
 
-            <!-- 工具结果卡片（挂在 assistant 消息下） -->
+            <!-- 工具结果卡片（挂在 assistant 消息下，2+ 张时堆叠） -->
             <div
               v-if="msg.role === 'assistant' && visibleToolResults(msg).length"
               class="tool-results"
             >
-              <AiToolCard
-                v-for="(r, i) in visibleToolResults(msg)"
-                :key="i"
-                :result="r"
-              />
+              <!-- 只有 1 张卡片：直接显示 -->
+              <template v-if="visibleToolResults(msg).length === 1">
+                <AiToolCard :result="visibleToolResults(msg)[0]" />
+              </template>
+              <!-- 2+ 张卡片：堆叠 UI -->
+              <template v-else>
+                <div class="tool-stack">
+                  <!-- 首张卡片完整显示 -->
+                  <AiToolCard :result="visibleToolResults(msg)[0]" />
+                  <!-- 展开状态：显示剩余卡片 -->
+                  <template v-if="isStackExpanded(msg.id)">
+                    <AiToolCard
+                      v-for="(r, i) in visibleToolResults(msg).slice(1)"
+                      :key="i"
+                      :result="r"
+                    />
+                  </template>
+                  <!-- 折叠状态：堆叠示意 -->
+                  <div v-else class="tool-stack-indicator">
+                    <div
+                      v-for="i in Math.min(visibleToolResults(msg).length - 1, 3)"
+                      :key="'s' + i"
+                      class="tool-stack-sheet"
+                      :style="{ transform: `translateY(${-4 * i}px) scale(${1 - i * 0.03})`, zIndex: -i }"
+                    />
+                    <button class="stack-toggle-btn" @click="toggleStack(msg.id)">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                      <span>展开 {{ visibleToolResults(msg).length }} 张卡片</span>
+                    </button>
+                  </div>
+                  <!-- 展开后提供收起按钮 -->
+                  <button
+                    v-if="isStackExpanded(msg.id)"
+                    class="stack-collapse-btn"
+                    @click="toggleStack(msg.id)"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="18 15 12 9 6 15" />
+                    </svg>
+                    <span>收起卡片</span>
+                  </button>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -698,6 +761,17 @@ watch(
   content-visibility: auto;
   contain-intrinsic-size: auto 120px;
   contain: layout paint style;
+  animation: msg-fade-in 0.35s var(--ease-immersive) both;
+}
+@keyframes msg-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .msg-row.user {
   align-self: flex-end;
@@ -975,6 +1049,70 @@ watch(
   max-width: 100%;
   margin-top: 4px;
 }
+
+/* 堆叠工具卡片 */
+.tool-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: relative;
+}
+.tool-stack-indicator {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 4px;
+}
+.tool-stack-sheet {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  right: 4px;
+  height: 100%;
+  max-height: 32px;
+  background: var(--card-bg);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-divider);
+  pointer-events: none;
+}
+.stack-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  background: var(--warm-50, rgba(255, 149, 0, 0.08));
+  color: var(--color-warm);
+  border: none;
+  font-size: var(--text-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+  margin-top: var(--space-2);
+}
+.stack-toggle-btn:active { transform: scale(0.96); }
+.stack-toggle-btn svg {
+  transition: transform var(--dur-fast);
+}
+.stack-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--bg-100, rgba(0, 0, 0, 0.04));
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-divider);
+  font-size: var(--text-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+  align-self: center;
+  margin-top: 2px;
+}
+.stack-collapse-btn:active { transform: scale(0.96); }
 
 /* ====== 引用选择器 ====== */
 .cite-picker-mask {

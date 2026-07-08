@@ -218,6 +218,13 @@ export const useWorkoutStore = defineStore("workout", () => {
 
   function advanceStep() {
     if (!plan.value) return;
+
+    // 组间休息中：跳过休息，直接进入下一组
+    if (inSetRest.value) {
+      exitSetRest();
+      return;
+    }
+
     const step = currentStep.value;
     if (!step) return;
 

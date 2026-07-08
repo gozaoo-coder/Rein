@@ -174,6 +174,17 @@ const actionLabel = computed(() => toolLabel[props.result.name] ?? props.result.
   gap: var(--space-2);
   border-left: 3px solid var(--color-warm);
   overflow: hidden;
+  animation: card-fade-in 0.35s var(--ease-immersive) both;
+}
+@keyframes card-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 .tool-card.is-error {
   border-left-color: var(--color-danger);
