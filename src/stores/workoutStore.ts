@@ -465,6 +465,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     restSec?: number;
     weight?: string;
     note?: string;
+    cautions?: string;
   }): boolean {
     if (!activeCourse.value) return false;
     const courseStore = useCourseStore();
@@ -479,6 +480,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     if (patch.restSec != null && patch.restSec >= 0) stepPatch.restSec = patch.restSec;
     if (typeof patch.weight === "string") stepPatch.weight = patch.weight;
     if (typeof patch.note === "string") stepPatch.note = patch.note;
+    if (typeof patch.cautions === "string") stepPatch.cautions = patch.cautions;
     Object.assign(cs, stepPatch);
     courseStore.updateCourse(course.id, { steps: [...course.steps] });
     // 同步刷新 activeCourse + plan

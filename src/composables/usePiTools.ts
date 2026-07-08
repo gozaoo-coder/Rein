@@ -58,6 +58,8 @@ const StepSchema = Type.Object({
   restSec: Type.Number(),
   phase: StepPhaseEnum,
   note: Type.Optional(Type.String()),
+  weight: Type.Optional(Type.String({ description: "配重描述，如 20kg / 自重 / RM 60%" })),
+  cautions: Type.Optional(Type.String({ description: "注意事项，覆盖动作默认 cautions 时使用" })),
 });
 
 const MineralsSchema = Type.Object({
@@ -111,6 +113,8 @@ function normalizeStep(s: Record<string, unknown>): import("@/types/course").Cou
     restSec: Number(s.restSec ?? 60),
     phase: (s.phase as StepPhase) ?? "main",
     note: typeof s.note === "string" ? s.note : undefined,
+    weight: typeof s.weight === "string" && s.weight ? s.weight : undefined,
+    cautions: typeof s.cautions === "string" && s.cautions ? s.cautions : undefined,
   };
 }
 
@@ -453,6 +457,7 @@ function executeWorkoutCourseAdjustPermanent(args: AnyParams): ToolResult {
     restSec?: number;
     weight?: string;
     note?: string;
+    cautions?: string;
   } = {};
   if (args.sets != null) patch.sets = Number(args.sets);
   if (args.reps != null) patch.reps = Number(args.reps);
@@ -460,6 +465,7 @@ function executeWorkoutCourseAdjustPermanent(args: AnyParams): ToolResult {
   if (args.restSec != null) patch.restSec = Number(args.restSec);
   if (typeof args.weight === "string") patch.weight = args.weight;
   if (typeof args.note === "string") patch.note = args.note;
+  if (typeof args.cautions === "string") patch.cautions = args.cautions;
   const ok = store.adjustCoursePermanent(stepIndex, patch);
   if (!ok) throw new Error("无法永久调整：课程或步骤不存在");
   return {
@@ -1358,7 +1364,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "workout_course_adjust_permanent",
     label: "永久调整课程",
-    description: "把对课程步骤的修改写回课程库（影响后续训练）。需指定 stepIndex（0-based）。可改 sets/reps/durationSec/restSec/weight/note。",
+    description: "把对课程步骤的修改写回课程库（影响后续训练）。需指定 stepIndex（0-based）。可改 sets/reps/durationSec/restSec/weight/note/cautions。",
     parameters: Type.Object({
       stepIndex: Type.Optional(Type.Number({ description: "步骤索引（0-based，默认当前步）" })),
       sets: Type.Optional(Type.Number()),
@@ -1367,6 +1373,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       restSec: Type.Optional(Type.Number()),
       weight: Type.Optional(Type.String({ description: "配重描述，如 20kg / 自重" })),
       note: Type.Optional(Type.String()),
+      cautions: Type.Optional(Type.String({ description: "步骤级注意事项，覆盖动作默认 cautions" })),
     }),
     execute: wrapExecuteRich("workout_course_adjust_permanent"),
   },
