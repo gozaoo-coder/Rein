@@ -73,6 +73,26 @@ const router = createRouter({
       name: "todo",
       component: () => import("@/pages/TodoPage.vue"),
     },
+    {
+      path: "/health/water",
+      name: "health-water",
+      component: () => import("@/pages/WaterPage.vue"),
+    },
+    {
+      path: "/health/food",
+      name: "health-food",
+      component: () => import("@/pages/FoodPage.vue"),
+    },
+    {
+      path: "/health/food-db",
+      name: "health-food-db",
+      component: () => import("@/pages/FoodDatabasePage.vue"),
+    },
+    {
+      path: "/health/bmi",
+      name: "health-bmi",
+      component: () => import("@/pages/BodyMetricsPage.vue"),
+    },
   ],
 });
 
