@@ -53,11 +53,9 @@ function goComposition(e: Event) {
     </div>
 
     <div v-if="size === '1x1'" class="mini">
+      <div class="mini-label">饮食</div>
       <div class="mini-num">{{ calories }}</div>
       <div class="mini-label">kcal</div>
-      <button class="comp-link-mini" @click="goComposition" aria-label="饮食构成">
-        <i class="bi bi-pie-chart" style="font-size:10px"></i>
-      </button>
     </div>
 
     <div v-else-if="size === '2x1'" class="body-2x1">
@@ -259,7 +257,7 @@ function goComposition(e: Event) {
   line-height: 1;
 }
 .mini-label {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 

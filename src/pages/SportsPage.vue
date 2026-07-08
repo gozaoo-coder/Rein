@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
-import { useHrBroadcast } from "@/composables/useHrBroadcast";
 import { useCourseStore } from "@/stores/courseStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
 import { useWorkoutStore } from "@/stores/workoutStore";
@@ -15,18 +14,6 @@ const router = useRouter();
 const courseStore = useCourseStore();
 const statsStore = useWorkoutStatsStore();
 const workoutStore = useWorkoutStore();
-
-const {
-  state: hrState,
-  devices: hrDevices,
-  connectedDevice: hrConnected,
-  heartRate: hrValue,
-  isConnected: hrConnectedFlag,
-  scan: hrScan,
-  cancelScan: hrCancelScan,
-  connect: hrConnect,
-  disconnect: hrDisconnect,
-} = useHrBroadcast();
 
 const pinned = computed(() => courseStore.pinnedCourses);
 const recent = computed(() => courseStore.recentCourses);
@@ -106,52 +93,20 @@ onMounted(() => {
 
 <template>
   <div class="sports-page">
-    <!-- HR 广播绑定卡片 -->
-    <section class="clean-card hr-card">
+    <!-- HR 广播绑定卡片（功能开发中，暂不可用） -->
+    <section class="clean-card hr-card hr-card--disabled">
       <div class="hr-left">
-        <div class="hr-icon" :class="{ connected: hrConnectedFlag }">
+        <div class="hr-icon">
           <i class="bi bi-heart-pulse" style="font-size:22px"></i>
         </div>
         <div class="hr-text">
-          <div class="hr-title">
-            <template v-if="hrConnectedFlag">{{ hrConnected?.name }}</template>
-            <template v-else-if="hrState === 'scanning'">正在搜索设备…</template>
-            <template v-else>蓝牙心率广播</template>
-          </div>
-          <div class="hr-sub">
-            <template v-if="hrConnectedFlag">实时心率 · 已绑定</template>
-            <template v-else>绑定胸带/手表广播心率</template>
-          </div>
+          <div class="hr-title">蓝牙心率广播</div>
+          <div class="hr-sub">功能开发中，暂不可用</div>
         </div>
       </div>
 
       <div class="hr-right">
-        <template v-if="hrConnectedFlag">
-          <div class="hr-value">
-            <span class="hr-num">{{ hrValue ?? "--" }}</span>
-            <span class="hr-unit">bpm</span>
-          </div>
-          <button class="hr-btn ghost" @click="hrDisconnect">断开</button>
-        </template>
-        <template v-else-if="hrState === 'scanning'">
-          <button class="hr-btn ghost" @click="hrCancelScan">取消</button>
-        </template>
-        <template v-else>
-          <button class="hr-btn primary" @click="hrScan">扫描设备</button>
-        </template>
-      </div>
-
-      <!-- 扫描结果列表 -->
-      <div v-if="hrState !== 'connected' && hrDevices.length" class="hr-device-list">
-        <button
-          v-for="d in hrDevices"
-          :key="d.id"
-          class="hr-device"
-          @click="hrConnect(d)"
-        >
-          <div class="hr-device-name">{{ d.name }}</div>
-          <div class="hr-device-rssi">信号 {{ d.rssi }}dBm</div>
-        </button>
+        <button class="hr-btn ghost" disabled>未开启</button>
       </div>
     </section>
 
@@ -346,7 +301,7 @@ onMounted(() => {
   gap: var(--space-5);
 }
 
-/* HR 卡片 */
+/* HR 卡片（不可用态） */
 .hr-card {
   display: flex;
   flex-wrap: wrap;
@@ -354,6 +309,9 @@ onMounted(() => {
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
+}
+.hr-card--disabled {
+  opacity: 1;
 }
 .hr-left {
   display: flex;
@@ -370,51 +328,27 @@ onMounted(() => {
   height: 44px;
   border-radius: 50%;
   background: var(--bg-200);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   flex-shrink: 0;
-}
-.hr-icon.connected {
-  background: var(--color-warm);
-  color: #fff;
-  animation: hr-pulse 1.4s ease-in-out infinite;
-}
-@keyframes hr-pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.08); }
 }
 .hr-text { min-width: 0; }
 .hr-title {
   font-size: var(--text-md);
   font-weight: var(--fw-semibold);
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .hr-sub {
   font-size: var(--text-xs);
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   margin-top: 2px;
 }
 .hr-right {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-}
-.hr-value {
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
-}
-.hr-num {
-  font-size: 28px;
-  font-weight: var(--fw-bold);
-  color: var(--color-warm);
-  line-height: 1;
-}
-.hr-unit {
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
 }
 .hr-btn {
   padding: 6px 14px;
@@ -425,32 +359,15 @@ onMounted(() => {
   cursor: pointer;
   transition: opacity var(--dur-fast);
 }
-.hr-btn.primary { background: var(--color-warm); color: #fff; }
-.hr-btn.ghost { background: var(--bg-200); color: var(--color-text); }
+.hr-btn.ghost {
+  background: var(--bg-200);
+  color: var(--color-text-tertiary);
+}
 .hr-btn:active { opacity: 0.7; }
-.hr-device-list {
-  flex-basis: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-divider);
+.hr-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
-.hr-device {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-2) var(--space-3);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  text-align: left;
-}
-.hr-device:active { background: var(--bg-200); }
-.hr-device-name { font-size: var(--text-sm); color: var(--color-text); font-weight: var(--fw-medium); }
-.hr-device-rssi { font-size: var(--text-xs); color: var(--color-text-secondary); }
 
 /* 统计卡片 */
 .stats-card {

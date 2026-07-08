@@ -1,14 +1,15 @@
 <script setup lang="ts">
 /**
- * WaterQuickAddCard — 独立的快速记水卡片
+ * WaterQuickAddCard — 快速记水卡片
  *
- * 与饮水记录卡（WaterRecordCard）不同：本卡只做快速记水，
- * 不显示进度，不跳页。点击数字按钮立即记录该毫升数。
- * 支持 1x1 / 2x1。
+ * 整张卡片为触发按钮，点击弹出 BottomSheet 记水表单
+ * （金额显示 + 预设按钮 + slider + 杯子可视化 + 确认）。
+ * 1x1 / 2x1 共用同一个 BottomSheet。
  */
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useToast } from "@/composables/useToast";
+import { BottomSheet } from "@/components/ui";
 import type { CardSize } from "@/types/card";
 
 defineProps<{ size: CardSize }>();
@@ -16,18 +17,38 @@ defineProps<{ size: CardSize }>();
 const store = useHealthDataStore();
 const toast = useToast();
 
-const QUICK_AMOUNTS = [100, 200, 250, 500];
-const rippleKey = ref(0);
+const todayAmount = computed(() => store.todayWaterAmount);
 
-function quickAdd(ml: number) {
-  store.addWater(ml);
-  rippleKey.value++;
-  toast.success(`+${ml}ml`);
+const showSheet = ref(false);
+const addAmount = ref(200);
+const PRESET_AMOUNTS = [100, 200, 300, 500];
+
+const sliderPercent = computed(() => Math.min(addAmount.value / 1000, 1) * 100);
+
+function openSheet() {
+  addAmount.value = 200;
+  showSheet.value = true;
+}
+
+function confirmAdd() {
+  if (addAmount.value <= 0) return;
+  store.addWater(addAmount.value);
+  showSheet.value = false;
+  toast.success(`+${addAmount.value}ml`);
+}
+
+function onSliderInput(e: Event) {
+  addAmount.value = Number((e.target as HTMLInputElement).value);
 }
 </script>
 
 <template>
-  <div class="home-card clean-card wqa-card" :class="`home-card--${size}`">
+  <button
+    type="button"
+    class="home-card clean-card wqa-card"
+    :class="`home-card--${size}`"
+    @click="openSheet"
+  >
     <div class="wqa-head">
       <span class="title-icon title-icon--blue">
         <i class="bi bi-cup-straw" style="font-size:12px"></i>
@@ -35,34 +56,90 @@ function quickAdd(ml: number) {
       <span class="wqa-title">快速记水</span>
     </div>
 
-    <div class="wqa-grid" :class="`wqa-grid--${size}`">
-      <button
-        v-for="ml in QUICK_AMOUNTS"
-        :key="`${ml}-${rippleKey}`"
-        class="wqa-btn"
-        :class="{ 'wqa-btn--lg': size === '2x1' }"
-        @click="quickAdd(ml)"
-        :aria-label="`记录${ml}ml`"
-      >
-        <i class="bi bi-plus-lg wqa-plus"></i>
-        <span class="wqa-num">{{ ml }}</span>
+    <div class="wqa-body" :class="`wqa-body--${size}`">
+      <i class="bi bi-droplet-fill wqa-drop"></i>
+      <div class="wqa-amount-row">
+        <span class="wqa-amount">{{ todayAmount }}</span>
         <span class="wqa-unit">ml</span>
+      </div>
+    </div>
+
+    <div class="wqa-hint">
+      <i class="bi bi-plus-lg"></i>
+    </div>
+  </button>
+
+  <BottomSheet
+    v-model:visible="showSheet"
+    title="记一次饮水"
+    :detents="['medium']"
+    default-detent="medium"
+  >
+    <div class="add-body">
+      <div class="amount-display">
+        <span class="amount-num">{{ addAmount }}</span>
+        <span class="amount-unit">ml</span>
+      </div>
+
+      <div class="preset-row">
+        <button
+          v-for="a in PRESET_AMOUNTS"
+          :key="a"
+          class="preset-btn"
+          :class="{ active: addAmount === a }"
+          @click="addAmount = a"
+        >
+          {{ a }}ml
+        </button>
+      </div>
+
+      <div class="slider-wrap">
+        <input
+          type="range"
+          min="0"
+          max="1000"
+          step="10"
+          :value="addAmount"
+          class="water-slider"
+          :style="{ '--slider-percent': sliderPercent + '%' }"
+          @input="onSliderInput"
+        />
+        <div class="slider-scale">
+          <span>0</span><span>250</span><span>500</span><span>750</span><span>1000ml</span>
+        </div>
+      </div>
+
+      <div class="cup-visual">
+        <div class="cup-fill" :style="{ height: sliderPercent + '%' }">
+          <div class="cup-wave" />
+        </div>
+      </div>
+
+      <button class="confirm-btn" @click="confirmAdd" :disabled="addAmount <= 0">
+        记 {{ addAmount }}ml
       </button>
     </div>
-  </div>
+  </BottomSheet>
 </template>
 
 <style scoped>
 .wqa-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
   text-align: left;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
+  border: none;
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-immersive),
+    box-shadow var(--dur-fast) var(--ease-immersive);
 }
+.wqa-card:active { transform: scale(0.98); }
+.wqa-card:hover { box-shadow: var(--shadow-card-hover); }
 
 .wqa-head {
   display: flex;
@@ -89,68 +166,191 @@ function quickAdd(ml: number) {
   line-height: 1.2;
 }
 
-.wqa-grid {
+.wqa-body {
   flex: 1;
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   min-height: 0;
 }
-.wqa-grid--1x1 {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+.wqa-body--1x1 {
+  flex-direction: column;
+  gap: 2px;
 }
-.wqa-grid--2x1 {
-  grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: 1fr;
+.wqa-body--2x1 {
+  flex-direction: row;
+  gap: var(--space-2);
 }
 
-.wqa-btn {
+.wqa-drop {
+  font-size: 18px;
+  color: var(--icon-blue);
+  line-height: 1;
+}
+
+.wqa-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+.wqa-amount {
+  font-size: var(--text-xl);
+  font-weight: var(--fw-bold);
+  color: var(--icon-blue);
+  line-height: 1;
+}
+.wqa-unit {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+.wqa-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* BottomSheet 表单 */
+.add-body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(108, 175, 255, 0.35);
-  background: linear-gradient(135deg, rgba(108, 175, 255, 0.12), rgba(108, 175, 255, 0.04));
-  color: var(--icon-blue);
-  cursor: pointer;
-  padding: 2px;
-  min-width: 0;
-  min-height: 0;
-  transition: transform 0.12s var(--ease-immersive), background 0.12s;
-}
-.wqa-btn:active {
-  transform: scale(0.9);
-  background: var(--icon-blue);
-  color: #fff;
-}
-.wqa-btn--lg {
-  flex-direction: row;
-  gap: 2px;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
 }
 
-.wqa-plus {
-  font-size: 9px;
-  line-height: 1;
+.amount-display {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
 }
-.wqa-num {
-  font-size: var(--text-sm);
+.amount-num {
+  font-size: 56px;
   font-weight: var(--fw-bold);
-  line-height: 1.1;
-}
-.wqa-btn--lg .wqa-num {
-  font-size: var(--text-md);
-}
-.wqa-unit {
-  font-size: 8px;
-  color: var(--color-text-tertiary);
+  color: #3da9ff;
   line-height: 1;
 }
-.wqa-btn--lg .wqa-unit {
-  font-size: 9px;
+.amount-unit {
+  font-size: var(--text-lg);
+  color: var(--color-text-tertiary);
 }
-.wqa-btn:active .wqa-unit {
-  color: rgba(255, 255, 255, 0.85);
+
+.preset-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.preset-btn {
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.preset-btn.active {
+  border-color: #3da9ff;
+  background: rgba(61, 169, 255, 0.1);
+  color: #3da9ff;
+}
+
+.slider-wrap {
+  width: 100%;
+  padding: 0 var(--space-2);
+}
+.water-slider {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(to right, #3da9ff 0%, #3da9ff var(--slider-percent, 0%), var(--bg-200) var(--slider-percent, 0%), var(--bg-200) 100%);
+  border-radius: var(--radius-full);
+  outline: none;
+}
+.water-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid #3da9ff;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+.water-slider::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  border: 3px solid #3da9ff;
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+.slider-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+.cup-visual {
+  width: 80px;
+  height: 100px;
+  border: 2px solid #b3dfff;
+  border-top: none;
+  border-radius: 0 0 40px 40px;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-100);
+}
+.cup-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(180deg, #7dc8ff 0%, #3da9ff 100%);
+  transition: height 0.2s;
+  border-radius: 0 0 38px 38px;
+  overflow: hidden;
+}
+.cup-wave {
+  position: absolute;
+  top: -6px;
+  left: -10%;
+  width: 120%;
+  height: 12px;
+  background: radial-gradient(ellipse at center, transparent 0%, transparent 50%, #7dc8ff 50%);
+  background-size: 20px 12px;
+  animation: wave 2s linear infinite;
+}
+@keyframes wave {
+  from { transform: translateX(0); }
+  to { transform: translateX(-20px); }
+}
+
+.confirm-btn {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: #3da9ff;
+  color: #fff;
+  font-size: var(--text-md);
+  font-weight: var(--fw-bold);
+  cursor: pointer;
+  margin-top: var(--space-2);
+}
+.confirm-btn:active { transform: scale(0.98); }
+.confirm-btn:disabled {
+  background: var(--bg-300);
+  cursor: not-allowed;
 }
 </style>

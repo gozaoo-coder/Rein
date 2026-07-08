@@ -32,6 +32,7 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
     </div>
 
     <div v-if="size === '1x1'" class="mini">
+      <div class="mini-label">饮水</div>
       <div class="mini-num">{{ amount }}</div>
       <div class="mini-label">ml</div>
     </div>
@@ -135,7 +136,7 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
   line-height: 1;
 }
 .mini-label {
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 

@@ -30,13 +30,14 @@ function onToggle(id: string, e: Event) {
 }
 
 const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
-const ringR = computed(() => (props.size === "1x1" ? 14 : props.size === "2x1" ? 13 : 16));
+const ringR = computed(() => (props.size === "1x1" ? 14 : 13));
+const ringStroke = computed(() => 2.5);
 const C = computed(() => 2 * Math.PI * ringR.value);
 const dashOffset = computed(() => C.value - progress.value * C.value);
 const pctText = computed(() =>
   total.value === 0 ? "0" : Math.round(progress.value * 100) + "%",
 );
-const pctFontSize = computed(() => (props.size === "1x1" ? 8 : props.size === "2x1" ? 8 : 9));
+const pctFontSize = computed(() => 8);
 const ringSize = computed(() => ringR.value * 2 + 8);
 </script>
 
@@ -51,15 +52,38 @@ const ringSize = computed(() => ringR.value * 2 + 8);
         <i class="bi bi-check-lg" style="font-size:14px"></i>
       </span>
       <span class="card-title">今日待办</span>
+      <span v-if="size === '2x2'" class="head-count">{{ doneCount }}/{{ total }}</span>
     </div>
 
-    <div class="body" :class="{ 'body--center': size === '1x1', 'body--row': size === '2x1' }">
+    <!-- 2x2：顶部进度条 + 预览列表 -->
+    <div v-if="size === '2x2'" class="body-2x2">
+      <div class="top-bar-track">
+        <div class="top-bar-fill" :style="{ width: progress * 100 + '%' }" />
+      </div>
+      <div v-if="previewItems.length" class="preview-list">
+        <div v-for="item in previewItems" :key="item.id" class="preview-item">
+          <button
+            class="cb"
+            :class="{ 'is-done': item.done }"
+            @click="onToggle(item.id, $event)"
+            :aria-label="item.done ? '标记未完成' : '标记完成'"
+          >
+            <i v-if="item.done" class="bi bi-check-lg" style="font-size:10px;color:#fff"></i>
+          </button>
+          <span class="preview-title" :class="{ 'is-done': item.done }">{{ item.title }}</span>
+        </div>
+      </div>
+      <div v-else class="empty">今天还没有待办</div>
+    </div>
+
+    <!-- 1x1 / 2x1：细线圆环 -->
+    <div v-else class="body" :class="{ 'body--center': size === '1x1', 'body--row': size === '2x1' }">
       <div class="ring">
         <svg :width="ringSize" :height="ringSize" :viewBox="`0 0 ${ringR * 2 + 8} ${ringR * 2 + 8}`">
-          <circle :cx="ringR + 4" :cy="ringR + 4" :r="ringR" fill="none" stroke="var(--bg-200)" :stroke-width="size === '2x1' ? 3 : 4" />
+          <circle :cx="ringR + 4" :cy="ringR + 4" :r="ringR" fill="none" stroke="var(--bg-100)" :stroke-width="ringStroke" />
           <circle
             :cx="ringR + 4" :cy="ringR + 4" :r="ringR" fill="none"
-            stroke="var(--color-warm)" :stroke-width="size === '2x1' ? 3 : 4"
+            stroke="var(--color-warm)" :stroke-width="ringStroke"
             stroke-linecap="round"
             :stroke-dasharray="C"
             :stroke-dashoffset="dashOffset"
@@ -79,21 +103,6 @@ const ringSize = computed(() => ringR.value * 2 + 8);
         <span class="count-num">{{ doneCount }}/{{ total }}</span>
         <span class="count-label">已完成</span>
       </div>
-
-      <div v-if="size === '2x2' && previewItems.length" class="preview-list">
-        <div v-for="item in previewItems" :key="item.id" class="preview-item">
-          <button
-            class="cb"
-            :class="{ 'is-done': item.done }"
-            @click="onToggle(item.id, $event)"
-            :aria-label="item.done ? '标记未完成' : '标记完成'"
-          >
-            <i v-if="item.done" class="bi bi-check-lg" style="font-size:10px;color:#fff"></i>
-          </button>
-          <span class="preview-title" :class="{ 'is-done': item.done }">{{ item.title }}</span>
-        </div>
-      </div>
-      <div v-else-if="size === '2x2' && total === 0" class="empty">今天还没有待办</div>
     </div>
   </div>
 </template>
@@ -151,6 +160,16 @@ const ringSize = computed(() => ringR.value * 2 + 8);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.head-count {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--color-warm);
+  font-weight: var(--fw-semibold);
+  flex-shrink: 0;
 }
 
 .body {
@@ -167,7 +186,36 @@ const ringSize = computed(() => ringR.value * 2 + 8);
   flex-direction: row;
 }
 
-.ring { flex-shrink: 0; }
+/* 2x2：顶部进度条 + 预览列表 */
+.body-2x2 {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.top-bar-track {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-100);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.top-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-warm);
+  transition: width 0.4s var(--ease-immersive);
+}
+
+.ring-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1;
+}
+
+.ring { flex-shrink: 0;--tw-ring-shadow: none !important }
 
 .count-text {
   display: flex;
