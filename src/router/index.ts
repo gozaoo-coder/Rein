@@ -93,6 +93,11 @@ const router = createRouter({
       name: "health-bmi",
       component: () => import("@/pages/BodyMetricsPage.vue"),
     },
+    {
+      path: "/sync",
+      name: "sync",
+      component: () => import("@/pages/SyncPage.vue"),
+    },
   ],
 });
 

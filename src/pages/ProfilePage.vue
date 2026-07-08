@@ -48,6 +48,11 @@ const menuItems = [
     path: '/todo',
   },
   {
+    icon: 'sync',
+    title: 'P2P 多设备同步',
+    path: '/sync',
+  },
+  {
     icon: 'stats',
     title: '统计数据',
     path: '',
@@ -179,6 +184,13 @@ function handleMenuClick(path: string) {
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="16" x2="12" y2="12" />
               <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+            <svg v-else-if="item.icon === 'sync'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 3 21 3 21 8" />
+              <line x1="4" y1="20" x2="21" y2="3" />
+              <polyline points="21 16 21 21 16 21" />
+              <line x1="15" y1="15" x2="21" y2="21" />
+              <line x1="4" y1="4" x2="9" y2="9" />
             </svg>
           </div>
           <span class="menu-title">{{ item.title }}</span>
@@ -362,6 +374,11 @@ function handleMenuClick(path: string) {
 .menu-icon.about {
   background: rgba(0, 122, 255, 0.12);
   color: var(--brand-500);
+}
+
+.menu-icon.sync {
+  background: rgba(48, 209, 88, 0.12);
+  color: var(--success-500);
 }
 
 .menu-title {
