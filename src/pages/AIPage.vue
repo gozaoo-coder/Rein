@@ -87,7 +87,51 @@ const suggestions = [
 
 function renderMarkdown(content: string): string {
   if (!content) return "";
-  return marked.parse(content, { breaks: true }) as string;
+  // marked 配置：GFM 表格 + 换行转 <br>
+  const html = marked.parse(content, {
+    breaks: true,
+    gfm: true,
+  }) as string;
+  // 给 pre/code 块加上语言徽章 + 复制按钮
+  return enhanceCodeBlocks(html);
+}
+
+/** 为 pre>code 块注入语言徽章 + 复制按钮（事件委托处理点击） */
+function enhanceCodeBlocks(html: string): string {
+  return html.replace(
+    /<pre><code class="language-([a-z0-9+-]+)">([\s\S]*?)<\/code><\/pre>/g,
+    (_m, lang, code) => {
+      const langLabel = String(lang).toUpperCase();
+      return `<div class="code-block" data-lang="${langLabel}">
+        <div class="code-head">
+          <span class="code-lang">${langLabel}</span>
+          <button class="copy-code-btn" type="button" aria-label="复制代码">复制</button>
+        </div>
+        <pre><code class="language-${lang}">${code}</code></pre>
+      </div>`;
+    },
+  );
+}
+
+/** 事件委托：复制代码到剪贴板 */
+function onMsgContentClick(e: MouseEvent): void {
+  const target = e.target as HTMLElement;
+  if (!target.classList.contains("copy-code-btn")) return;
+  const block = target.closest(".code-block") as HTMLElement | null;
+  if (!block) return;
+  const code = block.querySelector("pre code") as HTMLElement | null;
+  if (!code) return;
+  const text = code.textContent ?? "";
+  navigator.clipboard?.writeText(text).then(
+    () => {
+      target.textContent = "已复制";
+      setTimeout(() => (target.textContent = "复制"), 1500);
+    },
+    () => {
+      target.textContent = "失败";
+      setTimeout(() => (target.textContent = "复制"), 1500);
+    },
+  );
 }
 
 function scrollToBottom() {
@@ -446,6 +490,7 @@ watch(
               <div
                 v-if="msg.role === 'assistant' && textOf(msg)"
                 class="msg-content"
+                @click="onMsgContentClick"
               >
                 <!-- 流式生成中：句子级动画 -->
                 <AiStreamingText
@@ -1011,48 +1056,179 @@ watch(
 
 .msg-content {
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: 1.55;
 }
-.msg-content :deep(h1),
-.msg-content :deep(h2),
+.msg-content :deep(h1) {
+  font-size: 18px;
+  font-weight: var(--fw-bold);
+  margin: 10px 0 6px;
+  color: var(--color-text);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-divider);
+}
+.msg-content :deep(h2) {
+  font-size: 16px;
+  font-weight: var(--fw-semibold);
+  margin: 8px 0 4px;
+  color: var(--color-text);
+}
 .msg-content :deep(h3) {
   font-size: var(--text-md);
   font-weight: var(--fw-semibold);
-  margin: 6px 0 4px;
+  margin: 6px 0 3px;
+  color: var(--color-text);
 }
-.msg-content :deep(p) { margin: 4px 0; }
+.msg-content :deep(h4),
+.msg-content :deep(h5),
+.msg-content :deep(h6) {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  margin: 6px 0 2px;
+  color: var(--color-text-secondary);
+}
+.msg-content :deep(p) { margin: 5px 0; }
 .msg-content :deep(ul),
 .msg-content :deep(ol) {
-  padding-left: 20px;
-  margin: 4px 0;
+  padding-left: 22px;
+  margin: 5px 0;
 }
-.msg-content :deep(li) { margin: 2px 0; }
+.msg-content :deep(li) { margin: 3px 0; }
+.msg-content :deep(li::marker) { color: var(--color-warm); }
 .msg-content :deep(code) {
   background: var(--bg-200);
-  padding: 1px 5px;
+  padding: 1px 6px;
   border-radius: 4px;
   font-size: 0.88em;
   font-family: var(--font-mono);
+  color: var(--color-warm);
 }
 .msg-content :deep(pre) {
-  background: var(--bg-200);
-  padding: 10px;
-  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
   overflow-x: auto;
-  margin: 6px 0;
+  margin: 0;
 }
 .msg-content :deep(pre code) {
   background: transparent;
   padding: 0;
+  color: var(--color-text);
+  font-size: 0.85em;
+}
+.msg-content :deep(.code-block) {
+  background: var(--bg-200);
+  border-radius: var(--radius-md);
+  margin: 8px 0;
+  overflow: hidden;
+  border: 1px solid var(--color-divider);
+}
+.msg-content :deep(.code-head) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--bg-300);
+  border-bottom: 1px solid var(--color-divider);
+}
+.msg-content :deep(.code-lang) {
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-secondary);
+  letter-spacing: 0.5px;
+}
+.msg-content :deep(.copy-code-btn) {
+  background: transparent;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-immersive);
+}
+.msg-content :deep(.copy-code-btn:hover) {
+  background: var(--color-warm);
+  color: #fff;
+  border-color: var(--color-warm);
+}
+.msg-content :deep(.copy-code-btn:active) { transform: scale(0.94); }
+.msg-content :deep(.code-block pre) {
+  padding: 10px 12px;
+  overflow-x: auto;
 }
 .msg-content :deep(blockquote) {
   border-left: 3px solid var(--color-warm);
-  padding-left: 10px;
+  padding: 4px 12px;
   color: var(--color-text-secondary);
+  margin: 8px 0;
+  background: var(--bg-100);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.msg-content :deep(strong) {
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.msg-content :deep(em) { color: var(--color-text-secondary); }
+.msg-content :deep(a) {
+  color: var(--color-warm);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--color-warm);
+}
+.msg-content :deep(a:hover) { opacity: 0.8; }
+.msg-content :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--color-divider);
+  margin: 10px 0;
+}
+.msg-content :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 0.92em;
+  display: block;
+  overflow-x: auto;
+}
+.msg-content :deep(thead) {
+  background: var(--bg-200);
+}
+.msg-content :deep(th),
+.msg-content :deep(td) {
+  border: 1px solid var(--color-divider);
+  padding: 5px 10px;
+  text-align: left;
+}
+.msg-content :deep(th) {
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.msg-content :deep(td) { color: var(--color-text-secondary); }
+.msg-content :deep(tbody tr:nth-child(even)) {
+  background: var(--bg-100);
+}
+.msg-content :deep(kbd) {
+  background: var(--bg-200);
+  border: 1px solid var(--color-divider);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.85em;
+  font-family: var(--font-mono);
+}
+.msg-content :deep(mark) {
+  background: rgba(255, 149, 0, 0.2);
+  color: var(--color-warm);
+  padding: 0 3px;
+  border-radius: 3px;
+}
+.msg-content :deep(del) {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+}
+.msg-content :deep(img) {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
   margin: 6px 0;
 }
-.msg-content :deep(strong) { font-weight: var(--fw-semibold); }
-.msg-content :deep(a) { color: var(--color-warm); }
 
 .msg-images {
   display: flex;
