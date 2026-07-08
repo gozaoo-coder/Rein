@@ -88,9 +88,7 @@ onMounted(() => {
   <div class="course-list-page">
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
+        <i class="bi bi-chevron-left" style="font-size:22px"></i>
       </button>
       <h2 class="sub-title">
         全部课程
@@ -146,14 +144,10 @@ onMounted(() => {
           </button>
           <div class="course-ops">
             <button class="op-btn" @click="togglePin(c)" :title="c.pinned ? '取消置顶' : '置顶'">
-              <svg width="18" height="18" viewBox="0 0 24 24" :fill="c.pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M16 4l4 4-5 1-3 3 1 6-2-2-3 3-1-1 3-3-2-2 6 1 3-3 1-5z"/>
-              </svg>
+              <i :class="c.pinned ? 'bi bi-pin-angle-fill' : 'bi bi-pin-angle'" style="font-size:18px"></i>
             </button>
             <button class="op-btn danger" @click="askDelete(c)" title="删除">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              </svg>
+              <i class="bi bi-trash3" style="font-size:18px"></i>
             </button>
           </div>
         </div>

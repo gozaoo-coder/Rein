@@ -316,10 +316,7 @@ onBeforeUnmount(() => {
     >
       <template v-if="editMode">
         <button class="card-delete" @click="deleteCard(card, $event)" aria-label="删除卡片">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
+          <i class="bi bi-x-lg" style="font-size:10px"></i>
         </button>
 
         <div
@@ -331,9 +328,7 @@ onBeforeUnmount(() => {
           @pointercancel="onResizePointerUp($event)"
           aria-label="拖拽调整大小"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M22 22 L22 16 A6 6 0 0 0 16 22 Z M22 22 L16 22 A6 6 0 0 0 22 16 Z" />
-          </svg>
+          <i class="bi bi-arrows-angle-expand" style="font-size:12px"></i>
           <span v-if="resizeState?.cardId === card.id && resizeState.previewSize" class="resize-label">
             {{ resizeState.previewSize }}
           </span>

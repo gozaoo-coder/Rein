@@ -102,10 +102,7 @@ onMounted(() => {
     <section class="clean-card hr-card">
       <div class="hr-left">
         <div class="hr-icon" :class="{ connected: hrConnectedFlag }">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z" />
-            <path d="M3 12h4l2-4 3 8 2-5 2 1h5" />
-          </svg>
+          <i class="bi bi-heart-pulse" style="font-size:22px"></i>
         </div>
         <div class="hr-text">
           <div class="hr-title">
@@ -200,9 +197,7 @@ onMounted(() => {
               </span>
             </div>
           </div>
-          <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 6l6 6-6 6" />
-          </svg>
+          <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
         </button>
       </div>
     </section>
@@ -221,7 +216,7 @@ onMounted(() => {
           @click="openCourse(c)"
         >
           <div class="course-pin">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M16 4l4 4-5 1-3 3 1 6-2-2-3 3-1-1 3-3-2-2 6 1 3-3 1-5z"/></svg>
+            <i class="bi bi-pin-angle-fill" style="font-size:14px"></i>
           </div>
           <div class="course-card-body">
             <div class="course-name">{{ c.name }}</div>
@@ -304,9 +299,7 @@ onMounted(() => {
           </div>
           <div class="course-row-right">
             <button class="mini-btn primary" @click.stop="startCourse(c)">开始</button>
-            <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 6l6 6-6 6" />
-            </svg>
+            <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
           </div>
         </button>
       </div>
@@ -320,19 +313,13 @@ onMounted(() => {
       </div>
       <button class="ex-entry clean-card clean-card--interactive" @click="openExercises">
         <div class="ex-icon icon-circle icon-circle--orange">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M6.5 6.5h11v11h-11z" />
-            <path d="M3 9.5v5" />
-            <path d="M21 9.5v5" />
-          </svg>
+          <i class="bi bi-dumbbell" style="font-size:20px"></i>
         </div>
         <div class="ex-text">
           <div class="ex-name">动作库</div>
           <div class="ex-sub">徒手 / 器械，支持自定义新增</div>
         </div>
-        <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 6l6 6-6 6" />
-        </svg>
+        <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
       </button>
     </section>
   </div>

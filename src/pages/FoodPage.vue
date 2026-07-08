@@ -1,30 +1,51 @@
 <script setup lang="ts">
 /**
- * FoodPage — 饮食热量记录页
+ * FoodPage — 饮食热量记录页（半模态改版）
  *
- * - 今日热量 + 三大营养素
- * - 添加饮食表单（食品库选择 / 快速记录 + 克数）
- * - 周/月视图（热量/碳水/蛋白质/脂肪）
+ * - 今日热量/三大营养素概览
+ * - 周/月水平切换 + 水平日期选择
+ * - 记录饮食使用 BottomSheet：AI快速记 / 搜索食品库 / 手动输入
  */
 import { computed, onMounted, ref } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useRouter } from "vue-router";
 import BarChartThin from "@/components/charts/BarChartThin.vue";
+import { BottomSheet } from "@/components/ui";
+import { useToast } from "@/composables/useToast";
 
 const store = useHealthDataStore();
 const router = useRouter();
+const toast = useToast();
 
 type Macro = "calories" | "carbs" | "protein" | "fat";
-const view = ref<"week" | "month">("week");
+type AddTab = "ai" | "search" | "manual";
+type ViewMode = "week" | "month";
+
+const view = ref<ViewMode>("week");
 const macro = ref<Macro>("calories");
+const selectedDate = ref<Date>(new Date());
 const weekStart = ref<Date>(startOfWeek(new Date()));
 const viewMonth = ref<Date>(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+
+const showAddSheet = ref(false);
+const addTab = ref<AddTab>("ai");
+
+const searchQuery = ref("");
+const selectedFoodId = ref<string>("");
+const grams = ref<number>(100);
+const customName = ref<string>("");
+const customCalories = ref<number>(0);
+const customCarbs = ref<number>(0);
+const customProtein = ref<number>(0);
+const customFat = ref<number>(0);
+
+const aiInput = ref("");
+const aiProcessing = ref(false);
 
 onMounted(() => {
   void store.load();
 });
 
-// ===== 工具 =====
 function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
@@ -38,6 +59,9 @@ function addDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
   return x;
+}
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 const GOALS: Record<Macro, number> = {
@@ -68,15 +92,19 @@ const MACRO_COLOR: Record<Macro, string> = {
   fat: "#9b59b6",
 };
 
-// ===== 今日 =====
-const todayValues = computed(() => ({
-  calories: store.todayCalories,
-  carbs: store.todayCarbs,
-  protein: store.todayProtein,
-  fat: store.todayFat,
-}));
+const isToday = computed(() => isSameDay(selectedDate.value, new Date()));
+const selKey = computed(() => dateKey(selectedDate.value));
 
-// ===== 周/月聚合 =====
+const dayValues = computed(() => {
+  const recs = store.foodRecordsByDate(selKey.value);
+  return {
+    calories: recs.reduce((s, r) => s + r.calories, 0),
+    carbs: Math.round(recs.reduce((s, r) => s + r.carbs, 0) * 10) / 10,
+    protein: Math.round(recs.reduce((s, r) => s + r.protein, 0) * 10) / 10,
+    fat: Math.round(recs.reduce((s, r) => s + r.fat, 0) * 10) / 10,
+  };
+});
+
 function dailyMacro(d: Date): number {
   const k = dateKey(d);
   const recs = store.foodRecordsByDate(k);
@@ -88,34 +116,59 @@ function dailyMacro(d: Date): number {
   }
 }
 
-const weekData = computed(() => {
-  const out: { date: string; label: string; value: number }[] = [];
+const weekDays = computed(() => {
+  const out: { date: Date; key: string; label: string; weekday: string; value: number; selected: boolean }[] = [];
   for (let i = 0; i < 7; i++) {
     const d = addDays(weekStart.value, i);
-    out.push({ date: dateKey(d), label: `${d.getMonth() + 1}/${d.getDate()}`, value: dailyMacro(d) });
+    out.push({
+      date: d,
+      key: dateKey(d),
+      label: String(d.getDate()),
+      weekday: ["日", "一", "二", "三", "四", "五", "六"][d.getDay()],
+      value: dailyMacro(d),
+      selected: isSameDay(d, selectedDate.value),
+    });
   }
   return out;
 });
 
-const monthData = computed(() => {
-  const days = new Date(viewMonth.value.getFullYear(), viewMonth.value.getMonth() + 1, 0).getDate();
-  const out: { date: string; label: string; value: number }[] = [];
+const monthDays = computed(() => {
+  const year = viewMonth.value.getFullYear();
+  const month = viewMonth.value.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const days = new Date(year, month + 1, 0).getDate();
+  const out: { date: Date | null; key: string; label: string; value: number; selected: boolean; isToday: boolean }[] = [];
+  for (let i = 0; i < firstDay; i++) {
+    out.push({ date: null, key: `e${i}`, label: "", value: 0, selected: false, isToday: false });
+  }
+  const today = new Date();
   for (let i = 1; i <= days; i++) {
-    const d = new Date(viewMonth.value.getFullYear(), viewMonth.value.getMonth(), i);
-    out.push({ date: dateKey(d), label: String(i), value: dailyMacro(d) });
+    const d = new Date(year, month, i);
+    out.push({
+      date: d,
+      key: dateKey(d),
+      label: String(i),
+      value: dailyMacro(d),
+      selected: isSameDay(d, selectedDate.value),
+      isToday: isSameDay(d, today),
+    });
   }
   return out;
 });
 
 const chartData = computed(() =>
-  view.value === "week" ? weekData.value.map((d) => d.value) : monthData.value.map((d) => d.value),
+  view.value === "week"
+    ? weekDays.value.map((d) => d.value)
+    : monthDays.value.filter((d) => d.date).map((d) => d.value),
 );
 const chartLabels = computed(() =>
-  view.value === "week" ? weekData.value.map((d) => d.label) : monthData.value.map((d) => d.label),
+  view.value === "week"
+    ? weekDays.value.map((d) => d.label)
+    : monthDays.value.filter((d) => d.date).map((d) => d.label),
 );
 
 const avgValue = computed(() => {
-  const arr = view.value === "week" ? weekData.value : monthData.value;
+  const arr = view.value === "week" ? weekDays.value : monthDays.value.filter((d) => d.date);
   const sum = arr.reduce((s, d) => s + d.value, 0);
   return arr.length > 0 ? Math.round(sum / arr.length * 10) / 10 : 0;
 });
@@ -123,69 +176,171 @@ const avgValue = computed(() => {
 const periodLabel = computed(() => {
   if (view.value === "week") {
     const end = addDays(weekStart.value, 6);
-    return `${weekStart.value.getMonth() + 1}/${weekStart.value.getDate()} - ${end.getMonth() + 1}/${end.getDate()}`;
+    return `${weekStart.value.getMonth() + 1}/${weekStart.value.getDate()}-${end.getMonth() + 1}/${end.getDate()}`;
   }
   return `${viewMonth.value.getFullYear()}年${viewMonth.value.getMonth() + 1}月`;
 });
 
 function prevPeriod() {
-  if (view.value === "week") weekStart.value = addDays(weekStart.value, -7);
-  else viewMonth.value = new Date(viewMonth.value.getFullYear(), viewMonth.value.getMonth() - 1, 1);
+  if (view.value === "week") {
+    weekStart.value = addDays(weekStart.value, -7);
+    selectedDate.value = weekStart.value;
+  } else {
+    viewMonth.value = new Date(viewMonth.value.getFullYear(), viewMonth.value.getMonth() - 1, 1);
+  }
 }
 function nextPeriod() {
-  if (view.value === "week") weekStart.value = addDays(weekStart.value, 7);
-  else viewMonth.value = new Date(viewMonth.value.getFullYear(), viewMonth.value.getMonth() + 1, 1);
-}
-
-// ===== 添加饮食 =====
-const showAddForm = ref(false);
-const searchQuery = ref("");
-const selectedFood = ref<string>("");
-const grams = ref<number>(100);
-const customName = ref<string>("");
-const customCalories = ref<number>(0);
-const isCustom = ref(false);
-
-const searchResults = computed(() => store.searchFoods(searchQuery.value).slice(0, 20));
-
-function selectFood(foodId: string) {
-  selectedFood.value = foodId;
-  const food = store.findFood(foodId);
-  if (food) grams.value = food.units[0]?.grams ?? 100;
-}
-
-function submitFood() {
-  if (isCustom.value) {
-    if (!customName.value.trim()) return;
-    store.addFoodRecord({
-      foodName: customName.value.trim(),
-      grams: grams.value,
-      calories: customCalories.value,
-    });
+  if (view.value === "week") {
+    weekStart.value = addDays(weekStart.value, 7);
+    selectedDate.value = weekStart.value;
   } else {
-    const food = store.findFood(selectedFood.value);
-    if (!food) return;
-    store.addFoodRecord({
-      foodId: food.id,
-      foodName: food.name,
-      grams: grams.value,
-    });
+    viewMonth.value = new Date(viewMonth.value.getFullYear(), viewMonth.value.getMonth() + 1, 1);
   }
-  // reset
-  showAddForm.value = false;
-  selectedFood.value = "";
+}
+function switchView(v: ViewMode) {
+  view.value = v;
+  if (v === "week") weekStart.value = startOfWeek(selectedDate.value);
+  else viewMonth.value = new Date(selectedDate.value.getFullYear(), selectedDate.value.getMonth(), 1);
+}
+function selectDay(d: Date) {
+  selectedDate.value = d;
+}
+
+const searchResults = computed(() => store.searchFoods(searchQuery.value).slice(0, 30));
+
+const selectedFood = computed(() => (selectedFoodId.value ? store.findFood(selectedFoodId.value) : undefined));
+
+function openAddSheet() {
+  addTab.value = "ai";
+  aiInput.value = "";
+  searchQuery.value = "";
+  selectedFoodId.value = "";
   grams.value = 100;
   customName.value = "";
   customCalories.value = 0;
-  isCustom.value = false;
-  searchQuery.value = "";
+  customCarbs.value = 0;
+  customProtein.value = 0;
+  customFat.value = 0;
+  showAddSheet.value = true;
 }
 
-function toggleCustom() {
-  isCustom.value = !isCustom.value;
-  selectedFood.value = "";
-  customName.value = "";
+function selectFood(foodId: string) {
+  selectedFoodId.value = foodId;
+  const food = store.findFood(foodId);
+  if (food) grams.value = food.units?.[0]?.grams ?? 100;
 }
+
+function submitFromSearch() {
+  const food = selectedFood.value;
+  if (!food) return;
+  store.addFoodRecord({
+    foodId: food.id,
+    foodName: food.name,
+    grams: grams.value,
+  });
+  toast.success(`已添加 ${food.name} ${grams.value}g`);
+  showAddSheet.value = false;
+}
+
+function submitManual() {
+  if (!customName.value.trim()) {
+    toast.info("请输入食品名");
+    return;
+  }
+  store.addFoodRecord({
+    foodName: customName.value.trim(),
+    grams: grams.value,
+    calories: customCalories.value,
+    carbs: customCarbs.value,
+    protein: customProtein.value,
+    fat: customFat.value,
+  });
+  toast.success(`已添加 ${customName.value.trim()}`);
+  showAddSheet.value = false;
+}
+
+/**
+ * AI 快速记饮食：简单本地解析 + 回退到 foodDb 匹配
+ * 真正的 AI MCP 调用需要 pi agent，这里做轻量本地解析：
+ *  - "一个苹果" → 苹果, ~180g
+ *  - "一碗米饭" → 米饭, ~150g
+ *  - "100g鸡胸肉" → 鸡胸肉, 100g
+ *  - "一杯牛奶250ml" → 牛奶, 250g
+ */
+function parseAiInput(text: string): { name: string; grams: number } | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  // 提取克数： 200g / 200克
+  const gMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*(?:g|克|ml|毫升)/i);
+  let grams = gMatch ? Number(gMatch[1]) : 0;
+
+  // 量词映射
+  const quantityMap: Record<string, number> = {
+    一个: 150, 一根: 120, 一块: 100, 一片: 30, 一碗: 200,
+    一份: 200, 一杯: 250, 一瓶: 500, 一口: 30, 一小碗: 150,
+    一大碗: 350, 半个: 80, 半根: 60,
+  };
+  if (!grams) {
+    for (const [q, g] of Object.entries(quantityMap)) {
+      if (trimmed.includes(q)) {
+        grams = g;
+        break;
+      }
+    }
+  }
+  if (!grams) grams = 100;
+
+  // 搜索食品库匹配名称
+  const cleaned = trimmed
+    .replace(/\d+(?:\.\d+)?\s*(?:g|克|ml|毫升)/gi, "")
+    .replace(/一个|一根|一块|一片|一碗|一份|一杯|一瓶|一口|一小碗|一大碗|半个|半根/g, "")
+    .replace(/[了吃喝进食记]|早餐|午餐|晚餐|加餐|零食/g, "")
+    .trim();
+  if (!cleaned) return null;
+
+  // 先精确匹配
+  let food = store.foodDb.find((f) => f.name === cleaned);
+  if (!food) {
+    // 包含匹配
+    food = store.foodDb.find((f) => f.name.includes(cleaned) || cleaned.includes(f.name));
+  }
+  if (!food) return null;
+
+  return { name: food.name, grams };
+}
+
+async function submitAi() {
+  if (!aiInput.value.trim()) return;
+  aiProcessing.value = true;
+  await new Promise((r) => setTimeout(r, 300));
+  const parsed = parseAiInput(aiInput.value);
+  aiProcessing.value = false;
+  if (!parsed) {
+    toast.info("未识别到食品，试试搜索或手动输入");
+    addTab.value = "search";
+    searchQuery.value = aiInput.value;
+    return;
+  }
+  const food = store.foodDb.find((f) => f.name === parsed.name);
+  if (food) {
+    store.addFoodRecord({
+      foodId: food.id,
+      foodName: food.name,
+      grams: parsed.grams,
+    });
+    toast.success(`AI 记食: ${food.name} ${parsed.grams}g`);
+  } else {
+    store.addFoodRecord({
+      foodName: parsed.name,
+      grams: parsed.grams,
+    });
+    toast.success(`AI 记食: ${parsed.name} ${parsed.grams}g`);
+  }
+  showAddSheet.value = false;
+}
+
+const dayRecords = computed(() => store.foodRecordsByDate(selKey.value).slice().reverse());
 
 function goFoodDb() {
   void router.push("/health/food-db");
@@ -196,113 +351,119 @@ function goFoodDb() {
   <div class="food-page">
     <h2 class="page-title">饮食热量</h2>
 
-    <!-- 今日概览 -->
     <div class="today-card clean-card">
-      <div class="macro-row">
-        <div class="macro-block macro-block--main">
+      <div class="macro-main">
+        <div class="macro-main-left">
           <span class="macro-label">{{ MACRO_LABEL.calories }}</span>
           <div class="macro-value-row">
-            <span class="macro-num">{{ todayValues.calories }}</span>
+            <span class="macro-num">{{ dayValues.calories }}</span>
             <span class="macro-goal">/{{ GOALS.calories }}{{ MACRO_UNIT.calories }}</span>
           </div>
           <div class="macro-bar">
-            <div class="macro-bar-fill" :style="{ width: Math.min(todayValues.calories / GOALS.calories, 1) * 100 + '%', background: MACRO_COLOR.calories }" />
+            <div
+              class="macro-bar-fill"
+              :style="{
+                width: Math.min(dayValues.calories / GOALS.calories, 1) * 100 + '%',
+                background: MACRO_COLOR.calories,
+              }"
+            />
           </div>
         </div>
+        <button v-if="isToday" class="add-food-fab" @click="openAddSheet" aria-label="记录饮食">
+          <i class="bi bi-plus-lg" style="font-size:20px"></i>
+        </button>
       </div>
-      <div class="macro-row macro-row--3">
+      <div class="macro-row-3">
         <div v-for="m in (['carbs', 'protein', 'fat'] as Macro[])" :key="m" class="macro-block">
           <span class="macro-label">{{ MACRO_LABEL[m] }}</span>
           <div class="macro-value-row">
-            <span class="macro-num">{{ todayValues[m] }}</span>
-            <span class="macro-goal">/{{ GOALS[m] }}{{ MACRO_UNIT[m] }}</span>
+            <span class="macro-num-sm">{{ dayValues[m] }}</span>
+            <span class="macro-goal-sm">/{{ GOALS[m] }}{{ MACRO_UNIT[m] }}</span>
           </div>
-          <div class="macro-bar">
-            <div class="macro-bar-fill" :style="{ width: Math.min(todayValues[m] / GOALS[m], 1) * 100 + '%', background: MACRO_COLOR[m] }" />
+          <div class="macro-bar-sm">
+            <div
+              class="macro-bar-fill"
+              :style="{
+                width: Math.min(dayValues[m] / GOALS[m], 1) * 100 + '%',
+                background: MACRO_COLOR[m],
+              }"
+            />
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 添加饮食 -->
-    <button v-if="!showAddForm" class="add-btn" @click="showAddForm = true">
-      <i class="bi bi-plus-lg" style="font-size:18px"></i>
-      <span>记录饮食</span>
-    </button>
-
-    <div v-else class="add-form clean-card">
-      <div class="form-header">
-        <h3 class="form-title">记录饮食</h3>
-        <button class="close-btn" @click="showAddForm = false" aria-label="关闭">×</button>
-      </div>
-
-      <div class="toggle-row">
-        <button class="toggle-btn" :class="{ 'toggle-btn--active': !isCustom }" @click="isCustom = false">食品库</button>
-        <button class="toggle-btn" :class="{ 'toggle-btn--active': isCustom }" @click="toggleCustom">快速记录</button>
-      </div>
-
-      <div v-if="!isCustom" class="food-picker">
-        <input v-model="searchQuery" type="text" placeholder="搜索食品..." class="search-input" />
-        <div class="search-results">
+    <div class="period-bar clean-card">
+      <div class="period-bar-top">
+        <div class="view-switch">
+          <button class="vs-btn" :class="{ active: view === 'week' }" @click="switchView('week')">周</button>
+          <button class="vs-btn" :class="{ active: view === 'month' }" @click="switchView('month')">月</button>
+        </div>
+        <div class="macro-tabs">
           <button
-            v-for="food in searchResults"
-            :key="food.id"
-            class="food-result"
-            :class="{ 'food-result--active': selectedFood === food.id }"
-            @click="selectFood(food.id)"
+            v-for="m in (['calories', 'carbs', 'protein', 'fat'] as Macro[])"
+            :key="m"
+            class="macro-tab"
+            :class="{ 'macro-tab--active': macro === m }"
+            :style="macro === m ? { background: MACRO_COLOR[m], color: '#fff' } : {}"
+            @click="macro = m"
           >
-            <div class="food-info">
-              <span class="food-name">{{ food.name }}</span>
-              <span class="food-cat">{{ food.category }} · {{ food.caloriesPer100g }}千卡/100g</span>
-            </div>
+            {{ MACRO_LABEL[m] }}
+          </button>
+        </div>
+        <div class="period-nav">
+          <button class="nav-btn" @click="prevPeriod" aria-label="上一周期">
+            <i class="bi bi-chevron-left" style="font-size:14px"></i>
+          </button>
+          <span class="nav-label">{{ periodLabel }}</span>
+          <button class="nav-btn" @click="nextPeriod" aria-label="下一周期">
+            <i class="bi bi-chevron-right" style="font-size:14px"></i>
           </button>
         </div>
       </div>
 
-      <div v-else class="custom-inputs">
-        <input v-model="customName" type="text" placeholder="食品名" class="text-input" />
-        <input v-model.number="customCalories" type="number" placeholder="热量(千卡)" class="text-input" />
+      <div v-if="view === 'week'" class="week-strip">
+        <button
+          v-for="d in weekDays"
+          :key="d.key"
+          class="day-chip"
+          :class="{ 'is-selected': d.selected, 'is-today': isSameDay(d.date, new Date()) }"
+          @click="selectDay(d.date)"
+        >
+          <span class="dw">{{ d.weekday }}</span>
+          <span class="dd">{{ d.label }}</span>
+          <span
+            class="d-bar"
+            :style="{
+              height: Math.min(d.value / GOALS[macro] * 28, 28) + 'px',
+              background: d.value >= GOALS[macro] ? '#64bb5c' : MACRO_COLOR[macro],
+            }"
+          />
+        </button>
       </div>
 
-      <div class="grams-row">
-        <label class="grams-label">克数</label>
-        <input v-model.number="grams" type="number" min="1" class="grams-input" />
-        <span class="grams-unit">g</span>
+      <div v-else class="month-grid">
+        <div class="mg-head">
+          <span v-for="w in ['日','一','二','三','四','五','六']" :key="w" class="mgh">{{ w }}</span>
+        </div>
+        <div class="mg-body">
+          <button
+            v-for="d in monthDays"
+            :key="d.key"
+            class="mg-cell"
+            :class="{ 'is-empty': !d.date, 'is-selected': d.selected, 'is-today': d.isToday }"
+            :disabled="!d.date"
+            @click="d.date && selectDay(d.date)"
+          >
+            <template v-if="d.date">
+              <span class="mg-num">{{ d.label }}</span>
+              <span v-if="d.value > 0" class="mg-dot" :style="{ background: MACRO_COLOR[macro], opacity: 0.3 + Math.min(d.value / GOALS[macro], 1) * 0.7 }" />
+            </template>
+          </button>
+        </div>
       </div>
-
-      <button class="submit-btn" @click="submitFood" :disabled="!isCustom && !selectedFood">
-        添加
-      </button>
     </div>
 
-    <!-- 视图切换 -->
-    <div class="view-tabs">
-      <button class="tab-btn" :class="{ 'tab-btn--active': view === 'week' }" @click="view = 'week'">周</button>
-      <button class="tab-btn" :class="{ 'tab-btn--active': view === 'month' }" @click="view = 'month'">月</button>
-    </div>
-
-    <!-- 营养素切换 -->
-    <div class="macro-tabs">
-      <button
-        v-for="m in (['calories', 'carbs', 'protein', 'fat'] as Macro[])"
-        :key="m"
-        class="macro-tab"
-        :class="{ 'macro-tab--active': macro === m }"
-        :style="macro === m ? { background: MACRO_COLOR[m], color: '#fff' } : {}"
-        @click="macro = m"
-      >
-        {{ MACRO_LABEL[m] }}
-      </button>
-    </div>
-
-    <!-- 周期导航 -->
-    <div class="period-nav">
-      <button class="nav-btn" @click="prevPeriod"><i class="bi bi-chevron-left" style="font-size:16px"></i></button>
-      <span class="period-label">{{ periodLabel }}</span>
-      <button class="nav-btn" @click="nextPeriod"><i class="bi bi-chevron-right" style="font-size:16px"></i></button>
-    </div>
-
-    <!-- 图表 -->
     <div class="chart-card clean-card">
       <div class="chart-header">
         <span class="chart-title">{{ MACRO_LABEL[macro] }} · {{ view === "week" ? "本周" : "本月" }}</span>
@@ -318,22 +479,20 @@ function goFoodDb() {
       />
     </div>
 
-    <!-- 今日记录列表 -->
     <div class="history-card clean-card">
       <div class="history-header">
-        <h3 class="block-title">今日饮食</h3>
+        <h3 class="block-title">{{ isToday ? "今日" : `${selectedDate.getMonth() + 1}/${selectedDate.getDate()}` }}饮食</h3>
         <button class="link-btn" @click="goFoodDb">食品库 →</button>
       </div>
-      <div v-if="store.todayFoodRecords.length === 0" class="empty">暂无饮食记录</div>
+      <div v-if="dayRecords.length === 0" class="empty">暂无饮食记录</div>
       <div class="history-list">
-        <div
-          v-for="rec in store.todayFoodRecords.slice().reverse()"
-          :key="rec.id"
-          class="history-item"
-        >
+        <div v-for="rec in dayRecords" :key="rec.id" class="history-item">
           <div class="h-info">
-            <span class="h-name">{{ rec.foodName }}</span>
-            <span class="h-meta">{{ rec.grams }}g · {{ rec.calories }}千卡 · 碳{{ rec.carbs }}g 蛋白{{ rec.protein }}g 脂{{ rec.fat }}g</span>
+            <div class="h-name-row">
+              <span class="h-name">{{ rec.foodName }}</span>
+              <span class="h-cal">{{ rec.calories }}千卡</span>
+            </div>
+            <span class="h-meta">{{ rec.grams }}g · 碳{{ rec.carbs }}g 蛋{{ rec.protein }}g 脂{{ rec.fat }}g</span>
           </div>
           <button class="h-del" @click="store.removeFoodRecord(rec.id)" aria-label="删除">
             <i class="bi bi-trash3" style="font-size:14px"></i>
@@ -341,6 +500,135 @@ function goFoodDb() {
         </div>
       </div>
     </div>
+
+    <BottomSheet
+      v-model:visible="showAddSheet"
+      title="记录饮食"
+      :detents="['medium', 'large']"
+      default-detent="medium"
+    >
+      <div class="add-food-body">
+        <div class="add-tabs">
+          <button
+            v-for="t in ([
+              { id: 'ai', label: 'AI 快速记', icon: 'stars' },
+              { id: 'search', label: '搜索', icon: 'search' },
+              { id: 'manual', label: '手动', icon: 'pencil-square' },
+            ] as { id: AddTab; label: string; icon: string }[])"
+            :key="t.id"
+            class="add-tab"
+            :class="{ active: addTab === t.id }"
+            @click="addTab = t.id"
+          >
+            <i :class="['bi', `bi-${t.icon}`]" style="font-size:16px"></i>
+            <span>{{ t.label }}</span>
+          </button>
+        </div>
+
+        <!-- AI Quick Add -->
+        <div v-if="addTab === 'ai'" class="ai-add">
+          <div class="ai-hint">说一句"早餐吃了一个苹果"或"300g鸡胸肉"即可快速记录</div>
+          <div class="ai-input-wrap">
+            <textarea
+              v-model="aiInput"
+              rows="3"
+              placeholder="例如：中午一碗米饭、一块鸡胸肉、一杯牛奶"
+              class="ai-textarea"
+            />
+          </div>
+          <div class="ai-examples">
+            <button
+              v-for="ex in ['一个苹果', '一碗米饭', '200g鸡胸肉', '一杯牛奶', '一根香蕉', '一个鸡蛋']"
+              :key="ex"
+              class="ex-chip"
+              @click="aiInput = ex"
+            >
+              {{ ex }}
+            </button>
+          </div>
+          <button class="submit-btn" :disabled="!aiInput.trim() || aiProcessing" @click="submitAi">
+            <span v-if="aiProcessing">识别中...</span>
+            <span v-else>AI 识别并记录</span>
+          </button>
+        </div>
+
+        <!-- Search -->
+        <div v-else-if="addTab === 'search'" class="search-add">
+          <div class="search-wrap">
+            <i class="bi bi-search search-ic" style="font-size:16px"></i>
+            <input v-model="searchQuery" type="text" placeholder="搜索食品..." class="search-input" />
+          </div>
+          <div class="food-list scrollbar-hide">
+            <button
+              v-for="food in searchResults"
+              :key="food.id"
+              class="food-item"
+              :class="{ active: selectedFoodId === food.id }"
+              @click="selectFood(food.id)"
+            >
+              <div class="food-info">
+                <span class="food-name">{{ food.name }}</span>
+                <span class="food-meta">{{ food.category }} · {{ food.caloriesPer100g }}千卡/100g</span>
+              </div>
+              <i v-if="selectedFoodId === food.id" class="bi bi-check-lg" style="font-size:18px;color:var(--color-warm)"></i>
+            </button>
+            <div v-if="searchResults.length === 0" class="empty-sm">没有找到匹配食品</div>
+          </div>
+          <template v-if="selectedFood">
+            <div class="grams-row">
+              <label class="grams-label">分量</label>
+              <input v-model.number="grams" type="number" min="1" class="grams-input" />
+              <span class="grams-unit">g</span>
+            </div>
+            <div class="quick-grams">
+              <button v-for="g in [50, 100, 150, 200, 300]" :key="g" class="qg" :class="{ active: grams === g }" @click="grams = g">{{ g }}g</button>
+            </div>
+            <div class="nutrition-preview">
+              <span>热量 {{ Math.round(selectedFood.caloriesPer100g * grams / 100) }}千卡</span>
+              <span>·</span>
+              <span>碳 {{ (selectedFood.carbsPer100g * grams / 100).toFixed(1) }}g</span>
+              <span>·</span>
+              <span>蛋 {{ (selectedFood.proteinPer100g * grams / 100).toFixed(1) }}g</span>
+              <span>·</span>
+              <span>脂 {{ (selectedFood.fatPer100g * grams / 100).toFixed(1) }}g</span>
+            </div>
+          </template>
+          <button class="submit-btn" :disabled="!selectedFood" @click="submitFromSearch">
+            添加{{ selectedFood ? ` ${selectedFood.name} ${grams}g` : '' }}
+          </button>
+        </div>
+
+        <!-- Manual -->
+        <div v-else class="manual-add">
+          <input v-model="customName" type="text" placeholder="食品名 (如: 自制三明治)" class="text-input" />
+          <div class="manual-row">
+            <div class="manual-field">
+              <label>热量(千卡)</label>
+              <input v-model.number="customCalories" type="number" min="0" class="text-input" />
+            </div>
+            <div class="manual-field">
+              <label>分量(g)</label>
+              <input v-model.number="grams" type="number" min="1" class="text-input" />
+            </div>
+          </div>
+          <div class="manual-row">
+            <div class="manual-field">
+              <label>碳水(g)</label>
+              <input v-model.number="customCarbs" type="number" min="0" step="0.1" class="text-input" />
+            </div>
+            <div class="manual-field">
+              <label>蛋白质(g)</label>
+              <input v-model.number="customProtein" type="number" min="0" step="0.1" class="text-input" />
+            </div>
+            <div class="manual-field">
+              <label>脂肪(g)</label>
+              <input v-model.number="customFat" type="number" min="0" step="0.1" class="text-input" />
+            </div>
+          </div>
+          <button class="submit-btn" :disabled="!customName.trim()" @click="submitManual">添加记录</button>
+        </div>
+      </div>
+    </BottomSheet>
   </div>
 </template>
 
@@ -360,31 +648,23 @@ function goFoodDb() {
 }
 
 .today-card {
-  padding: var(--space-5);
+  padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-}
-
-.macro-row {
-  display: flex;
   gap: var(--space-3);
 }
 
-.macro-row--3 {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-2);
+.macro-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
-.macro-block {
+.macro-main-left {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-
-.macro-block--main {
-  flex: 1;
 }
 
 .macro-label {
@@ -399,22 +679,32 @@ function goFoodDb() {
 }
 
 .macro-num {
-  font-size: var(--text-2xl);
+  font-size: var(--text-3xl);
+  font-weight: var(--fw-bold);
+  color: var(--color-warm);
+  line-height: 1.1;
+}
+
+.macro-num-sm {
+  font-size: var(--text-xl);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   line-height: 1.1;
 }
 
-.macro-block--main .macro-num {
-  font-size: var(--text-3xl);
-}
-
-.macro-goal {
+.macro-goal, .macro-goal-sm {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 
 .macro-bar {
+  height: 8px;
+  background: var(--bg-200);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.macro-bar-sm {
   height: 4px;
   background: var(--bg-200);
   border-radius: var(--radius-full);
@@ -427,244 +717,104 @@ function goFoodDb() {
   transition: width 0.4s var(--ease-immersive);
 }
 
-.add-btn {
+.add-food-fab {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-warm);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  padding: 12px;
-  border-radius: var(--radius-md);
-  border: 1.5px dashed var(--color-warm);
-  background: var(--warm-50);
-  color: var(--color-warm);
-  font-size: var(--text-md);
-  font-weight: var(--fw-semibold);
   cursor: pointer;
-  transition: all 0.15s;
+  box-shadow: var(--shadow-md);
+  flex-shrink: 0;
 }
 
-.add-btn:active { transform: scale(0.98); }
+.add-food-fab:active { transform: scale(0.93); }
 
-.add-form {
-  padding: var(--space-4);
+.macro-row-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+.macro-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.period-bar {
+  padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
 
-.form-header {
+.period-bar-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.form-title {
-  font-size: var(--text-md);
-  font-weight: var(--fw-bold);
-  color: var(--color-text);
-  margin: 0;
-}
-
-.close-btn {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-size: 22px;
-  cursor: pointer;
-}
-
-.toggle-row {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--bg-100);
-  border-radius: var(--radius-md);
-}
-
-.toggle-btn {
-  flex: 1;
-  padding: 8px;
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-}
-
-.toggle-btn--active {
-  background: var(--bg-50);
-  color: var(--color-text);
-}
-
-.food-picker {
-  display: flex;
-  flex-direction: column;
   gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
-.search-input,
-.text-input {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-md);
-  font-size: var(--text-md);
-  background: var(--bg-100);
-  color: var(--color-text);
-  outline: none;
-  box-sizing: border-box;
-}
-
-.search-input:focus,
-.text-input:focus {
-  border-color: var(--color-warm);
-  background: var(--bg-50);
-}
-
-.search-results {
-  max-height: 200px;
-  overflow-y: auto;
+.view-switch {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.food-result {
-  text-align: left;
-  padding: 8px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  background: var(--bg-100);
-  cursor: pointer;
-}
-
-.food-result--active {
-  border-color: var(--color-warm);
-  background: var(--warm-50);
-}
-
-.food-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.food-name {
-  font-size: var(--text-sm);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-}
-
-.food-cat {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
-}
-
-.custom-inputs {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.grams-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.grams-label {
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-}
-
-.grams-input {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-md);
-  font-size: var(--text-md);
-  background: var(--bg-100);
-  color: var(--color-text);
-  outline: none;
-}
-
-.grams-unit {
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-}
-
-.submit-btn {
-  padding: 12px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: var(--color-warm);
-  color: #fff;
-  font-size: var(--text-md);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-}
-
-.submit-btn:disabled {
-  background: var(--bg-300);
-  cursor: not-allowed;
-}
-
-.view-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--bg-100);
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-200);
   border-radius: var(--radius-full);
-  align-self: center;
 }
 
-.tab-btn {
-  padding: 6px 24px;
+.vs-btn {
+  padding: 5px 14px;
   border-radius: var(--radius-full);
   border: none;
   background: transparent;
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   font-size: var(--text-sm);
   font-weight: var(--fw-semibold);
   cursor: pointer;
 }
 
-.tab-btn--active {
+.vs-btn.active {
   background: var(--bg-50);
   color: var(--color-text);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-sm);
 }
 
 .macro-tabs {
   display: flex;
   gap: 4px;
-  align-self: center;
 }
 
 .macro-tab {
-  padding: 6px 14px;
+  padding: 5px 10px;
   border-radius: var(--radius-full);
   border: 1px solid var(--color-divider);
   background: var(--bg-100);
   color: var(--color-text-secondary);
-  font-size: var(--text-sm);
+  font-size: 11px;
   font-weight: var(--fw-semibold);
   cursor: pointer;
+}
+
+.macro-tab--active {
+  border-color: transparent;
 }
 
 .period-nav {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .nav-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: none;
   background: var(--bg-100);
@@ -675,53 +825,82 @@ function goFoodDb() {
   cursor: pointer;
 }
 
-.period-label {
-  font-size: var(--text-md);
+.nav-label {
+  font-size: var(--text-sm);
   font-weight: var(--fw-semibold);
   color: var(--color-text);
-  min-width: 140px;
+  min-width: 90px;
   text-align: center;
 }
 
-.chart-card {
-  padding: var(--space-4);
+.week-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
 }
 
-.chart-header {
+.day-chip {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-3);
+  gap: 4px;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
 }
 
-.chart-title {
-  font-size: var(--text-md);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
+.day-chip.is-selected {
+  background: rgba(255, 107, 53, 0.1);
 }
 
-.chart-avg {
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
+.day-chip.is-selected .dd { color: var(--color-warm); font-weight: var(--fw-bold); }
+.day-chip.is-today .dd { color: var(--color-warm); }
+
+.dw { font-size: 10px; color: var(--color-text-tertiary); }
+.dd { font-size: var(--text-sm); font-weight: var(--fw-medium); color: var(--color-text); }
+
+.d-bar {
+  width: 6px;
+  border-radius: 3px;
+  min-height: 2px;
+  transition: height 0.3s;
 }
 
-.history-card {
-  padding: var(--space-4);
-}
+.month-grid { display: flex; flex-direction: column; gap: 4px; }
+.mg-head { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.mgh { text-align: center; font-size: 10px; color: var(--color-text-tertiary); padding: 2px 0; }
+.mg-body { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
 
-.history-header {
+.mg-cell {
+  aspect-ratio: 1;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-3);
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  padding: 0;
 }
+.mg-cell.is-empty { visibility: hidden; }
+.mg-cell.is-selected { background: rgba(255, 107, 53, 0.12); }
+.mg-cell.is-selected .mg-num { color: var(--color-warm); font-weight: var(--fw-bold); }
+.mg-cell.is-today .mg-num { color: var(--color-warm); font-weight: var(--fw-bold); }
+.mg-num { font-size: var(--text-sm); color: var(--color-text); }
+.mg-dot { width: 4px; height: 4px; border-radius: 50%; }
 
-.block-title {
-  font-size: var(--text-md);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-  margin: 0;
-}
+.chart-card { padding: var(--space-4); }
+.chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
+.chart-title { font-size: var(--text-md); font-weight: var(--fw-semibold); color: var(--color-text); }
+.chart-avg { font-size: var(--text-sm); color: var(--color-text-tertiary); }
+
+.history-card { padding: var(--space-4); }
+.history-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
+.block-title { font-size: var(--text-md); font-weight: var(--fw-semibold); color: var(--color-text); margin: 0; }
 
 .link-btn {
   background: transparent;
@@ -731,18 +910,15 @@ function goFoodDb() {
   cursor: pointer;
 }
 
-.empty {
+.empty, .empty-sm {
   font-size: var(--text-sm);
   color: var(--color-text-tertiary);
   text-align: center;
   padding: var(--space-4);
 }
+.empty-sm { padding: var(--space-6) 0; }
 
-.history-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
+.history-list { display: flex; flex-direction: column; gap: var(--space-2); }
 
 .history-item {
   display: flex;
@@ -753,34 +929,250 @@ function goFoodDb() {
   border-radius: var(--radius-md);
 }
 
-.h-info {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.h-name {
-  font-size: var(--text-sm);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-}
-
-.h-meta {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
-}
+.h-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.h-name-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.h-name { font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--color-text); }
+.h-cal { font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--color-warm); flex-shrink: 0; }
+.h-meta { font-size: var(--text-xs); color: var(--color-text-tertiary); }
 
 .h-del {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
+  width: 28px; height: 28px; border-radius: 50%;
+  border: none; background: transparent;
   color: var(--color-text-tertiary);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.h-del:active { color: var(--danger-500); }
+
+/* Add food sheet */
+.add-food-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
+.add-tabs {
+  display: flex;
+  gap: var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-lg);
+  padding: 4px;
+}
+
+.add-tab {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.add-tab.active {
+  background: var(--bg-50);
+  color: var(--color-warm);
+  box-shadow: var(--shadow-sm);
+}
+
+.ai-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ai-hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  text-align: center;
+  padding: var(--space-2) var(--space-2) 0;
+  line-height: 1.5;
+}
+
+.ai-input-wrap {
+  padding: 0 var(--space-1);
+}
+
+.ai-textarea {
+  width: 100%;
+  padding: 12px;
+  border: 1.5px solid var(--color-divider);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-md);
+  background: var(--bg-100);
+  color: var(--color-text);
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.ai-textarea:focus {
+  border-color: var(--color-warm);
+  background: var(--bg-50);
+}
+
+.ai-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 var(--space-1);
+}
+
+.ex-chip {
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
   cursor: pointer;
 }
 
-.h-del:active { color: var(--danger-500); }
+.ex-chip:active { background: var(--bg-200); }
+
+.submit-btn {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--color-warm);
+  color: #fff;
+  font-size: var(--text-md);
+  font-weight: var(--fw-bold);
+  cursor: pointer;
+  margin-top: var(--space-1);
+}
+
+.submit-btn:active { transform: scale(0.98); }
+.submit-btn:disabled { background: var(--bg-300); cursor: not-allowed; }
+
+.search-add { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-ic {
+  position: absolute;
+  left: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px 12px 10px 36px;
+  border: 1.5px solid var(--color-divider);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-md);
+  background: var(--bg-100);
+  color: var(--color-text);
+  outline: none;
+  box-sizing: border-box;
+}
+.search-input:focus { border-color: var(--color-warm); background: var(--bg-50); }
+
+.food-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.food-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-100);
+  cursor: pointer;
+  text-align: left;
+}
+
+.food-item.active {
+  border-color: var(--color-warm);
+  background: var(--warm-50);
+}
+
+.food-info { display: flex; flex-direction: column; gap: 2px; }
+.food-name { font-size: var(--text-sm); font-weight: var(--fw-semibold); color: var(--color-text); }
+.food-meta { font-size: var(--text-xs); color: var(--color-text-tertiary); }
+
+.grams-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.grams-label { font-size: var(--text-sm); color: var(--color-text-secondary); min-width: 40px; }
+
+.grams-input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1.5px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+  background: var(--bg-100);
+  color: var(--color-text);
+  outline: none;
+}
+
+.grams-unit { font-size: var(--text-sm); color: var(--color-text-tertiary); }
+
+.quick-grams { display: flex; gap: 6px; flex-wrap: wrap; }
+.qg {
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.qg.active { border-color: var(--color-warm); background: var(--warm-50); color: var(--color-warm); }
+
+.nutrition-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  padding: 8px 12px;
+  background: var(--bg-100);
+  border-radius: var(--radius-md);
+}
+
+.manual-add { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.text-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+  background: var(--bg-100);
+  color: var(--color-text);
+  outline: none;
+  box-sizing: border-box;
+}
+.text-input:focus { border-color: var(--color-warm); background: var(--bg-50); }
+
+.manual-row { display: flex; gap: var(--space-2); }
+.manual-field { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.manual-field label { font-size: var(--text-xs); color: var(--color-text-tertiary); padding-left: 2px; }
+
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { scrollbar-width: none; }
 </style>

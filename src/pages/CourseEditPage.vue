@@ -162,15 +162,11 @@ onMounted(() => {
   <div v-if="course" class="course-edit-page">
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
+        <i class="bi bi-chevron-left" style="font-size:22px"></i>
       </button>
       <h2 class="sub-title">{{ course.name }}</h2>
       <button class="head-action" @click="togglePin" :class="{ active: course.pinned }" :title="course.pinned ? '取消置顶' : '置顶'">
-        <svg width="20" height="20" viewBox="0 0 24 24" :fill="course.pinned ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 4l4 4-5 1-3 3 1 6-2-2-3 3-1-1 3-3-2-2 6 1 3-3 1-5z"/>
-        </svg>
+        <i :class="course.pinned ? 'bi bi-pin-angle-fill' : 'bi bi-pin-angle'" style="font-size:20px"></i>
       </button>
       <ShareButton @click="showShare = true" />
     </header>
@@ -201,7 +197,7 @@ onMounted(() => {
 
       <div class="ov-actions">
         <button class="primary-btn" @click="startWorkout">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <i class="bi bi-play-fill" style="font-size:16px"></i>
           开始训练
         </button>
         <button class="ghost-btn" @click="toggleEditing">

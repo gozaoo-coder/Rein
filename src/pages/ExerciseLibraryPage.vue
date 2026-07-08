@@ -70,9 +70,7 @@ onMounted(() => {
   <div class="ex-lib-page">
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
+        <i class="bi bi-chevron-left" style="font-size:22px"></i>
       </button>
       <h2 class="sub-title">动作库</h2>
       <button class="add-btn" @click="openNew">+ 新增</button>
@@ -81,10 +79,7 @@ onMounted(() => {
     <!-- 搜索与筛选 -->
     <section class="clean-card filters">
       <div class="search-row">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8" />
-          <path d="M21 21l-4.35-4.35" />
-        </svg>
+        <i class="bi bi-search" style="font-size:16px"></i>
         <input v-model="search" type="text" placeholder="搜索动作名/器械" />
       </div>
       <div class="filter-row">
@@ -116,15 +111,8 @@ onMounted(() => {
           @click="openEdit(ex.id)"
         >
           <div class="ex-icon-circle" :data-cat="ex.category">
-            <svg v-if="ex.category === 'equipment'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6.5 6.5h11v11h-11z" />
-              <path d="M3 9.5v5M21 9.5v5" />
-            </svg>
-            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="5" r="2" />
-              <path d="M12 7v5" />
-              <path d="M8 20l4-8 4 8" />
-            </svg>
+            <i v-if="ex.category === 'equipment'" class="bi bi-bullseye" style="font-size:18px"></i>
+            <i v-else class="bi bi-person-arms-up" style="font-size:18px"></i>
           </div>
           <div class="ex-info">
             <div class="ex-name">
@@ -139,9 +127,7 @@ onMounted(() => {
               <span class="diff" :data-diff="ex.difficulty">{{ EXERCISE_DIFFICULTY_LABEL[ex.difficulty] }}</span>
             </div>
           </div>
-          <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 6l6 6-6 6" />
-          </svg>
+          <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
         </button>
       </div>
     </section>

@@ -75,9 +75,7 @@ function goBack() {
   <div class="cfg-page">
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
+        <i class="bi bi-chevron-left" style="font-size:22px"></i>
       </button>
       <h2 class="sub-title">AI 配置</h2>
     </header>
@@ -98,10 +96,7 @@ function goBack() {
         </div>
       </div>
       <div v-if="cfg.config.vision" class="vision-badge">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-          <circle cx="12" cy="12" r="3" />
-        </svg>
+        <i class="bi bi-eye" style="font-size:14px"></i>
         <span>Vision</span>
       </div>
     </section>
@@ -132,14 +127,8 @@ function goBack() {
             @blur="saveAll"
           />
           <button class="eye-btn" @click="showApiKey = !showApiKey" :aria-label="showApiKey ? '隐藏' : '显示'">
-            <svg v-if="showApiKey" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-              <line x1="1" y1="1" x2="23" y2="23" />
-            </svg>
-            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
+            <i v-if="showApiKey" class="bi bi-eye-slash" style="font-size:18px"></i>
+            <i v-else class="bi bi-eye" style="font-size:18px"></i>
           </button>
         </div>
         <div class="field-hint">仅本地存储，不上传第三方</div>
@@ -149,11 +138,7 @@ function goBack() {
         <div class="field-label-row">
           <label class="field-label">模型</label>
           <button class="refresh-btn" :disabled="testing || !baseURL || !apiKey" @click="refreshModels">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" :class="{ spinning: testing }">
-              <polyline points="23 4 23 10 17 10" />
-              <polyline points="1 20 1 14 7 14" />
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-            </svg>
+            <i class="bi bi-arrow-clockwise" style="font-size:14px" :class="{ spinning: testing }"></i>
             {{ testing ? "拉取中..." : "刷新模型列表" }}
           </button>
         </div>
@@ -172,9 +157,7 @@ function goBack() {
             <div class="model-caps">
               <span v-for="c in m.capabilities" :key="c" class="cap-tag" :data-cap="c">{{ c }}</span>
             </div>
-            <svg v-if="model === m.id" class="check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+            <i v-if="model === m.id" class="bi bi-check-lg check" style="font-size:16px"></i>
           </button>
         </div>
         <div v-else class="empty-models">

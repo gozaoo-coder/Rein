@@ -10,6 +10,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useTodoStore } from "@/stores/todoStore";
+import BottomSheet from "@/components/ui/BottomSheet.vue";
 import {
   HOLIDAY_PRESETS,
   PRIORITY_LABEL,
@@ -129,6 +130,66 @@ function makeEmptyForm(): EditorForm {
 
 function genId(prefix = "todo"): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function offsetDate(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return dateKey(d);
+}
+
+function nextWeekdayDate(targetDow: number): string {
+  const d = new Date();
+  const today = d.getDay();
+  let diff = targetDow - today;
+  if (diff <= 0) diff += 7;
+  d.setDate(d.getDate() + diff);
+  return dateKey(d);
+}
+
+function setDatePreset(preset: string) {
+  switch (preset) {
+    case "today":
+      editorForm.value.dueDate = todayKey();
+      break;
+    case "tomorrow":
+      editorForm.value.dueDate = offsetDate(1);
+      break;
+    case "day-after":
+      editorForm.value.dueDate = offsetDate(2);
+      break;
+    case "next-week":
+      editorForm.value.dueDate = offsetDate(7);
+      break;
+    case "mon":
+      editorForm.value.dueDate = nextWeekdayDate(1);
+      break;
+    case "no-date":
+      editorForm.value.dueDate = "";
+      break;
+  }
+}
+
+const datePresets = [
+  { key: "today", label: "今天" },
+  { key: "tomorrow", label: "明天" },
+  { key: "day-after", label: "后天" },
+  { key: "mon", label: "下周一" },
+  { key: "next-week", label: "下周" },
+  { key: "no-date", label: "无日期" },
+];
+
+function isDatePresetActive(key: string): boolean {
+  const f = editorForm.value;
+  switch (key) {
+    case "today": return f.dueDate === todayKey();
+    case "tomorrow": return f.dueDate === offsetDate(1);
+    case "day-after": return f.dueDate === offsetDate(2);
+    case "next-week": return f.dueDate === offsetDate(7);
+    case "mon": return f.dueDate === nextWeekdayDate(1);
+    case "no-date": return !f.dueDate;
+  }
+  return false;
 }
 
 // ====== 工具函数 ======
@@ -954,76 +1015,147 @@ watch(calMode, (m) => {
       </button>
     </template>
 
-    <!-- ============ 编辑器抽屉 ============ -->
-    <div v-if="showEditor" class="modal-mask" @click.self="closeEditor">
-      <div class="clean-card editor-sheet">
-        <div class="editor-head">
-          <h3 class="editor-title">{{ editingItem ? '编辑待办' : '新建待办' }}</h3>
-          <span v-if="editingQuadrant" class="editor-q-tag" :style="{ color: quadrantAccentVar(editingQuadrant) }">
-            {{ QUADRANT_LABEL[editingQuadrant] }}
-          </span>
+    <!-- ============ 编辑器 BottomSheet ============ -->
+    <BottomSheet
+      :visible="showEditor"
+      :title="editingItem ? '编辑待办' : '新建待办'"
+      :detents="['large']"
+      default-detent="large"
+      @update:visible="(v) => { if (!v) closeEditor() }"
+      @close="closeEditor"
+    >
+      <div class="ed-scroll">
+        <div v-if="editingQuadrant" class="ed-q-banner" :style="{ '--q-accent': quadrantAccentVar(editingQuadrant) }">
+          <span class="ed-q-dot" />
+          <span>将归入「{{ QUADRANT_LABEL[editingQuadrant] }}」象限</span>
+          <span class="ed-q-hint">{{ QUADRANT_HINT[editingQuadrant] }}</span>
         </div>
 
-        <label class="ed-field">
-          <span class="ed-label">标题 *</span>
-          <input v-model="editorForm.title" type="text" placeholder="如：完成训练计划" />
-        </label>
+        <!-- 标题 + 备注 -->
+        <div class="ed-section ed-section--title">
+          <input
+            v-model="editorForm.title"
+            class="ed-title-input"
+            type="text"
+            placeholder="要做什么？"
+            autofocus
+          />
+          <textarea
+            v-model="editorForm.note"
+            class="ed-note-input"
+            rows="2"
+            placeholder="添加备注（可选）"
+          />
+        </div>
 
-        <label class="ed-field">
-          <span class="ed-label">备注</span>
-          <textarea v-model="editorForm.note" rows="2" placeholder="可选" />
-        </label>
-
-        <div class="ed-field">
-          <span class="ed-label">类型</span>
-          <div class="seg-buttons">
+        <!-- 时间类型卡片 -->
+        <div class="ed-section">
+          <div class="ed-section-title">时间安排</div>
+          <div class="kind-cards">
             <button
               v-for="k in kindOptions"
               :key="k"
-              class="seg-btn"
+              class="kind-card"
               :class="{ active: editorForm.kind === k }"
               @click="editorForm.kind = k"
-            >{{ TODO_KIND_LABEL[k] }}</button>
+            >
+              <div class="kind-card-icon">
+                <i v-if="k === 'all-day'" class="bi bi-calendar3" style="font-size:20px"></i>
+                <i v-else-if="k === 'deadline'" class="bi bi-clock" style="font-size:20px"></i>
+                <i v-else class="bi bi-clock-history" style="font-size:20px"></i>
+              </div>
+              <div class="kind-card-info">
+                <div class="kind-card-name">{{ TODO_KIND_LABEL[k] }}</div>
+                <div class="kind-card-desc">
+                  {{ k === 'all-day' ? '全天安排，无需具体时刻' : k === 'deadline' ? '需在某时刻前完成' : '有明确起止时段' }}
+                </div>
+              </div>
+              <div class="kind-card-check" v-if="editorForm.kind === k">
+                <i class="bi bi-check-lg" style="font-size:16px"></i>
+              </div>
+            </button>
           </div>
         </div>
 
-        <div class="ed-grid">
-          <label class="ed-field">
-            <span class="ed-label">{{ editorForm.kind === 'deadline' ? '截止日期' : '日期' }}</span>
-            <input v-model="editorForm.dueDate" type="date" />
-          </label>
-          <label v-if="editorForm.kind === 'deadline'" class="ed-field">
-            <span class="ed-label">截止时间</span>
-            <input v-model="editorForm.dueTime" type="time" />
-          </label>
-        </div>
-
-        <div v-if="editorForm.kind === 'time-range'" class="ed-grid">
-          <label class="ed-field">
-            <span class="ed-label">开始时间</span>
-            <input v-model="editorForm.startTime" type="time" />
-          </label>
-          <label class="ed-field">
-            <span class="ed-label">结束时间</span>
-            <input v-model="editorForm.endTime" type="time" />
-          </label>
-        </div>
-
-        <div class="ed-field">
-          <span class="ed-label">重复</span>
-          <div class="toggle-row">
+        <!-- 日期快捷选择 -->
+        <div class="ed-section">
+          <div class="ed-section-title">日期</div>
+          <div class="date-chips">
             <button
-              class="toggle-pill"
+              v-for="p in datePresets"
+              :key="p.key"
+              class="date-chip"
+              :class="{ active: isDatePresetActive(p.key) }"
+              @click="setDatePreset(p.key)"
+            >{{ p.label }}</button>
+          </div>
+          <div class="date-input-row">
+            <input
+              v-model="editorForm.dueDate"
+              class="ed-input"
+              type="date"
+            />
+          </div>
+        </div>
+
+        <!-- 时间（根据 kind 显示） -->
+        <div v-if="editorForm.kind === 'deadline'" class="ed-section">
+          <div class="ed-section-title">截止时刻</div>
+          <div class="time-quick-chips">
+            <button
+              v-for="t in ['09:00','12:00','18:00','21:00','23:59']"
+              :key="t"
+              class="date-chip"
+              :class="{ active: editorForm.dueTime === t }"
+              @click="editorForm.dueTime = t"
+            >{{ t }}</button>
+          </div>
+          <div class="date-input-row">
+            <input
+              v-model="editorForm.dueTime"
+              class="ed-input"
+              type="time"
+            />
+          </div>
+        </div>
+
+        <div v-if="editorForm.kind === 'time-range'" class="ed-section">
+          <div class="ed-section-title">时间段</div>
+          <div class="time-range-row">
+            <div class="time-cell">
+              <span class="time-cell-label">开始</span>
+              <input v-model="editorForm.startTime" class="ed-input" type="time" />
+            </div>
+            <div class="time-arrow">→</div>
+            <div class="time-cell">
+              <span class="time-cell-label">结束</span>
+              <input v-model="editorForm.endTime" class="ed-input" type="time" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 重复 -->
+        <div class="ed-section">
+          <div class="ed-toggle-row">
+            <div class="ed-toggle-info">
+              <div class="ed-toggle-title">
+                <i class="bi bi-arrow-repeat" style="font-size:18px;margin-right:6px"></i>
+                重复
+              </div>
+              <div class="ed-toggle-desc">{{ editorForm.recurrenceEnabled ? RECURRENCE_LABEL[editorForm.recurrenceType] + (editorForm.recurrenceInterval > 1 ? ' · 每' + editorForm.recurrenceInterval : '') : '不重复' }}</div>
+            </div>
+            <button
+              class="ios-toggle"
               :class="{ on: editorForm.recurrenceEnabled }"
               @click="editorForm.recurrenceEnabled = !editorForm.recurrenceEnabled"
-            >{{ editorForm.recurrenceEnabled ? '已开启' : '关闭' }}</button>
+              :aria-label="editorForm.recurrenceEnabled ? '关闭重复' : '开启重复'"
+            >
+              <span class="ios-toggle-knob" />
+            </button>
           </div>
-        </div>
 
-        <template v-if="editorForm.recurrenceEnabled">
-          <div class="ed-field">
-            <span class="ed-label">重复方式</span>
-            <div class="seg-buttons">
+          <template v-if="editorForm.recurrenceEnabled">
+            <div class="seg-buttons ed-seg">
               <button
                 v-for="t in recurrenceTypeOptions"
                 :key="t"
@@ -1032,11 +1164,8 @@ watch(calMode, (m) => {
                 @click="editorForm.recurrenceType = t"
               >{{ RECURRENCE_LABEL[t] }}</button>
             </div>
-          </div>
 
-          <div v-if="editorForm.recurrenceType === 'custom'" class="ed-field">
-            <span class="ed-label">每周几</span>
-            <div class="weekday-toggles">
+            <div v-if="editorForm.recurrenceType === 'custom'" class="weekday-toggles">
               <button
                 v-for="(lbl, i) in weekdayLabels"
                 :key="i"
@@ -1045,141 +1174,147 @@ watch(calMode, (m) => {
                 @click="toggleWeekday(i)"
               >{{ lbl }}</button>
             </div>
-          </div>
 
-          <div class="ed-grid">
-            <label class="ed-field">
-              <span class="ed-label">间隔（每 N 个单位）</span>
-              <input
-                v-model.number="editorForm.recurrenceInterval"
-                type="number"
-                min="1"
-              />
+            <div class="recurrence-extra">
+              <label class="rec-field">
+                <span class="rec-field-label">间隔</span>
+                <input
+                  v-model.number="editorForm.recurrenceInterval"
+                  type="number"
+                  min="1"
+                  class="ed-input ed-input--small"
+                />
+                <span class="rec-field-unit">
+                  {{ editorForm.recurrenceType === 'daily' ? '天' : editorForm.recurrenceType === 'weekly' ? '周' : editorForm.recurrenceType === 'monthly' ? '月' : '天' }}
+                </span>
+              </label>
+              <label class="rec-field">
+                <span class="rec-field-label">截止</span>
+                <input
+                  v-model="editorForm.recurrenceUntil"
+                  type="date"
+                  class="ed-input"
+                />
+              </label>
+            </div>
+
+            <label class="ed-check-inline">
+              <input v-model="editorForm.checkin" type="checkbox" class="ed-checkbox" />
+              <span class="ed-check-label">每日打卡（完成后自动延续到次日）</span>
             </label>
-            <label class="ed-field">
-              <span class="ed-label">结束日期（可选）</span>
-              <input v-model="editorForm.recurrenceUntil" type="date" />
-            </label>
-          </div>
+          </template>
+        </div>
 
-          <label class="ed-field ed-check-row">
-            <input
-              v-model="editorForm.checkin"
-              type="checkbox"
-              class="ed-checkbox"
-            />
-            <span>每日打卡</span>
-          </label>
-        </template>
-
-        <label class="ed-field">
-          <span class="ed-label">地点</span>
-          <input
-            v-model="editorForm.location"
-            type="text"
-            placeholder="如：公司 / 健身房"
-          />
-        </label>
-
-        <div class="ed-field">
-          <span class="ed-label">优先级</span>
-          <div class="seg-buttons">
+        <!-- 优先级 + 紧急 -->
+        <div class="ed-section">
+          <div class="ed-section-title">优先级</div>
+          <div class="prio-chips">
             <button
               v-for="p in priorityOptions"
               :key="p"
-              class="seg-btn"
-              :class="{ active: editorForm.priority === p }"
+              class="prio-chip"
+              :class="[`prio--${p}`, { active: editorForm.priority === p }]"
               @click="editorForm.priority = p"
-            >{{ PRIORITY_LABEL[p] }}</button>
-          </div>
-        </div>
-
-        <div class="ed-field">
-          <span class="ed-label">紧急</span>
-          <div class="toggle-row">
-            <button
-              class="toggle-pill"
-              :class="{ on: editorForm.urgent }"
-              @click="editorForm.urgent = !editorForm.urgent"
-            >{{ editorForm.urgent ? '紧急' : '非紧急' }}</button>
-          </div>
-        </div>
-
-        <label class="ed-field">
-          <span class="ed-label">分类</span>
-          <select v-model="editorForm.categoryId">
-            <option
-              v-for="cat in store.categories"
-              :key="cat.id"
-              :value="cat.id"
-            >{{ cat.icon }} {{ cat.name }}</option>
-          </select>
-        </label>
-
-        <div class="ed-field">
-          <div class="ed-label-row">
-            <span class="ed-label">子任务</span>
-            <button class="mini-add-btn" @click="addSubtaskRow">+ 添加子任务</button>
-          </div>
-          <div v-if="!editorForm.subtasks.length" class="ed-hint">暂无子任务</div>
-          <div
-            v-for="(sub, idx) in editorForm.subtasks"
-            :key="idx"
-            class="subtask-row"
-          >
-            <button
-              class="check-btn small"
-              :class="{ checked: sub.done }"
-              @click="sub.done = !sub.done"
-              :aria-label="sub.done ? '取消完成' : '标记完成'"
             >
-              <i v-if="sub.done" class="bi bi-check-lg" style="font-size:12px"></i>
+              <span class="prio-dot-chip" />
+              {{ PRIORITY_LABEL[p] }}
             </button>
-            <input
-              v-model="sub.title"
-              class="sub-input sub-title-input"
-              type="text"
-              placeholder="子任务标题"
-            />
-            <input
-              v-model="sub.countMin"
-              class="sub-input sub-count-input"
-              type="number"
-              min="0"
-              placeholder="最小"
-            />
-            <input
-              v-model="sub.countMax"
-              class="sub-input sub-count-input"
-              type="number"
-              min="0"
-              placeholder="最大"
-            />
-            <input
-              v-model="sub.unit"
-              class="sub-input sub-unit-input"
-              type="text"
-              placeholder="单位"
-            />
-            <button
-              class="sub-remove"
-              @click="removeSubtaskRow(idx)"
-              aria-label="删除子任务"
-            >✕</button>
+          </div>
+          <label class="ed-check-inline ed-urgent-row">
+            <input v-model="editorForm.urgent" type="checkbox" class="ed-checkbox" />
+            <span class="ed-check-label">标记为紧急（会显示「急」标签并归入第一象限）</span>
+          </label>
+        </div>
+
+        <!-- 地点 + 分类 -->
+        <div class="ed-section">
+          <div class="ed-section-title">附加信息</div>
+          <div class="ed-field-group">
+            <div class="ed-input-with-icon">
+              <i class="bi bi-geo-alt" style="font-size:16px"></i>
+              <input
+                v-model="editorForm.location"
+                type="text"
+                class="ed-input ed-input--icon"
+                placeholder="地点（可选，如 健身房）"
+              />
+            </div>
+            <div class="ed-input-with-icon">
+              <i class="bi bi-tag" style="font-size:16px"></i>
+              <select v-model="editorForm.categoryId" class="ed-input ed-input--icon ed-select">
+                <option
+                  v-for="cat in store.categories"
+                  :key="cat.id"
+                  :value="cat.id"
+                >{{ cat.icon }} {{ cat.name }}</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <div class="ed-actions">
-          <button v-if="editingItem" class="danger-btn" @click="removeCurrent">删除</button>
-          <button class="ghost-btn" @click="closeEditor">取消</button>
-          <button
-            class="primary-btn"
-            :disabled="!editorForm.title.trim()"
-            @click="saveEditor"
-          >保存</button>
+        <!-- 子任务 -->
+        <div class="ed-section">
+          <div class="ed-section-head">
+            <div class="ed-section-title">子任务 / 清单</div>
+            <button class="ed-mini-add" @click="addSubtaskRow">
+              <i class="bi bi-plus-lg" style="font-size:14px"></i>
+              添加
+            </button>
+          </div>
+          <div v-if="!editorForm.subtasks.length" class="ed-empty-hint">
+            将复杂任务拆分成小步骤，完成一个勾一个
+          </div>
+          <div class="subtask-list">
+            <div
+              v-for="(sub, idx) in editorForm.subtasks"
+              :key="idx"
+              class="subtask-row-new"
+            >
+              <button
+                class="sub-check"
+                :class="{ checked: sub.done }"
+                @click="sub.done = !sub.done"
+                :aria-label="sub.done ? '取消完成' : '标记完成'"
+              >
+                <i v-if="sub.done" class="bi bi-check-lg" style="font-size:12px"></i>
+              </button>
+              <input
+                v-model="sub.title"
+                class="sub-title-new"
+                type="text"
+                placeholder="子任务内容"
+              />
+              <div class="sub-count-wrap">
+                <input v-model="sub.countMin" type="number" min="0" class="sub-count-new" placeholder="×" />
+                <input v-model="sub.countMax" type="number" min="0" class="sub-count-new" placeholder="×" />
+                <input v-model="sub.unit" type="text" class="sub-unit-new" placeholder="单位" />
+              </div>
+              <button class="sub-del" @click="removeSubtaskRow(idx)" aria-label="删除">
+                <i class="bi bi-x-lg" style="font-size:12px"></i>
+              </button>
+            </div>
+          </div>
         </div>
+
+        <!-- 底部留白 -->
+        <div class="ed-bottom-space" />
       </div>
-    </div>
+
+      <!-- 固定保存栏 -->
+      <div class="ed-footer">
+        <button v-if="editingItem" class="ed-footer-del" @click="removeCurrent" aria-label="删除">
+          <i class="bi bi-trash3" style="font-size:18px"></i>
+        </button>
+        <button
+          class="ed-footer-save"
+          :class="{ disabled: !editorForm.title.trim() }"
+          :disabled="!editorForm.title.trim()"
+          @click="saveEditor"
+        >
+          {{ editingItem ? '保存修改' : '创建待办' }}
+        </button>
+      </div>
+    </BottomSheet>
 
     <!-- ============ 分类管理弹窗 ============ -->
     <div v-if="showCategoryModal" class="modal-mask" @click.self="closeCategoryModal">
@@ -1958,26 +2093,15 @@ watch(calMode, (m) => {
   cursor: pointer;
 }
 
-/* ====== 编辑器 / 弹窗 ====== */
+/* ====== 分类弹窗（保留旧 modal-mask） ====== */
 .modal-mask {
   position: fixed;
   inset: 0;
-  z-index: 320;
+  z-index: 400;
   background: rgba(0, 0, 0, 0.45);
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-}
-.editor-sheet {
-  width: 100%;
-  max-width: 560px;
-  max-height: 90vh;
-  overflow-y: auto;
-  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
-  padding: var(--space-5);
-  background: var(--bg-50);
-  box-shadow: var(--shadow-modal);
-  animation: sheet-up 0.3s var(--ease-out);
 }
 .category-sheet {
   width: 100%;
@@ -1987,152 +2111,332 @@ watch(calMode, (m) => {
   background: var(--bg-50);
   box-shadow: var(--shadow-modal);
   margin: auto;
-  align-self: center;
-  animation: sheet-up 0.3s var(--ease-out);
+  animation: cat-pop 0.25s var(--ease-out);
 }
-@keyframes sheet-up {
-  from { transform: translateY(100%); opacity: 0.4; }
-  to { transform: translateY(0); opacity: 1; }
+@keyframes cat-pop {
+  from { transform: scale(0.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
-.editor-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-.editor-title {
-  font-size: var(--text-lg);
-  font-weight: var(--fw-bold);
-  color: var(--color-text);
-  margin: 0;
-}
-.editor-q-tag {
-  font-size: var(--text-xs);
-  font-weight: var(--fw-semibold);
-  background: var(--bg-200);
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-}
-.ed-field {
+/* ====== 新编辑器（BottomSheet 内部） ====== */
+.ed-scroll {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
-  margin-bottom: var(--space-3);
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
 }
-.ed-label { font-weight: var(--fw-medium); }
-.ed-label-row {
+.ed-bottom-space {
+  height: 12px;
+}
+
+/* 象限提示横幅 */
+.ed-q-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--q-accent) 10%, transparent);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--q-accent);
+  font-weight: var(--fw-medium);
+}
+.ed-q-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--q-accent);
+  flex-shrink: 0;
+}
+.ed-q-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  font-weight: var(--fw-normal);
+}
+
+/* 标题区 */
+.ed-section--title {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: var(--space-2) 0;
+}
+.ed-title-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: 22px;
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+  outline: none;
+  font-family: inherit;
+  padding: 4px 0;
+  line-height: 1.3;
+}
+.ed-title-input::placeholder {
+  color: var(--color-text-tertiary);
+  font-weight: var(--fw-medium);
+}
+.ed-note-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  outline: none;
+  font-family: inherit;
+  padding: 2px 0 4px;
+  resize: none;
+  line-height: 1.4;
+}
+.ed-note-input::placeholder { color: var(--color-text-tertiary); }
+
+/* 通用 section */
+.ed-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ed-section-title {
+  font-size: var(--text-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 2px;
+}
+.ed-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.ed-hint {
+.ed-mini-add {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  border: none;
+  background: transparent;
+  color: var(--color-warm);
+  font-size: var(--text-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.ed-mini-add:active { background: var(--warm-50); }
+
+/* 类型卡片 */
+.kind-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.kind-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 2px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: var(--bg-50);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s var(--ease-immersive);
+  position: relative;
+}
+.kind-card.active {
+  border-color: var(--color-warm);
+  background: var(--warm-50);
+}
+.kind-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--bg-200);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.kind-card.active .kind-card-icon {
+  background: var(--color-warm);
+  color: #fff;
+}
+.kind-card-info { flex: 1; min-width: 0; }
+.kind-card-name {
+  font-size: var(--text-md);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.kind-card-desc {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-  padding: var(--space-1) 0;
+  margin-top: 2px;
 }
-.ed-field input,
-.ed-field select,
-.ed-field textarea {
-  padding: 8px 12px;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-sm);
+.kind-card-check {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-warm);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* 日期 chips */
+.date-chips,
+.time-quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.date-chip {
+  padding: 6px 14px;
+  border: 1.5px solid var(--color-divider);
+  background: var(--bg-50);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all 0.15s var(--ease-immersive);
+}
+.date-chip.active {
+  border-color: var(--color-warm);
+  background: var(--color-warm);
+  color: #fff;
+}
+.date-chip:active { transform: scale(0.96); }
+
+.date-input-row {
+  display: flex;
+}
+.ed-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid var(--color-divider);
+  border-radius: var(--radius-md);
   font-size: var(--text-md);
   background: var(--bg-50);
   color: var(--color-text);
   outline: none;
   font-family: inherit;
-  resize: vertical;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
 }
-.ed-field input:focus,
-.ed-field select:focus,
-.ed-field textarea:focus {
-  border-color: var(--color-warm);
-}
-.ed-field input:disabled {
-  background: var(--bg-100);
-  color: var(--color-text-tertiary);
-}
-.ed-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-}
-.ed-check-row {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-2);
-}
-.ed-checkbox {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--color-warm);
+.ed-input:focus { border-color: var(--color-warm); }
+.ed-input--small { width: 80px; text-align: center; }
+.ed-input--icon { padding-left: 38px; }
+.ed-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
 }
 
-/* 分段按钮组 */
-.seg-buttons {
+/* 时间范围行 */
+.time-range-row {
   display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.time-cell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.time-cell-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  font-weight: var(--fw-medium);
+  padding: 0 2px;
+}
+.time-arrow {
+  font-size: var(--text-lg);
+  color: var(--color-text-tertiary);
+  padding-bottom: 10px;
+}
+
+/* iOS 风格 toggle */
+.ed-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ed-toggle-info { flex: 1; min-width: 0; }
+.ed-toggle-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-md);
+  font-weight: var(--fw-medium);
+  color: var(--color-text);
+}
+.ed-toggle-desc {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+}
+.ios-toggle {
+  width: 48px;
+  height: 28px;
+  border-radius: 14px;
+  border: none;
+  background: var(--bg-300);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.2s var(--ease-immersive);
+  flex-shrink: 0;
+  padding: 0;
+}
+.ios-toggle.on { background: var(--color-warm); }
+.ios-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: transform 0.2s var(--ease-immersive);
+}
+.ios-toggle.on .ios-toggle-knob { transform: translateX(20px); }
+
+/* 分段按钮（重复类型） */
+.seg-buttons.ed-seg {
   background: var(--bg-200);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   padding: 3px;
   gap: 2px;
 }
-.seg-btn {
-  flex: 1;
-  padding: 6px 8px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
+.seg-buttons .seg-btn {
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
   font-size: var(--text-sm);
-  font-weight: var(--fw-medium);
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  transition: all 0.15s var(--ease-immersive);
-}
-.seg-btn.active {
-  background: var(--bg-50);
-  color: var(--color-warm);
-  font-weight: var(--fw-semibold);
-  box-shadow: var(--shadow-sm);
-}
-
-/* 切换 pill */
-.toggle-row {
-  display: flex;
-}
-.toggle-pill {
-  padding: 6px 16px;
-  border: 1px solid var(--color-divider);
-  background: var(--bg-50);
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  font-weight: var(--fw-medium);
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: all 0.15s var(--ease-immersive);
-}
-.toggle-pill.on {
-  background: var(--color-warm);
-  color: #fff;
-  border-color: var(--color-warm);
 }
 
 /* 周几选择 */
 .weekday-toggles {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
+  gap: 6px;
 }
 .weekday-btn {
-  padding: 8px 0;
-  border: 1px solid var(--color-divider);
+  padding: 10px 0;
+  border: 1.5px solid var(--color-divider);
   background: var(--bg-50);
   color: var(--color-text-secondary);
   font-size: var(--text-sm);
   font-weight: var(--fw-medium);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s var(--ease-immersive);
 }
@@ -2142,70 +2446,253 @@ watch(calMode, (m) => {
   border-color: var(--color-warm);
 }
 
-/* 子任务行 */
-.mini-add-btn {
-  border: none;
-  background: transparent;
-  color: var(--color-warm);
-  font-size: var(--text-xs);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-  padding: 0;
+/* 重复额外选项 */
+.recurrence-extra {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
-.subtask-row {
+.rec-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+.rec-field-label { font-weight: var(--fw-medium); white-space: nowrap; }
+.rec-field-unit { color: var(--color-text-tertiary); white-space: nowrap; }
+
+/* 行内 checkbox */
+.ed-check-inline {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--color-divider);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 4px 0;
 }
-.subtask-row:last-child {
-  border-bottom: none;
+.ed-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-warm);
+  flex-shrink: 0;
 }
-.sub-input {
-  padding: 4px 8px;
+.ed-check-label { line-height: 1.3; }
+.ed-urgent-row {
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--danger-500) 6%, transparent);
+  border-radius: var(--radius-md);
+  margin-top: 4px;
+}
+
+/* 优先级 chips */
+.prio-chips {
+  display: flex;
+  gap: var(--space-2);
+}
+.prio-chip {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px var(--space-3);
+  border: 2px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  background: var(--bg-50);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all 0.15s var(--ease-immersive);
+}
+.prio-chip:active { transform: scale(0.97); }
+.prio-dot-chip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bg-400);
+}
+.prio--low.prio-chip.active {
+  border-color: var(--color-text-tertiary);
+  background: var(--bg-200);
+  color: var(--color-text);
+}
+.prio--low.prio-chip.active .prio-dot-chip { background: var(--color-text-tertiary); }
+.prio--normal.prio-chip.active {
+  border-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}
+.prio--normal.prio-chip.active .prio-dot-chip { background: var(--color-warning); }
+.prio--high.prio-chip.active {
+  border-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
+}
+.prio--high.prio-chip.active .prio-dot-chip { background: var(--color-danger); }
+
+/* 附加信息输入组 */
+.ed-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ed-input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.ed-input-with-icon > svg {
+  position: absolute;
+  left: 12px;
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+/* 空提示 */
+.ed-empty-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  text-align: center;
+  padding: var(--space-3);
+  background: var(--bg-100);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-divider);
+}
+
+/* 子任务列表 */
+.subtask-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.subtask-row-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-100);
+  border-radius: var(--radius-md);
+}
+.sub-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-400);
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  transition: all 0.15s;
+  padding: 0;
+}
+.sub-check.checked {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: #fff;
+}
+.sub-title-new {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  outline: none;
+  font-family: inherit;
+  padding: 4px 0;
+}
+.sub-count-wrap {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.sub-count-new {
+  width: 40px;
+  padding: 4px 6px;
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-xs);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  background: var(--bg-50);
+  color: var(--color-text);
+  outline: none;
+  font-family: inherit;
+  text-align: center;
+}
+.sub-count-new:focus { border-color: var(--color-warm); }
+.sub-unit-new {
+  width: 44px;
+  padding: 4px 6px;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
   background: var(--bg-50);
   color: var(--color-text);
   outline: none;
   font-family: inherit;
 }
-.sub-input:focus {
-  border-color: var(--color-warm);
-}
-.sub-title-input {
-  flex: 1;
-  min-width: 0;
-}
-.sub-count-input {
-  width: 56px;
-  flex-shrink: 0;
-}
-.sub-unit-input {
-  width: 60px;
-  flex-shrink: 0;
-}
-.sub-remove {
-  width: 24px;
-  height: 24px;
+.sub-unit-new:focus { border-color: var(--color-warm); }
+.sub-del {
+  width: 26px;
+  height: 26px;
   border: none;
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: 14px;
   cursor: pointer;
   flex-shrink: 0;
   border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
-.sub-remove:active {
-  background: var(--bg-200);
+.sub-del:active {
+  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
   color: var(--color-danger);
 }
 
-.ed-actions {
+/* 固定底部栏 */
+.ed-footer {
   display: flex;
   gap: var(--space-2);
-  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--color-divider);
+  background: var(--bg-50);
+  margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-5));
 }
+.ed-footer-del {
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ed-footer-del:active { background: color-mix(in srgb, var(--color-danger) 20%, transparent); }
+.ed-footer-save {
+  flex: 1;
+  height: 48px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-warm);
+  color: #fff;
+  font-size: var(--text-md);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  font-family: inherit;
+  transition: opacity 0.15s;
+}
+.ed-footer-save.disabled { opacity: 0.4; pointer-events: none; }
+.ed-footer-save:active { opacity: 0.85; }
 </style>
