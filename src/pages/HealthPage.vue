@@ -1,488 +1,207 @@
 <script setup lang="ts">
 /**
- * HealthPage — 首页（健康 + 待办 + 运动总览）
+ * HealthPage — 首页（可编辑卡片网格）
  *
- * 布局：
- *   1. 三环 Hero（卡路里 / 步数 / 运动）
- *   2. 每日汇总卡
- *   3. 今日待办总览 + 最近运动总览（双卡并列）
- *   4. 2x2 健康详情卡（睡眠 / 心率 / 血压 / 血糖）
+ * - HomeCardGrid：4 列网格，1x1/2x1/2x2/4x2 卡片
+ * - 编辑模式：长按卡片 或 点击右上角"编辑主页"（笔图标）
+ * - 三环数据源可在 HealthOverviewCard 上点击 → RingDataPickerSheet
  */
-import SemiRingProgress from "@/components/charts/SemiRingProgress.vue";
-import RangeChart, { type ChartZone } from "@/components/charts/RangeChart.vue";
-import LevelIndicator, { type LevelSegment } from "@/components/charts/LevelIndicator.vue";
-import TodoOverview from "@/components/home/TodoOverview.vue";
-import RecentWorkoutOverview from "@/components/home/RecentWorkoutOverview.vue";
+import { onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
+import HomeCardGrid from "@/components/cards/home/HomeCardGrid.vue";
+import AddCardSheet from "@/components/cards/home/AddCardSheet.vue";
+import RingDataPickerSheet from "@/components/cards/home/RingDataPickerSheet.vue";
+import { useCardLayoutStore } from "@/stores/cardLayoutStore";
+import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
-import { onMounted, computed } from "vue";
+import type { CardConfig } from "@/types/card";
 
-const todoStore = useTodoStore();
-const statsStore = useWorkoutStatsStore();
+const router = useRouter();
+const cardLayout = useCardLayoutStore();
+const health = useHealthDataStore();
+const todo = useTodoStore();
+const stats = useWorkoutStatsStore();
 
-const today = new Date();
-const dateStr = computed(() => {
-  const m = today.getMonth() + 1;
-  const d = today.getDate();
-  return `${m}月${d}日`;
+const editMode = ref(false);
+const showAddSheet = ref(false);
+const showRingSheet = ref(false);
+
+onMounted(async () => {
+  await Promise.all([
+    cardLayout.load(),
+    health.load(),
+    todo.load(),
+    stats.load(),
+  ]);
 });
 
-onMounted(() => {
-  void todoStore.load();
-  void statsStore.load();
-});
-
-/* ===== Health data (placeholder — will bind to store later) ===== */
-const health = {
-  calories: 229,
-  caloriesGoal: 400,
-  steps: 4247,
-  stepsGoal: 9000,
-  exerciseMin: 7,
-  exerciseGoal: 30,
-  activities: 6,
-  sleepHours: 3,
-  sleepMinutes: 54,
-  sleepQuality: "有待提高",
-  sleepQualityValue: 0.15,
-  heartRate: 60,
-  heartRateTime: "19:41",
-};
-
-function sleepDurationLabel() {
-  const h = health.sleepHours;
-  const m = health.sleepMinutes;
-  return `${h}时${m}分`;
-}
-
-/* ===== Heart rate 24h data + zones (RangeChart) =====
- * Zones from bottom (resting) to top (peak), matching Huawei Health colors:
- *   休息 <100, 热身 100-120, 燃脂 120-140, 有氧 140-160, 极限 160-190
- */
-const hrZones: ChartZone[] = [
-  { from: 50,  to: 100, color: "#e8e0ff", label: "休息" },
-  { from: 100, to: 120, color: "#c8d8ff", label: "热身" },
-  { from: 120, to: 140, color: "#ffd0b0", label: "燃脂" },
-  { from: 140, to: 160, color: "#ff9a78", label: "有氧" },
-  { from: 160, to: 190, color: "#ff6a50", label: "极限" },
-];
-
-/* Deterministic 30-sample 24h heart rate pattern simulating day rhythm */
-const hrData = computed(() => {
-  const pattern = [
-    0.12, 0.10, 0.08, 0.08, 0.10, 0.14, 0.20, 0.28,
-    0.42, 0.60, 0.78, 0.55, 0.38, 0.26, 0.22, 0.28,
-    0.50, 0.68, 0.82, 0.70, 0.52, 0.34, 0.24, 0.20,
-    0.16, 0.14, 0.12, 0.10, 0.10, 0.12,
-  ];
-  return pattern.map((p) => Math.round(58 + p * 110));
-});
-
-/* ===== Sleep quality levels (LevelIndicator) ===== */
-const sleepLevels: LevelSegment[] = [
-  { color: "#f0a0a0", label: "有待提高" },
-  { color: "#f0c880" },
-  { color: "#b0d890" },
-  { color: "#7cc07c", label: "优" },
-];
-</script>
-
-<template>
-  <div class="health-page">
-    <!-- ===== Activity Rings Hero (reusable SemiRingProgress) ===== -->
-    <div class="hero-section">
-      <SemiRingProgress
-        :calories="health.calories"
-        :calories-goal="health.caloriesGoal"
-        :steps="health.steps"
-        :steps-goal="health.stepsGoal"
-        :exercise-minutes="health.exerciseMin"
-        :exercise-goal="health.exerciseGoal"
-      />
-    </div>
-
-    <!-- ===== Daily Summary Card ===== -->
-    <div class="summary-card clean-card">
-      <div class="metrics-row">
-        <div class="metric-item">
-          <div class="metric-head">
-            <svg class="metric-icon metric-icon--orange" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2c1 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3 2-4-1 4 3 5 3 1 0-2-2-4 0-6z" />
-            </svg>
-            <span class="metric-label">卡路里</span>
-          </div>
-          <div class="metric-value-row">
-            <span class="metric-number">{{ health.calories }}</span>
-            <span class="metric-goal">/{{ health.caloriesGoal }}千卡</span>
-          </div>
-        </div>
-
-        <div class="metric-divider" />
-
-        <div class="metric-item">
-          <div class="metric-head">
-            <svg class="metric-icon metric-icon--yellow" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-            </svg>
-            <span class="metric-label">步数</span>
-          </div>
-          <div class="metric-value-row">
-            <span class="metric-number">{{ health.steps.toLocaleString() }}</span>
-            <span class="metric-goal">/{{ health.stepsGoal.toLocaleString() }}步</span>
-          </div>
-        </div>
-
-        <div class="metric-divider" />
-
-        <div class="metric-item">
-          <div class="metric-head">
-            <svg class="metric-icon metric-icon--blue" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 7v5l3 2" />
-            </svg>
-            <span class="metric-label">中高强度</span>
-          </div>
-          <div class="metric-value-row">
-            <span class="metric-number">{{ health.exerciseMin }}</span>
-            <span class="metric-goal">/{{ health.exerciseGoal }}分钟</span>
-          </div>
-        </div>
-      </div>
-
-      <hr class="divider summary-divider" />
-
-      <div class="activity-row">
-        <div class="activity-left">
-          <svg class="activity-icon" width="20" height="20" viewBox="0 0 24 24" fill="#64BB5C">
-            <circle cx="12" cy="8" r="4" />
-            <path d="M4 21v-1a7 7 0 0 1 14 0v1" />
-          </svg>
-          <span class="activity-label">活动次数</span>
-          <span class="activity-count">{{ health.activities }} 次</span>
-        </div>
-        <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-      </div>
-    </div>
-
-    <!-- ===== Overview cards: Todo + Recent Workout ===== -->
-    <div class="overview-grid">
-      <TodoOverview />
-      <RecentWorkoutOverview />
-    </div>
-
-    <!-- ===== Detail Cards 2x2 Grid ===== -->
-    <div class="detail-grid">
-      <!-- Sleep: LevelIndicator (equal segments + triangle pointer) -->
-      <div class="detail-card clean-card clean-card--interactive">
-        <div class="detail-icon-wrap icon-circle--purple icon-circle">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-          </svg>
-        </div>
-        <div class="detail-title">睡眠</div>
-        <div class="detail-value">{{ sleepDurationLabel() }}</div>
-        <div class="detail-sub">{{ dateStr }} 睡眠质量{{ health.sleepQuality }}</div>
-        <div class="detail-chart">
-          <LevelIndicator
-            :segments="sleepLevels"
-            :value="health.sleepQualityValue"
-            :height="10"
-            :gap="2"
-          />
-        </div>
-      </div>
-
-      <!-- Heart Rate: RangeChart (colored HR zones + 24h line) -->
-      <div class="detail-card clean-card clean-card--interactive">
-        <div class="detail-icon-wrap icon-circle--red icon-circle">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-          </svg>
-        </div>
-        <div class="detail-title">心率</div>
-        <div class="detail-value">{{ health.heartRate }}<span class="detail-unit">次/分</span></div>
-        <div class="detail-sub">{{ dateStr }} {{ health.heartRateTime }}</div>
-        <div class="detail-chart">
-          <RangeChart
-            :data="hrData"
-            :zones="hrZones"
-            :x-labels="['00:00', '06:00', '12:00', '18:00', '24:00']"
-            :height="52"
-            color="#e84040"
-            :stroke-width="1.6"
-            :smooth="true"
-          />
-        </div>
-      </div>
-
-      <!-- Blood Pressure -->
-      <div class="detail-card clean-card clean-card--interactive detail-card--row">
-        <div class="detail-row">
-          <div class="detail-icon-wrap icon-circle--blue icon-circle">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
-            </svg>
-          </div>
-          <div class="detail-text">
-            <div class="detail-title detail-title--row">血压</div>
-            <div class="detail-sub detail-sub--row">佩戴设备后测量</div>
-          </div>
-        </div>
-        <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-      </div>
-
-      <!-- Blood Sugar -->
-      <div class="detail-card clean-card clean-card--interactive detail-card--row">
-        <div class="detail-row">
-          <div class="detail-icon-wrap icon-circle--red icon-circle">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
-              <path d="M12 7v6M9 12h6" stroke="#fff" stroke-width="1.8" stroke-linecap="round" fill="none" />
-            </svg>
-          </div>
-          <div class="detail-text">
-            <div class="detail-title detail-title--row">血糖</div>
-            <div class="detail-sub detail-sub--row">记录您的血糖数据</div>
-          </div>
-        </div>
-        <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-      </div>
-    </div>
-  </div>
-</template>
-
-<style scoped>
-.health-page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-}
-
-/* ===== Hero Rings ===== */
-.hero-section {
-  padding: var(--space-2) var(--space-2) 0;
-  display: flex;
-  justify-content: center;
-}
-
-/* ===== Summary Card ===== */
-.summary-card {
-  padding: var(--space-5) var(--space-5) var(--space-4);
-}
-
-.metrics-row {
-  display: flex;
-  align-items: stretch;
-  justify-content: space-between;
-}
-
-.metric-item {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.metric-item:not(:last-child) {
-  padding-right: var(--space-2);
-}
-
-.metric-divider {
-  width: 1px;
-  background: var(--color-divider);
-  flex-shrink: 0;
-  align-self: stretch;
-  margin: 0 var(--space-1);
-}
-
-.metric-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.metric-icon {
-  flex-shrink: 0;
-}
-
-.metric-icon--orange { color: var(--color-warm); }
-.metric-icon--yellow { color: var(--ring-middle); }
-.metric-icon--blue { color: var(--ring-inner); }
-
-.metric-label {
-  font-size: var(--text-md);
-  font-weight: var(--fw-medium);
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.metric-value-row {
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
-  flex-wrap: wrap;
-}
-
-.metric-number {
-  font-size: var(--text-2xl);
-  font-weight: var(--fw-bold);
-  color: var(--color-text);
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-}
-
-.metric-goal {
-  font-size: var(--text-base);
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-}
-
-.summary-divider {
-  margin: var(--space-4) 0 var(--space-3);
-}
-
-.activity-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-1) 0;
-  color: var(--color-text-tertiary);
-}
-
-.activity-left {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--color-text);
-}
-
-.chevron {
-  flex-shrink: 0;
-  color: var(--color-text-tertiary);
-}
-
-.activity-icon {
-  flex-shrink: 0;
-}
-
-.activity-label {
-  font-size: var(--text-md);
-  font-weight: var(--fw-medium);
-  color: var(--color-text);
-}
-
-.activity-count {
-  font-size: var(--text-md);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-}
-
-/* ===== Detail Cards Grid ===== */
-.detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  grid-auto-rows: 1fr;
-  gap: var(--space-3);
-}
-
-/* ===== Overview cards (Todo + Recent Workout) ===== */
-.overview-grid {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-@media (min-width: 768px) {
-  .overview-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    align-items: start;
+function toggleEdit() {
+  editMode.value = !editMode.value;
+  if (!editMode.value) {
+    showAddSheet.value = false;
   }
 }
 
-.detail-card {
+function onCardClick(card: CardConfig) {
+  // 三环数据源：HealthOverviewCard 点击 → 打开 RingDataPickerSheet
+  if (card.type === "health-overview") {
+    showRingSheet.value = true;
+    return;
+  }
+  // 其他卡片：跳转对应详情页
+  switch (card.type) {
+    case "today-todo":
+    case "important-todo":
+    case "urgent-todo":
+      void router.push("/todo");
+      break;
+    case "recent-workout":
+      void router.push("/sports");
+      break;
+    case "water-record":
+      void router.push("/health/water");
+      break;
+    case "food-record":
+      void router.push("/health/food");
+      break;
+  }
+}
+
+</script>
+
+<template>
+  <div class="home-page" :class="{ 'is-editing': editMode }">
+    <!-- 编辑模式工具栏 -->
+    <div v-if="editMode" class="edit-toolbar clean-card">
+      <button class="tool-btn" @click="showRingSheet = true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="5" />
+          <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+        </svg>
+        <span>三环数据</span>
+      </button>
+      <button class="tool-btn tool-btn--primary" @click="showAddSheet = true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        <span>添加卡片</span>
+      </button>
+      <button class="tool-btn tool-btn--done" @click="toggleEdit">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+        <span>完成</span>
+      </button>
+    </div>
+
+    <!-- 右上角编辑入口（非编辑模式可见） -->
+    <button v-else class="edit-fab" @click="toggleEdit" aria-label="编辑主页">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+      </svg>
+    </button>
+
+    <!-- 卡片网格 -->
+    <HomeCardGrid
+      :edit-mode="editMode"
+      @click="onCardClick"
+      @enter-edit="editMode = true"
+    />
+  </div>
+
+  <!-- 添加卡片 -->
+  <AddCardSheet v-if="showAddSheet" @close="showAddSheet = false" />
+
+  <!-- 三环数据源 -->
+  <RingDataPickerSheet v-if="showRingSheet" @close="showRingSheet = false" />
+</template>
+
+<style scoped>
+.home-page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  min-height: 180px;
+  gap: var(--space-3);
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   position: relative;
 }
 
-.detail-icon-wrap {
-  margin-bottom: var(--space-1);
+.home-page.is-editing {
+  padding-top: var(--space-2);
 }
 
-.detail-title {
-  font-size: var(--text-lg);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-  line-height: 1.2;
-}
-
-.detail-value {
-  font-size: var(--text-2xl);
-  font-weight: var(--fw-bold);
-  color: var(--color-text);
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-}
-
-.detail-unit {
-  font-size: var(--text-base);
-  font-weight: var(--fw-regular);
-  color: var(--color-text-secondary);
-  margin-left: 2px;
-}
-
-.detail-sub {
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-  line-height: 1.3;
-}
-
-.detail-chart {
-  margin-top: auto;
-  width: 100%;
-}
-
-/* Row-style detail cards (BP / Blood Sugar) share same grid cell height */
-.detail-card--row {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.detail-row {
+/* 编辑工具栏 */
+.edit-toolbar {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  align-self: stretch;
+  background: var(--bg-50);
+  box-shadow: var(--shadow-card);
+  animation: toolbar-down 0.25s var(--ease-out);
+}
+
+@keyframes toolbar-down {
+  from { transform: translateY(-12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.tool-btn {
   flex: 1;
-  min-width: 0;
-}
-
-.detail-text {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.detail-title--row {
-  font-size: var(--text-lg);
-}
-
-.detail-sub--row {
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: var(--bg-100);
+  color: var(--color-text);
   font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tool-btn:active {
+  transform: scale(0.96);
+}
+
+.tool-btn--primary {
+  background: var(--color-warm);
+  color: #fff;
+}
+
+.tool-btn--done {
+  background: var(--success-500);
+  color: #fff;
+}
+
+/* 编辑入口 FAB（笔图标） */
+.edit-fab {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 5;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.7);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.edit-fab:active {
+  transform: scale(0.9);
 }
 </style>
