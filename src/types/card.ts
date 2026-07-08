@@ -16,6 +16,7 @@ export type CardType =
   | "urgent-todo" // 紧急待办
   | "recent-workout" // 最近运动
   | "water-record" // 饮水记录
+  | "water-quick-add" // 快速记水（1x1/2x1，只做快速加）
   | "food-record"; // 记录食物
 
 /** 环形图可选数据源 */
@@ -128,6 +129,15 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     defaultSize: "2x1",
     accent: "var(--icon-blue)",
     icon: "droplet-fill",
+  },
+  "water-quick-add": {
+    type: "water-quick-add",
+    title: "快速记水",
+    description: "点按数字直接记录饮水量",
+    sizes: ["1x1", "2x1"],
+    defaultSize: "2x1",
+    accent: "var(--icon-blue)",
+    icon: "cup-straw",
   },
   "food-record": {
     type: "food-record",

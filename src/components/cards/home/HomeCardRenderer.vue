@@ -12,6 +12,7 @@ import ImportantTodoCard from "./ImportantTodoCard.vue";
 import UrgentTodoCard from "./UrgentTodoCard.vue";
 import RecentWorkoutCard from "./RecentWorkoutCard.vue";
 import WaterRecordCard from "./WaterRecordCard.vue";
+import WaterQuickAddCard from "./WaterQuickAddCard.vue";
 import FoodRecordCard from "./FoodRecordCard.vue";
 
 defineProps<{ card: CardConfig }>();
@@ -26,5 +27,6 @@ const emit = defineEmits<{ click: [] }>();
   <UrgentTodoCard v-else-if="card.type === 'urgent-todo'" :size="card.size" @click="emit('click')" />
   <RecentWorkoutCard v-else-if="card.type === 'recent-workout'" :size="card.size" @click="emit('click')" />
   <WaterRecordCard v-else-if="card.type === 'water-record'" :size="card.size" @click="emit('click')" />
+  <WaterQuickAddCard v-else-if="card.type === 'water-quick-add'" :size="card.size" />
   <FoodRecordCard v-else-if="card.type === 'food-record'" :size="card.size" @click="emit('click')" />
 </template>

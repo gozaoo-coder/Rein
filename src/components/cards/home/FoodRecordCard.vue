@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useRouter } from "vue-router";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import type { CardSize } from "@/types/card";
 
@@ -7,6 +8,7 @@ const props = defineProps<{ size: CardSize }>();
 const emit = defineEmits<{ click: [] }>();
 
 const store = useHealthDataStore();
+const router = useRouter();
 
 const calories = computed(() => store.todayCalories);
 const carbs = computed(() => store.todayCarbs);
@@ -25,6 +27,11 @@ const macros = computed(() => [
 ]);
 
 const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
+
+function goComposition(e: Event) {
+  e.stopPropagation();
+  void router.push("/health/food/composition");
+}
 </script>
 
 <template>
@@ -38,12 +45,19 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
         <i class="bi bi-apple" style="font-size:12px"></i>
       </span>
       <span class="card-title">饮食</span>
+      <button class="comp-btn" @click="goComposition" aria-label="查看饮食构成">
+        <span class="comp-btn-text">构成</span>
+        <i class="bi bi-chevron-right" style="font-size:10px"></i>
+      </button>
       <span class="card-kcal">{{ calories }}kcal</span>
     </div>
 
     <div v-if="size === '1x1'" class="mini">
       <div class="mini-num">{{ calories }}</div>
       <div class="mini-label">kcal</div>
+      <button class="comp-link-mini" @click="goComposition" aria-label="饮食构成">
+        <i class="bi bi-pie-chart" style="font-size:10px"></i>
+      </button>
     </div>
 
     <div v-else-if="size === '2x1'" class="body-2x1">
@@ -58,14 +72,18 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
     </div>
 
     <div v-else class="body-2x2">
-      <div class="cal-big-row">
+      <div class="cal-big-row" @click="goComposition">
         <div class="cal-big-text">
           <span class="cal-big-num">{{ calories }}</span>
           <span class="cal-big-unit">kcal</span>
         </div>
         <span class="cal-big-goal">/ {{ CAL_GOAL }}</span>
+        <span class="comp-tag">
+          <i class="bi bi-pie-chart-fill" style="font-size:10px"></i>
+          构成
+        </span>
       </div>
-      <div class="macro-rows">
+      <div class="macro-rows" @click="goComposition">
         <div v-for="m in macros" :key="m.label" class="macro-row">
           <span class="macro-dot" :style="{ background: m.color }" />
           <span class="macro-label">{{ m.label === '碳' ? '碳水' : m.label === '蛋' ? '蛋白' : '脂肪' }}</span>
@@ -136,6 +154,94 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
   font-size: var(--text-xs);
   color: var(--success-600);
   font-weight: var(--fw-semibold);
+}
+
+.comp-link-mini {
+  margin-top: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--success-600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.comp-link-mini:active { transform: scale(0.92); }
+
+.comp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: rgba(45, 177, 92, 0.12);
+  color: var(--success-600);
+  font-size: 9px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.comp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 4px;
+  padding: 2px 6px 2px 8px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: rgba(45, 179, 113, 0.1);
+  color: var(--success-600);
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.12s;
+}
+.comp-btn:active {
+  transform: scale(0.92);
+  background: rgba(45, 179, 113, 0.2);
+}
+.comp-btn-text {
+  line-height: 1;
+}
+
+.comp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(45, 179, 113, 0.12);
+  color: var(--success-600);
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.comp-link-mini {
+  margin-top: 2px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(45, 179, 113, 0.12);
+  color: var(--success-600);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.comp-link-mini:active { transform: scale(0.9); }
+
+.cal-big-row {
+  cursor: pointer;
+}
+.macro-rows {
+  cursor: pointer;
 }
 
 .mini {

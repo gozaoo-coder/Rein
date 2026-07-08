@@ -257,6 +257,9 @@ code, pre, kbd {
   box-shadow: var(--card-shadow);
   padding: var(--card-padding);
   overflow: hidden;
+  /* Prevent Tailwind ring-shadow leak (currentColor fallback causes black border) */
+  --tw-ring-color: transparent;
+  --tw-ring-shadow: 0 0 #0000;
 }
 
 .clean-card--interactive {

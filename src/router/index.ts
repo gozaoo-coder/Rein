@@ -84,6 +84,11 @@ const router = createRouter({
       component: () => import("@/pages/FoodPage.vue"),
     },
     {
+      path: "/health/food/composition",
+      name: "health-food-composition",
+      component: () => import("@/pages/FoodCompositionPage.vue"),
+    },
+    {
       path: "/health/food-db",
       name: "health-food-db",
       component: () => import("@/pages/FoodDatabasePage.vue"),
