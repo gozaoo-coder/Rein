@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { AiConfig, ModelInfo } from "@/types/ai";
 import { readJSON, writeJSON } from "@/composables/useStorage";
-import { fetchModels, checkVisionSupport } from "@/composables/useAiClient";
+import { refreshCustomModels, checkVisionSupport } from "@/composables/usePiProvider";
 
 const CONFIG_KEY = "ai-config";
 const MODELS_KEY = "ai-models-cache";
@@ -53,7 +53,7 @@ export const useAiConfigStore = defineStore("aiConfig", () => {
     loadingModels.value = true;
     modelsError.value = null;
     try {
-      const list = await fetchModels(config.value.baseURL, config.value.apiKey);
+      const list = await refreshCustomModels(config.value.baseURL, config.value.apiKey);
       models.value = list;
       await writeJSON(MODELS_KEY, list);
       // 自动检测当前模型是否支持图片
