@@ -452,6 +452,38 @@ function removeFood(food: FoodItem) {
 }
 .add-btn:active { transform: scale(0.98); }
 
+.chip-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 4px;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+}
+.chip-row::-webkit-scrollbar { display: none; }
+.chip {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--bg-300);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.chip:active { transform: scale(0.95); }
+.chip--active {
+  background: var(--color-warm);
+  color: #fff;
+  border-color: var(--color-warm);
+}
+
 .empty {
   padding: var(--space-5);
   font-size: var(--text-sm);
