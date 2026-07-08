@@ -31,16 +31,16 @@ const exerciseList = computed(() => (Array.isArray(data.value) ? (data.value as 
 const stats = computed(() => (data.value as WorkoutStats | undefined) ?? null);
 
 const toolLabel: Record<string, string> = {
-  "course.list": "查询课程",
-  "course.get": "课程详情",
-  "course.create": "创建课程",
-  "course.update": "更新课程",
-  "course.delete": "删除课程",
-  "exercise.list": "查询动作",
-  "exercise.create": "创建动作",
-  "exercise.update": "更新动作",
-  "exercise.delete": "删除动作",
-  "stats.get": "运动统计",
+  "course_list": "查询课程",
+  "course_get": "课程详情",
+  "course_create": "创建课程",
+  "course_update": "更新课程",
+  "course_delete": "删除课程",
+  "exercise_list": "查询动作",
+  "exercise_create": "创建动作",
+  "exercise_update": "更新动作",
+  "exercise_delete": "删除动作",
+  "stats_get": "运动统计",
 };
 const actionLabel = computed(() => toolLabel[props.result.name] ?? props.result.name);
 </script>

@@ -6,18 +6,22 @@
  * - 浮动输入栏（与底部 pill tab bar 上下布局）
  * - 视觉模型时显示图片按钮
  * - @ 触发引用选择器（历史会话 / 当前上文）
+ * - 虚拟列表：content-visibility + 消息上限，防止长对话卡顿
+ * - 错误气泡：醒目红色 + 重试按钮 + 错误详情
  */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { marked } from "marked";
 import { useAiChatStore } from "@/stores/aiChatStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
+import { useToast } from "@/composables/useToast";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
 import type { Citation, ChatMessage, ContentPart, Conversation } from "@/types/ai";
 
 const router = useRouter();
 const store = useAiChatStore();
 const cfg = useAiConfigStore();
+const toast = useToast();
 
 const chatRef = ref<HTMLElement | null>(null);
 const inputText = ref("");
@@ -25,8 +29,18 @@ const pendingImages = ref<string[]>([]);
 const pendingCitations = ref<Citation[]>([]);
 const showCitePicker = ref(false);
 const sending = ref(false);
+/** 渲染窗口：默认仅渲染最近 N 条，防止超长对话卡顿 */
+const RENDER_LIMIT = 200;
+const showAll = ref(false);
 
-const messages = computed(() => store.active?.messages ?? []);
+const allMessages = computed(() => store.active?.messages ?? []);
+const messages = computed(() => {
+  if (showAll.value || allMessages.value.length <= RENDER_LIMIT) {
+    return allMessages.value;
+  }
+  return allMessages.value.slice(-RENDER_LIMIT);
+});
+const hiddenCount = computed(() => Math.max(0, allMessages.value.length - messages.value.length));
 const isConfigured = computed(() => cfg.isConfigured);
 const vision = computed(() => cfg.config.vision);
 
@@ -95,7 +109,25 @@ async function send(text?: string) {
   try {
     await store.send(content, cites);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     console.error("[ai] send failed", e);
+    toast.error(msg);
+  } finally {
+    sending.value = false;
+    scrollToBottom();
+  }
+}
+
+/** 重试：删除最后一条 assistant 消息（含 tool）后重新生成 */
+async function retryLast() {
+  if (sending.value) return;
+  sending.value = true;
+  try {
+    await store.regenerate();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[ai] retry failed", e);
+    toast.error(`重试失败：${msg}`);
   } finally {
     sending.value = false;
     scrollToBottom();
@@ -227,7 +259,10 @@ watch(
 );
 watch(
   () => store.activeId,
-  () => scrollToBottom(),
+  () => {
+    showAll.value = false;
+    scrollToBottom();
+  },
 );
 </script>
 
@@ -273,7 +308,7 @@ watch(
       </div>
 
       <!-- 欢迎横幅（已配置但无消息） -->
-      <div v-else-if="messages.length === 0" class="welcome-banner clean-card">
+      <div v-else-if="allMessages.length === 0" class="welcome-banner clean-card">
         <div class="welcome-avatar">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
@@ -294,7 +329,17 @@ watch(
         </div>
       </div>
 
-      <!-- 消息列表 -->
+      <!-- 虚拟列表：折叠提示 -->
+      <div v-if="hiddenCount > 0" class="virtual-fold">
+        <button class="fold-btn" @click="showAll = true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="18 15 12 9 6 15" />
+          </svg>
+          <span>加载更早的 {{ hiddenCount }} 条消息</span>
+        </button>
+      </div>
+
+      <!-- 消息列表（content-visibility 自动虚拟化） -->
       <template v-for="msg in messages" :key="msg.id">
         <!-- tool 角色消息：不直接渲染（卡片挂在 assistant 上） -->
         <div v-if="msg.role === 'tool'" class="tool-msg-hidden" />
@@ -369,6 +414,25 @@ watch(
               <!-- pending 指示 -->
               <div v-if="msg.pending" class="pending-dots">
                 <span /><span /><span />
+              </div>
+
+              <!-- 错误详情 + 重试 -->
+              <div v-if="msg.error && !msg.pending" class="err-actions">
+                <div class="err-detail">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span class="err-text">{{ msg.error }}</span>
+                </div>
+                <button class="retry-btn" @click="retryLast">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                  <span>重试</span>
+                </button>
               </div>
             </div>
 
@@ -625,12 +689,15 @@ watch(
 }
 .chip:active { transform: scale(0.96); }
 
-/* 消息行 */
+/* 消息行 — content-visibility 实现浏览器原生虚拟化，跳过屏幕外布局/绘制 */
 .msg-row {
   display: flex;
   gap: var(--space-2);
   align-items: flex-start;
   max-width: 92%;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+  contain: layout paint style;
 }
 .msg-row.user {
   align-self: flex-end;
@@ -751,7 +818,76 @@ watch(
 .msg-bubble.is-error {
   background: var(--danger-50, #ffe7e2);
   color: var(--danger-600, #c4180c);
+  border: 1px solid var(--danger-200, #ffb4a8);
 }
+
+/* 错误详情 + 重试 */
+.err-actions {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--danger-200, #ffb4a8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.err-detail {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--text-xs);
+  color: var(--danger-700, #a3170a);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.err-detail svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.err-text {
+  flex: 1;
+}
+.retry-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  background: var(--danger-600, #c4180c);
+  color: #fff;
+  border: none;
+  font-size: var(--text-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+.retry-btn:active { transform: scale(0.96); }
+.retry-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 虚拟列表折叠提示 */
+.virtual-fold {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2) 0;
+}
+.fold-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--bg-100, rgba(0, 0, 0, 0.04));
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-divider);
+  font-size: var(--text-xs);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+.fold-btn:active { transform: scale(0.96); }
 
 .msg-content {
   font-size: var(--text-sm);

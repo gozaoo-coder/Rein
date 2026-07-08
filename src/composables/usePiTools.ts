@@ -118,10 +118,10 @@ function executeCourseList(args: AnyParams): ToolResult {
   }));
   return {
     toolCallId: "",
-    name: "course.list",
+    name: "course_list",
     ok: true,
     content: JSON.stringify(summary),
-    summary: okSummary("course.list", `共 ${summary.length} 个课程`),
+    summary: okSummary("course_list", `共 ${summary.length} 个课程`),
     card: "course-list",
     cardData: list,
   };
@@ -133,10 +133,10 @@ function executeCourseGet(args: AnyParams): ToolResult {
   if (!c) throw new Error("课程不存在");
   return {
     toolCallId: "",
-    name: "course.get",
+    name: "course_get",
     ok: true,
     content: JSON.stringify(c),
-    summary: okSummary("course.get", c.name),
+    summary: okSummary("course_get", c.name),
     card: "course",
     cardData: c,
   };
@@ -160,10 +160,10 @@ function executeCourseCreate(args: AnyParams): ToolResult {
   });
   return {
     toolCallId: "",
-    name: "course.create",
+    name: "course_create",
     ok: true,
     content: JSON.stringify(created),
-    summary: okSummary("course.create", `已创建「${created.name}」`),
+    summary: okSummary("course_create", `已创建「${created.name}」`),
     card: "course",
     cardData: created,
   };
@@ -187,10 +187,10 @@ function executeCourseUpdate(args: AnyParams): ToolResult {
   const updated = store.getById(id)!;
   return {
     toolCallId: "",
-    name: "course.update",
+    name: "course_update",
     ok: true,
     content: JSON.stringify(updated),
-    summary: okSummary("course.update", `已更新「${updated.name}」`),
+    summary: okSummary("course_update", `已更新「${updated.name}」`),
     card: "course",
     cardData: updated,
   };
@@ -205,10 +205,10 @@ function executeCourseDelete(args: AnyParams): ToolResult {
   store.deleteCourse(id);
   return {
     toolCallId: "",
-    name: "course.delete",
+    name: "course_delete",
     ok: true,
     content: JSON.stringify({ deleted: true, id }),
-    summary: okSummary("course.delete", `已删除「${title}」`),
+    summary: okSummary("course_delete", `已删除「${title}」`),
     card: "raw",
     cardData: { deleted: true, id, title },
   };
@@ -223,10 +223,10 @@ function executeExerciseList(args: AnyParams): ToolResult {
   if (cat) list = list.filter((e) => e.category === cat);
   return {
     toolCallId: "",
-    name: "exercise.list",
+    name: "exercise_list",
     ok: true,
     content: JSON.stringify(list),
-    summary: okSummary("exercise.list", `共 ${list.length} 个动作`),
+    summary: okSummary("exercise_list", `共 ${list.length} 个动作`),
     card: "exercise-list",
     cardData: list,
   };
@@ -245,10 +245,10 @@ function executeExerciseCreate(args: AnyParams): ToolResult {
   });
   return {
     toolCallId: "",
-    name: "exercise.create",
+    name: "exercise_create",
     ok: true,
     content: JSON.stringify(ex),
-    summary: okSummary("exercise.create", `已创建「${ex.name}」`),
+    summary: okSummary("exercise_create", `已创建「${ex.name}」`),
     card: "exercise",
     cardData: ex,
   };
@@ -270,10 +270,10 @@ function executeExerciseUpdate(args: AnyParams): ToolResult {
   const updated = store.getById(id)!;
   return {
     toolCallId: "",
-    name: "exercise.update",
+    name: "exercise_update",
     ok: true,
     content: JSON.stringify(updated),
-    summary: okSummary("exercise.update", `已更新「${updated.name}」`),
+    summary: okSummary("exercise_update", `已更新「${updated.name}」`),
     card: "exercise",
     cardData: updated,
   };
@@ -289,10 +289,10 @@ function executeExerciseDelete(args: AnyParams): ToolResult {
   store.deleteExercise(id);
   return {
     toolCallId: "",
-    name: "exercise.delete",
+    name: "exercise_delete",
     ok: true,
     content: JSON.stringify({ deleted: true, id }),
-    summary: okSummary("exercise.delete", `已删除「${title}」`),
+    summary: okSummary("exercise_delete", `已删除「${title}」`),
     card: "raw",
     cardData: { deleted: true, id, title },
   };
@@ -303,11 +303,11 @@ function executeStatsGet(): ToolResult {
   const s = store.stats;
   return {
     toolCallId: "",
-    name: "stats.get",
+    name: "stats_get",
     ok: true,
     content: JSON.stringify(s),
     summary: okSummary(
-      "stats.get",
+      "stats_get",
       `已训练 ${s.totalSessions} 次 / ${Math.round(s.totalDurationSec / 60)} 分钟 / ${Math.round(s.totalCalories)} 千卡`,
     ),
     card: "stats",
@@ -317,16 +317,16 @@ function executeStatsGet(): ToolResult {
 
 function dispatch(name: string, args: AnyParams): ToolResult {
   switch (name) {
-    case "course.list": return executeCourseList(args);
-    case "course.get": return executeCourseGet(args);
-    case "course.create": return executeCourseCreate(args);
-    case "course.update": return executeCourseUpdate(args);
-    case "course.delete": return executeCourseDelete(args);
-    case "exercise.list": return executeExerciseList(args);
-    case "exercise.create": return executeExerciseCreate(args);
-    case "exercise.update": return executeExerciseUpdate(args);
-    case "exercise.delete": return executeExerciseDelete(args);
-    case "stats.get": return executeStatsGet();
+    case "course_list": return executeCourseList(args);
+    case "course_get": return executeCourseGet(args);
+    case "course_create": return executeCourseCreate(args);
+    case "course_update": return executeCourseUpdate(args);
+    case "course_delete": return executeCourseDelete(args);
+    case "exercise_list": return executeExerciseList(args);
+    case "exercise_create": return executeExerciseCreate(args);
+    case "exercise_update": return executeExerciseUpdate(args);
+    case "exercise_delete": return executeExerciseDelete(args);
+    case "stats_get": return executeStatsGet();
     default: throw new Error(`未知工具: ${name}`);
   }
 }
@@ -361,26 +361,26 @@ function wrapExecuteRich(name: string): AgentTool["execute"] {
 
 export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
-    name: "course.list",
+    name: "course_list",
     label: "查询课程",
     description: "列出所有课程，可选按部位(category)或难度(difficulty)筛选。返回课程摘要列表。",
     parameters: Type.Object({
       category: Type.Optional(CourseCategoryEnum),
       difficulty: Type.Optional(CourseDifficultyEnum),
     }),
-    execute: wrapExecuteRich("course.list"),
+    execute: wrapExecuteRich("course_list"),
   },
   {
-    name: "course.get",
+    name: "course_get",
     label: "课程详情",
     description: "按 id 获取单个课程详情（含训练组步骤）。",
     parameters: Type.Object({
       id: Type.String({ description: "课程 id" }),
     }),
-    execute: wrapExecuteRich("course.get"),
+    execute: wrapExecuteRich("course_get"),
   },
   {
-    name: "course.create",
+    name: "course_create",
     label: "创建课程",
     description: "创建新课程。会持久化到课程库。返回创建后的课程。",
     parameters: Type.Object({
@@ -393,10 +393,10 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       pinned: Type.Optional(Type.Boolean()),
       steps: Type.Array(StepSchema),
     }),
-    execute: wrapExecuteRich("course.create"),
+    execute: wrapExecuteRich("course_create"),
   },
   {
-    name: "course.update",
+    name: "course_update",
     label: "更新课程",
     description: "更新已有课程。仅传需要修改的字段。返回更新后的课程。",
     parameters: Type.Object({
@@ -410,29 +410,29 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       pinned: Type.Optional(Type.Boolean()),
       steps: Type.Optional(Type.Array(StepSchema)),
     }),
-    execute: wrapExecuteRich("course.update"),
+    execute: wrapExecuteRich("course_update"),
   },
   {
-    name: "course.delete",
+    name: "course_delete",
     label: "删除课程",
     description: "按 id 删除课程。不可撤销。",
     parameters: Type.Object({
       id: Type.String(),
     }),
-    execute: wrapExecuteRich("course.delete"),
+    execute: wrapExecuteRich("course_delete"),
   },
   {
-    name: "exercise.list",
+    name: "exercise_list",
     label: "查询动作",
     description: "列出动作库，可选按部位(muscleGroup)或类别(category)筛选。",
     parameters: Type.Object({
       muscleGroup: Type.Optional(MuscleGroupEnum),
       category: Type.Optional(ExerciseCategoryEnum),
     }),
-    execute: wrapExecuteRich("exercise.list"),
+    execute: wrapExecuteRich("exercise_list"),
   },
   {
-    name: "exercise.create",
+    name: "exercise_create",
     label: "新增动作",
     description: "新增自定义动作。会持久化到动作库。",
     parameters: Type.Object({
@@ -443,10 +443,10 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       equipment: Type.Optional(Type.String()),
       description: Type.Optional(Type.String()),
     }),
-    execute: wrapExecuteRich("exercise.create"),
+    execute: wrapExecuteRich("exercise_create"),
   },
   {
-    name: "exercise.update",
+    name: "exercise_update",
     label: "更新动作",
     description: "更新已有动作。仅传需要修改的字段。",
     parameters: Type.Object({
@@ -458,22 +458,22 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       equipment: Type.Optional(Type.String()),
       description: Type.Optional(Type.String()),
     }),
-    execute: wrapExecuteRich("exercise.update"),
+    execute: wrapExecuteRich("exercise_update"),
   },
   {
-    name: "exercise.delete",
+    name: "exercise_delete",
     label: "删除动作",
     description: "按 id 删除自定义动作。预设动作不可删。",
     parameters: Type.Object({
       id: Type.String(),
     }),
-    execute: wrapExecuteRich("exercise.delete"),
+    execute: wrapExecuteRich("exercise_delete"),
   },
   {
-    name: "stats.get",
+    name: "stats_get",
     label: "运动统计",
     description: "获取当前用户的运动统计（总训练次数、时长、热量、连续天数、近7/30天趋势、按部位/难度分布）。",
     parameters: Type.Object({}),
-    execute: wrapExecuteRich("stats.get"),
+    execute: wrapExecuteRich("stats_get"),
   },
 ];

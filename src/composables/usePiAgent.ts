@@ -17,7 +17,7 @@ import type {
   ImageContent,
   ToolCall as PiToolCall,
 } from "@earendil-works/pi-ai";
-import { getModelsCollection, resolvePiModel } from "@/composables/usePiProvider";
+import { getModelsCollection, resolvePiModel, registerCustomProvider } from "@/composables/usePiProvider";
 import { PI_TOOLS, type PiToolDetails } from "@/composables/usePiTools";
 import { buildSystemPrompt } from "@/data/aiPrompt";
 import type {
@@ -137,6 +137,10 @@ function buildAgent(opts: {
   apiKey: string;
   autoExecute: boolean;
 }): Agent | null {
+  // 兜底：provider 未注册时立即注册（避免 streamFn 调用时 requireProvider 抛错）
+  if (opts.baseURL && opts.apiKey) {
+    registerCustomProvider({ baseURL: opts.baseURL, apiKey: opts.apiKey });
+  }
   const piModel = resolvePiModel(opts.modelId, opts.baseURL);
   if (!piModel) return null;
 
@@ -289,11 +293,14 @@ export async function runPrompt(
               });
             }
           }
+          const errMsg = am.errorMessage;
+          // 出错且无文本时，把错误信息作为可见内容写入气泡
+          const finalContent = errMsg && !text ? `⚠️ ${errMsg}` : text;
           cb.onUpdateAssistant?.(placeholderId, {
-            content: text,
+            content: finalContent,
             toolCalls: toolCalls.length ? toolCalls : undefined,
             pending: false,
-            error: am.errorMessage,
+            error: errMsg,
           });
           // 如果这一条 assistant 有 toolCalls，下一条 assistant 消息要新建 placeholder
           if (toolCalls.length) {

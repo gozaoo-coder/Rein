@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { AiConfig, ModelInfo } from "@/types/ai";
 import { readJSON, writeJSON } from "@/composables/useStorage";
-import { refreshCustomModels, checkVisionSupport } from "@/composables/usePiProvider";
+import { refreshCustomModels, checkVisionSupport, registerCustomProvider } from "@/composables/usePiProvider";
 
 const CONFIG_KEY = "ai-config";
 const MODELS_KEY = "ai-models-cache";
@@ -36,12 +36,30 @@ export const useAiConfigStore = defineStore("aiConfig", () => {
     if (cached && Array.isArray(cached)) {
       models.value = cached;
     }
+    // 启动时若已有配置，立即注册 provider（避免首次发送时 streamFn 找不到 provider）
+    if (config.value.baseURL && config.value.apiKey) {
+      registerCustomProvider({
+        baseURL: config.value.baseURL,
+        apiKey: config.value.apiKey,
+        cachedModels: models.value,
+      });
+    }
     loaded.value = true;
   }
 
   async function save(patch: Partial<AiConfig>): Promise<void> {
+    const prevBase = config.value.baseURL;
+    const prevKey = config.value.apiKey;
     config.value = { ...config.value, ...patch };
     await writeJSON(CONFIG_KEY, config.value);
+    // baseURL / apiKey 变化时重建 provider
+    if (config.value.baseURL && config.value.apiKey && (config.value.baseURL !== prevBase || config.value.apiKey !== prevKey)) {
+      registerCustomProvider({
+        baseURL: config.value.baseURL,
+        apiKey: config.value.apiKey,
+        cachedModels: models.value,
+      });
+    }
   }
 
   /** 拉取模型列表，并更新 vision 标志 */
