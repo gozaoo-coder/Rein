@@ -47,12 +47,22 @@ app.use(router);
 import { useCourseStore } from "@/stores/courseStore";
 import { useExerciseStore } from "@/stores/exerciseStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
+import { useAiConfigStore } from "@/stores/aiConfigStore";
+import { useAiChatStore } from "@/stores/aiChatStore";
 
 const courseStore = useCourseStore(pinia);
 const exerciseStore = useExerciseStore(pinia);
 const statsStore = useWorkoutStatsStore(pinia);
+const aiConfigStore = useAiConfigStore(pinia);
+const aiChatStore = useAiChatStore(pinia);
 
-Promise.all([courseStore.load(), exerciseStore.load(), statsStore.load()]).finally(() => {
+Promise.all([
+  courseStore.load(),
+  exerciseStore.load(),
+  statsStore.load(),
+  aiConfigStore.load(),
+  aiChatStore.load(),
+]).finally(() => {
   app.mount("#app");
 });
 

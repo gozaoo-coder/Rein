@@ -44,6 +44,16 @@ const router = createRouter({
       component: () => import("@/pages/AIPage.vue"),
     },
     {
+      path: "/ai/config",
+      name: "ai-config",
+      component: () => import("@/pages/AiConfigPage.vue"),
+    },
+    {
+      path: "/ai/history",
+      name: "ai-history",
+      component: () => import("@/pages/AiHistoryPage.vue"),
+    },
+    {
       path: "/profile",
       name: "profile",
       component: () => import("@/pages/ProfilePage.vue"),
