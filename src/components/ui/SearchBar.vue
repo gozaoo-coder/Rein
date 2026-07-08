@@ -48,10 +48,7 @@ function onKeydown(e: KeyboardEvent) {
 <template>
   <label class="search-bar" :class="[`search-bar--${variant}`, { 'is-disabled': disabled }]">
     <span class="search-icon" aria-hidden="true">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="7" />
-        <path d="m20 20-3.5-3.5" />
-      </svg>
+      <i class="bi bi-search" style="font-size:16px"></i>
     </span>
     <input
       class="search-input"
@@ -73,9 +70,7 @@ function onKeydown(e: KeyboardEvent) {
       @mousedown.prevent
       @click="value = ''"
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-        <path d="M18 6 6 18M6 6l12 12" />
-      </svg>
+      <i class="bi bi-x-lg" style="font-size:12px"></i>
     </button>
   </label>
 </template>

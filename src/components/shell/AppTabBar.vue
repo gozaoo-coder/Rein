@@ -46,28 +46,10 @@ const activeIndex = computed(() => {
       >
         <span class="tab-indicator" aria-hidden="true" />
         <span class="tab-icon">
-          <!-- Home: house outline -->
-          <svg v-if="tab.icon === 'home'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 11l9-8 9 8" />
-            <path d="M5 10v10h14V10" />
-            <path d="M9 20v-6h6v6" />
-          </svg>
-          <!-- Sports: running figure -->
-          <svg v-else-if="tab.icon === 'sports'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="15" cy="5" r="2" />
-            <path d="M10 21l2-6 3 2 3-5-3-1-3 3-3-1-3 5z" />
-            <path d="M7 14l2-2" />
-          </svg>
-          <!-- AI: sparkles -->
-          <svg v-else-if="tab.icon === 'ai'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-            <path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14z" />
-          </svg>
-          <!-- Profile: person -->
-          <svg v-else width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="8" r="4" />
-            <path d="M4 21v-1a7 7 0 0 1 14 0v1" />
-          </svg>
+          <i v-if="tab.icon === 'home'" class="bi bi-house" style="font-size:22px"></i>
+          <i v-else-if="tab.icon === 'sports'" class="bi bi-activity" style="font-size:22px"></i>
+          <i v-else-if="tab.icon === 'ai'" class="bi bi-stars" style="font-size:22px"></i>
+          <i v-else class="bi bi-person-circle" style="font-size:22px"></i>
         </span>
         <span class="tab-label">{{ tab.label }}</span>
       </button>

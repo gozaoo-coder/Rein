@@ -7,11 +7,11 @@ import { useToast } from "@/composables/useToast";
 
 const { toasts, dismiss } = useToast();
 
-const icons = {
-  error: "M12 8v4M12 16h.01",
-  warning: "M12 9v4M12 17h.01",
-  info: "M12 8h.01M11 12h1v4",
-  success: "M20 6L9 17l-5-5",
+const icons: Record<string, string> = {
+  error: "x-circle-fill",
+  warning: "exclamation-triangle-fill",
+  info: "info-circle-fill",
+  success: "check-circle-fill",
 };
 </script>
 
@@ -24,19 +24,7 @@ const icons = {
       :class="t.type"
       @click="dismiss(t.id)"
     >
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <path :d="icons[t.type]" />
-      </svg>
+      <i :class="['bi', `bi-${icons[t.type]}`]" style="font-size:16px"></i>
       <span class="toast-msg">{{ t.message }}</span>
     </div>
   </div>

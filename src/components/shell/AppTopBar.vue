@@ -2,14 +2,16 @@
 /**
  * AppTopBar — HarmonyOS 沉浸光感 sticky header.
  * Ultra_Thin glass tier that tints content beneath; supports large title,
- * circular icon actions, and an optional bottom slot for search/tabs.
+ * circular icon actions (registered via useTopBar composable).
  */
 import { computed } from "vue";
 import { useBreakpoint } from "@/composables/useBreakpoint";
 import { useRoute } from "vue-router";
+import { useTopBar } from "@/composables/useTopBar";
 
 const { mode } = useBreakpoint();
 const route = useRoute();
+const { actions } = useTopBar();
 
 const isPhone = computed(() => mode.value === "phone");
 
@@ -20,16 +22,11 @@ const pageTitle = computed(() => {
   if (p.startsWith("/ai")) return "AI";
   if (p.startsWith("/profile")) return "我的";
   if (p.startsWith("/todo")) return "待办";
+  if (p.startsWith("/health/water")) return "饮水";
+  if (p.startsWith("/health/food")) return "饮食";
+  if (p.startsWith("/health/metrics")) return "身体数据";
   return "Rein";
 });
-
-const showAction = computed(() =>
-  ["首页", "运动"].includes(pageTitle.value)
-);
-
-defineEmits<{
-  (e: "action"): void;
-}>();
 </script>
 
 <template>
@@ -41,20 +38,18 @@ defineEmits<{
       <h1 class="top-bar-title" :class="{ 'title-phone': isPhone }">
         {{ pageTitle }}
       </h1>
-      <div class="top-bar-actions">
+      <div class="top-bar-actions" v-if="actions.length > 0">
         <button
-          v-if="showAction"
+          v-for="a in actions"
+          :key="a.id"
           class="top-bar-icon-btn"
-          :aria-label="pageTitle === '首页' ? '添加数据' : '开始运动'"
-          @click="$emit('action')"
+          :aria-label="a.label"
+          @click="a.onClick()"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
+          <i :class="['bi', `bi-${a.icon}`]" style="font-size:20px"></i>
         </button>
       </div>
     </div>
-    <!-- Optional bottom area: search bar, segmented tabs, etc. -->
     <div v-if="$slots.default" class="top-bar-extra">
       <slot />
     </div>
@@ -108,7 +103,6 @@ defineEmits<{
   gap: var(--space-2);
 }
 
-/* Circular glass icon button */
 .top-bar-icon-btn {
   display: flex;
   align-items: center;
