@@ -1,11 +1,10 @@
 //! Tauri commands for P2P sync
 
-use std::sync::Arc;
-
 use tauri::{AppHandle, Emitter, State};
 
 use crate::sync::store::{now_ts, PairedDevice, Record};
 use crate::sync::{current_pair_code, code_remaining_secs, SyncState, DiscoveredDevice};
+use serde_json::Value;
 
 /// 获取本机设备信息
 #[tauri::command]
@@ -26,7 +25,7 @@ pub fn sync_pair_code(state: State<SyncState>) -> serde_json::Value {
     })
 }
 
-/// 发起配对请求：检查防撞码 → TCP 发送 PairRequest
+/// 发起配对请求：检查防撞码 → TCP 发送 PairRequest（短连接）
 #[tauri::command]
 pub async fn sync_pair_request(
     app: AppHandle,
@@ -40,10 +39,9 @@ pub async fn sync_pair_request(
     state.pairing.check_cooldown(&target_device_id).map_err(|secs| {
         format!("请等待 {secs} 秒后再次发起配对")
     })?;
-    // 验证对方匹配码（我们这边不可验证，由对方验证；这里仅本地防撞）
     state.pairing.mark_request(&target_device_id);
 
-    // 通过 TCP 发送请求
+    // 通过短连接发送 PairRequest（长连接在收到 PairAccept 后由 transport::connect_to 建立）
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
     let mut stream = TcpStream::connect(format!("{target_ip}:{target_port}"))
@@ -59,10 +57,7 @@ pub async fn sync_pair_request(
     stream.write_all(&len.to_be_bytes()).await.map_err(|e| e.to_string())?;
     stream.write_all(&payload).await.map_err(|e| e.to_string())?;
     stream.flush().await.map_err(|e| e.to_string())?;
-
-    // 注册到连接池（保持长连接）
-    let conn = Arc::new(tokio::sync::Mutex::new(stream));
-    state.transport.conns.lock().await.insert(target_device_id.clone(), conn);
+    // 短连接发送后即关闭；不注册到连接池
 
     let _ = app.emit("sync-pair-pending", &serde_json::json!({ "target": target_device_id }));
     Ok(())
@@ -91,6 +86,8 @@ pub async fn sync_pair_respond(
         crate::sync::Message::PairAccept {
             from_id: state.device_id.clone(),
             from_name: state.device_name.clone(),
+            from_ip: state.device_id.clone(), // 占位：接收方已知自己 ip，发起方从 peer_addr 取
+            from_port: crate::sync::TCP_PORT,
             to_id: from_id.clone(),
         }
     } else {
@@ -99,7 +96,7 @@ pub async fn sync_pair_respond(
             to_id: from_id.clone(),
         }
     };
-    // 推送给对方
+    // 通过短连接推送 PairAccept/PairReject 给对方
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
     let mut stream = TcpStream::connect(format!("{from_ip}:{from_port}"))
@@ -110,22 +107,20 @@ pub async fn sync_pair_respond(
     stream.write_all(&len.to_be_bytes()).await.map_err(|e| e.to_string())?;
     stream.write_all(&payload).await.map_err(|e| e.to_string())?;
     stream.flush().await.map_err(|e| e.to_string())?;
+    drop(stream);
 
-    // 若同意：注册长连接并自动开始全量同步
+    // 若同意：建立长连接（保活 + 全量同步）
     if accept {
-        let conn = Arc::new(tokio::sync::Mutex::new(stream));
-        state.transport.conns.lock().await.insert(from_id.clone(), conn);
         crate::sync::transport::connect_to(&app, &from_ip, from_port, &from_id);
         let _ = app.emit("sync-pair-success", &serde_json::json!({ "device_id": from_id }));
     }
     Ok(())
 }
 
-/// 取消配对（移除已配对设备）
+/// 取消配对（移除已配对设备 + 断开 TCP）
 #[tauri::command]
 pub async fn sync_unpair(state: State<'_, SyncState>, device_id: String) -> Result<(), String> {
     state.store.remove_paired(&device_id).await;
-    // 断开 TCP
     state.transport.conns.lock().await.remove(&device_id);
     Ok(())
 }
@@ -142,24 +137,34 @@ pub async fn sync_online_list(state: State<'_, SyncState>) -> Result<Vec<Discove
     Ok(state.discovery.online.read().await.clone())
 }
 
-/// 读取所有同步记录
+// ===== 类型化数据同步 =====
+
+/// 读取所有同步记录（按 kind 过滤；kind 为空返回全部）
 #[tauri::command]
-pub async fn sync_records_list(state: State<'_, SyncState>) -> Result<Vec<Record>, String> {
-    Ok(state.store.all_records().await)
+pub async fn sync_data_list(
+    state: State<'_, SyncState>,
+    kind: Option<String>,
+) -> Result<Vec<Record>, String> {
+    match kind {
+        Some(k) if !k.is_empty() => Ok(state.store.records_by_kind(&k).await),
+        _ => Ok(state.store.all_records().await),
+    }
 }
 
-/// 新增/编辑本地记录（同时推送给所有配对设备）
+/// 新增/编辑本地数据（同时推送给所有配对设备）
 #[tauri::command]
-pub async fn sync_record_upsert(
+pub async fn sync_data_upsert(
     app: AppHandle,
     state: State<'_, SyncState>,
+    kind: String,
     id: String,
-    content: String,
+    payload: Value,
 ) -> Result<Record, String> {
     let ts = now_ts();
     let rec = Record {
-        id,
-        content,
+        id: id.clone(),
+        kind: kind.clone(),
+        payload,
         created_at: ts,
         updated_at: ts,
         deleted_at: None,
@@ -171,17 +176,18 @@ pub async fn sync_record_upsert(
 
 /// 软删除记录
 #[tauri::command]
-pub async fn sync_record_delete(
+pub async fn sync_data_delete(
     app: AppHandle,
     state: State<'_, SyncState>,
+    kind: String,
     id: String,
 ) -> Result<(), String> {
-    state.store.delete_local(&id).await;
-    // 推送软删除版本
+    state.store.delete_local(&kind, &id).await;
     let ts = now_ts();
     let rec = Record {
         id,
-        content: String::new(),
+        kind,
+        payload: serde_json::Value::Null,
         created_at: ts,
         updated_at: ts,
         deleted_at: Some(ts),

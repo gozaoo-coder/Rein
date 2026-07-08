@@ -1,4 +1,5 @@
 //! 合并算法：Last-Write-Wins，软删除优先
+//! 复合主键：(kind, id)
 
 use crate::sync::store::Record;
 
@@ -6,7 +7,7 @@ use crate::sync::store::Record;
 pub fn merge_into(local: &mut Vec<Record>, incoming: Vec<Record>) -> bool {
     let mut changed = false;
     for rec in incoming {
-        match local.iter().position(|r| r.id == rec.id) {
+        match local.iter().position(|r| r.id == rec.id && r.kind == rec.kind) {
             None => {
                 local.push(rec);
                 changed = true;
@@ -25,7 +26,7 @@ pub fn merge_into(local: &mut Vec<Record>, incoming: Vec<Record>) -> bool {
 
 /// 单条增量变更合并
 pub fn merge_one(local: &mut Vec<Record>, rec: Record) -> bool {
-    match local.iter().position(|r| r.id == rec.id) {
+    match local.iter().position(|r| r.id == rec.id && r.kind == rec.kind) {
         None => {
             local.push(rec);
             true

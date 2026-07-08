@@ -18,6 +18,7 @@ import type {
 import { calcBmi } from "@/types/health";
 import { PRESET_FOODS } from "@/data/foodDatabase";
 import { useUserStore } from "@/stores/userStore";
+import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
 
 const WATER_KEY = "health-water";
 const FOOD_RECORD_KEY = "health-food-records";
@@ -108,16 +109,20 @@ export const useHealthDataStore = defineStore("healthData", () => {
     };
     waterRecords.value.push(rec);
     void persistWater();
+    void pushChange(WATER_KEY, rec.id, rec);
     return rec;
   }
   function removeWater(id: string): void {
     waterRecords.value = waterRecords.value.filter((r) => r.id !== id);
     void persistWater();
+    void pushDelete(WATER_KEY, id);
   }
   function clearTodayWater(): void {
     const today = todayKey();
+    const removed = waterRecords.value.filter((r) => dateKeyFromTs(r.timestamp) === today);
     waterRecords.value = waterRecords.value.filter((r) => dateKeyFromTs(r.timestamp) !== today);
     void persistWater();
+    for (const r of removed) void pushDelete(WATER_KEY, r.id);
   }
 
   // ===== 饮食记录 =====
@@ -158,11 +163,13 @@ export const useHealthDataStore = defineStore("healthData", () => {
     };
     foodRecords.value.push(rec);
     void persistFoodRecords();
+    void pushChange(FOOD_RECORD_KEY, rec.id, rec);
     return rec;
   }
   function removeFoodRecord(id: string): void {
     foodRecords.value = foodRecords.value.filter((r) => r.id !== id);
     void persistFoodRecords();
+    void pushDelete(FOOD_RECORD_KEY, id);
   }
 
   // ===== 食品库 CRUD =====
@@ -177,6 +184,7 @@ export const useHealthDataStore = defineStore("healthData", () => {
     };
     foodDb.value.push(item);
     void persistFoodDb();
+    void pushChange(FOOD_DB_KEY, item.id, item);
     return item;
   }
   function updateFoodItem(id: string, patch: Partial<Omit<FoodItem, "id" | "createdAt">>): void {
@@ -184,12 +192,14 @@ export const useHealthDataStore = defineStore("healthData", () => {
     if (idx < 0) return;
     foodDb.value[idx] = { ...foodDb.value[idx], ...patch, updatedAt: Date.now() };
     void persistFoodDb();
+    void pushChange(FOOD_DB_KEY, id, foodDb.value[idx]);
   }
   function deleteFoodItem(id: string): void {
     const item = foodDb.value.find((f) => f.id === id);
     if (!item || !item.custom) return; // 预设不可删
     foodDb.value = foodDb.value.filter((f) => f.id !== id);
     void persistFoodDb();
+    void pushDelete(FOOD_DB_KEY, id);
   }
   function findFood(id: string): FoodItem | undefined {
     return foodDb.value.find((f) => f.id === id);
@@ -217,6 +227,7 @@ export const useHealthDataStore = defineStore("healthData", () => {
     };
     bodyMetrics.value.push(rec);
     void persistBody();
+    void pushChange(BODY_KEY, rec.id, rec);
     if (input.weightKg != null) {
       try {
         useUserStore().setProfile({ weight: input.weightKg });
@@ -305,5 +316,113 @@ export const useHealthDataStore = defineStore("healthData", () => {
     addBodyMetrics,
     foodRecordsByDate,
     waterByDate,
+    applyRemoteWater,
+    applyRemoteFoodRecord,
+    applyRemoteFoodDb,
+    applyRemoteBody,
   };
 });
+
+// ===== 远端同步 applyRemote =====
+
+async function applyRemoteWater(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useHealthDataStore();
+  const idx = store.waterRecords.findIndex((r) => r.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.waterRecords.splice(idx, 1);
+      await writeJSON(WATER_KEY, store.waterRecords);
+    }
+    return;
+  }
+  const rec = payload as WaterRecord;
+  if (!rec || typeof rec.id !== "string") return;
+  if (idx >= 0) {
+    if (rec.timestamp > store.waterRecords[idx].timestamp) {
+      store.waterRecords[idx] = rec;
+      await writeJSON(WATER_KEY, store.waterRecords);
+    }
+  } else {
+    store.waterRecords.push(rec);
+    await writeJSON(WATER_KEY, store.waterRecords);
+  }
+}
+
+async function applyRemoteFoodRecord(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useHealthDataStore();
+  const idx = store.foodRecords.findIndex((r) => r.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.foodRecords.splice(idx, 1);
+      await writeJSON(FOOD_RECORD_KEY, store.foodRecords);
+    }
+    return;
+  }
+  const rec = payload as FoodRecord;
+  if (!rec || typeof rec.id !== "string") return;
+  if (idx >= 0) {
+    if (rec.timestamp > store.foodRecords[idx].timestamp) {
+      store.foodRecords[idx] = rec;
+      await writeJSON(FOOD_RECORD_KEY, store.foodRecords);
+    }
+  } else {
+    store.foodRecords.push(rec);
+    await writeJSON(FOOD_RECORD_KEY, store.foodRecords);
+  }
+}
+
+async function applyRemoteFoodDb(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useHealthDataStore();
+  const idx = store.foodDb.findIndex((f) => f.id === id);
+  if (deleted) {
+    if (idx >= 0 && store.foodDb[idx].custom) {
+      store.foodDb.splice(idx, 1);
+      const customs = store.foodDb.filter((f) => f.custom);
+      await writeJSON(FOOD_DB_KEY, customs);
+    }
+    return;
+  }
+  const item = payload as FoodItem;
+  if (!item || typeof item.id !== "string") return;
+  // 预设不可被远端覆盖
+  if (idx >= 0 && !store.foodDb[idx].custom) return;
+  if (idx >= 0) {
+    if ((item.updatedAt ?? 0) > (store.foodDb[idx].updatedAt ?? 0)) {
+      store.foodDb[idx] = item;
+      const customs = store.foodDb.filter((f) => f.custom);
+      await writeJSON(FOOD_DB_KEY, customs);
+    }
+  } else {
+    store.foodDb.push(item);
+    const customs = store.foodDb.filter((f) => f.custom);
+    await writeJSON(FOOD_DB_KEY, customs);
+  }
+}
+
+async function applyRemoteBody(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useHealthDataStore();
+  const idx = store.bodyMetrics.findIndex((r) => r.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.bodyMetrics.splice(idx, 1);
+      await writeJSON(BODY_KEY, store.bodyMetrics);
+    }
+    return;
+  }
+  const rec = payload as BodyMetricsRecord;
+  if (!rec || typeof rec.id !== "string") return;
+  if (idx >= 0) {
+    if (rec.timestamp > store.bodyMetrics[idx].timestamp) {
+      store.bodyMetrics[idx] = rec;
+      await writeJSON(BODY_KEY, store.bodyMetrics);
+    }
+  } else {
+    store.bodyMetrics.push(rec);
+    await writeJSON(BODY_KEY, store.bodyMetrics);
+  }
+}
+
+registerSyncEntity<WaterRecord>({ kind: WATER_KEY, applyRemote: applyRemoteWater });
+registerSyncEntity<FoodRecord>({ kind: FOOD_RECORD_KEY, applyRemote: applyRemoteFoodRecord });
+registerSyncEntity<FoodItem>({ kind: FOOD_DB_KEY, applyRemote: applyRemoteFoodDb });
+registerSyncEntity<BodyMetricsRecord>({ kind: BODY_KEY, applyRemote: applyRemoteBody });

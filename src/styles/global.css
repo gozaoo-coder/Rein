@@ -10,7 +10,8 @@
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
-  src: url("@/assets/fonts/HarmonyOS_Sans.ttf") format("truetype"), url("@/assets/fonts/HarmonyOS_Sans_SC.ttf") format("truetype"), url("@/assets/fonts/HarmonyOS_Sans_TC.ttf") format("truetype");;
+  src: url("@/assets/fonts/HarmonyOS_Sans.ttf") format("truetype");
+  /* SC/TC rendered via system fonts (PingFang SC / Microsoft YaHei) */
 }
 
 /* --- Global Reset --- */

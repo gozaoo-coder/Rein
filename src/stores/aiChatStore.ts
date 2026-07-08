@@ -9,6 +9,7 @@ import type {
 import { readJSON, writeJSON } from "@/composables/useStorage";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { runPrompt, runRegenerate, type RunPromptCallbacks } from "@/composables/usePiAgent";
+import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
 
 const CONV_KEY = "ai-conversations";
 
@@ -57,6 +58,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
     conversations.value.unshift(conv);
     activeId.value = conv.id;
     void persist();
+    void pushChange(CONV_KEY, conv.id, conv);
     return conv;
   }
 
@@ -72,6 +74,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
       activeId.value = conversations.value[0]?.id ?? null;
     }
     void persist();
+    void pushDelete(CONV_KEY, id);
   }
 
   function togglePin(id: string): void {
@@ -79,6 +82,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
     if (!c) return;
     c.pinned = !c.pinned;
     void persist();
+    void pushChange(CONV_KEY, id, c);
   }
 
   function rename(id: string, title: string): void {
@@ -86,6 +90,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
     if (!c) return;
     c.title = title || "未命名对话";
     void persist();
+    void pushChange(CONV_KEY, id, c);
   }
 
   function findMessage(convId: string, msgId: string): ChatMessage | undefined {
@@ -106,6 +111,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
       active.value!.title = text.slice(0, 24) || "新对话";
     }
     void persist();
+    void pushChange(CONV_KEY, active.value!.id, active.value!);
   }
 
   function updateMessage(msgId: string, patch: Partial<ChatMessage>): void {
@@ -115,6 +121,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
         Object.assign(m, patch);
         c.updatedAt = Date.now();
         void persist();
+        void pushChange(CONV_KEY, c.id, c);
         return;
       }
     }
@@ -143,6 +150,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
         if (!m) return;
         m.toolResults = [...(m.toolResults ?? []), result];
         void persist();
+        void pushChange(CONV_KEY, conv.id, conv);
       },
       onError: (msg) => {
         pushMessage({
@@ -259,6 +267,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
         c.messages.splice(idx, 1);
         c.updatedAt = Date.now();
         void persist();
+        void pushChange(CONV_KEY, c.id, c);
         return;
       }
     }
@@ -283,5 +292,33 @@ export const useAiChatStore = defineStore("aiChat", () => {
     deleteMessage,
     send,
     regenerate,
+    applyRemote,
   };
 });
+
+// ===== 远端同步 applyRemote =====
+
+async function applyRemote(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useAiChatStore();
+  const idx = store.conversations.findIndex((c) => c.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.conversations.splice(idx, 1);
+      await writeJSON(CONV_KEY, store.conversations);
+    }
+    return;
+  }
+  const conv = payload as Conversation;
+  if (!conv || typeof conv.id !== "string" || !Array.isArray(conv.messages)) return;
+  if (idx >= 0) {
+    if ((conv.updatedAt ?? 0) > (store.conversations[idx].updatedAt ?? 0)) {
+      store.conversations[idx] = conv;
+      await writeJSON(CONV_KEY, store.conversations);
+    }
+  } else {
+    store.conversations.unshift(conv);
+    await writeJSON(CONV_KEY, store.conversations);
+  }
+}
+
+registerSyncEntity<Conversation>({ kind: CONV_KEY, applyRemote });

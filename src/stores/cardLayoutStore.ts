@@ -13,8 +13,10 @@ import { readJSON, writeJSON } from "@/composables/useStorage";
 import { packLayout } from "@/composables/useGridLayout";
 import type { CardConfig, CardLayout, CardSize, CardType, RingDataSource } from "@/types/card";
 import { CARD_REGISTRY, CARD_SIZE_MAP, DEFAULT_RINGS } from "@/types/card";
+import { pushChange, registerSyncEntity } from "@/composables/useSyncBridge";
 
 const LAYOUT_KEY = "home-card-layout";
+const LAYOUT_REC_ID = "layout";
 
 function genId(): string {
   return `card-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -75,6 +77,7 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
 
   async function persist(): Promise<void> {
     await writeJSON(LAYOUT_KEY, layout.value);
+    void pushChange(LAYOUT_KEY, LAYOUT_REC_ID, layout.value);
   }
 
   function addCard(type: CardType, size?: CardSize, atIndex?: number): CardConfig {
@@ -198,6 +201,19 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     setRings,
     resetToDefault,
     reassignPositions,
+    applyRemote,
   };
 });
+
+/** 远端同步应用：card-layout 单条（id="layout"），整体替换 */
+async function applyRemote(_id: string, payload: unknown, deleted: boolean): Promise<void> {
+  if (deleted) return;
+  const store = useCardLayoutStore();
+  const incoming = payload as CardLayout;
+  if (!incoming || !Array.isArray(incoming.cards)) return;
+  store.layout = incoming;
+  await writeJSON(LAYOUT_KEY, store.layout);
+}
+
+registerSyncEntity<CardLayout>({ kind: LAYOUT_KEY, applyRemote });
 

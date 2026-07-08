@@ -64,6 +64,12 @@ export interface ToolResult {
     | "exercise-list"
     | "stats"
     | "workout"
+    | "todo"
+    | "todo-list"
+    | "water"
+    | "food-record"
+    | "food-db"
+    | "body-metrics"
     | "raw";
   /** 卡片渲染数据 */
   cardData?: unknown;

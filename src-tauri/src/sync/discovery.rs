@@ -1,8 +1,9 @@
 //! UDP 局域网发现：每 5 秒广播自身 + 监听他人广播
 
+use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -19,14 +20,24 @@ pub struct Broadcast {
 
 pub struct DiscoveryState {
     pub online: Arc<RwLock<Vec<crate::sync::DiscoveredDevice>>>,
+    /// 设备最后一次被发现的时间戳（秒）
+    pub last_seen: Arc<RwLock<HashMap<String, u64>>>,
 }
 
 impl DiscoveryState {
     pub fn new() -> Self {
         Self {
             online: Arc::new(RwLock::new(Vec::new())),
+            last_seen: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// 启动广播 + 监听任务
@@ -58,13 +69,16 @@ pub fn spawn(app: AppHandle, device_id: String, device_name: String) {
             // 清理超时在线设备（>20s 未刷新）
             {
                 let state = app_b.state::<crate::sync::SyncState>();
-                let mut g = state.discovery.online.write().await;
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                g.retain(|d| now.saturating_sub(d_last_seen(&d.device_id)) < 20);
-                // 注：这里简化处理，last_seen 用 port 旁挂不合适；实际用单独 map
+                let now = now_secs();
+                let mut last_seen = state.discovery.last_seen.write().await;
+                last_seen.retain(|_id, ts| now.saturating_sub(*ts) < 20);
+                let stale_ids: Vec<String> = last_seen
+                    .keys()
+                    .cloned()
+                    .collect();
+                drop(last_seen);
+                let mut online = state.discovery.online.write().await;
+                online.retain(|d| stale_ids.contains(&d.device_id));
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -103,8 +117,9 @@ pub fn spawn(app: AppHandle, device_id: String, device_name: String) {
                         paired,
                     };
                     {
+                        let mut last_seen = state.discovery.last_seen.write().await;
+                        last_seen.insert(dev.device_id.clone(), now_secs());
                         let mut g = state.discovery.online.write().await;
-                        // 去重更新
                         if let Some(existing) = g.iter_mut().find(|d| d.device_id == dev.device_id) {
                             *existing = dev.clone();
                         } else {
@@ -124,13 +139,4 @@ pub fn spawn(app: AppHandle, device_id: String, device_name: String) {
             }
         }
     });
-}
-
-fn d_last_seen(_id: &str) -> u64 {
-    // 简化：实际应维护独立 last_seen map；这里返回 0 让清理失效
-    // 真实实现见 transport::TransportState.last_seen
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }

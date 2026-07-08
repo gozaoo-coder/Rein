@@ -4,6 +4,7 @@ import type { Course, CourseCategory, CourseDifficulty } from "@/types/course";
 import { CATEGORY_LABEL, DIFFICULTY_LABEL } from "@/types/course";
 import { presetCourses } from "@/data/presetCourses";
 import { readJSON, writeJSON } from "@/composables/useStorage";
+import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
 
 const STORAGE_KEY = "courses";
 
@@ -91,6 +92,7 @@ export const useCourseStore = defineStore("course", () => {
     };
     courses.value.push(course);
     void persist();
+    void pushChange(STORAGE_KEY, course.id, course);
     return course;
   }
 
@@ -104,6 +106,7 @@ export const useCourseStore = defineStore("course", () => {
       updatedAt: Date.now(),
     };
     void persist();
+    void pushChange(STORAGE_KEY, id, courses.value[idx]);
   }
 
   function deleteCourse(id: string): void {
@@ -111,6 +114,7 @@ export const useCourseStore = defineStore("course", () => {
     if (idx < 0) return;
     courses.value.splice(idx, 1);
     void persist();
+    void pushDelete(STORAGE_KEY, id);
   }
 
   function togglePin(id: string): void {
@@ -119,6 +123,7 @@ export const useCourseStore = defineStore("course", () => {
     c.pinned = !c.pinned;
     c.updatedAt = Date.now();
     void persist();
+    void pushChange(STORAGE_KEY, id, c);
   }
 
   /** 课程被练习一次：计数 +1 + 更新时间 */
@@ -129,6 +134,7 @@ export const useCourseStore = defineStore("course", () => {
     c.lastPracticedAt = Date.now();
     c.updatedAt = Date.now();
     void persist();
+    void pushChange(STORAGE_KEY, id, c);
   }
 
   /** 课程步骤重排序 */
@@ -142,6 +148,7 @@ export const useCourseStore = defineStore("course", () => {
     steps.splice(toIdx, 0, moved);
     c.updatedAt = Date.now();
     void persist();
+    void pushChange(STORAGE_KEY, courseId, c);
   }
 
   return {
@@ -158,5 +165,33 @@ export const useCourseStore = defineStore("course", () => {
     togglePin,
     markPracticed,
     reorderSteps,
+    applyRemote,
   };
 });
+
+/** 远端同步应用：upsert / 软删除单条 course（不回推） */
+async function applyRemote(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useCourseStore();
+  const idx = store.courses.findIndex((c) => c.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.courses.splice(idx, 1);
+      await writeJSON(STORAGE_KEY, store.courses);
+    }
+    return;
+  }
+  const course = payload as Course;
+  if (!course || typeof course.id !== "string") return;
+  if (idx >= 0) {
+    // LWW：按 updatedAt 比较
+    if (course.updatedAt > store.courses[idx].updatedAt) {
+      store.courses[idx] = course;
+      await writeJSON(STORAGE_KEY, store.courses);
+    }
+  } else {
+    store.courses.push(course);
+    await writeJSON(STORAGE_KEY, store.courses);
+  }
+}
+
+registerSyncEntity<Course>({ kind: STORAGE_KEY, applyRemote });

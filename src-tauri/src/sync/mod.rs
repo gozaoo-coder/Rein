@@ -50,6 +50,8 @@ pub enum Message {
     PairAccept {
         from_id: String,
         from_name: String,
+        from_ip: String,
+        from_port: u16,
         to_id: String,
     },
     /// 配对拒绝

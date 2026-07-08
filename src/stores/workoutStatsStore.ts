@@ -4,6 +4,7 @@ import type { WorkoutRecord, WorkoutStats, DailyStat } from "@/types/workout-sta
 import { emptyStats } from "@/types/workout-stats";
 import type { Course } from "@/types/course";
 import { readJSON, writeJSON } from "@/composables/useStorage";
+import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
 
 const RECORDS_KEY = "workout-records";
 const STATS_KEY = "workout-stats";
@@ -122,6 +123,8 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
     records.value.push(rec);
     stats.value = computeStats(records.value);
     void persist();
+    void pushChange(RECORDS_KEY, rec.id, rec);
+    void pushChange(STATS_KEY, "stats", stats.value);
     return rec;
   }
 
@@ -151,12 +154,15 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
     records.value.splice(idx, 1);
     stats.value = computeStats(records.value);
     void persist();
+    void pushDelete(RECORDS_KEY, id);
+    void pushChange(STATS_KEY, "stats", stats.value);
   }
 
   function clearAll(): void {
     records.value = [];
     stats.value = emptyStats();
     void persist();
+    void pushChange(STATS_KEY, "stats", stats.value);
   }
 
   return {
@@ -172,5 +178,53 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
     recordSession,
     deleteRecord,
     clearAll,
+    applyRemoteRecord,
+    applyRemoteStats,
   };
 });
+
+/** 远端同步应用：单条 workout-record */
+async function applyRemoteRecord(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useWorkoutStatsStore();
+  const idx = store.records.findIndex((r) => r.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.records.splice(idx, 1);
+      store.stats = computeStats(store.records);
+      await writeJSON(RECORDS_KEY, store.records);
+      await writeJSON(STATS_KEY, store.stats);
+    }
+    return;
+  }
+  const rec = payload as WorkoutRecord;
+  if (!rec || typeof rec.id !== "string") return;
+  if (idx >= 0) {
+    if (rec.startedAt > store.records[idx].startedAt) {
+      store.records[idx] = rec;
+      store.stats = computeStats(store.records);
+      await writeJSON(RECORDS_KEY, store.records);
+      await writeJSON(STATS_KEY, store.stats);
+    }
+  } else {
+    store.records.push(rec);
+    store.stats = computeStats(store.records);
+    await writeJSON(RECORDS_KEY, store.records);
+    await writeJSON(STATS_KEY, store.stats);
+  }
+}
+
+/** 远端同步应用：workout-stats 单条（id="stats"） */
+async function applyRemoteStats(_id: string, payload: unknown, deleted: boolean): Promise<void> {
+  if (deleted) return;
+  const store = useWorkoutStatsStore();
+  const incoming = payload as WorkoutStats;
+  if (!incoming) return;
+  // LWW：以 lastActiveAt 比较（stats 没有 updatedAt）
+  if (incoming.lastActiveAt > store.stats.lastActiveAt) {
+    store.stats = incoming;
+    await writeJSON(STATS_KEY, store.stats);
+  }
+}
+
+registerSyncEntity<WorkoutRecord>({ kind: RECORDS_KEY, applyRemote: applyRemoteRecord });
+registerSyncEntity<WorkoutStats>({ kind: STATS_KEY, applyRemote: applyRemoteStats });

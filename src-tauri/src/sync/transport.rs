@@ -156,27 +156,39 @@ async fn handle_message(app: &AppHandle, stream: &mut TcpStream, msg: Message) -
                 send(stream, &reject).await?;
                 return Ok(());
             }
+            // 取对端地址（用于回连）
+            let peer_addr = stream.peer_addr().ok();
+            let peer_ip = peer_addr.map(|a| a.ip().to_string()).unwrap_or_default();
+            let peer_port = peer_addr.map(|a| a.port()).unwrap_or(TCP_PORT);
             // 前端弹窗确认
             let _ = app.emit("sync-pair-request", &serde_json::json!({
                 "from_id": from_id,
                 "from_name": from_name,
+                "from_ip": peer_ip,
+                "from_port": peer_port,
             }));
             // 等待前端通过 sync_pair_respond 命令回送结果
-            // 简化：返回 ack，前端异步处理
         }
-        Message::PairAccept { from_id, from_name, to_id } => {
+        Message::PairAccept { from_id, from_name, from_ip, from_port, to_id } => {
             if to_id != state.device_id {
                 return Ok(());
             }
+            // 优先用 socket peer 地址（接收方已知对端真实地址），回退到消息字段
+            let (peer_ip, peer_port) = stream
+                .peer_addr()
+                .map(|a| (a.ip().to_string(), a.port()))
+                .unwrap_or((from_ip.clone(), from_port));
             // 双方互写授权
             state.store.add_paired(PairedDevice {
                 device_id: from_id.clone(),
-                name: from_name,
-                ip: String::new(),
-                port: TCP_PORT,
+                name: from_name.clone(),
+                ip: peer_ip.clone(),
+                port: peer_port,
                 paired_at: now_ts(),
             }).await;
             let _ = app.emit("sync-pair-success", &serde_json::json!({ "device_id": from_id }));
+            // 发起方收到 Accept 后，主动建立长连接（保活 + 全量同步）
+            crate::sync::transport::connect_to(app, &peer_ip, peer_port, &from_id);
         }
         Message::PairReject { from_id: _, to_id } => {
             if to_id == state.device_id {

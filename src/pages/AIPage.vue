@@ -11,13 +11,12 @@
  */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { marked } from "marked";
 import { useAiChatStore } from "@/stores/aiChatStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { useToast } from "@/composables/useToast";
 import { useTopBar, ICONS } from "@/composables/useTopBar";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
-import AiStreamingText from "@/components/ai/AiStreamingText.vue";
+import MarkdownRenderer from "@/components/ai/MarkdownRenderer.vue";
 import ShareSheet from "@/components/share/ShareSheet.vue";
 import { formatAiChat } from "@/data/shareFormatters";
 import type { Citation, ChatMessage, ContentPart, Conversation } from "@/types/ai";
@@ -86,55 +85,6 @@ const suggestions = [
   "推荐一个减脂有氧计划",
   "我的动作库里有哪些核心动作？",
 ];
-
-function renderMarkdown(content: string): string {
-  if (!content) return "";
-  // marked 配置：GFM 表格 + 换行转 <br>
-  const html = marked.parse(content, {
-    breaks: true,
-    gfm: true,
-  }) as string;
-  // 给 pre/code 块加上语言徽章 + 复制按钮
-  return enhanceCodeBlocks(html);
-}
-
-/** 为 pre>code 块注入语言徽章 + 复制按钮（事件委托处理点击） */
-function enhanceCodeBlocks(html: string): string {
-  return html.replace(
-    /<pre><code class="language-([a-z0-9+-]+)">([\s\S]*?)<\/code><\/pre>/g,
-    (_m, lang, code) => {
-      const langLabel = String(lang).toUpperCase();
-      return `<div class="code-block" data-lang="${langLabel}">
-        <div class="code-head">
-          <span class="code-lang">${langLabel}</span>
-          <button class="copy-code-btn" type="button" aria-label="复制代码">复制</button>
-        </div>
-        <pre><code class="language-${lang}">${code}</code></pre>
-      </div>`;
-    },
-  );
-}
-
-/** 事件委托：复制代码到剪贴板 */
-function onMsgContentClick(e: MouseEvent): void {
-  const target = e.target as HTMLElement;
-  if (!target.classList.contains("copy-code-btn")) return;
-  const block = target.closest(".code-block") as HTMLElement | null;
-  if (!block) return;
-  const code = block.querySelector("pre code") as HTMLElement | null;
-  if (!code) return;
-  const text = code.textContent ?? "";
-  navigator.clipboard?.writeText(text).then(
-    () => {
-      target.textContent = "已复制";
-      setTimeout(() => (target.textContent = "复制"), 1500);
-    },
-    () => {
-      target.textContent = "失败";
-      setTimeout(() => (target.textContent = "复制"), 1500);
-    },
-  );
-}
 
 function scrollToBottom() {
   nextTick(() => {
@@ -457,16 +407,12 @@ watch(
               <div
                 v-if="msg.role === 'assistant' && textOf(msg)"
                 class="msg-content"
-                @click="onMsgContentClick"
               >
-                <!-- 流式生成中：句子级动画 -->
-                <AiStreamingText
-                  v-if="msg.pending"
-                  :text="textOf(msg)"
-                  :is-pending="true"
+                <!-- 统一 markdown 渲染：流式打字机 + 静态一次性 -->
+                <MarkdownRenderer
+                  :content="textOf(msg)"
+                  :streaming="!!msg.pending"
                 />
-                <!-- 已完成：渲染 markdown -->
-                <div v-else v-html="renderMarkdown(textOf(msg))" />
               </div>
               <div v-else class="msg-content">
                 <p v-if="textOf(msg)">{{ textOf(msg) }}</p>

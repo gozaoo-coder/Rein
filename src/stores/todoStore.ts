@@ -24,6 +24,7 @@ import {
   todoActiveOnDate,
 } from "@/types/todo";
 import { readJSON, writeJSON } from "@/composables/useStorage";
+import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
 
 const TODO_KEY = "todo-items";
 const CATEGORY_KEY = "todo-categories";
@@ -133,6 +134,7 @@ export const useTodoStore = defineStore("todo", () => {
     };
     items.value.push(item);
     void persistItems();
+    void pushChange(TODO_KEY, item.id, item);
     return item;
   }
 
@@ -148,6 +150,7 @@ export const useTodoStore = defineStore("todo", () => {
       updatedAt: Date.now(),
     };
     void persistItems();
+    void pushChange(TODO_KEY, id, items.value[idx]);
   }
 
   function toggleDone(id: string): void {
@@ -157,6 +160,7 @@ export const useTodoStore = defineStore("todo", () => {
     item.completedAt = item.done ? Date.now() : 0;
     item.updatedAt = Date.now();
     void persistItems();
+    void pushChange(TODO_KEY, id, item);
   }
 
   function deleteItem(id: string): void {
@@ -164,6 +168,7 @@ export const useTodoStore = defineStore("todo", () => {
     if (idx < 0) return;
     items.value.splice(idx, 1);
     void persistItems();
+    void pushDelete(TODO_KEY, id);
   }
 
   // ===== 子任务 =====
@@ -175,6 +180,7 @@ export const useTodoStore = defineStore("todo", () => {
     item.subtasks.push({ ...sub, id: genId("st") });
     item.updatedAt = Date.now();
     void persistItems();
+    void pushChange(TODO_KEY, todoId, item);
   }
 
   function updateSubtask(
@@ -189,6 +195,7 @@ export const useTodoStore = defineStore("todo", () => {
     item.subtasks[idx] = { ...item.subtasks[idx], ...patch };
     item.updatedAt = Date.now();
     void persistItems();
+    void pushChange(TODO_KEY, todoId, item);
   }
 
   function removeSubtask(todoId: string, subId: string): void {
@@ -197,6 +204,7 @@ export const useTodoStore = defineStore("todo", () => {
     item.subtasks = item.subtasks.filter((s) => s.id !== subId);
     item.updatedAt = Date.now();
     void persistItems();
+    void pushChange(TODO_KEY, todoId, item);
   }
 
   function toggleSubtask(todoId: string, subId: string): void {
@@ -207,6 +215,7 @@ export const useTodoStore = defineStore("todo", () => {
     sub.done = !sub.done;
     item.updatedAt = Date.now();
     void persistItems();
+    void pushChange(TODO_KEY, todoId, item);
   }
 
   // ===== 分类 =====
@@ -225,6 +234,7 @@ export const useTodoStore = defineStore("todo", () => {
     };
     categories.value.push(cat);
     void persistCategories();
+    void pushChange(CATEGORY_KEY, cat.id, cat);
     return cat;
   }
 
@@ -237,6 +247,7 @@ export const useTodoStore = defineStore("todo", () => {
     if (categories.value[idx].preset && patch.name !== undefined) return;
     categories.value[idx] = { ...categories.value[idx], ...patch };
     void persistCategories();
+    void pushChange(CATEGORY_KEY, id, categories.value[idx]);
   }
 
   function deleteCategory(id: string): void {
@@ -252,6 +263,13 @@ export const useTodoStore = defineStore("todo", () => {
     }
     void persistCategories();
     void persistItems();
+    void pushDelete(CATEGORY_KEY, id);
+    // 同步被迁移的 items
+    for (const it of items.value) {
+      if (it.categoryId === "default" && it.updatedAt === Date.now()) {
+        void pushChange(TODO_KEY, it.id, it);
+      }
+    }
   }
 
   /** 把待办移到指定分类 */
@@ -261,6 +279,7 @@ export const useTodoStore = defineStore("todo", () => {
     item.categoryId = categoryId;
     item.updatedAt = Date.now();
     void persistItems();
+    void pushChange(TODO_KEY, todoId, item);
   }
 
   function categoryById(id?: string): TodoCategory | undefined {
@@ -357,5 +376,58 @@ export const useTodoStore = defineStore("todo", () => {
     moveToCategory,
     categoryById,
     itemsOfDate,
+    applyRemoteItem,
+    applyRemoteCategory,
   };
 });
+
+/** 远端同步应用：单条 todo-item */
+async function applyRemoteItem(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useTodoStore();
+  const idx = store.items.findIndex((t) => t.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.items.splice(idx, 1);
+      await writeJSON(TODO_KEY, store.items);
+    }
+    return;
+  }
+  const item = payload as TodoItem;
+  if (!item || typeof item.id !== "string") return;
+  if (idx >= 0) {
+    if ((item.updatedAt ?? 0) > (store.items[idx].updatedAt ?? 0)) {
+      store.items[idx] = item;
+      await writeJSON(TODO_KEY, store.items);
+    }
+  } else {
+    store.items.push(item);
+    await writeJSON(TODO_KEY, store.items);
+  }
+}
+
+/** 远端同步应用：单条 todo-category */
+async function applyRemoteCategory(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useTodoStore();
+  const idx = store.categories.findIndex((c) => c.id === id);
+  if (deleted) {
+    if (idx >= 0 && !store.categories[idx].preset) {
+      store.categories.splice(idx, 1);
+      await writeJSON(CATEGORY_KEY, store.categories);
+    }
+    return;
+  }
+  const cat = payload as TodoCategory;
+  if (!cat || typeof cat.id !== "string") return;
+  // preset 不可被覆盖
+  if (idx >= 0) {
+    if (store.categories[idx].preset) return;
+    store.categories[idx] = cat;
+    await writeJSON(CATEGORY_KEY, store.categories);
+  } else {
+    store.categories.push(cat);
+    await writeJSON(CATEGORY_KEY, store.categories);
+  }
+}
+
+registerSyncEntity<TodoItem>({ kind: TODO_KEY, applyRemote: applyRemoteItem });
+registerSyncEntity<TodoCategory>({ kind: CATEGORY_KEY, applyRemote: applyRemoteCategory });

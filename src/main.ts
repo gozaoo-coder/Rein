@@ -45,25 +45,36 @@ app.use(pinia);
 app.use(router);
 
 // 启动时加载持久化数据
+// 注意：aiConfigStore / aiChatStore 不在此处加载，避免打包 pi-agent-core / pi-ai SDK（~4MB）。
+// AI 相关 store 在首次访问 AI 页面时按需初始化，registerSyncEntity 会在加载时补拉。
 import { useCourseStore } from "@/stores/courseStore";
 import { useExerciseStore } from "@/stores/exerciseStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
-import { useAiConfigStore } from "@/stores/aiConfigStore";
-import { useAiChatStore } from "@/stores/aiChatStore";
+import { useUserStore } from "@/stores/userStore";
+import { useTodoStore } from "@/stores/todoStore";
+import { useHealthDataStore } from "@/stores/healthDataStore";
+import { useCardLayoutStore } from "@/stores/cardLayoutStore";
+import { initSyncBridge } from "@/composables/useSyncBridge";
 
 const courseStore = useCourseStore(pinia);
 const exerciseStore = useExerciseStore(pinia);
 const statsStore = useWorkoutStatsStore(pinia);
-const aiConfigStore = useAiConfigStore(pinia);
-const aiChatStore = useAiChatStore(pinia);
+const userStore = useUserStore(pinia);
+const todoStore = useTodoStore(pinia);
+const healthStore = useHealthDataStore(pinia);
+const cardLayoutStore = useCardLayoutStore(pinia);
 
 Promise.all([
   courseStore.load(),
   exerciseStore.load(),
   statsStore.load(),
-  aiConfigStore.load(),
-  aiChatStore.load(),
-]).finally(() => {
-  app.mount("#app");
-});
+  userStore.load(),
+  todoStore.load(),
+  healthStore.load(),
+  cardLayoutStore.load(),
+])
+  .then(() => initSyncBridge())
+  .finally(() => {
+    app.mount("#app");
+  });
 

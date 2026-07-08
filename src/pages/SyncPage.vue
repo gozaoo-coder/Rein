@@ -32,7 +32,6 @@ const {
   refreshAll,
   refreshPairCode,
   pairRequest,
-  pairRespond,
   unpair,
   upsertRecord,
   deleteRecord,
@@ -42,14 +41,6 @@ const {
 const targetCode = ref("");
 const targetDeviceId = ref("");
 const recordsCollapsed = ref(true);
-
-interface PairRequestPayload {
-  from_id: string;
-  from_name: string;
-  from_ip?: string;
-  from_port?: number;
-}
-const pairRequestModal = ref<PairRequestPayload | null>(null);
 
 // ====== 计算属性 ======
 const unpairedTargets = computed(() =>
@@ -142,27 +133,6 @@ function selectTarget(d: DiscoveredDevice) {
     ?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-async function respondPair(accept: boolean) {
-  const req = pairRequestModal.value;
-  if (!req) return;
-  let ip = req.from_ip ?? "";
-  let port = req.from_port ?? 0;
-  if (!ip) {
-    const found = onlineDevices.value.find((d) => d.device_id === req.from_id);
-    if (found) {
-      ip = found.ip;
-      port = found.port;
-    }
-  }
-  pairRequestModal.value = null;
-  try {
-    await pairRespond(req.from_id, req.from_name, ip, port, accept);
-  } catch (e) {
-    toast.error("响应配对失败");
-    console.warn(e);
-  }
-}
-
 // ====== 数据记录 ======
 async function addTestRecord() {
   const n = records.value.length + 1;
@@ -196,15 +166,6 @@ onMounted(async () => {
       await listen("sync-device-discovered", () => {
         void refreshAll();
       }),
-      await listen<{ from_id: string; from_name: string }>(
-        "sync-pair-request",
-        (e) => {
-          pairRequestModal.value = {
-            from_id: e.payload.from_id,
-            from_name: e.payload.from_name,
-          };
-        },
-      ),
       await listen("sync-pair-success", () => {
         toast.success("配对成功");
         void refreshAll();
@@ -404,28 +365,6 @@ onUnmounted(() => {
         </div>
       </div>
     </section>
-
-    <!-- 配对请求 modal -->
-    <div
-      v-if="pairRequestModal"
-      class="modal-mask"
-      @click.self="respondPair(false)"
-    >
-      <div class="clean-card modal">
-        <h3 class="modal-title">配对请求</h3>
-        <p class="modal-text">
-          {{ pairRequestModal.from_name }} 请求配对
-        </p>
-        <div class="modal-actions">
-          <button class="modal-btn ghost" @click="respondPair(false)">
-            拒绝
-          </button>
-          <button class="modal-btn primary" @click="respondPair(true)">
-            接受
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -755,56 +694,6 @@ onUnmounted(() => {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
   margin-top: 2px;
-}
-
-/* ===== Modal ===== */
-.modal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-  padding: var(--space-5);
-}
-.modal {
-  width: 100%;
-  max-width: 320px;
-  padding: var(--space-5);
-  text-align: center;
-}
-.modal-title {
-  font-size: var(--text-md);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-  margin: 0 0 var(--space-2);
-}
-.modal-text {
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-  margin: 0 0 var(--space-4);
-}
-.modal-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-.modal-btn {
-  flex: 1;
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  border: none;
-  font-size: var(--text-md);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-}
-.modal-btn.ghost {
-  background: var(--bg-200);
-  color: var(--color-text);
-}
-.modal-btn.primary {
-  background: var(--color-warm);
-  color: #fff;
 }
 
 /* ===== 平板适配 ===== */

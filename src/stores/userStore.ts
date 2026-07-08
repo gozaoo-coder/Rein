@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { readJSON, writeJSON } from "@/composables/useStorage";
+import { pushChange, registerSyncEntity } from "@/composables/useSyncBridge";
 
 export interface UserProfile {
   id: string;
@@ -15,6 +16,7 @@ export interface UserProfile {
 }
 
 const USER_KEY = "user-profile";
+const USER_REC_ID = "profile";
 
 function defaultProfile(): UserProfile {
   return {
@@ -76,6 +78,7 @@ export const useUserStore = defineStore("user", () => {
     calculateBmi();
     // fire-and-forget 持久化
     void persist();
+    void pushChange(USER_KEY, USER_REC_ID, profile.value);
   }
 
   function calculateBmi(): void {
@@ -91,6 +94,7 @@ export const useUserStore = defineStore("user", () => {
     profile.value = defaultProfile();
     bmi.value = 0;
     await persist();
+    void pushChange(USER_KEY, USER_REC_ID, profile.value);
   }
 
   return {
@@ -102,5 +106,19 @@ export const useUserStore = defineStore("user", () => {
     clearProfile,
     calculateBmi,
     persist,
+    applyRemote,
   };
 });
+
+/** 远端同步应用：user-profile 单条（id="profile"） */
+async function applyRemote(_id: string, payload: unknown, deleted: boolean): Promise<void> {
+  if (deleted) return;
+  const store = useUserStore();
+  const incoming = payload as UserProfile;
+  if (!incoming) return;
+  store.profile = { ...defaultProfile(), ...incoming };
+  store.calculateBmi();
+  await writeJSON(USER_KEY, store.profile);
+}
+
+registerSyncEntity<UserProfile>({ kind: USER_KEY, applyRemote });

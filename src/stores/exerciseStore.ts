@@ -4,6 +4,7 @@ import type { Exercise, ExerciseCategory, MuscleGroup } from "@/types/exercise";
 import { MUSCLE_GROUP_LABEL, EXERCISE_DIFFICULTY_LABEL, EXERCISE_CATEGORY_LABEL } from "@/types/exercise";
 import { presetExercises } from "@/data/presetExercises";
 import { readJSON, writeJSON } from "@/composables/useStorage";
+import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
 
 const STORAGE_KEY = "exercises";
 
@@ -89,6 +90,7 @@ export const useExerciseStore = defineStore("exercise", () => {
     };
     exercises.value.push(ex);
     void persist();
+    void pushChange(STORAGE_KEY, ex.id, ex);
     return ex;
   }
 
@@ -102,6 +104,7 @@ export const useExerciseStore = defineStore("exercise", () => {
       updatedAt: Date.now(),
     };
     void persist();
+    void pushChange(STORAGE_KEY, id, exercises.value[idx]);
   }
 
   function deleteExercise(id: string): void {
@@ -111,6 +114,7 @@ export const useExerciseStore = defineStore("exercise", () => {
     if (!exercises.value[idx].custom) return;
     exercises.value.splice(idx, 1);
     void persist();
+    void pushDelete(STORAGE_KEY, id);
   }
 
   return {
@@ -125,5 +129,32 @@ export const useExerciseStore = defineStore("exercise", () => {
     createExercise,
     updateExercise,
     deleteExercise,
+    applyRemote,
   };
 });
+
+/** 远端同步应用：upsert / 软删除单条 exercise（不回推） */
+async function applyRemote(id: string, payload: unknown, deleted: boolean): Promise<void> {
+  const store = useExerciseStore();
+  const idx = store.exercises.findIndex((e) => e.id === id);
+  if (deleted) {
+    if (idx >= 0) {
+      store.exercises.splice(idx, 1);
+      await writeJSON(STORAGE_KEY, store.exercises);
+    }
+    return;
+  }
+  const ex = payload as Exercise;
+  if (!ex || typeof ex.id !== "string") return;
+  if (idx >= 0) {
+    if (ex.updatedAt > store.exercises[idx].updatedAt) {
+      store.exercises[idx] = ex;
+      await writeJSON(STORAGE_KEY, store.exercises);
+    }
+  } else {
+    store.exercises.push(ex);
+    await writeJSON(STORAGE_KEY, store.exercises);
+  }
+}
+
+registerSyncEntity<Exercise>({ kind: STORAGE_KEY, applyRemote });

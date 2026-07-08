@@ -27,9 +27,11 @@ export interface PairedDevice {
   paired_at: number;
 }
 
+/** 类型化同步记录：按 (kind, id) 唯一 */
 export interface SyncRecord {
   id: string;
-  content: string;
+  kind: string;
+  payload: unknown;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -46,6 +48,13 @@ export interface DeviceInfo {
   device_name: string;
 }
 
+export interface PairRequestPayload {
+  from_id: string;
+  from_name: string;
+  from_ip: string;
+  from_port: number;
+}
+
 export function useSync() {
   const onlineDevices = ref<DiscoveredDevice[]>([]);
   const pairedDevices = ref<PairedDevice[]>([]);
@@ -60,7 +69,7 @@ export function useSync() {
         invoke<DeviceInfo>("sync_device_info"),
         invoke<DiscoveredDevice[]>("sync_online_list"),
         invoke<PairedDevice[]>("sync_paired_list"),
-        invoke<SyncRecord[]>("sync_records_list"),
+        invoke<SyncRecord[]>("sync_data_list", { kind: null }),
       ]);
       deviceInfo.value = info;
       onlineDevices.value = online;
@@ -118,17 +127,22 @@ export function useSync() {
     await refreshAll();
   }
 
-  async function upsertRecord(id: string, content: string): Promise<SyncRecord | null> {
+  // ===== 类型化数据同步 =====
+
+  async function dataList(kind?: string): Promise<SyncRecord[]> {
+    if (!isTauri) return [];
+    return invoke<SyncRecord[]>("sync_data_list", { kind: kind ?? null });
+  }
+
+  async function dataUpsert(kind: string, id: string, payload: unknown): Promise<SyncRecord | null> {
     if (!isTauri) return null;
-    const rec = await invoke<SyncRecord>("sync_record_upsert", { id, content });
-    await refreshAll();
+    const rec = await invoke<SyncRecord>("sync_data_upsert", { kind, id, payload });
     return rec;
   }
 
-  async function deleteRecord(id: string): Promise<void> {
+  async function dataDelete(kind: string, id: string): Promise<void> {
     if (!isTauri) return;
-    await invoke("sync_record_delete", { id });
-    await refreshAll();
+    await invoke("sync_data_delete", { kind, id });
   }
 
   return {
@@ -142,7 +156,10 @@ export function useSync() {
     pairRequest,
     pairRespond,
     unpair,
-    upsertRecord,
-    deleteRecord,
+    dataList,
+    dataUpsert,
+    dataDelete,
   };
 }
+
+export { isTauri as isTauriSync };

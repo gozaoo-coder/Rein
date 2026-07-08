@@ -18,7 +18,7 @@ import {
   EXERCISE_DIFFICULTY_LABEL,
 } from "@/types/exercise";
 
-const props = defineProps<{ result: ToolResult }>();
+const props = defineProps<{ result: ToolResult; compact?: boolean }>();
 
 const cardType = computed(() => props.result.card ?? "raw");
 const data = computed(() => props.result.cardData);
@@ -29,6 +29,38 @@ const courseList = computed(() => (Array.isArray(data.value) ? (data.value as Co
 const exercise = computed(() => (data.value as Exercise | undefined) ?? null);
 const exerciseList = computed(() => (Array.isArray(data.value) ? (data.value as Exercise[]) : []));
 const stats = computed(() => (data.value as WorkoutStats | undefined) ?? null);
+
+interface WorkoutCardData {
+  planName: string;
+  planLevel?: string;
+  totalSteps: number;
+  currentStepIndex: number;
+  currentSetInStep: number;
+  totalElapsedSeconds: number;
+  totalSets: number;
+  completedSets: number;
+  step: {
+    title: string;
+    phase: string;
+    equipment?: string;
+    muscleGroup?: string;
+    weight?: number;
+    cautions?: string;
+    guide?: string;
+    sets?: number;
+    restBetweenSets?: number;
+    timer?: number;
+  };
+}
+const workoutData = computed(() => data.value as WorkoutCardData | undefined);
+interface BodyMetricsCardData {
+  heightCm?: number;
+  weightKg?: number;
+  bodyFatPercent?: number;
+  bmi?: number;
+  timestamp?: number;
+}
+const bodyData = computed(() => data.value as BodyMetricsCardData | undefined);
 
 const toolLabel: Record<string, string> = {
   "course_list": "查询课程",
@@ -80,7 +112,7 @@ const waterPct = computed(() => {
 </script>
 
 <template>
-  <div class="tool-card" :class="{ 'is-error': !ok }">
+  <div class="tool-card" :class="{ 'is-error': !ok, 'is-compact': compact }">
     <div class="tool-head">
       <div class="tool-badge" :class="ok ? 'ok' : 'err'">
         <i v-if="ok" class="bi bi-check-lg" style="font-size:12px"></i>
@@ -267,6 +299,58 @@ const waterPct = computed(() => {
         </div>
       </div>
       <div v-if="foodDbData.items.length > 6" class="list-more">共 {{ foodDbData.items.length }} 个</div>
+    </div>
+
+    <!-- 当前训练卡 -->
+    <div v-else-if="cardType === 'workout' && workoutData" class="workout-card-body">
+      <div class="wk-head">
+        <span class="wk-plan">{{ workoutData.planName }}</span>
+        <span class="wk-progress">{{ workoutData.currentStepIndex + 1 }}/{{ workoutData.totalSteps }} 步</span>
+      </div>
+      <div class="wk-step">
+        <div class="wk-step-title">{{ workoutData.step.title }}</div>
+        <div class="wk-step-meta">
+          <span v-if="workoutData.step.phase">{{ workoutData.step.phase }}</span>
+          <span v-if="workoutData.step.muscleGroup" class="dot">·</span>
+          <span v-if="workoutData.step.muscleGroup">{{ workoutData.step.muscleGroup }}</span>
+          <span v-if="workoutData.step.equipment" class="dot">·</span>
+          <span v-if="workoutData.step.equipment">{{ workoutData.step.equipment }}</span>
+          <span v-if="workoutData.step.weight" class="dot">·</span>
+          <span v-if="workoutData.step.weight">{{ workoutData.step.weight }}kg</span>
+        </div>
+        <div class="wk-sets">
+          组 {{ workoutData.currentSetInStep + 1 }}/{{ workoutData.step.sets ?? 1 }}
+          · 已完成 {{ workoutData.completedSets }}/{{ workoutData.totalSets }}
+          · {{ Math.floor(workoutData.totalElapsedSeconds / 60) }}min
+        </div>
+        <div v-if="workoutData.step.guide" class="wk-guide">{{ workoutData.step.guide }}</div>
+        <div v-if="workoutData.step.cautions" class="wk-caution">
+          <i class="bi bi-exclamation-triangle" style="font-size:11px"></i>
+          <span>{{ workoutData.step.cautions }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 体征记录卡 -->
+    <div v-else-if="cardType === 'body-metrics' && bodyData" class="body-card-body">
+      <div class="body-grid">
+        <div v-if="bodyData.heightCm != null" class="body-block">
+          <span class="bd-num">{{ bodyData.heightCm }}</span>
+          <span class="bd-label">cm</span>
+        </div>
+        <div v-if="bodyData.weightKg != null" class="body-block">
+          <span class="bd-num">{{ bodyData.weightKg }}</span>
+          <span class="bd-label">kg</span>
+        </div>
+        <div v-if="bodyData.bodyFatPercent != null" class="body-block">
+          <span class="bd-num">{{ bodyData.bodyFatPercent }}</span>
+          <span class="bd-label">%体脂</span>
+        </div>
+        <div v-if="bodyData.bmi != null" class="body-block">
+          <span class="bd-num">{{ bodyData.bmi }}</span>
+          <span class="bd-label">BMI</span>
+        </div>
+      </div>
     </div>
 
     <!-- raw / error -->
@@ -692,5 +776,114 @@ const waterPct = computed(() => {
   font-size: 10px;
   color: var(--color-text-secondary);
   flex-shrink: 0;
+}
+
+/* ===== 当前训练卡 ===== */
+.workout-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.wk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.wk-plan {
+  font-size: var(--text-md);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+}
+.wk-progress {
+  font-size: var(--text-xs);
+  color: var(--color-warm);
+  font-weight: var(--fw-semibold);
+  background: var(--warm-50, rgba(255, 149, 0, 0.08));
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+.wk-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.wk-step-title {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.wk-step-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.wk-step-meta .dot { color: var(--color-text-tertiary); }
+.wk-sets {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+.wk-guide {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-top: 2px;
+}
+.wk-caution {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+  font-size: var(--text-xs);
+  color: var(--danger-600, #c4180c);
+  background: var(--danger-50, #ffe7e2);
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+  margin-top: 4px;
+}
+
+/* ===== 体征记录卡 ===== */
+.body-card-body {
+  padding: var(--space-2) 0;
+}
+.body-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+.body-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.bd-num {
+  font-size: var(--text-md);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+  line-height: 1;
+}
+.bd-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+
+/* ===== 紧凑模式（运动面板内联） ===== */
+.tool-card.is-compact {
+  padding: var(--space-2) var(--space-3);
+  border-left-width: 2px;
+}
+.tool-card.is-compact .stats-grid,
+.tool-card.is-compact .body-grid {
+  grid-template-columns: repeat(2, 1fr);
 }
 </style>

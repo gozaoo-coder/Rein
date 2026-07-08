@@ -1,23 +1,28 @@
 //! 内存状态 + JSON 文件持久化
 //!
-//! 数据：Vec<Record>，Arc<RwLock<>> 保护
-//! 持久化：debounced 异步写入 data.json
-//! 配对设备：Vec<Device>，paired.json
+//! 数据：Vec<Record>（带 kind + payload），Arc<RwLock<>> 保护
+//! 持久化：debounced 异步写入 sync-data.json
+//! 配对设备：Vec<PairedDevice>，paired-devices.json
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::Manager;
 use tokio::fs;
 use tokio::sync::RwLock;
 
 use crate::sync::DiscoveredDevice;
 
+/// 同步记录：按 (kind, id) 唯一，payload 为任意 JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Record {
     pub id: String,
-    pub content: String,
+    /// 数据分类，例如 "user" / "courses" / "todo-items"
+    pub kind: String,
+    /// 任意 JSON 负载
+    pub payload: Value,
     pub created_at: u64,
     pub updated_at: u64,
     pub deleted_at: Option<u64>,
@@ -107,10 +112,21 @@ impl SyncStore {
         self.records.read().await.clone()
     }
 
+    /// 按 kind 过滤
+    pub async fn records_by_kind(&self, kind: &str) -> Vec<Record> {
+        self.records
+            .read()
+            .await
+            .iter()
+            .filter(|r| r.kind == kind)
+            .cloned()
+            .collect()
+    }
+
     /// 本地写入：新增 / 编辑 / 软删除
     pub async fn upsert_local(&self, rec: Record) {
         let mut guard = self.records.write().await;
-        if let Some(existing) = guard.iter_mut().find(|r| r.id == rec.id) {
+        if let Some(existing) = guard.iter_mut().find(|r| r.id == rec.id && r.kind == rec.kind) {
             *existing = rec.clone();
         } else {
             guard.push(rec);
@@ -119,9 +135,9 @@ impl SyncStore {
         self.persist_records().await;
     }
 
-    pub async fn delete_local(&self, id: &str) {
+    pub async fn delete_local(&self, kind: &str, id: &str) {
         let mut guard = self.records.write().await;
-        if let Some(r) = guard.iter_mut().find(|r| r.id == id) {
+        if let Some(r) = guard.iter_mut().find(|r| r.id == id && r.kind == kind) {
             r.deleted_at = Some(now_ts());
             r.updated_at = now_ts();
         }

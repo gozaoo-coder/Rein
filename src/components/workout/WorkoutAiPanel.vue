@@ -11,11 +11,13 @@
  * 单一职责：只负责运动模式下的 AI 交互；不渲染工具卡片细节，
  * 工具结果以摘要形式内联展示。
  */
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useWorkoutStore } from "@/stores/workoutStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { runPrompt, type RunPromptCallbacks } from "@/composables/usePiAgent";
-import type { ChatMessage, Conversation, ToolResult } from "@/types/ai";
+import AiToolCard from "@/components/ai/AiToolCard.vue";
+import MarkdownRenderer from "@/components/ai/MarkdownRenderer.vue";
+import type { ChatMessage, Conversation } from "@/types/ai";
 
 const emit = defineEmits<{
   (e: "close"): void;
@@ -23,6 +25,10 @@ const emit = defineEmits<{
 
 const workoutStore = useWorkoutStore();
 const configStore = useAiConfigStore();
+
+onMounted(() => {
+  void configStore.load();
+});
 
 const messages = ref<ChatMessage[]>([]);
 const inputText = ref("");
@@ -159,8 +165,8 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-function toolSummary(r: ToolResult): string {
-  return r.summary ?? r.name;
+function textOf(m: ChatMessage): string {
+  return typeof m.content === "string" ? m.content : "";
 }
 
 function close() {
@@ -203,16 +209,23 @@ function close() {
           :class="`wai-msg--${m.role}`"
         >
           <div class="wai-msg-bubble">
-            <div v-if="m.pending && !m.content" class="wai-typing">
+            <div v-if="m.pending && !textOf(m)" class="wai-typing">
               <span class="dot" /><span class="dot" /><span class="dot" />
             </div>
-            <div v-else class="wai-msg-content">{{ m.content }}</div>
-            <!-- 工具结果摘要 -->
+            <!-- 统一 markdown 渲染（assistant 流式 + 静态） -->
+            <MarkdownRenderer
+              v-else
+              :content="textOf(m)"
+              :streaming="!!m.pending"
+            />
+            <!-- 工具结果卡片（复用 AiToolCard） -->
             <div v-if="m.toolResults?.length" class="wai-tool-results">
-              <div v-for="(tr, i) in m.toolResults" :key="i" class="wai-tool-chip">
-                <i class="bi bi-check-lg" style="font-size:12px"></i>
-                <span>{{ toolSummary(tr) }}</span>
-              </div>
+              <AiToolCard
+                v-for="(tr, i) in m.toolResults"
+                :key="i"
+                :result="tr"
+                :compact="true"
+              />
             </div>
           </div>
         </div>

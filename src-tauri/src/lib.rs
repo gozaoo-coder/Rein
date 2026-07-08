@@ -73,9 +73,9 @@ pub fn run() {
             sync_unpair,
             sync_paired_list,
             sync_online_list,
-            sync_records_list,
-            sync_record_upsert,
-            sync_record_delete,
+            sync_data_list,
+            sync_data_upsert,
+            sync_data_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
