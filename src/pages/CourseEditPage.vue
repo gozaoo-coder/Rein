@@ -12,6 +12,10 @@ import {
   type StepPhase,
 } from "@/types/course";
 import { MUSCLE_GROUP_LABEL } from "@/types/exercise";
+import ShareSheet from "@/components/share/ShareSheet.vue";
+import ShareButton from "@/components/share/ShareButton.vue";
+import { formatCourseDetail } from "@/data/shareFormatters";
+import type { ShareContent } from "@/types/share";
 
 const route = useRoute();
 const router = useRouter();
@@ -25,6 +29,11 @@ const course = computed<Course | undefined>(() => courseStore.getById(courseId.v
 const isEditing = ref(false);
 const showAddSheet = ref(false);
 const pendingDeleteIdx = ref<number | null>(null);
+const showShare = ref(false);
+
+const shareContent = computed<ShareContent | null>(() =>
+  course.value ? formatCourseDetail(course.value) : null,
+);
 
 // 新增步骤的临时表单
 const newStepForm = ref({
@@ -163,6 +172,7 @@ onMounted(() => {
           <path d="M16 4l4 4-5 1-3 3 1 6-2-2-3 3-1-1 3-3-2-2 6 1 3-3 1-5z"/>
         </svg>
       </button>
+      <ShareButton @click="showShare = true" />
     </header>
 
     <!-- 概览 -->
@@ -339,6 +349,13 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- 分享面板 -->
+    <ShareSheet
+      v-if="showShare && shareContent"
+      :content="shareContent"
+      @close="showShare = false"
+    />
   </div>
 
   <div v-else class="not-found">

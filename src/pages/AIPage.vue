@@ -17,7 +17,10 @@ import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { useToast } from "@/composables/useToast";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
 import AiStreamingText from "@/components/ai/AiStreamingText.vue";
+import ShareSheet from "@/components/share/ShareSheet.vue";
+import { formatAiChat } from "@/data/shareFormatters";
 import type { Citation, ChatMessage, ContentPart, Conversation } from "@/types/ai";
+import type { ShareContent } from "@/types/share";
 
 const router = useRouter();
 const store = useAiChatStore();
@@ -59,6 +62,20 @@ const messages = computed(() => {
 const hiddenCount = computed(() => Math.max(0, allMessages.value.length - messages.value.length));
 const isConfigured = computed(() => cfg.isConfigured);
 const vision = computed(() => cfg.config.vision);
+
+/** 分享当前会话 */
+const showShare = ref(false);
+const shareContent = computed<ShareContent | null>(() => {
+  if (!store.active) return null;
+  return formatAiChat(store.active);
+});
+function openShare() {
+  if (!store.active || allMessages.value.length === 0) {
+    toast.info("当前没有可分享的对话");
+    return;
+  }
+  showShare.value = true;
+}
 
 const suggestions = [
   "查看我的运动统计",
@@ -298,6 +315,16 @@ watch(
           <path d="M12 5v14M5 12h14" />
         </svg>
         <span>新对话</span>
+      </button>
+      <button class="act-btn" @click="openShare" :disabled="!store.active || allMessages.length === 0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="18" cy="5" r="3" />
+          <circle cx="6" cy="12" r="3" />
+          <circle cx="18" cy="19" r="3" />
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+        </svg>
+        <span>分享</span>
       </button>
       <button class="act-btn" :class="{ configured: isConfigured }" @click="goConfig">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -631,6 +658,13 @@ watch(
         </button>
       </div>
     </div>
+
+    <!-- 分享面板 -->
+    <ShareSheet
+      v-if="showShare && shareContent"
+      :content="shareContent"
+      @close="showShare = false"
+    />
   </div>
 </template>
 
@@ -668,6 +702,10 @@ watch(
   transition: all var(--dur-fast);
 }
 .act-btn:active { transform: scale(0.96); }
+.act-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .act-btn.configured {
   color: var(--color-success, #34c759);
   border-color: var(--color-success, #34c759);

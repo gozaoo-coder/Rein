@@ -96,6 +96,11 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
   const totalCalories = computed(() => stats.value.totalCalories);
   const streakDays = computed(() => stats.value.streakDays);
 
+  /** 按 id 取单条历史记录 */
+  function getRecord(id: string): WorkoutRecord | undefined {
+    return records.value.find((r) => r.id === id);
+  }
+
   async function load(): Promise<void> {
     if (loaded.value) return;
     const stored = await readJSON<WorkoutRecord[]>(RECORDS_KEY);
@@ -161,6 +166,7 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
     totalDurationSec,
     totalCalories,
     streakDays,
+    getRecord,
     load,
     addRecord,
     recordSession,

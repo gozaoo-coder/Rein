@@ -63,6 +63,16 @@ const router = createRouter({
       name: "workout",
       component: () => import("@/pages/WorkoutPage.vue"),
     },
+    {
+      path: "/workout/history/:id",
+      name: "workout-history-detail",
+      component: () => import("@/pages/WorkoutHistoryDetailPage.vue"),
+    },
+    {
+      path: "/todo",
+      name: "todo",
+      component: () => import("@/pages/TodoPage.vue"),
+    },
   ],
 });
 

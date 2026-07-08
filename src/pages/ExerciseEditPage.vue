@@ -10,6 +10,10 @@ import {
   type ExerciseDifficulty,
   type MuscleGroup,
 } from "@/types/exercise";
+import ShareSheet from "@/components/share/ShareSheet.vue";
+import ShareButton from "@/components/share/ShareButton.vue";
+import { formatExerciseDetail } from "@/data/shareFormatters";
+import type { ShareContent } from "@/types/share";
 
 const route = useRoute();
 const router = useRouter();
@@ -29,6 +33,11 @@ const form = ref({
 });
 
 const pendingDelete = ref(false);
+const showShare = ref(false);
+
+const shareContent = computed<ShareContent | null>(() =>
+  existing.value ? formatExerciseDetail(existing.value) : null,
+);
 
 const categoryOptions = Object.entries(EXERCISE_CATEGORY_LABEL) as [ExerciseCategory, string][];
 const muscleOptions = Object.entries(MUSCLE_GROUP_LABEL) as [MuscleGroup, string][];
@@ -99,6 +108,7 @@ onMounted(() => {
         </svg>
       </button>
       <h2 class="sub-title">{{ isNew ? '新增动作' : '编辑动作' }}</h2>
+      <ShareButton v-if="existing" @click="showShare = true" />
     </header>
 
     <section class="clean-card form-card">
@@ -158,6 +168,13 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- 分享面板 -->
+    <ShareSheet
+      v-if="showShare && shareContent"
+      :content="shareContent"
+      @close="showShare = false"
+    />
   </div>
 </template>
 

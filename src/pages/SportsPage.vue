@@ -36,6 +36,13 @@ const totalMinutes = computed(() =>
   Math.round(statsStore.totalDurationSec / 60),
 );
 
+/** 最近 5 条训练记录（按时间倒序） */
+const recentRecords = computed(() =>
+  [...statsStore.records]
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, 5),
+);
+
 function startCourse(course: Course) {
   workoutStore.startCourse(course);
   router.push("/workout");
@@ -43,6 +50,10 @@ function startCourse(course: Course) {
 
 function openCourse(course: Course) {
   router.push(`/sports/courses/${course.id}`);
+}
+
+function openRecord(id: string) {
+  router.push(`/workout/history/${id}`);
 }
 
 function openAllCourses(difficulty?: string) {
@@ -62,6 +73,21 @@ function fmtMinutes(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return m === 0 ? `${h}h` : `${h}h${m}`;
+}
+
+function fmtRecordDate(ts: number): string {
+  const d = new Date(ts);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
+function fmtRecordDuration(sec: number): string {
+  const mm = Math.floor(sec / 60);
+  const ss = sec % 60;
+  return `${mm}:${String(ss).padStart(2, "0")}`;
 }
 
 onMounted(() => {
@@ -144,6 +170,40 @@ onMounted(() => {
       <div class="stat-block">
         <div class="stat-num">{{ Math.round(statsStore.totalCalories) }}</div>
         <div class="stat-label">千卡</div>
+      </div>
+    </section>
+
+    <!-- 最近训练记录 -->
+    <section v-if="recentRecords.length" class="block">
+      <div class="block-head">
+        <h3 class="block-title">最近训练记录</h3>
+        <span class="block-count">{{ statsStore.records.length }}</span>
+      </div>
+      <div class="rec-list">
+        <button
+          v-for="r in recentRecords"
+          :key="r.id"
+          class="rec-row clean-card clean-card--interactive"
+          @click="openRecord(r.id)"
+        >
+          <div class="rec-main">
+            <div class="rec-name">{{ r.courseName }}</div>
+            <div class="rec-meta">
+              <span>{{ fmtRecordDate(r.startedAt) }}</span>
+              <span class="dot">·</span>
+              <span>{{ fmtRecordDuration(r.durationSec) }}</span>
+              <span class="dot">·</span>
+              <span>{{ Math.round(r.caloriesBurned) }}kcal</span>
+              <span class="dot">·</span>
+              <span :class="r.finished ? 'rec-done' : 'rec-partial'">
+                {{ r.finished ? '完成' : '中断' }}
+              </span>
+            </div>
+          </div>
+          <svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 6l6 6-6 6" />
+          </svg>
+        </button>
       </div>
     </section>
 
@@ -597,4 +657,40 @@ onMounted(() => {
 .ex-text { flex: 1; min-width: 0; }
 .ex-name { font-size: var(--text-md); font-weight: var(--fw-semibold); color: var(--color-text); }
 .ex-sub { font-size: var(--text-xs); color: var(--color-text-secondary); margin-top: 2px; }
+
+/* 训练记录列表 */
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.rec-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  text-align: left;
+}
+.rec-main { flex: 1; min-width: 0; }
+.rec-name {
+  font-size: var(--text-md);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rec-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+.rec-meta .dot { color: var(--color-text-tertiary); }
+.rec-done { color: var(--color-success); font-weight: var(--fw-medium); }
+.rec-partial { color: var(--color-warning); font-weight: var(--fw-medium); }
 </style>

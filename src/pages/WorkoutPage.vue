@@ -12,6 +12,9 @@ import WorkoutNav from "@/components/workout/WorkoutNav.vue";
 import WorkoutProgressSheet from "@/components/workout/WorkoutProgressSheet.vue";
 import WorkoutQuickRestSheet from "@/components/workout/WorkoutQuickRestSheet.vue";
 import WorkoutAiPanel from "@/components/workout/WorkoutAiPanel.vue";
+import ShareSheet from "@/components/share/ShareSheet.vue";
+import { formatWorkoutEnd } from "@/data/shareFormatters";
+import type { ShareContent } from "@/types/share";
 import { StepType, MediaType } from "@/types/workout";
 
 const router = useRouter();
@@ -21,6 +24,20 @@ const showConfirmExit = ref(false);
 const showProgress = ref(false);
 const showQuickRest = ref(false);
 const showAiPanel = ref(false);
+const showShare = ref(false);
+
+const shareContent = computed<ShareContent | null>(() => {
+  if (store.workoutState !== "finished" || !store.activeCourse) return null;
+  return formatWorkoutEnd({
+    courseName: store.activeCourse.name,
+    durationSec: store.totalElapsedSeconds,
+    caloriesBurned: store.caloriesBurned,
+    completedSets: store.completedSets,
+    totalSets: store.totalSets,
+    avgHeartRate: store.heartRate || undefined,
+    finished: true,
+  });
+});
 
 const stepTitle = computed(() => store.currentStep?.details.title ?? "");
 const guideContent = computed(() => store.currentStep?.details.guide.content ?? "");
@@ -338,6 +355,16 @@ function handleJumpStep(idx: number) {
         </div>
       </div>
       <button class="finish-btn" @click="goBackToSports">返回运动</button>
+      <button class="share-btn" @click="showShare = true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="18" cy="5" r="3" />
+          <circle cx="6" cy="12" r="3" />
+          <circle cx="18" cy="19" r="3" />
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+        </svg>
+        <span>分享战绩</span>
+      </button>
     </div>
 
     <!-- Workout bottom nav -->
@@ -378,6 +405,13 @@ function handleJumpStep(idx: number) {
     <WorkoutAiPanel
       v-if="showAiPanel"
       @close="showAiPanel = false"
+    />
+
+    <!-- 分享面板 -->
+    <ShareSheet
+      v-if="showShare && shareContent"
+      :content="shareContent"
+      @close="showShare = false"
     />
   </div>
 </template>
@@ -887,6 +921,26 @@ function handleJumpStep(idx: number) {
   transition: transform 0.15s ease;
 }
 .finish-btn:active { transform: scale(0.95); }
+
+.share-btn {
+  margin-top: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-6);
+  background: var(--bg-50);
+  color: var(--color-text);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-md);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.share-btn:active {
+  transform: scale(0.95);
+  background: var(--bg-100);
+}
 
 /* Confirm overlay */
 .confirm-overlay {
