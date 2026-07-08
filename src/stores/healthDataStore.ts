@@ -17,6 +17,7 @@ import type {
 } from "@/types/health";
 import { calcBmi } from "@/types/health";
 import { PRESET_FOODS } from "@/data/foodDatabase";
+import { useUserStore } from "@/stores/userStore";
 
 const WATER_KEY = "health-water";
 const FOOD_RECORD_KEY = "health-food-records";
@@ -216,6 +217,13 @@ export const useHealthDataStore = defineStore("healthData", () => {
     };
     bodyMetrics.value.push(rec);
     void persistBody();
+    if (input.weightKg != null) {
+      try {
+        useUserStore().setProfile({ weight: input.weightKg });
+      } catch {
+        /* noop */
+      }
+    }
     return rec;
   }
 
@@ -252,6 +260,10 @@ export const useHealthDataStore = defineStore("healthData", () => {
 
   const currentBmi = computed<number | undefined>(() => latestBodyMetrics.value?.bmi);
 
+  const currentWeight = computed<number>(
+    () => latestBodyMetrics.value?.weightKg ?? useUserStore().profile.weight ?? 0,
+  );
+
   /** 按日期分组获取饮食记录 */
   function foodRecordsByDate(date: string): FoodRecord[] {
     return foodRecords.value.filter((r) => dateKeyFromTs(r.timestamp) === date);
@@ -278,6 +290,7 @@ export const useHealthDataStore = defineStore("healthData", () => {
     todayFat,
     latestBodyMetrics,
     currentBmi,
+    currentWeight,
     load,
     addWater,
     removeWater,

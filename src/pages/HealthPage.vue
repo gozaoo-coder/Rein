@@ -90,6 +90,9 @@ function onCardClick(card: CardConfig) {
     case "food-record":
       void router.push("/health/food");
       break;
+    case "weight-record":
+      void router.push("/health/weight");
+      break;
   }
 }
 

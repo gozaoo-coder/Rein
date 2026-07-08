@@ -17,7 +17,8 @@ export type CardType =
   | "recent-workout" // 最近运动
   | "water-record" // 饮水记录
   | "water-quick-add" // 快速记水（1x1/2x1，只做快速加）
-  | "food-record"; // 记录食物
+  | "food-record" // 记录食物
+  | "weight-record"; // 体重记录
 
 /** 环形图可选数据源 */
 export type RingDataSource =
@@ -147,6 +148,15 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     defaultSize: "2x2",
     accent: "var(--success-500)",
     icon: "apple",
+  },
+  "weight-record": {
+    type: "weight-record",
+    title: "体重",
+    description: "当前体重与历史趋势",
+    sizes: ["2x1", "2x2", "4x2"],
+    defaultSize: "2x1",
+    accent: "var(--icon-purple)",
+    icon: "speedometer2",
   },
 };
 
