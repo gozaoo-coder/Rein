@@ -30,7 +30,15 @@ const {
 
 const pinned = computed(() => courseStore.pinnedCourses);
 const recent = computed(() => courseStore.recentCourses);
-const byDifficulty = computed(() => courseStore.coursesByDifficulty);
+
+const pinnedIds = computed(() => new Set(pinned.value.map((c) => c.id)));
+const recentIds = computed(() => new Set(recent.value.map((c) => c.id)));
+
+const recommendedCourses = computed(() => {
+  return courseStore.courses
+    .filter((c) => !pinnedIds.value.has(c.id) && !recentIds.value.has(c.id))
+    .slice(0, 4);
+});
 
 const totalMinutes = computed(() =>
   Math.round(statsStore.totalDurationSec / 60),
@@ -265,36 +273,59 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- 按难度分组 -->
-    <section
-      v-for="grp in byDifficulty"
-      :key="grp.key"
-      class="block"
-    >
+    <!-- 课程库入口 -->
+    <section class="block">
       <div class="block-head">
-        <h3 class="block-title">{{ grp.label }}</h3>
-        <button class="see-all" @click="openAllCourses(grp.key)">查看全部 ›</button>
+        <h3 class="block-title">课程库</h3>
+        <span class="block-count">{{ courseStore.courses.length }} 个课程</span>
       </div>
-      <div v-if="grp.courses.length" class="course-list">
+      <div class="lib-entries">
+        <button class="lib-card clean-card clean-card--interactive" @click="openAllCourses()">
+          <div class="lib-icon icon-circle icon-circle--warm">
+            <i class="bi bi-collection-play" style="font-size:22px"></i>
+          </div>
+          <div class="lib-text">
+            <div class="lib-name">全部课程</div>
+            <div class="lib-sub">浏览所有训练课程，按分类/难度筛选</div>
+          </div>
+          <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
+        </button>
+        <button class="lib-card clean-card clean-card--interactive" @click="openExercises">
+          <div class="lib-icon icon-circle icon-circle--orange">
+            <i class="bi bi-dumbbell" style="font-size:20px"></i>
+          </div>
+          <div class="lib-text">
+            <div class="lib-name">动作库</div>
+            <div class="lib-sub">徒手 / 器械，支持自定义新增</div>
+          </div>
+          <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
+        </button>
+      </div>
+    </section>
+
+    <!-- 推荐课程（未置顶未最近练的，最多 4 个） -->
+    <section v-if="recommendedCourses.length" class="block">
+      <div class="block-head">
+        <h3 class="block-title">推荐课程</h3>
+        <button class="see-all" @click="openAllCourses()">查看全部 ›</button>
+      </div>
+      <div class="course-list">
         <button
-          v-for="c in grp.courses"
+          v-for="c in recommendedCourses"
           :key="c.id"
           class="course-row clean-card clean-card--interactive"
           @click="openCourse(c)"
         >
           <div class="course-row-main">
-            <div class="course-row-name">
-              <span v-if="c.pinned" class="pin-mark">★</span>
-              {{ c.name }}
-            </div>
+            <div class="course-row-name">{{ c.name }}</div>
             <div class="course-row-meta">
               <span>{{ CATEGORY_LABEL[c.category] }}</span>
+              <span class="dot">·</span>
+              <span>{{ DIFFICULTY_LABEL[c.difficulty] }}</span>
               <span class="dot">·</span>
               <span>{{ c.steps.length }}组</span>
               <span class="dot">·</span>
               <span>{{ c.estimatedMinutes }}min</span>
-              <span class="dot">·</span>
-              <span>{{ c.estimatedCalories }}kcal</span>
             </div>
           </div>
           <div class="course-row-right">
@@ -303,24 +334,6 @@ onMounted(() => {
           </div>
         </button>
       </div>
-      <div v-else class="empty-hint">暂无{{ grp.label }}课程</div>
-    </section>
-
-    <!-- 动作库入口 -->
-    <section class="block">
-      <div class="block-head">
-        <h3 class="block-title">动作库</h3>
-      </div>
-      <button class="ex-entry clean-card clean-card--interactive" @click="openExercises">
-        <div class="ex-icon icon-circle icon-circle--orange">
-          <i class="bi bi-dumbbell" style="font-size:20px"></i>
-        </div>
-        <div class="ex-text">
-          <div class="ex-name">动作库</div>
-          <div class="ex-sub">徒手 / 器械，支持自定义新增</div>
-        </div>
-        <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
-      </button>
     </section>
   </div>
 </template>
@@ -631,8 +644,13 @@ onMounted(() => {
   text-align: center;
 }
 
-/* 动作库入口 */
-.ex-entry {
+/* 课程库入口 */
+.lib-entries {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.lib-card {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -641,9 +659,9 @@ onMounted(() => {
   text-align: left;
   width: 100%;
 }
-.ex-text { flex: 1; min-width: 0; }
-.ex-name { font-size: var(--text-md); font-weight: var(--fw-semibold); color: var(--color-text); }
-.ex-sub { font-size: var(--text-xs); color: var(--color-text-secondary); margin-top: 2px; }
+.lib-text { flex: 1; min-width: 0; }
+.lib-name { font-size: var(--text-md); font-weight: var(--fw-semibold); color: var(--color-text); }
+.lib-sub { font-size: var(--text-xs); color: var(--color-text-secondary); margin-top: 2px; }
 
 /* 训练记录列表 */
 .rec-list {

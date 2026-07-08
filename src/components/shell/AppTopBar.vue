@@ -24,7 +24,9 @@ const pageTitle = computed(() => {
   if (p.startsWith("/todo")) return "待办";
   if (p.startsWith("/health/water")) return "饮水";
   if (p.startsWith("/health/food")) return "饮食";
-  if (p.startsWith("/health/metrics")) return "身体数据";
+  if (p.startsWith("/health/bmi")) return "身体数据";
+  if (p.startsWith("/health/metrics")) return "健康概览";
+  if (p.startsWith("/health")) return "健康";
   return "Rein";
 });
 </script>

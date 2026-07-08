@@ -2,7 +2,7 @@
 /**
  * ThreeRingCard — 三环数据独立卡片（无边框模式）
  *
- * 4x2 宽卡片，无背景/边框/阴影，直接在页面上显示三环进度
+ * 4x2 宽卡片，左环右指标的横向布局
  * 点击打开环数据源配置面板
  */
 import { computed } from "vue";
@@ -39,7 +39,6 @@ const ringMetas = computed(() =>
 <template>
   <div
     class="three-ring-card"
-    :class="`three-ring--${size}`"
     @click="emit('click')"
   >
     <div class="ring-visual">
@@ -47,7 +46,7 @@ const ringMetas = computed(() =>
     </div>
     <div class="ring-metrics">
       <div v-for="(m, i) in ringMetas" :key="i" class="ring-metric">
-        <div class="metric-head">
+        <div class="metric-row">
           <span class="ring-dot" :style="{ background: ringConfigs[i]?.color }" />
           <span class="metric-label">{{ m.label }}</span>
         </div>
@@ -64,15 +63,14 @@ const ringMetas = computed(() =>
 <style scoped>
 .three-ring-card {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
   cursor: pointer;
-  padding: var(--space-3) var(--space-2);
-  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-4);
   background: transparent;
   border-radius: var(--radius-lg);
   transition: background var(--dur-fast) var(--ease-immersive);
@@ -82,61 +80,68 @@ const ringMetas = computed(() =>
 }
 
 .ring-visual {
-  width: 100%;
-  max-width: 280px;
-  flex-shrink: 0;
+  flex: 0 0 45%;
+  max-width: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ring-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-2);
-  width: 100%;
-  max-width: 320px;
 }
 
 .ring-metric {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: var(--space-1) var(--space-2);
+  gap: 1px;
 }
 
-.metric-head {
+.metric-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .ring-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .metric-label {
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.02em;
 }
 
 .metric-value {
   display: flex;
   align-items: baseline;
-  gap: 2px;
+  gap: 3px;
+  padding-left: 14px;
 }
 .metric-value .num {
-  font-size: var(--text-md);
+  font-size: 20px;
   font-weight: var(--fw-bold);
   color: var(--color-text);
   line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 .metric-value .sep {
   color: var(--color-text-tertiary);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-light);
 }
 .metric-value .goal {
   color: var(--color-text-tertiary);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
 }
 </style>

@@ -42,13 +42,13 @@ function syncTopBar() {
 }
 
 onMounted(async () => {
+  syncTopBar();
   await Promise.all([
     cardLayout.load(),
     health.load(),
     todo.load(),
     stats.load(),
   ]);
-  syncTopBar();
 });
 
 onUnmounted(() => {
@@ -118,7 +118,7 @@ function onCardClick(card: CardConfig) {
   </div>
 
   <!-- 添加卡片 -->
-  <AddCardSheet v-if="showAddSheet" @close="showAddSheet = false" />
+  <AddCardSheet v-model:visible="showAddSheet" @close="showAddSheet = false" />
 
   <!-- 三环数据源 -->
   <RingDataPickerSheet v-if="showRingSheet" @close="showRingSheet = false" />

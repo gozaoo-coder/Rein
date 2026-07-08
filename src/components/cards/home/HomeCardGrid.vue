@@ -23,21 +23,32 @@ function setCellRef(el: HTMLElement | null, idx: number) {
   if (el) cellRefs.value[idx] = el;
 }
 
-// ===== Drag reorder (pointer-based, works for touch+mouse) =====
+// ===== Drag reorder (document-level pointer events) =====
 const dragState = ref<{
   cardId: string;
+  startIdx: number;
   startX: number;
   startY: number;
   ghostX: number;
   ghostY: number;
   active: boolean;
   pointerId: number;
+  longPressTimer: number | null;
 } | null>(null);
 const dropIndex = ref<number | null>(null);
 const ghostEl = ref<HTMLElement | null>(null);
+const animating = ref(false);
+
+function clearLongPress(ds: NonNullable<typeof dragState.value>) {
+  if (ds.longPressTimer !== null) {
+    clearTimeout(ds.longPressTimer);
+    ds.longPressTimer = null;
+  }
+}
 
 function onCardPointerDown(e: PointerEvent, card: CardConfig, idx: number) {
   if (!props.editMode) return;
+  if (e.button !== undefined && e.button !== 0) return;
   const target = e.target as HTMLElement;
   if (target.closest(".card-delete") || target.closest(".card-resize")) return;
   const cellEl = cellRefs.value[idx];
@@ -46,28 +57,40 @@ function onCardPointerDown(e: PointerEvent, card: CardConfig, idx: number) {
   cellEl.setPointerCapture(e.pointerId);
   dragState.value = {
     cardId: card.id,
+    startIdx: idx,
     startX: e.clientX,
     startY: e.clientY,
     ghostX: 0,
     ghostY: 0,
     active: false,
     pointerId: e.pointerId,
+    longPressTimer: null,
   };
 }
 
-function onCardPointerMove(e: PointerEvent) {
+function docPointerMove(e: PointerEvent) {
+  // Resize takes priority
+  if (resizeState.value) {
+    onResizePointerMove(e);
+    return;
+  }
+
   const ds = dragState.value;
   if (!ds) return;
+  if (e.pointerId !== ds.pointerId) return;
+
   const dx = e.clientX - ds.startX;
   const dy = e.clientY - ds.startY;
   const dist = Math.hypot(dx, dy);
 
   if (!ds.active) {
-    if (dist > 6) {
+    if (dist > 8) {
       ds.active = true;
+      clearLongPress(ds);
       createGhost(ds.cardId);
       document.body.style.userSelect = "none";
       document.body.style.touchAction = "none";
+      dropIndex.value = ds.startIdx;
     } else {
       return;
     }
@@ -80,32 +103,49 @@ function onCardPointerMove(e: PointerEvent) {
   const elBelow = document.elementFromPoint(e.clientX, e.clientY);
   const cellEl = elBelow?.closest(".card-cell") as HTMLElement | null;
   if (cellEl && gridRef.value?.contains(cellEl)) {
-    const idx = cellRefs.value.indexOf(cellEl);
-    if (idx >= 0) dropIndex.value = idx;
+    const targetIdx = cellRefs.value.indexOf(cellEl);
+    if (targetIdx >= 0 && targetIdx !== dropIndex.value) {
+      dropIndex.value = targetIdx;
+    }
   }
 
-  if (e.clientY > window.innerHeight - 100) {
-    const scroller = document.querySelector(".app-main") as HTMLElement | null;
-    scroller?.scrollBy({ top: 20 });
-  } else if (e.clientY < 120) {
-    const scroller = document.querySelector(".app-main") as HTMLElement | null;
-    scroller?.scrollBy({ top: -20 });
+  // Auto-scroll
+  const scroller = document.querySelector(".app-main") as HTMLElement | null;
+  if (scroller) {
+    if (e.clientY > window.innerHeight - 120) {
+      scroller.scrollBy({ top: 16 });
+    } else if (e.clientY < 100) {
+      scroller.scrollBy({ top: -16 });
+    }
   }
 }
 
-function onCardPointerUp(e: PointerEvent) {
-  const ds = dragState.value;
-  if (!ds) return;
+function docPointerUp(e: PointerEvent) {
+  // Resize end
+  if (resizeState.value && e.pointerId === resizeState.value.pointerId) {
+    onResizePointerUp(e);
+    return;
+  }
 
-  if (ds.active && dropIndex.value !== null) {
+  const ds = dragState.value;
+  if (!ds || e.pointerId !== ds.pointerId) return;
+
+  clearLongPress(ds);
+
+  if (ds.active && dropIndex.value !== null && dropIndex.value !== ds.startIdx) {
+    animating.value = true;
     store.moveCardTo(ds.cardId, dropIndex.value);
+    nextTick(() => {
+      setTimeout(() => { animating.value = false; }, 280);
+    });
   }
 
   removeGhost();
   document.body.style.userSelect = "";
   document.body.style.touchAction = "";
   try {
-    (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+    const cell = cellRefs.value[ds.startIdx];
+    cell?.releasePointerCapture?.(e.pointerId);
   } catch { /* noop */ }
   dragState.value = null;
   dropIndex.value = null;
@@ -125,10 +165,12 @@ function createGhost(cardId: string) {
   ghost.style.height = rect.height + "px";
   ghost.style.zIndex = "9999";
   ghost.style.pointerEvents = "none";
-  ghost.style.transform = "scale(1.05)";
-  ghost.style.opacity = "0.9";
+  ghost.style.transform = "scale(1.04) rotate(1.5deg)";
+  ghost.style.opacity = "0.92";
   ghost.style.transition = "none";
-  ghost.style.boxShadow = "0 12px 32px rgba(0,0,0,0.2)";
+  ghost.style.boxShadow = "0 16px 48px rgba(0,0,0,0.25)";
+  ghost.style.borderRadius = "var(--radius-lg)";
+  ghost.style.overflow = "hidden";
   ghost.querySelectorAll(".card-delete, .card-resize").forEach((el) => el.remove());
   document.body.appendChild(ghost);
   ghostEl.value = ghost;
@@ -136,7 +178,7 @@ function createGhost(cardId: string) {
 
 function updateGhostPosition(dx: number, dy: number) {
   if (!ghostEl.value) return;
-  ghostEl.value.style.transform = `translate(${dx}px, ${dy}px) scale(1.05)`;
+  ghostEl.value.style.transform = `translate(${dx}px, ${dy}px) scale(1.04) rotate(1.5deg)`;
 }
 
 function removeGhost() {
@@ -146,7 +188,7 @@ function removeGhost() {
   }
 }
 
-// ===== Drag-to-resize (corner handle drag) =====
+// ===== Drag-to-resize (document-level pointer events) =====
 const resizeState = ref<{
   cardId: string;
   startX: number;
@@ -155,6 +197,7 @@ const resizeState = ref<{
   startRows: number;
   cellW: number;
   cellH: number;
+  gap: number;
   previewSize: CardSize | null;
   pointerId: number;
 } | null>(null);
@@ -163,14 +206,16 @@ function onResizePointerDown(e: PointerEvent, card: CardConfig, idx: number) {
   e.stopPropagation();
   e.preventDefault();
   if (!props.editMode) return;
-  const cellEl = cellRefs.value[idx];
-  if (!cellEl) return;
+  if (e.button !== undefined && e.button !== 0) return;
 
-  cellEl.setPointerCapture(e.pointerId);
+  const handle = e.currentTarget as HTMLElement;
+  handle.setPointerCapture(e.pointerId);
+
   const m = CARD_SIZE_MAP[card.size];
+  const gridEl = gridRef.value;
+  const gridRect = gridEl?.getBoundingClientRect();
   const gap = 12;
-  const gridRect = gridRef.value?.getBoundingClientRect();
-  const cellW = gridRect ? (gridRect.width - gap * 3) / 4 : cellEl.offsetWidth / m.cols;
+  const cellW = gridRect ? (gridRect.width - gap * 3) / 4 : 80;
   const firstCell = cellRefs.value[0];
   const cellH = firstCell ? firstCell.offsetHeight : 88;
 
@@ -182,6 +227,7 @@ function onResizePointerDown(e: PointerEvent, card: CardConfig, idx: number) {
     startRows: m.rows,
     cellW,
     cellH,
+    gap,
     previewSize: card.size,
     pointerId: e.pointerId,
   };
@@ -190,11 +236,13 @@ function onResizePointerDown(e: PointerEvent, card: CardConfig, idx: number) {
 function onResizePointerMove(e: PointerEvent) {
   const rs = resizeState.value;
   if (!rs) return;
+  if (e.pointerId !== rs.pointerId) return;
+
   const dx = e.clientX - rs.startX;
   const dy = e.clientY - rs.startY;
 
-  const deltaCols = Math.round(dx / (rs.cellW + 12));
-  const deltaRows = Math.round(dy / (rs.cellH + 12));
+  const deltaCols = Math.round(dx / (rs.cellW + rs.gap));
+  const deltaRows = Math.round(dy / (rs.cellH + rs.gap));
 
   let targetCols = Math.max(1, Math.min(4, rs.startCols + deltaCols));
   let targetRows = Math.max(1, Math.min(4, rs.startRows + deltaRows));
@@ -218,43 +266,65 @@ function onResizePointerMove(e: PointerEvent) {
 function onResizePointerUp(e: PointerEvent) {
   const rs = resizeState.value;
   if (!rs) return;
+  if (e.pointerId !== rs.pointerId) return;
+
   if (rs.previewSize) {
-    store.resizeCard(rs.cardId, rs.previewSize);
+    const card = cards.value.find((c) => c.id === rs.cardId);
+    if (card && rs.previewSize !== card.size) {
+      store.resizeCard(rs.cardId, rs.previewSize);
+    }
   }
   try {
-    (e.target as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+    const handle = e.currentTarget as HTMLElement | null;
+    handle?.releasePointerCapture?.(e.pointerId);
   } catch { /* noop */ }
   resizeState.value = null;
 }
 
-// ===== Long-press to enter edit mode (non-edit mode) =====
-const longPressTimer = ref<number | null>(null);
-const lpStart = ref<{ x: number; y: number } | null>(null);
-const LP_MS = 450;
-const LP_DIST = 8;
+// ===== Document-level listeners =====
+onMounted(() => {
+  window.addEventListener("pointermove", docPointerMove, { passive: true });
+  window.addEventListener("pointerup", docPointerUp);
+  window.addEventListener("pointercancel", docPointerUp);
+});
 
-function onTouchStart(e: PointerEvent) {
+onBeforeUnmount(() => {
+  window.removeEventListener("pointermove", docPointerMove);
+  window.removeEventListener("pointerup", docPointerUp);
+  window.removeEventListener("pointercancel", docPointerUp);
+  removeGhost();
+});
+
+// ===== Long-press to enter edit mode =====
+const lpTimer = ref<number | null>(null);
+const lpStart = ref<{ x: number; y: number } | null>(null);
+const LP_MS = 500;
+const LP_DIST = 10;
+
+function onGridPointerDown(e: PointerEvent) {
   if (props.editMode) return;
+  if (e.button !== undefined && e.button !== 0) return;
   lpStart.value = { x: e.clientX, y: e.clientY };
-  longPressTimer.value = window.setTimeout(() => {
+  lpTimer.value = window.setTimeout(() => {
     emit("enter-edit");
-    longPressTimer.value = null;
+    lpTimer.value = null;
+    lpStart.value = null;
   }, LP_MS);
 }
 
-function onTouchMove(e: PointerEvent) {
-  if (!lpStart.value || !longPressTimer.value) return;
+function onGridPointerMove(e: PointerEvent) {
+  if (!lpStart.value || lpTimer.value === null) return;
   const d = Math.hypot(e.clientX - lpStart.value.x, e.clientY - lpStart.value.y);
   if (d > LP_DIST) {
-    clearTimeout(longPressTimer.value);
-    longPressTimer.value = null;
+    clearTimeout(lpTimer.value);
+    lpTimer.value = null;
   }
 }
 
-function onTouchEnd() {
-  if (longPressTimer.value) {
-    clearTimeout(longPressTimer.value);
-    longPressTimer.value = null;
+function onGridPointerUp() {
+  if (lpTimer.value !== null) {
+    clearTimeout(lpTimer.value);
+    lpTimer.value = null;
   }
   lpStart.value = null;
 }
@@ -281,22 +351,20 @@ function isDragging(id: string) {
 function isResizePreview(card: CardConfig) {
   return resizeState.value?.cardId === card.id ? resizeState.value.previewSize : null;
 }
-
-onBeforeUnmount(() => {
-  removeGhost();
-  if (longPressTimer.value) clearTimeout(longPressTimer.value);
-});
 </script>
 
 <template>
   <div
     ref="gridRef"
     class="card-grid"
-    :class="{ 'is-editing': editMode }"
-    @pointerdown="onTouchStart"
-    @pointermove="onTouchMove"
-    @pointerup="onTouchEnd"
-    @pointercancel="onTouchEnd"
+    :class="{
+      'is-editing': editMode,
+      'is-animating': animating,
+    }"
+    @pointerdown="onGridPointerDown"
+    @pointermove="onGridPointerMove"
+    @pointerup="onGridPointerUp"
+    @pointercancel="onGridPointerUp"
   >
     <div
       v-for="(card, idx) in cards"
@@ -305,13 +373,11 @@ onBeforeUnmount(() => {
       class="card-cell"
       :class="{
         'is-dragging': isDragging(card.id),
-        'is-drop-target': dropIndex === idx && dragState?.active,
+        'is-drop-before': editMode && dropIndex === idx && dragState?.active && dragState.startIdx !== idx && idx <= dragState.startIdx,
+        'is-drop-after': editMode && dropIndex === idx && dragState?.active && dragState.startIdx !== idx && idx > dragState.startIdx,
       }"
       :style="gridSpan(isResizePreview(card) || card.size)"
       @pointerdown="editMode && onCardPointerDown($event, card, idx)"
-      @pointermove="editMode && onCardPointerMove($event)"
-      @pointerup="editMode && onCardPointerUp($event)"
-      @pointercancel="editMode && onCardPointerUp($event)"
       @click="!editMode && !dragState?.active && emit('click', card)"
     >
       <template v-if="editMode">
@@ -319,20 +385,14 @@ onBeforeUnmount(() => {
           <i class="bi bi-x-lg" style="font-size:10px"></i>
         </button>
 
-        <div
+        <button
           class="card-resize"
           :class="{ 'is-resizing': resizeState?.cardId === card.id }"
           @pointerdown="onResizePointerDown($event, card, idx)"
-          @pointermove="onResizePointerMove($event)"
-          @pointerup="onResizePointerUp($event)"
-          @pointercancel="onResizePointerUp($event)"
           aria-label="拖拽调整大小"
         >
           <i class="bi bi-arrows-angle-expand" style="font-size:12px"></i>
-          <span v-if="resizeState?.cardId === card.id && resizeState.previewSize" class="resize-label">
-            {{ resizeState.previewSize }}
-          </span>
-        </div>
+        </button>
       </template>
 
       <HomeCardRenderer :card="card" @click="!editMode && !dragState?.active && emit('click', card)" />
@@ -356,18 +416,14 @@ onBeforeUnmount(() => {
 }
 
 .card-grid.is-editing {
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
-.card-grid.is-editing .card-cell {
-  cursor: grab;
-  position: relative;
-  border-radius: var(--radius-lg);
-  transition: transform 0.2s var(--ease-immersive), outline-color 0.2s;
-}
-
-.card-grid.is-editing .card-cell:active {
-  cursor: grabbing;
+.card-grid.is-animating .card-cell {
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+              grid-column 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+              grid-row 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.2s;
 }
 
 .card-cell {
@@ -375,21 +431,29 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   min-height: 0;
+  border-radius: var(--radius-lg);
   transition: transform 0.2s var(--ease-immersive), opacity 0.2s;
 }
 
 .card-grid.is-editing .card-cell {
   touch-action: none;
+  cursor: grab;
+}
+
+.card-grid.is-editing .card-cell:active {
+  cursor: grabbing;
 }
 
 .card-cell.is-dragging {
-  opacity: 0.3;
+  opacity: 0.25;
+  transform: scale(0.96);
 }
 
-.card-cell.is-drop-target {
-  outline: 2px dashed var(--color-warm);
-  outline-offset: 2px;
-  border-radius: var(--radius-lg);
+.card-cell.is-drop-before {
+  transform: translateX(calc(var(--space-3) + 4px));
+}
+.card-cell.is-drop-after {
+  transform: translateX(calc(-1 * (var(--space-3) + 4px)));
 }
 
 .card-cell > :deep(.home-card),
@@ -427,8 +491,8 @@ onBeforeUnmount(() => {
   bottom: -8px;
   right: -8px;
   z-index: 10;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--color-warm);
   color: #fff;
@@ -441,25 +505,10 @@ onBeforeUnmount(() => {
   padding: 0;
   touch-action: none;
   transition: transform 0.15s;
-  flex-direction: column;
-  gap: 0;
 }
 
 .card-resize.is-resizing {
   transform: scale(1.2);
-}
-
-.resize-label {
-  position: absolute;
-  bottom: -20px;
-  right: 0;
-  font-size: 9px;
-  font-weight: var(--fw-bold);
-  color: var(--color-warm);
-  background: var(--bg-50);
-  padding: 1px 4px;
-  border-radius: 4px;
-  white-space: nowrap;
 }
 
 .grid-empty {

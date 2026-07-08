@@ -94,6 +94,11 @@ const router = createRouter({
       component: () => import("@/pages/BodyMetricsPage.vue"),
     },
     {
+      path: "/health/metrics",
+      name: "health-metrics",
+      component: () => import("@/pages/HealthOverviewPage.vue"),
+    },
+    {
       path: "/sync",
       name: "sync",
       component: () => import("@/pages/SyncPage.vue"),

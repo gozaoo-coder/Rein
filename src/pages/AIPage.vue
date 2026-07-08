@@ -333,6 +333,7 @@ function syncTopBar() {
 // ====== 生命周期 ======
 
 onMounted(async () => {
+  syncTopBar();
   await Promise.all([cfg.load(), store.load()]);
   if (!store.active && store.conversations.length === 0) {
     store.createConversation("新对话");
@@ -340,7 +341,6 @@ onMounted(async () => {
     store.setActive(store.conversations[0].id);
   }
   syncTopBar();
-  // 处理来自 TodoPage 的 prefill 参数
   const prefill = route.query.prefill;
   if (typeof prefill === "string" && prefill.trim()) {
     inputText.value = prefill.trim();
