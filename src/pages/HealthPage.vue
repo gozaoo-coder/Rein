@@ -1,23 +1,35 @@
 <script setup lang="ts">
 /**
- * HealthPage — Daily health overview.
- * Layout matches 华为健康 reference:
- *   1. Triple semi-ring hero (calories / steps / exercise)
- *   2. Daily summary card (calories / steps / exercise + activity count)
- *   3. 2x2 detail cards (sleep / heart rate / blood pressure / blood sugar)
+ * HealthPage — 首页（健康 + 待办 + 运动总览）
  *
- * All mini-charts use reusable SVG components from @/components/charts.
+ * 布局：
+ *   1. 三环 Hero（卡路里 / 步数 / 运动）
+ *   2. 每日汇总卡
+ *   3. 今日待办总览 + 最近运动总览（双卡并列）
+ *   4. 2x2 健康详情卡（睡眠 / 心率 / 血压 / 血糖）
  */
 import SemiRingProgress from "@/components/charts/SemiRingProgress.vue";
 import RangeChart, { type ChartZone } from "@/components/charts/RangeChart.vue";
 import LevelIndicator, { type LevelSegment } from "@/components/charts/LevelIndicator.vue";
-import { computed } from "vue";
+import TodoOverview from "@/components/home/TodoOverview.vue";
+import RecentWorkoutOverview from "@/components/home/RecentWorkoutOverview.vue";
+import { useTodoStore } from "@/stores/todoStore";
+import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
+import { onMounted, computed } from "vue";
+
+const todoStore = useTodoStore();
+const statsStore = useWorkoutStatsStore();
 
 const today = new Date();
 const dateStr = computed(() => {
   const m = today.getMonth() + 1;
   const d = today.getDate();
   return `${m}月${d}日`;
+});
+
+onMounted(() => {
+  void todoStore.load();
+  void statsStore.load();
 });
 
 /* ===== Health data (placeholder — will bind to store later) ===== */
@@ -152,6 +164,12 @@ const sleepLevels: LevelSegment[] = [
           <path d="M9 18l6-6-6-6" />
         </svg>
       </div>
+    </div>
+
+    <!-- ===== Overview cards: Todo + Recent Workout ===== -->
+    <div class="overview-grid">
+      <TodoOverview />
+      <RecentWorkoutOverview />
     </div>
 
     <!-- ===== Detail Cards 2x2 Grid ===== -->
@@ -375,6 +393,21 @@ const sleepLevels: LevelSegment[] = [
   grid-template-columns: repeat(2, 1fr);
   grid-auto-rows: 1fr;
   gap: var(--space-3);
+}
+
+/* ===== Overview cards (Todo + Recent Workout) ===== */
+.overview-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+@media (min-width: 768px) {
+  .overview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    align-items: start;
+  }
 }
 
 .detail-card {

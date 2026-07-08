@@ -5,7 +5,7 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      name: "health",
+      name: "home",
       component: () => import("@/pages/HealthPage.vue"),
     },
     {

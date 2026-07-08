@@ -11,7 +11,7 @@ const route = useRoute();
 const router = useRouter();
 
 const tabs = [
-  { path: "/", label: "健康", icon: "health" },
+  { path: "/", label: "首页", icon: "home" },
   { path: "/sports", label: "运动", icon: "sports" },
   { path: "/ai", label: "AI", icon: "ai" },
   { path: "/profile", label: "我的", icon: "profile" },
@@ -46,9 +46,11 @@ const activeIndex = computed(() => {
       >
         <span class="tab-indicator" aria-hidden="true" />
         <span class="tab-icon">
-          <!-- Health: activity ring -->
-          <svg v-if="tab.icon === 'health'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-            <circle cx="12" cy="12" r="8" />
+          <!-- Home: house outline -->
+          <svg v-if="tab.icon === 'home'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 11l9-8 9 8" />
+            <path d="M5 10v10h14V10" />
+            <path d="M9 20v-6h6v6" />
           </svg>
           <!-- Sports: running figure -->
           <svg v-else-if="tab.icon === 'sports'" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">

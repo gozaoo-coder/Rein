@@ -15,15 +15,16 @@ const isPhone = computed(() => mode.value === "phone");
 
 const pageTitle = computed(() => {
   const p = route.path;
-  if (p === "/") return "健康";
+  if (p === "/") return "首页";
   if (p.startsWith("/sports")) return "运动";
   if (p.startsWith("/ai")) return "AI";
   if (p.startsWith("/profile")) return "我的";
+  if (p.startsWith("/todo")) return "待办";
   return "Rein";
 });
 
 const showAction = computed(() =>
-  ["健康", "运动"].includes(pageTitle.value)
+  ["首页", "运动"].includes(pageTitle.value)
 );
 
 defineEmits<{
@@ -44,7 +45,7 @@ defineEmits<{
         <button
           v-if="showAction"
           class="top-bar-icon-btn"
-          :aria-label="pageTitle === '健康' ? '添加数据' : '开始运动'"
+          :aria-label="pageTitle === '首页' ? '添加数据' : '开始运动'"
           @click="$emit('action')"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
