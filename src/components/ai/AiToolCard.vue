@@ -41,8 +41,42 @@ const toolLabel: Record<string, string> = {
   "exercise_update": "更新动作",
   "exercise_delete": "删除动作",
   "stats_get": "运动统计",
+  "todo_list": "查询待办",
+  "todo_create": "创建待办",
+  "todo_update": "更新待办",
+  "todo_delete": "删除待办",
+  "todo_toggle_done": "切换完成",
+  "water_add": "记录饮水",
+  "water_today": "今日饮水",
+  "food_record_add": "记录饮食",
+  "food_today": "今日饮食",
+  "food_db_list": "查询食品库",
+  "food_db_create": "新增食品",
+  "food_db_update": "更新食品",
+  "food_db_delete": "删除食品",
+  "body_metrics_record": "记录体征",
 };
 const actionLabel = computed(() => toolLabel[props.result.name] ?? props.result.name);
+
+// ===== 新卡片数据 computed =====
+interface TodoCardData { items: any[]; date: string }
+interface WaterCardData { amount: number; total: number; goal: number }
+interface FoodRecordCardData {
+  record?: any;
+  records?: any[];
+  todayTotals: { calories: number; carbs: number; protein: number; fat: number };
+}
+interface FoodDbCardData { items: any[] }
+
+const todoData = computed(() => data.value as TodoCardData | undefined);
+const waterData = computed(() => data.value as WaterCardData | undefined);
+const foodRecData = computed(() => data.value as FoodRecordCardData | undefined);
+const foodDbData = computed(() => data.value as FoodDbCardData | undefined);
+
+const waterPct = computed(() => {
+  if (!waterData.value) return 0;
+  return Math.min((waterData.value.total / waterData.value.goal) * 100, 100);
+});
 </script>
 
 <template>
@@ -154,6 +188,92 @@ const actionLabel = computed(() => toolLabel[props.result.name] ?? props.result.
           <span class="bar-label">{{ d.date.slice(5) }}</span>
         </div>
       </div>
+    </div>
+
+    <!-- 待办卡 -->
+    <div v-else-if="cardType === 'todo' && todoData" class="todo-card-body">
+      <div class="todo-date">{{ todoData.date === "all" ? "全部待办" : todoData.date }}</div>
+      <div v-if="!todoData.items.length" class="empty">暂无待办</div>
+      <div v-for="t in todoData.items.slice(0, 6)" :key="t.id" class="todo-item">
+        <span class="todo-cb" :class="{ 'is-done': t.done }">
+          <svg v-if="t.done" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </span>
+        <span class="todo-title" :class="{ 'is-done': t.done }">{{ t.title }}</span>
+        <span class="todo-pri" :data-pri="t.priority">{{ t.priorityLabel }}</span>
+      </div>
+      <div v-if="todoData.items.length > 6" class="list-more">共 {{ todoData.items.length }} 条</div>
+    </div>
+
+    <!-- 饮水卡 -->
+    <div v-else-if="cardType === 'water' && waterData" class="water-card-body">
+      <div class="water-row">
+        <svg width="56" height="56" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="32" fill="none" stroke="var(--bg-200)" stroke-width="6" />
+          <circle
+            cx="40" cy="40" r="32" fill="none"
+            stroke="#3da9ff" stroke-width="6"
+            stroke-linecap="round"
+            :stroke-dasharray="2 * Math.PI * 32"
+            :stroke-dashoffset="2 * Math.PI * 32 - (waterPct / 100) * 2 * Math.PI * 32"
+            :style="{ transform: 'rotate(-90deg)', transformOrigin: '40px 40px' }"
+          />
+        </svg>
+        <div class="water-meta">
+          <div class="water-num">{{ waterData.total }}<span class="water-unit">ml</span></div>
+          <div class="water-goal">目标 {{ waterData.goal }}ml</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 饮食记录卡 -->
+    <div v-else-if="cardType === 'food-record' && foodRecData" class="food-rec-body">
+      <div class="food-totals">
+        <div class="ft-block ft-main">
+          <span class="ft-num">{{ foodRecData.todayTotals.calories }}</span>
+          <span class="ft-label">千卡</span>
+        </div>
+        <div class="ft-block">
+          <span class="ft-num">{{ foodRecData.todayTotals.carbs }}g</span>
+          <span class="ft-label">碳水</span>
+        </div>
+        <div class="ft-block">
+          <span class="ft-num">{{ foodRecData.todayTotals.protein }}g</span>
+          <span class="ft-label">蛋白</span>
+        </div>
+        <div class="ft-block">
+          <span class="ft-num">{{ foodRecData.todayTotals.fat }}g</span>
+          <span class="ft-label">脂肪</span>
+        </div>
+      </div>
+      <div v-if="foodRecData.record" class="food-rec-item">
+        <span class="fri-name">{{ foodRecData.record.foodName }}</span>
+        <span class="fri-meta">{{ foodRecData.record.grams }}g · {{ foodRecData.record.calories }}千卡</span>
+      </div>
+      <div v-else-if="foodRecData.records && foodRecData.records.length" class="list-wrap">
+        <div v-for="r in foodRecData.records.slice(0, 6)" :key="r.id" class="food-rec-item">
+          <span class="fri-name">{{ r.foodName }}</span>
+          <span class="fri-meta">{{ r.grams }}g · {{ r.calories }}千卡</span>
+        </div>
+        <div v-if="foodRecData.records.length > 6" class="list-more">共 {{ foodRecData.records.length }} 条</div>
+      </div>
+    </div>
+
+    <!-- 食品库卡 -->
+    <div v-else-if="cardType === 'food-db' && foodDbData" class="list-wrap">
+      <div v-for="f in foodDbData.items.slice(0, 6)" :key="f.id" class="food-db-item">
+        <div class="fdb-info">
+          <div class="fdb-name">{{ f.name }}</div>
+          <div class="fdb-meta">{{ f.category }} · {{ f.caloriesPer100g }}千卡/100g</div>
+        </div>
+        <div class="fdb-macros">
+          <span>碳{{ f.carbsPer100g }}g</span>
+          <span>蛋{{ f.proteinPer100g }}g</span>
+          <span>脂{{ f.fatPer100g }}g</span>
+        </div>
+      </div>
+      <div v-if="foodDbData.items.length > 6" class="list-more">共 {{ foodDbData.items.length }} 个</div>
     </div>
 
     <!-- raw / error -->
@@ -405,5 +525,179 @@ const actionLabel = computed(() => toolLabel[props.result.name] ?? props.result.
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--font-mono);
+}
+
+/* ===== 待办卡 ===== */
+.todo-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.todo-date {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  font-weight: var(--fw-semibold);
+}
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.todo-cb {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.6px solid var(--bg-400);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.todo-cb.is-done {
+  background: var(--success-500);
+  border-color: var(--success-500);
+}
+.todo-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todo-title.is-done {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+}
+.todo-pri {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-weight: var(--fw-semibold);
+  flex-shrink: 0;
+}
+.todo-pri[data-pri="high"] { background: rgba(232,64,38,0.12); color: var(--danger-500); }
+.todo-pri[data-pri="normal"] { background: rgba(255,149,0,0.12); color: var(--color-warm); }
+.todo-pri[data-pri="low"] { background: var(--bg-200); color: var(--color-text-tertiary); }
+
+/* ===== 饮水卡 ===== */
+.water-card-body {
+  padding: var(--space-2) 0;
+}
+.water-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+}
+.water-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.water-num {
+  font-size: var(--text-xl);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+  line-height: 1;
+}
+.water-unit {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-regular);
+  color: var(--color-text-secondary);
+  margin-left: 4px;
+}
+.water-goal {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ===== 饮食记录卡 ===== */
+.food-rec-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.food-totals {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.ft-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ft-main { align-items: flex-start; }
+.ft-num {
+  font-size: var(--text-md);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+  line-height: 1;
+}
+.ft-main .ft-num { font-size: var(--text-lg); }
+.ft-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+.food-rec-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.fri-name {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.fri-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* ===== 食品库卡 ===== */
+.food-db-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.fdb-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.fdb-name {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.fdb-meta {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+.fdb-macros {
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
 }
 </style>

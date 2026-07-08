@@ -21,6 +21,10 @@ import { useExerciseStore } from "@/stores/exerciseStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
 import { useWorkoutStore } from "@/stores/workoutStore";
 import { useUserStore } from "@/stores/userStore";
+import { useTodoStore } from "@/stores/todoStore";
+import { useHealthDataStore } from "@/stores/healthDataStore";
+import type { TodoPriority } from "@/types/todo";
+import { PRIORITY_LABEL } from "@/types/todo";
 
 // ===== Schemas =====
 
@@ -482,6 +486,335 @@ function executeAppConfigUpdate(args: AnyParams): ToolResult {
   };
 }
 
+// ===== TodoList 工具 =====
+
+function todoDateKey(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function executeTodoList(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const date = typeof args.date === "string" ? args.date : todoDateKey();
+  const includeAll = Boolean(args.includeAll);
+  const list = includeAll ? store.items : store.itemsOfDate(date);
+  const summary = list.map((t) => ({
+    id: t.id,
+    title: t.title,
+    note: t.note,
+    dueDate: t.dueDate,
+    priority: t.priority,
+    priorityLabel: PRIORITY_LABEL[t.priority],
+    done: t.done,
+  }));
+  return {
+    toolCallId: "",
+    name: "todo_list",
+    ok: true,
+    content: JSON.stringify(summary),
+    summary: okSummary("todo_list", `${includeAll ? "全部" : date} 共 ${summary.length} 条`),
+    card: "todo",
+    cardData: { items: summary, date: includeAll ? "all" : date },
+  };
+}
+
+function executeTodoCreate(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const priority = (args.priority as TodoPriority | undefined) ?? "normal";
+  const item = store.createItem({
+    title: String(args.title ?? "未命名待办"),
+    note: typeof args.note === "string" ? args.note : undefined,
+    dueDate: typeof args.dueDate === "string" ? args.dueDate : todoDateKey(),
+    priority,
+  });
+  return {
+    toolCallId: "",
+    name: "todo_create",
+    ok: true,
+    content: JSON.stringify(item),
+    summary: okSummary("todo_create", `已创建「${item.title}」`),
+    card: "todo",
+    cardData: { items: [item], date: item.dueDate ?? "today" },
+  };
+}
+
+function executeTodoUpdate(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.id ?? "");
+  const item = store.items.find((t) => t.id === id);
+  if (!item) throw new Error("待办不存在");
+  const patch: Partial<typeof item> = {};
+  if (typeof args.title === "string") patch.title = args.title;
+  if (typeof args.note === "string") patch.note = args.note;
+  if (typeof args.dueDate === "string") patch.dueDate = args.dueDate;
+  if (args.priority) patch.priority = args.priority as TodoPriority;
+  if (typeof args.done === "boolean") {
+    patch.done = args.done;
+    patch.completedAt = args.done ? Date.now() : 0;
+  }
+  store.updateItem(id, patch);
+  const updated = store.items.find((t) => t.id === id)!;
+  return {
+    toolCallId: "",
+    name: "todo_update",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("todo_update", `已更新「${updated.title}」`),
+    card: "todo",
+    cardData: { items: [updated], date: updated.dueDate ?? "today" },
+  };
+}
+
+function executeTodoDelete(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.id ?? "");
+  const item = store.items.find((t) => t.id === id);
+  if (!item) throw new Error("待办不存在");
+  const title = item.title;
+  store.deleteItem(id);
+  return {
+    toolCallId: "",
+    name: "todo_delete",
+    ok: true,
+    content: JSON.stringify({ deleted: true, id }),
+    summary: okSummary("todo_delete", `已删除「${title}」`),
+    card: "raw",
+    cardData: { deleted: true, id, title },
+  };
+}
+
+function executeTodoToggleDone(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.id ?? "");
+  const item = store.items.find((t) => t.id === id);
+  if (!item) throw new Error("待办不存在");
+  store.toggleDone(id);
+  const updated = store.items.find((t) => t.id === id)!;
+  return {
+    toolCallId: "",
+    name: "todo_toggle_done",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("todo_toggle_done", `「${updated.title}」${updated.done ? "已完成" : "未完成"}`),
+    card: "todo",
+    cardData: { items: [updated], date: updated.dueDate ?? "today" },
+  };
+}
+
+// ===== 饮水工具 =====
+
+function executeWaterAdd(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const amount = Number(args.amount ?? 0);
+  if (amount <= 0) throw new Error("amount 必须 > 0");
+  const rec = store.addWater(amount);
+  return {
+    toolCallId: "",
+    name: "water_add",
+    ok: true,
+    content: JSON.stringify(rec),
+    summary: okSummary("water_add", `已记录 ${amount}ml，今日累计 ${store.todayWaterAmount}ml`),
+    card: "water",
+    cardData: { amount, total: store.todayWaterAmount, goal: 2000 },
+  };
+}
+
+function executeWaterToday(): ToolResult {
+  const store = useHealthDataStore();
+  const total = store.todayWaterAmount;
+  return {
+    toolCallId: "",
+    name: "water_today",
+    ok: true,
+    content: JSON.stringify({ total, goal: 2000 }),
+    summary: okSummary("water_today", `今日 ${total}ml / 2000ml`),
+    card: "water",
+    cardData: { amount: 0, total, goal: 2000 },
+  };
+}
+
+// ===== 饮食记录工具 =====
+
+function executeFoodRecordAdd(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const foodId = typeof args.foodId === "string" ? args.foodId : undefined;
+  const grams = Number(args.grams ?? 0);
+  if (grams <= 0) throw new Error("grams 必须 > 0");
+  let foodName = typeof args.foodName === "string" ? args.foodName : "";
+  if (foodId) {
+    const food = store.findFood(foodId);
+    if (!food) throw new Error(`食品 id ${foodId} 不存在`);
+    foodName = food.name;
+  }
+  if (!foodName) throw new Error("需提供 foodId 或 foodName");
+  const rec = store.addFoodRecord({
+    foodId,
+    foodName,
+    grams,
+    calories: typeof args.calories === "number" ? Number(args.calories) : undefined,
+    carbs: typeof args.carbs === "number" ? Number(args.carbs) : undefined,
+    protein: typeof args.protein === "number" ? Number(args.protein) : undefined,
+    fat: typeof args.fat === "number" ? Number(args.fat) : undefined,
+  });
+  return {
+    toolCallId: "",
+    name: "food_record_add",
+    ok: true,
+    content: JSON.stringify(rec),
+    summary: okSummary("food_record_add", `已记录 ${foodName} ${grams}g / ${rec.calories}千卡`),
+    card: "food-record",
+    cardData: {
+      record: rec,
+      todayTotals: {
+        calories: store.todayCalories,
+        carbs: store.todayCarbs,
+        protein: store.todayProtein,
+        fat: store.todayFat,
+      },
+    },
+  };
+}
+
+function executeFoodToday(): ToolResult {
+  const store = useHealthDataStore();
+  const records = store.todayFoodRecords;
+  return {
+    toolCallId: "",
+    name: "food_today",
+    ok: true,
+    content: JSON.stringify(records),
+    summary: okSummary("food_today", `今日 ${records.length} 条 · ${store.todayCalories}千卡`),
+    card: "food-record",
+    cardData: {
+      records,
+      todayTotals: {
+        calories: store.todayCalories,
+        carbs: store.todayCarbs,
+        protein: store.todayProtein,
+        fat: store.todayFat,
+      },
+    },
+  };
+}
+
+// ===== 食品库 CRUD =====
+
+function executeFoodDbList(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const q = typeof args.query === "string" ? args.query : "";
+  const list = store.searchFoods(q).slice(0, 50);
+  return {
+    toolCallId: "",
+    name: "food_db_list",
+    ok: true,
+    content: JSON.stringify(list),
+    summary: okSummary("food_db_list", `共 ${list.length} 个食品`),
+    card: "food-db",
+    cardData: { items: list },
+  };
+}
+
+function executeFoodDbCreate(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const units = Array.isArray(args.units)
+    ? (args.units as Record<string, unknown>[]).map((u) => ({
+        name: String(u.name ?? ""),
+        grams: Number(u.grams ?? 0),
+      }))
+    : [{ name: "100g", grams: 100 }];
+  const item = store.addFoodItem({
+    name: String(args.name ?? "未命名食品"),
+    category: typeof args.category === "string" ? args.category : "其他",
+    caloriesPer100g: Number(args.caloriesPer100g ?? 0),
+    carbsPer100g: Number(args.carbsPer100g ?? 0),
+    proteinPer100g: Number(args.proteinPer100g ?? 0),
+    fatPer100g: Number(args.fatPer100g ?? 0),
+    microNutrients: typeof args.microNutrients === "string" ? args.microNutrients : undefined,
+    units,
+  });
+  return {
+    toolCallId: "",
+    name: "food_db_create",
+    ok: true,
+    content: JSON.stringify(item),
+    summary: okSummary("food_db_create", `已创建「${item.name}」`),
+    card: "food-db",
+    cardData: { items: [item] },
+  };
+}
+
+function executeFoodDbUpdate(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const id = String(args.id ?? "");
+  const item = store.findFood(id);
+  if (!item) throw new Error("食品不存在");
+  const patch: Record<string, unknown> = {};
+  if (typeof args.name === "string") patch.name = args.name;
+  if (typeof args.category === "string") patch.category = args.category;
+  if (args.caloriesPer100g != null) patch.caloriesPer100g = Number(args.caloriesPer100g);
+  if (args.carbsPer100g != null) patch.carbsPer100g = Number(args.carbsPer100g);
+  if (args.proteinPer100g != null) patch.proteinPer100g = Number(args.proteinPer100g);
+  if (args.fatPer100g != null) patch.fatPer100g = Number(args.fatPer100g);
+  if (typeof args.microNutrients === "string") patch.microNutrients = args.microNutrients;
+  if (Array.isArray(args.units)) {
+    patch.units = (args.units as Record<string, unknown>[]).map((u) => ({
+      name: String(u.name ?? ""),
+      grams: Number(u.grams ?? 0),
+    }));
+  }
+  store.updateFoodItem(id, patch);
+  const updated = store.findFood(id)!;
+  return {
+    toolCallId: "",
+    name: "food_db_update",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("food_db_update", `已更新「${updated.name}」`),
+    card: "food-db",
+    cardData: { items: [updated] },
+  };
+}
+
+function executeFoodDbDelete(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const id = String(args.id ?? "");
+  const item = store.findFood(id);
+  if (!item) throw new Error("食品不存在");
+  const title = item.name;
+  store.deleteFoodItem(id);
+  return {
+    toolCallId: "",
+    name: "food_db_delete",
+    ok: true,
+    content: JSON.stringify({ deleted: true, id }),
+    summary: okSummary("food_db_delete", `已删除「${title}」`),
+    card: "raw",
+    cardData: { deleted: true, id, title },
+  };
+}
+
+// ===== 体征记录工具 =====
+
+function executeBodyMetricsRecord(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const rec = store.addBodyMetrics({
+    heightCm: typeof args.heightCm === "number" ? Number(args.heightCm) : undefined,
+    weightKg: typeof args.weightKg === "number" ? Number(args.weightKg) : undefined,
+    bodyFatPercent: typeof args.bodyFatPercent === "number" ? Number(args.bodyFatPercent) : undefined,
+  });
+  return {
+    toolCallId: "",
+    name: "body_metrics_record",
+    ok: true,
+    content: JSON.stringify(rec),
+    summary: okSummary(
+      "body_metrics_record",
+      `已记录 BMI ${rec.bmi?.toFixed(1) ?? "--"}${rec.bodyFatPercent ? ` · 体脂 ${rec.bodyFatPercent}%` : ""}`,
+    ),
+    card: "raw",
+    cardData: rec,
+  };
+}
+
 function dispatch(name: string, args: AnyParams): ToolResult {
   switch (name) {
     case "course_list": return executeCourseList(args);
@@ -500,6 +833,20 @@ function dispatch(name: string, args: AnyParams): ToolResult {
     case "workout_course_adjust_permanent": return executeWorkoutCourseAdjustPermanent(args);
     case "app_config_get": return executeAppConfigGet();
     case "app_config_update": return executeAppConfigUpdate(args);
+    case "todo_list": return executeTodoList(args);
+    case "todo_create": return executeTodoCreate(args);
+    case "todo_update": return executeTodoUpdate(args);
+    case "todo_delete": return executeTodoDelete(args);
+    case "todo_toggle_done": return executeTodoToggleDone(args);
+    case "water_add": return executeWaterAdd(args);
+    case "water_today": return executeWaterToday();
+    case "food_record_add": return executeFoodRecordAdd(args);
+    case "food_today": return executeFoodToday();
+    case "food_db_list": return executeFoodDbList(args);
+    case "food_db_create": return executeFoodDbCreate(args);
+    case "food_db_update": return executeFoodDbUpdate(args);
+    case "food_db_delete": return executeFoodDbDelete(args);
+    case "body_metrics_record": return executeBodyMetricsRecord(args);
     default: throw new Error(`未知工具: ${name}`);
   }
 }
@@ -710,5 +1057,172 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       weight: Type.Optional(Type.Number({ description: "kg" })),
     }),
     execute: wrapExecuteRich("app_config_update"),
+  },
+  // ===== TodoList 工具 =====
+  {
+    name: "todo_list",
+    label: "查询待办",
+    description: "列出待办事项。默认今日，传 includeAll=true 列全部，传 date=YYYY-MM-DD 查指定日期。",
+    parameters: Type.Object({
+      date: Type.Optional(Type.String({ description: "YYYY-MM-DD，默认今日" })),
+      includeAll: Type.Optional(Type.Boolean({ description: "true 列全部待办" })),
+    }),
+    execute: wrapExecuteRich("todo_list"),
+  },
+  {
+    name: "todo_create",
+    label: "创建待办",
+    description: "创建待办事项。priority: low/normal/high。dueDate 默认今日。",
+    parameters: Type.Object({
+      title: Type.String(),
+      note: Type.Optional(Type.String()),
+      dueDate: Type.Optional(Type.String({ description: "YYYY-MM-DD" })),
+      priority: Type.Optional(Type.Union([
+        Type.Literal("low"),
+        Type.Literal("normal"),
+        Type.Literal("high"),
+      ])),
+    }),
+    execute: wrapExecuteRich("todo_create"),
+  },
+  {
+    name: "todo_update",
+    label: "更新待办",
+    description: "更新已有待办。仅传需要修改的字段。done 设为 true/false 切换完成状态。",
+    parameters: Type.Object({
+      id: Type.String(),
+      title: Type.Optional(Type.String()),
+      note: Type.Optional(Type.String()),
+      dueDate: Type.Optional(Type.String()),
+      priority: Type.Optional(Type.Union([
+        Type.Literal("low"),
+        Type.Literal("normal"),
+        Type.Literal("high"),
+      ])),
+      done: Type.Optional(Type.Boolean()),
+    }),
+    execute: wrapExecuteRich("todo_update"),
+  },
+  {
+    name: "todo_delete",
+    label: "删除待办",
+    description: "按 id 删除待办。",
+    parameters: Type.Object({ id: Type.String() }),
+    execute: wrapExecuteRich("todo_delete"),
+  },
+  {
+    name: "todo_toggle_done",
+    label: "切换待办完成",
+    description: "切换待办完成/未完成状态。",
+    parameters: Type.Object({ id: Type.String() }),
+    execute: wrapExecuteRich("todo_toggle_done"),
+  },
+  // ===== 饮水工具 =====
+  {
+    name: "water_add",
+    label: "记录饮水",
+    description: "记录一次饮水量（毫升）。会叠加到今日总量。",
+    parameters: Type.Object({
+      amount: Type.Number({ description: "毫升" }),
+    }),
+    execute: wrapExecuteRich("water_add"),
+  },
+  {
+    name: "water_today",
+    label: "今日饮水",
+    description: "获取今日饮水总量与目标。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("water_today"),
+  },
+  // ===== 饮食记录工具 =====
+  {
+    name: "food_record_add",
+    label: "记录饮食",
+    description: "记录一次饮食。优先用 foodId 引用食品库自动计算营养；也可手动传 foodName + grams + 各营养值。",
+    parameters: Type.Object({
+      foodId: Type.Optional(Type.String({ description: "食品库 id" })),
+      foodName: Type.Optional(Type.String({ description: "无 foodId 时必填" })),
+      grams: Type.Number({ description: "克数" }),
+      calories: Type.Optional(Type.Number({ description: "无 foodId 时手动填千卡" })),
+      carbs: Type.Optional(Type.Number()),
+      protein: Type.Optional(Type.Number()),
+      fat: Type.Optional(Type.Number()),
+    }),
+    execute: wrapExecuteRich("food_record_add"),
+  },
+  {
+    name: "food_today",
+    label: "今日饮食",
+    description: "获取今日所有饮食记录与热量/碳水/蛋白质/脂肪汇总。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("food_today"),
+  },
+  // ===== 食品库 CRUD =====
+  {
+    name: "food_db_list",
+    label: "查询食品库",
+    description: "搜索食品库。query 按名称/分类模糊匹配。返回每 100g 营养信息与可用单位。",
+    parameters: Type.Object({
+      query: Type.Optional(Type.String()),
+    }),
+    execute: wrapExecuteRich("food_db_list"),
+  },
+  {
+    name: "food_db_create",
+    label: "新增食品",
+    description: "新增自定义食品。营养以每 100g 为基准。units 为可用单位（如 个/杯/两 折算克数）。",
+    parameters: Type.Object({
+      name: Type.String(),
+      category: Type.Optional(Type.String()),
+      caloriesPer100g: Type.Number(),
+      carbsPer100g: Type.Number(),
+      proteinPer100g: Type.Number(),
+      fatPer100g: Type.Number(),
+      microNutrients: Type.Optional(Type.String()),
+      units: Type.Optional(Type.Array(Type.Object({
+        name: Type.String(),
+        grams: Type.Number(),
+      }))),
+    }),
+    execute: wrapExecuteRich("food_db_create"),
+  },
+  {
+    name: "food_db_update",
+    label: "更新食品",
+    description: "更新自定义食品。预设食品也可改（运行时），仅传需修改字段。",
+    parameters: Type.Object({
+      id: Type.String(),
+      name: Type.Optional(Type.String()),
+      category: Type.Optional(Type.String()),
+      caloriesPer100g: Type.Optional(Type.Number()),
+      carbsPer100g: Type.Optional(Type.Number()),
+      proteinPer100g: Type.Optional(Type.Number()),
+      fatPer100g: Type.Optional(Type.Number()),
+      microNutrients: Type.Optional(Type.String()),
+      units: Type.Optional(Type.Array(Type.Object({
+        name: Type.String(),
+        grams: Type.Number(),
+      }))),
+    }),
+    execute: wrapExecuteRich("food_db_update"),
+  },
+  {
+    name: "food_db_delete",
+    label: "删除食品",
+    description: "按 id 删除自定义食品。预设食品不可删。",
+    parameters: Type.Object({ id: Type.String() }),
+    execute: wrapExecuteRich("food_db_delete"),
+  },
+  // ===== 体征记录 =====
+  {
+    name: "body_metrics_record",
+    label: "记录体征",
+    description: "记录身高/体重/体脂率，自动计算 BMI。仅传需更新的字段，未传字段沿用上次记录。",
+    parameters: Type.Object({
+      heightCm: Type.Optional(Type.Number({ description: "cm" })),
+      weightKg: Type.Optional(Type.Number({ description: "kg" })),
+      bodyFatPercent: Type.Optional(Type.Number({ description: "体脂率 %" })),
+    }),
+    execute: wrapExecuteRich("body_metrics_record"),
   },
 ];
