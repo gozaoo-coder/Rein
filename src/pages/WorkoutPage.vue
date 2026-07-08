@@ -16,6 +16,7 @@ import ShareSheet from "@/components/share/ShareSheet.vue";
 import { formatWorkoutEnd } from "@/data/shareFormatters";
 import type { ShareContent } from "@/types/share";
 import { StepType, MediaType } from "@/types/workout";
+import { DIFFICULTY_LABEL, type CourseDifficulty } from "@/types/course";
 
 const router = useRouter();
 const { store, hasInterrupted, resumeInterrupted, discardInterrupted } = useWorkoutRuntime();
@@ -40,6 +41,10 @@ const shareContent = computed<ShareContent | null>(() => {
 });
 
 const stepTitle = computed(() => store.currentStep?.details.title ?? "");
+const levelLabel = computed(() => {
+  const lv = store.plan?.level as CourseDifficulty | undefined;
+  return lv ? (DIFFICULTY_LABEL[lv] ?? lv) : "";
+});
 const guideContent = computed(() => store.currentStep?.details.guide.content ?? "");
 const guideType = computed(() => store.currentStep?.details.guide.type);
 const stepDetails = computed(() => store.currentStep?.details);
@@ -192,7 +197,7 @@ function handleJumpStep(idx: number) {
               </svg>
               休息时间
             </span>
-            <span class="level-tag">{{ store.plan?.level }}</span>
+            <span class="level-tag">{{ levelLabel }}</span>
           </div>
         </div>
         <!-- 右上角 list 按钮 -->
@@ -232,12 +237,6 @@ function handleJumpStep(idx: number) {
           <div class="timer-center">
             <div class="timer-number">{{ timerValue }}</div>
             <div class="timer-label">{{ timerLabel }}</div>
-            <div v-if="store.heartRateConnected && store.heartRate" class="timer-hr">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="#ff5a5a">
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-              </svg>
-              {{ store.heartRate }} BPM
-            </div>
           </div>
         </div>
 
@@ -697,6 +696,7 @@ function handleJumpStep(idx: number) {
   color: var(--color-text-secondary);
   font-weight: var(--fw-medium);
   margin-top: -8px;
+  white-space: nowrap;
 }
 .set-progress-dots {
   display: flex;

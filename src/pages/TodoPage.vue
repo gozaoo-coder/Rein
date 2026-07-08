@@ -682,9 +682,6 @@ watch(viewMode, (m) => {
   grid-template-columns: repeat(7, 1fr);
   gap: 2px;
 }
-.week-grid :deep(.day-cell) {
-  min-height: 100px;
-}
 .day-cell {
   position: relative;
   aspect-ratio: 1 / 1;
@@ -697,6 +694,12 @@ watch(viewMode, (m) => {
   padding: 4px 2px 2px;
   cursor: pointer;
   transition: background 0.15s;
+}
+/* 周视图：取消 1:1 宽高比，使用 min-height，内容顶部对齐 */
+.week-grid :deep(.day-cell) {
+  aspect-ratio: auto;
+  min-height: 100px;
+  align-items: center;
 }
 .day-cell:active { background: var(--bg-200); }
 .day-cell.out-month { opacity: 0.35; }

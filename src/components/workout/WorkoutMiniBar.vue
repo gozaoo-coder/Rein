@@ -98,7 +98,7 @@ const heartBeatClass = computed(() => ({
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   background: rgba(255, 255, 255, 0.78);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
   backdrop-filter: blur(40px) saturate(180%);
