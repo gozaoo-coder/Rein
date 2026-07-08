@@ -480,9 +480,11 @@ function executeAppConfigGet(): ToolResult {
     profile: {
       nickname: p.nickname,
       gender: p.gender,
-      age: p.age,
+      birthday: p.birthday,
+      age: userStore.computedAge,
       height: p.height,
       weight: p.weight,
+      targetWeight: p.targetWeight,
     },
     bmi: userStore.bmi,
   };
@@ -504,11 +506,11 @@ function executeAppConfigUpdate(args: AnyParams): ToolResult {
   if (typeof args.gender === "string" && ["male", "female", "other"].includes(args.gender)) {
     patch.gender = args.gender as "male" | "female" | "other";
   }
-  if (args.age != null) patch.age = Number(args.age);
+  if (typeof args.birthday === "string") patch.birthday = args.birthday;
   if (args.height != null) patch.height = Number(args.height);
   if (args.weight != null) patch.weight = Number(args.weight);
+  if (args.targetWeight != null) patch.targetWeight = Number(args.targetWeight);
   userStore.setProfile(patch);
-  userStore.calculateBmi();
   return {
     toolCallId: "",
     name: "app_config_update",
@@ -1378,13 +1380,14 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "app_config_update",
     label: "更新应用配置",
-    description: "更新用户配置。可改 nickname/gender/age/height/weight。",
+    description: "更新用户配置。可改 nickname/gender/birthday/height/weight/targetWeight。",
     parameters: Type.Object({
       nickname: Type.Optional(Type.String()),
       gender: Type.Optional(Type.Union([Type.Literal("male"), Type.Literal("female"), Type.Literal("other")])),
-      age: Type.Optional(Type.Number()),
+      birthday: Type.Optional(Type.String({ description: "YYYY-MM-DD 生日" })),
       height: Type.Optional(Type.Number({ description: "cm" })),
       weight: Type.Optional(Type.Number({ description: "kg" })),
+      targetWeight: Type.Optional(Type.Number({ description: "kg 目标体重" })),
     }),
     execute: wrapExecuteRich("app_config_update"),
   },

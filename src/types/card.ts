@@ -32,6 +32,9 @@ export interface CardConfig {
   id: string;
   type: CardType;
   size: CardSize;
+  /** 显式网格位置（1-based）。未设置时由 packer 自动分配 */
+  col?: number;
+  row?: number;
   /** 自定义 props */
   props?: Record<string, any>;
 }

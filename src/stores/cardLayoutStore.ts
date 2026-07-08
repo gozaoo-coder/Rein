@@ -3,14 +3,16 @@
  *
  * - 卡片实例 CRUD
  * - 拖拽换位 / 调整尺寸
+ * - 显式网格位置 (col, row) 持久化，保留空隙不回填
  * - 三环数据源配置
  * - 持久化到 Tauri storage（useStorage 桥）
  */
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { readJSON, writeJSON } from "@/composables/useStorage";
+import { packLayout } from "@/composables/useGridLayout";
 import type { CardConfig, CardLayout, CardSize, CardType, RingDataSource } from "@/types/card";
-import { CARD_REGISTRY, DEFAULT_RINGS } from "@/types/card";
+import { CARD_REGISTRY, CARD_SIZE_MAP, DEFAULT_RINGS } from "@/types/card";
 
 const LAYOUT_KEY = "home-card-layout";
 
@@ -22,14 +24,25 @@ function genId(): string {
 function defaultLayout(): CardLayout {
   return {
     cards: [
-      { id: genId(), type: "three-ring", size: "4x2" },
-      { id: genId(), type: "health-overview", size: "2x2" },
-      { id: genId(), type: "today-todo", size: "2x2" },
-      { id: genId(), type: "recent-workout", size: "4x2" },
+      { id: genId(), type: "three-ring", size: "4x2", col: 1, row: 1 },
+      { id: genId(), type: "health-overview", size: "2x2", col: 1, row: 3 },
+      { id: genId(), type: "today-todo", size: "2x2", col: 3, row: 3 },
+      { id: genId(), type: "recent-workout", size: "4x2", col: 1, row: 5 },
     ],
     columns: 4,
     rings: [...DEFAULT_RINGS],
   };
+}
+
+/** 给没有显式位置的卡分配位置（packer 自动） */
+function ensurePositions(cards: CardConfig[]): void {
+  const placed = packLayout(cards);
+  for (const p of placed) {
+    if (p.card.col === undefined || p.card.row === undefined) {
+      p.card.col = p.col;
+      p.card.row = p.row;
+    }
+  }
 }
 
 export const useCardLayoutStore = defineStore("cardLayout", () => {
@@ -48,11 +61,13 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
         const hoIdx = stored.cards.findIndex((c) => c.type === "health-overview");
         if (hoIdx >= 0) {
           stored.cards[hoIdx].size = "2x2";
-          stored.cards.splice(hoIdx, 0, { id: genId(), type: "three-ring", size: "4x2" });
+          stored.cards.splice(hoIdx, 0, { id: genId(), type: "three-ring", size: "4x2", col: 1, row: 1 });
         } else {
-          stored.cards.unshift({ id: genId(), type: "three-ring", size: "4x2" });
+          stored.cards.unshift({ id: genId(), type: "three-ring", size: "4x2", col: 1, row: 1 });
         }
       }
+      // 给老数据（无 col/row）分配位置
+      ensurePositions(stored.cards);
       layout.value = stored;
     }
     loaded.value = true;
@@ -74,13 +89,25 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     } else {
       layout.value.cards.push(card);
     }
+    // 重新 pack 并写入位置
+    reassignPositions();
     void persist();
     return card;
   }
 
   function removeCard(id: string): void {
     layout.value.cards = layout.value.cards.filter((c) => c.id !== id);
+    reassignPositions();
     void persist();
+  }
+
+  /** 重新计算所有卡的位置（保留已有显式位置，冲突推后） */
+  function reassignPositions(): void {
+    const placed = packLayout(layout.value.cards);
+    for (const p of placed) {
+      p.card.col = p.col;
+      p.card.row = p.row;
+    }
   }
 
   function moveCard(fromIndex: number, toIndex: number): void {
@@ -90,6 +117,7 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     if (fromIndex === clampedTo) return;
     const [moved] = cards.splice(fromIndex, 1);
     cards.splice(clampedTo, 0, moved);
+    reassignPositions();
     void persist();
   }
 
@@ -101,6 +129,21 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     const [moved] = cards.splice(fromIdx, 1);
     const clampedTo = Math.max(0, Math.min(toIndex, cards.length));
     cards.splice(clampedTo, 0, moved);
+    reassignPositions();
+    void persist();
+  }
+
+  /**
+   * 将卡片放置到指定网格 cell (col, row)。
+   * 其他卡被推开（向下/向右），通过 packer 解决冲突。
+   */
+  function placeCardAt(cardId: string, col: number, row: number): void {
+    const card = layout.value.cards.find((c) => c.id === cardId);
+    if (!card) return;
+    const m = CARD_SIZE_MAP[card.size];
+    card.col = Math.max(1, Math.min(col, 4 - m.cols + 1));
+    card.row = Math.max(1, row);
+    reassignPositions();
     void persist();
   }
 
@@ -110,6 +153,12 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     const meta = CARD_REGISTRY[card.type];
     if (!meta.sizes.includes(size)) return;
     card.size = size;
+    // 调整尺寸时保持当前位置（clamp col 使其不越界）
+    const m = CARD_SIZE_MAP[size];
+    if (card.col) {
+      card.col = Math.max(1, Math.min(card.col, 4 - m.cols + 1));
+    }
+    reassignPositions();
     void persist();
   }
 
@@ -143,9 +192,12 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     removeCard,
     moveCard,
     moveCardTo,
+    placeCardAt,
     resizeCard,
     updateCardProps,
     setRings,
     resetToDefault,
+    reassignPositions,
   };
 });
+

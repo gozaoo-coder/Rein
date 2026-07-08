@@ -1,7 +1,23 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+/**
+ * HomeCardGrid — 显式网格布局 + FLIP 动画 + 拖拽悬停预览
+ *
+ * 布局：每张卡有显式 (col, row)，由 useGridLayout packer 计算。
+ *   - 不回填空隙：gap 保留
+ *   - 调整尺寸：保持当前位置
+ *   - 拖拽：悬停 0.5s 显示"顶开"预览，松手落入预览位置
+ *
+ * 动画：FLIP（First-Last-Invert-Play）实现网格位置切换的平滑过渡
+ */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useCardLayoutStore } from "@/stores/cardLayoutStore";
 import { CARD_REGISTRY, CARD_SIZE_MAP, type CardConfig, type CardSize } from "@/types/card";
+import {
+  packLayout,
+  pointerToCell,
+  gridRowCount,
+  type PlacedCard,
+} from "@/composables/useGridLayout";
 import HomeCardRenderer from "./HomeCardRenderer.vue";
 
 const props = defineProps<{
@@ -23,7 +39,93 @@ function setCellRef(el: HTMLElement | null, idx: number) {
   if (el) cellRefs.value[idx] = el;
 }
 
-// ===== Drag reorder (document-level pointer events) =====
+const GAP = 12;
+const ROW_H = 88;
+
+// ===== 布局计算 =====
+
+/** 当前布局位置（排除拖动中的卡） */
+const placed = computed<PlacedCard[]>(() => {
+  const excludeId = dragState.value?.active ? dragState.value.cardId : undefined;
+  return packLayout(cards.value, excludeId);
+});
+
+/** 预览布局（悬停 0.5s 后计算的"顶开"效果） */
+const previewPlaced = ref<PlacedCard[] | null>(null);
+
+/** 实际渲染用的位置：有预览用预览，否则用 placed */
+const renderPlaced = computed<PlacedCard[]>(() => {
+  if (previewPlaced.value) return previewPlaced.value;
+  return placed.value;
+});
+
+const positions = computed(() => {
+  const map = new Map<string, PlacedCard>();
+  for (const p of renderPlaced.value) {
+    map.set(p.card.id, p);
+  }
+  return map;
+});
+
+const rowCount = computed(() => gridRowCount(renderPlaced.value));
+
+function gridStyle(pos: PlacedCard): Record<string, string> {
+  return {
+    gridColumn: `${pos.col} / ${pos.col + pos.cols}`,
+    gridRow: `${pos.row} / ${pos.row + pos.rows}`,
+  };
+}
+
+// ===== FLIP 动画 =====
+const flipEnabled = ref(true);
+let firstRects: Map<HTMLElement, DOMRect> | null = null;
+
+function recordFirst() {
+  if (!flipEnabled.value) return;
+  firstRects = new Map();
+  for (const el of cellRefs.value) {
+    if (el) firstRects.set(el, el.getBoundingClientRect());
+  }
+}
+
+function playFlip() {
+  if (!firstRects || !flipEnabled.value) return;
+  const rects = firstRects;
+  firstRects = null;
+  nextTick(() => {
+    for (const el of cellRefs.value) {
+      if (!el || !rects.has(el)) continue;
+      const first = rects.get(el)!;
+      const last = el.getBoundingClientRect();
+      const dx = first.left - last.left;
+      const dy = first.top - last.top;
+      if (dx === 0 && dy === 0) continue;
+      el.style.transition = "none";
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+      el.getBoundingClientRect(); // force reflow
+      el.style.transition = "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)";
+      el.style.transform = "";
+      const cleanup = () => {
+        el.style.transition = "";
+        el.style.transform = "";
+        el.removeEventListener("transitionend", cleanup);
+      };
+      el.addEventListener("transitionend", cleanup);
+    }
+  });
+}
+
+// 监听位置变化触发 FLIP
+watch(
+  () => renderPlaced.value.map((p) => `${p.card.id}:${p.col},${p.row}`).join("|"),
+  () => {
+    if (dragState.value?.active) return; // 拖动中不 FLIP（预览动画由 CSS transition 处理）
+    recordFirst();
+    nextTick(() => playFlip());
+  },
+);
+
+// ===== 拖拽换位（含 0.5s 悬停预览） =====
 const dragState = ref<{
   cardId: string;
   startIdx: number;
@@ -33,18 +135,12 @@ const dragState = ref<{
   ghostY: number;
   active: boolean;
   pointerId: number;
-  longPressTimer: number | null;
 } | null>(null);
-const dropIndex = ref<number | null>(null);
-const ghostEl = ref<HTMLElement | null>(null);
-const animating = ref(false);
 
-function clearLongPress(ds: NonNullable<typeof dragState.value>) {
-  if (ds.longPressTimer !== null) {
-    clearTimeout(ds.longPressTimer);
-    ds.longPressTimer = null;
-  }
-}
+const hoverCell = ref<{ col: number; row: number } | null>(null);
+let hoverTimer: number | null = null;
+const HOVER_MS = 500;
+const ghostEl = ref<HTMLElement | null>(null);
 
 function onCardPointerDown(e: PointerEvent, card: CardConfig, idx: number) {
   if (!props.editMode) return;
@@ -64,20 +160,17 @@ function onCardPointerDown(e: PointerEvent, card: CardConfig, idx: number) {
     ghostY: 0,
     active: false,
     pointerId: e.pointerId,
-    longPressTimer: null,
   };
 }
 
 function docPointerMove(e: PointerEvent) {
-  // Resize takes priority
   if (resizeState.value) {
     onResizePointerMove(e);
     return;
   }
 
   const ds = dragState.value;
-  if (!ds) return;
-  if (e.pointerId !== ds.pointerId) return;
+  if (!ds || e.pointerId !== ds.pointerId) return;
 
   const dx = e.clientX - ds.startX;
   const dy = e.clientY - ds.startY;
@@ -86,11 +179,9 @@ function docPointerMove(e: PointerEvent) {
   if (!ds.active) {
     if (dist > 8) {
       ds.active = true;
-      clearLongPress(ds);
       createGhost(ds.cardId);
       document.body.style.userSelect = "none";
       document.body.style.touchAction = "none";
-      dropIndex.value = ds.startIdx;
     } else {
       return;
     }
@@ -100,12 +191,32 @@ function docPointerMove(e: PointerEvent) {
   ds.ghostY = dy;
   updateGhostPosition(dx, dy);
 
-  const elBelow = document.elementFromPoint(e.clientX, e.clientY);
-  const cellEl = elBelow?.closest(".card-cell") as HTMLElement | null;
-  if (cellEl && gridRef.value?.contains(cellEl)) {
-    const targetIdx = cellRefs.value.indexOf(cellEl);
-    if (targetIdx >= 0 && targetIdx !== dropIndex.value) {
-      dropIndex.value = targetIdx;
+  // 计算悬停 cell
+  if (gridRef.value) {
+    const cell = pointerToCell(e.clientX, e.clientY, gridRef.value, GAP);
+    if (cell) {
+      if (!hoverCell.value || hoverCell.value.col !== cell.col || hoverCell.value.row !== cell.row) {
+        hoverCell.value = cell;
+        // 悬停 cell 变化 → 重置预览
+        previewPlaced.value = null;
+        if (hoverTimer !== null) clearTimeout(hoverTimer);
+        const card = cards.value.find((c) => c.id === ds.cardId);
+        if (card) {
+          const m = CARD_SIZE_MAP[card.size];
+          const clampedCol = Math.max(1, Math.min(cell.col, 4 - m.cols + 1));
+          hoverTimer = window.setTimeout(() => {
+            // 计算顶开预览
+            previewPlaced.value = packLayout(cards.value, ds.cardId, {
+              id: ds.cardId,
+              col: clampedCol,
+              row: cell.row,
+              cols: m.cols,
+              rows: m.rows,
+            });
+            hoverTimer = null;
+          }, HOVER_MS);
+        }
+      }
     }
   }
 
@@ -121,7 +232,6 @@ function docPointerMove(e: PointerEvent) {
 }
 
 function docPointerUp(e: PointerEvent) {
-  // Resize end
   if (resizeState.value && e.pointerId === resizeState.value.pointerId) {
     onResizePointerUp(e);
     return;
@@ -130,16 +240,25 @@ function docPointerUp(e: PointerEvent) {
   const ds = dragState.value;
   if (!ds || e.pointerId !== ds.pointerId) return;
 
-  clearLongPress(ds);
-
-  if (ds.active && dropIndex.value !== null && dropIndex.value !== ds.startIdx) {
-    animating.value = true;
-    store.moveCardTo(ds.cardId, dropIndex.value);
-    nextTick(() => {
-      setTimeout(() => { animating.value = false; }, 280);
-    });
+  if (hoverTimer !== null) {
+    clearTimeout(hoverTimer);
+    hoverTimer = null;
   }
 
+  if (ds.active) {
+    // 有预览 → 提交位置；否则尝试简单放置
+    if (hoverCell.value) {
+      const card = cards.value.find((c) => c.id === ds.cardId);
+      if (card) {
+        const m = CARD_SIZE_MAP[card.size];
+        const col = Math.max(1, Math.min(hoverCell.value.col, 4 - m.cols + 1));
+        store.placeCardAt(ds.cardId, col, hoverCell.value.row);
+      }
+    }
+  }
+
+  previewPlaced.value = null;
+  hoverCell.value = null;
   removeGhost();
   document.body.style.userSelect = "";
   document.body.style.touchAction = "";
@@ -148,7 +267,6 @@ function docPointerUp(e: PointerEvent) {
     cell?.releasePointerCapture?.(e.pointerId);
   } catch { /* noop */ }
   dragState.value = null;
-  dropIndex.value = null;
 }
 
 function createGhost(cardId: string) {
@@ -188,7 +306,7 @@ function removeGhost() {
   }
 }
 
-// ===== Drag-to-resize (document-level pointer events) =====
+// ===== 拖拽调整大小 =====
 const resizeState = ref<{
   cardId: string;
   startX: number;
@@ -214,10 +332,9 @@ function onResizePointerDown(e: PointerEvent, card: CardConfig, idx: number) {
   const m = CARD_SIZE_MAP[card.size];
   const gridEl = gridRef.value;
   const gridRect = gridEl?.getBoundingClientRect();
-  const gap = 12;
+  const gap = GAP;
   const cellW = gridRect ? (gridRect.width - gap * 3) / 4 : 80;
-  const firstCell = cellRefs.value[0];
-  const cellH = firstCell ? firstCell.offsetHeight : 88;
+  const cellH = ROW_H;
 
   resizeState.value = {
     cardId: card.id,
@@ -235,8 +352,7 @@ function onResizePointerDown(e: PointerEvent, card: CardConfig, idx: number) {
 
 function onResizePointerMove(e: PointerEvent) {
   const rs = resizeState.value;
-  if (!rs) return;
-  if (e.pointerId !== rs.pointerId) return;
+  if (!rs || e.pointerId !== rs.pointerId) return;
 
   const dx = e.clientX - rs.startX;
   const dy = e.clientY - rs.startY;
@@ -244,8 +360,8 @@ function onResizePointerMove(e: PointerEvent) {
   const deltaCols = Math.round(dx / (rs.cellW + rs.gap));
   const deltaRows = Math.round(dy / (rs.cellH + rs.gap));
 
-  let targetCols = Math.max(1, Math.min(4, rs.startCols + deltaCols));
-  let targetRows = Math.max(1, Math.min(4, rs.startRows + deltaRows));
+  const targetCols = Math.max(1, Math.min(4, rs.startCols + deltaCols));
+  const targetRows = Math.max(1, Math.min(4, rs.startRows + deltaRows));
 
   const card = cards.value.find((c) => c.id === rs.cardId);
   if (!card) return;
@@ -271,7 +387,9 @@ function onResizePointerUp(e: PointerEvent) {
   if (rs.previewSize) {
     const card = cards.value.find((c) => c.id === rs.cardId);
     if (card && rs.previewSize !== card.size) {
+      recordFirst();
       store.resizeCard(rs.cardId, rs.previewSize);
+      nextTick(() => playFlip());
     }
   }
   try {
@@ -293,9 +411,10 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointerup", docPointerUp);
   window.removeEventListener("pointercancel", docPointerUp);
   removeGhost();
+  if (hoverTimer !== null) clearTimeout(hoverTimer);
 });
 
-// ===== Long-press to enter edit mode =====
+// ===== 长按进入编辑模式 =====
 const lpTimer = ref<number | null>(null);
 const lpStart = ref<{ x: number; y: number } | null>(null);
 const LP_MS = 500;
@@ -329,19 +448,12 @@ function onGridPointerUp() {
   lpStart.value = null;
 }
 
-// ===== Delete =====
+// ===== 删除 =====
 function deleteCard(card: CardConfig, e: Event) {
   e.stopPropagation();
+  recordFirst();
   store.removeCard(card.id);
-}
-
-// ===== Grid span =====
-function gridSpan(size: CardSize): { gridColumn: string; gridRow: string } {
-  const m = CARD_SIZE_MAP[size];
-  return {
-    gridColumn: `span ${m.cols}`,
-    gridRow: `span ${m.rows}`,
-  };
+  nextTick(() => playFlip());
 }
 
 function isDragging(id: string) {
@@ -351,6 +463,16 @@ function isDragging(id: string) {
 function isResizePreview(card: CardConfig) {
   return resizeState.value?.cardId === card.id ? resizeState.value.previewSize : null;
 }
+
+/** 拖拽预览中的放置占位（半透明轮廓） */
+const dropPlaceholder = computed(() => {
+  if (!dragState.value?.active || !hoverCell.value) return null;
+  const card = cards.value.find((c) => c.id === dragState.value!.cardId);
+  if (!card) return null;
+  const m = CARD_SIZE_MAP[card.size];
+  const col = Math.max(1, Math.min(hoverCell.value.col, 4 - m.cols + 1));
+  return { col, row: hoverCell.value.row, cols: m.cols, rows: m.rows };
+});
 </script>
 
 <template>
@@ -359,8 +481,9 @@ function isResizePreview(card: CardConfig) {
     class="card-grid"
     :class="{
       'is-editing': editMode,
-      'is-animating': animating,
+      'is-previewing': !!previewPlaced,
     }"
+    :style="{ gridAutoRows: ROW_H + 'px' }"
     @pointerdown="onGridPointerDown"
     @pointermove="onGridPointerMove"
     @pointerup="onGridPointerUp"
@@ -373,10 +496,8 @@ function isResizePreview(card: CardConfig) {
       class="card-cell"
       :class="{
         'is-dragging': isDragging(card.id),
-        'is-drop-before': editMode && dropIndex === idx && dragState?.active && dragState.startIdx !== idx && idx <= dragState.startIdx,
-        'is-drop-after': editMode && dropIndex === idx && dragState?.active && dragState.startIdx !== idx && idx > dragState.startIdx,
       }"
-      :style="gridSpan(isResizePreview(card) || card.size)"
+      :style="positions.has(card.id) ? gridStyle(positions.get(card.id)!) : undefined"
       @pointerdown="editMode && onCardPointerDown($event, card, idx)"
       @click="!editMode && !dragState?.active && emit('click', card)"
     >
@@ -397,6 +518,16 @@ function isResizePreview(card: CardConfig) {
 
       <HomeCardRenderer :card="card" @click="!editMode && !dragState?.active && emit('click', card)" />
     </div>
+
+    <!-- 拖拽放置占位（顶开预览的空位轮廓） -->
+    <div
+      v-if="dropPlaceholder && !previewPlaced"
+      class="drop-placeholder"
+      :style="{
+        gridColumn: `${dropPlaceholder.col} / ${dropPlaceholder.col + dropPlaceholder.cols}`,
+        gridRow: `${dropPlaceholder.row} / ${dropPlaceholder.row + dropPlaceholder.rows}`,
+      }"
+    />
 
     <div v-if="cards.length === 0" class="grid-empty">
       <p>暂无卡片，点击编辑添加</p>
@@ -419,10 +550,11 @@ function isResizePreview(card: CardConfig) {
   gap: var(--space-3);
 }
 
-.card-grid.is-animating .card-cell {
-  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
-              grid-column 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
-              grid-row 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
+/* 预览中：所有 cell 平滑过渡到新位置 */
+.card-grid.is-previewing .card-cell {
+  transition: grid-column 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+              grid-row 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+              transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
               opacity 0.2s;
 }
 
@@ -432,7 +564,10 @@ function isResizePreview(card: CardConfig) {
   min-width: 0;
   min-height: 0;
   border-radius: var(--radius-lg);
-  transition: transform 0.2s var(--ease-immersive), opacity 0.2s;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+              grid-column 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+              grid-row 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.2s;
 }
 
 .card-grid.is-editing .card-cell {
@@ -445,21 +580,30 @@ function isResizePreview(card: CardConfig) {
 }
 
 .card-cell.is-dragging {
-  opacity: 0.25;
+  opacity: 0.2;
   transform: scale(0.96);
-}
-
-.card-cell.is-drop-before {
-  transform: translateX(calc(var(--space-3) + 4px));
-}
-.card-cell.is-drop-after {
-  transform: translateX(calc(-1 * (var(--space-3) + 4px)));
+  pointer-events: none;
 }
 
 .card-cell > :deep(.home-card),
 .card-cell > :deep(.three-ring-card) {
   width: 100%;
   height: 100%;
+}
+
+/* 拖拽放置占位 */
+.drop-placeholder {
+  border-radius: var(--radius-lg);
+  border: 2px dashed var(--color-warm);
+  background: rgba(255, 149, 0, 0.06);
+  pointer-events: none;
+  animation: pulse-placeholder 1s ease-in-out infinite;
+  z-index: 0;
+}
+
+@keyframes pulse-placeholder {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
 }
 
 .card-delete {

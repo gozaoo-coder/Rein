@@ -197,14 +197,16 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-height: 0;
+  overflow: hidden;
 }
 
 .cal-big-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 .cal-big-text {
   display: flex;
@@ -212,13 +214,13 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
   gap: 4px;
 }
 .cal-big-num {
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: var(--fw-bold);
   color: var(--success-500);
   line-height: 1;
 }
 .cal-big-unit {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-secondary);
 }
 .cal-big-goal {
@@ -229,10 +231,13 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
 .macro-rows {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2);
+  gap: 4px;
+  padding: var(--space-1) var(--space-2);
   background: var(--bg-100);
   border-radius: var(--radius-md);
+  flex: 1;
+  min-height: 0;
+  justify-content: center;
 }
 .macro-row {
   display: flex;
@@ -246,9 +251,9 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
   flex-shrink: 0;
 }
 .macro-label {
-  font-size: var(--text-xs);
+  font-size: 10px;
   color: var(--color-text-tertiary);
-  width: 28px;
+  width: 24px;
   flex-shrink: 0;
 }
 .macro-track {
@@ -264,10 +269,10 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
   transition: width 0.4s var(--ease-immersive);
 }
 .macro-val {
-  font-size: var(--text-xs);
+  font-size: 10px;
   color: var(--color-text-secondary);
   font-weight: var(--fw-medium);
-  width: 36px;
+  width: 32px;
   text-align: right;
   flex-shrink: 0;
 }
@@ -277,15 +282,16 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 8px;
+  gap: 4px;
+  padding: 6px;
   border-radius: var(--radius-full);
   border: none;
   background: linear-gradient(135deg, var(--success-500), #5dd39e);
   color: #fff;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   font-weight: var(--fw-semibold);
   cursor: pointer;
+  flex-shrink: 0;
 }
 .add-btn:active { transform: scale(0.97); }
 </style>

@@ -55,21 +55,21 @@ const ringSize = computed(() => ringR.value * 2 + 8);
 
     <div class="body" :class="{ 'body--center': size === '1x1', 'body--row': size === '2x1' }">
       <div class="ring">
-        <svg :width="ringSize" :height="ringSize" :viewBox="`0 0 ${ringR.value * 2 + 8} ${ringR.value * 2 + 8}`">
-          <circle :cx="ringR.value + 4" :cy="ringR.value + 4" :r="ringR.value" fill="none" stroke="var(--bg-200)" :stroke-width="size === '2x1' ? 3 : 4" />
+        <svg :width="ringSize" :height="ringSize" :viewBox="`0 0 ${ringR * 2 + 8} ${ringR * 2 + 8}`">
+          <circle :cx="ringR + 4" :cy="ringR + 4" :r="ringR" fill="none" stroke="var(--bg-200)" :stroke-width="size === '2x1' ? 3 : 4" />
           <circle
-            :cx="ringR.value + 4" :cy="ringR.value + 4" :r="ringR.value" fill="none"
+            :cx="ringR + 4" :cy="ringR + 4" :r="ringR" fill="none"
             stroke="var(--color-warm)" :stroke-width="size === '2x1' ? 3 : 4"
             stroke-linecap="round"
             :stroke-dasharray="C"
             :stroke-dashoffset="dashOffset"
             :style="{
               transform: 'rotate(-90deg)',
-              transformOrigin: `${ringR.value + 4}px ${ringR.value + 4}px`,
+              transformOrigin: `${ringR + 4}px ${ringR + 4}px`,
               transition: 'stroke-dashoffset .4s var(--ease-immersive)',
             }"
           />
-          <text :x="ringR.value + 4" :y="ringR.value + 4 + pctFontSize / 3" text-anchor="middle" :font-size="pctFontSize" font-weight="700" fill="var(--color-text)">
+          <text :x="ringR + 4" :y="ringR + 4 + pctFontSize / 3" text-anchor="middle" :font-size="pctFontSize" font-weight="700" fill="var(--color-text)">
             {{ pctText }}
           </text>
         </svg>
