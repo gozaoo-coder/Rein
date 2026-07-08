@@ -21,4 +21,18 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    target: "esnext",
+    minify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/@earendil-works/pi-ai")) return "pi-ai";
+          if (id.includes("node_modules/@earendil-works/pi-agent-core")) return "pi-agent";
+          if (id.includes("node_modules/marked")) return "vendor-marked";
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1000,
+  },
 });
