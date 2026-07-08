@@ -13,10 +13,11 @@ const state = reactive({
 
 export function useTopBar() {
   function setActions(actions: TopBarAction[]) {
-    state.actions = [...actions];
+    // 原地修改：保持 AppTopBar 解构拿到的数组引用有效，触发 length 响应
+    state.actions.splice(0, state.actions.length, ...actions);
   }
   function clearActions() {
-    state.actions = [];
+    state.actions.splice(0, state.actions.length);
   }
   return { actions: state.actions, setActions, clearActions };
 }
