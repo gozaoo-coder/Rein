@@ -3,6 +3,7 @@ import { createPinia } from "pinia";
 import router from "./router";
 import App from "./App.vue";
 
+import "bootstrap-icons/font/bootstrap-icons.css";
 import "./styles/tokens.css";
 import "./styles/global.css";
 

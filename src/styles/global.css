@@ -327,6 +327,40 @@ svg, img {
   flex-shrink: 0;
 }
 
+/* --- Chip row (horizontal scroll with edge fade mask) --- */
+.chip-row {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+}
+.chip-row::-webkit-scrollbar { display: none; }
+
+.chip {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all 0.15s var(--ease-immersive);
+  white-space: nowrap;
+}
+.chip:active { transform: scale(0.96); }
+.chip--active {
+  background: var(--color-warm);
+  color: #fff;
+  border-color: var(--color-warm);
+}
+
 /* --- Chevron/arrow helper --- */
 .chevron {
   color: var(--color-text-tertiary);

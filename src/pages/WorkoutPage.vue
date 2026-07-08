@@ -75,8 +75,11 @@ const timerRingProgress = computed(() => {
   return ((total - store.stepSecondsRemaining) / total) * 283;
 });
 
-const guideLines = computed(() => {
-  return guideContent.value.split("\n").filter((l) => l.trim().length > 0);
+const guideParagraphs = computed(() => {
+  return guideContent.value
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
 });
 
 const timerLabel = computed(() => {
@@ -145,10 +148,7 @@ function handleJumpStep(idx: number) {
     <div v-if="hasInterrupted" class="interrupt-mask">
       <div class="interrupt-card glass-thick">
         <div class="interrupt-icon">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-warm)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-          </svg>
+          <i class="bi bi-arrow-clockwise"></i>
         </div>
         <h3 class="interrupt-title">检测到未完成的训练</h3>
         <p class="interrupt-desc">
@@ -166,9 +166,7 @@ function handleJumpStep(idx: number) {
       <!-- Header section: name + set info + actions -->
       <div class="workout-header">
         <button class="back-btn" @click="handleTerminate" aria-label="退出">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
+          <i class="bi bi-chevron-left"></i>
         </button>
         <div class="header-text">
           <h1 class="workout-name">{{ store.plan?.name }}</h1>
@@ -177,24 +175,15 @@ function handleJumpStep(idx: number) {
               第 {{ store.currentSetInStep }}/{{ store.currentStepSets }} 组
             </span>
             <span class="set-badge set-badge--rest" v-else-if="store.inSetRest">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <polyline points="12 6 12 12 16 14" />
-              </svg>
+              <i class="bi bi-clock"></i>
               组间休息
             </span>
             <span class="set-badge set-badge--rest" v-else-if="store.inQuickRest">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <polyline points="12 6 12 12 16 14" />
-              </svg>
+              <i class="bi bi-clock"></i>
               小休息
             </span>
             <span class="set-badge set-badge--rest" v-else>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <polyline points="12 6 12 12 16 14" />
-              </svg>
+              <i class="bi bi-clock"></i>
               休息时间
             </span>
             <span class="level-tag">{{ levelLabel }}</span>
@@ -202,14 +191,7 @@ function handleJumpStep(idx: number) {
         </div>
         <!-- 右上角 list 按钮 -->
         <button class="list-btn" @click="showProgress = true" aria-label="训练进度">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="8" y1="6" x2="21" y2="6" />
-            <line x1="8" y1="12" x2="21" y2="12" />
-            <line x1="8" y1="18" x2="21" y2="18" />
-            <line x1="3" y1="6" x2="3.01" y2="6" />
-            <line x1="3" y1="12" x2="3.01" y2="12" />
-            <line x1="3" y1="18" x2="3.01" y2="18" />
-          </svg>
+          <i class="bi bi-list"></i>
         </button>
       </div>
 
@@ -253,9 +235,7 @@ function handleJumpStep(idx: number) {
           <div class="reps-number">{{ store.currentStep.timer.value }}</div>
           <div class="reps-label">次 · 第 {{ store.currentSetInStep }}/{{ store.currentStepSets }} 组</div>
           <button class="manual-next-btn" @click="handleManualNext">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
+            <i class="bi bi-chevron-right"></i>
             <span>完成本组</span>
           </button>
         </div>
@@ -266,23 +246,15 @@ function handleJumpStep(idx: number) {
         <!-- 元数据 chips -->
         <div class="detail-chips">
           <span v-if="stepDetails.equipment" class="detail-chip detail-chip--equip">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6.5 6.5h11v11h-11z" />
-              <path d="M2 9v6M22 9v6" />
-            </svg>
+            <i class="bi bi-tools"></i>
             {{ stepDetails.equipment }}
           </span>
           <span v-if="stepDetails.muscleGroup" class="detail-chip detail-chip--muscle">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2a3 3 0 0 0-3 3c0 1.5 1 3 3 5 2-2 3-3.5 3-5a3 3 0 0 0-3-3z" />
-              <path d="M6 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
-            </svg>
+            <i class="bi bi-bullseye"></i>
             {{ stepDetails.muscleGroup }}
           </span>
           <span v-if="stepDetails.weight" class="detail-chip detail-chip--weight">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6 4v16M18 4v16M2 8v8M22 8v8" />
-            </svg>
+            <i class="bi bi-lightning-charge"></i>
             {{ stepDetails.weight }}
           </span>
         </div>
@@ -290,34 +262,24 @@ function handleJumpStep(idx: number) {
         <!-- 注意事项 -->
         <div v-if="stepDetails.cautions" class="cautions-card">
           <div class="cautions-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-              <line x1="12" y1="9" x2="12" y2="13" />
-              <line x1="12" y1="17" x2="12.01" y2="17" />
-            </svg>
+            <i class="bi bi-exclamation-triangle-fill"></i>
           </div>
           <span class="cautions-text">{{ stepDetails.cautions }}</span>
         </div>
       </div>
 
       <!-- Guide content (markdown text) -->
-      <div v-if="isMarkdown && guideLines.length > 0 && !isResting" class="guide-section">
+      <div v-if="isMarkdown && guideParagraphs.length > 0 && !isResting" class="guide-section">
         <div class="guide-card clean-card">
-          <div class="guide-steps">
-            <div v-for="(line, idx) in guideLines" :key="idx" class="guide-step">
-              <span class="step-num">{{ idx + 1 }}</span>
-              <span class="step-text">{{ line.replace(/^\d+\.\s*/, "") }}</span>
-            </div>
+          <div class="guide-paragraphs">
+            <p v-for="(p, idx) in guideParagraphs" :key="idx" class="guide-p">{{ p }}</p>
           </div>
         </div>
       </div>
 
       <!-- Video placeholder -->
       <div v-if="isVideo" class="video-placeholder">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="2" y="4" width="20" height="16" rx="3" />
-          <polygon points="10 9 15 12 10 15 10 9" fill="currentColor" />
-        </svg>
+        <i class="bi bi-play-circle" style="font-size:48px"></i>
         <span>指导视频</span>
       </div>
     </div>
@@ -325,10 +287,7 @@ function handleJumpStep(idx: number) {
     <!-- Finished state -->
     <div v-else class="finished-view">
       <div class="finished-icon">
-        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-          <polyline points="22 4 12 14.01 9 11.01" />
-        </svg>
+        <i class="bi bi-check-circle-fill" style="font-size:48px"></i>
       </div>
       <h2 class="finished-title">训练完成！</h2>
       <p class="finished-sub">干得漂亮，继续坚持</p>
@@ -355,13 +314,7 @@ function handleJumpStep(idx: number) {
       </div>
       <button class="finish-btn" @click="goBackToSports">返回运动</button>
       <button class="share-btn" @click="showShare = true">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="18" cy="5" r="3" />
-          <circle cx="6" cy="12" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-        </svg>
+        <i class="bi bi-share"></i>
         <span>分享战绩</span>
       </button>
     </div>
@@ -481,6 +434,8 @@ function handleJumpStep(idx: number) {
   align-items: center;
   justify-content: center;
   margin: 0 auto var(--space-3);
+  color: var(--color-warm);
+  font-size: 28px;
 }
 .interrupt-title {
   font-size: var(--text-lg);
@@ -551,6 +506,7 @@ function handleJumpStep(idx: number) {
   flex-shrink: 0;
   border: 1px solid rgba(255, 255, 255, 0.5);
   transition: transform 0.15s ease;
+  font-size: 18px;
 }
 .back-btn:active, .list-btn:active { transform: scale(0.9); }
 
@@ -583,6 +539,7 @@ function handleJumpStep(idx: number) {
   padding: 3px 10px;
   border-radius: var(--radius-pill);
 }
+.set-badge i { font-size: 13px; }
 .set-badge--rest {
   color: #3da9ff;
   background: rgba(61, 169, 255, 0.1);
@@ -730,6 +687,7 @@ function handleJumpStep(idx: number) {
   box-shadow: 0 8px 24px rgba(255, 102, 51, 0.3);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+.manual-next-btn i { font-size: 24px; }
 .manual-next-btn:active {
   transform: scale(0.95);
   box-shadow: 0 4px 12px rgba(255, 102, 51, 0.25);
@@ -758,6 +716,7 @@ function handleJumpStep(idx: number) {
   border-radius: var(--radius-pill);
   border: 1px solid transparent;
 }
+.detail-chip i { font-size: 12px; }
 .detail-chip--equip {
   background: rgba(10, 89, 247, 0.08);
   color: #0a59f7;
@@ -787,6 +746,7 @@ function handleJumpStep(idx: number) {
   color: #d4a000;
   flex-shrink: 0;
   margin-top: 1px;
+  font-size: 14px;
 }
 .cautions-text {
   font-size: var(--text-sm);
@@ -802,36 +762,16 @@ function handleJumpStep(idx: number) {
 .guide-card {
   padding: var(--space-4) var(--space-5);
 }
-.guide-steps {
+.guide-paragraphs {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
-.guide-step {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-}
-.step-num {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--color-warm);
-  color: white;
-  font-size: var(--text-xs);
-  font-weight: var(--fw-bold);
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-.is-resting .step-num { background: #3da9ff; }
-.step-text {
+.guide-p {
   font-size: var(--text-md);
   color: var(--color-text-secondary);
-  line-height: 1.5;
-  flex: 1;
+  line-height: 1.6;
+  margin: 0;
 }
 
 /* Video placeholder */
@@ -869,6 +809,8 @@ function handleJumpStep(idx: number) {
   align-items: center;
   justify-content: center;
   margin-bottom: var(--space-2);
+  color: var(--color-success, #64bb5c);
+  font-size: 48px;
 }
 .finished-title {
   font-size: var(--text-3xl);

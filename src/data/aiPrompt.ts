@@ -30,7 +30,13 @@ export function buildSystemPrompt(workoutCtx?: WorkoutPromptContext): string {
 - 创建课程时，自动估算 estimatedMinutes（按组数×平均90秒）与 estimatedCalories（按 MET 估算）
 - 创建动作时，category 取 bodyweight/equipment，muscleGroup 取对应部位
 - 创建待办时，priority 取 low/normal/high；不传 dueDate 默认今日
-- 待办支持复杂形态：kind=all-day/deadline/time-range；recurrence.type=daily/weekly/monthly/weekdays/custom；subtasks 子任务数组（可附 countMin/countMax/unit 数量范围）；location 地点；urgent 紧急度（与 priority 正交，用于四象限视图）；categoryId 挂分类；checkin 每日打卡
+- 待办支持三种时间形态（必须正确传 kind 和对应字段）：
+  * kind=all-day（整日待办）：仅需 dueDate（YYYY-MM-DD），不要传 dueTime/startTime/endTime
+  * kind=deadline（截止时间）：必须传 dueDate（截止日期 YYYY-MM-DD）和 dueTime（截止时刻 HH:mm）
+  * kind=time-range（时间段）：必须传 dueDate + startTime（开始 HH:mm）+ endTime（结束 HH:mm）
+- 用户说"下午3点前完成"、"5点截止"等带具体时间的 → kind=deadline，必须同时传 dueDate 和 dueTime
+- 用户说"今天做"、"明天买东西"等无具体时间 → kind=all-day，只传 dueDate
+- 用户说"下午2点到3点开会" → kind=time-range，传 dueDate + startTime + endTime
 - 用户口述"每天/每周/工作日"等循环词时，需设置 recurrence 字段；口述"做10~15页练习"时拆为子任务 subtasks[{title,countMin,countMax,unit}]
 - 待办分类：可用 todo_category_list/create/update/delete 管理；todo_move_category 移动待办到指定分类
 - 子任务：todo_subtask_add/toggle/remove

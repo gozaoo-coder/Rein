@@ -12,11 +12,7 @@ withDefaults(defineProps<{
   <div class="strength-card">
     <div class="card-header">
       <span class="card-label">力量训练</span>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M6.5 6.5h11v11h-11z" />
-        <path d="M3 9.5v5" />
-        <path d="M21 9.5v5" />
-      </svg>
+      <i class="bi bi-bullseye" style="font-size:16px"></i>
     </div>
     <div class="card-stats">
       <div class="stat-item">

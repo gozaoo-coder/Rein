@@ -41,9 +41,7 @@ function stepStatus(idx: number): "done" | "current" | "pending" {
       <header class="ps-header">
         <h3 class="ps-title">训练进度</h3>
         <button class="ps-close" @click="$emit('close')" aria-label="关闭">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
+          <i class="bi bi-x-lg" style="font-size:20px"></i>
         </button>
       </header>
 
@@ -100,9 +98,7 @@ function stepStatus(idx: number): "done" | "current" | "pending" {
             @click="$emit('jump', idx)"
           >
             <div class="ps-step-num">
-              <svg v-if="stepStatus(idx) === 'done'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+              <i v-if="stepStatus(idx) === 'done'" class="bi bi-check-lg" style="font-size:14px"></i>
               <span v-else>{{ idx + 1 }}</span>
             </div>
             <div class="ps-step-main">

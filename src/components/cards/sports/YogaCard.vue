@@ -12,13 +12,7 @@ withDefaults(defineProps<{
   <div class="yoga-card">
     <div class="card-header">
       <span class="card-label">瑜伽</span>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="4" r="2" />
-        <path d="M12 6v6" />
-        <path d="M8 14l4 2 4-2" />
-        <path d="M6 18h12" />
-        <path d="M6 21l6-3 6 3" />
-      </svg>
+      <i class="bi bi-universal-access" style="font-size:16px"></i>
     </div>
     <div class="card-body">
       <div class="stat-main">

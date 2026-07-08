@@ -60,6 +60,36 @@ const StepSchema = Type.Object({
   note: Type.Optional(Type.String()),
 });
 
+const MineralsSchema = Type.Object({
+  calcium: Type.Optional(Type.Number({ description: "钙 mg/100g" })),
+  iron: Type.Optional(Type.Number({ description: "铁 mg/100g" })),
+  magnesium: Type.Optional(Type.Number({ description: "镁 mg/100g" })),
+  phosphorus: Type.Optional(Type.Number({ description: "磷 mg/100g" })),
+  potassium: Type.Optional(Type.Number({ description: "钾 mg/100g" })),
+  sodium: Type.Optional(Type.Number({ description: "钠 mg/100g" })),
+  zinc: Type.Optional(Type.Number({ description: "锌 mg/100g" })),
+});
+
+const VitaminsSchema = Type.Object({
+  a: Type.Optional(Type.Number({ description: "维生素A μg RAE/100g" })),
+  c: Type.Optional(Type.Number({ description: "维生素C mg/100g" })),
+  d: Type.Optional(Type.Number({ description: "维生素D IU/100g" })),
+  e: Type.Optional(Type.Number({ description: "维生素E mg/100g" })),
+  k: Type.Optional(Type.Number({ description: "维生素K μg/100g" })),
+  b1: Type.Optional(Type.Number({ description: "维生素B1 mg/100g" })),
+  b2: Type.Optional(Type.Number({ description: "维生素B2 mg/100g" })),
+  b3: Type.Optional(Type.Number({ description: "维生素B3(烟酸) mg/100g" })),
+  b6: Type.Optional(Type.Number({ description: "维生素B6 mg/100g" })),
+  b12: Type.Optional(Type.Number({ description: "维生素B12 μg/100g" })),
+  folate: Type.Optional(Type.Number({ description: "叶酸 μg DFE/100g" })),
+});
+
+const CustomNutrientSchema = Type.Object({
+  name: Type.String({ description: "营养素名，如 咖啡因" }),
+  value: Type.Number({ description: "每100g数值" }),
+  unit: Type.String({ description: "单位，如 mg" }),
+});
+
 // ===== Tool result details type =====
 
 export interface PiToolDetails extends ToolResult {}
@@ -247,6 +277,8 @@ function executeExerciseCreate(args: AnyParams): ToolResult {
     difficulty: (args.difficulty as ExerciseDifficulty) ?? "beginner",
     equipment: typeof args.equipment === "string" ? args.equipment : undefined,
     description: typeof args.description === "string" ? args.description : undefined,
+    executionDetails: typeof args.executionDetails === "string" ? args.executionDetails : undefined,
+    cautions: typeof args.cautions === "string" ? args.cautions : undefined,
     custom: true,
   });
   return {
@@ -272,6 +304,8 @@ function executeExerciseUpdate(args: AnyParams): ToolResult {
   if (args.difficulty) patch.difficulty = args.difficulty as ExerciseDifficulty;
   if (typeof args.equipment === "string") patch.equipment = args.equipment;
   if (typeof args.description === "string") patch.description = args.description;
+  if (typeof args.executionDetails === "string") patch.executionDetails = args.executionDetails;
+  if (typeof args.cautions === "string") patch.cautions = args.cautions;
   store.updateExercise(id, patch);
   const updated = store.getById(id)!;
   return {
@@ -530,6 +564,7 @@ function executeTodoList(args: AnyParams): ToolResult {
 function executeTodoCreate(args: AnyParams): ToolResult {
   const store = useTodoStore();
   const priority = (args.priority as TodoPriority | undefined) ?? "normal";
+  const kind = (args.kind as "all-day" | "deadline" | "time-range" | undefined) ?? "all-day";
   const subtasks = Array.isArray(args.subtasks)
     ? (args.subtasks as Record<string, unknown>[]).map((s) => ({
         title: String(s.title ?? ""),
@@ -539,14 +574,18 @@ function executeTodoCreate(args: AnyParams): ToolResult {
         unit: typeof s.unit === "string" ? s.unit : undefined,
       }))
     : undefined;
+  const dueDateStr = typeof args.dueDate === "string" ? args.dueDate : todoDateKey();
+  const dueTimeStr = typeof args.dueTime === "string" && args.dueTime ? args.dueTime : undefined;
+  const startTimeStr = typeof args.startTime === "string" && args.startTime ? args.startTime : undefined;
+  const endTimeStr = typeof args.endTime === "string" && args.endTime ? args.endTime : undefined;
   const item = store.createItem({
     title: String(args.title ?? "未命名待办"),
     note: typeof args.note === "string" ? args.note : undefined,
-    kind: (args.kind as "all-day" | "deadline" | "time-range" | undefined) ?? "all-day",
-    dueDate: typeof args.dueDate === "string" ? args.dueDate : todoDateKey(),
-    dueTime: typeof args.dueTime === "string" ? args.dueTime : undefined,
-    startTime: typeof args.startTime === "string" ? args.startTime : undefined,
-    endTime: typeof args.endTime === "string" ? args.endTime : undefined,
+    kind,
+    dueDate: dueDateStr,
+    dueTime: kind === "deadline" ? dueTimeStr : undefined,
+    startTime: kind === "time-range" ? startTimeStr : undefined,
+    endTime: kind === "time-range" ? endTimeStr : undefined,
     recurrence: args.recurrence as Record<string, unknown> | undefined,
     checkin: typeof args.checkin === "boolean" ? args.checkin : undefined,
     subtasks,
@@ -574,11 +613,30 @@ function executeTodoUpdate(args: AnyParams): ToolResult {
   const patch: Partial<typeof item> = {};
   if (typeof args.title === "string") patch.title = args.title;
   if (typeof args.note === "string") patch.note = args.note;
-  if (args.kind) patch.kind = args.kind as "all-day" | "deadline" | "time-range";
+  const newKind = args.kind ? (args.kind as "all-day" | "deadline" | "time-range") : undefined;
+  const effectiveKind = newKind ?? item.kind;
+  if (newKind) patch.kind = newKind;
   if (typeof args.dueDate === "string") patch.dueDate = args.dueDate;
-  if (typeof args.dueTime === "string") patch.dueTime = args.dueTime;
-  if (typeof args.startTime === "string") patch.startTime = args.startTime;
-  if (typeof args.endTime === "string") patch.endTime = args.endTime;
+  if (args.dueTime !== undefined) {
+    patch.dueTime = effectiveKind === "deadline" && typeof args.dueTime === "string" && args.dueTime
+      ? args.dueTime : undefined;
+  }
+  if (args.startTime !== undefined) {
+    patch.startTime = effectiveKind === "time-range" && typeof args.startTime === "string" && args.startTime ? args.startTime : undefined;
+  }
+  if (args.endTime !== undefined) {
+    patch.endTime = effectiveKind === "time-range" && typeof args.endTime === "string" && args.endTime ? args.endTime : undefined;
+  }
+  if (effectiveKind === "all-day" && !newKind) {
+    patch.dueTime = undefined;
+    patch.startTime = undefined;
+    patch.endTime = undefined;
+  } else if (effectiveKind === "deadline" && newKind) {
+    patch.startTime = undefined;
+    patch.endTime = undefined;
+  } else if (effectiveKind === "time-range" && newKind) {
+    // time-range keeps all time fields
+  }
   if (args.recurrence) patch.recurrence = args.recurrence as typeof item.recurrence;
   if (typeof args.checkin === "boolean") patch.checkin = args.checkin;
   if (typeof args.location === "string") patch.location = args.location;
@@ -922,6 +980,27 @@ function executeFoodDbCreate(args: AnyParams): ToolResult {
         grams: Number(u.grams ?? 0),
       }))
     : [{ name: "100g", grams: 100 }];
+  const customNutrients = Array.isArray(args.customNutrients)
+    ? (args.customNutrients as Record<string, unknown>[]).map((n) => ({
+        name: String(n.name ?? ""),
+        value: Number(n.value ?? 0),
+        unit: String(n.unit ?? "mg"),
+      })).filter((n) => n.name)
+    : undefined;
+  const minerals = args.minerals && typeof args.minerals === "object"
+    ? Object.fromEntries(
+        Object.entries(args.minerals as Record<string, unknown>)
+          .filter(([, v]) => v != null && typeof v === "number")
+          .map(([k, v]) => [k, Number(v)]),
+      )
+    : undefined;
+  const vitamins = args.vitamins && typeof args.vitamins === "object"
+    ? Object.fromEntries(
+        Object.entries(args.vitamins as Record<string, unknown>)
+          .filter(([, v]) => v != null && typeof v === "number")
+          .map(([k, v]) => [k, Number(v)]),
+      )
+    : undefined;
   const item = store.addFoodItem({
     name: String(args.name ?? "未命名食品"),
     category: typeof args.category === "string" ? args.category : "其他",
@@ -929,8 +1008,17 @@ function executeFoodDbCreate(args: AnyParams): ToolResult {
     carbsPer100g: Number(args.carbsPer100g ?? 0),
     proteinPer100g: Number(args.proteinPer100g ?? 0),
     fatPer100g: Number(args.fatPer100g ?? 0),
-    microNutrients: typeof args.microNutrients === "string" ? args.microNutrients : undefined,
+    fiberPer100g: args.fiberPer100g != null ? Number(args.fiberPer100g) : undefined,
+    sugarPer100g: args.sugarPer100g != null ? Number(args.sugarPer100g) : undefined,
+    saturatedFatPer100g: args.saturatedFatPer100g != null ? Number(args.saturatedFatPer100g) : undefined,
+    cholesterolPer100g: args.cholesterolPer100g != null ? Number(args.cholesterolPer100g) : undefined,
+    sodiumPer100g: args.sodiumPer100g != null ? Number(args.sodiumPer100g) : undefined,
+    minerals: minerals && Object.keys(minerals).length > 0 ? minerals as import("@/types/health").FoodMinerals : undefined,
+    vitamins: vitamins && Object.keys(vitamins).length > 0 ? vitamins as import("@/types/health").FoodVitamins : undefined,
+    healthScore: (Number(args.healthScore ?? 3) as 0|1|2|3|4|5) || 3,
+    description: typeof args.description === "string" ? args.description : undefined,
     units,
+    customNutrients: customNutrients && customNutrients.length > 0 ? customNutrients : undefined,
   });
   return {
     toolCallId: "",
@@ -955,12 +1043,41 @@ function executeFoodDbUpdate(args: AnyParams): ToolResult {
   if (args.carbsPer100g != null) patch.carbsPer100g = Number(args.carbsPer100g);
   if (args.proteinPer100g != null) patch.proteinPer100g = Number(args.proteinPer100g);
   if (args.fatPer100g != null) patch.fatPer100g = Number(args.fatPer100g);
-  if (typeof args.microNutrients === "string") patch.microNutrients = args.microNutrients;
+  if (args.fiberPer100g != null) patch.fiberPer100g = Number(args.fiberPer100g);
+  if (args.sugarPer100g != null) patch.sugarPer100g = Number(args.sugarPer100g);
+  if (args.saturatedFatPer100g != null) patch.saturatedFatPer100g = Number(args.saturatedFatPer100g);
+  if (args.cholesterolPer100g != null) patch.cholesterolPer100g = Number(args.cholesterolPer100g);
+  if (args.sodiumPer100g != null) patch.sodiumPer100g = Number(args.sodiumPer100g);
+  if (args.healthScore != null) patch.healthScore = Number(args.healthScore) as 0|1|2|3|4|5;
+  if (typeof args.description === "string") patch.description = args.description;
   if (Array.isArray(args.units)) {
     patch.units = (args.units as Record<string, unknown>[]).map((u) => ({
       name: String(u.name ?? ""),
       grams: Number(u.grams ?? 0),
     }));
+  }
+  if (args.minerals && typeof args.minerals === "object") {
+    patch.minerals = Object.fromEntries(
+      Object.entries(args.minerals as Record<string, unknown>)
+        .filter(([, v]) => v != null && typeof v === "number")
+        .map(([k, v]) => [k, Number(v)]),
+    );
+  }
+  if (args.vitamins && typeof args.vitamins === "object") {
+    patch.vitamins = Object.fromEntries(
+      Object.entries(args.vitamins as Record<string, unknown>)
+        .filter(([, v]) => v != null && typeof v === "number")
+        .map(([k, v]) => [k, Number(v)]),
+    );
+  }
+  if (Array.isArray(args.customNutrients)) {
+    patch.customNutrients = (args.customNutrients as Record<string, unknown>[])
+      .map((n) => ({
+        name: String(n.name ?? ""),
+        value: Number(n.value ?? 0),
+        unit: String(n.unit ?? "mg"),
+      }))
+      .filter((n) => n.name);
   }
   store.updateFoodItem(id, patch);
   const updated = store.findFood(id)!;
@@ -1163,14 +1280,16 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "exercise_create",
     label: "新增动作",
-    description: "新增自定义动作。会持久化到动作库。",
+    description: "新增自定义动作（含器械/目标肌群/动作要领/注意事项）。会持久化到动作库。",
     parameters: Type.Object({
       name: Type.String(),
       category: ExerciseCategoryEnum,
       muscleGroup: MuscleGroupEnum,
       difficulty: ExerciseDifficultyEnum,
-      equipment: Type.Optional(Type.String()),
-      description: Type.Optional(Type.String()),
+      equipment: Type.Optional(Type.String({ description: "所需器械，如 一对哑铃/杠铃+卧推架，徒手填 '徒手'" })),
+      description: Type.Optional(Type.String({ description: "一句话概述这个动作锻炼什么" })),
+      executionDetails: Type.Optional(Type.String({ description: "动作要领/执行细节（起始姿势/动作路径/呼吸/节奏）" })),
+      cautions: Type.Optional(Type.String({ description: "注意事项/常见错误/安全提示" })),
     }),
     execute: wrapExecuteRich("exercise_create"),
   },
@@ -1186,6 +1305,8 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       difficulty: Type.Optional(ExerciseDifficultyEnum),
       equipment: Type.Optional(Type.String()),
       description: Type.Optional(Type.String()),
+      executionDetails: Type.Optional(Type.String()),
+      cautions: Type.Optional(Type.String()),
     }),
     execute: wrapExecuteRich("exercise_update"),
   },
@@ -1290,10 +1411,10 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
         Type.Literal("deadline"),
         Type.Literal("time-range"),
       ])),
-      dueDate: Type.Optional(Type.String({ description: "YYYY-MM-DD，默认今日" })),
-      dueTime: Type.Optional(Type.String({ description: "HH:mm，仅 deadline/time-range" })),
-      startTime: Type.Optional(Type.String({ description: "HH:mm，仅 time-range" })),
-      endTime: Type.Optional(Type.String({ description: "HH:mm，仅 time-range" })),
+      dueDate: Type.Optional(Type.String({ description: "日期 YYYY-MM-DD，所有kind都需要。deadline时为截止日期，all-day时为待办日期，time-range时为日期" })),
+      dueTime: Type.Optional(Type.String({ description: "截止时间 HH:mm，仅 kind=deadline 时传" })),
+      startTime: Type.Optional(Type.String({ description: "开始时间 HH:mm，仅 kind=time-range 时传" })),
+      endTime: Type.Optional(Type.String({ description: "结束时间 HH:mm，仅 kind=time-range 时传" })),
       recurrence: Type.Optional(Type.Object({
         type: Type.Union([
           Type.Literal("daily"),
@@ -1506,7 +1627,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "food_db_create",
     label: "新增食品",
-    description: "新增自定义食品。营养以每 100g 为基准。units 为可用单位（如 个/杯/两 折算克数）。",
+    description: "新增自定义食品。营养以每 100g 为基准。healthScore 0(慎食)-5(极佳)。minerals 含钙铁镁磷钾钠锌，vitamins 含A/C/D/E/K/B1/B2/B3/B6/B12/叶酸，customNutrients 用于咖啡因等自定义项。units 为可用单位（如 个/杯/两 折算克数）。",
     parameters: Type.Object({
       name: Type.String(),
       category: Type.Optional(Type.String()),
@@ -1514,7 +1635,19 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       carbsPer100g: Type.Number(),
       proteinPer100g: Type.Number(),
       fatPer100g: Type.Number(),
-      microNutrients: Type.Optional(Type.String()),
+      fiberPer100g: Type.Optional(Type.Number({ description: "膳食纤维 g/100g" })),
+      sugarPer100g: Type.Optional(Type.Number({ description: "糖 g/100g" })),
+      saturatedFatPer100g: Type.Optional(Type.Number({ description: "饱和脂肪 g/100g" })),
+      cholesterolPer100g: Type.Optional(Type.Number({ description: "胆固醇 mg/100g" })),
+      sodiumPer100g: Type.Optional(Type.Number({ description: "钠 mg/100g" })),
+      minerals: Type.Optional(MineralsSchema),
+      vitamins: Type.Optional(VitaminsSchema),
+      customNutrients: Type.Optional(Type.Array(CustomNutrientSchema, { description: "自定义营养素，如咖啡因" })),
+      healthScore: Type.Optional(Type.Union([
+        Type.Literal(0), Type.Literal(1), Type.Literal(2),
+        Type.Literal(3), Type.Literal(4), Type.Literal(5),
+      ], { description: "健康评分 0慎食-5极佳，默认3" })),
+      description: Type.Optional(Type.String({ description: "食品描述/备注" })),
       units: Type.Optional(Type.Array(Type.Object({
         name: Type.String(),
         grams: Type.Number(),
@@ -1534,7 +1667,19 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       carbsPer100g: Type.Optional(Type.Number()),
       proteinPer100g: Type.Optional(Type.Number()),
       fatPer100g: Type.Optional(Type.Number()),
-      microNutrients: Type.Optional(Type.String()),
+      fiberPer100g: Type.Optional(Type.Number()),
+      sugarPer100g: Type.Optional(Type.Number()),
+      saturatedFatPer100g: Type.Optional(Type.Number()),
+      cholesterolPer100g: Type.Optional(Type.Number()),
+      sodiumPer100g: Type.Optional(Type.Number()),
+      minerals: Type.Optional(MineralsSchema),
+      vitamins: Type.Optional(VitaminsSchema),
+      customNutrients: Type.Optional(Type.Array(CustomNutrientSchema)),
+      healthScore: Type.Optional(Type.Union([
+        Type.Literal(0), Type.Literal(1), Type.Literal(2),
+        Type.Literal(3), Type.Literal(4), Type.Literal(5),
+      ])),
+      description: Type.Optional(Type.String()),
       units: Type.Optional(Type.Array(Type.Object({
         name: Type.String(),
         grams: Type.Number(),

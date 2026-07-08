@@ -226,9 +226,7 @@ function goFoodDb() {
 
     <!-- 添加饮食 -->
     <button v-if="!showAddForm" class="add-btn" @click="showAddForm = true">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-        <path d="M12 5v14M5 12h14" />
-      </svg>
+      <i class="bi bi-plus-lg" style="font-size:18px"></i>
       <span>记录饮食</span>
     </button>
 
@@ -299,9 +297,9 @@ function goFoodDb() {
 
     <!-- 周期导航 -->
     <div class="period-nav">
-      <button class="nav-btn" @click="prevPeriod"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
+      <button class="nav-btn" @click="prevPeriod"><i class="bi bi-chevron-left" style="font-size:16px"></i></button>
       <span class="period-label">{{ periodLabel }}</span>
-      <button class="nav-btn" @click="nextPeriod"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg></button>
+      <button class="nav-btn" @click="nextPeriod"><i class="bi bi-chevron-right" style="font-size:16px"></i></button>
     </div>
 
     <!-- 图表 -->
@@ -338,10 +336,7 @@ function goFoodDb() {
             <span class="h-meta">{{ rec.grams }}g · {{ rec.calories }}千卡 · 碳{{ rec.carbs }}g 蛋白{{ rec.protein }}g 脂{{ rec.fat }}g</span>
           </div>
           <button class="h-del" @click="store.removeFoodRecord(rec.id)" aria-label="删除">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-            </svg>
+            <i class="bi bi-trash3" style="font-size:14px"></i>
           </button>
         </div>
       </div>

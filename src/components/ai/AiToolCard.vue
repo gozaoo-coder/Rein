@@ -83,13 +83,8 @@ const waterPct = computed(() => {
   <div class="tool-card" :class="{ 'is-error': !ok }">
     <div class="tool-head">
       <div class="tool-badge" :class="ok ? 'ok' : 'err'">
-        <svg v-if="ok" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
+        <i v-if="ok" class="bi bi-check-lg" style="font-size:12px"></i>
+        <i v-else class="bi bi-x-lg" style="font-size:12px"></i>
       </div>
       <span class="tool-action">{{ actionLabel }}</span>
       <span class="tool-summary">{{ result.summary }}</span>
@@ -196,9 +191,7 @@ const waterPct = computed(() => {
       <div v-if="!todoData.items.length" class="empty">暂无待办</div>
       <div v-for="t in todoData.items.slice(0, 6)" :key="t.id" class="todo-item">
         <span class="todo-cb" :class="{ 'is-done': t.done }">
-          <svg v-if="t.done" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
+          <i v-if="t.done" class="bi bi-check-lg" style="font-size:10px;color:#fff"></i>
         </span>
         <span class="todo-title" :class="{ 'is-done': t.done }">{{ t.title }}</span>
         <span class="todo-pri" :data-pri="t.priority">{{ t.priorityLabel }}</span>

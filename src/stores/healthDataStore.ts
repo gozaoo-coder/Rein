@@ -13,6 +13,7 @@ import type {
   FoodItem,
   FoodRecord,
   WaterRecord,
+  HealthScore,
 } from "@/types/health";
 import { calcBmi } from "@/types/health";
 import { PRESET_FOODS } from "@/data/foodDatabase";
@@ -34,6 +35,19 @@ function todayKey(): string {
 function dateKeyFromTs(ts: number): string {
   const d = new Date(ts);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function migrateFoodItem(f: FoodItem & { microNutrients?: string }): FoodItem {
+  if (f.healthScore != null) return f;
+  let score: HealthScore = 3;
+  if (f.category === "蔬菜") score = 5;
+  else if (f.category === "蛋白质" && f.fatPer100g < 5) score = 5;
+  else if (f.category === "水果") score = f.sugarPer100g && f.sugarPer100g > 12 ? 3 : 4;
+  else if (f.category === "主食") score = f.fiberPer100g && f.fiberPer100g > 5 ? 4 : 2;
+  else if (f.category === "坚果") score = 3;
+  else if (f.category === "乳制品") score = 4;
+  else if (f.category === "饮品") score = f.caloriesPer100g < 10 ? 4 : 2;
+  return { ...f, healthScore: score };
 }
 
 export const useHealthDataStore = defineStore("healthData", () => {
@@ -58,7 +72,12 @@ export const useHealthDataStore = defineStore("healthData", () => {
     // 合并预设与存储：存储覆盖同名预设
     if (db && db.length > 0) {
       const presetIds = new Set(PRESET_FOODS.map((f) => f.id));
-      foodDb.value = [...PRESET_FOODS, ...db.filter((f) => !presetIds.has(f.id))];
+      const migrated = db
+        .filter((f) => !presetIds.has(f.id))
+        .map((f) => migrateFoodItem(f));
+      foodDb.value = [...PRESET_FOODS, ...migrated];
+    } else {
+      foodDb.value = [...PRESET_FOODS];
     }
     bodyMetrics.value = bm ?? [];
     loaded.value = true;

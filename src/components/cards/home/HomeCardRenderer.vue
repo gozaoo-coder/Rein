@@ -5,6 +5,7 @@
  * 接收 CardConfig，渲染对应组件
  */
 import type { CardConfig } from "@/types/card";
+import ThreeRingCard from "./ThreeRingCard.vue";
 import HealthOverviewCard from "./HealthOverviewCard.vue";
 import TodayTodoCard from "./TodayTodoCard.vue";
 import ImportantTodoCard from "./ImportantTodoCard.vue";
@@ -18,7 +19,8 @@ const emit = defineEmits<{ click: [] }>();
 </script>
 
 <template>
-  <HealthOverviewCard v-if="card.type === 'health-overview'" :size="card.size" @click="emit('click')" />
+  <ThreeRingCard v-if="card.type === 'three-ring'" :size="card.size" @click="emit('click')" />
+  <HealthOverviewCard v-else-if="card.type === 'health-overview'" :size="card.size" @click="emit('click')" />
   <TodayTodoCard v-else-if="card.type === 'today-todo'" :size="card.size" @click="emit('click')" />
   <ImportantTodoCard v-else-if="card.type === 'important-todo'" :size="card.size" @click="emit('click')" />
   <UrgentTodoCard v-else-if="card.type === 'urgent-todo'" :size="card.size" @click="emit('click')" />

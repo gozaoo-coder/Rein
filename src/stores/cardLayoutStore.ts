@@ -18,10 +18,11 @@ function genId(): string {
   return `card-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** 默认布局：健康概览 + 今日待办 + 最近运动 */
+/** 默认布局：三环 + 健康概览 + 今日待办 + 最近运动 */
 function defaultLayout(): CardLayout {
   return {
     cards: [
+      { id: genId(), type: "three-ring", size: "4x2" },
       { id: genId(), type: "health-overview", size: "2x2" },
       { id: genId(), type: "today-todo", size: "2x2" },
       { id: genId(), type: "recent-workout", size: "4x2" },
@@ -39,9 +40,18 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     if (loaded.value) return;
     const stored = await readJSON<CardLayout>(LAYOUT_KEY);
     if (stored && Array.isArray(stored.cards) && stored.cards.length > 0) {
-      // 兼容性：补全 rings 字段
       if (!stored.rings || stored.rings.length !== 3) {
         stored.rings = [...DEFAULT_RINGS];
+      }
+      const hasThreeRing = stored.cards.some((c) => c.type === "three-ring");
+      if (!hasThreeRing) {
+        const hoIdx = stored.cards.findIndex((c) => c.type === "health-overview");
+        if (hoIdx >= 0) {
+          stored.cards[hoIdx].size = "2x2";
+          stored.cards.splice(hoIdx, 0, { id: genId(), type: "three-ring", size: "4x2" });
+        } else {
+          stored.cards.unshift({ id: genId(), type: "three-ring", size: "4x2" });
+        }
       }
       layout.value = stored;
     }

@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * UrgentTodoCard — 紧急待办（urgent=true 未完成）
- *
- * 1x1: 数量徽章 + 警告图标
- * 2x1: "紧急 X 项" + 首项标题
- * 2x2: 最多 4 条带警告图标 + 标题 + 时间
- */
 import { computed } from "vue";
 import { useTodoStore } from "@/stores/todoStore";
 import type { CardSize } from "@/types/card";
@@ -19,6 +12,7 @@ const items = computed(() => store.urgentItems);
 const count = computed(() => items.value.length);
 const first = computed(() => items.value[0]);
 const list = computed(() => items.value.slice(0, 4));
+const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
 
 function fmtTime(item: { dueTime?: string; startTime?: string }): string {
   return item.dueTime ?? item.startTime ?? "";
@@ -28,43 +22,30 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
 <template>
   <div
     class="home-card clean-card urg-card"
-    :class="`home-card--${size}`"
+    :class="[`home-card--${size}`, { 'is-compact': isCompact }]"
     @click="emit('click')"
   >
     <div v-if="size !== '1x1'" class="card-head">
       <span class="title-icon title-icon--danger">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
-        </svg>
+        <i class="bi bi-exclamation-triangle-fill" style="font-size:12px"></i>
       </span>
       <span class="card-title">紧急待办</span>
     </div>
 
-    <!-- 1x1 -->
     <div v-if="size === '1x1'" class="mini">
-      <span class="title-icon title-icon--danger">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
-        </svg>
-      </span>
       <div class="mini-num">{{ count }}</div>
       <div class="mini-label">紧急</div>
     </div>
 
-    <!-- 2x1 -->
     <div v-else-if="size === '2x1'" class="row-2">
       <div class="big-num">
         <span class="num">{{ count }}</span>
-        <span class="unit">项</span>
+        <span class="unit">项紧急</span>
       </div>
-      <div class="sub-text">
-        <span class="sub-label">紧急</span>
-        <span v-if="first" class="first-title">{{ first.title }}</span>
-        <span v-else class="empty-text">暂无紧急事项</span>
-      </div>
+      <span v-if="first" class="first-title">{{ first.title }}</span>
+      <span v-else class="empty-text">暂无</span>
     </div>
 
-    <!-- 2x2 -->
     <div v-else class="list">
       <div class="row-head">
         <div class="big-num">
@@ -74,9 +55,7 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
       </div>
       <div v-if="list.length" class="item-list">
         <div v-for="item in list" :key="item.id" class="item">
-          <svg class="alert" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--danger-500)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
-          </svg>
+          <i class="bi bi-exclamation-triangle-fill alert" style="font-size:14px;color:var(--danger-500)"></i>
           <span class="item-title">{{ item.title }}</span>
           <span v-if="fmtTime(item)" class="item-time">{{ fmtTime(item) }}</span>
         </div>
@@ -90,8 +69,8 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
 .urg-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3);
   text-align: left;
   width: 100%;
   height: 100%;
@@ -104,18 +83,23 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
 .urg-card:active { transform: scale(0.98); }
 .urg-card:hover { box-shadow: var(--shadow-card-hover); }
 
+.urg-card.is-compact {
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-1);
+}
+
 .card-head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .title-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
   color: #fff;
@@ -123,10 +107,13 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
 .title-icon--danger { background: var(--danger-500); }
 
 .card-title {
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   font-weight: var(--fw-semibold);
   color: var(--color-text);
   line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mini {
@@ -135,7 +122,7 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-1);
+  gap: 2px;
 }
 .mini-num {
   font-size: var(--text-2xl);
@@ -153,7 +140,8 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: var(--space-1);
+  gap: 2px;
+  min-height: 0;
 }
 .big-num {
   display: flex;
@@ -167,29 +155,18 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
   line-height: 1;
 }
 .unit {
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-}
-
-.sub-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.sub-label {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 .first-title {
-  font-size: var(--text-sm);
-  color: var(--color-text);
-  font-weight: var(--fw-medium);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .empty-text {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 
@@ -215,7 +192,7 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   background: var(--bg-100);
   border-radius: var(--radius-md);
 }
@@ -225,7 +202,7 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
 .item-title {
   flex: 1;
   min-width: 0;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -234,7 +211,8 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
 .item-time {
   flex-shrink: 0;
   font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
+  color: var(--danger-500);
+  font-weight: var(--fw-semibold);
 }
 
 .empty {
@@ -242,7 +220,7 @@ function fmtTime(item: { dueTime?: string; startTime?: string }): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 </style>

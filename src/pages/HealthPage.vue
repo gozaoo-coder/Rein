@@ -6,7 +6,7 @@
  * - 编辑模式：长按卡片 或 点击右上角"编辑主页"（笔图标）
  * - 三环数据源可在 HealthOverviewCard 上点击 → RingDataPickerSheet
  */
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import HomeCardGrid from "@/components/cards/home/HomeCardGrid.vue";
 import AddCardSheet from "@/components/cards/home/AddCardSheet.vue";
@@ -15,6 +15,7 @@ import { useCardLayoutStore } from "@/stores/cardLayoutStore";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
+import { useTopBar, ICONS } from "@/composables/useTopBar";
 import type { CardConfig } from "@/types/card";
 
 const router = useRouter();
@@ -22,10 +23,23 @@ const cardLayout = useCardLayoutStore();
 const health = useHealthDataStore();
 const todo = useTodoStore();
 const stats = useWorkoutStatsStore();
+const { setActions, clearActions } = useTopBar();
 
 const editMode = ref(false);
 const showAddSheet = ref(false);
 const showRingSheet = ref(false);
+
+function syncTopBar() {
+  if (editMode.value) {
+    setActions([
+      { id: "done", icon: ICONS.done, label: "完成", onClick: toggleEdit },
+    ]);
+  } else {
+    setActions([
+      { id: "edit", icon: ICONS.edit, label: "编辑主页", onClick: toggleEdit },
+    ]);
+  }
+}
 
 onMounted(async () => {
   await Promise.all([
@@ -34,6 +48,15 @@ onMounted(async () => {
     todo.load(),
     stats.load(),
   ]);
+  syncTopBar();
+});
+
+onUnmounted(() => {
+  clearActions();
+});
+
+watch(editMode, () => {
+  syncTopBar();
 });
 
 function toggleEdit() {
@@ -44,12 +67,14 @@ function toggleEdit() {
 }
 
 function onCardClick(card: CardConfig) {
-  // 三环数据源：HealthOverviewCard 点击 → 打开 RingDataPickerSheet
-  if (card.type === "health-overview") {
+  if (card.type === "three-ring") {
     showRingSheet.value = true;
     return;
   }
-  // 其他卡片：跳转对应详情页
+  if (card.type === "health-overview") {
+    void router.push("/health/metrics");
+    return;
+  }
   switch (card.type) {
     case "today-todo":
     case "important-todo":
@@ -75,34 +100,14 @@ function onCardClick(card: CardConfig) {
     <!-- 编辑模式工具栏 -->
     <div v-if="editMode" class="edit-toolbar clean-card">
       <button class="tool-btn" @click="showRingSheet = true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9" />
-          <circle cx="12" cy="12" r="5" />
-          <circle cx="12" cy="12" r="1.5" fill="currentColor" />
-        </svg>
+        <i class="bi bi-bullseye" style="font-size:18px"></i>
         <span>三环数据</span>
       </button>
       <button class="tool-btn tool-btn--primary" @click="showAddSheet = true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
+        <i class="bi bi-plus-lg" style="font-size:18px"></i>
         <span>添加卡片</span>
       </button>
-      <button class="tool-btn tool-btn--done" @click="toggleEdit">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        <span>完成</span>
-      </button>
     </div>
-
-    <!-- 右上角编辑入口（非编辑模式可见） -->
-    <button v-else class="edit-fab" @click="toggleEdit" aria-label="编辑主页">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 20h9" />
-        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-      </svg>
-    </button>
 
     <!-- 卡片网格 -->
     <HomeCardGrid
@@ -173,35 +178,5 @@ function onCardClick(card: CardConfig) {
 .tool-btn--primary {
   background: var(--color-warm);
   color: #fff;
-}
-
-.tool-btn--done {
-  background: var(--success-500);
-  color: #fff;
-}
-
-/* 编辑入口 FAB（笔图标） */
-.edit-fab {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 5;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.7);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  color: var(--color-text);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: transform 0.15s;
-}
-
-.edit-fab:active {
-  transform: scale(0.9);
 }
 </style>

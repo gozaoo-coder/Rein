@@ -1,10 +1,5 @@
 /**
  * Health data types — 饮水 / 饮食 / 体征
- *
- * - WaterRecord: 单次饮水记录
- * - FoodRecord: 单次饮食记录（引用食品库 + 克数）
- * - FoodItem: 食品数据库条目（每 100g 营养信息）
- * - BodyMetrics: 身高/体重/体脂（手动记录，支持历史）
  */
 
 /** 单次饮水记录 */
@@ -24,6 +19,72 @@ export interface FoodUnit {
   grams: number;
 }
 
+/** 重要矿物质枚举 (mg per 100g) */
+export interface FoodMinerals {
+  /** 钙 mg */
+  calcium?: number;
+  /** 铁 mg */
+  iron?: number;
+  /** 镁 mg */
+  magnesium?: number;
+  /** 磷 mg */
+  phosphorus?: number;
+  /** 钾 mg */
+  potassium?: number;
+  /** 钠 mg */
+  sodium?: number;
+  /** 锌 mg */
+  zinc?: number;
+}
+
+/** 重要维生素枚举 (per 100g) */
+export interface FoodVitamins {
+  /** 维生素A μg RAE */
+  a?: number;
+  /** 维生素C mg */
+  c?: number;
+  /** 维生素D IU */
+  d?: number;
+  /** 维生素E mg */
+  e?: number;
+  /** 维生素K μg */
+  k?: number;
+  /** 维生素B1 (硫胺素) mg */
+  b1?: number;
+  /** 维生素B2 (核黄素) mg */
+  b2?: number;
+  /** 维生素B3 (烟酸) mg */
+  b3?: number;
+  /** 维生素B6 mg */
+  b6?: number;
+  /** 维生素B12 μg */
+  b12?: number;
+  /** 叶酸 μg DFE */
+  folate?: number;
+}
+
+/** 自定义营养素条目 (用于咖啡因等非标准项) */
+export interface CustomNutrient {
+  /** 营养素名，如 "咖啡因" */
+  name: string;
+  /** 数值 (per 100g) */
+  value: number;
+  /** 单位，如 "mg" */
+  unit: string;
+}
+
+/** 健康评分 0-100 */
+export type HealthScore = 0 | 1 | 2 | 3 | 4 | 5;
+
+export const HEALTH_SCORE_LABEL: Record<HealthScore, string> = {
+  0: "慎食",
+  1: "较差",
+  2: "一般",
+  3: "良好",
+  4: "优秀",
+  5: "极佳",
+};
+
 /** 食品数据库条目 — 营养信息以 100g 为基准 */
 export interface FoodItem {
   id: string;
@@ -37,8 +98,26 @@ export interface FoodItem {
   proteinPer100g: number;
   /** 每 100g 脂肪 g */
   fatPer100g: number;
-  /** 可选：维生素/矿物质描述 */
-  microNutrients?: string;
+  /** 每 100g 膳食纤维 g */
+  fiberPer100g?: number;
+  /** 每 100g 糖 g */
+  sugarPer100g?: number;
+  /** 每 100g 饱和脂肪 g */
+  saturatedFatPer100g?: number;
+  /** 每 100g 胆固醇 mg */
+  cholesterolPer100g?: number;
+  /** 每 100g 钠 mg */
+  sodiumPer100g?: number;
+  /** 矿物质明细 */
+  minerals?: FoodMinerals;
+  /** 维生素明细 */
+  vitamins?: FoodVitamins;
+  /** 自定义营养素（咖啡因等） */
+  customNutrients?: CustomNutrient[];
+  /** 健康评分 0-5 */
+  healthScore: HealthScore;
+  /** 可选：描述/备注 */
+  description?: string;
   /** 可用单位（默认含 100g） */
   units: FoodUnit[];
   /** 是否用户自定义 */

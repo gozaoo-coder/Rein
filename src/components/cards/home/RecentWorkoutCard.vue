@@ -65,10 +65,7 @@ function fmtDuration(sec: number): string {
   >
     <div class="card-head">
       <span class="title-icon title-icon--warm">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="15" cy="5" r="2" />
-          <path d="M10 21l2-6 3 2 3-5-3-1-3 3-3-1-3 5z" />
-        </svg>
+        <i class="bi bi-universal-access" style="font-size:14px"></i>
       </span>
       <span class="card-title">最近运动</span>
       <span v-if="hasData" class="head-sub">连续 {{ store.streakDays }} 天</span>
@@ -103,10 +100,7 @@ function fmtDuration(sec: number): string {
     </div>
 
     <div v-else class="empty">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="15" cy="5" r="2" />
-        <path d="M10 21l2-6 3 2 3-5-3-1-3 3-3-1-3 5z" />
-      </svg>
+      <i class="bi bi-universal-access" style="font-size:28px;color:var(--color-text-tertiary)"></i>
       <div class="empty-text">暂无训练记录</div>
     </div>
 
@@ -133,8 +127,8 @@ function fmtDuration(sec: number): string {
 .wo-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3);
   text-align: left;
   width: 100%;
   height: 100%;
@@ -150,15 +144,15 @@ function fmtDuration(sec: number): string {
 .card-head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .title-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
   color: #fff;
@@ -166,7 +160,7 @@ function fmtDuration(sec: number): string {
 }
 
 .card-title {
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   font-weight: var(--fw-semibold);
   color: var(--color-text);
   line-height: 1.2;

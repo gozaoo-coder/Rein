@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * FoodRecordCard — 饮食记录卡
- *
- * 1x1: 大卡数 + kcal
- * 2x1: 卡路里 + 3 营养素迷你条
- * 2x2: 卡路里大数 + 3 营养素行 + 最近 3 条饮食记录
- */
 import { computed } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import type { CardSize } from "@/types/card";
@@ -26,95 +19,66 @@ const PROTEIN_GOAL = 60;
 const FAT_GOAL = 70;
 
 const macros = computed(() => [
-  { label: "碳水", value: carbs.value, goal: CARB_GOAL, color: "var(--icon-orange)" },
-  { label: "蛋白", value: protein.value, goal: PROTEIN_GOAL, color: "var(--icon-blue)" },
-  { label: "脂肪", value: fat.value, goal: FAT_GOAL, color: "var(--warning-500)" },
+  { label: "碳", value: carbs.value, goal: CARB_GOAL, color: "var(--icon-orange)" },
+  { label: "蛋", value: protein.value, goal: PROTEIN_GOAL, color: "var(--icon-blue)" },
+  { label: "脂", value: fat.value, goal: FAT_GOAL, color: "var(--warning-500)" },
 ]);
 
-const recentFoods = computed(() =>
-  [...store.todayFoodRecords]
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .slice(0, 3),
-);
-
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
+const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
 </script>
 
 <template>
   <div
     class="home-card clean-card food-card"
-    :class="`home-card--${size}`"
+    :class="[`home-card--${size}`, { 'is-compact': isCompact }]"
     @click="emit('click')"
   >
     <div v-if="size !== '1x1'" class="card-head">
       <span class="title-icon title-icon--success">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 11h18l-2 9a2 2 0 0 1-2 1.7H7a2 2 0 0 1-2-1.7L3 11zM7 11V8a5 5 0 0 1 10 0v3" />
-        </svg>
+        <i class="bi bi-apple" style="font-size:12px"></i>
       </span>
-      <span class="card-title">饮食记录</span>
+      <span class="card-title">饮食</span>
+      <span class="card-kcal">{{ calories }}kcal</span>
     </div>
 
-    <!-- 1x1 -->
     <div v-if="size === '1x1'" class="mini">
       <div class="mini-num">{{ calories }}</div>
       <div class="mini-label">kcal</div>
     </div>
 
-    <!-- 2x1 -->
     <div v-else-if="size === '2x1'" class="body-2x1">
-      <div class="cal-row">
-        <span class="cal-num">{{ calories }}</span>
-        <span class="cal-unit">kcal</span>
-        <span class="cal-goal">/ {{ CAL_GOAL }}</span>
-      </div>
-      <div class="macro-mini-list">
-        <div v-for="m in macros" :key="m.label" class="macro-mini">
-          <div class="macro-mini-head">
-            <span class="macro-mini-label">{{ m.label }}</span>
-            <span class="macro-mini-val">{{ m.value }}g</span>
+      <div class="macro-row-compact">
+        <div v-for="m in macros" :key="m.label" class="macro-c">
+          <div class="macro-c-track">
+            <div class="macro-c-fill" :style="{ width: Math.min(m.value / m.goal, 1) * 100 + '%', background: m.color }" />
           </div>
-          <div class="mini-track">
-            <div class="mini-fill" :style="{ width: Math.min(m.value / m.goal, 1) * 100 + '%', background: m.color }" />
-          </div>
+          <span class="macro-c-label">{{ m.label }} {{ m.value }}g</span>
         </div>
       </div>
     </div>
 
-    <!-- 2x2 -->
     <div v-else class="body-2x2">
       <div class="cal-big-row">
         <div class="cal-big-text">
           <span class="cal-big-num">{{ calories }}</span>
           <span class="cal-big-unit">kcal</span>
         </div>
-        <span class="cal-big-goal">目标 {{ CAL_GOAL }} kcal</span>
+        <span class="cal-big-goal">/ {{ CAL_GOAL }}</span>
       </div>
-
       <div class="macro-rows">
         <div v-for="m in macros" :key="m.label" class="macro-row">
           <span class="macro-dot" :style="{ background: m.color }" />
-          <span class="macro-label">{{ m.label }}</span>
+          <span class="macro-label">{{ m.label === '碳' ? '碳水' : m.label === '蛋' ? '蛋白' : '脂肪' }}</span>
           <div class="macro-track">
             <div class="macro-fill" :style="{ width: Math.min(m.value / m.goal, 1) * 100 + '%', background: m.color }" />
           </div>
           <span class="macro-val">{{ m.value }}g</span>
         </div>
       </div>
-
-      <div v-if="recentFoods.length" class="food-list">
-        <div v-for="r in recentFoods" :key="r.id" class="food-item">
-          <div class="food-main">
-            <div class="food-name">{{ r.foodName }}</div>
-            <div class="food-meta">{{ fmtTime(r.timestamp) }} · {{ r.grams }}g</div>
-          </div>
-          <span class="food-kcal">{{ r.calories }}kcal</span>
-        </div>
-      </div>
-      <div v-else class="empty">今日暂无饮食记录</div>
+      <button class="add-btn" @click.stop="emit('click')">
+        <i class="bi bi-plus-lg" style="font-size:16px"></i>
+        记饮食
+      </button>
     </div>
   </div>
 </template>
@@ -124,7 +88,7 @@ function fmtTime(ts: number): string {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-4);
+  padding: var(--space-3);
   text-align: left;
   width: 100%;
   height: 100%;
@@ -137,18 +101,23 @@ function fmtTime(ts: number): string {
 .food-card:active { transform: scale(0.98); }
 .food-card:hover { box-shadow: var(--shadow-card-hover); }
 
+.food-card.is-compact {
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-1);
+}
+
 .card-head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .title-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
   color: #fff;
@@ -156,10 +125,17 @@ function fmtTime(ts: number): string {
 }
 
 .card-title {
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   font-weight: var(--fw-semibold);
   color: var(--color-text);
   line-height: 1.2;
+}
+
+.card-kcal {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--success-600);
+  font-weight: var(--fw-semibold);
 }
 
 .mini {
@@ -168,16 +144,16 @@ function fmtTime(ts: number): string {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 0;
 }
 .mini-num {
-  font-size: var(--text-2xl);
+  font-size: var(--text-xl);
   font-weight: var(--fw-bold);
   color: var(--success-500);
   line-height: 1;
 }
 .mini-label {
-  font-size: var(--text-xs);
+  font-size: 10px;
   color: var(--color-text-tertiary);
 }
 
@@ -185,56 +161,36 @@ function fmtTime(ts: number): string {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  justify-content: center;
   min-height: 0;
 }
 
-.cal-row {
+.macro-row-compact {
   display: flex;
-  align-items: baseline;
-  gap: 4px;
+  gap: var(--space-2);
 }
-.cal-num {
-  font-size: var(--text-xl);
-  font-weight: var(--fw-bold);
-  color: var(--success-500);
-  line-height: 1;
-}
-.cal-unit {
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-}
-.cal-goal {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
-  margin-left: auto;
-}
-
-.macro-mini-list {
+.macro-c {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  flex: 1;
-  min-height: 0;
+  gap: 2px;
+  min-width: 0;
 }
-.macro-mini-head {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--text-xs);
-  margin-bottom: 2px;
-}
-.macro-mini-label { color: var(--color-text-tertiary); }
-.macro-mini-val { color: var(--color-text-secondary); font-weight: var(--fw-medium); }
-.mini-track {
+.macro-c-track {
   height: 4px;
   border-radius: var(--radius-full);
   background: var(--bg-200);
   overflow: hidden;
 }
-.mini-fill {
+.macro-c-fill {
   height: 100%;
   border-radius: var(--radius-full);
   transition: width 0.4s var(--ease-immersive);
+}
+.macro-c-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  text-align: center;
 }
 
 .body-2x2 {
@@ -292,7 +248,7 @@ function fmtTime(ts: number): string {
 .macro-label {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
-  width: 32px;
+  width: 28px;
   flex-shrink: 0;
 }
 .macro-track {
@@ -311,56 +267,25 @@ function fmtTime(ts: number): string {
   font-size: var(--text-xs);
   color: var(--color-text-secondary);
   font-weight: var(--fw-medium);
-  width: 40px;
+  width: 36px;
   text-align: right;
   flex-shrink: 0;
 }
 
-.food-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  flex: 1;
-  min-height: 0;
-}
-.food-item {
+.add-btn {
+  margin-top: auto;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  background: var(--bg-100);
-  border-radius: var(--radius-sm);
-}
-.food-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.food-name {
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: linear-gradient(135deg, var(--success-500), #5dd39e);
+  color: #fff;
   font-size: var(--text-sm);
-  color: var(--color-text);
-  font-weight: var(--fw-medium);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.food-meta {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
-}
-.food-kcal {
-  font-size: var(--text-sm);
-  color: var(--success-600);
   font-weight: var(--fw-semibold);
-  flex-shrink: 0;
+  cursor: pointer;
 }
-.empty {
-  font-size: var(--text-sm);
-  color: var(--color-text-tertiary);
-  text-align: center;
-  padding: var(--space-2);
-}
+.add-btn:active { transform: scale(0.97); }
 </style>

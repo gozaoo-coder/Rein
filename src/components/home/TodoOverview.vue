@@ -48,10 +48,7 @@ function fmtCount(): string {
     <div class="ov-header">
       <div class="ov-title-wrap">
         <div class="icon-circle icon-circle--orange">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="9 11 12 14 22 4" />
-            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-          </svg>
+          <i class="bi bi-check-lg" style="font-size:18px"></i>
         </div>
         <div class="ov-title-text">
           <div class="ov-title">今日待办</div>
@@ -80,9 +77,7 @@ function fmtCount(): string {
     <div v-if="previewItems.length" class="ov-list">
       <div v-for="item in previewItems" :key="item.id" class="ov-item">
         <span class="ov-checkbox" :class="{ 'is-done': item.done }" aria-hidden="true">
-          <svg v-if="item.done" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
+          <i v-if="item.done" class="bi bi-check-lg" style="font-size:10px;color:#fff"></i>
         </span>
         <span class="ov-item-title">{{ item.title }}</span>
         <span v-if="item.priority === 'high'" class="ov-priority ov-priority--high" />
@@ -92,12 +87,7 @@ function fmtCount(): string {
 
     <!-- Empty state -->
     <div v-else class="ov-empty">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="18" rx="2" />
-        <line x1="16" y1="2" x2="16" y2="6" />
-        <line x1="8" y1="2" x2="8" y2="6" />
-        <line x1="3" y1="10" x2="21" y2="10" />
-      </svg>
+      <i class="bi bi-calendar3" style="font-size:22px;color:var(--color-text-tertiary)"></i>
       <span>{{ total === 0 ? '今天还没有待办' : '今日待办已全部完成' }}</span>
     </div>
 
@@ -106,9 +96,7 @@ function fmtCount(): string {
       <span class="ov-stat">{{ doneCount }}/{{ total }} 已完成</span>
       <span class="ov-link">
         查看全部
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 6l6 6-6 6" />
-        </svg>
+        <i class="bi bi-chevron-right" style="font-size:14px"></i>
       </span>
     </div>
   </button>

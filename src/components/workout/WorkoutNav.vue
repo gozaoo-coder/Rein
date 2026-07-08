@@ -48,22 +48,14 @@ function handleNext() {
       <template v-if="!isPaused">
         <button class="pause-btn" @click="togglePause" aria-label="暂停">
           <span class="pause-glow" />
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="4" width="4" height="16" rx="1.5" />
-            <rect x="14" y="4" width="4" height="16" rx="1.5" />
-          </svg>
+          <i class="bi bi-pause-fill" style="font-size:22px"></i>
         </button>
         <WorkoutMiniBar :expanded="false" class="nav-minibar" />
         <button class="icon-action-btn" @click="$emit('quick-rest')" aria-label="小休息">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-            <circle cx="12" cy="12" r="3.5" />
-          </svg>
+          <i class="bi bi-sun" style="font-size:18px"></i>
         </button>
         <button class="icon-action-btn icon-action-btn--ai" @click="$emit('ai-chat')" aria-label="和 AI 聊聊">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
+          <i class="bi bi-chat-dots" style="font-size:18px"></i>
         </button>
       </template>
 
@@ -72,33 +64,23 @@ function handleNext() {
         <WorkoutMiniBar :expanded="true" class="nav-minibar nav-minibar--expanded" />
         <div class="control-tabs">
           <button class="ctrl-btn ctrl-btn--danger" @click="handleStop" aria-label="终止运动">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-              <rect x="5" y="5" width="14" height="14" rx="3" />
-            </svg>
+            <i class="bi bi-stop-fill" style="font-size:22px"></i>
             <span class="ctrl-label">终止</span>
           </button>
           <button class="ctrl-btn" :disabled="!canGoPrev" @click="handlePrev" aria-label="上一组">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
+            <i class="bi bi-chevron-left" style="font-size:22px"></i>
             <span class="ctrl-label">上一组</span>
           </button>
           <button class="ctrl-btn ctrl-btn--primary" @click="togglePause" aria-label="继续运动">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-              <polygon points="7,4 20,12 7,20" />
-            </svg>
+            <i class="bi bi-play-fill" style="font-size:22px"></i>
             <span class="ctrl-label">继续</span>
           </button>
           <button class="ctrl-btn" :disabled="!canGoNext" @click="handleNext" aria-label="下一组">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
+            <i class="bi bi-chevron-right" style="font-size:22px"></i>
             <span class="ctrl-label">下一组</span>
           </button>
           <button class="ctrl-btn" @click="$emit('ai-chat')" aria-label="和 AI 聊聊">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
+            <i class="bi bi-chat-dots" style="font-size:20px"></i>
             <span class="ctrl-label">AI 助手</span>
           </button>
         </div>

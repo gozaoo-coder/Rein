@@ -19,9 +19,7 @@ const qualityMap: Record<string, string> = {
   <div class="sleep-card">
     <div class="card-header">
       <span class="card-label">睡眠</span>
-      <svg class="moon-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-      </svg>
+      <i class="bi bi-moon-stars-fill moon-icon" style="font-size:16px"></i>
     </div>
     <div class="card-body">
       <span class="hours-value">{{ hours }}</span>

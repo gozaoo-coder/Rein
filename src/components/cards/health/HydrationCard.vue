@@ -16,9 +16,7 @@ const progress = computed(() => Math.min((props.current / props.target) * 100, 1
   <div class="hydration-card">
     <div class="card-header">
       <span class="card-label">饮水</span>
-      <svg class="water-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" />
-      </svg>
+      <i class="bi bi-droplet-fill water-icon" style="font-size:16px"></i>
     </div>
     <div class="card-body">
       <div class="glass-display">

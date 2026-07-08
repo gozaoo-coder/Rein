@@ -96,28 +96,18 @@ function handleSave() {
       <header class="sheet-head">
         <h3 class="sheet-title">分享</h3>
         <button class="close-btn" @click="emit('close')" aria-label="关闭">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
+          <i class="bi bi-x-lg" style="font-size:20px"></i>
         </button>
       </header>
 
       <!-- 模式切换 -->
       <div v-if="hasImage" class="mode-tabs">
         <button class="mode-tab" :class="{ active: mode === 'text' }" @click="mode = 'text'">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="4" y1="6" x2="20" y2="6" />
-            <line x1="4" y1="12" x2="20" y2="12" />
-            <line x1="4" y1="18" x2="14" y2="18" />
-          </svg>
+          <i class="bi bi-file-text" style="font-size:16px"></i>
           <span>文本</span>
         </button>
         <button class="mode-tab" :class="{ active: mode === 'image' }" @click="mode = 'image'">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <polyline points="21 15 16 10 5 21" />
-          </svg>
+          <i class="bi bi-image" style="font-size:16px"></i>
           <span>图片</span>
         </button>
       </div>
@@ -138,41 +128,28 @@ function handleSave() {
       <div class="channels">
         <button v-if="canShareNative" class="channel" @click="handleSystem">
           <div class="ch-icon ch-icon--system">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="18" cy="5" r="3" />
-              <circle cx="6" cy="12" r="3" />
-              <circle cx="18" cy="19" r="3" />
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-            </svg>
+            <i class="bi bi-share" style="font-size:22px"></i>
           </div>
           <span class="ch-label">系统分享</span>
         </button>
 
         <button v-if="canShareNative" class="channel" @click="handleChannel">
           <div class="ch-icon ch-icon--qq">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2c-3.3 0-6 2.7-6 6 0 1.3.4 2.5 1.1 3.5L6 14l2.5-1c.5.3 1 .5 1.5.6L9 16l3-1 3 1-1-2.4c.5-.1 1-.3 1.5-.6L18 14l-1.1-2.5C17.6 10.5 18 9.3 18 8c0-3.3-2.7-6-6-6z"/>
-            </svg>
+            <i class="bi bi-qq" style="font-size:22px"></i>
           </div>
           <span class="ch-label">QQ</span>
         </button>
 
         <button v-if="canShareNative" class="channel" @click="handleChannel">
           <div class="ch-icon ch-icon--wechat">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M9 4C4.6 4 1 6.9 1 10.5c0 2 1.1 3.8 2.9 5L3 18l2.7-1.4c.8.2 1.6.3 2.4.4-.1-.5-.2-1.1-.2-1.6 0-3.3 3.1-6 7-6 .3 0 .6 0 .9.1C15.4 6.1 12.5 4 9 4zm-2.5 4a1 1 0 110 2 1 1 0 010-2zm5 0a1 1 0 110 2 1 1 0 010-2zM15.5 10C12 10 9 12.5 9 15.5c0 1.7.9 3.2 2.4 4.2L11 22l2.3-1.2c.7.2 1.4.3 2.2.3 3.6 0 6.5-2.5 6.5-5.6S19.1 10 15.5 10zm-2 3a.8.8 0 110 1.6.8.8 0 010-1.6zm4 0a.8.8 0 110 1.6.8.8 0 010-1.6z"/>
-            </svg>
+            <i class="bi bi-wechat" style="font-size:22px"></i>
           </div>
           <span class="ch-label">微信</span>
         </button>
 
         <button class="channel" @click="handleCopy">
           <div class="ch-icon ch-icon--copy">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
+            <i class="bi bi-copy" style="font-size:22px"></i>
           </div>
           <span class="ch-label">复制</span>
         </button>
@@ -183,11 +160,7 @@ function handleSave() {
           @click="handleSave"
         >
           <div class="ch-icon ch-icon--save">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
+            <i class="bi bi-download" style="font-size:22px"></i>
           </div>
           <span class="ch-label">保存</span>
         </button>

@@ -14,10 +14,7 @@ withDefaults(defineProps<{
   <div class="running-card">
     <div class="card-header">
       <span class="card-label">跑步</span>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="5" r="2" />
-        <path d="M7 21l3-7 3 3 4-5-2-1-2.5 3-2.5-3-3 7z" />
-      </svg>
+      <i class="bi bi-universal-access" style="font-size:16px"></i>
     </div>
     <div class="card-stats">
       <div class="stat-item">

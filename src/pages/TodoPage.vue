@@ -603,9 +603,7 @@ watch(calMode, (m) => {
   <div class="todo-page">
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
+        <i class="bi bi-chevron-left" style="font-size:22px"></i>
       </button>
       <h2 class="sub-title">待办事项</h2>
       <button class="today-btn" @click="jumpToday">今天</button>
@@ -642,9 +640,7 @@ watch(calMode, (m) => {
         @keyup.enter="submitAi"
       />
       <button class="ai-send" @click="submitAi" aria-label="发送给 AI">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
-        </svg>
+        <i class="bi bi-send" style="font-size:18px"></i>
       </button>
     </section>
 
@@ -666,15 +662,15 @@ watch(calMode, (m) => {
         </div>
         <div class="nav-row">
           <button class="nav-arrow" @click="goPrev" aria-label="上一个">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+            <i class="bi bi-chevron-left" style="font-size:18px"></i>
           </button>
           <button class="period-label" @click="showMonthPicker = !showMonthPicker">
             <span v-if="calMode === 'month'">{{ monthLabel }}</span>
             <span v-else>{{ weekLabel }}</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+            <i class="bi bi-chevron-down" style="font-size:14px"></i>
           </button>
           <button class="nav-arrow" @click="goNext" aria-label="下一个">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            <i class="bi bi-chevron-right" style="font-size:18px"></i>
           </button>
         </div>
       </section>
@@ -767,7 +763,7 @@ watch(calMode, (m) => {
             </div>
           </div>
           <button class="add-btn" @click="openCreate">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            <i class="bi bi-plus-lg" style="font-size:16px"></i>
             <span>新建</span>
           </button>
         </div>
@@ -790,7 +786,7 @@ watch(calMode, (m) => {
               @click.stop="store.toggleDone(item.id)"
               :aria-label="item.done ? '取消完成' : '标记完成'"
             >
-              <svg v-if="item.done" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <i v-if="item.done" class="bi bi-check-lg" style="font-size:14px"></i>
             </button>
             <div class="todo-main">
               <div class="todo-title">
@@ -857,7 +853,7 @@ watch(calMode, (m) => {
         </div>
       </section>
       <button class="fab" @click="openCreate" aria-label="新建待办">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        <i class="bi bi-plus-lg" style="font-size:22px"></i>
       </button>
     </template>
 
@@ -901,7 +897,7 @@ watch(calMode, (m) => {
                   @click.stop="store.toggleDone(item.id)"
                   aria-label="标记完成"
                 >
-                  <svg v-if="item.done" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <i v-if="item.done" class="bi bi-check-lg" style="font-size:14px"></i>
                 </button>
                 <div class="todo-main">
                   <div class="todo-title">
@@ -934,7 +930,7 @@ watch(calMode, (m) => {
                   @click.stop="store.toggleDone(item.id)"
                   aria-label="取消完成"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <i class="bi bi-check-lg" style="font-size:14px"></i>
                 </button>
                 <div class="todo-main">
                   <div class="todo-title">{{ item.title }}</div>
@@ -954,7 +950,7 @@ watch(calMode, (m) => {
         </div>
       </section>
       <button class="fab" @click="openCreate" aria-label="新建待办">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        <i class="bi bi-plus-lg" style="font-size:22px"></i>
       </button>
     </template>
 
@@ -993,7 +989,7 @@ watch(calMode, (m) => {
 
         <div class="ed-grid">
           <label class="ed-field">
-            <span class="ed-label">日期</span>
+            <span class="ed-label">{{ editorForm.kind === 'deadline' ? '截止日期' : '日期' }}</span>
             <input v-model="editorForm.dueDate" type="date" />
           </label>
           <label v-if="editorForm.kind === 'deadline'" class="ed-field">
@@ -1137,7 +1133,7 @@ watch(calMode, (m) => {
               @click="sub.done = !sub.done"
               :aria-label="sub.done ? '取消完成' : '标记完成'"
             >
-              <svg v-if="sub.done" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <i v-if="sub.done" class="bi bi-check-lg" style="font-size:12px"></i>
             </button>
             <input
               v-model="sub.title"
@@ -1247,7 +1243,7 @@ watch(calMode, (m) => {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 0 var(--space-1);
+  padding: 0;
 }
 .back-btn {
   width: 36px;
@@ -1319,7 +1315,6 @@ watch(calMode, (m) => {
   padding: var(--space-2) var(--space-4);
   background: var(--warm-50);
   border-radius: var(--radius-full);
-  margin: 0 var(--space-1);
 }
 .ai-input {
   flex: 1;

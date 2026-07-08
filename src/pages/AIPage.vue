@@ -9,12 +9,13 @@
  * - 虚拟列表：content-visibility + 消息上限，防止长对话卡顿
  * - 错误气泡：醒目红色 + 重试按钮 + 错误详情
  */
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { marked } from "marked";
 import { useAiChatStore } from "@/stores/aiChatStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { useToast } from "@/composables/useToast";
+import { useTopBar, ICONS } from "@/composables/useTopBar";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
 import AiStreamingText from "@/components/ai/AiStreamingText.vue";
 import ShareSheet from "@/components/share/ShareSheet.vue";
@@ -27,6 +28,7 @@ const route = useRoute();
 const store = useAiChatStore();
 const cfg = useAiConfigStore();
 const toast = useToast();
+const { setActions, clearActions } = useTopBar();
 
 const chatRef = ref<HTMLElement | null>(null);
 const inputText = ref("");
@@ -319,6 +321,15 @@ function newChat() {
   store.createConversation("新对话");
 }
 
+function syncTopBar() {
+  setActions([
+    { id: "history", icon: ICONS.history, label: "历史", onClick: goHistory },
+    { id: "new", icon: ICONS.plus, label: "新对话", onClick: newChat },
+    { id: "share", icon: ICONS.share, label: "分享", onClick: openShare },
+    { id: "config", icon: ICONS.config, label: isConfigured.value ? "已配置" : "配置", onClick: goConfig },
+  ]);
+}
+
 // ====== 生命周期 ======
 
 onMounted(async () => {
@@ -328,6 +339,7 @@ onMounted(async () => {
   } else if (!store.active && store.conversations.length) {
     store.setActive(store.conversations[0].id);
   }
+  syncTopBar();
   // 处理来自 TodoPage 的 prefill 参数
   const prefill = route.query.prefill;
   if (typeof prefill === "string" && prefill.trim()) {
@@ -337,6 +349,12 @@ onMounted(async () => {
   }
   scrollToBottom();
 });
+
+onUnmounted(() => {
+  clearActions();
+});
+
+watch(isConfigured, () => syncTopBar());
 
 watch(
   () => messages.value.length,
@@ -353,49 +371,12 @@ watch(
 
 <template>
   <div class="ai-page">
-    <!-- 顶部操作行 -->
-    <div class="action-row">
-      <button class="act-btn" @click="goHistory">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="12 6 12 12 16 14" />
-        </svg>
-        <span>历史</span>
-      </button>
-      <button class="act-btn" @click="newChat">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span>新对话</span>
-      </button>
-      <button class="act-btn" @click="openShare" :disabled="!store.active || allMessages.length === 0">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="18" cy="5" r="3" />
-          <circle cx="6" cy="12" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-        </svg>
-        <span>分享</span>
-      </button>
-      <button class="act-btn" :class="{ configured: isConfigured }" @click="goConfig">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-        <span>{{ isConfigured ? "已配置" : "未配置" }}</span>
-      </button>
-    </div>
-
     <!-- 聊天滚动区 -->
     <div ref="chatRef" class="chat-area scrollbar-hide">
       <!-- 未配置提示 -->
       <div v-if="!isConfigured" class="welcome-banner clean-card">
         <div class="welcome-avatar">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-            <path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14z" />
-          </svg>
+          <i class="bi bi-stars" style="font-size:32px"></i>
         </div>
         <p class="welcome-text">欢迎使用 Rein AI 助手</p>
         <p class="welcome-sub">请先配置 API 信息以启用聊天功能</p>
@@ -405,10 +386,7 @@ watch(
       <!-- 欢迎横幅（已配置但无消息） -->
       <div v-else-if="allMessages.length === 0" class="welcome-banner clean-card">
         <div class="welcome-avatar">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-            <path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14z" />
-          </svg>
+          <i class="bi bi-stars" style="font-size:32px"></i>
         </div>
         <p class="welcome-text">Hi！我是 Rein AI 健康助手</p>
         <p class="welcome-sub">可以问我课程安排、动作指导，或直接让我帮你创建/修改训练计划</p>
@@ -427,9 +405,7 @@ watch(
       <!-- 虚拟列表：折叠提示 -->
       <div v-if="hiddenCount > 0" class="virtual-fold">
         <button class="fold-btn" @click="showAll = true">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="18 15 12 9 6 15" />
-          </svg>
+          <i class="bi bi-chevron-up" style="font-size:14px"></i>
           <span>加载更早的 {{ hiddenCount }} 条消息</span>
         </button>
       </div>
@@ -447,13 +423,8 @@ watch(
         >
           <!-- 头像 -->
           <div class="msg-avatar" :class="msg.role">
-            <svg v-if="msg.role === 'assistant'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-            </svg>
-            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
-            </svg>
+            <i v-if="msg.role === 'assistant'" class="bi bi-stars" style="font-size:16px"></i>
+            <i v-else class="bi bi-person" style="font-size:16px"></i>
           </div>
 
           <!-- 气泡主体 -->
@@ -465,9 +436,7 @@ watch(
                 :key="i"
                 class="cite-chip"
               >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-                </svg>
+                <i class="bi bi-pin-angle" style="font-size:11px"></i>
                 <span class="cite-label">{{ c.type === 'conversation' ? c.fromTitle : '上文' }}</span>
               </div>
             </div>
@@ -479,9 +448,7 @@ watch(
               :title="'引用此消息'"
               @click="citeMessage(msg)"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-              </svg>
+              <i class="bi bi-pin-angle" style="font-size:12px"></i>
             </button>
 
             <!-- 气泡 -->
@@ -522,18 +489,11 @@ watch(
               <!-- 错误详情 + 重试 -->
               <div v-if="msg.error && !msg.pending" class="err-actions">
                 <div class="err-detail">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
-                  </svg>
+                  <i class="bi bi-exclamation-triangle-fill" style="font-size:12px"></i>
                   <span class="err-text">{{ msg.error }}</span>
                 </div>
                 <button class="retry-btn" @click="retryLast">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="23 4 23 10 17 10" />
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                  </svg>
+                  <i class="bi bi-arrow-clockwise" style="font-size:12px"></i>
                   <span>重试</span>
                 </button>
               </div>
@@ -570,9 +530,7 @@ watch(
                       :style="{ transform: `translateY(${-4 * i}px) scale(${1 - i * 0.03})`, zIndex: -i }"
                     />
                     <button class="stack-toggle-btn" @click="toggleStack(msg.id)">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
+                      <i class="bi bi-chevron-down" style="font-size:14px"></i>
                       <span>展开 {{ visibleToolResults(msg).length }} 张卡片</span>
                     </button>
                   </div>
@@ -582,9 +540,7 @@ watch(
                     class="stack-collapse-btn"
                     @click="toggleStack(msg.id)"
                   >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="18 15 12 9 6 15" />
-                    </svg>
+                    <i class="bi bi-chevron-up" style="font-size:14px"></i>
                     <span>收起卡片</span>
                   </button>
                 </div>
@@ -643,9 +599,7 @@ watch(
           :key="i"
           class="pending-cite-chip"
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-          </svg>
+          <i class="bi bi-pin-angle" style="font-size:10px"></i>
           <span class="pcite-label">{{ c.type === 'conversation' ? c.fromTitle : '引用上文' }}</span>
           <button class="pcite-x" @click="removeCitation(i)">×</button>
         </div>
@@ -666,17 +620,11 @@ watch(
       <!-- 输入栏（悬浮 pill 风格） -->
       <div class="input-bar">
         <button class="in-btn" @click="showCitePicker = true" title="引用">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-          </svg>
+          <i class="bi bi-pin-angle" style="font-size:18px"></i>
         </button>
 
         <label v-if="vision" class="in-btn" title="附加图片">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <polyline points="21 15 16 10 5 21" />
-          </svg>
+          <i class="bi bi-camera" style="font-size:18px"></i>
           <input
             type="file"
             accept="image/*"
@@ -701,13 +649,8 @@ watch(
           :disabled="!inputText.trim() && !pendingImages.length || sending"
           @click="send()"
         >
-          <svg v-if="!sending" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="spin">
-            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-          </svg>
+          <i v-if="!sending" class="bi bi-send" style="font-size:18px"></i>
+          <i v-else class="bi bi-arrow-repeat spin" style="font-size:18px"></i>
         </button>
       </div>
     </div>
@@ -731,40 +674,7 @@ watch(
   padding-bottom: calc(var(--pill-bar-height, 64px) + env(safe-area-inset-bottom, 0px) + var(--space-3) + 96px);
 }
 
-/* 顶部操作行 */
-.action-row {
-  display: flex;
-  gap: var(--space-2);
-  padding: 0 0 var(--space-3);
-  flex-shrink: 0;
-}
-.act-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border-radius: var(--radius-full);
-  background: var(--bg-100, rgba(0, 0, 0, 0.04));
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-divider);
-  font-size: var(--text-xs);
-  font-weight: var(--fw-medium);
-  cursor: pointer;
-  flex: 1;
-  justify-content: center;
-  transition: all var(--dur-fast);
-}
-.act-btn:active { transform: scale(0.96); }
-.act-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.act-btn.configured {
-  color: var(--color-success, #34c759);
-  border-color: var(--color-success, #34c759);
-}
-
-/* 聊天区 */
+/* 聊天滚动区 */
 .chat-area {
   flex: 1;
   overflow-y: auto;
@@ -1004,7 +914,7 @@ watch(
   line-height: 1.4;
   word-break: break-word;
 }
-.err-detail svg {
+.err-detail i {
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -1315,7 +1225,7 @@ watch(
   margin-top: var(--space-2);
 }
 .stack-toggle-btn:active { transform: scale(0.96); }
-.stack-toggle-btn svg {
+.stack-toggle-btn i {
   transition: transform var(--dur-fast);
 }
 .stack-collapse-btn {

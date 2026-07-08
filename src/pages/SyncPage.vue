@@ -243,18 +243,7 @@ onUnmounted(() => {
     <!-- 子标题栏 -->
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
-        <svg
-          width="22"
-          height="22"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M15 6l-6 6 6 6" />
-        </svg>
+        <i class="bi bi-chevron-left" style="font-size:22px"></i>
       </button>
       <h2 class="sub-title">P2P 同步</h2>
     </header>

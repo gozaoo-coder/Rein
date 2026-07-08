@@ -1,11 +1,4 @@
 <script setup lang="ts">
-/**
- * TodayTodoCard — 今日待办卡
- *
- * 1x1: 圆环 + 百分比
- * 2x1: 圆环 + X/Y 已完成
- * 2x2: 圆环 + 最多 3 条预览（可切换完成状态）
- */
 import { computed } from "vue";
 import { useTodoStore } from "@/stores/todoStore";
 import type { CardSize } from "@/types/card";
@@ -36,46 +29,47 @@ function onToggle(id: string, e: Event) {
   store.toggleDone(id);
 }
 
-const C = 2 * Math.PI * 16;
-const dashOffset = computed(() => C - progress.value * C);
+const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
+const ringR = computed(() => (props.size === "1x1" ? 14 : props.size === "2x1" ? 13 : 16));
+const C = computed(() => 2 * Math.PI * ringR.value);
+const dashOffset = computed(() => C.value - progress.value * C.value);
 const pctText = computed(() =>
   total.value === 0 ? "0" : Math.round(progress.value * 100) + "%",
 );
+const pctFontSize = computed(() => (props.size === "1x1" ? 8 : props.size === "2x1" ? 8 : 9));
+const ringSize = computed(() => ringR.value * 2 + 8);
 </script>
 
 <template>
   <div
     class="home-card clean-card todo-card"
-    :class="`home-card--${size}`"
+    :class="[`home-card--${size}`, { 'is-compact': isCompact }]"
     @click="emit('click')"
   >
     <div v-if="size !== '1x1'" class="card-head">
       <span class="title-icon title-icon--orange">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 11 12 14 22 4" />
-          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-        </svg>
+        <i class="bi bi-check-lg" style="font-size:14px"></i>
       </span>
       <span class="card-title">今日待办</span>
     </div>
 
-    <div class="body" :class="{ 'body--center': size === '1x1' }">
+    <div class="body" :class="{ 'body--center': size === '1x1', 'body--row': size === '2x1' }">
       <div class="ring">
-        <svg width="64" height="64" viewBox="0 0 40 40">
-          <circle cx="20" cy="20" r="16" fill="none" stroke="var(--bg-200)" stroke-width="4" />
+        <svg :width="ringSize" :height="ringSize" :viewBox="`0 0 ${ringR.value * 2 + 8} ${ringR.value * 2 + 8}`">
+          <circle :cx="ringR.value + 4" :cy="ringR.value + 4" :r="ringR.value" fill="none" stroke="var(--bg-200)" :stroke-width="size === '2x1' ? 3 : 4" />
           <circle
-            cx="20" cy="20" r="16" fill="none"
-            stroke="var(--color-warm)" stroke-width="4"
+            :cx="ringR.value + 4" :cy="ringR.value + 4" :r="ringR.value" fill="none"
+            stroke="var(--color-warm)" :stroke-width="size === '2x1' ? 3 : 4"
             stroke-linecap="round"
             :stroke-dasharray="C"
             :stroke-dashoffset="dashOffset"
             :style="{
               transform: 'rotate(-90deg)',
-              transformOrigin: '20px 20px',
+              transformOrigin: `${ringR.value + 4}px ${ringR.value + 4}px`,
               transition: 'stroke-dashoffset .4s var(--ease-immersive)',
             }"
           />
-          <text x="20" y="23" text-anchor="middle" font-size="9" font-weight="700" fill="var(--color-text)">
+          <text :x="ringR.value + 4" :y="ringR.value + 4 + pctFontSize / 3" text-anchor="middle" :font-size="pctFontSize" font-weight="700" fill="var(--color-text)">
             {{ pctText }}
           </text>
         </svg>
@@ -94,9 +88,7 @@ const pctText = computed(() =>
             @click="onToggle(item.id, $event)"
             :aria-label="item.done ? '标记未完成' : '标记完成'"
           >
-            <svg v-if="item.done" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
+            <i v-if="item.done" class="bi bi-check-lg" style="font-size:10px;color:#fff"></i>
           </button>
           <span class="preview-title" :class="{ 'is-done': item.done }">{{ item.title }}</span>
         </div>
@@ -110,8 +102,8 @@ const pctText = computed(() =>
 .todo-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-3);
   text-align: left;
   width: 100%;
   height: 100%;
@@ -124,18 +116,27 @@ const pctText = computed(() =>
 .todo-card:active { transform: scale(0.98); }
 .todo-card:hover { box-shadow: var(--shadow-card-hover); }
 
+.todo-card.is-compact {
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-1);
+}
+
 .card-head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
+}
+
+.is-compact .card-head {
+  gap: 4px;
 }
 
 .title-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--radius-full);
   flex-shrink: 0;
   color: #fff;
@@ -143,22 +144,27 @@ const pctText = computed(() =>
 .title-icon--orange { background: var(--icon-orange); }
 
 .card-title {
-  font-size: var(--text-md);
+  font-size: var(--text-sm);
   font-weight: var(--fw-semibold);
   color: var(--color-text);
   line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .body {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-height: 0;
 }
 .body--center {
-  flex-direction: column;
   justify-content: center;
+}
+.body--row {
+  flex-direction: row;
 }
 
 .ring { flex-shrink: 0; }
@@ -166,16 +172,17 @@ const pctText = computed(() =>
 .count-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  min-width: 0;
 }
 .count-num {
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   line-height: 1;
 }
 .count-label {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 
@@ -183,25 +190,26 @@ const pctText = computed(() =>
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
+  min-height: 0;
 }
 
 .preview-item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   background: var(--bg-100);
   border-radius: var(--radius-md);
 }
 
 .cb {
   flex-shrink: 0;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  border: 1.6px solid var(--bg-400);
+  border: 1.4px solid var(--bg-400);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -217,7 +225,7 @@ const pctText = computed(() =>
 .preview-title {
   flex: 1;
   min-width: 0;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -233,7 +241,7 @@ const pctText = computed(() =>
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
 </style>

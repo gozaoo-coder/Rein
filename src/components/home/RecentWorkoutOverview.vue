@@ -70,11 +70,7 @@ function fmtDuration(sec: number): string {
     <div class="ov-header">
       <div class="ov-title-wrap">
         <div class="icon-circle icon-circle--warm">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="15" cy="5" r="2" />
-            <path d="M10 21l2-6 3 2 3-5-3-1-3 3-3-1-3 5z" />
-            <path d="M7 14l2-2" />
-          </svg>
+          <i class="bi bi-universal-access" style="font-size:18px"></i>
         </div>
         <div class="ov-title-text">
           <div class="ov-title">最近运动</div>
@@ -85,9 +81,7 @@ function fmtDuration(sec: number): string {
         </div>
       </div>
       <button class="ov-more" @click="goSports" aria-label="查看更多">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 6l6 6-6 6" />
-        </svg>
+        <i class="bi bi-chevron-right" style="font-size:18px"></i>
       </button>
     </div>
 
@@ -128,10 +122,7 @@ function fmtDuration(sec: number): string {
 
     <!-- Empty state -->
     <div v-else class="ov-empty">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-tertiary)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="15" cy="5" r="2" />
-        <path d="M10 21l2-6 3 2 3-5-3-1-3 3-3-1-3 5z" />
-      </svg>
+      <i class="bi bi-universal-access" style="font-size:28px;color:var(--color-text-tertiary)"></i>
       <div class="ov-empty-text">暂无训练记录</div>
       <button class="ov-empty-btn" @click="goSports">去运动</button>
     </div>

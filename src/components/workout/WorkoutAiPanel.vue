@@ -175,9 +175,7 @@ function close() {
       <header class="wai-header">
         <div class="wai-header-left">
           <div class="wai-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
+            <i class="bi bi-chat-dots" style="font-size:18px"></i>
           </div>
           <div class="wai-header-text">
             <div class="wai-title">AI 运动助手</div>
@@ -185,9 +183,7 @@ function close() {
           </div>
         </div>
         <button class="wai-close" @click="close" aria-label="关闭">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
+          <i class="bi bi-x-lg" style="font-size:18px"></i>
         </button>
       </header>
 
@@ -195,9 +191,7 @@ function close() {
       <div ref="listEl" class="wai-messages">
         <div v-if="messages.length === 0" class="wai-empty">
           <div class="wai-empty-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
+            <i class="bi bi-chat-dots" style="font-size:36px"></i>
           </div>
           <p class="wai-empty-text">问我当前动作细节、调整配重或修改课程</p>
         </div>
@@ -216,9 +210,7 @@ function close() {
             <!-- 工具结果摘要 -->
             <div v-if="m.toolResults?.length" class="wai-tool-results">
               <div v-for="(tr, i) in m.toolResults" :key="i" class="wai-tool-chip">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                </svg>
+                <i class="bi bi-check-lg" style="font-size:12px"></i>
                 <span>{{ toolSummary(tr) }}</span>
               </div>
             </div>
@@ -252,10 +244,7 @@ function close() {
           @click="send(inputText)"
           aria-label="发送"
         >
-          <svg v-if="!sending" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
+          <i v-if="!sending" class="bi bi-send" style="font-size:18px"></i>
           <span v-else class="wai-spinner" />
         </button>
       </div>

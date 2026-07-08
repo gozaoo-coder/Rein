@@ -2,14 +2,15 @@
 /**
  * FoodDatabasePage — 食品数据库
  *
- * - 搜索 + 分类筛选
- * - 按分类分组展示
- * - 自定义食品增/改/删，预设食品仅展示
+ * - 搜索 + 分类chip（横向滚动+边缘渐变遮罩）
+ * - 简化列表：食物名 / 健康评分 / 每份热量 / 右侧添加按钮
+ * - 自定义食品增/改/删（含完整营养素表单）
+ * - 预设食品仅展示+添加
  */
 import { computed, onMounted, reactive, ref } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { FOOD_CATEGORIES } from "@/data/foodDatabase";
-import type { FoodItem, FoodUnit } from "@/types/health";
+import { HEALTH_SCORE_LABEL, type FoodItem, type FoodUnit, type HealthScore, type CustomNutrient } from "@/types/health";
 
 const store = useHealthDataStore();
 
@@ -40,6 +41,32 @@ const groupedFoods = computed<{ category: string; items: FoodItem[] }[]>(() => {
   return groups;
 });
 
+function caloriesPerUnit(food: FoodItem, unit: FoodUnit): number {
+  return Math.round((food.caloriesPer100g * unit.grams) / 100);
+}
+
+function primaryUnit(food: FoodItem): FoodUnit {
+  return food.units[0] ?? { name: "100g", grams: 100 };
+}
+
+const HEALTH_SCORE_COLORS: Record<HealthScore, string> = {
+  0: "#dc3545",
+  1: "#fd7e14",
+  2: "#ffc107",
+  3: "#20c997",
+  4: "#28a745",
+  5: "#0a59f7",
+};
+
+function addToLog(food: FoodItem) {
+  const unit = primaryUnit(food);
+  store.addFoodRecord({
+    foodId: food.id,
+    foodName: food.name,
+    grams: unit.grams,
+  });
+}
+
 // ===== 表单 =====
 interface FoodFormState {
   id: string | null;
@@ -49,8 +76,13 @@ interface FoodFormState {
   carbsPer100g: number | null;
   proteinPer100g: number | null;
   fatPer100g: number | null;
-  microNutrients: string;
+  fiberPer100g: number | null;
+  sugarPer100g: number | null;
+  sodiumPer100g: number | null;
+  healthScore: HealthScore;
+  description: string;
   units: FoodUnit[];
+  customNutrients: CustomNutrient[];
 }
 
 const showForm = ref(false);
@@ -63,8 +95,13 @@ const form = reactive<FoodFormState>({
   carbsPer100g: null,
   proteinPer100g: null,
   fatPer100g: null,
-  microNutrients: "",
+  fiberPer100g: null,
+  sugarPer100g: null,
+  sodiumPer100g: null,
+  healthScore: 3,
+  description: "",
   units: [{ name: "", grams: null as number | null }],
+  customNutrients: [],
 });
 
 function resetForm() {
@@ -75,8 +112,13 @@ function resetForm() {
   form.carbsPer100g = null;
   form.proteinPer100g = null;
   form.fatPer100g = null;
-  form.microNutrients = "";
+  form.fiberPer100g = null;
+  form.sugarPer100g = null;
+  form.sodiumPer100g = null;
+  form.healthScore = 3;
+  form.description = "";
   form.units = [{ name: "", grams: null }];
+  form.customNutrients = [];
   editingCustom.value = false;
 }
 
@@ -93,8 +135,13 @@ function openEdit(food: FoodItem) {
   form.carbsPer100g = food.carbsPer100g;
   form.proteinPer100g = food.proteinPer100g;
   form.fatPer100g = food.fatPer100g;
-  form.microNutrients = food.microNutrients ?? "";
+  form.fiberPer100g = food.fiberPer100g ?? null;
+  form.sugarPer100g = food.sugarPer100g ?? null;
+  form.sodiumPer100g = food.sodiumPer100g ?? null;
+  form.healthScore = food.healthScore;
+  form.description = food.description ?? "";
   form.units = food.units.map((u) => ({ name: u.name, grams: u.grams }));
+  form.customNutrients = food.customNutrients ? [...food.customNutrients] : [];
   editingCustom.value = true;
   showForm.value = true;
 }
@@ -107,10 +154,15 @@ function closeForm() {
 function addUnit() {
   form.units.push({ name: "", grams: null });
 }
-
 function removeUnit(idx: number) {
   if (form.units.length <= 1) return;
   form.units.splice(idx, 1);
+}
+function addCustomNutrient() {
+  form.customNutrients.push({ name: "", value: 0, unit: "mg" });
+}
+function removeCustomNutrient(idx: number) {
+  form.customNutrients.splice(idx, 1);
 }
 
 function submitForm() {
@@ -123,10 +175,21 @@ function submitForm() {
     carbsPer100g: Number(form.carbsPer100g) || 0,
     proteinPer100g: Number(form.proteinPer100g) || 0,
     fatPer100g: Number(form.fatPer100g) || 0,
-    microNutrients: form.microNutrients.trim() || undefined,
+    fiberPer100g: form.fiberPer100g != null ? Number(form.fiberPer100g) : undefined,
+    sugarPer100g: form.sugarPer100g != null ? Number(form.sugarPer100g) : undefined,
+    sodiumPer100g: form.sodiumPer100g != null ? Number(form.sodiumPer100g) : undefined,
+    healthScore: form.healthScore,
+    description: form.description.trim() || undefined,
     units: form.units
       .filter((u) => u.name.trim() && u.grams != null && u.grams > 0)
       .map((u) => ({ name: u.name.trim(), grams: Number(u.grams) || 0 })),
+    customNutrients: form.customNutrients.filter((n) => n.name.trim()).length > 0
+      ? form.customNutrients.filter((n) => n.name.trim()).map((n) => ({
+          name: n.name.trim(),
+          value: Number(n.value) || 0,
+          unit: n.unit.trim() || "mg",
+        }))
+      : undefined,
   };
   if (editingCustom.value && form.id) {
     store.updateFoodItem(form.id, payload);
@@ -145,19 +208,14 @@ function removeFood(food: FoodItem) {
 </script>
 
 <template>
-  <div class="food-db-page">
+  <div class="food-db-page page-scroll">
     <h2 class="page-title">食品数据库</h2>
 
-    <!-- 搜索 -->
     <div class="search-row clean-card">
-      <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="7" />
-        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-      </svg>
+      <i class="bi bi-search search-icon"></i>
       <input v-model="searchQuery" type="text" placeholder="搜索食品名 / 分类" class="search-input" />
     </div>
 
-    <!-- 分类筛选 -->
     <div class="chip-row">
       <button
         class="chip"
@@ -173,15 +231,11 @@ function removeFood(food: FoodItem) {
       >{{ cat }}</button>
     </div>
 
-    <!-- 添加按钮 -->
     <button class="add-btn" @click="openAdd">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-        <path d="M12 5v14M5 12h14" />
-      </svg>
+      <i class="bi bi-plus-lg"></i>
       <span>新建食品</span>
     </button>
 
-    <!-- 分组列表 -->
     <div v-if="groupedFoods.length === 0" class="empty clean-card">暂无匹配食品</div>
 
     <div v-for="group in groupedFoods" :key="group.category" class="group-card clean-card">
@@ -191,34 +245,32 @@ function removeFood(food: FoodItem) {
       </div>
       <div class="food-list">
         <div v-for="food in group.items" :key="food.id" class="food-item">
-          <div class="food-main">
+          <div class="food-main" @click="food.custom ? openEdit(food) : null">
             <div class="food-top">
               <span class="food-name">{{ food.name }}</span>
-              <span v-if="!food.custom" class="preset-badge">预设</span>
+              <span v-if="food.custom" class="preset-badge">自定</span>
             </div>
-            <div class="food-cal">{{ food.caloriesPer100g }} 千卡/100g</div>
-            <div class="food-macros">
-              <span>碳水 {{ food.carbsPer100g }}g</span>
-              <span>蛋白 {{ food.proteinPer100g }}g</span>
-              <span>脂肪 {{ food.fatPer100g }}g</span>
+            <div class="food-meta">
+              <span
+                class="health-dot"
+                :style="{ background: HEALTH_SCORE_COLORS[food.healthScore] }"
+              />
+              <span class="health-label">{{ HEALTH_SCORE_LABEL[food.healthScore] }}</span>
+              <span class="sep">·</span>
+              <span class="cal-text">
+                {{ caloriesPerUnit(food, primaryUnit(food)) }}千卡/{{ primaryUnit(food).name }}
+              </span>
             </div>
-            <div v-if="food.units.length > 0" class="food-units">
-              <span v-for="(u, i) in food.units" :key="i" class="unit-tag">{{ u.name }}·{{ u.grams }}g</span>
-            </div>
-            <div v-if="food.microNutrients" class="food-micro">{{ food.microNutrients }}</div>
           </div>
+          <button class="add-food-btn" @click="addToLog(food)" aria-label="添加到饮食记录">
+            <i class="bi bi-plus-lg"></i>
+          </button>
           <div v-if="food.custom" class="food-actions">
-            <button class="icon-btn icon-btn--edit" @click="openEdit(food)" aria-label="编辑">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 20h9" />
-                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-              </svg>
+            <button class="icon-btn" @click="openEdit(food)" aria-label="编辑">
+              <i class="bi bi-pencil"></i>
             </button>
             <button class="icon-btn icon-btn--del" @click="removeFood(food)" aria-label="删除">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              </svg>
+              <i class="bi bi-trash3"></i>
             </button>
           </div>
         </div>
@@ -230,7 +282,9 @@ function removeFood(food: FoodItem) {
       <div class="sheet clean-card">
         <div class="sheet-header">
           <h3 class="sheet-title">{{ editingCustom ? "编辑食品" : "新建食品" }}</h3>
-          <button class="close-btn" @click="closeForm" aria-label="关闭">×</button>
+          <button class="close-btn" @click="closeForm" aria-label="关闭">
+            <i class="bi bi-x-lg"></i>
+          </button>
         </div>
 
         <div class="sheet-body">
@@ -246,9 +300,25 @@ function removeFood(food: FoodItem) {
             </select>
           </label>
 
+          <div class="field">
+            <span class="field-label">健康评分</span>
+            <div class="score-row">
+              <button
+                v-for="s in ([0,1,2,3,4,5] as HealthScore[])"
+                :key="s"
+                class="score-btn"
+                :class="{ 'score-btn--active': form.healthScore === s }"
+                :style="form.healthScore === s ? { background: HEALTH_SCORE_COLORS[s], color: '#fff', borderColor: HEALTH_SCORE_COLORS[s] } : {}"
+                @click="form.healthScore = s"
+              >
+                {{ HEALTH_SCORE_LABEL[s] }}
+              </button>
+            </div>
+          </div>
+
           <div class="field-grid">
             <label class="field">
-              <span class="field-label">热量 / 100g</span>
+              <span class="field-label">热量 / 100g (千卡)</span>
               <input v-model.number="form.caloriesPer100g" type="number" min="0" placeholder="千卡" class="text-input" />
             </label>
             <label class="field">
@@ -263,11 +333,23 @@ function removeFood(food: FoodItem) {
               <span class="field-label">脂肪 / 100g</span>
               <input v-model.number="form.fatPer100g" type="number" min="0" placeholder="g" class="text-input" />
             </label>
+            <label class="field">
+              <span class="field-label">膳食纤维 / 100g</span>
+              <input v-model.number="form.fiberPer100g" type="number" min="0" placeholder="g" class="text-input" />
+            </label>
+            <label class="field">
+              <span class="field-label">糖 / 100g</span>
+              <input v-model.number="form.sugarPer100g" type="number" min="0" placeholder="g" class="text-input" />
+            </label>
+            <label class="field">
+              <span class="field-label">钠 / 100g</span>
+              <input v-model.number="form.sodiumPer100g" type="number" min="0" placeholder="mg" class="text-input" />
+            </label>
           </div>
 
           <label class="field">
-            <span class="field-label">微量营养（可选）</span>
-            <input v-model="form.microNutrients" type="text" placeholder="如 富含维生素 B12" class="text-input" />
+            <span class="field-label">描述（可选）</span>
+            <input v-model="form.description" type="text" placeholder="食品描述/备注" class="text-input" />
           </label>
 
           <div class="field">
@@ -284,7 +366,24 @@ function removeFood(food: FoodItem) {
                   class="icon-btn icon-btn--del"
                   @click="removeUnit(i)"
                   aria-label="删除单位"
-                >×</button>
+                ><i class="bi bi-dash-lg"></i></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="units-header">
+              <span class="field-label">自定义营养素（咖啡因等）</span>
+              <button class="link-btn" @click="addCustomNutrient">+ 添加</button>
+            </div>
+            <div class="units-list">
+              <div v-for="(n, i) in form.customNutrients" :key="i" class="unit-row">
+                <input v-model="n.name" type="text" placeholder="名称（如 咖啡因）" class="text-input unit-name" />
+                <input v-model.number="n.value" type="number" min="0" placeholder="数值" class="text-input unit-grams" />
+                <input v-model="n.unit" type="text" placeholder="单位" class="text-input unit-unit" />
+                <button class="icon-btn icon-btn--del" @click="removeCustomNutrient(i)" aria-label="删除">
+                  <i class="bi bi-dash-lg"></i>
+                </button>
               </div>
             </div>
           </div>
@@ -316,19 +415,17 @@ function removeFood(food: FoodItem) {
   margin: 0;
 }
 
-/* 搜索 */
 .search-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 10px 14px;
 }
-
 .search-icon {
   color: var(--color-text-tertiary);
   flex-shrink: 0;
+  font-size: 16px;
 }
-
 .search-input {
   flex: 1;
   border: none;
@@ -338,37 +435,6 @@ function removeFood(food: FoodItem) {
   outline: none;
 }
 
-/* 分类 chips */
-.chip-row {
-  display: flex;
-  gap: var(--space-2);
-  overflow-x: auto;
-  padding: 4px 2px;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.chip-row::-webkit-scrollbar { display: none; }
-
-.chip {
-  flex-shrink: 0;
-  padding: 6px 14px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-divider);
-  background: var(--bg-100);
-  color: var(--color-text-secondary);
-  font-size: var(--text-sm);
-  font-weight: var(--fw-semibold);
-  cursor: pointer;
-  transition: all 0.15s var(--ease-immersive);
-}
-
-.chip--active {
-  background: var(--color-warm);
-  color: #fff;
-  border-color: var(--color-warm);
-}
-
-/* 添加按钮 */
 .add-btn {
   display: flex;
   align-items: center;
@@ -386,7 +452,6 @@ function removeFood(food: FoodItem) {
 }
 .add-btn:active { transform: scale(0.98); }
 
-/* 空态 */
 .empty {
   padding: var(--space-5);
   font-size: var(--text-sm);
@@ -394,7 +459,6 @@ function removeFood(food: FoodItem) {
   text-align: center;
 }
 
-/* 分组卡片 */
 .group-card {
   padding: var(--space-4);
 }
@@ -405,14 +469,12 @@ function removeFood(food: FoodItem) {
   justify-content: space-between;
   margin-bottom: var(--space-3);
 }
-
 .group-title {
   font-size: var(--text-md);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   margin: 0;
 }
-
 .group-count {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
@@ -426,7 +488,8 @@ function removeFood(food: FoodItem) {
 
 .food-item {
   display: flex;
-  gap: var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-3);
   background: var(--bg-100);
   border-radius: var(--radius-md);
@@ -434,10 +497,10 @@ function removeFood(food: FoodItem) {
 
 .food-main {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 0;
 }
 
 .food-top {
@@ -445,13 +508,11 @@ function removeFood(food: FoodItem) {
   align-items: center;
   gap: var(--space-2);
 }
-
 .food-name {
   font-size: var(--text-md);
   font-weight: var(--fw-semibold);
   color: var(--color-text);
 }
-
 .preset-badge {
   padding: 1px 6px;
   border-radius: var(--radius-full);
@@ -461,46 +522,52 @@ function removeFood(food: FoodItem) {
   font-weight: var(--fw-semibold);
 }
 
-.food-cal {
+.food-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--text-sm);
-  color: var(--color-warm);
+  color: var(--color-text-secondary);
+}
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.health-label {
   font-weight: var(--fw-semibold);
 }
-
-.food-macros {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
+.sep {
   color: var(--color-text-tertiary);
 }
+.cal-text {
+  color: var(--color-warm);
+  font-weight: var(--fw-medium);
+}
 
-.food-units {
+.add-food-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-warm);
+  color: #fff;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  flex-shrink: 0;
+  transition: transform 0.15s;
 }
-
-.unit-tag {
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: var(--bg-200);
-  color: var(--color-text-secondary);
-  font-size: var(--text-xs);
-}
-
-.food-micro {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
-  font-style: italic;
-}
+.add-food-btn:active { transform: scale(0.9); }
 
 .food-actions {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  gap: 6px;
+  flex-shrink: 0;
 }
-
 .icon-btn {
   width: 32px;
   height: 32px;
@@ -512,10 +579,8 @@ function removeFood(food: FoodItem) {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s;
+  font-size: 14px;
 }
-
-.icon-btn--edit:active { color: var(--color-warm); }
 .icon-btn--del:active { color: var(--danger-500); }
 
 /* Sheet */
@@ -529,11 +594,7 @@ function removeFood(food: FoodItem) {
   justify-content: center;
   animation: fade-in 0.2s var(--ease-immersive);
 }
-
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 .sheet {
   width: 100%;
@@ -545,11 +606,7 @@ function removeFood(food: FoodItem) {
   box-shadow: var(--shadow-modal);
   animation: sheet-up 0.28s var(--ease-immersive);
 }
-
-@keyframes sheet-up {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
-}
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
 .sheet-header {
   display: flex;
@@ -558,22 +615,23 @@ function removeFood(food: FoodItem) {
   padding: var(--space-4);
   border-bottom: 1px solid var(--color-divider);
 }
-
 .sheet-title {
   font-size: var(--text-md);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   margin: 0;
 }
-
 .close-btn {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border: none;
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: 22px;
+  font-size: 16px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .sheet-body {
@@ -590,13 +648,11 @@ function removeFood(food: FoodItem) {
   flex-direction: column;
   gap: 6px;
 }
-
 .field-label {
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
   font-weight: var(--fw-semibold);
 }
-
 .text-input {
   width: 100%;
   padding: 10px 12px;
@@ -608,7 +664,6 @@ function removeFood(food: FoodItem) {
   outline: none;
   box-sizing: border-box;
 }
-
 .text-input:focus {
   border-color: var(--color-warm);
   background: var(--bg-50);
@@ -620,12 +675,28 @@ function removeFood(food: FoodItem) {
   gap: var(--space-2);
 }
 
+.score-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.score-btn {
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
 .units-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-
 .link-btn {
   background: transparent;
   border: none;
@@ -634,21 +705,19 @@ function removeFood(food: FoodItem) {
   font-weight: var(--fw-semibold);
   cursor: pointer;
 }
-
 .units-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
-
 .unit-row {
   display: flex;
   gap: var(--space-2);
   align-items: center;
 }
-
-.unit-name { flex: 1; }
+.unit-name { flex: 2; }
 .unit-grams { flex: 1; }
+.unit-unit { flex: 1; }
 
 .sheet-footer {
   display: flex;
@@ -656,7 +725,6 @@ function removeFood(food: FoodItem) {
   padding: var(--space-4);
   border-top: 1px solid var(--color-divider);
 }
-
 .cancel-btn,
 .submit-btn {
   flex: 1;
@@ -667,19 +735,7 @@ function removeFood(food: FoodItem) {
   font-weight: var(--fw-semibold);
   cursor: pointer;
 }
-
-.cancel-btn {
-  background: var(--bg-200);
-  color: var(--color-text-secondary);
-}
-
-.submit-btn {
-  background: var(--color-warm);
-  color: #fff;
-}
-
-.submit-btn:disabled {
-  background: var(--bg-300);
-  cursor: not-allowed;
-}
+.cancel-btn { background: var(--bg-200); color: var(--color-text-secondary); }
+.submit-btn { background: var(--color-warm); color: #fff; }
+.submit-btn:disabled { background: var(--bg-300); cursor: not-allowed; }
 </style>

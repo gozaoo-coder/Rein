@@ -1,98 +1,146 @@
 /**
- * Course → WorkoutPlan 适配器
- * Course (业务模型) 转换为 WorkoutPlan (运行时模型)，
- * 让现有 WorkoutPage / workoutStore 可直接消费。
+ * Course → WorkoutPlan 转换工具
  *
- * 运行时 StepDetails 携带详细动作信息：
- *   equipment / muscleGroup / weight / cautions，
- * 供运动页面倒计时下方展示。
+ * 将课程 (Course) 数据结构转换为训练执行 (WorkoutPlan) 结构：
+ *  - 创建训练/休息交替的 WorkoutStep[]
+ *  - 为每个训练步填充详细动作指南（来自 Exercise.executionDetails / cautions / equipment / muscleGroup）
+ *  - 热身 / 拉伸作为单独的 training 步（按秒计时）
+ *  - 器械动作自动生成配重建议文案（基于难度与类型）
  */
 
-import type { Course, CourseStep } from "@/types/course";
-import type { WorkoutPlan, WorkoutStep, TimerConfig } from "@/types/workout";
-import { StepType, MediaType } from "@/types/workout";
+import type { Course, CourseExercise } from "@/types/course";
 import type { Exercise } from "@/types/exercise";
-import { MUSCLE_GROUP_LABEL } from "@/types/exercise";
 import { useExerciseStore } from "@/stores/exerciseStore";
+import {
+  MediaType,
+  StepType,
+  type WorkoutPlan,
+  type WorkoutStep,
+} from "@/types/workout";
+import { MUSCLE_GROUP_LABEL, EXERCISE_DIFFICULTY_LABEL } from "@/types/exercise";
 
-const PHASE_LABEL: Record<CourseStep["phase"], string> = {
-  warmup: "热身",
-  main: "正式",
-  stretch: "拉伸",
-  rest: "休息",
-};
-
-function phaseLabel(phase: CourseStep["phase"]): string {
-  return PHASE_LABEL[phase] ?? "正式";
-}
-
-function stepTimer(step: CourseStep): TimerConfig {
-  if (step.durationSec != null) {
-    return { enabled: true, unit: "seconds", value: step.durationSec };
+function resolveExercise(id: string): Exercise | undefined {
+  try {
+    return useExerciseStore().getById(id);
+  } catch {
+    return undefined;
   }
-  return { enabled: false, unit: "reps", value: step.reps ?? 10 };
 }
 
-function stepTitle(step: CourseStep, exercise?: Exercise): string {
-  const name = exercise?.name ?? step.exerciseName;
-  const sets = step.sets;
-  const reps = step.reps;
-  const dur = step.durationSec;
-  const detail = reps != null ? `${sets}×${reps}` : dur != null ? `${sets}×${dur}s` : `${sets}组`;
-  return `${name}  ${detail}`;
-}
-
-/**
- * 构建 stepGuide：将动作描述 / 要领 / 注意事项 / 配重等组合为 markdown 文本。
- * 该文本用于运动页面下方滚动展示。
- */
-function stepGuide(step: CourseStep, exercise?: Exercise): string {
-  const lines: string[] = [];
-  if (exercise?.description) lines.push(exercise.description);
-  if (exercise?.executionDetails) lines.push(`要领：${exercise.executionDetails}`);
-  if (step.note) lines.push(`备注：${step.note}`);
-  lines.push(`组数：${step.sets}`);
-  if (step.reps != null) lines.push(`每组次数：${step.reps}`);
-  if (step.durationSec != null) lines.push(`每组时长：${step.durationSec} 秒`);
-  lines.push(`组间休息：${step.restSec} 秒`);
-  if (step.cautions ?? exercise?.cautions) {
-    lines.push(`⚠️ 注意：${step.cautions ?? exercise?.cautions}`);
+function suggestWeight(exercise: Exercise): string {
+  const eq = exercise.equipment ?? "";
+  if (eq.includes("杠铃")) {
+    return exercise.difficulty === "beginner" ? "建议起始：空杆 20kg"
+      : exercise.difficulty === "intermediate" ? "建议：60-70% 1RM"
+      : "建议：80% 1RM，需保护";
   }
-  return lines.join("\n");
+  if (eq.includes("哑铃")) {
+    return exercise.difficulty === "beginner" ? "建议起始：2-5kg/只"
+      : exercise.difficulty === "intermediate" ? "建议：6-12kg/只"
+      : "建议：12kg+/只";
+  }
+  if (exercise.category === "bodyweight" && !eq) return "自重";
+  if (eq) return "按能力选择配重";
+  return "自重";
 }
 
-/** 将 Course 转换为 WorkoutPlan：每个 CourseStep 映射为一个带 sets 的训练步 */
-export function courseToWorkoutPlan(course: Course): WorkoutPlan {
-  const exerciseStore = useExerciseStore();
-  const steps: WorkoutStep[] = [];
+function buildStep(order: number, ce: CourseExercise, exercise: Exercise, phase: string): WorkoutStep {
+  const isRepBased = !!ce.reps;
+  const parts: string[] = [];
+  if (exercise.executionDetails) parts.push(exercise.executionDetails);
+  else if (exercise.description) parts.push(exercise.description);
+  else parts.push(exercise.name);
 
-  for (const cs of course.steps) {
-    const exercise = exerciseStore.getById(cs.exerciseId);
-    const phase = phaseLabel(cs.phase);
+  const md = parts.join("\n\n");
 
-    steps.push({
-      type: StepType.TRAINING,
-      phase,
-      timer: stepTimer(cs),
-      sets: cs.sets,
-      restBetweenSets: cs.restSec,
-      details: {
-        title: stepTitle(cs, exercise),
-        guide: {
-          type: MediaType.MARKDOWN_TEXT,
-          content: stepGuide(cs, exercise),
-        },
-        equipment: exercise?.equipment ?? (exercise?.category === "bodyweight" ? "徒手" : undefined),
-        muscleGroup: exercise ? MUSCLE_GROUP_LABEL[exercise.muscleGroup] : undefined,
-        weight: cs.weight,
-        cautions: cs.cautions ?? exercise?.cautions,
+  return {
+    type: StepType.TRAINING,
+    phase,
+    timer: isRepBased
+      ? { enabled: false, unit: "reps", value: ce.reps ?? 0 }
+      : { enabled: true, unit: "seconds", value: ce.duration ?? 30 },
+    sets: ce.sets ?? 1,
+    restBetweenSets: ce.restAfterSet ?? ce.rest ?? 0,
+    details: {
+      title: `${order}. ${exercise.name}`,
+      guide: {
+        type: exercise.guide?.type ?? MediaType.MARKDOWN_TEXT,
+        url: exercise.guide?.url,
+        content: md,
       },
-    });
+      equipment: exercise.equipment ?? "徒手",
+      muscleGroup: MUSCLE_GROUP_LABEL[exercise.muscleGroup] ?? "",
+      weight: suggestWeight(exercise),
+      cautions: exercise.cautions ?? undefined,
+    },
+  };
+}
+
+function stretchStep(order: number, exercise: Exercise, durationSec: number, phase: string): WorkoutStep {
+  return {
+    type: StepType.TRAINING,
+    phase,
+    timer: { enabled: true, unit: "seconds", value: durationSec },
+    sets: 1,
+    details: {
+      title: `${order}. ${exercise.name}`,
+      guide: {
+        type: MediaType.MARKDOWN_TEXT,
+        content: exercise.executionDetails ?? exercise.description ?? exercise.name,
+      },
+      equipment: exercise.equipment ?? "徒手",
+      muscleGroup: MUSCLE_GROUP_LABEL[exercise.muscleGroup] ?? "",
+      cautions: exercise.cautions ?? undefined,
+    },
+  };
+}
+
+function restStep(seconds: number, label = "组间休息"): WorkoutStep {
+  return {
+    type: StepType.RESTING,
+    phase: "休息",
+    timer: { enabled: true, unit: "seconds", value: seconds },
+    details: {
+      title: label,
+      guide: { type: MediaType.MARKDOWN_TEXT, content: `${seconds}秒 深呼吸、调整节奏、小口补水。` },
+    },
+  };
+}
+
+export function courseToWorkoutPlan(course: Course): WorkoutPlan {
+  const steps: WorkoutStep[] = [];
+  let order = 1;
+
+  if (course.warmup?.length) {
+    for (const we of course.warmup) {
+      const ex = resolveExercise(we.exerciseId);
+      if (!ex) continue;
+      steps.push(stretchStep(order++, ex, we.duration, "热身"));
+      if (we.restAfter) steps.push(restStep(we.restAfter, "热身间休息"));
+    }
+  }
+
+  if (course.mainWorkout?.length) {
+    for (const ce of course.mainWorkout) {
+      const ex = resolveExercise(ce.exerciseId);
+      if (!ex) continue;
+      steps.push(buildStep(order++, ce, ex, "主训练"));
+      if (ce.rest) steps.push(restStep(ce.rest, "动作间休息"));
+    }
+  }
+
+  if (course.coolDown?.length) {
+    for (const we of course.coolDown) {
+      const ex = resolveExercise(we.exerciseId);
+      if (!ex) continue;
+      steps.push(stretchStep(order++, ex, we.duration, "拉伸"));
+      if (we.restAfter) steps.push(restStep(we.restAfter, "拉伸间休息"));
+    }
   }
 
   return {
     name: course.name,
-    level: course.difficulty,
+    level: EXERCISE_DIFFICULTY_LABEL[course.level],
     steps,
   };
 }

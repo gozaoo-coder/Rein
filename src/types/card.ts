@@ -9,7 +9,8 @@ export type CardSize = "1x1" | "2x1" | "2x2" | "4x2";
 
 /** 卡片类型枚举 — 所有支持的卡片种类 */
 export type CardType =
-  | "health-overview" // 健康概览（卡路里/步数/BMI 等）
+  | "three-ring" // 三环数据（无边框独立卡）
+  | "health-overview" // 健康概览（BMI/身体指标）
   | "today-todo" // 今日待办
   | "important-todo" // 重要待办
   | "urgent-todo" // 紧急待办
@@ -53,29 +54,32 @@ export const CARD_SIZE_MAP: Record<CardSize, { cols: number; rows: number }> = {
 /** 卡片元信息 — 注册表 */
 export interface CardMeta {
   type: CardType;
-  /** 显示名 */
   title: string;
-  /** 简短描述 */
   description: string;
-  /** 支持的尺寸 */
   sizes: CardSize[];
-  /** 默认尺寸 */
   defaultSize: CardSize;
-  /** 主题色（用于图标背景） */
   accent: string;
-  /** 图标 svg path (24x24 viewBox) */
   icon: string;
 }
 
 export const CARD_REGISTRY: Record<CardType, CardMeta> = {
+  "three-ring": {
+    type: "three-ring",
+    title: "三环数据",
+    description: "活动/运动/站立三环进度",
+    sizes: ["4x2"],
+    defaultSize: "4x2",
+    accent: "var(--color-warm)",
+    icon: "bullseye",
+  },
   "health-overview": {
     type: "health-overview",
     title: "健康概览",
-    description: "卡路里 / 步数 / BMI 等综合数据",
-    sizes: ["2x2", "4x2"],
+    description: "BMI 等健康指标",
+    sizes: ["2x1", "2x2"],
     defaultSize: "2x2",
     accent: "var(--color-warm)",
-    icon: "M12 21s-7-4.35-9.5-8.5C.5 8.5 3 4 7 4c2 0 3.5 1 5 3 1.5-2 3-3 5-3 4 0 6.5 4.5 4.5 8.5C19 16.65 12 21 12 21z",
+    icon: "heart-fill",
   },
   "today-todo": {
     type: "today-todo",
@@ -84,7 +88,7 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     sizes: ["1x1", "2x1", "2x2"],
     defaultSize: "2x2",
     accent: "var(--icon-orange)",
-    icon: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+    icon: "check-lg",
   },
   "important-todo": {
     type: "important-todo",
@@ -93,7 +97,7 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     sizes: ["1x1", "2x1", "2x2"],
     defaultSize: "2x1",
     accent: "var(--warning-500)",
-    icon: "M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z",
+    icon: "star-fill",
   },
   "urgent-todo": {
     type: "urgent-todo",
@@ -102,7 +106,7 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     sizes: ["1x1", "2x1", "2x2"],
     defaultSize: "2x1",
     accent: "var(--danger-500)",
-    icon: "M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z",
+    icon: "exclamation-triangle-fill",
   },
   "recent-workout": {
     type: "recent-workout",
@@ -111,7 +115,7 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     sizes: ["2x2", "4x2"],
     defaultSize: "2x2",
     accent: "var(--color-warm)",
-    icon: "M15 5a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM10 21l2-6 3 2 3-5-3-1-3 3-3-1-3 5z",
+    icon: "activity",
   },
   "water-record": {
     type: "water-record",
@@ -120,7 +124,7 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     sizes: ["1x1", "2x1", "2x2"],
     defaultSize: "2x1",
     accent: "var(--icon-blue)",
-    icon: "M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z",
+    icon: "droplet-fill",
   },
   "food-record": {
     type: "food-record",
@@ -129,7 +133,7 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     sizes: ["1x1", "2x1", "2x2"],
     defaultSize: "2x2",
     accent: "var(--success-500)",
-    icon: "M3 11h18l-2 9a2 2 0 0 1-2 1.7H7a2 2 0 0 1-2-1.7L3 11zM7 11V8a5 5 0 0 1 10 0v3",
+    icon: "apple",
   },
 };
 
