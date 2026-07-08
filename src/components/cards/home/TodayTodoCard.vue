@@ -78,6 +78,7 @@ const ringSize = computed(() => ringR.value * 2 + 8);
 
     <!-- 1x1 / 2x1：细线圆环 -->
     <div v-else class="body" :class="{ 'body--center': size === '1x1', 'body--row': size === '2x1' }">
+      <span v-if="size === '1x1'" class="mini-label">待办</span>
       <div class="ring">
         <svg :width="ringSize" :height="ringSize" :viewBox="`0 0 ${ringR * 2 + 8} ${ringR * 2 + 8}`">
           <circle :cx="ringR + 4" :cy="ringR + 4" :r="ringR" fill="none" stroke="var(--bg-100)" :stroke-width="ringStroke" />
@@ -180,7 +181,14 @@ const ringSize = computed(() => ringR.value * 2 + 8);
   min-height: 0;
 }
 .body--center {
+  flex-direction: column;
   justify-content: center;
+}
+
+.mini-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1;
 }
 .body--row {
   flex-direction: row;
