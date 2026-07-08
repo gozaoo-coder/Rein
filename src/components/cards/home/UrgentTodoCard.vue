@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * UrgentTodoCard — 紧急待办（今日截止未完成）
+ * UrgentTodoCard — 紧急待办（urgent=true 未完成）
  *
  * 1x1: 数量徽章 + 警告图标
  * 2x1: "紧急 X 项" + 首项标题
@@ -15,21 +15,13 @@ const emit = defineEmits<{ click: [] }>();
 
 const store = useTodoStore();
 
-function todayKey(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-const items = computed(() =>
-  store.todayItems.filter((t) => !t.done && t.dueDate === todayKey()),
-);
+const items = computed(() => store.urgentItems);
 const count = computed(() => items.value.length);
 const first = computed(() => items.value[0]);
 const list = computed(() => items.value.slice(0, 4));
 
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+function fmtTime(item: { dueTime?: string; startTime?: string }): string {
+  return item.dueTime ?? item.startTime ?? "";
 }
 </script>
 
@@ -86,7 +78,7 @@ function fmtTime(ts: number): string {
             <path d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 0 0-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
           </svg>
           <span class="item-title">{{ item.title }}</span>
-          <span class="item-time">{{ fmtTime(item.createdAt) }}</span>
+          <span v-if="fmtTime(item)" class="item-time">{{ fmtTime(item) }}</span>
         </div>
       </div>
       <div v-else class="empty">暂无紧急事项</div>

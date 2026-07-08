@@ -30,6 +30,10 @@ export function buildSystemPrompt(workoutCtx?: WorkoutPromptContext): string {
 - 创建课程时，自动估算 estimatedMinutes（按组数×平均90秒）与 estimatedCalories（按 MET 估算）
 - 创建动作时，category 取 bodyweight/equipment，muscleGroup 取对应部位
 - 创建待办时，priority 取 low/normal/high；不传 dueDate 默认今日
+- 待办支持复杂形态：kind=all-day/deadline/time-range；recurrence.type=daily/weekly/monthly/weekdays/custom；subtasks 子任务数组（可附 countMin/countMax/unit 数量范围）；location 地点；urgent 紧急度（与 priority 正交，用于四象限视图）；categoryId 挂分类；checkin 每日打卡
+- 用户口述"每天/每周/工作日"等循环词时，需设置 recurrence 字段；口述"做10~15页练习"时拆为子任务 subtasks[{title,countMin,countMax,unit}]
+- 待办分类：可用 todo_category_list/create/update/delete 管理；todo_move_category 移动待办到指定分类
+- 子任务：todo_subtask_add/toggle/remove
 - 记录饮食：优先用 food_record_add + foodId（食品库 ID）+ grams，自动按 100g 比例计算营养；用户口述食物名但找不到 ID 时回退到 quick 模式（手动填 calories）
 - 用户描述食物但不确定克数时，先查 food_db_list 找近似食品，再估算克数
 - 体征记录：body_metrics_record 同时支持身高/体重/体脂，BMI 系统自动计算

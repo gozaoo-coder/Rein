@@ -501,9 +501,19 @@ function executeTodoList(args: AnyParams): ToolResult {
     id: t.id,
     title: t.title,
     note: t.note,
+    kind: t.kind,
     dueDate: t.dueDate,
+    dueTime: t.dueTime,
+    startTime: t.startTime,
+    endTime: t.endTime,
+    recurrence: t.recurrence,
+    checkin: t.checkin,
+    subtasks: t.subtasks,
+    location: t.location,
     priority: t.priority,
     priorityLabel: PRIORITY_LABEL[t.priority],
+    urgent: t.urgent,
+    categoryId: t.categoryId,
     done: t.done,
   }));
   return {
@@ -520,11 +530,30 @@ function executeTodoList(args: AnyParams): ToolResult {
 function executeTodoCreate(args: AnyParams): ToolResult {
   const store = useTodoStore();
   const priority = (args.priority as TodoPriority | undefined) ?? "normal";
+  const subtasks = Array.isArray(args.subtasks)
+    ? (args.subtasks as Record<string, unknown>[]).map((s) => ({
+        title: String(s.title ?? ""),
+        done: false,
+        countMin: s.countMin != null ? Number(s.countMin) : undefined,
+        countMax: s.countMax != null ? Number(s.countMax) : undefined,
+        unit: typeof s.unit === "string" ? s.unit : undefined,
+      }))
+    : undefined;
   const item = store.createItem({
     title: String(args.title ?? "未命名待办"),
     note: typeof args.note === "string" ? args.note : undefined,
+    kind: (args.kind as "all-day" | "deadline" | "time-range" | undefined) ?? "all-day",
     dueDate: typeof args.dueDate === "string" ? args.dueDate : todoDateKey(),
+    dueTime: typeof args.dueTime === "string" ? args.dueTime : undefined,
+    startTime: typeof args.startTime === "string" ? args.startTime : undefined,
+    endTime: typeof args.endTime === "string" ? args.endTime : undefined,
+    recurrence: args.recurrence as Record<string, unknown> | undefined,
+    checkin: typeof args.checkin === "boolean" ? args.checkin : undefined,
+    subtasks,
+    location: typeof args.location === "string" ? args.location : undefined,
     priority,
+    urgent: typeof args.urgent === "boolean" ? args.urgent : undefined,
+    categoryId: typeof args.categoryId === "string" ? args.categoryId : undefined,
   });
   return {
     toolCallId: "",
@@ -545,8 +574,17 @@ function executeTodoUpdate(args: AnyParams): ToolResult {
   const patch: Partial<typeof item> = {};
   if (typeof args.title === "string") patch.title = args.title;
   if (typeof args.note === "string") patch.note = args.note;
+  if (args.kind) patch.kind = args.kind as "all-day" | "deadline" | "time-range";
   if (typeof args.dueDate === "string") patch.dueDate = args.dueDate;
+  if (typeof args.dueTime === "string") patch.dueTime = args.dueTime;
+  if (typeof args.startTime === "string") patch.startTime = args.startTime;
+  if (typeof args.endTime === "string") patch.endTime = args.endTime;
+  if (args.recurrence) patch.recurrence = args.recurrence as typeof item.recurrence;
+  if (typeof args.checkin === "boolean") patch.checkin = args.checkin;
+  if (typeof args.location === "string") patch.location = args.location;
   if (args.priority) patch.priority = args.priority as TodoPriority;
+  if (typeof args.urgent === "boolean") patch.urgent = args.urgent;
+  if (typeof args.categoryId === "string") patch.categoryId = args.categoryId;
   if (typeof args.done === "boolean") {
     patch.done = args.done;
     patch.completedAt = args.done ? Date.now() : 0;
@@ -559,6 +597,169 @@ function executeTodoUpdate(args: AnyParams): ToolResult {
     ok: true,
     content: JSON.stringify(updated),
     summary: okSummary("todo_update", `已更新「${updated.title}」`),
+    card: "todo",
+    cardData: { items: [updated], date: updated.dueDate ?? "today" },
+  };
+}
+
+// ===== 子任务 / 分类工具 =====
+
+function executeTodoSubtaskAdd(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.todoId ?? "");
+  const item = store.items.find((t) => t.id === id);
+  if (!item) throw new Error("待办不存在");
+  store.addSubtask(id, {
+    title: String(args.title ?? ""),
+    done: false,
+    countMin: args.countMin != null ? Number(args.countMin) : undefined,
+    countMax: args.countMax != null ? Number(args.countMax) : undefined,
+    unit: typeof args.unit === "string" ? args.unit : undefined,
+  });
+  const updated = store.items.find((t) => t.id === id)!;
+  return {
+    toolCallId: "",
+    name: "todo_subtask_add",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("todo_subtask_add", `已添加子任务到「${updated.title}」`),
+    card: "todo",
+    cardData: { items: [updated], date: updated.dueDate ?? "today" },
+  };
+}
+
+function executeTodoSubtaskToggle(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.todoId ?? "");
+  const subId = String(args.subId ?? "");
+  const item = store.items.find((t) => t.id === id);
+  if (!item) throw new Error("待办不存在");
+  store.toggleSubtask(id, subId);
+  const updated = store.items.find((t) => t.id === id)!;
+  return {
+    toolCallId: "",
+    name: "todo_subtask_toggle",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("todo_subtask_toggle", `子任务已切换`),
+    card: "todo",
+    cardData: { items: [updated], date: updated.dueDate ?? "today" },
+  };
+}
+
+function executeTodoSubtaskRemove(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.todoId ?? "");
+  const subId = String(args.subId ?? "");
+  const item = store.items.find((t) => t.id === id);
+  if (!item) throw new Error("待办不存在");
+  store.removeSubtask(id, subId);
+  const updated = store.items.find((t) => t.id === id)!;
+  return {
+    toolCallId: "",
+    name: "todo_subtask_remove",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("todo_subtask_remove", `子任务已删除`),
+    card: "todo",
+    cardData: { items: [updated], date: updated.dueDate ?? "today" },
+  };
+}
+
+function executeTodoCategoryList(): ToolResult {
+  const store = useTodoStore();
+  const cats = store.categories.map((c) => ({
+    id: c.id,
+    name: c.name,
+    icon: c.icon,
+    preset: c.preset,
+    count: store.byCategory[c.id]?.length ?? 0,
+  }));
+  return {
+    toolCallId: "",
+    name: "todo_category_list",
+    ok: true,
+    content: JSON.stringify(cats),
+    summary: okSummary("todo_category_list", `共 ${cats.length} 个分类`),
+    card: "raw",
+    cardData: { categories: cats },
+  };
+}
+
+function executeTodoCategoryCreate(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const cat = store.createCategory({
+    name: String(args.name ?? "未命名分类"),
+    icon: typeof args.icon === "string" ? args.icon : undefined,
+    color: typeof args.color === "string" ? args.color : undefined,
+  });
+  return {
+    toolCallId: "",
+    name: "todo_category_create",
+    ok: true,
+    content: JSON.stringify(cat),
+    summary: okSummary("todo_category_create", `已创建分类「${cat.name}」`),
+    card: "raw",
+    cardData: { category: cat },
+  };
+}
+
+function executeTodoCategoryUpdate(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.id ?? "");
+  const cat = store.categories.find((c) => c.id === id);
+  if (!cat) throw new Error("分类不存在");
+  store.updateCategory(id, {
+    name: typeof args.name === "string" ? args.name : undefined,
+    icon: typeof args.icon === "string" ? args.icon : undefined,
+    color: typeof args.color === "string" ? args.color : undefined,
+  });
+  const updated = store.categories.find((c) => c.id === id)!;
+  return {
+    toolCallId: "",
+    name: "todo_category_update",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("todo_category_update", `已更新分类「${updated.name}」`),
+    card: "raw",
+    cardData: { category: updated },
+  };
+}
+
+function executeTodoCategoryDelete(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const id = String(args.id ?? "");
+  const cat = store.categories.find((c) => c.id === id);
+  if (!cat) throw new Error("分类不存在");
+  const name = cat.name;
+  store.deleteCategory(id);
+  return {
+    toolCallId: "",
+    name: "todo_category_delete",
+    ok: true,
+    content: JSON.stringify({ deleted: true, id }),
+    summary: okSummary("todo_category_delete", `已删除分类「${name}」`),
+    card: "raw",
+    cardData: { deleted: true, id, name },
+  };
+}
+
+function executeTodoMoveCategory(args: AnyParams): ToolResult {
+  const store = useTodoStore();
+  const todoId = String(args.todoId ?? "");
+  const categoryId = String(args.categoryId ?? "");
+  const item = store.items.find((t) => t.id === todoId);
+  if (!item) throw new Error("待办不存在");
+  const cat = store.categories.find((c) => c.id === categoryId);
+  if (!cat) throw new Error("分类不存在");
+  store.moveToCategory(todoId, categoryId);
+  const updated = store.items.find((t) => t.id === todoId)!;
+  return {
+    toolCallId: "",
+    name: "todo_move_category",
+    ok: true,
+    content: JSON.stringify(updated),
+    summary: okSummary("todo_move_category", `「${updated.title}」已移至「${cat.name}」`),
     card: "todo",
     cardData: { items: [updated], date: updated.dueDate ?? "today" },
   };
@@ -838,6 +1039,14 @@ function dispatch(name: string, args: AnyParams): ToolResult {
     case "todo_update": return executeTodoUpdate(args);
     case "todo_delete": return executeTodoDelete(args);
     case "todo_toggle_done": return executeTodoToggleDone(args);
+    case "todo_subtask_add": return executeTodoSubtaskAdd(args);
+    case "todo_subtask_toggle": return executeTodoSubtaskToggle(args);
+    case "todo_subtask_remove": return executeTodoSubtaskRemove(args);
+    case "todo_category_list": return executeTodoCategoryList();
+    case "todo_category_create": return executeTodoCategoryCreate(args);
+    case "todo_category_update": return executeTodoCategoryUpdate(args);
+    case "todo_category_delete": return executeTodoCategoryDelete(args);
+    case "todo_move_category": return executeTodoMoveCategory(args);
     case "water_add": return executeWaterAdd(args);
     case "water_today": return executeWaterToday();
     case "food_record_add": return executeFoodRecordAdd(args);
@@ -1062,7 +1271,7 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "todo_list",
     label: "查询待办",
-    description: "列出待办事项。默认今日，传 includeAll=true 列全部，传 date=YYYY-MM-DD 查指定日期。",
+    description: "列出待办事项。默认今日（按循环规则展开），传 includeAll=true 列全部，传 date=YYYY-MM-DD 查指定日期。",
     parameters: Type.Object({
       date: Type.Optional(Type.String({ description: "YYYY-MM-DD，默认今日" })),
       includeAll: Type.Optional(Type.Boolean({ description: "true 列全部待办" })),
@@ -1072,16 +1281,47 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
   {
     name: "todo_create",
     label: "创建待办",
-    description: "创建待办事项。priority: low/normal/high。dueDate 默认今日。",
+    description: "创建待办事项。kind: all-day/deadline/time-range。priority: low/normal/high。urgent 用于四象限视图。recurrence.type: daily/weekly/monthly/weekdays/custom。subtasks 为子任务数组。categoryId 可挂分类。",
     parameters: Type.Object({
       title: Type.String(),
       note: Type.Optional(Type.String()),
-      dueDate: Type.Optional(Type.String({ description: "YYYY-MM-DD" })),
+      kind: Type.Optional(Type.Union([
+        Type.Literal("all-day"),
+        Type.Literal("deadline"),
+        Type.Literal("time-range"),
+      ])),
+      dueDate: Type.Optional(Type.String({ description: "YYYY-MM-DD，默认今日" })),
+      dueTime: Type.Optional(Type.String({ description: "HH:mm，仅 deadline/time-range" })),
+      startTime: Type.Optional(Type.String({ description: "HH:mm，仅 time-range" })),
+      endTime: Type.Optional(Type.String({ description: "HH:mm，仅 time-range" })),
+      recurrence: Type.Optional(Type.Object({
+        type: Type.Union([
+          Type.Literal("daily"),
+          Type.Literal("weekly"),
+          Type.Literal("monthly"),
+          Type.Literal("weekdays"),
+          Type.Literal("custom"),
+        ]),
+        daysOfWeek: Type.Optional(Type.Array(Type.Number())),
+        dayOfMonth: Type.Optional(Type.Number()),
+        interval: Type.Optional(Type.Number()),
+        until: Type.Optional(Type.String()),
+      })),
+      checkin: Type.Optional(Type.Boolean({ description: "true 为每日打卡式" })),
+      subtasks: Type.Optional(Type.Array(Type.Object({
+        title: Type.String(),
+        countMin: Type.Optional(Type.Number()),
+        countMax: Type.Optional(Type.Number()),
+        unit: Type.Optional(Type.String()),
+      }))),
+      location: Type.Optional(Type.String()),
       priority: Type.Optional(Type.Union([
         Type.Literal("low"),
         Type.Literal("normal"),
         Type.Literal("high"),
       ])),
+      urgent: Type.Optional(Type.Boolean()),
+      categoryId: Type.Optional(Type.String()),
     }),
     execute: wrapExecuteRich("todo_create"),
   },
@@ -1093,12 +1333,37 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       id: Type.String(),
       title: Type.Optional(Type.String()),
       note: Type.Optional(Type.String()),
+      kind: Type.Optional(Type.Union([
+        Type.Literal("all-day"),
+        Type.Literal("deadline"),
+        Type.Literal("time-range"),
+      ])),
       dueDate: Type.Optional(Type.String()),
+      dueTime: Type.Optional(Type.String()),
+      startTime: Type.Optional(Type.String()),
+      endTime: Type.Optional(Type.String()),
+      recurrence: Type.Optional(Type.Object({
+        type: Type.Union([
+          Type.Literal("daily"),
+          Type.Literal("weekly"),
+          Type.Literal("monthly"),
+          Type.Literal("weekdays"),
+          Type.Literal("custom"),
+        ]),
+        daysOfWeek: Type.Optional(Type.Array(Type.Number())),
+        dayOfMonth: Type.Optional(Type.Number()),
+        interval: Type.Optional(Type.Number()),
+        until: Type.Optional(Type.String()),
+      })),
+      checkin: Type.Optional(Type.Boolean()),
+      location: Type.Optional(Type.String()),
       priority: Type.Optional(Type.Union([
         Type.Literal("low"),
         Type.Literal("normal"),
         Type.Literal("high"),
       ])),
+      urgent: Type.Optional(Type.Boolean()),
+      categoryId: Type.Optional(Type.String()),
       done: Type.Optional(Type.Boolean()),
     }),
     execute: wrapExecuteRich("todo_update"),
@@ -1116,6 +1381,77 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
     description: "切换待办完成/未完成状态。",
     parameters: Type.Object({ id: Type.String() }),
     execute: wrapExecuteRich("todo_toggle_done"),
+  },
+  {
+    name: "todo_subtask_add",
+    label: "添加子任务",
+    description: "为指定待办添加一条子任务。countMin/countMax 用于数量范围（如做 10~15 页练习）。",
+    parameters: Type.Object({
+      todoId: Type.String(),
+      title: Type.String(),
+      countMin: Type.Optional(Type.Number()),
+      countMax: Type.Optional(Type.Number()),
+      unit: Type.Optional(Type.String()),
+    }),
+    execute: wrapExecuteRich("todo_subtask_add"),
+  },
+  {
+    name: "todo_subtask_toggle",
+    label: "切换子任务完成",
+    description: "切换指定待办的指定子任务完成状态。",
+    parameters: Type.Object({ todoId: Type.String(), subId: Type.String() }),
+    execute: wrapExecuteRich("todo_subtask_toggle"),
+  },
+  {
+    name: "todo_subtask_remove",
+    label: "删除子任务",
+    description: "删除指定待办下的指定子任务。",
+    parameters: Type.Object({ todoId: Type.String(), subId: Type.String() }),
+    execute: wrapExecuteRich("todo_subtask_remove"),
+  },
+  {
+    name: "todo_category_list",
+    label: "查询待办分类",
+    description: "列出所有待办分类（含预置 + 自定义），返回每个分类下待办数。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("todo_category_list"),
+  },
+  {
+    name: "todo_category_create",
+    label: "创建待办分类",
+    description: "创建一个自定义待办分类。icon 为 emoji，name 为中文短名。",
+    parameters: Type.Object({
+      name: Type.String(),
+      icon: Type.Optional(Type.String({ description: "emoji，默认 🏷️" })),
+      color: Type.Optional(Type.String()),
+    }),
+    execute: wrapExecuteRich("todo_category_create"),
+  },
+  {
+    name: "todo_category_update",
+    label: "更新待办分类",
+    description: "更新自定义分类（预置分类不可改名）。仅传需要修改的字段。",
+    parameters: Type.Object({
+      id: Type.String(),
+      name: Type.Optional(Type.String()),
+      icon: Type.Optional(Type.String()),
+      color: Type.Optional(Type.String()),
+    }),
+    execute: wrapExecuteRich("todo_category_update"),
+  },
+  {
+    name: "todo_category_delete",
+    label: "删除待办分类",
+    description: "删除自定义分类。该分类下待办自动迁移到默认分类。预置分类不可删。",
+    parameters: Type.Object({ id: Type.String() }),
+    execute: wrapExecuteRich("todo_category_delete"),
+  },
+  {
+    name: "todo_move_category",
+    label: "移动待办到分类",
+    description: "把指定待办移到指定分类。",
+    parameters: Type.Object({ todoId: Type.String(), categoryId: Type.String() }),
+    execute: wrapExecuteRich("todo_move_category"),
   },
   // ===== 饮水工具 =====
   {

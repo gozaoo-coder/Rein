@@ -10,7 +10,7 @@
  * - 错误气泡：醒目红色 + 重试按钮 + 错误详情
  */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { marked } from "marked";
 import { useAiChatStore } from "@/stores/aiChatStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
@@ -23,6 +23,7 @@ import type { Citation, ChatMessage, ContentPart, Conversation } from "@/types/a
 import type { ShareContent } from "@/types/share";
 
 const router = useRouter();
+const route = useRoute();
 const store = useAiChatStore();
 const cfg = useAiConfigStore();
 const toast = useToast();
@@ -282,6 +283,13 @@ onMounted(async () => {
     store.createConversation("新对话");
   } else if (!store.active && store.conversations.length) {
     store.setActive(store.conversations[0].id);
+  }
+  // 处理来自 TodoPage 的 prefill 参数
+  const prefill = route.query.prefill;
+  if (typeof prefill === "string" && prefill.trim()) {
+    inputText.value = prefill.trim();
+    await nextTick();
+    scrollToBottom();
   }
   scrollToBottom();
 });
