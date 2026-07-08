@@ -26,6 +26,14 @@ export interface Guide {
 export interface StepDetails {
   title: string;
   guide: Guide;
+  /** 器械名（哑铃 / 杠铃 / 徒手…） */
+  equipment?: string;
+  /** 目标肌群标签 */
+  muscleGroup?: string;
+  /** 配重（kg 或 自重） */
+  weight?: string;
+  /** 注意事项 */
+  cautions?: string;
 }
 
 export interface WorkoutStep {
@@ -45,8 +53,47 @@ export interface WorkoutPlan {
   steps: WorkoutStep[];
 }
 
-export type WorkoutState = "idle" | "running" | "paused" | "finished";
+export type WorkoutState = "idle" | "running" | "paused" | "finished" | "interrupted";
 export type StepSubState = "exercising" | "resting";
+
+/** 小休息预设（秒） — 30s ~ 2.5min */
+export const QUICK_REST_PRESETS: number[] = [30, 60, 90, 120, 150];
+
+/**
+ * WorkoutSnapshot — 运动运行时快照，用于异常打断后恢复。
+ * 序列化后通过 useStorage 持久化，重启 / 异常退出后可恢复训练。
+ */
+export interface WorkoutSnapshot {
+  /** 快照写入时间戳 */
+  savedAt: number;
+  /** 训练开始时间 */
+  startedAt: number;
+  /** 课程 id（用于从 courseStore 重新拉回 Course 对象） */
+  courseId: string;
+  /** Plan 名称（兜底展示） */
+  planName: string;
+  planLevel: string;
+  /** 序列化的 plan（含 steps） */
+  plan: WorkoutPlan;
+  currentStepIndex: number;
+  workoutState: WorkoutState;
+  subState: StepSubState;
+  stepSecondsRemaining: number;
+  totalElapsedSeconds: number;
+  caloriesBurned: number;
+  heartRate: number | null;
+  heartRateConnected: boolean;
+  phaseCarouselIndex: number;
+  completedSets: number;
+  currentSetInStep: number;
+  inSetRest: boolean;
+  /** 标记是否处于小休息（quick rest） */
+  inQuickRest: boolean;
+  /** 小休息剩余秒数 */
+  quickRestRemaining: number;
+  /** 心率采样 */
+  heartRateSamples: number[];
+}
 
 export interface WorkoutRuntime {
   currentStepIndex: number;

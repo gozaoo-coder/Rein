@@ -1,45 +1,47 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+/**
+ * WorkoutPage — 运动模式主页面
+ *
+ * 渲染层：header + 步骤标题 + 中心计时圆环 + 详细动作信息 + 底部 WorkoutNav
+ * 运行时生命周期由 useWorkoutRuntime composable 管理（含异常打断恢复）
+ */
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
-import { useWorkoutStore } from "@/stores/workoutStore";
-import { createSampleWorkout } from "@/data/workoutBuilder";
+import { useWorkoutRuntime } from "@/composables/useWorkoutRuntime";
 import WorkoutNav from "@/components/workout/WorkoutNav.vue";
+import WorkoutProgressSheet from "@/components/workout/WorkoutProgressSheet.vue";
+import WorkoutQuickRestSheet from "@/components/workout/WorkoutQuickRestSheet.vue";
+import WorkoutAiPanel from "@/components/workout/WorkoutAiPanel.vue";
 import { StepType, MediaType } from "@/types/workout";
 
 const router = useRouter();
-const store = useWorkoutStore();
+const { store, hasInterrupted, resumeInterrupted, discardInterrupted } = useWorkoutRuntime();
 
 const showConfirmExit = ref(false);
-
-onMounted(() => {
-  if (!store.plan || store.workoutState === "idle") {
-    const plan = createSampleWorkout();
-    store.startWorkout(plan);
-  }
-});
-
-onUnmounted(() => {
-  if (store.workoutState !== "finished") {
-    store.reset();
-  }
-});
+const showProgress = ref(false);
+const showQuickRest = ref(false);
+const showAiPanel = ref(false);
 
 const stepTitle = computed(() => store.currentStep?.details.title ?? "");
 const guideContent = computed(() => store.currentStep?.details.guide.content ?? "");
 const guideType = computed(() => store.currentStep?.details.guide.type);
+const stepDetails = computed(() => store.currentStep?.details);
 const isVideo = computed(() => guideType.value === MediaType.VIDEO);
 const isImage = computed(() => guideType.value === MediaType.IMAGE);
 const isMarkdown = computed(() => guideType.value === MediaType.MARKDOWN_TEXT);
 const isResting = computed(() =>
-  store.currentStep?.type === StepType.RESTING || store.inSetRest
+  store.currentStep?.type === StepType.RESTING || store.inSetRest || store.inQuickRest
 );
 
 const hasTimer = computed(() => {
-  if (store.inSetRest) return true;
+  if (store.inSetRest || store.inQuickRest) return true;
   return store.currentStep?.timer?.enabled && store.currentStep.timer.unit === "seconds";
 });
 
 const timerRingProgress = computed(() => {
+  if (store.inQuickRest) {
+    return store.quickRestProgress * 283;
+  }
   if (store.inSetRest) {
     const total = store.currentStep?.restBetweenSets ?? 30;
     if (total <= 0) return 0;
@@ -53,6 +55,18 @@ const timerRingProgress = computed(() => {
 
 const guideLines = computed(() => {
   return guideContent.value.split("\n").filter((l) => l.trim().length > 0);
+});
+
+const timerLabel = computed(() => {
+  if (store.inQuickRest) return "小休息";
+  if (store.inSetRest) return "组间休息";
+  if (isResting.value) return "休息中";
+  return "秒";
+});
+
+const timerValue = computed(() => {
+  if (store.inQuickRest) return store.formattedQuickRest;
+  return store.formattedStepTime;
 });
 
 function handleManualNext() {
@@ -78,6 +92,25 @@ function goBackToSports() {
   store.reset();
   router.push("/sports");
 }
+
+function handleQuickRest(seconds: number) {
+  store.enterQuickRest(seconds);
+  showQuickRest.value = false;
+}
+
+function handleJumpStep(idx: number) {
+  if (idx === store.currentStepIndex) {
+    showProgress.value = false;
+    return;
+  }
+  // 简化：仅允许向前跳到未完成步骤
+  if (idx > store.currentStepIndex) {
+    for (let i = store.currentStepIndex; i < idx; i++) {
+      store.nextStep();
+    }
+  }
+  showProgress.value = false;
+}
 </script>
 
 <template>
@@ -86,9 +119,29 @@ function goBackToSports() {
     <div class="ambient-halo ambient-halo--warm" />
     <div v-if="isResting" class="ambient-halo ambient-halo--cool" />
 
+    <!-- 异常打断恢复提示 -->
+    <div v-if="hasInterrupted" class="interrupt-mask">
+      <div class="interrupt-card glass-thick">
+        <div class="interrupt-icon">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--color-warm)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+          </svg>
+        </div>
+        <h3 class="interrupt-title">检测到未完成的训练</h3>
+        <p class="interrupt-desc">
+          {{ store.plan?.name }} · 已进行 {{ store.formattedTime }}
+        </p>
+        <div class="interrupt-actions">
+          <button class="interrupt-btn interrupt-btn--ghost" @click="discardInterrupted">放弃</button>
+          <button class="interrupt-btn interrupt-btn--primary" @click="resumeInterrupted">继续训练</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Main content -->
     <div v-if="store.workoutState !== 'finished'" class="workout-content">
-      <!-- Header section: name + set info -->
+      <!-- Header section: name + set info + actions -->
       <div class="workout-header">
         <button class="back-btn" @click="handleTerminate" aria-label="退出">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -108,6 +161,13 @@ function goBackToSports() {
               </svg>
               组间休息
             </span>
+            <span class="set-badge set-badge--rest" v-else-if="store.inQuickRest">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              小休息
+            </span>
             <span class="set-badge set-badge--rest" v-else>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
                 <circle cx="12" cy="12" r="10" />
@@ -118,9 +178,17 @@ function goBackToSports() {
             <span class="level-tag">{{ store.plan?.level }}</span>
           </div>
         </div>
-        <div class="header-timer">
-          <span class="total-time">{{ store.formattedTime }}</span>
-        </div>
+        <!-- 右上角 list 按钮 -->
+        <button class="list-btn" @click="showProgress = true" aria-label="训练进度">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <line x1="3" y1="6" x2="3.01" y2="6" />
+            <line x1="3" y1="12" x2="3.01" y2="12" />
+            <line x1="3" y1="18" x2="3.01" y2="18" />
+          </svg>
+        </button>
       </div>
 
       <!-- Step title (exercise name) -->
@@ -131,13 +199,13 @@ function goBackToSports() {
 
       <!-- Center area: timer ring OR guide content -->
       <div class="center-area">
-        <!-- Timer with ring (when timer is enabled) -->
+        <!-- Timer with ring (thick) -->
         <div v-if="hasTimer" class="timer-ring-wrap">
-          <svg class="timer-ring" width="240" height="240" viewBox="0 0 100 100">
-            <circle class="ring-track" cx="50" cy="50" r="45" fill="none" stroke-width="4" />
+          <svg class="timer-ring" width="260" height="260" viewBox="0 0 100 100">
+            <circle class="ring-track" cx="50" cy="50" r="45" fill="none" stroke-width="8" />
             <circle
               class="ring-progress"
-              cx="50" cy="50" r="45" fill="none" stroke-width="4"
+              cx="50" cy="50" r="45" fill="none" stroke-width="8"
               stroke-linecap="round"
               :stroke-dasharray="283"
               :stroke-dashoffset="283 - timerRingProgress"
@@ -145,8 +213,8 @@ function goBackToSports() {
             />
           </svg>
           <div class="timer-center">
-            <div class="timer-number">{{ store.formattedStepTime }}</div>
-            <div class="timer-label">{{ isResting ? '秒后继续' : '秒' }}</div>
+            <div class="timer-number">{{ timerValue }}</div>
+            <div class="timer-label">{{ timerLabel }}</div>
             <div v-if="store.heartRateConnected && store.heartRate" class="timer-hr">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="#ff5a5a">
                 <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
@@ -157,7 +225,7 @@ function goBackToSports() {
         </div>
 
         <!-- Reps counter (manual mode) -->
-        <div v-else-if="store.currentStep?.timer?.unit === 'reps' && !store.inSetRest" class="reps-display">
+        <div v-else-if="store.currentStep?.timer?.unit === 'reps' && !store.inSetRest && !store.inQuickRest" class="reps-display">
           <div class="set-progress-dots" v-if="store.currentStepSets > 1">
             <span
               v-for="n in store.currentStepSets"
@@ -177,8 +245,47 @@ function goBackToSports() {
         </div>
       </div>
 
-      <!-- Guide content (markdown text, fills remaining space below timer) -->
-      <div v-if="isMarkdown && guideLines.length > 0" class="guide-section">
+      <!-- 详细动作信息：器械 / 肌群 / 配重 / 注意事项 + 文字指引 -->
+      <div v-if="stepDetails && !isResting" class="detail-section">
+        <!-- 元数据 chips -->
+        <div class="detail-chips">
+          <span v-if="stepDetails.equipment" class="detail-chip detail-chip--equip">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.5 6.5h11v11h-11z" />
+              <path d="M2 9v6M22 9v6" />
+            </svg>
+            {{ stepDetails.equipment }}
+          </span>
+          <span v-if="stepDetails.muscleGroup" class="detail-chip detail-chip--muscle">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3c0 1.5 1 3 3 5 2-2 3-3.5 3-5a3 3 0 0 0-3-3z" />
+              <path d="M6 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 14a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" />
+            </svg>
+            {{ stepDetails.muscleGroup }}
+          </span>
+          <span v-if="stepDetails.weight" class="detail-chip detail-chip--weight">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 4v16M18 4v16M2 8v8M22 8v8" />
+            </svg>
+            {{ stepDetails.weight }}
+          </span>
+        </div>
+
+        <!-- 注意事项 -->
+        <div v-if="stepDetails.cautions" class="cautions-card">
+          <div class="cautions-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+          </div>
+          <span class="cautions-text">{{ stepDetails.cautions }}</span>
+        </div>
+      </div>
+
+      <!-- Guide content (markdown text) -->
+      <div v-if="isMarkdown && guideLines.length > 0 && !isResting" class="guide-section">
         <div class="guide-card clean-card">
           <div class="guide-steps">
             <div v-for="(line, idx) in guideLines" :key="idx" class="guide-step">
@@ -233,20 +340,45 @@ function goBackToSports() {
       <button class="finish-btn" @click="goBackToSports">返回运动</button>
     </div>
 
-    <!-- Workout bottom nav (only during workout, not on finished screen) -->
-    <WorkoutNav v-if="store.workoutState !== 'finished'" @terminate="handleTerminate" />
+    <!-- Workout bottom nav -->
+    <WorkoutNav
+      v-if="store.workoutState !== 'finished'"
+      @terminate="handleTerminate"
+      @quick-rest="showQuickRest = true"
+      @ai-chat="showAiPanel = true"
+    />
 
     <!-- Confirm exit overlay -->
     <div v-if="showConfirmExit" class="confirm-overlay">
       <div class="confirm-card glass-thick">
         <h3 class="confirm-title">确认退出训练？</h3>
-        <p class="confirm-desc">退出后当前训练进度将不会保存</p>
+        <p class="confirm-desc">退出后下次进入可恢复本次进度</p>
         <div class="confirm-actions">
           <button class="confirm-btn confirm-btn--cancel" @click="cancelExit">继续训练</button>
           <button class="confirm-btn confirm-btn--danger" @click="confirmExit">确认退出</button>
         </div>
       </div>
     </div>
+
+    <!-- Progress sheet -->
+    <WorkoutProgressSheet
+      v-if="showProgress"
+      @close="showProgress = false"
+      @jump="handleJumpStep"
+    />
+
+    <!-- Quick rest sheet -->
+    <WorkoutQuickRestSheet
+      v-if="showQuickRest"
+      @select="handleQuickRest"
+      @close="showQuickRest = false"
+    />
+
+    <!-- AI panel -->
+    <WorkoutAiPanel
+      v-if="showAiPanel"
+      @close="showAiPanel = false"
+    />
   </div>
 </template>
 
@@ -269,7 +401,6 @@ function goBackToSports() {
   pointer-events: none;
   z-index: 0;
 }
-
 .ambient-halo--warm {
   width: 400px;
   height: 400px;
@@ -277,7 +408,6 @@ function goBackToSports() {
   top: -100px;
   right: -100px;
 }
-
 .ambient-halo--cool {
   width: 350px;
   height: 350px;
@@ -285,13 +415,72 @@ function goBackToSports() {
   bottom: 100px;
   left: -80px;
 }
+.is-resting .ambient-halo--warm { background: rgba(61, 169, 255, 0.08); }
+.is-resting .ambient-halo--cool { background: rgba(100, 187, 92, 0.1); }
 
-.is-resting .ambient-halo--warm {
-  background: rgba(61, 169, 255, 0.08);
+/* Interrupt mask */
+.interrupt-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 350;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  animation: overlay-fade 0.25s ease;
 }
-
-.is-resting .ambient-halo--cool {
-  background: rgba(100, 187, 92, 0.1);
+.interrupt-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+  animation: card-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.interrupt-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 102, 51, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto var(--space-3);
+}
+.interrupt-title {
+  font-size: var(--text-lg);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+  margin: 0 0 var(--space-1);
+}
+.interrupt-desc {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-5);
+}
+.interrupt-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.interrupt-btn {
+  flex: 1;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: none;
+  font-size: var(--text-md);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.interrupt-btn--ghost {
+  background: var(--bg-200);
+  color: var(--color-text);
+}
+.interrupt-btn--primary {
+  background: var(--color-warm);
+  color: white;
+  box-shadow: 0 4px 16px rgba(255, 102, 51, 0.3);
 }
 
 /* Content */
@@ -315,8 +504,7 @@ function goBackToSports() {
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
-
-.back-btn {
+.back-btn, .list-btn {
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -331,16 +519,12 @@ function goBackToSports() {
   border: 1px solid rgba(255, 255, 255, 0.5);
   transition: transform 0.15s ease;
 }
-
-.back-btn:active {
-  transform: scale(0.9);
-}
+.back-btn:active, .list-btn:active { transform: scale(0.9); }
 
 .header-text {
   flex: 1;
   min-width: 0;
 }
-
 .workout-name {
   font-size: var(--text-xl);
   font-weight: var(--fw-bold);
@@ -348,7 +532,6 @@ function goBackToSports() {
   line-height: 1.2;
   letter-spacing: -0.01em;
 }
-
 .set-info-row {
   display: flex;
   align-items: center;
@@ -356,7 +539,6 @@ function goBackToSports() {
   margin-top: var(--space-1);
   flex-wrap: wrap;
 }
-
 .set-badge {
   display: inline-flex;
   align-items: center;
@@ -368,12 +550,10 @@ function goBackToSports() {
   padding: 3px 10px;
   border-radius: var(--radius-pill);
 }
-
 .set-badge--rest {
   color: #3da9ff;
   background: rgba(61, 169, 255, 0.1);
 }
-
 .level-tag {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
@@ -382,24 +562,12 @@ function goBackToSports() {
   border-radius: var(--radius-pill);
 }
 
-.header-timer {
-  flex-shrink: 0;
-}
-
-.total-time {
-  font-size: var(--text-lg);
-  font-weight: var(--fw-bold);
-  color: var(--color-text-secondary);
-  font-variant-numeric: tabular-nums;
-}
-
 /* Step title */
 .step-title-section {
   text-align: center;
   margin-bottom: var(--space-2);
   padding: var(--space-2) 0;
 }
-
 .step-title {
   font-size: var(--text-3xl);
   font-weight: var(--fw-bold);
@@ -407,7 +575,6 @@ function goBackToSports() {
   letter-spacing: -0.02em;
   line-height: 1.1;
 }
-
 .rest-hint {
   font-size: var(--text-md);
   color: #3da9ff;
@@ -425,61 +592,48 @@ function goBackToSports() {
   padding: var(--space-4) 0;
 }
 
-/* Timer ring */
+/* Timer ring (thick) */
 .timer-ring-wrap {
   position: relative;
-  width: 240px;
-  height: 240px;
+  width: 260px;
+  height: 260px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-
 .timer-ring {
   position: absolute;
   inset: 0;
 }
-
 .ring-track {
   stroke: rgba(0, 0, 0, 0.05);
 }
-
 .ring-progress {
   stroke: var(--color-warm);
   transition: stroke-dashoffset 1s linear;
   stroke-linecap: round;
 }
-
-.is-resting .ring-progress {
-  stroke: #3da9ff;
-}
-
+.is-resting .ring-progress { stroke: #3da9ff; }
 .timer-center {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
 }
-
 .timer-number {
-  font-size: 56px;
+  font-size: 60px;
   font-weight: var(--fw-bold);
   color: var(--color-text);
   line-height: 1;
   letter-spacing: -0.03em;
   font-variant-numeric: tabular-nums;
 }
-
-.is-resting .timer-number {
-  color: #3da9ff;
-}
-
+.is-resting .timer-number { color: #3da9ff; }
 .timer-label {
   font-size: var(--text-sm);
   color: var(--color-text-tertiary);
   font-weight: var(--fw-medium);
 }
-
 .timer-hr {
   display: flex;
   align-items: center;
@@ -497,7 +651,6 @@ function goBackToSports() {
   align-items: center;
   gap: var(--space-4);
 }
-
 .reps-number {
   font-size: 96px;
   font-weight: var(--fw-bold);
@@ -505,21 +658,17 @@ function goBackToSports() {
   line-height: 1;
   letter-spacing: -0.04em;
 }
-
 .reps-label {
   font-size: var(--text-xl);
   color: var(--color-text-secondary);
   font-weight: var(--fw-medium);
   margin-top: -8px;
 }
-
-/* Set progress dots */
 .set-progress-dots {
   display: flex;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
 }
-
 .set-dot {
   width: 8px;
   height: 8px;
@@ -527,17 +676,12 @@ function goBackToSports() {
   background: var(--bg-300);
   transition: all 0.3s ease;
 }
-
-.set-dot.is-done {
-  background: var(--color-warm);
-}
-
+.set-dot.is-done { background: var(--color-warm); }
 .set-dot.is-current {
   background: var(--color-warm);
   transform: scale(1.4);
   box-shadow: 0 0 8px rgba(255, 102, 51, 0.4);
 }
-
 .manual-next-btn {
   display: flex;
   align-items: center;
@@ -552,33 +696,88 @@ function goBackToSports() {
   box-shadow: 0 8px 24px rgba(255, 102, 51, 0.3);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-
 .manual-next-btn:active {
   transform: scale(0.95);
   box-shadow: 0 4px 12px rgba(255, 102, 51, 0.25);
+}
+
+/* Detail section (chips + cautions) */
+.detail-section {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+}
+.detail-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  font-weight: var(--fw-semibold);
+  padding: 5px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+}
+.detail-chip--equip {
+  background: rgba(10, 89, 247, 0.08);
+  color: #0a59f7;
+  border-color: rgba(10, 89, 247, 0.15);
+}
+.detail-chip--muscle {
+  background: rgba(172, 73, 245, 0.08);
+  color: #8a3bc4;
+  border-color: rgba(172, 73, 245, 0.15);
+}
+.detail-chip--weight {
+  background: rgba(255, 102, 51, 0.08);
+  color: var(--color-warm);
+  border-color: rgba(255, 102, 51, 0.18);
+}
+
+.cautions-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: rgba(255, 200, 0, 0.08);
+  border: 1px solid rgba(255, 200, 0, 0.2);
+  border-radius: var(--radius-md);
+}
+.cautions-icon {
+  color: #d4a000;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.cautions-text {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  flex: 1;
 }
 
 /* Guide section */
 .guide-section {
   margin-top: var(--space-3);
 }
-
 .guide-card {
   padding: var(--space-4) var(--space-5);
 }
-
 .guide-steps {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
 }
-
 .guide-step {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
 }
-
 .step-num {
   display: flex;
   align-items: center;
@@ -593,11 +792,7 @@ function goBackToSports() {
   flex-shrink: 0;
   margin-top: 1px;
 }
-
-.is-resting .step-num {
-  background: #3da9ff;
-}
-
+.is-resting .step-num { background: #3da9ff; }
 .step-text {
   font-size: var(--text-md);
   color: var(--color-text-secondary);
@@ -631,7 +826,6 @@ function goBackToSports() {
   padding: var(--space-8);
   gap: var(--space-3);
 }
-
 .finished-icon {
   width: 96px;
   height: 96px;
@@ -642,19 +836,16 @@ function goBackToSports() {
   justify-content: center;
   margin-bottom: var(--space-2);
 }
-
 .finished-title {
   font-size: var(--text-3xl);
   font-weight: var(--fw-bold);
   color: var(--color-text);
 }
-
 .finished-sub {
   font-size: var(--text-md);
   color: var(--color-text-tertiary);
   margin-bottom: var(--space-6);
 }
-
 .finished-stats {
   display: flex;
   align-items: center;
@@ -662,7 +853,6 @@ function goBackToSports() {
   padding: var(--space-5) var(--space-6);
   margin-bottom: var(--space-8);
 }
-
 .fin-stat {
   display: flex;
   flex-direction: column;
@@ -670,26 +860,22 @@ function goBackToSports() {
   gap: 4px;
   min-width: 60px;
 }
-
 .fin-val {
   font-size: var(--text-xl);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
 }
-
 .fin-lbl {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
 }
-
 .fin-divider {
   width: 1px;
   height: 32px;
   background: var(--color-divider);
   flex-shrink: 0;
 }
-
 .finish-btn {
   padding: var(--space-4) var(--space-10);
   background: var(--color-warm);
@@ -700,10 +886,7 @@ function goBackToSports() {
   box-shadow: 0 8px 24px rgba(255, 102, 51, 0.3);
   transition: transform 0.15s ease;
 }
-
-.finish-btn:active {
-  transform: scale(0.95);
-}
+.finish-btn:active { transform: scale(0.95); }
 
 /* Confirm overlay */
 .confirm-overlay {
@@ -717,12 +900,10 @@ function goBackToSports() {
   padding: var(--space-6);
   animation: overlay-fade 0.2s ease;
 }
-
 @keyframes overlay-fade {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-
 .confirm-card {
   background: rgba(255, 255, 255, 0.92);
   border-radius: var(--radius-xl);
@@ -732,30 +913,25 @@ function goBackToSports() {
   text-align: center;
   animation: card-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-
 @keyframes card-pop {
   from { opacity: 0; transform: scale(0.9); }
   to { opacity: 1; transform: scale(1); }
 }
-
 .confirm-title {
   font-size: var(--text-xl);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   margin-bottom: var(--space-2);
 }
-
 .confirm-desc {
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
   margin-bottom: var(--space-5);
 }
-
 .confirm-actions {
   display: flex;
   gap: var(--space-3);
 }
-
 .confirm-btn {
   flex: 1;
   padding: var(--space-3) var(--space-4);
@@ -764,16 +940,11 @@ function goBackToSports() {
   font-weight: var(--fw-semibold);
   transition: transform 0.15s ease;
 }
-
-.confirm-btn:active {
-  transform: scale(0.95);
-}
-
+.confirm-btn:active { transform: scale(0.95); }
 .confirm-btn--cancel {
   background: var(--bg-200);
   color: var(--color-text);
 }
-
 .confirm-btn--danger {
   background: var(--color-danger);
   color: white;

@@ -25,11 +25,18 @@ const heartBeatClass = computed(() => ({
     <!-- Glow aura behind the pill -->
     <div class="minibar-glow" />
 
-    <!-- Compact mode (running): phase text + HR + calories -->
+    <!-- Compact mode (running): phase text + total time + HR + calories -->
     <div v-if="!props.expanded" class="minibar-compact">
       <span class="phase-pill" :style="{ background: store.phaseColor.bg, color: store.phaseColor.text }">
         {{ phaseText }}
       </span>
+      <div class="time-badge">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+        <span class="time-value">{{ store.formattedTime }}</span>
+      </div>
       <div v-if="store.heartRateConnected && store.heartRate" class="hr-badge">
         <svg class="hr-icon" :class="heartBeatClass" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
           <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
@@ -160,6 +167,20 @@ const heartBeatClass = computed(() => ({
   padding: 3px 8px;
   border-radius: var(--radius-pill);
 }
+
+.time-badge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-xs);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+  background: rgba(0, 0, 0, 0.05);
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-variant-numeric: tabular-nums;
+}
+.time-value { color: var(--color-text); }
 
 .hr-icon {
   color: #ff5a5a;

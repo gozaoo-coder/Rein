@@ -5,6 +5,8 @@ import WorkoutMiniBar from "./WorkoutMiniBar.vue";
 
 const emit = defineEmits<{
   (e: "terminate"): void;
+  (e: "quick-rest"): void;
+  (e: "ai-chat"): void;
 }>();
 
 const store = useWorkoutStore();
@@ -52,6 +54,17 @@ function handleNext() {
           </svg>
         </button>
         <WorkoutMiniBar :expanded="false" class="nav-minibar" />
+        <button class="icon-action-btn" @click="$emit('quick-rest')" aria-label="小休息">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+            <circle cx="12" cy="12" r="3.5" />
+          </svg>
+        </button>
+        <button class="icon-action-btn icon-action-btn--ai" @click="$emit('ai-chat')" aria-label="和 AI 聊聊">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        </button>
       </template>
 
       <!-- Layout B: Paused (top-bottom) -->
@@ -81,6 +94,12 @@ function handleNext() {
               <polyline points="9 18 15 12 9 6" />
             </svg>
             <span class="ctrl-label">下一组</span>
+          </button>
+          <button class="ctrl-btn" @click="$emit('ai-chat')" aria-label="和 AI 聊聊">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            <span class="ctrl-label">AI 助手</span>
           </button>
         </div>
       </template>
@@ -172,6 +191,32 @@ function handleNext() {
 
 .nav-minibar--expanded {
   width: 100%;
+}
+
+/* Icon action buttons (quick rest / AI) — running state */
+.icon-action-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.78);
+  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  color: var(--color-text-secondary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+.icon-action-btn:active { transform: scale(0.9); }
+.icon-action-btn--ai {
+  color: white;
+  background: linear-gradient(135deg, var(--color-warm), #ff8a5a);
+  border-color: rgba(255, 138, 90, 0.4);
+  box-shadow: 0 8px 32px rgba(255, 102, 51, 0.28), 0 2px 8px rgba(255, 102, 51, 0.16);
 }
 
 /* Control tabs row (paused state) */

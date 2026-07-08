@@ -29,6 +29,10 @@ export interface CourseStep {
   restSec: number; // 组间休息
   phase: StepPhase;
   note?: string;
+  /** 配重描述（如 "20kg" / "自重" / "RM 60%"），可选 */
+  weight?: string;
+  /** 注意事项，覆盖 Exercise 默认 cautions 时使用 */
+  cautions?: string;
 }
 
 export interface Course {

@@ -36,6 +36,10 @@ export interface Exercise {
   difficulty: ExerciseDifficulty;
   equipment?: string; // 器械名（哑铃/杠铃/...）
   description?: string;
+  /** 动作要领细节（更具体的执行说明） */
+  executionDetails?: string;
+  /** 注意事项（避免受伤 / 常见错误） */
+  cautions?: string;
   guide?: ExerciseGuide;
   custom: boolean; // 用户自定义
   createdAt: number;

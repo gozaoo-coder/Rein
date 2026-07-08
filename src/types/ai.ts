@@ -63,6 +63,7 @@ export interface ToolResult {
     | "exercise"
     | "exercise-list"
     | "stats"
+    | "workout"
     | "raw";
   /** 卡片渲染数据 */
   cardData?: unknown;

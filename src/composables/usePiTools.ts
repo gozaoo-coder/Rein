@@ -19,6 +19,8 @@ import {
 import { useCourseStore } from "@/stores/courseStore";
 import { useExerciseStore } from "@/stores/exerciseStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
+import { useWorkoutStore } from "@/stores/workoutStore";
+import { useUserStore } from "@/stores/userStore";
 
 // ===== Schemas =====
 
@@ -315,6 +317,171 @@ function executeStatsGet(): ToolResult {
   };
 }
 
+// ===== Workout mode tools =====
+
+function executeWorkoutCurrentGet(): ToolResult {
+  const store = useWorkoutStore();
+  if (!store.plan) throw new Error("当前没有进行中的训练");
+  const step = store.currentStep;
+  if (!step) throw new Error("无法获取当前步骤");
+  const data = {
+    planName: store.plan.name,
+    planLevel: store.plan.level,
+    totalSteps: store.plan.steps.length,
+    currentStepIndex: store.currentStepIndex,
+    currentSetInStep: store.currentSetInStep,
+    inSetRest: store.inSetRest,
+    inQuickRest: store.inQuickRest,
+    stepSecondsRemaining: store.stepSecondsRemaining,
+    totalElapsedSeconds: store.totalElapsedSeconds,
+    caloriesBurned: Math.round(store.caloriesBurned),
+    heartRate: store.heartRate,
+    completedSets: store.completedSets,
+    totalSets: store.totalSets,
+    step: {
+      title: step.details.title,
+      phase: step.phase,
+      equipment: step.details.equipment,
+      muscleGroup: step.details.muscleGroup,
+      weight: step.details.weight,
+      cautions: step.details.cautions,
+      guide: step.details.guide.content,
+      sets: step.sets,
+      restBetweenSets: step.restBetweenSets,
+      timer: step.timer,
+    },
+  };
+  return {
+    toolCallId: "",
+    name: "workout_current_get",
+    ok: true,
+    content: JSON.stringify(data),
+    summary: okSummary("workout_current_get", `当前：${step.details.title}`),
+    card: "workout",
+    cardData: data,
+  };
+}
+
+function executeWorkoutStepSkip(): ToolResult {
+  const store = useWorkoutStore();
+  if (!store.plan) throw new Error("当前没有进行中的训练");
+  const before = store.currentStep?.details.title ?? "";
+  store.skipCurrentStep();
+  const after = store.currentStep?.details.title ?? "训练结束";
+  return {
+    toolCallId: "",
+    name: "workout_step_skip",
+    ok: true,
+    content: JSON.stringify({ skipped: before, now: after }),
+    summary: okSummary("workout_step_skip", `跳过「${before}」→「${after}」`),
+    card: "raw",
+    cardData: { skipped: before, now: after },
+  };
+}
+
+function executeWorkoutStepAdjustTemp(args: AnyParams): ToolResult {
+  const store = useWorkoutStore();
+  if (!store.plan) throw new Error("当前没有进行中的训练");
+  const patch: {
+    sets?: number;
+    reps?: number;
+    durationSec?: number;
+    restSec?: number;
+  } = {};
+  if (args.sets != null) patch.sets = Number(args.sets);
+  if (args.reps != null) patch.reps = Number(args.reps);
+  if (args.durationSec != null) patch.durationSec = Number(args.durationSec);
+  if (args.restSec != null) patch.restSec = Number(args.restSec);
+  store.adjustCurrentStepTemp(patch);
+  return {
+    toolCallId: "",
+    name: "workout_step_adjust_temp",
+    ok: true,
+    content: JSON.stringify({ applied: patch, temporary: true }),
+    summary: okSummary("workout_step_adjust_temp", `已临时调整（仅本次训练）`),
+    card: "raw",
+    cardData: { applied: patch, temporary: true },
+  };
+}
+
+function executeWorkoutCourseAdjustPermanent(args: AnyParams): ToolResult {
+  const store = useWorkoutStore();
+  if (!store.plan) throw new Error("当前没有进行中的训练");
+  const stepIndex = Number(args.stepIndex ?? store.currentStepIndex);
+  const patch: {
+    sets?: number;
+    reps?: number;
+    durationSec?: number;
+    restSec?: number;
+    weight?: string;
+    note?: string;
+  } = {};
+  if (args.sets != null) patch.sets = Number(args.sets);
+  if (args.reps != null) patch.reps = Number(args.reps);
+  if (args.durationSec != null) patch.durationSec = Number(args.durationSec);
+  if (args.restSec != null) patch.restSec = Number(args.restSec);
+  if (typeof args.weight === "string") patch.weight = args.weight;
+  if (typeof args.note === "string") patch.note = args.note;
+  const ok = store.adjustCoursePermanent(stepIndex, patch);
+  if (!ok) throw new Error("无法永久调整：课程或步骤不存在");
+  return {
+    toolCallId: "",
+    name: "workout_course_adjust_permanent",
+    ok: true,
+    content: JSON.stringify({ stepIndex, applied: patch, permanent: true }),
+    summary: okSummary("workout_course_adjust_permanent", `已写回课程库（步骤 ${stepIndex + 1}）`),
+    card: "raw",
+    cardData: { stepIndex, applied: patch, permanent: true },
+  };
+}
+
+function executeAppConfigGet(): ToolResult {
+  const userStore = useUserStore();
+  const p = userStore.profile;
+  const data = {
+    profile: {
+      nickname: p.nickname,
+      gender: p.gender,
+      age: p.age,
+      height: p.height,
+      weight: p.weight,
+    },
+    bmi: userStore.bmi,
+  };
+  return {
+    toolCallId: "",
+    name: "app_config_get",
+    ok: true,
+    content: JSON.stringify(data),
+    summary: okSummary("app_config_get", `已获取用户配置`),
+    card: "raw",
+    cardData: data,
+  };
+}
+
+function executeAppConfigUpdate(args: AnyParams): ToolResult {
+  const userStore = useUserStore();
+  const patch: Partial<typeof userStore.profile> = {};
+  if (typeof args.nickname === "string") patch.nickname = args.nickname;
+  if (typeof args.gender === "string" && ["male", "female", "other"].includes(args.gender)) {
+    patch.gender = args.gender as "male" | "female" | "other";
+  }
+  if (args.age != null) patch.age = Number(args.age);
+  if (args.height != null) patch.height = Number(args.height);
+  if (args.weight != null) patch.weight = Number(args.weight);
+  userStore.setProfile(patch);
+  userStore.calculateBmi();
+  return {
+    toolCallId: "",
+    name: "app_config_update",
+    ok: true,
+    content: JSON.stringify({ applied: patch }),
+    summary: okSummary("app_config_update", `已更新用户配置`),
+    card: "raw",
+    cardData: { applied: patch },
+  };
+}
+
 function dispatch(name: string, args: AnyParams): ToolResult {
   switch (name) {
     case "course_list": return executeCourseList(args);
@@ -327,6 +494,12 @@ function dispatch(name: string, args: AnyParams): ToolResult {
     case "exercise_update": return executeExerciseUpdate(args);
     case "exercise_delete": return executeExerciseDelete(args);
     case "stats_get": return executeStatsGet();
+    case "workout_current_get": return executeWorkoutCurrentGet();
+    case "workout_step_skip": return executeWorkoutStepSkip();
+    case "workout_step_adjust_temp": return executeWorkoutStepAdjustTemp(args);
+    case "workout_course_adjust_permanent": return executeWorkoutCourseAdjustPermanent(args);
+    case "app_config_get": return executeAppConfigGet();
+    case "app_config_update": return executeAppConfigUpdate(args);
     default: throw new Error(`未知工具: ${name}`);
   }
 }
@@ -475,5 +648,67 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
     description: "获取当前用户的运动统计（总训练次数、时长、热量、连续天数、近7/30天趋势、按部位/难度分布）。",
     parameters: Type.Object({}),
     execute: wrapExecuteRich("stats_get"),
+  },
+  // ===== 运动模式工具（仅在运动模式 AI 聊天中可用） =====
+  {
+    name: "workout_current_get",
+    label: "当前训练状态",
+    description: "获取当前进行中的训练的完整状态：课程名/当前步骤/器械/肌群/配重/组数/剩余时间/心率等。运动模式下询问动作细节时调用。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("workout_current_get"),
+  },
+  {
+    name: "workout_step_skip",
+    label: "跳过当前步",
+    description: "跳过当前训练步骤（小休息/组间休息/当前组）。仅在用户明确要求时调用。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("workout_step_skip"),
+  },
+  {
+    name: "workout_step_adjust_temp",
+    label: "临时调整当前步",
+    description: "临时调整当前训练步骤（仅本次训练有效，不写回课程库）。可改 sets/reps/durationSec/restSec。",
+    parameters: Type.Object({
+      sets: Type.Optional(Type.Number({ description: "新的组数" })),
+      reps: Type.Optional(Type.Number({ description: "新的每组次数" })),
+      durationSec: Type.Optional(Type.Number({ description: "新的每组时长（秒）" })),
+      restSec: Type.Optional(Type.Number({ description: "新的组间休息秒数" })),
+    }),
+    execute: wrapExecuteRich("workout_step_adjust_temp"),
+  },
+  {
+    name: "workout_course_adjust_permanent",
+    label: "永久调整课程",
+    description: "把对课程步骤的修改写回课程库（影响后续训练）。需指定 stepIndex（0-based）。可改 sets/reps/durationSec/restSec/weight/note。",
+    parameters: Type.Object({
+      stepIndex: Type.Optional(Type.Number({ description: "步骤索引（0-based，默认当前步）" })),
+      sets: Type.Optional(Type.Number()),
+      reps: Type.Optional(Type.Number()),
+      durationSec: Type.Optional(Type.Number()),
+      restSec: Type.Optional(Type.Number()),
+      weight: Type.Optional(Type.String({ description: "配重描述，如 20kg / 自重" })),
+      note: Type.Optional(Type.String()),
+    }),
+    execute: wrapExecuteRich("workout_course_adjust_permanent"),
+  },
+  {
+    name: "app_config_get",
+    label: "获取应用配置",
+    description: "获取用户配置（昵称/性别/年龄/身高/体重/BMI）。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("app_config_get"),
+  },
+  {
+    name: "app_config_update",
+    label: "更新应用配置",
+    description: "更新用户配置。可改 nickname/gender/age/height/weight。",
+    parameters: Type.Object({
+      nickname: Type.Optional(Type.String()),
+      gender: Type.Optional(Type.Union([Type.Literal("male"), Type.Literal("female"), Type.Literal("other")])),
+      age: Type.Optional(Type.Number()),
+      height: Type.Optional(Type.Number({ description: "cm" })),
+      weight: Type.Optional(Type.Number({ description: "kg" })),
+    }),
+    execute: wrapExecuteRich("app_config_update"),
   },
 ];
