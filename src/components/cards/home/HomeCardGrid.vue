@@ -42,6 +42,23 @@ function setCellRef(el: HTMLElement | null, idx: number) {
 const GAP = 12;
 const ROW_H = 88;
 
+// ===== 拖拽状态（声明在 computed 之前，避免 TDZ） =====
+const dragState = ref<{
+  cardId: string;
+  startIdx: number;
+  startX: number;
+  startY: number;
+  ghostX: number;
+  ghostY: number;
+  active: boolean;
+  pointerId: number;
+} | null>(null);
+
+const hoverCell = ref<{ col: number; row: number } | null>(null);
+let hoverTimer: number | null = null;
+const HOVER_MS = 500;
+const ghostEl = ref<HTMLElement | null>(null);
+
 // ===== 布局计算 =====
 
 /** 当前布局位置（排除拖动中的卡） */
@@ -126,21 +143,6 @@ watch(
 );
 
 // ===== 拖拽换位（含 0.5s 悬停预览） =====
-const dragState = ref<{
-  cardId: string;
-  startIdx: number;
-  startX: number;
-  startY: number;
-  ghostX: number;
-  ghostY: number;
-  active: boolean;
-  pointerId: number;
-} | null>(null);
-
-const hoverCell = ref<{ col: number; row: number } | null>(null);
-let hoverTimer: number | null = null;
-const HOVER_MS = 500;
-const ghostEl = ref<HTMLElement | null>(null);
 
 function onCardPointerDown(e: PointerEvent, card: CardConfig, idx: number) {
   if (!props.editMode) return;
