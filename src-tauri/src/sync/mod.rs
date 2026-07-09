@@ -45,6 +45,8 @@ pub enum Message {
         from_id: String,
         from_name: String,
         code: String,
+        /// 发起方 TCP 监听端口（接收方回连用，避免使用短连接的临时端口）
+        from_port: u16,
     },
     /// 配对同意
     PairAccept {

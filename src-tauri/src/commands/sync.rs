@@ -51,6 +51,7 @@ pub async fn sync_pair_request(
         from_id: state.device_id.clone(),
         from_name: state.device_name.clone(),
         code: target_code,
+        from_port: crate::sync::TCP_PORT,
     };
     let payload = serde_json::to_vec(&msg).map_err(|e| e.to_string())?;
     let len = payload.len() as u32;

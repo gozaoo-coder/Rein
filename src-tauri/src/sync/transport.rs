@@ -146,9 +146,9 @@ async fn handle_message(app: &AppHandle, stream: &mut TcpStream, msg: Message) -
         Message::Ping { .. } => {
             // 心跳：无需回复
         }
-        Message::PairRequest { from_id, from_name, code } => {
-            // 验证码 + 防撞码
-            if !crate::sync::pairing::verify_pair_code(&from_id, &code) {
+        Message::PairRequest { from_id, from_name, code, from_port } => {
+            // 验证码：必须是本机（接收方）当前/上一窗口的匹配码
+            if !crate::sync::pairing::verify_pair_code(&state.device_id, &code) {
                 let reject = Message::PairReject {
                     from_id: state.device_id.clone(),
                     to_id: from_id.clone(),
@@ -156,16 +156,17 @@ async fn handle_message(app: &AppHandle, stream: &mut TcpStream, msg: Message) -
                 send(stream, &reject).await?;
                 return Ok(());
             }
-            // 取对端地址（用于回连）
-            let peer_addr = stream.peer_addr().ok();
-            let peer_ip = peer_addr.map(|a| a.ip().to_string()).unwrap_or_default();
-            let peer_port = peer_addr.map(|a| a.port()).unwrap_or(TCP_PORT);
+            // 取对端 IP（用于回连），端口用消息中携带的 from_port（发起方 TCP 监听端口）
+            let peer_ip = stream
+                .peer_addr()
+                .map(|a| a.ip().to_string())
+                .unwrap_or_default();
             // 前端弹窗确认
             let _ = app.emit("sync-pair-request", &serde_json::json!({
                 "from_id": from_id,
                 "from_name": from_name,
                 "from_ip": peer_ip,
-                "from_port": peer_port,
+                "from_port": from_port,
             }));
             // 等待前端通过 sync_pair_respond 命令回送结果
         }
@@ -173,11 +174,12 @@ async fn handle_message(app: &AppHandle, stream: &mut TcpStream, msg: Message) -
             if to_id != state.device_id {
                 return Ok(());
             }
-            // 优先用 socket peer 地址（接收方已知对端真实地址），回退到消息字段
-            let (peer_ip, peer_port) = stream
+            // IP 用 socket peer 地址（接收方已知对端真实地址），端口用消息字段（接收方 TCP 监听端口）
+            let peer_ip = stream
                 .peer_addr()
-                .map(|a| (a.ip().to_string(), a.port()))
-                .unwrap_or((from_ip.clone(), from_port));
+                .map(|a| a.ip().to_string())
+                .unwrap_or(from_ip.clone());
+            let peer_port = from_port;
             // 双方互写授权
             state.store.add_paired(PairedDevice {
                 device_id: from_id.clone(),
