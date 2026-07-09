@@ -49,13 +49,6 @@ function onSliderInput(e: Event) {
     :class="`home-card--${size}`"
     @click="openSheet"
   >
-    <div class="wqa-head">
-      <span class="title-icon title-icon--blue">
-        <i class="bi bi-cup-straw" style="font-size:12px"></i>
-      </span>
-      <span class="wqa-title">快速记水</span>
-    </div>
-
     <div class="wqa-body" :class="`wqa-body--${size}`">
       <i class="bi bi-droplet-fill wqa-drop"></i>
       <div class="wqa-amount-row">
@@ -140,31 +133,6 @@ function onSliderInput(e: Event) {
 }
 .wqa-card:active { transform: scale(0.98); }
 .wqa-card:hover { box-shadow: var(--shadow-card-hover); }
-
-.wqa-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.title-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
-  color: #fff;
-  background: var(--icon-blue);
-}
-
-.wqa-title {
-  font-size: var(--text-sm);
-  font-weight: var(--fw-semibold);
-  color: var(--color-text);
-  line-height: 1.2;
-}
 
 .wqa-body {
   flex: 1;

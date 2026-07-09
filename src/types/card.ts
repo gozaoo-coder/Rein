@@ -5,7 +5,7 @@
  * 尺寸：1x1 / 2x1 / 2x2 / 4x2 (宽×高，单位为网格格)
  */
 
-export type CardSize = "1x1" | "2x1" | "2x2" | "4x2";
+export type CardSize = "1x1" | "1x2" | "2x1" | "2x2" | "4x2";
 
 /** 卡片类型枚举 — 所有支持的卡片种类 */
 export type CardType =
@@ -18,7 +18,8 @@ export type CardType =
   | "water-record" // 饮水记录
   | "water-quick-add" // 快速记水（1x1/2x1，只做快速加）
   | "food-record" // 记录食物
-  | "weight-record"; // 体重记录
+  | "weight-record" // 体重记录
+  | "todo-quick-add"; // 快速新建待办
 
 /** 环形图可选数据源 */
 export type RingDataSource =
@@ -51,6 +52,7 @@ export interface CardLayout {
 
 export const CARD_SIZE_MAP: Record<CardSize, { cols: number; rows: number }> = {
   "1x1": { cols: 1, rows: 1 },
+  "1x2": { cols: 1, rows: 2 },
   "2x1": { cols: 2, rows: 1 },
   "2x2": { cols: 2, rows: 2 },
   "4x2": { cols: 4, rows: 2 },
@@ -157,6 +159,15 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     defaultSize: "2x1",
     accent: "var(--icon-purple)",
     icon: "speedometer2",
+  },
+  "todo-quick-add": {
+    type: "todo-quick-add",
+    title: "快速新建待办",
+    description: "点按直接打开待办新建表单",
+    sizes: ["1x1", "1x2", "2x1", "2x2"],
+    defaultSize: "1x1",
+    accent: "var(--icon-orange)",
+    icon: "plus-lg",
   },
 };
 

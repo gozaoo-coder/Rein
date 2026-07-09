@@ -269,7 +269,12 @@ export const useHealthDataStore = defineStore("healthData", () => {
     return bodyMetrics.value[bodyMetrics.value.length - 1];
   });
 
-  const currentBmi = computed<number | undefined>(() => latestBodyMetrics.value?.bmi);
+  const currentBmi = computed<number | undefined>(() => {
+    // 优先使用体征记录中的 bmi，回退到 userStore.bmi（来自 profile.height/weight）
+    if (latestBodyMetrics.value?.bmi != null) return latestBodyMetrics.value.bmi;
+    const user = useUserStore();
+    return user.bmi > 0 ? user.bmi : undefined;
+  });
 
   const currentWeight = computed<number>(
     () => latestBodyMetrics.value?.weightKg ?? useUserStore().profile.weight ?? 0,

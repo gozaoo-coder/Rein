@@ -151,7 +151,7 @@ const isCompact = computed(() => props.size === "2x1");
         </span>
       </div>
 
-      <div v-if="hasData" class="chart-wrap">
+      <div v-if="hasData" class="chart-wrap" :style="{ height: chartHeight + 'px' }">
         <LineChart
           :data="chartData"
           :labels="chartLabels"
@@ -365,6 +365,18 @@ const isCompact = computed(() => props.size === "2x1");
   min-height: 0;
   display: flex;
   align-items: flex-end;
+  overflow: hidden;
+}
+.chart-wrap :deep(.line-chart-wrap) {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.chart-wrap :deep(.line-chart-svg) {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
 .empty {

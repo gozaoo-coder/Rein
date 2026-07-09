@@ -3,6 +3,7 @@ mod sync;
 
 use commands::storage::{init, storage_delete, storage_path, storage_read, storage_write};
 use commands::sync::*;
+use commands::http::http_fetch;
 use sync::{DiscoveryState, PairingState, SyncState, TransportState};
 use sync::store::init_store;
 use tauri::Manager;
@@ -76,6 +77,7 @@ pub fn run() {
             sync_data_list,
             sync_data_upsert,
             sync_data_delete,
+            http_fetch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

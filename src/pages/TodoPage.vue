@@ -8,7 +8,7 @@
  * 设计：HarmonyOS 沉浸光感 — 暖橙渐变 + 玻璃白卡 + 5 级材质
  */
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { useTodoStore } from "@/stores/todoStore";
 import BottomSheet from "@/components/ui/BottomSheet.vue";
 import {
@@ -32,6 +32,7 @@ import {
 } from "@/types/todo";
 
 const router = useRouter();
+const route = useRoute();
 const store = useTodoStore();
 
 // ====== 视图状态 ======
@@ -650,6 +651,12 @@ function quadrantAccentVar(q: QuadrantKey): string {
 
 onMounted(() => {
   store.load();
+  // 来自「快速新建待办」卡片的跳转：自动打开新建编辑器
+  if (route.query.new === "1") {
+    openCreate();
+    // 清除 query，避免刷新或返回时重复打开
+    router.replace({ path: route.path, query: {} });
+  }
 });
 
 // 切换日历子视图时同步周起始日为选中日期所在周

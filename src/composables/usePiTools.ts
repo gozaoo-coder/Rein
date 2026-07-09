@@ -25,6 +25,7 @@ import { useTodoStore } from "@/stores/todoStore";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import type { TodoPriority } from "@/types/todo";
 import { PRIORITY_LABEL } from "@/types/todo";
+import { invoke } from "@tauri-apps/api/core";
 
 // ===== Schemas =====
 
@@ -1139,7 +1140,112 @@ function executeBodyMetricsRecord(args: AnyParams): ToolResult {
   };
 }
 
-function dispatch(name: string, args: AnyParams): ToolResult {
+// ===== 爬虫工具（Bing 搜索 + URL 抓取） =====
+
+const BING_SEARCH_URL = "https://cn.bing.com/search?q=";
+
+interface WebSearchItem {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/** 从 Bing 搜索结果 HTML 解析条目。使用 DOMParser，仅取自然结果（b_algo）。 */
+function parseBingResults(html: string): WebSearchItem[] {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const items: WebSearchItem[] = [];
+    const nodes = doc.querySelectorAll("li.b_algo");
+    nodes.forEach((li) => {
+      const a = li.querySelector("h2 a");
+      const href = a?.getAttribute("href") ?? "";
+      const title = a?.textContent?.trim() ?? "";
+      // 摘要：b_caption > p 或 b_lineclamp*
+      const cap = li.querySelector(".b_caption p") || li.querySelector(".b_lineclamp1, .b_lineclamp2, .b_lineclamp3, .b_lineclamp4");
+      const snippet = cap?.textContent?.trim() ?? "";
+      if (title && href) {
+        items.push({ title, url: href, snippet });
+      }
+    });
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+/** 估算 HTML 正文文本（去标签、压缩空白），用于 web_fetch 返回摘要。 */
+function htmlToText(html: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    // 移除脚本/样式/nav/footer
+    doc.querySelectorAll("script,style,nav,footer,header,aside,form,noscript").forEach((n) => n.remove());
+    const text = doc.body?.textContent ?? "";
+    return text.replace(/\s+/g, " ").trim();
+  } catch {
+    return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+}
+
+async function executeWebSearch(args: AnyParams): Promise<ToolResult> {
+  const query = String(args.query ?? "").trim();
+  if (!query) throw new Error("query 不能为空");
+  const count = Math.min(Math.max(Number(args.count ?? 8), 1), 20);
+  const url = `${BING_SEARCH_URL}${encodeURIComponent(query)}`;
+  let html: string;
+  try {
+    html = await invoke<string>("http_fetch", { url });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Bing 搜索请求失败：${msg}（需在 Tauri 桌面环境运行）`);
+  }
+  const items = parseBingResults(html).slice(0, count);
+  if (!items.length) {
+    return {
+      toolCallId: "",
+      name: "web_search",
+      ok: true,
+      content: JSON.stringify({ query, count: 0, items: [] }),
+      summary: okSummary("web_search", `「${query}」未抓取到结果`),
+      card: "raw",
+      cardData: { query, count: 0, items: [] },
+    };
+  }
+  return {
+    toolCallId: "",
+    name: "web_search",
+    ok: true,
+    content: JSON.stringify({ query, count: items.length, items }),
+    summary: okSummary("web_search", `「${query}」共 ${items.length} 条结果`),
+    card: "raw",
+    cardData: { query, count: items.length, items },
+  };
+}
+
+async function executeWebFetch(args: AnyParams): Promise<ToolResult> {
+  const url = String(args.url ?? "").trim();
+  if (!url) throw new Error("url 不能为空");
+  if (!/^https?:\/\//.test(url)) throw new Error("仅支持 http/https");
+  const maxChars = Math.min(Math.max(Number(args.maxChars ?? 6000), 500), 20000);
+  let html: string;
+  try {
+    html = await invoke<string>("http_fetch", { url });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`抓取失败：${msg}`);
+  }
+  const text = htmlToText(html).slice(0, maxChars);
+  return {
+    toolCallId: "",
+    name: "web_fetch",
+    ok: true,
+    content: JSON.stringify({ url, length: text.length, text }),
+    summary: okSummary("web_fetch", `抓取 ${text.length} 字符`),
+    card: "raw",
+    cardData: { url, length: text.length, text },
+  };
+}
+
+async function dispatch(name: string, args: AnyParams): Promise<ToolResult> {
   switch (name) {
     case "course_list": return executeCourseList(args);
     case "course_get": return executeCourseGet(args);
@@ -1179,6 +1285,8 @@ function dispatch(name: string, args: AnyParams): ToolResult {
     case "food_db_update": return executeFoodDbUpdate(args);
     case "food_db_delete": return executeFoodDbDelete(args);
     case "body_metrics_record": return executeBodyMetricsRecord(args);
+    case "web_search": return await executeWebSearch(args);
+    case "web_fetch": return await executeWebFetch(args);
     default: throw new Error(`未知工具: ${name}`);
   }
 }
@@ -1192,7 +1300,7 @@ function wrapExecuteRich(name: string): AgentTool["execute"] {
   return async (_toolCallId, params) => {
     let result: ToolResult;
     try {
-      result = dispatch(name, params as AnyParams);
+      result = await dispatch(name, params as AnyParams);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       result = {
@@ -1713,5 +1821,28 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
       bodyFatPercent: Type.Optional(Type.Number({ description: "体脂率 %" })),
     }),
     execute: wrapExecuteRich("body_metrics_record"),
+  },
+  // ===== 爬虫工具 =====
+  {
+    name: "web_search",
+    label: "网页搜索",
+    description:
+      "使用 Bing 搜索引擎（https://cn.bing.com/search?q=）检索互联网信息。返回标题/URL/摘要列表。当用户询问最新资讯、外部资料或你知识范围外的事实时使用。需在 Tauri 桌面环境运行。",
+    parameters: Type.Object({
+      query: Type.String({ description: "搜索关键词" }),
+      count: Type.Optional(Type.Number({ description: "返回条目数，默认 8，最大 20" })),
+    }),
+    execute: wrapExecuteRich("web_search"),
+  },
+  {
+    name: "web_fetch",
+    label: "抓取网页",
+    description:
+      "抓取指定 URL 的网页正文文本（去标签后的纯文本）。用于在 web_search 后深入阅读某条结果。仅支持 http/https。",
+    parameters: Type.Object({
+      url: Type.String({ description: "完整 URL（http/https）" }),
+      maxChars: Type.Optional(Type.Number({ description: "返回文本最大字符数，默认 6000，最大 20000" })),
+    }),
+    execute: wrapExecuteRich("web_fetch"),
   },
 ];

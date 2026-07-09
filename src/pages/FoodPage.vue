@@ -8,12 +8,15 @@
  */
 import { computed, onMounted, ref } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
+import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { useRouter } from "vue-router";
 import BarChartThin from "@/components/charts/BarChartThin.vue";
 import { BottomSheet } from "@/components/ui";
 import { useToast } from "@/composables/useToast";
+import { visionChat } from "@/composables/useVisionChat";
 
 const store = useHealthDataStore();
+const aiCfg = useAiConfigStore();
 const router = useRouter();
 const toast = useToast();
 
@@ -41,10 +44,55 @@ const customFat = ref<number>(0);
 
 const aiInput = ref("");
 const aiProcessing = ref(false);
+const aiPendingImages = ref<string[]>([]);
+const aiVisionAvailable = computed(() => aiCfg.isConfigured && aiCfg.config.vision);
 
 onMounted(() => {
   void store.load();
+  void aiCfg.load();
 });
+
+function onPickFoodImage(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (!input.files?.length) return;
+  for (const f of Array.from(input.files)) {
+    if (!f.type.startsWith("image/")) continue;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        aiPendingImages.value.push(reader.result);
+      }
+    };
+    reader.readAsDataURL(f);
+  }
+  input.value = "";
+}
+
+function removePendingImage(idx: number) {
+  aiPendingImages.value.splice(idx, 1);
+}
+
+/** 解析视觉模型返回的食物 JSON 列表 */
+function parseVisionFoods(text: string): { name: string; grams: number; calories?: number; carbs?: number; protein?: number; fat?: number }[] {
+  // 容错：提取首个 JSON 数组
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) return [];
+  try {
+    const arr = JSON.parse(match[0]) as Array<Record<string, unknown>>;
+    return arr
+      .map((it) => ({
+        name: String(it.name ?? it.foodName ?? "").trim(),
+        grams: Number(it.grams ?? it.weight ?? 100) || 100,
+        calories: it.calories != null ? Number(it.calories) : undefined,
+        carbs: it.carbs != null ? Number(it.carbs) : undefined,
+        protein: it.protein != null ? Number(it.protein) : undefined,
+        fat: it.fat != null ? Number(it.fat) : undefined,
+      }))
+      .filter((x) => x.name);
+  } catch {
+    return [];
+  }
+}
 
 function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -213,6 +261,7 @@ const selectedFood = computed(() => (selectedFoodId.value ? store.findFood(selec
 function openAddSheet() {
   addTab.value = "ai";
   aiInput.value = "";
+  aiPendingImages.value = [];
   searchQuery.value = "";
   selectedFoodId.value = "";
   grams.value = 100;
@@ -311,6 +360,60 @@ function parseAiInput(text: string): { name: string; grams: number } | null {
 }
 
 async function submitAi() {
+  // 有图片时走视觉识别
+  if (aiPendingImages.value.length) {
+    if (!aiCfg.isConfigured) {
+      toast.info("请先在 AI 配置页填写 baseURL/apiKey/model");
+      return;
+    }
+    if (!aiCfg.config.vision) {
+      toast.info("当前模型不支持图片，请在 AI 配置页选择视觉模型");
+      return;
+    }
+    aiProcessing.value = true;
+    try {
+      const promptText =
+        "请识别图中所有食物，返回 JSON 数组（仅返回数组，无多余文字）。每项字段：name(食物名), grams(估算克数), calories(千卡), carbs(碳水g), protein(蛋白质g), fat(脂肪g)。无法识别的字段可省略。"
+        + (aiInput.value.trim() ? `\n用户补充说明：${aiInput.value.trim()}` : "");
+      const text = await visionChat(aiPendingImages.value, promptText, {
+        temperature: 0.2,
+        maxTokens: 1200,
+        timeoutMs: 90_000,
+      });
+      const items = parseVisionFoods(text);
+      if (!items.length) {
+        toast.info("未识别到食物，试试手动输入");
+        return;
+      }
+      let added = 0;
+      for (const it of items) {
+        const food = store.foodDb.find((f) => f.name === it.name);
+        if (food) {
+          store.addFoodRecord({ foodId: food.id, foodName: food.name, grams: it.grams });
+        } else {
+          store.addFoodRecord({
+            foodName: it.name,
+            grams: it.grams,
+            calories: it.calories,
+            carbs: it.carbs,
+            protein: it.protein,
+            fat: it.fat,
+          });
+        }
+        added++;
+      }
+      toast.success(`AI 识别并记录 ${added} 项食物`);
+      showAddSheet.value = false;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`识别失败：${msg}`);
+    } finally {
+      aiProcessing.value = false;
+    }
+    return;
+  }
+
+  // 纯文本走本地解析
   if (!aiInput.value.trim()) return;
   aiProcessing.value = true;
   await new Promise((r) => setTimeout(r, 300));
@@ -345,11 +448,15 @@ const dayRecords = computed(() => store.foodRecordsByDate(selKey.value).slice().
 function goFoodDb() {
   void router.push("/health/food-db");
 }
+
+function goFoodComposition() {
+  void router.push("/health/food-composition");
+}
 </script>
 
 <template>
   <div class="food-page">
-    <h2 class="page-title">饮食热量</h2>
+    <h2 class="page-title" role="button" tabindex="0" @click="goFoodComposition" @keydown.enter="goFoodComposition">饮食热量</h2>
 
     <div class="today-card clean-card">
       <div class="macro-main">
@@ -528,13 +635,40 @@ function goFoodDb() {
         <!-- AI Quick Add -->
         <div v-if="addTab === 'ai'" class="ai-add">
           <div class="ai-hint">说一句"早餐吃了一个苹果"或"300g鸡胸肉"即可快速记录</div>
+
+          <!-- 待识别图片预览 -->
+          <div v-if="aiPendingImages.length" class="ai-pending-images">
+            <div
+              v-for="(url, i) in aiPendingImages"
+              :key="i"
+              class="ai-pending-img-wrap"
+            >
+              <img :src="url" class="ai-pending-img" alt="food" />
+              <button class="ai-pending-img-x" @click="removePendingImage(i)" aria-label="移除">×</button>
+            </div>
+          </div>
+
           <div class="ai-input-wrap">
             <textarea
               v-model="aiInput"
               rows="3"
-              placeholder="例如：中午一碗米饭、一块鸡胸肉、一杯牛奶"
+              :placeholder="aiPendingImages.length ? '可选：补充说明（如份量、做法）' : '例如：中午一碗米饭、一块鸡胸肉、一杯牛奶'"
               class="ai-textarea"
             />
+            <label v-if="aiVisionAvailable" class="ai-camera-btn" title="拍照识别">
+              <i class="bi bi-camera" style="font-size:18px"></i>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                class="file-hidden"
+                @change="onPickFoodImage"
+              />
+            </label>
+          </div>
+          <div v-if="!aiVisionAvailable" class="ai-vision-hint">
+            <i class="bi bi-info-circle" style="font-size:11px"></i>
+            <span>配置视觉模型后可拍照识别食物</span>
           </div>
           <div class="ai-examples">
             <button
@@ -546,7 +680,7 @@ function goFoodDb() {
               {{ ex }}
             </button>
           </div>
-          <button class="submit-btn" :disabled="!aiInput.trim() || aiProcessing" @click="submitAi">
+          <button class="submit-btn" :disabled="(!aiInput.trim() && !aiPendingImages.length) || aiProcessing" @click="submitAi">
             <span v-if="aiProcessing">识别中...</span>
             <span v-else>AI 识别并记录</span>
           </button>
@@ -645,7 +779,14 @@ function goFoodDb() {
   font-weight: var(--fw-bold);
   color: var(--color-text);
   margin: 0;
+  cursor: pointer;
+  display: inline-block;
+  align-self: flex-start;
+  transition: opacity var(--dur-fast);
 }
+
+.page-title:hover { opacity: 0.7; }
+.page-title:active { opacity: 0.5; }
 
 .today-card {
   padding: var(--space-4) var(--space-5);
@@ -998,10 +1139,88 @@ function goFoodDb() {
 
 .ai-input-wrap {
   padding: 0 var(--space-1);
+  position: relative;
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.ai-camera-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--dur-fast);
+}
+
+.ai-camera-btn:active {
+  background: var(--bg-200);
+  transform: scale(0.94);
+}
+
+.ai-vision-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-1);
+}
+
+.ai-pending-images {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 var(--space-1);
+}
+
+.ai-pending-img-wrap {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+
+.ai-pending-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+
+.ai-pending-img-x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-text);
+  color: #fff;
+  border: 2px solid var(--color-bg);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.file-hidden {
+  display: none;
 }
 
 .ai-textarea {
   width: 100%;
+  flex: 1;
   padding: 12px;
   border: 1.5px solid var(--color-divider);
   border-radius: var(--radius-lg);

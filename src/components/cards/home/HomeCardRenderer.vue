@@ -15,6 +15,7 @@ import WaterRecordCard from "./WaterRecordCard.vue";
 import WaterQuickAddCard from "./WaterQuickAddCard.vue";
 import FoodRecordCard from "./FoodRecordCard.vue";
 import WeightRecordCard from "./WeightRecordCard.vue";
+import TodoQuickAddCard from "./TodoQuickAddCard.vue";
 
 defineProps<{ card: CardConfig }>();
 const emit = defineEmits<{ click: [] }>();
@@ -31,4 +32,5 @@ const emit = defineEmits<{ click: [] }>();
   <WaterQuickAddCard v-else-if="card.type === 'water-quick-add'" :size="card.size" />
   <FoodRecordCard v-else-if="card.type === 'food-record'" :size="card.size" @click="emit('click')" />
   <WeightRecordCard v-else-if="card.type === 'weight-record'" :size="card.size" @click="emit('click')" />
+  <TodoQuickAddCard v-else-if="card.type === 'todo-quick-add'" :size="card.size" />
 </template>

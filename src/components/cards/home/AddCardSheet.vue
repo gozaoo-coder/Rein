@@ -94,7 +94,9 @@ function sizeStyle(size: CardSize) {
               :style="sizeStyle(sz)"
               @click="addCard(entry.type, sz)"
             >
-              <HomeCardRenderer :card="previewCard(entry.type, sz)" />
+              <div class="preview-render-wrap">
+                <HomeCardRenderer :card="previewCard(entry.type, sz)" />
+              </div>
               <span class="size-tag">{{ CARD_SIZE_MAP[sz].cols }}×{{ CARD_SIZE_MAP[sz].rows }}</span>
             </button>
           </div>
@@ -217,6 +219,14 @@ function sizeStyle(size: CardSize) {
   width: 100% !important;
   height: 100% !important;
   margin: 0 !important;
+}
+
+/* 预览渲染容器：禁用内部所有交互，避免误触卡片内部功能 */
+.preview-render-wrap,
+.preview-render-wrap :deep(*) {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .size-tag {
   position: absolute;
