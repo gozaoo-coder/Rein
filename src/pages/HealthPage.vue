@@ -93,6 +93,11 @@ function onCardClick(card: CardConfig) {
     case "weight-record":
       void router.push("/health/weight");
       break;
+    case "body-fat-curve":
+      void router.push("/health/metrics");
+      break;
+    case "body-fat-quick-add":
+      break;
   }
 }
 

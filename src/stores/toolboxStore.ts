@@ -33,7 +33,7 @@ function defaultEntries(): ToolboxEntry[] {
     { key: "exercises", label: "动作库", icon: "person-arms-up", path: "/sports/exercises" },
     { key: "sports", label: "运动", icon: "activity", path: "/sports" },
     { key: "weight", label: "体重", icon: "speedometer2", path: "/health/weight" },
-    { key: "overview", label: "健康概览", icon: "heart-pulse", path: "/health/overview" },
+    { key: "overview", label: "健康概览", icon: "heart-pulse", path: "/health/metrics" },
   ];
   return defs.map((d, i) => ({ ...d, pinned: false, order: i }));
 }

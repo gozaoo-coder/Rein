@@ -281,6 +281,10 @@ export const useHealthDataStore = defineStore("healthData", () => {
     () => latestBodyMetrics.value?.weightKg ?? useUserStore().profile.weight ?? 0,
   );
 
+  const currentBodyFat = computed<number | undefined>(
+    () => latestBodyMetrics.value?.bodyFatPercent,
+  );
+
   /** 每日热量目标 kcal — 由 userStore 推导 */
   const dailyCalorieGoal = computed<number>(() => useUserStore().nutritionTarget.calories);
 
@@ -317,6 +321,7 @@ export const useHealthDataStore = defineStore("healthData", () => {
     latestBodyMetrics,
     currentBmi,
     currentWeight,
+    currentBodyFat,
     dailyCalorieGoal,
     macroTargets,
     waterGoalMl,

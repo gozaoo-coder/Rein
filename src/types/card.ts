@@ -19,6 +19,8 @@ export type CardType =
   | "water-quick-add" // 快速记水（1x1/2x1，只做快速加）
   | "food-record" // 记录食物
   | "weight-record" // 体重记录
+  | "body-fat-quick-add" // 快速记体脂（1x1/1x2/2x1，只做快速加）
+  | "body-fat-curve" // 体脂曲线
   | "todo-quick-add"; // 快速新建待办
 
 /** 环形图可选数据源 */
@@ -159,6 +161,24 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     defaultSize: "2x1",
     accent: "var(--icon-purple)",
     icon: "speedometer2",
+  },
+  "body-fat-quick-add": {
+    type: "body-fat-quick-add",
+    title: "快速记体脂",
+    description: "点按快速记录体脂率",
+    sizes: ["1x1", "1x2", "2x1"],
+    defaultSize: "2x1",
+    accent: "var(--icon-purple)",
+    icon: "person-fill",
+  },
+  "body-fat-curve": {
+    type: "body-fat-curve",
+    title: "体脂曲线",
+    description: "体脂率历史趋势",
+    sizes: ["2x1", "2x2", "4x2"],
+    defaultSize: "2x1",
+    accent: "var(--icon-purple)",
+    icon: "graph-up-arrow",
   },
   "todo-quick-add": {
     type: "todo-quick-add",

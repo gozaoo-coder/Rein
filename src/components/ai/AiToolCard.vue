@@ -3,8 +3,9 @@
  * AiToolCard — 渲染 AI 工具调用结果为精美卡片。
  * 复用 SportsPage 的 course-card-body 视觉语言 + 健康页统计卡风格。
  */
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { ToolResult } from "@/types/ai";
+import BottomSheet from "@/components/ui/BottomSheet.vue";
 import type { Course } from "@/types/course";
 import type { Exercise } from "@/types/exercise";
 import type { WorkoutStats } from "@/types/workout-stats";
@@ -109,10 +110,23 @@ const waterPct = computed(() => {
   if (!waterData.value) return 0;
   return Math.min((waterData.value.total / waterData.value.goal) * 100, 100);
 });
+
+// ===== 详情 BottomSheet =====
+const showDetail = ref(false);
+const detailJson = computed(() =>
+  data.value == null ? "{}" : JSON.stringify(data.value, null, 2),
+);
 </script>
 
 <template>
-  <div class="tool-card" :class="{ 'is-error': !ok, 'is-compact': compact }">
+  <div
+    class="tool-card"
+    :class="{ 'is-error': !ok, 'is-compact': compact }"
+    role="button"
+    tabindex="0"
+    @click="showDetail = true"
+    @keydown.enter="showDetail = true"
+  >
     <div class="tool-head">
       <div class="tool-badge" :class="ok ? 'ok' : 'err'">
         <i v-if="ok" class="bi bi-check-lg" style="font-size:12px"></i>
@@ -358,6 +372,20 @@ const waterPct = computed(() => {
       <pre>{{ JSON.stringify(data, null, 2) }}</pre>
     </div>
   </div>
+
+  <!-- 详情 BottomSheet：点击卡片查看完整工具结果 -->
+  <BottomSheet
+    :visible="showDetail"
+    :title="actionLabel"
+    @update:visible="showDetail = $event"
+    @close="showDetail = false"
+  >
+    <div class="detail-wrap">
+      <div v-if="result.summary" class="detail-summary">{{ result.summary }}</div>
+      <div class="detail-label">完整数据</div>
+      <pre class="detail-json">{{ detailJson }}</pre>
+    </div>
+  </BottomSheet>
 </template>
 
 <style scoped>
@@ -370,8 +398,19 @@ const waterPct = computed(() => {
   flex-direction: column;
   gap: var(--space-2);
   border-left: 3px solid var(--color-warm);
+  max-height: 84px;
   overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow 0.18s var(--ease-immersive), transform 0.18s var(--ease-immersive);
   animation: card-fade-in 0.35s var(--ease-immersive) both;
+}
+.tool-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+.tool-card:focus-visible {
+  outline: 2px solid var(--color-warm);
+  outline-offset: 2px;
 }
 @keyframes card-fade-in {
   from {
@@ -885,5 +924,42 @@ const waterPct = computed(() => {
 .tool-card.is-compact .stats-grid,
 .tool-card.is-compact .body-grid {
   grid-template-columns: repeat(2, 1fr);
+}
+
+/* ===== 详情 BottomSheet 内容 ===== */
+.detail-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+.detail-summary {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.detail-label {
+  font-size: var(--text-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.detail-json {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--bg-200);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 </style>
