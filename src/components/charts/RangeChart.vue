@@ -65,6 +65,13 @@ const props = withDefaults(
 
 const lineColor = computed(() => props.color || "var(--color-danger)");
 
+/** Font scale from height prop, clamped to readable bounds. */
+const FONT_BASE_H = 56;
+const fontScale = computed(() => {
+  const s = props.height / FONT_BASE_H;
+  return Math.min(Math.max(s, 0.7), 2.2);
+});
+
 const yMin = computed(() =>
   Math.min(...props.zones.map((z) => z.from), ...(props.data.length ? props.data : [0]))
 );
@@ -155,7 +162,7 @@ function zoneHeight(z: ChartZone) {
 </script>
 
 <template>
-  <div class="range-chart-wrap">
+  <div class="range-chart-wrap" :style="{ '--fs': fontScale }">
     <svg
       class="range-chart-svg"
       :viewBox="`0 0 ${VB_W} ${VB_H}`"
@@ -249,10 +256,10 @@ function zoneHeight(z: ChartZone) {
 }
 .axis-label {
   fill: var(--color-text-tertiary);
-  font-size: 3.8px;
+  font-size: calc(3.8px * var(--fs, 1));
   font-family: var(--font-sans);
 }
 .axis-label-y {
-  font-size: 3px;
+  font-size: calc(3px * var(--fs, 1));
 }
 </style>

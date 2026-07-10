@@ -49,6 +49,13 @@ const props = withDefaults(
 
 const clamped = computed(() => Math.min(Math.max(props.value, 0), 1));
 
+/** Font scale from segment bar height, clamped to readable bounds. */
+const FONT_BASE_H = 10;
+const fontScale = computed(() => {
+  const s = props.height / FONT_BASE_H;
+  return Math.min(Math.max(s, 0.8), 1.8);
+});
+
 const VB_W = 100;
 const VB_H = computed(() => {
   const hasLabels =
@@ -87,7 +94,7 @@ const pointerPath = computed(() => {
 </script>
 
 <template>
-  <div class="level-indicator">
+  <div class="level-indicator" :style="{ '--fs': fontScale }">
     <svg
       class="level-svg"
       :viewBox="`0 0 ${VB_W} ${VB_H}`"
@@ -142,7 +149,7 @@ const pointerPath = computed(() => {
 }
 .level-label {
   fill: var(--color-text-tertiary);
-  font-size: 4.5px;
+  font-size: calc(4.5px * var(--fs, 1));
   font-family: var(--font-sans);
 }
 </style>

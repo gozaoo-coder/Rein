@@ -45,6 +45,8 @@ export const useWorkoutStore = defineStore("workout", () => {
   let hrSimulateInterval: ReturnType<typeof setInterval> | null = null;
   /** 自动持久化快照的 watcher 卸载函数 */
   let snapshotWatchStop: (() => void) | null = null;
+  /** 上次持久化快照时间戳 — 用于节流（10s 一次，重要状态变更强制写入） */
+  let lastPersistAt = 0;
 
   const totalSets = computed(() => {
     if (!plan.value) return 0;
@@ -144,11 +146,15 @@ export const useWorkoutStore = defineStore("workout", () => {
     workoutState.value = "running";
     subState.value = currentStep.value?.type === StepType.RESTING ? "resting" : "exercising";
     startedAt.value = Date.now();
+    // 心率模拟初值（仅在首次启动时设置，resume 不重置以免覆盖已采集样本）
+    heartRateConnected.value = true;
+    heartRate.value = 72;
+    heartRateSamples.value = [72];
     initStep();
     startTimer();
     startCarousel();
     startHeartRateSimulation();
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /** 从 Course 启动训练 */
@@ -227,6 +233,7 @@ export const useWorkoutStore = defineStore("workout", () => {
   function startCarousel() {
     stopCarousel();
     carouselInterval = setInterval(() => {
+      if (workoutState.value !== "running") return;
       phaseCarouselIndex.value++;
     }, 3000);
   }
@@ -240,16 +247,19 @@ export const useWorkoutStore = defineStore("workout", () => {
 
   function startHeartRateSimulation() {
     stopHeartRateSimulation();
-    heartRateConnected.value = true;
-    heartRate.value = 72;
-    heartRateSamples.value = [72];
     hrSimulateInterval = setInterval(() => {
+      // 暂停或页面隐藏时不采样，减少后台开销/发热
       if (workoutState.value !== "running") return;
+      if (typeof document !== "undefined" && document.hidden) return;
       const base = subState.value === "resting" ? 80 : 130;
       const variance = Math.floor(Math.random() * 20) - 10;
       const next = Math.max(60, Math.min(190, base + variance + Math.floor(totalElapsedSeconds.value / 60)));
       heartRate.value = next;
       heartRateSamples.value.push(next);
+      // 限制采样数组长度，避免快照无限增长
+      if (heartRateSamples.value.length > 60) {
+        heartRateSamples.value = heartRateSamples.value.slice(-60);
+      }
     }, 2000);
   }
 
@@ -268,13 +278,21 @@ export const useWorkoutStore = defineStore("workout", () => {
   function pause() {
     if (workoutState.value !== "running") return;
     workoutState.value = "paused";
-    void persistSnapshot();
+    // 暂停时停掉所有定时器，避免后台空转/发热/重渲染
+    stopTimer();
+    stopCarousel();
+    stopHeartRateSimulation();
+    void persistSnapshot(true);
   }
 
   function resume() {
     if (workoutState.value !== "paused" && workoutState.value !== "interrupted") return;
     workoutState.value = "running";
-    void persistSnapshot();
+    // 恢复时重启定时器（心率不重置，沿用已采集值）
+    startTimer();
+    startCarousel();
+    startHeartRateSimulation();
+    void persistSnapshot(true);
   }
 
   function advanceStep() {
@@ -304,7 +322,7 @@ export const useWorkoutStore = defineStore("workout", () => {
           currentSetInStep.value++;
           initStepForNextSet();
         }
-        void persistSnapshot();
+        void persistSnapshot(true);
         return;
       }
     }
@@ -315,7 +333,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     }
     currentStepIndex.value++;
     initStep();
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /** 进入组间休息 */
@@ -324,7 +342,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     subState.value = "resting";
     const step = currentStep.value;
     stepSecondsRemaining.value = step?.restBetweenSets ?? 30;
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /** 退出组间休息，进入下一组 */
@@ -332,7 +350,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     inSetRest.value = false;
     currentSetInStep.value++;
     initStepForNextSet();
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /** 重置当前步计时但保留组号 */
@@ -365,7 +383,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     quickRestRemaining.value = seconds;
     subState.value = "resting";
     workoutState.value = "running"; // 确保计时器走动
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /** 提前结束小休息 */
@@ -374,7 +392,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     quickRestRemaining.value = 0;
     quickRestTotal.value = 0;
     subState.value = currentStep.value?.type === StepType.RESTING ? "resting" : "exercising";
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   function previousStep() {
@@ -386,7 +404,7 @@ export const useWorkoutStore = defineStore("workout", () => {
         if (completedSets.value > 0) completedSets.value--;
         initStepForNextSet();
       }
-      void persistSnapshot();
+      void persistSnapshot(true);
       return;
     }
     if (currentStepIndex.value > 0) {
@@ -399,7 +417,7 @@ export const useWorkoutStore = defineStore("workout", () => {
       }
       initStepForNextSet();
     }
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /** 从组间休息回退到上一组 */
@@ -452,7 +470,7 @@ export const useWorkoutStore = defineStore("workout", () => {
       }
     }
     if (patch.restSec != null && patch.restSec >= 0) step.restBetweenSets = patch.restSec;
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /**
@@ -486,7 +504,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     // 同步刷新 activeCourse + plan
     activeCourse.value = course;
     plan.value = courseToWorkoutPlan(course);
-    void persistSnapshot();
+    void persistSnapshot(true);
     return true;
   }
 
@@ -556,13 +574,21 @@ export const useWorkoutStore = defineStore("workout", () => {
       inSetRest: inSetRest.value,
       inQuickRest: inQuickRest.value,
       quickRestRemaining: quickRestRemaining.value,
-      heartRateSamples: heartRateSamples.value,
+      // 快照中限制心率采样为最近 60 条，避免无限增长
+      heartRateSamples: heartRateSamples.value.slice(-60),
     };
   }
 
-  async function persistSnapshot(): Promise<void> {
+  /**
+   * 持久化快照。
+   * @param force 重要状态变更（暂停/恢复/完成/步进/调整）强制写入；默认节流 10s 一次。
+   */
+  async function persistSnapshot(force = false): Promise<void> {
+    if (!force && Date.now() - lastPersistAt < 10000) return;
     const snap = snapshot();
-    if (snap) await writeJSON(SNAPSHOT_KEY, snap);
+    if (!snap) return;
+    await writeJSON(SNAPSHOT_KEY, snap);
+    lastPersistAt = Date.now();
   }
 
   async function clearSnapshot(): Promise<void> {
@@ -615,7 +641,7 @@ export const useWorkoutStore = defineStore("workout", () => {
     startTimer();
     startCarousel();
     startHeartRateSimulation();
-    void persistSnapshot();
+    void persistSnapshot(true);
   }
 
   /** 用户放弃恢复 — 直接退出 */

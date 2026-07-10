@@ -27,6 +27,8 @@ export interface CourseStep {
   reps?: number; // 每组次数（若按次数计）
   durationSec?: number; // 每组时长（若按时长计）
   restSec: number; // 组间休息
+  /** 不同动作步之间的休息秒数（覆盖默认 90s 主训练间隔）。undefined → 走默认逻辑 */
+  restBetweenSteps?: number;
   phase: StepPhase;
   note?: string;
   /** 配重描述（如 "20kg" / "自重" / "RM 60%"），可选 */

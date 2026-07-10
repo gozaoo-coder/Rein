@@ -59,6 +59,13 @@ const maxVal = computed(() => {
   return Math.max(...props.data.map((d) => d.value), 1);
 });
 
+/** Font scale from height prop, clamped to readable bounds. */
+const FONT_BASE_H = 60;
+const fontScale = computed(() => {
+  const s = props.height / FONT_BASE_H;
+  return Math.min(Math.max(s, 0.7), 2.2);
+});
+
 const AXIS_PAD_LEFT = computed(() => (props.showYAxis ? 28 : 0));
 const PAD_BOTTOM = computed(() => (props.showXLabels ? 18 : 4));
 const VB_W = 100;
@@ -95,7 +102,7 @@ const gridLines = computed(() => {
 </script>
 
 <template>
-  <div class="bar-thick-wrap">
+  <div class="bar-thick-wrap" :style="{ '--fs': fontScale }">
     <svg
       class="bar-thick-svg"
       :viewBox="`0 0 ${VB_W} ${VB_H}`"
@@ -171,10 +178,10 @@ const gridLines = computed(() => {
 }
 .axis-label {
   fill: var(--color-text-tertiary);
-  font-size: 4px;
+  font-size: calc(4px * var(--fs, 1));
   font-family: var(--font-sans);
 }
 .axis-label-y {
-  font-size: 3.2px;
+  font-size: calc(3.2px * var(--fs, 1));
 }
 </style>

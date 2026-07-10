@@ -109,44 +109,86 @@ function buildRestStep(cs: CourseStep, order: number): WorkoutStep {
   };
 }
 
+/** 构造动作组之间的休息步（不同动作之间，独立于组间休息 restBetweenSets） */
+function buildInterGroupRestStep(seconds: number, order: number): WorkoutStep {
+  return {
+    type: StepType.RESTING,
+    phase: "休息",
+    timer: { enabled: true, unit: "seconds", value: seconds },
+    details: {
+      title: `${order}. 组间休息`,
+      guide: {
+        type: MediaType.MARKDOWN_TEXT,
+        content: `${seconds}秒 休息，调整呼吸、补水，准备下一动作。`,
+      },
+    },
+  };
+}
+
+/**
+ * 计算两个相邻非休息步之间应插入的休息秒数。
+ * - 显式 restBetweenSteps > 0 → 用该值
+ * - 否则若前后均为 main 阶段 → 默认 90s
+ * - 其余（如 warmup→main、main→stretch）→ 0（不插入）
+ */
+function resolveRestBetweenSteps(prev: CourseStep, next: CourseStep): number {
+  if (prev.restBetweenSteps != null && prev.restBetweenSteps > 0) return prev.restBetweenSteps;
+  if (prev.phase === "main" && next.phase === "main") return 90;
+  return 0;
+}
+
+/** 由 CourseStep 构造训练步（动作库命中走 buildTrainingStep，未命中走兜底） */
+function buildStepFromCourse(cs: CourseStep, order: number): WorkoutStep {
+  const ex = resolveExercise(cs.exerciseId);
+  if (ex) return buildTrainingStep(order, cs, ex, cs.phase);
+  // 动作库查不到时兜底：用 CourseStep 自带字段构造一个最小训练步
+  const isRepBased = cs.reps != null && cs.reps > 0;
+  const isTimeBased = !isRepBased && cs.durationSec != null && cs.durationSec > 0;
+  return {
+    type: StepType.TRAINING,
+    phase: PHASE_LABEL[cs.phase],
+    timer: isRepBased
+      ? { enabled: false, unit: "reps", value: cs.reps ?? 0 }
+      : isTimeBased
+        ? { enabled: true, unit: "seconds", value: cs.durationSec ?? 30 }
+        : { enabled: false, unit: "reps", value: 0 },
+    sets: Math.max(1, cs.sets),
+    restBetweenSets: cs.restSec > 0 ? cs.restSec : undefined,
+    details: {
+      title: `${order}. ${cs.exerciseName}`,
+      guide: {
+        type: MediaType.MARKDOWN_TEXT,
+        content: cs.note ?? cs.exerciseName,
+      },
+      weight: cs.weight,
+      cautions: cs.cautions,
+    },
+  };
+}
+
 export function courseToWorkoutPlan(course: Course): WorkoutPlan {
   const steps: WorkoutStep[] = [];
   let order = 1;
 
-  for (const cs of course.steps) {
+  for (let i = 0; i < course.steps.length; i++) {
+    const cs = course.steps[i];
+    const next = course.steps[i + 1];
+
     if (cs.phase === "rest") {
       steps.push(buildRestStep(cs, order++));
+      // 当前已是休息步，不额外插入组间休息（避免重复）
       continue;
     }
-    const ex = resolveExercise(cs.exerciseId);
-    if (!ex) {
-      // 动作库查不到时兜底：用 CourseStep 自带字段构造一个最小训练步
-      const isRepBased = cs.reps != null && cs.reps > 0;
-      const isTimeBased = !isRepBased && cs.durationSec != null && cs.durationSec > 0;
-      steps.push({
-        type: StepType.TRAINING,
-        phase: PHASE_LABEL[cs.phase],
-        timer: isRepBased
-          ? { enabled: false, unit: "reps", value: cs.reps ?? 0 }
-          : isTimeBased
-            ? { enabled: true, unit: "seconds", value: cs.durationSec ?? 30 }
-            : { enabled: false, unit: "reps", value: 0 },
-        sets: Math.max(1, cs.sets),
-        restBetweenSets: cs.restSec > 0 ? cs.restSec : undefined,
-        details: {
-          title: `${order}. ${cs.exerciseName}`,
-          guide: {
-            type: MediaType.MARKDOWN_TEXT,
-            content: cs.note ?? cs.exerciseName,
-          },
-          weight: cs.weight,
-          cautions: cs.cautions,
-        },
-      });
-      order++;
-      continue;
+
+    steps.push(buildStepFromCourse(cs, order++));
+
+    // 在两个相邻非休息步之间插入组间休息：不插在最后一步之后，next 已是 rest 也不插
+    if (next && next.phase !== "rest") {
+      const restSecs = resolveRestBetweenSteps(cs, next);
+      if (restSecs > 0) {
+        steps.push(buildInterGroupRestStep(restSecs, order++));
+      }
     }
-    steps.push(buildTrainingStep(order++, cs, ex, cs.phase));
   }
 
   return {
