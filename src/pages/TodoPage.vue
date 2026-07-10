@@ -423,6 +423,24 @@ function submitAi() {
   aiInput.value = "";
 }
 
+function openAiHelp() {
+  const f = editorForm.value;
+  const parts: string[] = [];
+  if (f.title.trim()) parts.push(`待办标题：${f.title.trim()}`);
+  if (f.note.trim()) parts.push(`备注：${f.note.trim()}`);
+  if (f.kind !== "all-day") {
+    if (f.kind === "deadline" && f.dueTime) parts.push(`截止时间：${f.dueDate} ${f.dueTime}`);
+    if (f.kind === "time-range" && f.startTime) parts.push(`时间段：${f.dueDate} ${f.startTime}-${f.endTime}`);
+  } else if (f.dueDate) {
+    parts.push(`日期：${f.dueDate}`);
+  }
+  const prompt = parts.length
+    ? `请帮我优化这个待办，让它更清晰可执行：\n${parts.join("\n")}`
+    : "请帮我创建一个待办，我会告诉你要做什么";
+  router.push(`/ai?prefill=${encodeURIComponent(prompt)}`);
+  closeEditor();
+}
+
 // ====== 编辑器 ======
 function openCreate() {
   editingItem.value = null;
@@ -1054,6 +1072,13 @@ watch(calMode, (m) => {
             placeholder="添加备注（可选）"
           />
         </div>
+
+        <!-- AI 帮你优化代办 -->
+        <button class="ed-ai-help" @click="openAiHelp">
+          <i class="bi bi-stars" style="font-size:16px"></i>
+          <span>AI 帮你优化</span>
+          <i class="bi bi-chevron-right" style="font-size:12px;opacity:0.6"></i>
+        </button>
 
         <!-- 时间类型卡片 -->
         <div class="ed-section">
@@ -2167,6 +2192,7 @@ watch(calMode, (m) => {
   flex-direction: column;
   gap: 0;
   padding: var(--space-2) 0;
+  border-top: none;
 }
 .ed-title-input {
   width: 100%;
@@ -2198,11 +2224,40 @@ watch(calMode, (m) => {
 }
 .ed-note-input::placeholder { color: var(--color-text-tertiary); }
 
+.ed-ai-help {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-50);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-immersive);
+}
+.ed-ai-help:active {
+  transform: scale(0.98);
+  background: var(--bg-100);
+}
+.ed-ai-help i:first-child {
+  color: var(--color-warm);
+}
+.ed-ai-help span {
+  flex: 1;
+  text-align: left;
+}
+
 /* 通用 section */
 .ed-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-divider);
 }
 .ed-section-title {
   font-size: var(--text-xs);

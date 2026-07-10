@@ -10,6 +10,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ToolResult } from "@/types/ai";
 import type { CourseCategory, CourseDifficulty, StepPhase } from "@/types/course";
 import type { ExerciseCategory, ExerciseDifficulty, MuscleGroup } from "@/types/exercise";
+import type { DietGoal, ActivityLevel } from "@/types/health";
 import { CATEGORY_LABEL, DIFFICULTY_LABEL } from "@/types/course";
 import {
   MUSCLE_GROUP_LABEL,
@@ -1217,6 +1218,67 @@ function executeNutritionTargetGet(): ToolResult {
   };
 }
 
+function executeNutritionTargetSet(args: AnyParams): ToolResult {
+  const userStore = useUserStore();
+  const validDietGoals: DietGoal[] = ["lose", "maintain", "gain"];
+  const validActivityLevels: ActivityLevel[] = ["sedentary", "light", "moderate", "active", "very_active"];
+  const dietGoalRaw = typeof args.dietGoal === "string" ? args.dietGoal : undefined;
+  const activityRaw = typeof args.activityLevel === "string" ? args.activityLevel : undefined;
+
+  if (dietGoalRaw && !validDietGoals.includes(dietGoalRaw as DietGoal)) {
+    return {
+      toolCallId: "",
+      name: "nutrition_target_set",
+      ok: false,
+      content: JSON.stringify({ error: `无效的 dietGoal: ${dietGoalRaw}，可选: lose/maintain/gain` }),
+      summary: okSummary("nutrition_target_set", `无效的 dietGoal`),
+      card: "raw",
+      cardData: { error: `无效的 dietGoal: ${dietGoalRaw}` },
+    };
+  }
+  if (activityRaw && !validActivityLevels.includes(activityRaw as ActivityLevel)) {
+    return {
+      toolCallId: "",
+      name: "nutrition_target_set",
+      ok: false,
+      content: JSON.stringify({ error: `无效的 activityLevel: ${activityRaw}，可选: sedentary/light/moderate/active/very_active` }),
+      summary: okSummary("nutrition_target_set", `无效的 activityLevel`),
+      card: "raw",
+      cardData: { error: `无效的 activityLevel: ${activityRaw}` },
+    };
+  }
+  if (!dietGoalRaw && !activityRaw) {
+    return {
+      toolCallId: "",
+      name: "nutrition_target_set",
+      ok: false,
+      content: JSON.stringify({ error: "至少需要提供 dietGoal 或 activityLevel 中的一个" }),
+      summary: okSummary("nutrition_target_set", `未提供任何参数`),
+      card: "raw",
+      cardData: { error: "至少需要提供 dietGoal 或 activityLevel 中的一个" },
+    };
+  }
+
+  const patch: Partial<{ dietGoal: DietGoal; activityLevel: ActivityLevel }> = {};
+  if (dietGoalRaw) patch.dietGoal = dietGoalRaw as DietGoal;
+  if (activityRaw) patch.activityLevel = activityRaw as ActivityLevel;
+  userStore.setProfile(patch);
+
+  const target = userStore.nutritionTarget;
+  const waterGoalMl = userStore.waterGoalMl;
+  const dietGoal = userStore.profile.dietGoal;
+  const activityLevel = userStore.profile.activityLevel;
+  return {
+    toolCallId: "",
+    name: "nutrition_target_set",
+    ok: true,
+    content: JSON.stringify({ target, waterGoalMl, dietGoal, activityLevel }),
+    summary: okSummary("nutrition_target_set", `已更新营养目标`),
+    card: "nutrition",
+    cardData: { target, waterGoalMl, dietGoal, activityLevel },
+  };
+}
+
 function executeBodyMetricsHistory(args: AnyParams): ToolResult {
   const store = useHealthDataStore();
   const limit = Math.min(Math.max(Number(args.limit ?? 20), 1), 100);
@@ -1389,6 +1451,7 @@ async function dispatch(name: string, args: AnyParams): Promise<ToolResult> {
     case "workout_records_list": return executeWorkoutRecordsList(args);
     case "workout_record_detail": return executeWorkoutRecordDetail(args);
     case "nutrition_target_get": return executeNutritionTargetGet();
+    case "nutrition_target_set": return executeNutritionTargetSet(args);
     case "body_metrics_history": return executeBodyMetricsHistory(args);
     case "web_search": return await executeWebSearch(args);
     case "web_fetch": return await executeWebFetch(args);
@@ -1910,6 +1973,16 @@ export const PI_TOOLS_CORE: AgentTool<any, PiToolDetails>[] = [
     description: "获取每日营养目标（热量/碳水/蛋白/脂肪）、饮水目标、饮食目标与活动水平。",
     parameters: Type.Object({}),
     execute: wrapExecuteRich("nutrition_target_get"),
+  },
+  {
+    name: "nutrition_target_set",
+    label: "设置营养目标",
+    description: "修改每日营养目标。通过调整饮食目标(lose/maintain/gain)和活动水平(sedentary/light/moderate/active/very_active)来重新计算热量/碳水/蛋白质/脂肪目标。不传的参数保持不变。",
+    parameters: Type.Object({
+      dietGoal: Type.Optional(Type.String({ description: "饮食目标: lose(减脂)/maintain(维持)/gain(增肌)" })),
+      activityLevel: Type.Optional(Type.String({ description: "活动水平: sedentary(久坐)/light(轻度)/moderate(中度)/active(活跃)/very_active(非常活跃)" })),
+    }),
+    execute: wrapExecuteRich("nutrition_target_set"),
   },
   {
     name: "body_metrics_history",

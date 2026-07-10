@@ -11,7 +11,7 @@
  * 环数学修正：使用真实周长 2π·r + stroke-dasharray，弃用 0.97 fudge。
  * 图标配色统一使用 --icon-* tokens。
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useWorkoutStatsStore } from "@/stores/workoutStatsStore";
@@ -124,7 +124,17 @@ const DEFAULT_CONFIG: SummaryConfig = {
   layout: "row",
   items: ["water", "food", "workout"],
 };
-const cfg = usePersistentRef<SummaryConfig>("health-summary-config", { ...DEFAULT_CONFIG });
+const { value: cfg, save: saveCfg } = usePersistentRef<SummaryConfig>("health-summary-config", { ...DEFAULT_CONFIG });
+// 兼容旧版不完整数据：确保 items/layout 字段存在
+watch(cfg, (v) => {
+  if (!v || !Array.isArray(v.items) || v.items.length === 0 || (v.layout !== "row" && v.layout !== "split")) {
+    cfg.value = {
+      layout: v?.layout === "split" ? "split" : "row",
+      items: Array.isArray(v?.items) && v.items.length > 0 ? v.items : [...DEFAULT_CONFIG.items],
+    };
+    void saveCfg();
+  }
+}, { immediate: true });
 const showEdit = ref(false);
 
 const ALL_ITEMS: { id: ItemId; label: string }[] = [
@@ -204,12 +214,12 @@ function toggleItem(id: ItemId) {
     items.push(id);
   }
   cfg.value = { ...cfg.value, items };
-  void cfg.save();
+  void saveCfg();
 }
 
 function setLayout(layout: LayoutMode) {
   cfg.value = { ...cfg.value, layout };
-  void cfg.save();
+  void saveCfg();
 }
 
 /** 上移 / 下移项以调整顺序 */
@@ -221,7 +231,7 @@ function moveItem(id: ItemId, dir: -1 | 1) {
   if (target < 0 || target >= items.length) return;
   [items[idx], items[target]] = [items[target], items[idx]];
   cfg.value = { ...cfg.value, items };
-  void cfg.save();
+  void saveCfg();
 }
 
 function itemIndex(id: ItemId): number {
@@ -525,7 +535,7 @@ const weekBars = computed<ThickBar[]>(() => {
         :data="weekBars"
         :height="72"
         :bar-radius="5"
-        gap-ratio="0.45"
+        :gap-ratio="0.45"
         y-unit="min"
       />
       <div class="chart-hint">目标 {{ WORKOUT_WEEKLY_GOAL_MIN }} min / 周</div>

@@ -31,6 +31,8 @@ function onPointerDown(e: PointerEvent, idx: number, key: string) {
   // 仅主键触发
   if (e.button !== undefined && e.button !== 0) return;
   pressStart = { x: e.clientX, y: e.clientY, key, idx };
+  // 在 setTimeout 前捕获元素引用（事件派发结束后 currentTarget 会变为 null）
+  const target = e.currentTarget as HTMLElement | null;
   pressTimer = setTimeout(() => {
     pressTimer = null;
     dragKey.value = key;
@@ -40,7 +42,7 @@ function onPointerDown(e: PointerEvent, idx: number, key: string) {
     // 长按触感：轻微震动反馈（移动端）
     if (navigator.vibrate) navigator.vibrate(10);
     // 捕获指针，确保 move/up 都能收到
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    target?.setPointerCapture?.(e.pointerId);
   }, LONG_PRESS_MS);
 }
 

@@ -31,6 +31,9 @@ const toast = useToast();
 const { setActions, clearActions } = useTopBar();
 
 const chatRef = ref<HTMLElement | null>(null);
+/** 用户是否主动上滑（不在底部时不自动滚动） */
+const isNearBottom = ref(true);
+const SCROLL_THRESHOLD = 80; // px from bottom to consider "at bottom"
 const inputText = ref("");
 const pendingImages = ref<string[]>([]);
 const pendingCitations = ref<Citation[]>([]);
@@ -88,12 +91,21 @@ const suggestions = [
   "我的动作库里有哪些核心动作？",
 ];
 
-function scrollToBottom() {
+function scrollToBottom(force = false) {
   nextTick(() => {
-    if (chatRef.value) {
-      chatRef.value.scrollTop = chatRef.value.scrollHeight;
-    }
+    if (!chatRef.value) return;
+    if (!force && !isNearBottom.value) return;
+    chatRef.value.scrollTo({
+      top: chatRef.value.scrollHeight,
+      behavior: "smooth",
+    });
   });
+}
+
+function onChatScroll() {
+  if (!chatRef.value) return;
+  const el = chatRef.value;
+  isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
 }
 
 function textOf(msg: ChatMessage): string {
@@ -288,9 +300,9 @@ onMounted(async () => {
   if (typeof prefill === "string" && prefill.trim()) {
     inputText.value = prefill.trim();
     await nextTick();
-    scrollToBottom();
+    scrollToBottom(true);
   }
-  scrollToBottom();
+  scrollToBottom(true);
 });
 
 onUnmounted(() => {
@@ -307,15 +319,24 @@ watch(
   () => store.activeId,
   () => {
     showAll.value = false;
-    scrollToBottom();
+    scrollToBottom(true);
   },
+);
+/** AI 正在生成文本时，如果用户在底部则持续滚动 */
+watch(
+  () => {
+    const msgs = store.active?.messages ?? [];
+    const last = msgs[msgs.length - 1];
+    return last?.pending ? last.content : null;
+  },
+  () => scrollToBottom(),
 );
 </script>
 
 <template>
   <div class="ai-page">
     <!-- 聊天滚动区 -->
-    <div ref="chatRef" class="chat-area scrollbar-hide">
+    <div ref="chatRef" class="chat-area scrollbar-hide" @scroll.passive="onChatScroll">
       <!-- 未配置提示 -->
       <div v-if="!isConfigured" class="welcome-banner clean-card">
         <div class="welcome-avatar">
