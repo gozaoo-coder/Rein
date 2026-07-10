@@ -51,6 +51,11 @@ const menuItems = [
     path: '/sports',
   },
   {
+    icon: 'history',
+    title: '运动记录',
+    path: '/workout/history',
+  },
+  {
     icon: 'todo',
     title: '待办事项',
     path: '/todo',
@@ -213,6 +218,7 @@ function saveForm() {
         <div class="menu-item-left">
           <div class="menu-icon" :class="item.icon">
             <i v-if="item.icon === 'chart'" class="bi bi-bar-chart" style="font-size:20px"></i>
+            <i v-else-if="item.icon === 'history'" class="bi bi-clock-history" style="font-size:20px"></i>
             <i v-else-if="item.icon === 'stats'" class="bi bi-activity" style="font-size:20px"></i>
             <i v-else-if="item.icon === 'todo'" class="bi bi-check2-square" style="font-size:20px"></i>
             <i v-else-if="item.icon === 'settings'" class="bi bi-gear-fill" style="font-size:20px"></i>
@@ -512,6 +518,11 @@ function saveForm() {
 .menu-icon.chart {
   background: rgba(0, 122, 255, 0.12);
   color: var(--brand-500);
+}
+
+.menu-icon.history {
+  background: rgba(61, 169, 255, 0.12);
+  color: var(--icon-blue);
 }
 
 .menu-icon.stats {

@@ -13,11 +13,14 @@ import { pushChange, registerSyncEntity } from "@/composables/useSyncBridge";
 const KEY = "toolbox-entries";
 const REC_ID = "entries";
 
+export type ToolboxAccent = "blue" | "purple" | "red" | "orange" | "warm" | "green";
+
 export interface ToolboxEntry {
   key: string;
   label: string;
   icon: string;
   path: string;
+  accent: ToolboxAccent;
   pinned: boolean;
   order: number;
 }
@@ -25,15 +28,16 @@ export interface ToolboxEntry {
 /** 默认入口（顺序即默认 order） */
 function defaultEntries(): ToolboxEntry[] {
   const defs: Array<Omit<ToolboxEntry, "pinned" | "order">> = [
-    { key: "water", label: "饮水记录", icon: "cup-straw", path: "/health/water" },
-    { key: "todo", label: "待办", icon: "list-check", path: "/todo" },
-    { key: "food", label: "饮食记录", icon: "egg-fried", path: "/health/food" },
-    { key: "food-db", label: "食品数据库", icon: "egg", path: "/health/food-db" },
-    { key: "courses", label: "课程库", icon: "collection", path: "/sports/courses" },
-    { key: "exercises", label: "动作库", icon: "person-arms-up", path: "/sports/exercises" },
-    { key: "sports", label: "运动", icon: "activity", path: "/sports" },
-    { key: "weight", label: "体重", icon: "speedometer2", path: "/health/weight" },
-    { key: "overview", label: "健康概览", icon: "heart-pulse", path: "/health/metrics" },
+    { key: "water", label: "饮水记录", icon: "cup-straw", path: "/health/water", accent: "blue" },
+    { key: "todo", label: "待办", icon: "list-check", path: "/todo", accent: "purple" },
+    { key: "food", label: "饮食记录", icon: "egg-fried", path: "/health/food", accent: "warm" },
+    { key: "food-db", label: "食品数据库", icon: "egg", path: "/health/food-db", accent: "green" },
+    { key: "courses", label: "课程库", icon: "collection", path: "/sports/courses", accent: "purple" },
+    { key: "exercises", label: "动作库", icon: "person-arms-up", path: "/sports/exercises", accent: "orange" },
+    { key: "sports", label: "运动", icon: "activity", path: "/sports", accent: "red" },
+    { key: "weight", label: "体重", icon: "speedometer2", path: "/health/weight", accent: "blue" },
+    { key: "overview", label: "健康概览", icon: "heart-pulse", path: "/health/metrics", accent: "green" },
+    { key: "workout-history", label: "运动记录", icon: "clock-history", path: "/workout/history", accent: "orange" },
   ];
   return defs.map((d, i) => ({ ...d, pinned: false, order: i }));
 }
@@ -45,11 +49,14 @@ function normalize(entries: ToolboxEntry[]): ToolboxEntry[] {
   for (const e of entries) {
     if (!e || typeof e.key !== "string" || seen.has(e.key)) continue;
     seen.add(e.key);
+    const accent: ToolboxAccent =
+      typeof e.accent === "string" ? (e.accent as ToolboxAccent) : "warm";
     out.push({
       key: e.key,
       label: e.label ?? "",
       icon: e.icon ?? "grid",
       path: e.path ?? "/",
+      accent,
       pinned: !!e.pinned,
       order: typeof e.order === "number" ? e.order : out.length,
     });

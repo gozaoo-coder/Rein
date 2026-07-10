@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
+import { useUserStore } from "@/stores/userStore";
 import BarChartThin from "@/components/charts/BarChartThin.vue";
 import { BottomSheet } from "@/components/ui";
 
 const store = useHealthDataStore();
 
-const GOAL = 2000;
+const GOAL = computed(() => useUserStore().waterGoalMl);
 type ViewMode = "week" | "month";
 const view = ref<ViewMode>("week");
 const selectedDate = ref<Date>(new Date());
@@ -39,7 +40,7 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 const todayAmount = computed(() => store.waterByDate(dateKey(selectedDate.value)));
-const progress = computed(() => Math.min(todayAmount.value / GOAL, 1));
+const progress = computed(() => Math.min(todayAmount.value / GOAL.value, 1));
 const C = 2 * Math.PI * 36;
 const dashOffset = computed(() => C - progress.value * C);
 
@@ -181,7 +182,7 @@ const dayRecords = computed(() => {
           <circle cx="44" cy="44" r="36" fill="none" stroke="var(--bg-200)" stroke-width="7" />
           <circle
             cx="44" cy="44" r="36" fill="none"
-            stroke="#3da9ff" stroke-width="7"
+            stroke="var(--icon-blue)" stroke-width="7"
             stroke-linecap="round"
             :stroke-dasharray="C"
             :stroke-dashoffset="dashOffset"
@@ -194,7 +195,7 @@ const dayRecords = computed(() => {
         </svg>
         <div class="ring-text">
           <span class="ring-num">{{ todayAmount }}</span>
-          <span class="ring-goal">/{{ GOAL }}ml</span>
+          <span class="ring-goal">/{{ GOAL.value }}ml</span>
           <span v-if="!isToday" class="ring-date">{{ selectedDate.getMonth() + 1 }}/{{ selectedDate.getDate() }}</span>
         </div>
       </div>
@@ -202,7 +203,7 @@ const dayRecords = computed(() => {
         <div class="today-label">{{ isToday ? "今日饮水" : "当日饮水" }}</div>
         <div class="today-percent">{{ Math.round(progress * 100) }}%</div>
         <div class="today-tip" v-if="progress >= 1">达标! 💧</div>
-        <div class="today-tip" v-else>还差 {{ GOAL - todayAmount }}ml</div>
+        <div class="today-tip" v-else>还差 {{ GOAL.value - todayAmount }}ml</div>
         <button v-if="isToday" class="add-water-btn" @click="openAddSheet">
           <i class="bi bi-plus-lg" style="font-size:16px"></i>
           记水
@@ -237,7 +238,7 @@ const dayRecords = computed(() => {
         >
           <span class="dw">{{ d.weekday }}</span>
           <span class="dd">{{ d.label }}</span>
-          <span class="d-bar" :style="{ height: Math.min(d.amount / GOAL * 28, 28) + 'px', background: d.amount >= GOAL ? '#64bb5c' : '#3da9ff' }" />
+          <span class="d-bar" :style="{ height: Math.min(d.amount / GOAL.value * 28, 28) + 'px', background: d.amount >= GOAL.value ? '#64bb5c' : 'var(--icon-blue)' }" />
         </button>
       </div>
 
@@ -256,7 +257,7 @@ const dayRecords = computed(() => {
           >
             <template v-if="d.date">
               <span class="mg-num">{{ d.label }}</span>
-              <span v-if="d.amount > 0" class="mg-dot" :style="{ opacity: 0.3 + Math.min(d.amount / GOAL, 1) * 0.7 }" />
+              <span v-if="d.amount > 0" class="mg-dot" :style="{ opacity: 0.3 + Math.min(d.amount / GOAL.value, 1) * 0.7 }" />
             </template>
           </button>
         </div>
@@ -271,8 +272,8 @@ const dayRecords = computed(() => {
       <BarChartThin
         :data="chartData"
         :labels="chartLabels"
-        :height="100"
-        color="#3da9ff"
+        :height="64"
+        color="var(--icon-blue)"
         :show-y-axis="true"
         y-unit="ml"
       />
@@ -284,7 +285,7 @@ const dayRecords = computed(() => {
       <div class="history-list">
         <div v-for="rec in dayRecords" :key="rec.id" class="history-item">
           <div class="h-icon">
-            <i class="bi bi-droplet-fill" style="font-size:14px;color:#3da9ff"></i>
+            <i class="bi bi-droplet-fill" style="font-size:14px;color:var(--icon-blue)"></i>
           </div>
           <div class="h-info">
             <span class="h-amount">{{ rec.amount }}ml</span>
@@ -403,7 +404,7 @@ const dayRecords = computed(() => {
 
 .ring-date {
   font-size: 10px;
-  color: #3da9ff;
+  color: var(--icon-blue);
   margin-top: 2px;
 }
 
@@ -422,7 +423,7 @@ const dayRecords = computed(() => {
 .today-percent {
   font-size: var(--text-3xl);
   font-weight: var(--fw-bold);
-  color: #3da9ff;
+  color: var(--icon-blue);
   line-height: 1.1;
 }
 
@@ -440,7 +441,7 @@ const dayRecords = computed(() => {
   padding: 8px 18px;
   border-radius: var(--radius-full);
   border: none;
-  background: #3da9ff;
+  background: var(--icon-blue);
   color: #fff;
   font-size: var(--text-sm);
   font-weight: var(--fw-semibold);
@@ -538,7 +539,7 @@ const dayRecords = computed(() => {
 }
 
 .day-chip.is-selected .dd {
-  color: #3da9ff;
+  color: var(--icon-blue);
   font-weight: var(--fw-bold);
 }
 
@@ -560,7 +561,7 @@ const dayRecords = computed(() => {
 .d-bar {
   width: 6px;
   border-radius: 3px;
-  background: #3da9ff;
+  background: var(--icon-blue);
   min-height: 2px;
   transition: height 0.3s;
 }
@@ -612,7 +613,7 @@ const dayRecords = computed(() => {
 }
 
 .mg-cell.is-selected .mg-num {
-  color: #3da9ff;
+  color: var(--icon-blue);
   font-weight: var(--fw-bold);
 }
 
@@ -630,7 +631,7 @@ const dayRecords = computed(() => {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: #3da9ff;
+  background: var(--icon-blue);
 }
 
 .chart-card {
@@ -749,7 +750,7 @@ const dayRecords = computed(() => {
 .amount-num {
   font-size: 56px;
   font-weight: var(--fw-bold);
-  color: #3da9ff;
+  color: var(--icon-blue);
   line-height: 1;
 }
 
@@ -777,9 +778,9 @@ const dayRecords = computed(() => {
 }
 
 .preset-btn.active {
-  border-color: #3da9ff;
+  border-color: var(--icon-blue);
   background: rgba(61, 169, 255, 0.1);
-  color: #3da9ff;
+  color: var(--icon-blue);
 }
 
 .slider-wrap {
@@ -792,7 +793,7 @@ const dayRecords = computed(() => {
   height: 6px;
   -webkit-appearance: none;
   appearance: none;
-  background: linear-gradient(to right, #3da9ff 0%, #3da9ff var(--slider-percent, 0)%, var(--bg-200) var(--slider-percent, 0)%, var(--bg-200) 100%);
+  background: linear-gradient(to right, var(--icon-blue) 0%, var(--icon-blue) var(--slider-percent, 0)%, var(--bg-200) var(--slider-percent, 0)%, var(--bg-200) 100%);
   border-radius: var(--radius-full);
   outline: none;
 }
@@ -803,7 +804,7 @@ const dayRecords = computed(() => {
   height: 24px;
   border-radius: 50%;
   background: #fff;
-  border: 3px solid #3da9ff;
+  border: 3px solid var(--icon-blue);
   box-shadow: var(--shadow-md);
   cursor: pointer;
 }
@@ -813,7 +814,7 @@ const dayRecords = computed(() => {
   height: 24px;
   border-radius: 50%;
   background: #fff;
-  border: 3px solid #3da9ff;
+  border: 3px solid var(--icon-blue);
   box-shadow: var(--shadow-md);
   cursor: pointer;
 }
@@ -842,7 +843,7 @@ const dayRecords = computed(() => {
   bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(180deg, #7dc8ff 0%, #3da9ff 100%);
+  background: linear-gradient(180deg, #7dc8ff 0%, var(--icon-blue) 100%);
   transition: height 0.2s;
   border-radius: 0 0 38px 38px;
   overflow: hidden;
@@ -869,7 +870,7 @@ const dayRecords = computed(() => {
   padding: 14px;
   border: none;
   border-radius: var(--radius-lg);
-  background: #3da9ff;
+  background: var(--icon-blue);
   color: #fff;
   font-size: var(--text-md);
   font-weight: var(--fw-bold);

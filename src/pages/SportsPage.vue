@@ -255,6 +255,16 @@ onMounted(() => {
           </div>
           <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
         </button>
+        <button class="lib-card clean-card clean-card--interactive" @click="router.push('/workout/history')">
+          <div class="lib-icon icon-circle icon-circle--blue">
+            <i class="bi bi-clock-history" style="font-size:20px"></i>
+          </div>
+          <div class="lib-text">
+            <div class="lib-name">运动记录</div>
+            <div class="lib-sub">查看历史训练记录</div>
+          </div>
+          <i class="bi bi-chevron-right chevron" style="font-size:18px"></i>
+        </button>
       </div>
     </section>
 

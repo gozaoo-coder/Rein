@@ -159,7 +159,7 @@ onBeforeUnmount(onPointerCancel);
 
         <div class="tb-glow" />
 
-        <div class="tb-icon icon-circle icon-circle--warm">
+        <div class="tb-icon icon-circle" :class="`icon-circle--${entry.accent}`">
           <i :class="['bi', `bi-${entry.icon}`]" style="font-size:22px"></i>
         </div>
         <div class="tb-label">{{ entry.label }}</div>
