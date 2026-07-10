@@ -5,10 +5,13 @@
  * - 模型列表通过 refreshModels() 拉取
  * - 自动检测 vision 模态，显示徽标
  * - autoExecute 开关
+ * - 多平台预设：保存/应用/重命名/删除 + 一键模板
  */
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
+import type { AiPreset } from "@/stores/aiConfigStore";
+import { BottomSheet } from "@/components/ui";
 
 const router = useRouter();
 const cfg = useAiConfigStore();
@@ -22,13 +25,25 @@ const testing = ref(false);
 const testMsg = ref<string | null>(null);
 const testOk = ref(false);
 
+/** 内置一键模板（仅填 baseURL，用户自行输入 apiKey） */
+const PRESET_TEMPLATES = [
+  { name: "OpenAI", baseURL: "https://api.openai.com/v1" },
+  { name: "DeepSeek", baseURL: "https://api.deepseek.com/v1" },
+  { name: "智谱", baseURL: "https://open.bigmodel.cn/api/paas/v4" },
+  { name: "Qwen", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+];
+
 onMounted(async () => {
   await cfg.load();
+  syncFromConfig();
+});
+
+function syncFromConfig() {
   baseURL.value = cfg.config.baseURL;
   apiKey.value = cfg.config.apiKey;
   model.value = cfg.config.model;
   autoExecute.value = cfg.config.autoExecute;
-});
+}
 
 async function saveAll() {
   await cfg.save({
@@ -57,13 +72,86 @@ async function refreshModels() {
 async function pickModel(id: string) {
   model.value = id;
   await cfg.selectModel(id);
-  baseURL.value = cfg.config.baseURL;
-  apiKey.value = cfg.config.apiKey;
+  syncFromConfig();
 }
 
 async function toggleAuto() {
   autoExecute.value = !autoExecute.value;
   await cfg.save({ autoExecute: autoExecute.value });
+}
+
+// ===== 预设选择 =====
+const selectedPreset = computed<string>({
+  get: () => cfg.activePresetId ?? "",
+  set: (v) => {
+    void onPresetChange(v);
+  },
+});
+
+async function onPresetChange(value: string) {
+  if (!value) {
+    await cfg.useCurrentConfig();
+    return;
+  }
+  await cfg.applyPreset(value);
+  syncFromConfig();
+}
+
+// ===== 保存 / 重命名 命名弹层 =====
+const showNaming = ref(false);
+const namingMode = ref<"create" | "rename">("create");
+const namingId = ref<string>("");
+const namingName = ref("");
+
+function openSavePreset() {
+  namingMode.value = "create";
+  namingName.value = "";
+  showNaming.value = true;
+}
+
+function openRename(p: AiPreset) {
+  namingMode.value = "rename";
+  namingId.value = p.id;
+  namingName.value = p.name;
+  showNaming.value = true;
+}
+
+async function confirmName() {
+  const name = namingName.value.trim();
+  if (!name) return;
+  if (namingMode.value === "create") {
+    await cfg.savePreset(name);
+  } else {
+    await cfg.renamePreset(namingId.value, name);
+  }
+  showNaming.value = false;
+}
+
+// ===== 删除（二次确认） =====
+const pendingDeleteId = ref<string | null>(null);
+let deleteTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function removePreset(p: AiPreset) {
+  if (pendingDeleteId.value === p.id) {
+    if (deleteTimer) clearTimeout(deleteTimer);
+    deleteTimer = null;
+    pendingDeleteId.value = null;
+    await cfg.deletePreset(p.id);
+    return;
+  }
+  pendingDeleteId.value = p.id;
+  deleteTimer = setTimeout(() => {
+    pendingDeleteId.value = null;
+    deleteTimer = null;
+  }, 3000);
+}
+
+// ===== 一键模板 =====
+async function applyTemplate(t: { name: string; baseURL: string }) {
+  await cfg.useCurrentConfig();
+  baseURL.value = t.baseURL;
+  await saveAll();
+  testMsg.value = null;
 }
 
 function goBack() {
@@ -79,6 +167,44 @@ function goBack() {
       </button>
       <h2 class="sub-title">AI 配置</h2>
     </header>
+
+    <!-- 预设选择 + 保存 -->
+    <section class="clean-card preset-card">
+      <div class="preset-head">
+        <div class="preset-label">
+          <i class="bi bi-collection" style="font-size:16px"></i>
+          <span>配置预设</span>
+        </div>
+        <button class="save-preset-btn" @click="openSavePreset">
+          <i class="bi bi-bookmark-plus" style="font-size:14px"></i>
+          <span>保存为预设</span>
+        </button>
+      </div>
+      <div class="preset-select-wrap">
+        <i class="bi bi-boxes preset-select-icon" style="font-size:16px"></i>
+        <select v-model="selectedPreset" class="preset-select">
+          <option value="">当前配置（未绑定预设）</option>
+          <option v-for="p in cfg.presets" :key="p.id" :value="p.id">{{ p.name }}</option>
+        </select>
+        <i class="bi bi-chevron-down preset-select-arrow" style="font-size:12px"></i>
+      </div>
+    </section>
+
+    <!-- 一键模板 -->
+    <section class="clean-card template-card">
+      <div class="template-label">一键填充平台</div>
+      <div class="template-row">
+        <button
+          v-for="t in PRESET_TEMPLATES"
+          :key="t.name"
+          class="template-chip"
+          :class="{ active: baseURL.trim() === t.baseURL }"
+          @click="applyTemplate(t)"
+        >
+          {{ t.name }}
+        </button>
+      </div>
+    </section>
 
     <!-- 当前状态卡 -->
     <section class="clean-card status-card" :class="{ configured: cfg.isConfigured }">
@@ -184,6 +310,44 @@ function goBack() {
       </div>
     </section>
 
+    <!-- 已保存预设列表 -->
+    <section v-if="cfg.presets.length" class="clean-card preset-list-card">
+      <div class="preset-list-head">已保存预设</div>
+      <div class="preset-list">
+        <div
+          v-for="p in cfg.presets"
+          :key="p.id"
+          class="preset-row"
+          :class="{ active: cfg.activePresetId === p.id }"
+        >
+          <button class="preset-row-main" @click="cfg.activePresetId !== p.id && onPresetChange(p.id)">
+            <div class="preset-row-name">
+              <i class="bi bi-bookmark-fill preset-row-icon" style="font-size:14px"></i>
+              <span class="preset-row-title">{{ p.name }}</span>
+              <span v-if="cfg.activePresetId === p.id" class="preset-row-badge">当前</span>
+            </div>
+            <div class="preset-row-sub">
+              {{ p.config.baseURL || "—" }}
+              <span v-if="p.config.model"> · {{ p.config.model }}</span>
+            </div>
+          </button>
+          <div class="preset-row-actions">
+            <button class="icon-action" aria-label="重命名" @click="openRename(p)">
+              <i class="bi bi-pencil" style="font-size:14px"></i>
+            </button>
+            <button
+              class="icon-action danger"
+              :class="{ confirm: pendingDeleteId === p.id }"
+              :aria-label="pendingDeleteId === p.id ? '再次点击确认删除' : '删除'"
+              @click="removePreset(p)"
+            >
+              <i class="bi bi-trash" style="font-size:14px"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- 帮助 -->
     <section class="clean-card help-card">
       <h3 class="help-title">说明</h3>
@@ -192,8 +356,28 @@ function goBack() {
         <li>支持 OpenAI 兼容接口：OpenAI / DeepSeek / 智谱 / Qwen / Claude 兼容代理等。</li>
         <li>模型列表通过 GET {baseURL}/models 拉取，失败可手动填入 id。</li>
         <li>视觉模型检测基于模型 id 关键字（gpt-4o / claude-3 / gemini / qwen-vl 等），支持图片输入时聊天输入框会出现图片按钮。</li>
+        <li>预设可保存多套配置快速切换；编辑当前表单会同步更新已激活的预设。</li>
       </ul>
     </section>
+
+    <!-- 命名弹层 -->
+    <BottomSheet v-model:visible="showNaming" :title="namingMode === 'create' ? '保存为预设' : '重命名预设'" :detents="['medium']" default-detent="medium">
+      <div class="naming-body">
+        <input
+          v-model="namingName"
+          class="field-input naming-input"
+          placeholder="预设名称"
+          maxlength="30"
+          @keydown.enter="confirmName"
+        />
+        <div class="naming-actions">
+          <button class="naming-btn naming-cancel" @click="showNaming = false">取消</button>
+          <button class="naming-btn naming-ok" :disabled="!namingName.trim()" @click="confirmName">
+            {{ namingMode === 'create' ? '保存' : '重命名' }}
+          </button>
+        </div>
+      </div>
+    </BottomSheet>
   </div>
 </template>
 
@@ -229,6 +413,108 @@ function goBack() {
   font-weight: var(--fw-bold);
   color: var(--color-text);
   margin: 0;
+}
+
+/* 预设选择卡 */
+.preset-card {
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.preset-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.preset-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.preset-label i { color: var(--color-warm); }
+.save-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--color-warm);
+  color: #fff;
+  font-size: var(--text-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-immersive);
+}
+.save-preset-btn:active { transform: scale(0.95); }
+
+.preset-select-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg-100);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+}
+.preset-select-icon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  margin-right: var(--space-2);
+}
+.preset-select {
+  flex: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: var(--space-3) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  min-width: 0;
+}
+.preset-select-arrow {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
+/* 一键模板 */
+.template-card {
+  padding: var(--space-4) var(--space-5);
+}
+.template-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--fw-semibold);
+  margin-bottom: var(--space-2);
+}
+.template-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.template-chip {
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-immersive);
+}
+.template-chip:active { transform: scale(0.95); }
+.template-chip.active {
+  background: var(--warm-50);
+  border-color: var(--color-warm);
+  color: var(--color-warm);
 }
 
 /* 状态卡 */
@@ -469,6 +755,109 @@ function goBack() {
 }
 .toggle.on .toggle-knob { transform: translateX(18px); }
 
+/* 预设列表 */
+.preset-list-card {
+  padding: var(--space-5);
+}
+.preset-list-head {
+  font-size: var(--text-md);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-3);
+}
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  transition: all var(--dur-fast);
+}
+.preset-row.active {
+  background: var(--warm-50);
+  border-color: var(--color-warm);
+}
+.preset-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+.preset-row-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.preset-row-icon { color: var(--color-text-tertiary); flex-shrink: 0; }
+.preset-row.active .preset-row-icon { color: var(--color-warm); }
+.preset-row-title {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preset-row-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--color-warm);
+  color: #fff;
+  font-weight: var(--fw-semibold);
+  flex-shrink: 0;
+}
+.preset-row-sub {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preset-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.icon-action {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: var(--bg-200);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+.icon-action:active { transform: scale(0.9); }
+.icon-action.danger { color: var(--color-danger); }
+.icon-action.danger.confirm {
+  background: var(--color-danger);
+  color: #fff;
+  animation: shake 0.3s var(--ease-immersive);
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
 /* 帮助卡 */
 .help-card { padding: var(--space-5); }
 .help-title {
@@ -499,4 +888,39 @@ function goBack() {
   color: var(--color-text-tertiary);
   font-weight: bold;
 }
+
+/* 命名弹层 */
+.naming-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-2) var(--space-4);
+}
+.naming-input {
+  background: var(--bg-100);
+}
+.naming-actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+.naming-btn {
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+.naming-cancel {
+  background: var(--bg-200);
+  color: var(--color-text-secondary);
+}
+.naming-cancel:active { transform: scale(0.96); }
+.naming-ok {
+  background: var(--color-warm);
+  color: #fff;
+}
+.naming-ok:disabled { opacity: 0.4; cursor: not-allowed; }
+.naming-ok:not(:disabled):active { transform: scale(0.96); }
 </style>

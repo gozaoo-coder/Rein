@@ -73,6 +73,8 @@
   --icon-red-dark: #e84026;
   --icon-blue: #3da9ff;
   --icon-orange: #ff8c3a;
+  --icon-green: #4caf50;
+  --icon-warm: var(--warm-500);
 
   /* --- Background (10-step) --- */
   --bg-50: #ffffff;

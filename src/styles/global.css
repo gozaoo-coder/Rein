@@ -293,7 +293,8 @@ code, pre, kbd {
 .icon-circle--red { background: var(--icon-red); color: #fff; }
 .icon-circle--orange { background: var(--icon-orange); color: #fff; }
 .icon-circle--blue { background: var(--icon-blue); color: #fff; }
-.icon-circle--warm { background: var(--color-warm); color: #fff; }
+.icon-circle--green { background: var(--icon-green); color: #fff; }
+.icon-circle--warm { background: var(--icon-warm); color: #fff; }
 
 /* --- Stat number (large) --- */
 .stat-value {
