@@ -7,9 +7,18 @@
  */
 import { computed, onMounted } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
+import { useRouter } from "vue-router";
 import { sumTodayNutrients, macroEnergyRatio, type NutrientEntry } from "@/utils/foodNutrients";
 
 const store = useHealthDataStore();
+const router = useRouter();
+
+/** Macro colors aligned with FoodPage (CSS tokens only). */
+const MACRO_RING_COLOR = {
+  carbs: "var(--color-warning)",
+  protein: "var(--color-success)",
+  fat: "var(--icon-purple)",
+};
 
 onMounted(() => {
   void store.load();
@@ -63,9 +72,9 @@ const segments = computed(() => {
   if (total <= 0) return [];
   let acc = 0;
   const segs = [
-    { name: "碳水", pct: ratio.value.carbs, color: "#f5a623" },
-    { name: "蛋白质", pct: ratio.value.protein, color: "#64bb5c" },
-    { name: "脂肪", pct: ratio.value.fat, color: "#9b59b6" },
+    { name: "碳水", pct: ratio.value.carbs, color: MACRO_RING_COLOR.carbs },
+    { name: "蛋白质", pct: ratio.value.protein, color: MACRO_RING_COLOR.protein },
+    { name: "脂肪", pct: ratio.value.fat, color: MACRO_RING_COLOR.fat },
   ];
   return segs.map((s) => {
     const dash = (s.pct / 100) * CIRC;
@@ -76,16 +85,45 @@ const segments = computed(() => {
 });
 
 const hasData = computed(() => todayRecords.value.length > 0);
+
+function goFoodRecords() {
+  void router.push("/health/food");
+}
+
+function macroRingColor(name: string): string {
+  if (name === "碳水化合物") return MACRO_RING_COLOR.carbs;
+  if (name === "蛋白质") return MACRO_RING_COLOR.protein;
+  return MACRO_RING_COLOR.fat;
+}
 </script>
 
 <template>
   <div class="food-comp-page page-scroll">
-    <h2 class="page-title">今日饮食构成</h2>
+    <div class="page-head">
+      <button class="back-btn" @click="goFoodRecords">
+        <i class="bi bi-chevron-left" style="font-size:14px"></i>
+        <span>饮食记录</span>
+      </button>
+      <h2 class="page-title">饮食构成</h2>
+    </div>
+
+    <div class="target-summary clean-card">
+      <div class="ts-main">
+        <span class="ts-label">每日热量目标</span>
+        <span class="ts-cal">{{ store.dailyCalorieGoal }}<span class="ts-unit">千卡</span></span>
+      </div>
+      <div class="ts-macros">
+        <span class="ts-macro"><i class="ts-macro-dot" :style="{ background: MACRO_RING_COLOR.carbs }"></i>碳水 {{ store.macroTargets.carbs }}g</span>
+        <span class="ts-macro"><i class="ts-macro-dot" :style="{ background: MACRO_RING_COLOR.protein }"></i>蛋白质 {{ store.macroTargets.protein }}g</span>
+        <span class="ts-macro"><i class="ts-macro-dot" :style="{ background: MACRO_RING_COLOR.fat }"></i>脂肪 {{ store.macroTargets.fat }}g</span>
+      </div>
+    </div>
 
     <div v-if="!hasData" class="empty-card clean-card">
       <i class="bi bi-egg-fried" style="font-size:36px;color:var(--color-text-tertiary)"></i>
       <p>今日暂无饮食记录</p>
       <p class="empty-sub">去饮食页记录今日摄入即可查看构成</p>
+      <button class="empty-action" @click="goFoodRecords">去饮食记录</button>
     </div>
 
     <template v-else>
@@ -103,25 +141,26 @@ const hasData = computed(() => todayRecords.value.length > 0);
               transform="rotate(-90 70 70)"
               style="transition: stroke-dasharray 0.5s var(--ease-immersive), stroke-dashoffset 0.5s var(--ease-immersive)"
             />
-            <text x="70" y="64" text-anchor="middle" font-size="22" font-weight="700" fill="var(--color-text)">{{ cal }}</text>
-            <text x="70" y="82" text-anchor="middle" font-size="11" fill="var(--color-text-tertiary)">千卡</text>
+            <text x="70" y="60" text-anchor="middle" font-size="20" font-weight="700" fill="var(--color-text)">{{ cal }}</text>
+            <text x="70" y="74" text-anchor="middle" font-size="9" fill="var(--color-text-tertiary)">/ {{ store.dailyCalorieGoal }} 千卡</text>
+            <text x="70" y="88" text-anchor="middle" font-size="10" fill="var(--color-warm)" font-weight="600">{{ cal > 0 ? Math.round(cal / store.dailyCalorieGoal * 100) : 0 }}%</text>
           </svg>
         </div>
         <div class="legend">
           <div class="legend-item">
-            <span class="dot" style="background:#f5a623"></span>
+            <span class="dot" :style="{ background: MACRO_RING_COLOR.carbs }"></span>
             <span class="lbl">碳水</span>
             <span class="val">{{ carbs }}g</span>
             <span class="pct">{{ ratio.carbs }}%</span>
           </div>
           <div class="legend-item">
-            <span class="dot" style="background:#64bb5c"></span>
+            <span class="dot" :style="{ background: MACRO_RING_COLOR.protein }"></span>
             <span class="lbl">蛋白质</span>
             <span class="val">{{ protein }}g</span>
             <span class="pct">{{ ratio.protein }}%</span>
           </div>
           <div class="legend-item">
-            <span class="dot" style="background:#9b59b6"></span>
+            <span class="dot" :style="{ background: MACRO_RING_COLOR.fat }"></span>
             <span class="lbl">脂肪</span>
             <span class="val">{{ fat }}g</span>
             <span class="pct">{{ ratio.fat }}%</span>
@@ -140,7 +179,7 @@ const hasData = computed(() => todayRecords.value.length > 0);
             <div v-if="n.group === 'macro' && n.name !== '热量'" class="n-bar">
               <div class="n-bar-fill" :style="{
                 width: Math.min(n.value / macroGoalFor(n.name) * 100, 100) + '%',
-                background: n.name === '碳水化合物' ? '#f5a623' : n.name === '蛋白质' ? '#64bb5c' : '#9b59b6',
+                background: macroRingColor(n.name),
               }" />
             </div>
           </div>
@@ -158,11 +197,94 @@ const hasData = computed(() => todayRecords.value.length > 0);
   padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px 6px 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-50);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+
+.back-btn:active {
+  transform: scale(0.95);
+  background: var(--bg-100);
+}
+
 .page-title {
   font-size: var(--text-xl);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   margin: 0;
+}
+
+/* ===== Nutrition target summary ===== */
+.target-summary {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ts-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ts-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+.ts-cal {
+  font-size: var(--text-2xl);
+  font-weight: var(--fw-bold);
+  color: var(--color-warm);
+  line-height: 1.1;
+}
+
+.ts-unit {
+  font-size: var(--text-sm);
+  color: var(--color-text-tertiary);
+  font-weight: var(--fw-medium);
+  margin-left: 3px;
+}
+
+.ts-macros {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ts-macro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  font-weight: var(--fw-medium);
+}
+
+.ts-macro-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
 }
 
 .empty-card {
@@ -176,6 +298,19 @@ const hasData = computed(() => todayRecords.value.length > 0);
 }
 .empty-card p { margin: 0; font-size: var(--text-sm); }
 .empty-sub { font-size: var(--text-xs) !important; color: var(--color-text-tertiary); }
+
+.empty-action {
+  margin-top: var(--space-2);
+  padding: 8px 18px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: var(--color-warm);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+.empty-action:active { transform: scale(0.96); }
 
 .overview-card {
   padding: var(--space-4);

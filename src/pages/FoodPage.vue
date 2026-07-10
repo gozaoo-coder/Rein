@@ -8,6 +8,7 @@
  */
 import { computed, onMounted, ref } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
+import { useUserStore } from "@/stores/userStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { useRouter } from "vue-router";
 import MultiLineChart from "@/components/charts/MultiLineChart.vue";
@@ -15,11 +16,22 @@ import { BottomSheet } from "@/components/ui";
 import { useToast } from "@/composables/useToast";
 import { textComplete, visionChat } from "@/composables/useVisionChat";
 import { FOOD_TEXT_PARSE_PROMPT } from "@/data/aiPrompt";
+import type { DietGoal, ActivityLevel } from "@/types/health";
+import { ACTIVITY_LEVEL_LABEL } from "@/types/health";
 
 const store = useHealthDataStore();
+const userStore = useUserStore();
 const aiCfg = useAiConfigStore();
 const router = useRouter();
 const toast = useToast();
+
+const DIET_GOAL_LABEL: Record<DietGoal, string> = {
+  lose: "减脂",
+  maintain: "维持",
+  gain: "增肌",
+};
+const DIET_GOAL_ORDER: DietGoal[] = ["lose", "maintain", "gain"];
+const ACTIVITY_ORDER: ActivityLevel[] = ["sedentary", "light", "moderate", "active", "very_active"];
 
 type Macro = "calories" | "carbs" | "protein" | "fat";
 type AddTab = "ai" | "search" | "manual";
@@ -136,9 +148,9 @@ const MACRO_UNIT: Record<Macro, string> = {
 
 const MACRO_COLOR: Record<Macro, string> = {
   calories: "var(--color-warm)",
-  carbs: "#f5a623",
-  protein: "#64bb5c",
-  fat: "#9b59b6",
+  carbs: "var(--color-warning)",
+  protein: "var(--color-success)",
+  fat: "var(--icon-purple)",
 };
 
 const isToday = computed(() => isSameDay(selectedDate.value, new Date()));
@@ -154,15 +166,19 @@ const dayValues = computed(() => {
   };
 });
 
-function dailyMacro(d: Date): number {
+function dailyMacroValue(d: Date, m: Macro): number {
   const k = dateKey(d);
   const recs = store.foodRecordsByDate(k);
-  switch (macro.value) {
+  switch (m) {
     case "calories": return recs.reduce((s, r) => s + r.calories, 0);
     case "carbs": return Math.round(recs.reduce((s, r) => s + r.carbs, 0) * 10) / 10;
     case "protein": return Math.round(recs.reduce((s, r) => s + r.protein, 0) * 10) / 10;
     case "fat": return Math.round(recs.reduce((s, r) => s + r.fat, 0) * 10) / 10;
   }
+}
+
+function dailyMacro(d: Date): number {
+  return dailyMacroValue(d, macro.value);
 }
 
 const weekDays = computed(() => {
@@ -205,29 +221,41 @@ const monthDays = computed(() => {
   return out;
 });
 
-const chartData = computed(() =>
-  view.value === "week"
-    ? weekDays.value.map((d) => d.value)
-    : monthDays.value.filter((d) => d.date).map((d) => d.value),
-);
 const chartLabels = computed(() =>
   view.value === "week"
     ? weekDays.value.map((d) => d.label)
     : monthDays.value.filter((d) => d.date).map((d) => d.label),
 );
 
-const chartSeries = computed(() => [
-  {
-    data: chartData.value,
-    color: MACRO_COLOR[macro.value],
-    label: MACRO_LABEL[macro.value],
-  },
-]);
+/** Active day list (dates only) for the current view, used by the 4-macro overlay. */
+const chartDays = computed(() =>
+  view.value === "week"
+    ? weekDays.value.map((d) => d.date)
+    : monthDays.value.filter((d) => d.date).map((d) => d.date!),
+);
+
+/**
+ * 4-macro overlay series. Each series is normalized to % of its own daily goal
+ * so all four lines share one comparable scale (calories ~2000, carbs ~250 etc.
+ * would otherwise dwarf each other). Reference line at 100 = goal reached.
+ */
+const chartSeries = computed(() => {
+  const goals = GOALS.value;
+  return (["calories", "carbs", "protein", "fat"] as Macro[]).map((m) => ({
+    data: chartDays.value.map((d) => {
+      const g = goals[m];
+      const v = dailyMacroValue(d, m);
+      return g > 0 ? Math.round((v / g) * 1000) / 10 : 0;
+    }),
+    color: MACRO_COLOR[m],
+    label: MACRO_LABEL[m],
+  }));
+});
 
 const chartReference = computed(() => ({
-  value: GOALS.value[macro.value],
+  value: 100,
   color: "var(--color-text-tertiary)",
-  label: `目标 ${GOALS.value[macro.value]}`,
+  label: "目标 100%",
   dashed: true,
 }));
 
@@ -434,11 +462,77 @@ function goFoodDb() {
 function goFoodComposition() {
   void router.push("/health/food/composition");
 }
+
+// ===== Nutrition target adjustment =====
+const showTargetSheet = ref(false);
+const draftDietGoal = ref<DietGoal>("maintain");
+const draftActivity = ref<ActivityLevel>("moderate");
+
+function openTargetSheet() {
+  draftDietGoal.value = userStore.profile.dietGoal;
+  draftActivity.value = userStore.profile.activityLevel;
+  showTargetSheet.value = true;
+}
+
+function saveTarget() {
+  userStore.setProfile({
+    dietGoal: draftDietGoal.value,
+    activityLevel: draftActivity.value,
+  });
+  toast.success("营养目标已更新");
+  showTargetSheet.value = false;
+}
 </script>
 
 <template>
   <div class="food-page">
-    <h2 class="page-title" role="button" tabindex="0" @click="goFoodComposition" @keydown.enter="goFoodComposition">饮食热量</h2>
+    <div class="page-head">
+      <h2 class="page-title">饮食热量</h2>
+      <button class="comp-entry-btn" @click="goFoodComposition">
+        <i class="bi bi-pie-chart-fill" style="font-size:14px"></i>
+        <span>饮食构成</span>
+      </button>
+    </div>
+
+    <div class="target-card clean-card">
+      <div class="target-header">
+        <span class="target-title">营养目标</span>
+        <button class="target-edit-btn" @click="openTargetSheet">
+          <i class="bi bi-sliders" style="font-size:12px"></i>
+          <span>调整目标</span>
+        </button>
+      </div>
+      <div class="target-grid">
+        <div class="target-cell target-cell--main">
+          <span class="target-label">每日热量</span>
+          <span class="target-val">{{ store.dailyCalorieGoal }}<span class="target-unit">千卡</span></span>
+        </div>
+        <div class="target-cell">
+          <span class="target-label">碳水</span>
+          <span class="target-val">{{ store.macroTargets.carbs }}<span class="target-unit">g</span></span>
+        </div>
+        <div class="target-cell">
+          <span class="target-label">蛋白质</span>
+          <span class="target-val">{{ store.macroTargets.protein }}<span class="target-unit">g</span></span>
+        </div>
+        <div class="target-cell">
+          <span class="target-label">脂肪</span>
+          <span class="target-val">{{ store.macroTargets.fat }}<span class="target-unit">g</span></span>
+        </div>
+        <div class="target-cell">
+          <span class="target-label">饮水</span>
+          <span class="target-val">{{ store.waterGoalMl }}<span class="target-unit">ml</span></span>
+        </div>
+        <div class="target-cell">
+          <span class="target-label">目标</span>
+          <span class="target-val-text">{{ DIET_GOAL_LABEL[userStore.profile.dietGoal] }}</span>
+        </div>
+        <div class="target-cell">
+          <span class="target-label">活动</span>
+          <span class="target-val-text">{{ ACTIVITY_LEVEL_LABEL[userStore.profile.activityLevel] }}</span>
+        </div>
+      </div>
+    </div>
 
     <div class="today-card clean-card">
       <div class="macro-main">
@@ -525,7 +619,7 @@ function goFoodComposition() {
             class="d-bar"
             :style="{
               height: Math.min(d.value / GOALS[macro] * 28, 28) + 'px',
-              background: d.value >= GOALS[macro] ? '#64bb5c' : MACRO_COLOR[macro],
+              background: d.value >= GOALS[macro] ? 'var(--color-success)' : MACRO_COLOR[macro],
             }"
           />
         </button>
@@ -555,15 +649,28 @@ function goFoodComposition() {
 
     <div class="chart-card clean-card">
       <div class="chart-header">
-        <span class="chart-title">{{ MACRO_LABEL[macro] }} · {{ view === "week" ? "本周" : "本月" }}</span>
-        <span class="chart-avg">日均 {{ avgValue }}{{ MACRO_UNIT[macro] }} · 目标 {{ GOALS[macro] }}{{ MACRO_UNIT[macro] }}</span>
+        <div class="chart-header-left">
+          <span class="chart-title">营养摄入 · {{ view === "week" ? "本周" : "本月" }}</span>
+          <span class="chart-avg">{{ MACRO_LABEL[macro] }} 日均 {{ avgValue }}{{ MACRO_UNIT[macro] }} · 目标 {{ GOALS[macro] }}{{ MACRO_UNIT[macro] }}</span>
+        </div>
+        <div class="chart-legend">
+          <span
+            v-for="m in (['calories', 'carbs', 'protein', 'fat'] as Macro[])"
+            :key="m"
+            class="chart-legend-chip"
+            :class="{ 'chart-legend-chip--active': macro === m }"
+            @click="macro = m"
+          >
+            <span class="chart-legend-dot" :style="{ background: MACRO_COLOR[m] }" />
+            <span class="chart-legend-text">{{ MACRO_LABEL[m] }}</span>
+          </span>
+        </div>
       </div>
       <MultiLineChart
         :series="chartSeries"
         :labels="chartLabels"
         :height="120"
         :reference-line="chartReference"
-        :show-y-axis="true"
         :show-grid="true"
       />
     </div>
@@ -745,6 +852,49 @@ function goFoodComposition() {
         </div>
       </div>
     </BottomSheet>
+
+    <BottomSheet
+      v-model:visible="showTargetSheet"
+      title="调整营养目标"
+      :detents="['medium']"
+      default-detent="medium"
+    >
+      <div class="target-sheet-body">
+        <div class="sheet-section">
+          <label class="sheet-section-label">饮食目标</label>
+          <div class="chip-row">
+            <button
+              v-for="g in DIET_GOAL_ORDER"
+              :key="g"
+              class="goal-chip"
+              :class="{ active: draftDietGoal === g }"
+              @click="draftDietGoal = g"
+            >
+              {{ DIET_GOAL_LABEL[g] }}
+            </button>
+          </div>
+        </div>
+        <div class="sheet-section">
+          <label class="sheet-section-label">活动水平</label>
+          <div class="chip-row chip-row--wrap">
+            <button
+              v-for="a in ACTIVITY_ORDER"
+              :key="a"
+              class="goal-chip"
+              :class="{ active: draftActivity === a }"
+              @click="draftActivity = a"
+            >
+              {{ ACTIVITY_LEVEL_LABEL[a] }}
+            </button>
+          </div>
+        </div>
+        <div class="sheet-hint">
+          <i class="bi bi-info-circle" style="font-size:11px"></i>
+          <span>目标根据身高、体重、年龄、目标与活动水平自动计算</span>
+        </div>
+        <button class="submit-btn" @click="saveTarget">保存</button>
+      </div>
+    </BottomSheet>
   </div>
 </template>
 
@@ -756,19 +906,130 @@ function goFoodComposition() {
   padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
 
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .page-title {
   font-size: var(--text-xl);
   font-weight: var(--fw-bold);
   color: var(--color-text);
   margin: 0;
-  cursor: pointer;
-  display: inline-block;
-  align-self: flex-start;
-  transition: opacity var(--dur-fast);
 }
 
-.page-title:hover { opacity: 0.7; }
-.page-title:active { opacity: 0.5; }
+.comp-entry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+
+.comp-entry-btn:active {
+  transform: scale(0.96);
+  background: var(--bg-200);
+}
+
+/* ===== Nutrition target card ===== */
+.target-card {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.target-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.target-title {
+  font-size: var(--text-md);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+}
+
+.target-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-divider);
+  background: var(--bg-50);
+  color: var(--color-warm);
+  font-size: var(--text-xs);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+
+.target-edit-btn:active {
+  transform: scale(0.95);
+  background: var(--warm-50);
+}
+
+.target-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+.target-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-md);
+}
+
+.target-cell--main {
+  grid-column: span 2;
+  background: var(--warm-50);
+}
+
+.target-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+}
+
+.target-val {
+  font-size: var(--text-md);
+  font-weight: var(--fw-bold);
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+.target-cell--main .target-val {
+  font-size: var(--text-xl);
+  color: var(--color-warm);
+}
+
+.target-val-text {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+.target-unit {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  font-weight: var(--fw-medium);
+  margin-left: 2px;
+}
 
 .today-card {
   padding: var(--space-4) var(--space-5);
@@ -1017,9 +1278,109 @@ function goFoodComposition() {
 .mg-dot { width: 4px; height: 4px; border-radius: 50%; }
 
 .chart-card { padding: var(--space-4); }
-.chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
+.chart-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+.chart-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
 .chart-title { font-size: var(--text-md); font-weight: var(--fw-semibold); color: var(--color-text); }
 .chart-avg { font-size: var(--text-sm); color: var(--color-text-tertiary); }
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chart-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  background: var(--bg-100);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+.chart-legend-chip--active {
+  border-color: var(--color-divider);
+  background: var(--bg-200);
+}
+.chart-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.chart-legend-text {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-weight: var(--fw-semibold);
+}
+.chart-legend-chip--active .chart-legend-text {
+  color: var(--color-text);
+}
+
+/* ===== Target adjustment sheet ===== */
+.target-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-bottom: var(--space-2);
+}
+.sheet-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.sheet-section-label {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+}
+.chip-row {
+  display: flex;
+  gap: var(--space-2);
+}
+.chip-row--wrap {
+  flex-wrap: wrap;
+}
+.goal-chip {
+  flex: 1;
+  padding: 10px 8px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--color-divider);
+  background: var(--bg-100);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: all var(--dur-fast);
+}
+.chip-row--wrap .goal-chip {
+  flex: 0 1 auto;
+}
+.goal-chip.active {
+  border-color: var(--color-warm);
+  background: var(--warm-50);
+  color: var(--color-warm);
+}
+.sheet-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-1);
+}
 
 .history-card { padding: var(--space-4); }
 .history-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
