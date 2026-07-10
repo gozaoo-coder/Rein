@@ -10,10 +10,11 @@ import { computed, onMounted, ref } from "vue";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { useRouter } from "vue-router";
-import BarChartThin from "@/components/charts/BarChartThin.vue";
+import MultiLineChart from "@/components/charts/MultiLineChart.vue";
 import { BottomSheet } from "@/components/ui";
 import { useToast } from "@/composables/useToast";
-import { visionChat } from "@/composables/useVisionChat";
+import { textComplete, visionChat } from "@/composables/useVisionChat";
+import { FOOD_TEXT_PARSE_PROMPT } from "@/data/aiPrompt";
 
 const store = useHealthDataStore();
 const aiCfg = useAiConfigStore();
@@ -215,6 +216,21 @@ const chartLabels = computed(() =>
     : monthDays.value.filter((d) => d.date).map((d) => d.label),
 );
 
+const chartSeries = computed(() => [
+  {
+    data: chartData.value,
+    color: MACRO_COLOR[macro.value],
+    label: MACRO_LABEL[macro.value],
+  },
+]);
+
+const chartReference = computed(() => ({
+  value: GOALS.value[macro.value],
+  color: "var(--color-text-tertiary)",
+  label: `目标 ${GOALS.value[macro.value]}`,
+  dashed: true,
+}));
+
 const avgValue = computed(() => {
   const arr = view.value === "week" ? weekDays.value : monthDays.value.filter((d) => d.date);
   const sum = arr.reduce((s, d) => s + d.value, 0);
@@ -308,57 +324,6 @@ function submitManual() {
   showAddSheet.value = false;
 }
 
-/**
- * AI 快速记饮食：简单本地解析 + 回退到 foodDb 匹配
- * 真正的 AI MCP 调用需要 pi agent，这里做轻量本地解析：
- *  - "一个苹果" → 苹果, ~180g
- *  - "一碗米饭" → 米饭, ~150g
- *  - "100g鸡胸肉" → 鸡胸肉, 100g
- *  - "一杯牛奶250ml" → 牛奶, 250g
- */
-function parseAiInput(text: string): { name: string; grams: number } | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
-  // 提取克数： 200g / 200克
-  const gMatch = trimmed.match(/(\d+(?:\.\d+)?)\s*(?:g|克|ml|毫升)/i);
-  let grams = gMatch ? Number(gMatch[1]) : 0;
-
-  // 量词映射
-  const quantityMap: Record<string, number> = {
-    一个: 150, 一根: 120, 一块: 100, 一片: 30, 一碗: 200,
-    一份: 200, 一杯: 250, 一瓶: 500, 一口: 30, 一小碗: 150,
-    一大碗: 350, 半个: 80, 半根: 60,
-  };
-  if (!grams) {
-    for (const [q, g] of Object.entries(quantityMap)) {
-      if (trimmed.includes(q)) {
-        grams = g;
-        break;
-      }
-    }
-  }
-  if (!grams) grams = 100;
-
-  // 搜索食品库匹配名称
-  const cleaned = trimmed
-    .replace(/\d+(?:\.\d+)?\s*(?:g|克|ml|毫升)/gi, "")
-    .replace(/一个|一根|一块|一片|一碗|一份|一杯|一瓶|一口|一小碗|一大碗|半个|半根/g, "")
-    .replace(/[了吃喝进食记]|早餐|午餐|晚餐|加餐|零食/g, "")
-    .trim();
-  if (!cleaned) return null;
-
-  // 先精确匹配
-  let food = store.foodDb.find((f) => f.name === cleaned);
-  if (!food) {
-    // 包含匹配
-    food = store.foodDb.find((f) => f.name.includes(cleaned) || cleaned.includes(f.name));
-  }
-  if (!food) return null;
-
-  return { name: food.name, grams };
-}
-
 async function submitAi() {
   // 有图片时走视觉识别
   if (aiPendingImages.value.length) {
@@ -413,34 +378,51 @@ async function submitAi() {
     return;
   }
 
-  // 纯文本走本地解析
+  // 纯文本走 AI 解析
   if (!aiInput.value.trim()) return;
-  aiProcessing.value = true;
-  await new Promise((r) => setTimeout(r, 300));
-  const parsed = parseAiInput(aiInput.value);
-  aiProcessing.value = false;
-  if (!parsed) {
-    toast.info("未识别到食品，试试搜索或手动输入");
-    addTab.value = "search";
-    searchQuery.value = aiInput.value;
+  if (!aiCfg.isConfigured) {
+    toast.info("请先在 AI 配置页填写 baseURL/apiKey/model");
     return;
   }
-  const food = store.foodDb.find((f) => f.name === parsed.name);
-  if (food) {
-    store.addFoodRecord({
-      foodId: food.id,
-      foodName: food.name,
-      grams: parsed.grams,
+  aiProcessing.value = true;
+  try {
+    const text = await textComplete(FOOD_TEXT_PARSE_PROMPT(aiInput.value.trim()), {
+      temperature: 0.2,
+      maxTokens: 1200,
+      timeoutMs: 60_000,
     });
-    toast.success(`AI 记食: ${food.name} ${parsed.grams}g`);
-  } else {
-    store.addFoodRecord({
-      foodName: parsed.name,
-      grams: parsed.grams,
-    });
-    toast.success(`AI 记食: ${parsed.name} ${parsed.grams}g`);
+    const items = parseVisionFoods(text);
+    if (!items.length) {
+      toast.info("未识别到食物，试试手动输入或搜索");
+      addTab.value = "search";
+      searchQuery.value = aiInput.value;
+      return;
+    }
+    let added = 0;
+    for (const it of items) {
+      const food = store.foodDb.find((f) => f.name === it.name);
+      if (food) {
+        store.addFoodRecord({ foodId: food.id, foodName: food.name, grams: it.grams });
+      } else {
+        store.addFoodRecord({
+          foodName: it.name,
+          grams: it.grams,
+          calories: it.calories,
+          carbs: it.carbs,
+          protein: it.protein,
+          fat: it.fat,
+        });
+      }
+      added++;
+    }
+    toast.success(`AI 记食 ${added} 项`);
+    showAddSheet.value = false;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    toast.error(`识别失败：${msg}`);
+  } finally {
+    aiProcessing.value = false;
   }
-  showAddSheet.value = false;
 }
 
 const dayRecords = computed(() => store.foodRecordsByDate(selKey.value).slice().reverse());
@@ -450,7 +432,7 @@ function goFoodDb() {
 }
 
 function goFoodComposition() {
-  void router.push("/health/food-composition");
+  void router.push("/health/food/composition");
 }
 </script>
 
@@ -574,15 +556,15 @@ function goFoodComposition() {
     <div class="chart-card clean-card">
       <div class="chart-header">
         <span class="chart-title">{{ MACRO_LABEL[macro] }} · {{ view === "week" ? "本周" : "本月" }}</span>
-        <span class="chart-avg">日均 {{ avgValue }}{{ MACRO_UNIT[macro] }}</span>
+        <span class="chart-avg">日均 {{ avgValue }}{{ MACRO_UNIT[macro] }} · 目标 {{ GOALS[macro] }}{{ MACRO_UNIT[macro] }}</span>
       </div>
-      <BarChartThin
-        :data="chartData"
+      <MultiLineChart
+        :series="chartSeries"
         :labels="chartLabels"
         :height="120"
-        :color="MACRO_COLOR[macro]"
+        :reference-line="chartReference"
         :show-y-axis="true"
-        :y-unit="MACRO_UNIT[macro]"
+        :show-grid="true"
       />
     </div>
 

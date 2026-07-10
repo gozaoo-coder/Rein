@@ -87,3 +87,62 @@ export async function visionChat(
     clearTimeout(timer);
   }
 }
+
+export interface TextCompleteOptions {
+  /** 温度，默认 0.2 */
+  temperature?: number;
+  /** 最大输出 token */
+  maxTokens?: number;
+  /** 超时 ms，默认 60s */
+  timeoutMs?: number;
+}
+
+/**
+ * 发起一次纯文本聊天补全请求（无图片），复用 aiConfigStore 配置。
+ * 直接 POST 到 OpenAI 兼容的 /chat/completions，不经过 pi-agent。
+ * @param prompt 用户消息文本
+ * @returns 模型输出的文本
+ */
+export async function textComplete(
+  prompt: string,
+  opts: TextCompleteOptions = {},
+): Promise<string> {
+  const cfg = useAiConfigStore();
+  if (!cfg.isConfigured) {
+    throw new Error("请先配置 AI（baseURL/apiKey/model）");
+  }
+
+  const baseURL = cfg.config.baseURL.replace(/\/+$/, "");
+  const url = `${baseURL}/chat/completions`;
+  const body: Record<string, unknown> = {
+    model: cfg.config.model,
+    messages: [{ role: "user", content: prompt }],
+    temperature: opts.temperature ?? 0.2,
+    stream: false,
+  };
+  if (opts.maxTokens) body.max_tokens = opts.maxTokens;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 60_000);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${cfg.config.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`AI 请求失败 (${res.status}): ${text || res.statusText}`);
+    }
+    const json = (await res.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    return json.choices?.[0]?.message?.content ?? "";
+  } finally {
+    clearTimeout(timer);
+  }
+}

@@ -79,3 +79,30 @@ ${workoutCtx.summary}
 - 用户问"现在该怎么做"时，基于当前步骤的器械/肌群/配重/注意事项给出具体执行建议
 - 训练模式下同样遵守动作变体规则：当前步涉及的力量动作按站距/体位/握距具名（如"高位宽踩倒蹬"而非泛指"倒蹬"），动作说明覆盖具体描述/动作要领/注意事项/锻炼部位四部分；若当前步变体不明确，先用 workout_current_get 取信息，仍不清楚则询问用户`;
 }
+
+/**
+ * FOOD_TEXT_PARSE_PROMPT — 食物文本解析提示词。
+ * 引导模型把用户自然语言饮食描述解析为结构化 JSON 数组。
+ * 用于 FoodPage "AI 快速记" 纯文本路径（textComplete）。
+ * 返回字段：foodName / grams / calories / carbs / protein / fat。
+ */
+export function FOOD_TEXT_PARSE_PROMPT(userText: string): string {
+  return `你是营养记录助手。用户用自然语言描述了饮食，请解析为结构化食物列表。
+
+仅返回一个 JSON 数组，不要输出任何解释、markdown 代码块或多余文字。
+数组每项字段：
+- foodName (string)：食物名
+- grams (number)：克数
+- calories (number)：热量 kcal
+- carbs (number)：碳水 g
+- protein (number)：蛋白质 g
+- fat (number)：脂肪 g
+
+规则：
+- 根据常见份量估算克数（如"一个苹果"约 180g，"一碗米饭"约 200g，"一杯牛奶"约 250g，"一根香蕉"约 120g，"一个鸡蛋"约 50g）。
+- 按克数与食物营养密度估算 calories/carbs/protein/fat。
+- 用户描述了多个食物时，数组含多项。
+- 无法识别的食物名跳过。
+
+用户输入：${userText}`;
+}
