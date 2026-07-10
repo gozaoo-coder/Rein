@@ -1135,8 +1135,8 @@ function executeBodyMetricsRecord(args: AnyParams): ToolResult {
       "body_metrics_record",
       `已记录 BMI ${rec.bmi?.toFixed(1) ?? "--"}${rec.bodyFatPercent ? ` · 体脂 ${rec.bodyFatPercent}%` : ""}`,
     ),
-    card: "raw",
-    cardData: rec,
+    card: "body-metrics",
+    cardData: { record: rec },
   };
 }
 
