@@ -18,11 +18,12 @@ import type {
   ToolCall as PiToolCall,
 } from "@earendil-works/pi-ai";
 import { getModelsCollection, resolvePiModel, registerCustomProvider } from "@/composables/usePiProvider";
-import { PI_TOOLS, type PiToolDetails } from "@/composables/usePiTools";
-import { buildSystemPrompt } from "@/data/aiPrompt";
+import { PI_TOOLS, PI_TOOLS_CORE, type PiToolDetails } from "@/composables/usePiTools";
+import { buildSystemPrompt, type WorkoutPromptContext } from "@/data/aiPrompt";
 import type {
   ChatMessage,
   Citation,
+  FileAttachment,
   MessageContent,
   ToolResult,
   ToolCall,
@@ -31,6 +32,25 @@ import type {
 
 function genId(prefix = "msg"): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * 把附件列表转为给模型的纯文本注记（模型不直接消费二进制）。
+ * 例：【附件：a.txt, b.log】【文件夹：docs/（含 c.md, d.ts）】
+ */
+function formatAttachmentNote(attachments?: FileAttachment[]): string {
+  if (!attachments?.length) return "";
+  const files = attachments.filter((a) => a.kind === "file");
+  const folders = attachments.filter((a) => a.kind === "folder");
+  const parts: string[] = [];
+  if (files.length) {
+    parts.push(`【附件：${files.map((a) => a.name).join(", ")}】`);
+  }
+  for (const f of folders) {
+    const childList = f.children?.length ? `（含 ${f.children.slice(0, 8).join(", ")}${f.children.length > 8 ? " 等" : ""}）` : "";
+    parts.push(`【文件夹：${f.name}${childList}】`);
+  }
+  return parts.join("");
 }
 
 /** ChatMessage → pi AgentMessage（user / assistant / toolResult） */
@@ -45,9 +65,11 @@ function toAgentMessage(m: ChatMessage): AgentMessage | null {
           : `【引用上文】\n${c.snippet}`,
       )
       .join("\n\n");
+    const attachNote = formatAttachmentNote(m.attachments);
     const textContent =
       (typeof m.content === "string" ? m.content : m.content.filter((p) => p.type === "text").map((p) => p.text ?? "").join("")) || "";
-    const fullText = citePrefix ? `${citePrefix}\n\n${textContent}` : textContent;
+    const prefixParts = [citePrefix, attachNote].filter(Boolean).join("\n\n");
+    const fullText = prefixParts ? `${prefixParts}\n\n${textContent}` : textContent;
 
     if (typeof m.content === "string" || !m.content.some((p) => p.type === "image_url")) {
       return {
@@ -130,13 +152,18 @@ function toAgentMessage(m: ChatMessage): AgentMessage | null {
   return null;
 }
 
-/** 构造 Agent 实例（每次发送时按最新配置构造） */
-function buildAgent(opts: {
+/** runPrompt / runRegenerate 共享的运行时选项 */
+export interface RunPromptOptions {
   modelId: string;
   baseURL: string;
   apiKey: string;
   autoExecute: boolean;
-}): Agent | null {
+  /** 运动模式上下文；存在则注入系统提示并启用运动模式工具 */
+  workoutCtx?: WorkoutPromptContext;
+}
+
+/** 构造 Agent 实例（每次发送时按最新配置构造） */
+function buildAgent(opts: RunPromptOptions): Agent | null {
   // 兜底：provider 未注册时立即注册（避免 streamFn 调用时 requireProvider 抛错）
   if (opts.baseURL && opts.apiKey) {
     registerCustomProvider({ baseURL: opts.baseURL, apiKey: opts.apiKey });
@@ -145,13 +172,17 @@ function buildAgent(opts: {
   if (!piModel) return null;
 
   const collection = getModelsCollection();
+  const isWorkout = Boolean(opts.workoutCtx);
+  const tools = opts.autoExecute
+    ? (isWorkout ? PI_TOOLS : PI_TOOLS_CORE)
+    : [];
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: buildSystemPrompt(),
+      systemPrompt: buildSystemPrompt(opts.workoutCtx),
       model: piModel,
       thinkingLevel: "off",
-      tools: opts.autoExecute ? PI_TOOLS : [],
+      tools,
       messages: [],
     },
     convertToLlm: (messages) => {
@@ -196,13 +227,9 @@ export async function runPrompt(
   conv: Conversation,
   content: MessageContent,
   citations: Citation[],
-  opts: {
-    modelId: string;
-    baseURL: string;
-    apiKey: string;
-    autoExecute: boolean;
-  },
+  opts: RunPromptOptions,
   cb: RunPromptCallbacks,
+  attachments?: FileAttachment[],
 ): Promise<void> {
   const agent = buildAgent(opts);
   if (!agent) {
@@ -217,6 +244,7 @@ export async function runPrompt(
     role: "user",
     content,
     citations: citations.length ? citations : undefined,
+    attachments: attachments?.length ? attachments : undefined,
     timestamp: Date.now(),
   };
   cb.onUserMessage?.(userMsg);
@@ -360,12 +388,7 @@ export async function runPrompt(
 /** 重新生成：移除末尾 assistant+tool 消息后再次运行 */
 export async function runRegenerate(
   conv: Conversation,
-  opts: {
-    modelId: string;
-    baseURL: string;
-    apiKey: string;
-    autoExecute: boolean;
-  },
+  opts: RunPromptOptions,
   cb: RunPromptCallbacks,
 ): Promise<void> {
   // conv.messages 已被 store 裁剪过末尾 assistant/tool
@@ -384,7 +407,7 @@ export async function runRegenerate(
     return;
   }
   // 从 conv 中移除 lastUser（store 已裁剪 assistant/tool，但保留 user）
-  // 实际：我们重新提交 lastUser 的 content/citations
+  // 实际：我们重新提交 lastUser 的 content/citations/attachments
   const trimmed: Conversation = {
     ...conv,
     messages: conv.messages.filter((m) => m.id !== lastUser!.id),
@@ -395,5 +418,6 @@ export async function runRegenerate(
     lastUser.citations ?? [],
     opts,
     cb,
+    lastUser.attachments,
   );
 }

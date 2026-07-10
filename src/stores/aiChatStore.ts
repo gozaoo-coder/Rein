@@ -3,13 +3,17 @@ import { ref, computed } from "vue";
 import type {
   ChatMessage,
   Conversation,
+  ConversationMode,
   Citation,
+  FileAttachment,
   MessageContent,
 } from "@/types/ai";
 import { readJSON, writeJSON } from "@/composables/useStorage";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
-import { runPrompt, runRegenerate, type RunPromptCallbacks } from "@/composables/usePiAgent";
+import { runPrompt, runRegenerate, type RunPromptCallbacks, type RunPromptOptions } from "@/composables/usePiAgent";
+import type { WorkoutPromptContext } from "@/data/aiPrompt";
 import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
+import { useWorkoutStore } from "@/stores/workoutStore";
 
 const CONV_KEY = "ai-conversations";
 
@@ -47,19 +51,36 @@ export const useAiChatStore = defineStore("aiChat", () => {
     await writeJSON(CONV_KEY, conversations.value);
   }
 
-  function createConversation(title = "新对话"): Conversation {
+  function createConversation(title = "新对话", mode: ConversationMode = "normal"): Conversation {
     const conv: Conversation = {
       id: genId("conv"),
       title,
       messages: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      mode,
     };
     conversations.value.unshift(conv);
     activeId.value = conv.id;
     void persist();
     void pushChange(CONV_KEY, conv.id, conv);
     return conv;
+  }
+
+  /** 创建一个新的运动模式会话并设为 active */
+  function newWorkoutChat(): Conversation {
+    return createConversation("运动助手", "workout");
+  }
+
+  /**
+   * 确保存在一个 active 的运动模式会话：
+   * - 当前 active 是 workout 模式 → 直接返回
+   * - 否则新建一个 workout 模式会话并设为 active
+   */
+  function ensureWorkoutConversation(): Conversation {
+    const cur = active.value;
+    if (cur && cur.mode === "workout") return cur;
+    return newWorkoutChat();
   }
 
   function setActive(id: string): void {
@@ -169,8 +190,13 @@ export const useAiChatStore = defineStore("aiChat", () => {
    * 发送一条用户消息并运行 pi agent 循环
    * @param content 文本或带图的多模态内容
    * @param citations 引用列表
+   * @param opts 可选 { workoutCtx, attachments }：workoutCtx 注入运动模式系统提示并启用运动工具；attachments 附在用户消息上
    */
-  async function send(content: MessageContent, citations: Citation[] = []): Promise<void> {
+  async function send(
+    content: MessageContent,
+    citations: Citation[] = [],
+    opts?: { workoutCtx?: WorkoutPromptContext; attachments?: FileAttachment[] },
+  ): Promise<void> {
     const configStore = useAiConfigStore();
     if (!configStore.isConfigured) {
       throw new Error("请先在 AI 配置页填写 baseURL / apiKey / model");
@@ -180,19 +206,22 @@ export const useAiChatStore = defineStore("aiChat", () => {
 
     const conv = active.value!;
     const cfg = configStore.config;
+    const runOpts: RunPromptOptions = {
+      modelId: cfg.model,
+      baseURL: cfg.baseURL,
+      apiKey: cfg.apiKey,
+      autoExecute: cfg.autoExecute,
+      workoutCtx: opts?.workoutCtx,
+    };
     sending.value = true;
     try {
       await runPrompt(
         conv,
         content,
         citations,
-        {
-          modelId: cfg.model,
-          baseURL: cfg.baseURL,
-          apiKey: cfg.apiKey,
-          autoExecute: cfg.autoExecute,
-        },
+        runOpts,
         makeCallbacks(),
+        opts?.attachments,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -233,6 +262,13 @@ export const useAiChatStore = defineStore("aiChat", () => {
 
     const configStore = useAiConfigStore();
     const cfg = configStore.config;
+    // workout 模式会话：重生成时仍需注入运动上下文，保持系统提示一致
+    let workoutCtx: WorkoutPromptContext | undefined;
+    if (conv.mode === "workout") {
+      const ws = useWorkoutStore();
+      const summary = ws.aiContextSummary ?? "";
+      workoutCtx = summary ? { summary } : undefined;
+    }
     sending.value = true;
     try {
       await runRegenerate(
@@ -242,6 +278,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
           baseURL: cfg.baseURL,
           apiKey: cfg.apiKey,
           autoExecute: cfg.autoExecute,
+          workoutCtx,
         },
         makeCallbacks(),
       );
@@ -282,6 +319,8 @@ export const useAiChatStore = defineStore("aiChat", () => {
     loaded,
     load,
     createConversation,
+    newWorkoutChat,
+    ensureWorkoutConversation,
     setActive,
     deleteConversation,
     togglePin,

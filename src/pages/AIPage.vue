@@ -17,9 +17,10 @@ import { useToast } from "@/composables/useToast";
 import { useTopBar, ICONS } from "@/composables/useTopBar";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
 import MarkdownRenderer from "@/components/ai/MarkdownRenderer.vue";
+import AiChatInput from "@/components/ai/AiChatInput.vue";
 import ShareSheet from "@/components/share/ShareSheet.vue";
 import { formatAiChat } from "@/data/shareFormatters";
-import type { Citation, ChatMessage, ContentPart, Conversation } from "@/types/ai";
+import type { Citation, ChatMessage, ContentPart, Conversation, FileAttachment } from "@/types/ai";
 import type { ShareContent } from "@/types/share";
 
 const router = useRouter();
@@ -33,6 +34,7 @@ const chatRef = ref<HTMLElement | null>(null);
 const inputText = ref("");
 const pendingImages = ref<string[]>([]);
 const pendingCitations = ref<Citation[]>([]);
+const pendingAttachments = ref<FileAttachment[]>([]);
 const showCitePicker = ref(false);
 const sending = ref(false);
 /** 渲染窗口：默认仅渲染最近 N 条，防止超长对话卡顿 */
@@ -111,7 +113,7 @@ function imagesOf(msg: ChatMessage): string[] {
 
 async function send(text?: string) {
   const t = (text ?? inputText.value).trim();
-  if (!t && !pendingImages.value.length) return;
+  if (!t && !pendingImages.value.length && !pendingAttachments.value.length) return;
   if (!isConfigured.value) {
     router.push("/ai/config");
     return;
@@ -132,12 +134,14 @@ async function send(text?: string) {
   }
 
   const cites = [...pendingCitations.value];
+  const atts = pendingAttachments.value.length ? [...pendingAttachments.value] : undefined;
   inputText.value = "";
   pendingImages.value = [];
   pendingCitations.value = [];
+  pendingAttachments.value = [];
   sending.value = true;
   try {
-    await store.send(content, cites);
+    await store.send(content, cites, atts ? { attachments: atts } : undefined);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[ai] send failed", e);
@@ -146,6 +150,36 @@ async function send(text?: string) {
     sending.value = false;
     scrollToBottom();
   }
+}
+
+// ===== AiChatInput 事件处理 =====
+
+function onInputSend() {
+  void send();
+}
+
+function onAddImages(urls: string[]) {
+  pendingImages.value.push(...urls);
+}
+
+function onAddFiles(files: FileAttachment[]) {
+  pendingAttachments.value.push(...files);
+}
+
+function onAddFolder(folder: FileAttachment) {
+  pendingAttachments.value.push(folder);
+}
+
+function onAddCitation() {
+  showCitePicker.value = true;
+}
+
+function onRemoveImage(idx: number) {
+  pendingImages.value.splice(idx, 1);
+}
+
+function onRemoveAttachment(idx: number) {
+  pendingAttachments.value.splice(idx, 1);
 }
 
 /** 重试：删除最后一条 assistant 消息（含 tool）后重新生成 */
@@ -161,25 +195,6 @@ async function retryLast() {
   } finally {
     sending.value = false;
     scrollToBottom();
-  }
-}
-
-function handleKeyDown(e: KeyboardEvent) {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    send();
-  }
-}
-
-function handleInput(e: Event) {
-  const t = e.target as HTMLTextAreaElement;
-  // 自适应高度
-  t.style.height = "auto";
-  t.style.height = Math.min(t.scrollHeight, 120) + "px";
-  // @ 触发引用选择器
-  const v = t.value;
-  if (v.endsWith("@")) {
-    showCitePicker.value = true;
   }
 }
 
@@ -230,28 +245,6 @@ const pickerMessages = computed<ChatMessage[]>(() => {
 const pickerConversations = computed<Conversation[]>(() =>
   store.conversations.filter((c) => c.id !== store.activeId).slice(0, 10),
 );
-
-// ====== 图片 ======
-
-function onPickImage(e: Event) {
-  const input = e.target as HTMLInputElement;
-  if (!input.files?.length) return;
-  for (const f of Array.from(input.files)) {
-    if (!f.type.startsWith("image/")) continue;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        pendingImages.value.push(reader.result);
-      }
-    };
-    reader.readAsDataURL(f);
-  }
-  input.value = "";
-}
-
-function removeImage(idx: number) {
-  pendingImages.value.splice(idx, 1);
-}
 
 // ====== 工具结果渲染辅助 ======
 
@@ -538,67 +531,25 @@ watch(
 
     <!-- 浮动输入栏（与底部 pill tab bar 上下布局） -->
     <div class="input-bar-wrap">
-      <!-- 待发送引用 chips -->
-      <div v-if="pendingCitations.length" class="pending-cites">
-        <div
-          v-for="(c, i) in pendingCitations"
-          :key="i"
-          class="pending-cite-chip"
-        >
-          <i class="bi bi-pin-angle" style="font-size:10px"></i>
-          <span class="pcite-label">{{ c.type === 'conversation' ? c.fromTitle : '引用上文' }}</span>
-          <button class="pcite-x" @click="removeCitation(i)">×</button>
-        </div>
-      </div>
-
-      <!-- 待发送图片预览 -->
-      <div v-if="pendingImages.length" class="pending-images">
-        <div
-          v-for="(url, i) in pendingImages"
-          :key="i"
-          class="pending-img-wrap"
-        >
-          <img :src="url" class="pending-img" alt="preview" />
-          <button class="pending-img-x" @click="removeImage(i)">×</button>
-        </div>
-      </div>
-
-      <!-- 输入栏（悬浮 pill 风格） -->
-      <div class="input-bar">
-        <button class="in-btn" @click="showCitePicker = true" title="引用">
-          <i class="bi bi-pin-angle" style="font-size:18px"></i>
-        </button>
-
-        <label v-if="vision" class="in-btn" title="附加图片">
-          <i class="bi bi-camera" style="font-size:18px"></i>
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            class="file-hidden"
-            @change="onPickImage"
-          />
-        </label>
-
-        <textarea
-          v-model="inputText"
-          class="text-input"
-          :placeholder="isConfigured ? '输入消息，@ 引用...' : '请先配置 AI'"
-          :disabled="!isConfigured"
-          rows="1"
-          @keydown="handleKeyDown"
-          @input="handleInput"
-        />
-
-        <button
-          class="send-btn"
-          :disabled="!inputText.trim() && !pendingImages.length || sending"
-          @click="send()"
-        >
-          <i v-if="!sending" class="bi bi-send" style="font-size:18px"></i>
-          <i v-else class="bi bi-arrow-repeat spin" style="font-size:18px"></i>
-        </button>
-      </div>
+      <AiChatInput
+        v-model="inputText"
+        :pending-images="pendingImages"
+        :pending-citations="pendingCitations"
+        :pending-attachments="pendingAttachments"
+        :disabled="!isConfigured"
+        :vision="vision"
+        :allow-citations="true"
+        :sending="sending"
+        :placeholder="isConfigured ? '输入消息，@ 引用...' : '请先配置 AI'"
+        @send="onInputSend"
+        @add-images="onAddImages"
+        @add-files="onAddFiles"
+        @add-folder="onAddFolder"
+        @add-citation="onAddCitation"
+        @remove-image="onRemoveImage"
+        @remove-citation="removeCitation"
+        @remove-attachment="onRemoveAttachment"
+      />
     </div>
 
     <!-- 分享面板 -->

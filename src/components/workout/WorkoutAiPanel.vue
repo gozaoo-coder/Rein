@@ -2,40 +2,55 @@
 /**
  * WorkoutAiPanel — 运动模式底部 AI 聊天面板
  *
- * 特性：
- *   - 注入当前训练上下文到系统提示（每次发送时刷新）
- *   - 提供快捷提示 chips（询问当前动作 / 调整配重 / 缩短休息…）
- *   - 复用 usePiAgent.runPrompt + 全部 PI_TOOLS（含运动模式工具）
- *   - 消息为瞬态（不持久化到 aiChatStore），关闭即销毁
- *
- * 单一职责：只负责运动模式下的 AI 交互；不渲染工具卡片细节，
- * 工具结果以摘要形式内联展示。
+ * 已统一到 aiChatStore：
+ *   - 复用 ensureWorkoutConversation() 在打开时获取 / 创建一个 workout 模式会话
+ *   - 消息直接读取 aiChatStore.active?.messages（持久化 + 历史）
+ *   - 发送走 aiChatStore.send(content, citations, { workoutCtx, attachments })
+ *     workoutCtx 由 workoutStore.aiContextSummary 实时组装，注入系统提示
+ *   - 工具集在 usePiAgent.buildAgent 内根据 workoutCtx 启用运动模式工具
+ *   - 复用共享 AiChatInput 组件（图片 / 文件 / 引用入口）
  */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useWorkoutStore } from "@/stores/workoutStore";
+import { useAiChatStore } from "@/stores/aiChatStore";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
-import { runPrompt, type RunPromptCallbacks } from "@/composables/usePiAgent";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
 import MarkdownRenderer from "@/components/ai/MarkdownRenderer.vue";
-import type { ChatMessage, Conversation } from "@/types/ai";
+import AiChatInput from "@/components/ai/AiChatInput.vue";
+import type { ChatMessage, Citation, ContentPart, Conversation, FileAttachment } from "@/types/ai";
 
 const emit = defineEmits<{
   (e: "close"): void;
 }>();
 
+const router = useRouter();
 const workoutStore = useWorkoutStore();
+const aiChatStore = useAiChatStore();
 const configStore = useAiConfigStore();
 
-onMounted(() => {
-  void configStore.load();
+onMounted(async () => {
+  await configStore.load();
+  await aiChatStore.load();
+  // 确保 active 是 workout 模式会话
+  aiChatStore.ensureWorkoutConversation();
+  await nextTick();
+  void scrollToEnd();
 });
 
-const messages = ref<ChatMessage[]>([]);
-const inputText = ref("");
-const sending = ref(false);
 const listEl = ref<HTMLDivElement | null>(null);
 
 const isConfigured = computed(() => configStore.isConfigured);
+const sending = computed(() => aiChatStore.sending);
+const vision = computed(() => configStore.config.vision);
+
+/** active 会话：仅当 mode=workout 时才视为本面板可编辑的会话 */
+const activeConv = computed<Conversation | null>(() => {
+  const a = aiChatStore.active;
+  return a && a.mode === "workout" ? a : null;
+});
+
+const messages = computed<ChatMessage[]>(() => activeConv.value?.messages ?? []);
 
 const quickPrompts = computed(() => {
   const step = workoutStore.currentStep;
@@ -50,103 +65,119 @@ const quickPrompts = computed(() => {
   return base;
 });
 
-function genId(prefix = "msg"): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
+// ===== AiChatInput 状态 =====
+const inputText = ref("");
+const pendingImages = ref<string[]>([]);
+const pendingCitations = ref<Citation[]>([]);
+const pendingAttachments = ref<FileAttachment[]>([]);
 
-async function send(text: string) {
-  const content = text.trim();
-  if (!content || sending.value) return;
+async function send(text?: string) {
+  const t = (text ?? inputText.value).trim();
+  if (!t && !pendingImages.value.length && !pendingAttachments.value.length) return;
   if (!isConfigured.value) {
-    messages.value.push({
-      id: genId(),
+    // 未配置：写入提示气泡
+    aiChatStore.pushMessage({
+      id: `err-${Date.now()}`,
       role: "assistant",
       content: "⚠️ 请先在 AI 配置页填写 baseURL / apiKey / model",
       timestamp: Date.now(),
     });
     return;
   }
+  if (sending.value) return;
+
+  // 确保 workout 会话存在（可能被用户切走）
+  if (!activeConv.value) {
+    aiChatStore.ensureWorkoutConversation();
+  }
+
+  let content: string | ContentPart[];
+  if (pendingImages.value.length) {
+    content = [
+      { type: "text", text: t },
+      ...pendingImages.value.map((url) => ({
+        type: "image_url" as const,
+        image_url: { url },
+      })),
+    ];
+  } else {
+    content = t;
+  }
+
+  const cites = [...pendingCitations.value];
+  const atts = pendingAttachments.value.length ? [...pendingAttachments.value] : undefined;
+  const ctxSummary = workoutStore.aiContextSummary ?? "";
+  const workoutCtx = ctxSummary ? { summary: ctxSummary } : undefined;
 
   inputText.value = "";
+  pendingImages.value = [];
+  pendingCitations.value = [];
+  pendingAttachments.value = [];
 
-  // 构造瞬态 Conversation
-  const conv: Conversation = {
-    id: "workout-transient",
-    title: "运动助手",
-    messages: messages.value.filter((m) => !m.pending),
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-
-  const cfg = configStore.config;
-  const callbacks: RunPromptCallbacks = {
-    onUserMessage: (msg) => messages.value.push(msg),
-    onCreateAssistantPlaceholder: () => {
-      const id = genId();
-      messages.value.push({
-        id,
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-        pending: true,
-      });
-      return id;
-    },
-    onUpdateAssistant: (msgId, patch) => {
-      const m = messages.value.find((x) => x.id === msgId);
-      if (m) Object.assign(m, patch);
-    },
-    onToolResult: (msgId, result) => {
-      const m = messages.value.find((x) => x.id === msgId);
-      if (m) m.toolResults = [...(m.toolResults ?? []), result];
-    },
-    onError: (msg) => {
-      messages.value.push({
-        id: genId(),
-        role: "assistant",
-        content: `⚠️ ${msg}`,
-        timestamp: Date.now(),
-        error: msg,
-      });
-    },
-    onDone: () => void 0,
-  };
-
-  sending.value = true;
   try {
-    // 关键：每次发送都用最新 workoutContext 构造 systemPrompt
-    // 注意：runPrompt 内部调用 buildSystemPrompt() 无参版本，
-    // 我们通过 hijack 方式无法注入；故改为：将上下文作为 user 消息前缀注入。
-    const ctxSummary = workoutStore.aiContextSummary ?? "";
-    const enrichedContent = ctxSummary
-      ? `【当前训练上下文】\n${ctxSummary}\n\n──────\n\n${content}`
-      : content;
-
-    await runPrompt(
-      conv,
-      enrichedContent,
-      [],
-      {
-        modelId: cfg.model,
-        baseURL: cfg.baseURL,
-        apiKey: cfg.apiKey,
-        autoExecute: cfg.autoExecute,
-      },
-      callbacks,
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    messages.value.push({
-      id: genId(),
-      role: "assistant",
-      content: `⚠️ ${msg}`,
-      timestamp: Date.now(),
-      error: msg,
+    await aiChatStore.send(content, cites, {
+      workoutCtx,
+      attachments: atts,
     });
+  } catch {
+    // 错误已由 store 写入气泡
   } finally {
-    sending.value = false;
     await scrollToEnd();
   }
+}
+
+function onInputSend() {
+  void send();
+}
+
+function onQuickPrompt(p: string) {
+  void send(p);
+}
+
+function onAddImages(urls: string[]) {
+  pendingImages.value.push(...urls);
+}
+
+function onAddFiles(files: FileAttachment[]) {
+  pendingAttachments.value.push(...files);
+}
+
+function onAddFolder(folder: FileAttachment) {
+  pendingAttachments.value.push(folder);
+}
+
+function onAddCitation() {
+  // 运动面板暂不弹引用选择器（无历史上下文入口），保持简单
+  // 如需引用，可走主 AI 页；这里保留 emit 钩子以备扩展
+}
+
+function onRemoveImage(idx: number) {
+  pendingImages.value.splice(idx, 1);
+}
+
+function onRemoveCitation(idx: number) {
+  pendingCitations.value.splice(idx, 1);
+}
+
+function onRemoveAttachment(idx: number) {
+  pendingAttachments.value.splice(idx, 1);
+}
+
+// ===== 头部操作 =====
+
+function newBlankChat() {
+  aiChatStore.newWorkoutChat();
+  pendingImages.value = [];
+  pendingCitations.value = [];
+  pendingAttachments.value = [];
+  inputText.value = "";
+  void scrollToEnd();
+}
+
+function goHistory() {
+  // 关闭面板并跳到历史页
+  emit("close");
+  router.push("/ai/history");
 }
 
 async function scrollToEnd() {
@@ -157,13 +188,6 @@ async function scrollToEnd() {
 }
 
 watch(messages, () => void scrollToEnd(), { deep: true });
-
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    void send(inputText.value);
-  }
-}
 
 function textOf(m: ChatMessage): string {
   return typeof m.content === "string" ? m.content : "";
@@ -188,9 +212,17 @@ function close() {
             <div class="wai-sub">{{ workoutStore.plan?.name ?? "—" }}</div>
           </div>
         </div>
-        <button class="wai-close" @click="close" aria-label="关闭">
-          <i class="bi bi-x-lg" style="font-size:18px"></i>
-        </button>
+        <div class="wai-header-actions">
+          <button class="wai-action" @click="newBlankChat" title="新建空白聊天">
+            <i class="bi bi-plus-lg" style="font-size:18px"></i>
+          </button>
+          <button class="wai-action" @click="goHistory" title="历史">
+            <i class="bi bi-clock-history" style="font-size:18px"></i>
+          </button>
+          <button class="wai-close" @click="close" aria-label="关闭">
+            <i class="bi bi-x-lg" style="font-size:18px"></i>
+          </button>
+        </div>
       </header>
 
       <!-- Messages -->
@@ -237,29 +269,31 @@ function close() {
           v-for="(p, i) in quickPrompts"
           :key="i"
           class="wai-quick-chip"
-          @click="send(p)"
+          @click="onQuickPrompt(p)"
         >{{ p }}</button>
       </div>
 
-      <!-- Input -->
-      <div class="wai-input-bar">
-        <textarea
+      <!-- 输入区（共享 AiChatInput） -->
+      <div class="wai-input-wrap">
+        <AiChatInput
           v-model="inputText"
-          class="wai-input"
+          :pending-images="pendingImages"
+          :pending-citations="pendingCitations"
+          :pending-attachments="pendingAttachments"
+          :disabled="false"
+          :vision="vision"
+          :allow-citations="false"
+          :sending="sending"
           placeholder="问点什么…"
-          rows="1"
-          :disabled="sending"
-          @keydown="handleKeydown"
+          @send="onInputSend"
+          @add-images="onAddImages"
+          @add-files="onAddFiles"
+          @add-folder="onAddFolder"
+          @add-citation="onAddCitation"
+          @remove-image="onRemoveImage"
+          @remove-citation="onRemoveCitation"
+          @remove-attachment="onRemoveAttachment"
         />
-        <button
-          class="wai-send"
-          :disabled="!inputText.trim() || sending"
-          @click="send(inputText)"
-          aria-label="发送"
-        >
-          <i v-if="!sending" class="bi bi-send" style="font-size:18px"></i>
-          <span v-else class="wai-spinner" />
-        </button>
       </div>
     </div>
   </div>
@@ -336,6 +370,25 @@ function close() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.wai-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.wai-action {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bg-200);
+  border: none;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.wai-action:active { transform: scale(0.9); }
 .wai-close {
   width: 30px;
   height: 30px;
@@ -347,7 +400,6 @@ function close() {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  flex-shrink: 0;
 }
 .wai-close:active { transform: scale(0.9); }
 
@@ -412,26 +464,11 @@ function close() {
   border-bottom-left-radius: 4px;
 }
 
-.wai-msg-content {
-  white-space: pre-wrap;
-}
-
 .wai-tool-results {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: var(--space-1);
-}
-.wai-tool-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: var(--radius-pill);
-  background: rgba(255, 102, 51, 0.1);
-  color: var(--color-warm);
-  font-weight: var(--fw-medium);
 }
 
 .wai-typing {
@@ -473,54 +510,10 @@ function close() {
 }
 .wai-quick-chip:active { transform: scale(0.94); }
 
-/* Input */
-.wai-input-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4) calc(env(safe-area-inset-bottom, 0px) + var(--space-3));
+/* 输入区 */
+.wai-input-wrap {
+  padding: var(--space-2) var(--space-3) calc(env(safe-area-inset-bottom, 0px) + var(--space-3));
   border-top: 1px solid var(--color-divider);
   flex-shrink: 0;
 }
-.wai-input {
-  flex: 1;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--color-text);
-  background: var(--bg-100, rgba(0, 0, 0, 0.03));
-  resize: none;
-  max-height: 100px;
-  outline: none;
-  font-family: inherit;
-}
-.wai-input:focus { border-color: var(--color-warm); }
-
-.wai-send {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  border: none;
-  background: var(--color-warm);
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-.wai-send:disabled { opacity: 0.4; cursor: not-allowed; }
-.wai-send:not(:disabled):active { transform: scale(0.92); }
-
-.wai-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.4);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: wai-spin 0.8s linear infinite;
-}
-@keyframes wai-spin { to { transform: rotate(360deg); } }
 </style>

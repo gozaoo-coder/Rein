@@ -132,6 +132,7 @@ function goBack() {
             <div class="conv-title-row">
               <span v-if="conv.pinned" class="pin">★</span>
               <span class="conv-title">{{ conv.title }}</span>
+              <span v-if="conv.mode === 'workout'" class="mode-badge">运动</span>
             </div>
             <div class="conv-preview">{{ preview(conv) }}</div>
             <div class="conv-meta">
@@ -254,6 +255,16 @@ function goBack() {
   gap: var(--space-1);
 }
 .pin { color: var(--color-warm); font-size: var(--text-sm); }
+.mode-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 159, 67, 0.15);
+  color: var(--color-warm);
+  font-weight: var(--fw-medium);
+}
 .conv-title {
   font-size: var(--text-md);
   font-weight: var(--fw-semibold);

@@ -88,6 +88,18 @@ export interface Citation {
   timestamp: number;
 }
 
+/** 文件 / 文件夹附件（仅记录元数据，模型不直接消费二进制） */
+export interface FileAttachment {
+  name: string;
+  /** 文件系统路径（Tauri 桌面环境下可能存在；Web 无） */
+  path?: string;
+  kind: "file" | "folder";
+  /** 文件大小（字节，文件可选） */
+  size?: number;
+  /** 当 kind=folder 时，列出子文件名 */
+  children?: string[];
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -101,6 +113,8 @@ export interface ChatMessage {
   name?: string;
   /** 用户消息附带的引用 */
   citations?: Citation[];
+  /** 用户消息附带的文件 / 文件夹附件 */
+  attachments?: FileAttachment[];
   /** 该消息关联的工具结果（用于在 assistant 消息下方渲染卡片） */
   toolResults?: ToolResult[];
   /** 是否正在生成中 */
@@ -108,6 +122,8 @@ export interface ChatMessage {
   /** 错误信息（发送失败等） */
   error?: string;
 }
+
+export type ConversationMode = "workout" | "normal";
 
 export interface Conversation {
   id: string;
@@ -117,4 +133,6 @@ export interface Conversation {
   updatedAt: number;
   /** 是否已固定 */
   pinned?: boolean;
+  /** 会话模式：workout=运动模式（注入训练上下文 + 运动工具），normal=普通 */
+  mode?: ConversationMode;
 }

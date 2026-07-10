@@ -1319,7 +1319,8 @@ function wrapExecuteRich(name: string): AgentTool["execute"] {
 
 // ===== Tool definitions =====
 
-export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
+/** 非运动模式工具集（课程/动作/统计/待办/饮水/饮食/食品库/体征/爬虫等） */
+export const PI_TOOLS_CORE: AgentTool<any, PiToolDetails>[] = [
   {
     name: "course_list",
     label: "查询课程",
@@ -1439,49 +1440,6 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
     description: "获取当前用户的运动统计（总训练次数、时长、热量、连续天数、近7/30天趋势、按部位/难度分布）。",
     parameters: Type.Object({}),
     execute: wrapExecuteRich("stats_get"),
-  },
-  // ===== 运动模式工具（仅在运动模式 AI 聊天中可用） =====
-  {
-    name: "workout_current_get",
-    label: "当前训练状态",
-    description: "获取当前进行中的训练的完整状态：课程名/当前步骤/器械/肌群/配重/组数/剩余时间等。运动模式下询问动作细节时调用。",
-    parameters: Type.Object({}),
-    execute: wrapExecuteRich("workout_current_get"),
-  },
-  {
-    name: "workout_step_skip",
-    label: "跳过当前步",
-    description: "跳过当前训练步骤（小休息/组间休息/当前组）。仅在用户明确要求时调用。",
-    parameters: Type.Object({}),
-    execute: wrapExecuteRich("workout_step_skip"),
-  },
-  {
-    name: "workout_step_adjust_temp",
-    label: "临时调整当前步",
-    description: "临时调整当前训练步骤（仅本次训练有效，不写回课程库）。可改 sets/reps/durationSec/restSec。",
-    parameters: Type.Object({
-      sets: Type.Optional(Type.Number({ description: "新的组数" })),
-      reps: Type.Optional(Type.Number({ description: "新的每组次数" })),
-      durationSec: Type.Optional(Type.Number({ description: "新的每组时长（秒）" })),
-      restSec: Type.Optional(Type.Number({ description: "新的组间休息秒数" })),
-    }),
-    execute: wrapExecuteRich("workout_step_adjust_temp"),
-  },
-  {
-    name: "workout_course_adjust_permanent",
-    label: "永久调整课程",
-    description: "把对课程步骤的修改写回课程库（影响后续训练）。需指定 stepIndex（0-based）。可改 sets/reps/durationSec/restSec/weight/note/cautions。",
-    parameters: Type.Object({
-      stepIndex: Type.Optional(Type.Number({ description: "步骤索引（0-based，默认当前步）" })),
-      sets: Type.Optional(Type.Number()),
-      reps: Type.Optional(Type.Number()),
-      durationSec: Type.Optional(Type.Number()),
-      restSec: Type.Optional(Type.Number()),
-      weight: Type.Optional(Type.String({ description: "配重描述，如 20kg / 自重" })),
-      note: Type.Optional(Type.String()),
-      cautions: Type.Optional(Type.String({ description: "步骤级注意事项，覆盖动作默认 cautions" })),
-    }),
-    execute: wrapExecuteRich("workout_course_adjust_permanent"),
   },
   {
     name: "app_config_get",
@@ -1846,3 +1804,52 @@ export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [
     execute: wrapExecuteRich("web_fetch"),
   },
 ];
+
+/** 运动模式工具集（仅在运动模式 AI 聊天中可用） */
+export const PI_TOOLS_WORKOUT: AgentTool<any, PiToolDetails>[] = [
+  {
+    name: "workout_current_get",
+    label: "当前训练状态",
+    description: "获取当前进行中的训练的完整状态：课程名/当前步骤/器械/肌群/配重/组数/剩余时间等。运动模式下询问动作细节时调用。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("workout_current_get"),
+  },
+  {
+    name: "workout_step_skip",
+    label: "跳过当前步",
+    description: "跳过当前训练步骤（小休息/组间休息/当前组）。仅在用户明确要求时调用。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("workout_step_skip"),
+  },
+  {
+    name: "workout_step_adjust_temp",
+    label: "临时调整当前步",
+    description: "临时调整当前训练步骤（仅本次训练有效，不写回课程库）。可改 sets/reps/durationSec/restSec。",
+    parameters: Type.Object({
+      sets: Type.Optional(Type.Number({ description: "新的组数" })),
+      reps: Type.Optional(Type.Number({ description: "新的每组次数" })),
+      durationSec: Type.Optional(Type.Number({ description: "新的每组时长（秒）" })),
+      restSec: Type.Optional(Type.Number({ description: "新的组间休息秒数" })),
+    }),
+    execute: wrapExecuteRich("workout_step_adjust_temp"),
+  },
+  {
+    name: "workout_course_adjust_permanent",
+    label: "永久调整课程",
+    description: "把对课程步骤的修改写回课程库（影响后续训练）。需指定 stepIndex（0-based）。可改 sets/reps/durationSec/restSec/weight/note/cautions。",
+    parameters: Type.Object({
+      stepIndex: Type.Optional(Type.Number({ description: "步骤索引（0-based，默认当前步）" })),
+      sets: Type.Optional(Type.Number()),
+      reps: Type.Optional(Type.Number()),
+      durationSec: Type.Optional(Type.Number()),
+      restSec: Type.Optional(Type.Number()),
+      weight: Type.Optional(Type.String({ description: "配重描述，如 20kg / 自重" })),
+      note: Type.Optional(Type.String()),
+      cautions: Type.Optional(Type.String({ description: "步骤级注意事项，覆盖动作默认 cautions" })),
+    }),
+    execute: wrapExecuteRich("workout_course_adjust_permanent"),
+  },
+];
+
+/** 完整工具集（向后兼容） */
+export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [...PI_TOOLS_CORE, ...PI_TOOLS_WORKOUT];
