@@ -12,7 +12,7 @@ const router = useRouter();
 
 const tabs = [
   { path: "/", label: "首页", icon: "home" },
-  { path: "/sports", label: "运动", icon: "sports" },
+  { path: "/toolbox", label: "百宝箱", icon: "toolbox" },
   { path: "/ai", label: "AI", icon: "ai" },
   { path: "/profile", label: "我的", icon: "profile" },
 ];
@@ -47,7 +47,7 @@ const activeIndex = computed(() => {
         <span class="tab-indicator" aria-hidden="true" />
         <span class="tab-icon">
           <i v-if="tab.icon === 'home'" class="bi bi-house" style="font-size:22px"></i>
-          <i v-else-if="tab.icon === 'sports'" class="bi bi-activity" style="font-size:22px"></i>
+          <i v-else-if="tab.icon === 'toolbox'" class="bi bi-grid-3x3-gap" style="font-size:22px"></i>
           <i v-else-if="tab.icon === 'ai'" class="bi bi-stars" style="font-size:22px"></i>
           <i v-else class="bi bi-person-circle" style="font-size:22px"></i>
         </span>

@@ -4,6 +4,21 @@
  * WorkoutStats 由记录聚合而来，同时持久化以便快速展示。
  */
 
+/**
+ * 单步训练执行快照 — 写入 WorkoutRecord.steps 时使用。
+ * 仅记录 TRAINING 类型步骤，resting 步骤不写入。
+ */
+export interface WorkoutRecordStep {
+  exerciseId?: string;
+  exerciseName: string;
+  sets: number;
+  reps?: number;
+  durationSec?: number;
+  weight?: string;
+  restBetweenSets?: number;
+  completedSets: number;
+}
+
 export interface WorkoutRecord {
   id: string;
   courseId: string;
@@ -18,6 +33,8 @@ export interface WorkoutRecord {
   avgHeartRate?: number;
   maxHeartRate?: number;
   finished: boolean; // true=正常完成 false=中途退出
+  /** 本次训练实际执行的步骤明细（仅 TRAINING 步） */
+  steps?: WorkoutRecordStep[];
 }
 
 export interface DailyStat {
@@ -25,6 +42,26 @@ export interface DailyStat {
   sessions: number;
   durationSec: number;
   calories: number;
+}
+
+/** 月聚合统计 — yearMonth 格式 YYYY-MM */
+export interface MonthlyStat {
+  yearMonth: string;
+  sessions: number;
+  durationSec: number;
+  calories: number;
+  completedSets: number;
+  totalSets: number;
+}
+
+/** 年聚合统计 */
+export interface YearlyStat {
+  year: number;
+  sessions: number;
+  durationSec: number;
+  calories: number;
+  completedSets: number;
+  totalSets: number;
 }
 
 export interface WorkoutStats {

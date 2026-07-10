@@ -18,7 +18,10 @@ const isPhone = computed(() => mode.value === "phone");
 const pageTitle = computed(() => {
   const p = route.path;
   if (p === "/") return "首页";
+  if (p.startsWith("/toolbox")) return "百宝箱";
   if (p.startsWith("/sports")) return "运动";
+  if (p.startsWith("/workout/history")) return "运动历史";
+  if (p.startsWith("/workout")) return "训练";
   if (p.startsWith("/ai")) return "AI";
   if (p.startsWith("/profile")) return "我的";
   if (p.startsWith("/todo")) return "待办";

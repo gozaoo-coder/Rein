@@ -14,6 +14,16 @@ const router = createRouter({
       component: () => import("@/pages/SportsPage.vue"),
     },
     {
+      path: "/toolbox",
+      name: "toolbox",
+      component: () => import("@/pages/ToolboxPage.vue"),
+    },
+    {
+      path: "/workout/history",
+      name: "workout-history",
+      component: () => import("@/pages/WorkoutHistoryPage.vue"),
+    },
+    {
       path: "/sports/courses",
       name: "courses-all",
       component: () => import("@/pages/CourseListPage.vue"),

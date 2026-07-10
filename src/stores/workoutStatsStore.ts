@@ -1,6 +1,13 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import type { WorkoutRecord, WorkoutStats, DailyStat } from "@/types/workout-stats";
+import type {
+  WorkoutRecord,
+  WorkoutRecordStep,
+  WorkoutStats,
+  DailyStat,
+  MonthlyStat,
+  YearlyStat,
+} from "@/types/workout-stats";
 import { emptyStats } from "@/types/workout-stats";
 import type { Course } from "@/types/course";
 import { readJSON, writeJSON } from "@/composables/useStorage";
@@ -19,6 +26,23 @@ function dateKey(ts: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** YYYY-MM 月键 */
+export function monthKey(ts: number): string {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+/** 接受 "YYYY-MM-DD" 或 "YYYY-MM"，返回月键 "YYYY-MM" */
+function toMonthKey(date: string): string {
+  return date.slice(0, 7);
+}
+
+function yearOf(ts: number): number {
+  return new Date(ts).getFullYear();
 }
 
 /** 由记录数组聚合统计 */
@@ -139,6 +163,7 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
     finished: boolean;
     startedAt: number;
     endedAt: number;
+    steps?: WorkoutRecordStep[];
   }): WorkoutRecord {
     return addRecord({
       courseId: course.id,
@@ -146,6 +171,82 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
       courseCategory: course.category,
       ...runtime,
     });
+  }
+
+  /** 取某天（YYYY-MM-DD）的所有记录，按开始时间升序 */
+  function recordsForDate(date: string): WorkoutRecord[] {
+    return records.value
+      .filter((r) => dateKey(r.startedAt) === date)
+      .sort((a, b) => a.startedAt - b.startedAt);
+  }
+
+  /** 取某月（YYYY-MM）所有记录 */
+  function recordsForMonth(yearMonth: string): WorkoutRecord[] {
+    return records.value
+      .filter((r) => monthKey(r.startedAt) === yearMonth)
+      .sort((a, b) => a.startedAt - b.startedAt);
+  }
+
+  /** 月聚合：返回该月所有有记录的日期聚合，按日期升序 */
+  function monthAggregations(yearMonth: string): DailyStat[] {
+    const map = new Map<string, DailyStat>();
+    for (const r of records.value) {
+      if (monthKey(r.startedAt) !== yearMonth) continue;
+      const k = dateKey(r.startedAt);
+      const d =
+        map.get(k) ?? { date: k, sessions: 0, durationSec: 0, calories: 0 };
+      d.sessions += 1;
+      d.durationSec += r.durationSec;
+      d.calories += r.caloriesBurned;
+      map.set(k, d);
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
+  }
+
+  /** 年聚合：返回该年 12 个月的月度聚合（无记录月为零） */
+  function yearAggregations(year: number): MonthlyStat[] {
+    const out: MonthlyStat[] = [];
+    for (let m = 1; m <= 12; m++) {
+      const ym = `${year}-${String(m).padStart(2, "0")}`;
+      out.push({
+        yearMonth: ym,
+        sessions: 0,
+        durationSec: 0,
+        calories: 0,
+        completedSets: 0,
+        totalSets: 0,
+      });
+    }
+    for (const r of records.value) {
+      if (yearOf(r.startedAt) !== year) continue;
+      const idx = new Date(r.startedAt).getMonth();
+      const d = out[idx];
+      d.sessions += 1;
+      d.durationSec += r.durationSec;
+      d.calories += r.caloriesBurned;
+      d.completedSets += r.completedSets;
+      d.totalSets += r.totalSets;
+    }
+    return out;
+  }
+
+  /** 所有有记录的年份（降序） */
+  const yearsWithData = computed(() => {
+    const set = new Set<number>();
+    for (const r of records.value) set.add(yearOf(r.startedAt));
+    return Array.from(set).sort((a, b) => b - a);
+  });
+
+  /** 所有有记录的月份键（降序），限定年则只返回该年 */
+  function monthsWithData(year?: number): string[] {
+    const set = new Set<string>();
+    for (const r of records.value) {
+      if (year != null && yearOf(r.startedAt) !== year) continue;
+      set.add(monthKey(r.startedAt));
+    }
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
   }
 
   function deleteRecord(id: string): void {
@@ -172,10 +273,16 @@ export const useWorkoutStatsStore = defineStore("workoutStats", () => {
     totalDurationSec,
     totalCalories,
     streakDays,
+    yearsWithData,
     getRecord,
     load,
     addRecord,
     recordSession,
+    recordsForDate,
+    recordsForMonth,
+    monthAggregations,
+    yearAggregations,
+    monthsWithData,
     deleteRecord,
     clearAll,
     applyRemoteRecord,

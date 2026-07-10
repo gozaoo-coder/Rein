@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import type { WorkoutPlan, WorkoutState, StepSubState, WorkoutStep, WorkoutSnapshot } from "@/types/workout";
 import { StepType, QUICK_REST_PRESETS } from "@/types/workout";
+import type { WorkoutRecordStep } from "@/types/workout-stats";
 import { getTrainingSetCount } from "@/data/workoutBuilder";
 import { courseToWorkoutPlan } from "@/data/courseToWorkout";
 import type { Course } from "@/types/course";
@@ -544,8 +545,53 @@ export const useWorkoutStore = defineStore("workout", () => {
       finished,
       startedAt: startedAt.value || Date.now(),
       endedAt: Date.now(),
+      steps: buildRecordSteps(finished),
     });
     courseStore.markPracticed(activeCourse.value.id);
+  }
+
+  /**
+   * 构造本次训练实际执行的步骤快照（仅 TRAINING 步）。
+   * per-step 完成组数估算：
+   *   - 已跳过的步（index < currentStepIndex）：全完成
+   *   - 当前步：finished 全完成；组间休息中 = currentSetInStep（刚完成该组）；
+   *     否则 = currentSetInStep - 1（当前组进行中未计入）
+   *   - 未开始的步：0
+   */
+  function buildRecordSteps(finished: boolean): WorkoutRecordStep[] {
+    if (!plan.value) return [];
+    const curIdx = currentStepIndex.value;
+    const steps: WorkoutRecordStep[] = [];
+    for (let i = 0; i < plan.value.steps.length; i++) {
+      const s = plan.value.steps[i];
+      if (s.type !== StepType.TRAINING) continue;
+      const sets = s.sets ?? 1;
+      let completed: number;
+      if (i < curIdx) {
+        completed = sets;
+      } else if (i === curIdx) {
+        if (finished) {
+          completed = sets;
+        } else if (inSetRest.value) {
+          completed = Math.min(currentSetInStep.value, sets);
+        } else {
+          completed = Math.max(0, currentSetInStep.value - 1);
+        }
+      } else {
+        completed = 0;
+      }
+      steps.push({
+        exerciseId: undefined,
+        exerciseName: s.details.title,
+        sets,
+        reps: s.timer.unit === "reps" ? s.timer.value : undefined,
+        durationSec: s.timer.unit === "seconds" ? s.timer.value : undefined,
+        weight: s.details.weight,
+        restBetweenSets: s.restBetweenSets,
+        completedSets: completed,
+      });
+    }
+    return steps;
   }
 
   // ===== Snapshot / Resume =====
