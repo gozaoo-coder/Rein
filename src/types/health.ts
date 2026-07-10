@@ -192,3 +192,141 @@ export function classifyBmi(bmi: number): BmiCategory {
   if (bmi < 28) return "overweight";
   return "obese";
 }
+
+// ===== 营养目标计算 =====
+
+/** 饮食目标 */
+export type DietGoal = "lose" | "maintain" | "gain";
+
+/** 活动水平 */
+export type ActivityLevel = "sedentary" | "light" | "moderate" | "active" | "very_active";
+
+/** 活动系数（用于 TDEE = BMR × factor） */
+export const ACTIVITY_FACTOR: Record<ActivityLevel, number> = {
+  sedentary: 1.2,
+  light: 1.375,
+  moderate: 1.55,
+  active: 1.725,
+  very_active: 1.9,
+};
+
+/** 活动水平中文标签 */
+export const ACTIVITY_LEVEL_LABEL: Record<ActivityLevel, string> = {
+  sedentary: "久坐",
+  light: "轻度活动",
+  moderate: "中度活动",
+  active: "活跃",
+  very_active: "非常活跃",
+};
+
+/** 营养目标：热量(kcal) + 三大宏量营养素(g) */
+export interface NutritionTarget {
+  /** kcal */
+  calories: number;
+  /** g 碳水 */
+  carbs: number;
+  /** g 蛋白质 */
+  protein: number;
+  /** g 脂肪 */
+  fat: number;
+}
+
+/** 默认营养目标（profile 未设置完整时回退） */
+export const DEFAULT_NUTRITION_TARGET: NutritionTarget = {
+  calories: 2000,
+  carbs: 250,
+  protein: 60,
+  fat: 70,
+};
+
+/** 从生日计算年龄（周岁），无生日或格式非法返回 0 */
+export function calcAgeFromBirthday(birthday: string): number {
+  if (!birthday) return 0;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthday.trim());
+  if (!m) return 0;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!y || !mo || !d) return 0;
+  const now = new Date();
+  let age = now.getFullYear() - y;
+  if (
+    now.getMonth() + 1 < mo ||
+    (now.getMonth() + 1 === mo && now.getDate() < d)
+  ) {
+    age -= 1;
+  }
+  return age > 0 ? age : 0;
+}
+
+/**
+ * 计算 BMR（基础代谢）— Mifflin-St Jeor 公式
+ * 男：10*W + 6.25*H - 5*A + 5
+ * 女：10*W + 6.25*H - 5*A - 161
+ */
+export function calcBmr(
+  gender: "male" | "female" | "other",
+  weightKg: number,
+  heightCm: number,
+  ageYears: number,
+): number {
+  const base = 10 * weightKg + 6.25 * heightCm - 5 * ageYears;
+  if (gender === "male") return base + 5;
+  if (gender === "female") return base - 161;
+  // other：取男女常数平均
+  return base - 78;
+}
+
+/** 计算 TDEE（每日总消耗）= BMR × 活动系数 */
+export function calcTdee(bmr: number, activityLevel: ActivityLevel): number {
+  return bmr * ACTIVITY_FACTOR[activityLevel];
+}
+
+/** calcNutritionTarget 入参 profile */
+export interface NutritionProfileInput {
+  gender: "male" | "female" | "other";
+  height: number;
+  weight: number;
+  birthday: string;
+  dietGoal: DietGoal;
+  activityLevel: ActivityLevel;
+}
+
+/**
+ * 计算营养目标：
+ * - calories = TDEE + (lose -400 / gain +350 / maintain 0)，下限 1200
+ * - protein = weightKg × (lose 2.0 / gain 1.8 / maintain 1.6)
+ * - fat = calories × 0.25 / 9
+ * - carbs = 剩余热量 / 4
+ */
+export function calcNutritionTarget(profile: NutritionProfileInput): NutritionTarget {
+  const age = calcAgeFromBirthday(profile.birthday);
+  if (profile.height <= 0 || profile.weight <= 0 || age <= 0) {
+    return { ...DEFAULT_NUTRITION_TARGET };
+  }
+  const bmr = calcBmr(profile.gender, profile.weight, profile.height, age);
+  const tdee = calcTdee(bmr, profile.activityLevel);
+  const goalDelta =
+    profile.dietGoal === "lose" ? -400 : profile.dietGoal === "gain" ? 350 : 0;
+  let calories = tdee + goalDelta;
+  if (calories < 1200) calories = 1200;
+
+  const proteinFactor =
+    profile.dietGoal === "lose" ? 2.0 : profile.dietGoal === "gain" ? 1.8 : 1.6;
+  const protein = Math.round(profile.weight * proteinFactor);
+  const fat = Math.round((calories * 0.25) / 9);
+  const carbs = Math.round((calories - protein * 4 - fat * 9) / 4);
+
+  return {
+    calories: Math.round(calories),
+    carbs: Math.max(0, carbs),
+    protein,
+    fat: Math.max(0, fat),
+  };
+}
+
+/** 计算饮水目标（ml）= 体重 kg × 35；体重未设置回退 2000 */
+export function calcWaterGoalMl(weightKg: number): number {
+  if (weightKg <= 0) return 2000;
+  return Math.round(weightKg * 35);
+}

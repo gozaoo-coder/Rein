@@ -40,7 +40,7 @@ export function resolveRingData(
   stores: Stores,
 ): RingConfig {
   const { color, track } = RING_COLORS[source];
-  const goal = DEFAULT_GOALS[source];
+  const goal = ringGoal(source, stores);
 
   let value = 0;
   switch (source) {
@@ -72,6 +72,17 @@ export function resolveRingData(
   return { value, goal, color, track };
 }
 
+/** 解析环目标值：calories/water 优先取 userStore 推导值，回退 DEFAULT_GOALS */
+function ringGoal(source: RingDataSource, stores: Stores): number {
+  if (source === "calories") {
+    return stores.health.dailyCalorieGoal || DEFAULT_GOALS.calories;
+  }
+  if (source === "water") {
+    return stores.health.waterGoalMl || DEFAULT_GOALS.water;
+  }
+  return DEFAULT_GOALS[source];
+}
+
 /** 批量解析三环 */
 export function resolveRings(
   sources: RingDataSource[],
@@ -87,7 +98,7 @@ export function ringDisplayText(
 ): { value: string; goal: string } {
   switch (source) {
     case "calories":
-      return { value: `${stores.health.todayCalories}`, goal: `${DEFAULT_GOALS.calories}千卡` };
+      return { value: `${stores.health.todayCalories}`, goal: `${ringGoal("calories", stores)}千卡` };
     case "steps":
       return { value: `4247`, goal: `${DEFAULT_GOALS.steps}步` };
     case "exercise":
@@ -98,7 +109,7 @@ export function ringDisplayText(
       return { value: `${done}/${total}`, goal: "完成" };
     }
     case "water":
-      return { value: `${stores.health.todayWaterAmount}`, goal: `${DEFAULT_GOALS.water}ml` };
+      return { value: `${stores.health.todayWaterAmount}`, goal: `${ringGoal("water", stores)}ml` };
     case "bmi": {
       const bmi = stores.health.currentBmi;
       return { value: bmi ? bmi.toFixed(1) : "--", goal: "BMI 24" };

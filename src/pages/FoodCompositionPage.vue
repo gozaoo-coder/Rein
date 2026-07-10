@@ -46,6 +46,16 @@ const fat = computed(() => allNutrients.value.find((n) => n.name === "脂肪")?.
 
 const ratio = computed(() => macroEnergyRatio(cal.value, carbs.value, protein.value, fat.value));
 
+/** 三大营养素目标（g）— 由 userStore 推导 */
+const macroGoals = computed(() => store.macroTargets);
+
+function macroGoalFor(name: string): number {
+  const g = macroGoals.value;
+  if (name === "碳水化合物") return g.carbs;
+  if (name === "蛋白质") return g.protein;
+  return g.fat;
+}
+
 const RING = 56;
 const CIRC = 2 * Math.PI * RING;
 const segments = computed(() => {
@@ -129,7 +139,7 @@ const hasData = computed(() => todayRecords.value.length > 0);
             </div>
             <div v-if="n.group === 'macro' && n.name !== '热量'" class="n-bar">
               <div class="n-bar-fill" :style="{
-                width: Math.min(n.value / (n.name === '碳水化合物' ? 250 : n.name === '蛋白质' ? 60 : 70) * 100, 100) + '%',
+                width: Math.min(n.value / macroGoalFor(n.name) * 100, 100) + '%',
                 background: n.name === '碳水化合物' ? '#f5a623' : n.name === '蛋白质' ? '#64bb5c' : '#9b59b6',
               }" />
             </div>

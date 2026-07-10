@@ -2,6 +2,8 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { readJSON, writeJSON } from "@/composables/useStorage";
 import { pushChange, registerSyncEntity } from "@/composables/useSyncBridge";
+import type { ActivityLevel, DietGoal, NutritionTarget } from "@/types/health";
+import { calcAgeFromBirthday, calcNutritionTarget, calcWaterGoalMl } from "@/types/health";
 
 export interface UserProfile {
   id: string;
@@ -13,6 +15,10 @@ export interface UserProfile {
   height: number;
   weight: number;
   targetWeight: number;
+  /** 饮食目标 */
+  dietGoal: DietGoal;
+  /** 活动水平 */
+  activityLevel: ActivityLevel;
 }
 
 const USER_KEY = "user-profile";
@@ -28,35 +34,35 @@ function defaultProfile(): UserProfile {
     height: 0,
     weight: 0,
     targetWeight: 0,
+    dietGoal: "maintain",
+    activityLevel: "moderate",
   };
 }
 
-/** 从生日计算年龄（周岁），无生日返回 0 */
-export function computeAgeFromBirthday(birthday: string): number {
-  if (!birthday) return 0;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthday.trim());
-  if (!m) return 0;
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  if (!y || !mo || !d) return 0;
-  const now = new Date();
-  let age = now.getFullYear() - y;
-  if (
-    now.getMonth() + 1 < mo ||
-    (now.getMonth() + 1 === mo && now.getDate() < d)
-  ) {
-    age -= 1;
-  }
-  return age > 0 ? age : 0;
-}
+/** 从生日计算年龄（周岁），无生日返回 0 — 转发到 health.ts 实现 */
+export { calcAgeFromBirthday as computeAgeFromBirthday } from "@/types/health";
 
 export const useUserStore = defineStore("user", () => {
   const profile = ref<UserProfile>(defaultProfile());
   const loaded = ref(false);
   const bmi = ref(0);
 
-  const computedAge = computed(() => computeAgeFromBirthday(profile.value.birthday));
+  const computedAge = computed(() => calcAgeFromBirthday(profile.value.birthday));
+
+  /** 营养目标（热量/碳水/蛋白/脂肪）— 由 profile 推导 */
+  const nutritionTarget = computed<NutritionTarget>(() =>
+    calcNutritionTarget({
+      gender: profile.value.gender,
+      height: profile.value.height,
+      weight: profile.value.weight,
+      birthday: profile.value.birthday,
+      dietGoal: profile.value.dietGoal,
+      activityLevel: profile.value.activityLevel,
+    }),
+  );
+
+  /** 每日饮水目标 ml — 体重 kg × 35 */
+  const waterGoalMl = computed(() => calcWaterGoalMl(profile.value.weight));
 
   async function load(): Promise<void> {
     if (loaded.value) return;
@@ -101,6 +107,8 @@ export const useUserStore = defineStore("user", () => {
     profile,
     bmi,
     computedAge,
+    nutritionTarget,
+    waterGoalMl,
     load,
     setProfile,
     clearProfile,

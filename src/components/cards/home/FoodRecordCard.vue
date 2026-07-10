@@ -15,15 +15,12 @@ const carbs = computed(() => store.todayCarbs);
 const protein = computed(() => store.todayProtein);
 const fat = computed(() => store.todayFat);
 
-const CAL_GOAL = 2000;
-const CARB_GOAL = 250;
-const PROTEIN_GOAL = 60;
-const FAT_GOAL = 70;
+const CAL_GOAL = computed(() => store.macroTargets.calories);
 
 const macros = computed(() => [
-  { label: "碳", value: carbs.value, goal: CARB_GOAL, color: "var(--icon-orange)" },
-  { label: "蛋", value: protein.value, goal: PROTEIN_GOAL, color: "var(--icon-blue)" },
-  { label: "脂", value: fat.value, goal: FAT_GOAL, color: "var(--warning-500)" },
+  { label: "碳", value: carbs.value, goal: store.macroTargets.carbs, color: "var(--icon-orange)" },
+  { label: "蛋", value: protein.value, goal: store.macroTargets.protein, color: "var(--icon-blue)" },
+  { label: "脂", value: fat.value, goal: store.macroTargets.fat, color: "var(--warning-500)" },
 ]);
 
 const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");

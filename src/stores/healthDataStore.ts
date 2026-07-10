@@ -12,6 +12,7 @@ import type {
   BodyMetricsRecord,
   FoodItem,
   FoodRecord,
+  NutritionTarget,
   WaterRecord,
   HealthScore,
 } from "@/types/health";
@@ -280,6 +281,15 @@ export const useHealthDataStore = defineStore("healthData", () => {
     () => latestBodyMetrics.value?.weightKg ?? useUserStore().profile.weight ?? 0,
   );
 
+  /** 每日热量目标 kcal — 由 userStore 推导 */
+  const dailyCalorieGoal = computed<number>(() => useUserStore().nutritionTarget.calories);
+
+  /** 三大宏量营养素目标 — 由 userStore 推导 */
+  const macroTargets = computed<NutritionTarget>(() => useUserStore().nutritionTarget);
+
+  /** 每日饮水目标 ml — 由 userStore 推导 */
+  const waterGoalMl = computed<number>(() => useUserStore().waterGoalMl);
+
   /** 按日期分组获取饮食记录 */
   function foodRecordsByDate(date: string): FoodRecord[] {
     return foodRecords.value.filter((r) => dateKeyFromTs(r.timestamp) === date);
@@ -307,6 +317,9 @@ export const useHealthDataStore = defineStore("healthData", () => {
     latestBodyMetrics,
     currentBmi,
     currentWeight,
+    dailyCalorieGoal,
+    macroTargets,
+    waterGoalMl,
     load,
     addWater,
     removeWater,

@@ -112,12 +112,12 @@ function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-const GOALS: Record<Macro, number> = {
-  calories: 2000,
-  carbs: 250,
-  protein: 60,
-  fat: 70,
-};
+const GOALS = computed<Record<Macro, number>>(() => ({
+  calories: store.macroTargets.calories,
+  carbs: store.macroTargets.carbs,
+  protein: store.macroTargets.protein,
+  fat: store.macroTargets.fat,
+}));
 
 const MACRO_LABEL: Record<Macro, string> = {
   calories: "热量",
