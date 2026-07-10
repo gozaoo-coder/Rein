@@ -70,6 +70,8 @@ export interface ToolResult {
     | "food-record"
     | "food-db"
     | "body-metrics"
+    | "workout-history"
+    | "nutrition"
     | "raw";
   /** 卡片渲染数据 */
   cardData?: unknown;

@@ -1140,6 +1140,107 @@ function executeBodyMetricsRecord(args: AnyParams): ToolResult {
   };
 }
 
+// ===== 历史/目标查询工具 =====
+
+function executeWorkoutRecordsList(args: AnyParams): ToolResult {
+  const store = useWorkoutStatsStore();
+  const limit = Math.min(Math.max(Number(args.limit ?? 10), 1), 50);
+  const records = [...store.records]
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, limit)
+    .map((r) => ({
+      id: r.id,
+      courseName: r.courseName,
+      courseCategory: r.courseCategory,
+      startedAt: r.startedAt,
+      endedAt: r.endedAt,
+      durationSec: r.durationSec,
+      caloriesBurned: r.caloriesBurned,
+      completedSets: r.completedSets,
+      totalSets: r.totalSets,
+      finished: r.finished,
+    }));
+  return {
+    toolCallId: "",
+    name: "workout_records_list",
+    ok: true,
+    content: JSON.stringify(records),
+    summary: okSummary("workout_records_list", `最近 ${records.length} 次运动记录`),
+    card: "workout-history",
+    cardData: { records },
+  };
+}
+
+function executeWorkoutRecordDetail(args: AnyParams): ToolResult {
+  const store = useWorkoutStatsStore();
+  const id = String(args.id ?? "");
+  const record = store.getRecord(id);
+  if (!record) {
+    return {
+      toolCallId: "",
+      name: "workout_record_detail",
+      ok: false,
+      content: JSON.stringify({ error: `记录 ${id} 不存在` }),
+      summary: okSummary("workout_record_detail", `记录 ${id} 不存在`),
+      card: "raw",
+      cardData: { error: `记录 ${id} 不存在` },
+    };
+  }
+  return {
+    toolCallId: "",
+    name: "workout_record_detail",
+    ok: true,
+    content: JSON.stringify(record),
+    summary: okSummary(
+      "workout_record_detail",
+      `${record.courseName} · ${Math.round(record.durationSec / 60)}分钟 · ${record.caloriesBurned}千卡`,
+    ),
+    card: "workout-history",
+    cardData: { record },
+  };
+}
+
+function executeNutritionTargetGet(): ToolResult {
+  const userStore = useUserStore();
+  const target = userStore.nutritionTarget;
+  const waterGoalMl = userStore.waterGoalMl;
+  const dietGoal = userStore.profile.dietGoal;
+  const activityLevel = userStore.profile.activityLevel;
+  return {
+    toolCallId: "",
+    name: "nutrition_target_get",
+    ok: true,
+    content: JSON.stringify({ target, waterGoalMl, dietGoal, activityLevel }),
+    summary: okSummary("nutrition_target_get", `每日营养目标`),
+    card: "nutrition",
+    cardData: { target, waterGoalMl, dietGoal, activityLevel },
+  };
+}
+
+function executeBodyMetricsHistory(args: AnyParams): ToolResult {
+  const store = useHealthDataStore();
+  const limit = Math.min(Math.max(Number(args.limit ?? 20), 1), 100);
+  const records = [...store.bodyMetrics]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, limit)
+    .map((r) => ({
+      id: r.id,
+      weightKg: r.weightKg,
+      bodyFatPercent: r.bodyFatPercent,
+      bmi: r.bmi,
+      timestamp: r.timestamp,
+    }));
+  return {
+    toolCallId: "",
+    name: "body_metrics_history",
+    ok: true,
+    content: JSON.stringify(records),
+    summary: okSummary("body_metrics_history", `最近身体指标`),
+    card: "body-metrics",
+    cardData: { records },
+  };
+}
+
 // ===== 爬虫工具（Bing 搜索 + URL 抓取） =====
 
 const BING_SEARCH_URL = "https://cn.bing.com/search?q=";
@@ -1285,6 +1386,10 @@ async function dispatch(name: string, args: AnyParams): Promise<ToolResult> {
     case "food_db_update": return executeFoodDbUpdate(args);
     case "food_db_delete": return executeFoodDbDelete(args);
     case "body_metrics_record": return executeBodyMetricsRecord(args);
+    case "workout_records_list": return executeWorkoutRecordsList(args);
+    case "workout_record_detail": return executeWorkoutRecordDetail(args);
+    case "nutrition_target_get": return executeNutritionTargetGet();
+    case "body_metrics_history": return executeBodyMetricsHistory(args);
     case "web_search": return await executeWebSearch(args);
     case "web_fetch": return await executeWebFetch(args);
     default: throw new Error(`未知工具: ${name}`);
@@ -1779,6 +1884,41 @@ export const PI_TOOLS_CORE: AgentTool<any, PiToolDetails>[] = [
       bodyFatPercent: Type.Optional(Type.Number({ description: "体脂率 %" })),
     }),
     execute: wrapExecuteRich("body_metrics_record"),
+  },
+  // ===== 历史/目标查询 =====
+  {
+    name: "workout_records_list",
+    label: "运动记录列表",
+    description: "列出最近的运动记录（按开始时间倒序）。返回 id/课程名/分类/起止时间/时长/热量/组数/是否完成。",
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Number({ description: "返回条目数，默认 10，最大 50" })),
+    }),
+    execute: wrapExecuteRich("workout_records_list"),
+  },
+  {
+    name: "workout_record_detail",
+    label: "运动记录详情",
+    description: "按 id 获取单条运动记录详情（含每步执行明细 steps）。",
+    parameters: Type.Object({
+      id: Type.String({ description: "记录 id" }),
+    }),
+    execute: wrapExecuteRich("workout_record_detail"),
+  },
+  {
+    name: "nutrition_target_get",
+    label: "每日营养目标",
+    description: "获取每日营养目标（热量/碳水/蛋白/脂肪）、饮水目标、饮食目标与活动水平。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("nutrition_target_get"),
+  },
+  {
+    name: "body_metrics_history",
+    label: "体征历史",
+    description: "获取最近的体征记录（体重/体脂/BMI/时间戳，按时间倒序）。",
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Number({ description: "返回条目数，默认 20，最大 100" })),
+    }),
+    execute: wrapExecuteRich("body_metrics_history"),
   },
   // ===== 爬虫工具 =====
   {

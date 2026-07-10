@@ -47,7 +47,9 @@ export function buildSystemPrompt(workoutCtx?: WorkoutPromptContext): string {
 - 子任务：todo_subtask_add/toggle/remove
 - 记录饮食：优先用 food_record_add + foodId（食品库 ID）+ grams，自动按 100g 比例计算营养；用户口述食物名但找不到 ID 时回退到 quick 模式（手动填 calories）
 - 用户描述食物但不确定克数时，先查 food_db_list 找近似食品，再估算克数
-- 体征记录：body_metrics_record 同时支持身高/体重/体脂，BMI 系统自动计算
+- 体征记录：body_metrics_record 同时支持身高/体重/体脂，BMI 系统自动计算；body_metrics_history 查询最近体征历史（体重/体脂/BMI/时间戳）
+- 查询运动历史：workout_records_list 列出最近运动记录（按时间倒序），workout_record_detail 按 id 取单条详情（含每步执行明细 steps）
+- 查询每日目标：nutrition_target_get 获取每日营养目标（热量/碳水/蛋白/脂肪）、饮水目标、饮食目标与活动水平
 - 涉及多个对象时，可分多次调用工具，最后统一总结
 
 # 回复风格

@@ -8,7 +8,9 @@ import type { ToolResult } from "@/types/ai";
 import BottomSheet from "@/components/ui/BottomSheet.vue";
 import type { Course } from "@/types/course";
 import type { Exercise } from "@/types/exercise";
-import type { WorkoutStats } from "@/types/workout-stats";
+import type { WorkoutStats, WorkoutRecord } from "@/types/workout-stats";
+import type { NutritionTarget, DietGoal, ActivityLevel } from "@/types/health";
+import { ACTIVITY_LEVEL_LABEL } from "@/types/health";
 import {
   CATEGORY_LABEL,
   DIFFICULTY_LABEL,
@@ -61,7 +63,14 @@ interface BodyMetricsCardData {
   bmi?: number;
   timestamp?: number;
 }
-const bodyData = computed(() => data.value as BodyMetricsCardData | undefined);
+const bodyData = computed<BodyMetricsCardData | null>(() => {
+  const d = data.value as (BodyMetricsCardData & { records?: BodyMetricsCardData[] }) | undefined;
+  if (!d) return null;
+  if (Array.isArray(d.records)) {
+    return d.records.length ? d.records[0] : null;
+  }
+  return d;
+});
 
 const toolLabel: Record<string, string> = {
   "course_list": "查询课程",
@@ -88,6 +97,10 @@ const toolLabel: Record<string, string> = {
   "food_db_update": "更新食品",
   "food_db_delete": "删除食品",
   "body_metrics_record": "记录体征",
+  "workout_records_list": "运动记录列表",
+  "workout_record_detail": "运动记录详情",
+  "nutrition_target_get": "每日营养目标",
+  "body_metrics_history": "体征历史",
 };
 const actionLabel = computed(() => toolLabel[props.result.name] ?? props.result.name);
 
@@ -110,6 +123,32 @@ const waterPct = computed(() => {
   if (!waterData.value) return 0;
   return Math.min((waterData.value.total / waterData.value.goal) * 100, 100);
 });
+
+// ===== 运动历史 / 营养目标 卡片数据 =====
+interface WorkoutHistoryCardData {
+  records?: WorkoutRecord[];
+  record?: WorkoutRecord;
+}
+const workoutHistoryData = computed(() => data.value as WorkoutHistoryCardData | undefined);
+
+interface NutritionCardData {
+  target: NutritionTarget;
+  waterGoalMl: number;
+  dietGoal: DietGoal;
+  activityLevel: ActivityLevel;
+}
+const nutritionData = computed(() => data.value as NutritionCardData | undefined);
+
+const DIET_GOAL_LABEL: Record<DietGoal, string> = {
+  lose: "减脂",
+  maintain: "维持",
+  gain: "增肌",
+};
+
+function formatDateShort(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
 
 // ===== 详情 BottomSheet =====
 const showDetail = ref(false);
@@ -365,6 +404,44 @@ const detailJson = computed(() =>
           <span class="bd-label">BMI</span>
         </div>
       </div>
+    </div>
+
+    <!-- 运动历史卡（列表 / 单条详情） -->
+    <div v-else-if="cardType === 'workout-history' && workoutHistoryData" class="wk-history-body">
+      <div v-if="workoutHistoryData.record" class="wkh-item">
+        <span class="wkh-name">{{ workoutHistoryData.record.courseName }}</span>
+        <span class="wkh-meta">{{ formatDateShort(workoutHistoryData.record.startedAt) }} · {{ Math.round(workoutHistoryData.record.durationSec / 60) }}min · {{ workoutHistoryData.record.caloriesBurned }}千卡</span>
+      </div>
+      <template v-else-if="workoutHistoryData.records && workoutHistoryData.records.length">
+        <div v-for="r in workoutHistoryData.records.slice(0, 4)" :key="r.id" class="wkh-item">
+          <span class="wkh-name">{{ r.courseName }}</span>
+          <span class="wkh-meta">{{ formatDateShort(r.startedAt) }} · {{ Math.round(r.durationSec / 60) }}min · {{ r.caloriesBurned }}千卡</span>
+        </div>
+        <div v-if="workoutHistoryData.records.length > 4" class="list-more">共 {{ workoutHistoryData.records.length }} 条</div>
+      </template>
+    </div>
+
+    <!-- 营养目标卡 -->
+    <div v-else-if="cardType === 'nutrition' && nutritionData" class="nutrition-card-body">
+      <div class="food-totals">
+        <div class="ft-block ft-main">
+          <span class="ft-num">{{ nutritionData.target.calories }}</span>
+          <span class="ft-label">千卡/日</span>
+        </div>
+        <div class="ft-block">
+          <span class="ft-num">{{ nutritionData.target.carbs }}g</span>
+          <span class="ft-label">碳水</span>
+        </div>
+        <div class="ft-block">
+          <span class="ft-num">{{ nutritionData.target.protein }}g</span>
+          <span class="ft-label">蛋白</span>
+        </div>
+        <div class="ft-block">
+          <span class="ft-num">{{ nutritionData.target.fat }}g</span>
+          <span class="ft-label">脂肪</span>
+        </div>
+      </div>
+      <div class="nutrition-sub">饮水 {{ nutritionData.waterGoalMl }}ml · {{ DIET_GOAL_LABEL[nutritionData.dietGoal] }} · {{ ACTIVITY_LEVEL_LABEL[nutritionData.activityLevel] }}</div>
     </div>
 
     <!-- raw / error -->
@@ -916,13 +993,61 @@ const detailJson = computed(() =>
   color: var(--color-text-tertiary);
 }
 
+/* ===== 运动历史卡 ===== */
+.wk-history-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
+}
+.wkh-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-100);
+  border-radius: var(--radius-sm);
+}
+.wkh-name {
+  font-size: var(--text-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wkh-meta {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 营养目标卡 ===== */
+.nutrition-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
+}
+.nutrition-sub {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ===== 紧凑模式（运动面板内联） ===== */
 .tool-card.is-compact {
   padding: var(--space-2) var(--space-3);
   border-left-width: 2px;
 }
 .tool-card.is-compact .stats-grid,
-.tool-card.is-compact .body-grid {
+.tool-card.is-compact .body-grid,
+.tool-card.is-compact .food-totals {
   grid-template-columns: repeat(2, 1fr);
 }
 
