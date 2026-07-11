@@ -24,8 +24,10 @@ import { useWorkoutStore } from "@/stores/workoutStore";
 import { useUserStore } from "@/stores/userStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useHealthDataStore } from "@/stores/healthDataStore";
+import { usePomodoroStore } from "@/stores/pomodoroStore";
 import type { TodoPriority } from "@/types/todo";
 import { PRIORITY_LABEL } from "@/types/todo";
+import type { PomodoroConfig } from "@/types/pomodoro";
 import { invoke } from "@tauri-apps/api/core";
 
 // ===== Schemas =====
@@ -1408,6 +1410,125 @@ async function executeWebFetch(args: AnyParams): Promise<ToolResult> {
   };
 }
 
+// ===== 番茄钟工具 =====
+
+function executePomodoroStart(): ToolResult {
+  const store = usePomodoroStore();
+  store.start();
+  const snap = store.snapshot();
+  return {
+    toolCallId: "",
+    name: "pomodoro_start",
+    ok: true,
+    content: JSON.stringify(snap),
+    summary: okSummary("pomodoro_start", `番茄钟已启动（专注 ${snap.config.focusMin} 分钟）`),
+    card: "pomodoro",
+    cardData: snap,
+  };
+}
+
+function executePomodoroPause(): ToolResult {
+  const store = usePomodoroStore();
+  store.pause();
+  const snap = store.snapshot();
+  return {
+    toolCallId: "",
+    name: "pomodoro_pause",
+    ok: true,
+    content: JSON.stringify(snap),
+    summary: okSummary("pomodoro_pause", "番茄钟已暂停"),
+    card: "pomodoro",
+    cardData: snap,
+  };
+}
+
+function executePomodoroSkip(): ToolResult {
+  const store = usePomodoroStore();
+  store.skip();
+  const snap = store.snapshot();
+  return {
+    toolCallId: "",
+    name: "pomodoro_skip",
+    ok: true,
+    content: JSON.stringify(snap),
+    summary: okSummary("pomodoro_skip", `已跳过，当前阶段：${snap.phase}`),
+    card: "pomodoro",
+    cardData: snap,
+  };
+}
+
+function executePomodoroStatus(): ToolResult {
+  const store = usePomodoroStore();
+  const snap = store.snapshot();
+  return {
+    toolCallId: "",
+    name: "pomodoro_status",
+    ok: true,
+    content: JSON.stringify(snap),
+    summary: okSummary("pomodoro_status", `阶段：${snap.phase}，剩余 ${snap.remainingSec} 秒`),
+    card: "pomodoro",
+    cardData: snap,
+  };
+}
+
+function executePomodoroConfigSet(args: AnyParams): ToolResult {
+  const store = usePomodoroStore();
+  const patch: Partial<PomodoroConfig> = {};
+  if (typeof args.focusMin === "number") patch.focusMin = args.focusMin;
+  if (typeof args.restMin === "number") patch.restMin = args.restMin;
+  if (typeof args.targetCount === "number") patch.targetCount = args.targetCount;
+  store.setConfig(patch);
+  const snap = store.snapshot();
+  return {
+    toolCallId: "",
+    name: "pomodoro_config_set",
+    ok: true,
+    content: JSON.stringify(snap),
+    summary: okSummary("pomodoro_config_set", `配置已更新（专注 ${snap.config.focusMin} 分钟 / 休息 ${snap.config.restMin} 分钟 / 目标 ${snap.config.targetCount} 个）`),
+    card: "pomodoro",
+    cardData: snap,
+  };
+}
+
+function executeTodoFocusSet(args: AnyParams): ToolResult {
+  const store = usePomodoroStore();
+  let id: string | null = null;
+  if (typeof args.todoId === "string") {
+    id = args.todoId;
+  } else if (typeof args.keyword === "string") {
+    const keyword = args.keyword;
+    const match = store.sortedTodos.find((t) => t.title.includes(keyword));
+    id = match?.id ?? null;
+  }
+  store.setFocusTodo(id);
+  const sorted = store.sortedTodos.map((t) => ({ id: t.id, title: t.title }));
+  return {
+    toolCallId: "",
+    name: "todo_focus_set",
+    ok: true,
+    content: JSON.stringify({ focusTodoId: id, sortedTodos: sorted }),
+    summary: okSummary("todo_focus_set", id ? "已设置专注待办" : "已清除专注待办"),
+    card: "pomodoro",
+    cardData: { focusTodoId: id, sortedTodos: sorted },
+  };
+}
+
+function executeTodoPomodoroReorder(args: AnyParams): ToolResult {
+  const store = usePomodoroStore();
+  const ids: string[] = Array.isArray(args.ids) ? (args.ids as string[]) : [];
+  store.reorderTodos(ids);
+  const sorted = store.sortedTodos.map((t) => ({ id: t.id, title: t.title }));
+  return {
+    toolCallId: "",
+    name: "todo_pomodoro_reorder",
+    ok: true,
+    content: JSON.stringify(sorted),
+    summary: okSummary("todo_pomodoro_reorder", `已重排 ${sorted.length} 项待办`),
+    card: "pomodoro",
+    cardData: sorted,
+  };
+}
+
 async function dispatch(name: string, args: AnyParams): Promise<ToolResult> {
   switch (name) {
     case "course_list": return executeCourseList(args);
@@ -1455,6 +1576,13 @@ async function dispatch(name: string, args: AnyParams): Promise<ToolResult> {
     case "body_metrics_history": return executeBodyMetricsHistory(args);
     case "web_search": return await executeWebSearch(args);
     case "web_fetch": return await executeWebFetch(args);
+    case "pomodoro_start": return executePomodoroStart();
+    case "pomodoro_pause": return executePomodoroPause();
+    case "pomodoro_skip": return executePomodoroSkip();
+    case "pomodoro_status": return executePomodoroStatus();
+    case "pomodoro_config_set": return executePomodoroConfigSet(args);
+    case "todo_focus_set": return executeTodoFocusSet(args);
+    case "todo_pomodoro_reorder": return executeTodoPomodoroReorder(args);
     default: throw new Error(`未知工具: ${name}`);
   }
 }
@@ -2066,3 +2194,65 @@ export const PI_TOOLS_WORKOUT: AgentTool<any, PiToolDetails>[] = [
 
 /** 完整工具集（向后兼容） */
 export const PI_TOOLS: AgentTool<any, PiToolDetails>[] = [...PI_TOOLS_CORE, ...PI_TOOLS_WORKOUT];
+
+/** 番茄钟模式工具集（仅在番茄钟模式 AI 聊天中可用，搭配 PI_TOOLS_CORE 使用） */
+export const PI_TOOLS_POMODORO: AgentTool<any, PiToolDetails>[] = [
+  {
+    name: "pomodoro_start",
+    label: "启动番茄钟",
+    description: "启动番茄钟专注计时。如果当前是 idle 或 done 状态，会重置计数并开始新一轮。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("pomodoro_start"),
+  },
+  {
+    name: "pomodoro_pause",
+    label: "暂停番茄钟",
+    description: "暂停当前番茄钟计时。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("pomodoro_pause"),
+  },
+  {
+    name: "pomodoro_skip",
+    label: "跳过当前阶段",
+    description: "跳过当前专注或休息阶段，进入下一阶段。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("pomodoro_skip"),
+  },
+  {
+    name: "pomodoro_status",
+    label: "查询番茄钟状态",
+    description: "获取当前番茄钟的完整状态（阶段、剩余时间、已完成数、配置等）。",
+    parameters: Type.Object({}),
+    execute: wrapExecuteRich("pomodoro_status"),
+  },
+  {
+    name: "pomodoro_config_set",
+    label: "修改番茄钟配置",
+    description: "修改专注时长（最小23分钟）、休息时长（最小5分钟）、目标番茄数。仅传需要修改的字段。",
+    parameters: Type.Object({
+      focusMin: Type.Optional(Type.Number({ description: "专注时长（分钟），最小23" })),
+      restMin: Type.Optional(Type.Number({ description: "休息时长（分钟），最小5" })),
+      targetCount: Type.Optional(Type.Number({ description: "目标番茄数" })),
+    }),
+    execute: wrapExecuteRich("pomodoro_config_set"),
+  },
+  {
+    name: "todo_focus_set",
+    label: "设置专注待办",
+    description: "设置当前番茄钟的专注待办事项。可传 todoId 精确匹配，或传 keyword 按标题关键词模糊匹配。",
+    parameters: Type.Object({
+      todoId: Type.Optional(Type.String({ description: "待办 id" })),
+      keyword: Type.Optional(Type.String({ description: "标题关键词（当不传 todoId 时使用）" })),
+    }),
+    execute: wrapExecuteRich("todo_focus_set"),
+  },
+  {
+    name: "todo_pomodoro_reorder",
+    label: "重排番茄钟待办",
+    description: "重新排序番茄钟页面显示的待办事项列表。传入按新顺序排列的待办 id 列表。",
+    parameters: Type.Object({
+      ids: Type.Array(Type.String(), { description: "按新顺序排列的待办 id 列表" }),
+    }),
+    execute: wrapExecuteRich("todo_pomodoro_reorder"),
+  },
+];

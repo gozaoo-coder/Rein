@@ -18,6 +18,8 @@ import WeightRecordCard from "./WeightRecordCard.vue";
 import BodyFatQuickAddCard from "./BodyFatQuickAddCard.vue";
 import BodyFatCurveCard from "./BodyFatCurveCard.vue";
 import TodoQuickAddCard from "./TodoQuickAddCard.vue";
+import PomodoroEntryCard from "./PomodoroEntryCard.vue";
+import PomodoroQuickStartCard from "./PomodoroQuickStartCard.vue";
 
 defineProps<{ card: CardConfig }>();
 const emit = defineEmits<{ click: [] }>();
@@ -37,4 +39,6 @@ const emit = defineEmits<{ click: [] }>();
   <BodyFatQuickAddCard v-else-if="card.type === 'body-fat-quick-add'" :size="card.size" />
   <BodyFatCurveCard v-else-if="card.type === 'body-fat-curve'" :size="card.size" @click="emit('click')" />
   <TodoQuickAddCard v-else-if="card.type === 'todo-quick-add'" :size="card.size" />
+  <PomodoroEntryCard v-else-if="card.type === 'pomodoro-entry'" :size="card.size" />
+  <PomodoroQuickStartCard v-else-if="card.type === 'pomodoro-quick-start'" :size="card.size" />
 </template>

@@ -11,7 +11,7 @@ import type {
 import { readJSON, writeJSON } from "@/composables/useStorage";
 import { useAiConfigStore } from "@/stores/aiConfigStore";
 import { runPrompt, runRegenerate, type RunPromptCallbacks, type RunPromptOptions } from "@/composables/usePiAgent";
-import type { WorkoutPromptContext } from "@/data/aiPrompt";
+import type { WorkoutPromptContext, PomodoroPromptContext } from "@/data/aiPrompt";
 import { pushChange, pushDelete, registerSyncEntity } from "@/composables/useSyncBridge";
 import { useWorkoutStore } from "@/stores/workoutStore";
 
@@ -81,6 +81,17 @@ export const useAiChatStore = defineStore("aiChat", () => {
     const cur = active.value;
     if (cur && cur.mode === "workout") return cur;
     return newWorkoutChat();
+  }
+
+  /** 创建一个新的番茄钟模式会话并设为 active */
+  function newPomodoroChat(): Conversation {
+    return createConversation("番茄钟助手", "pomodoro");
+  }
+  /** 确保 active 是番茄钟模式会话 */
+  function ensurePomodoroConversation(): Conversation {
+    const cur = active.value;
+    if (cur && cur.mode === "pomodoro") return cur;
+    return newPomodoroChat();
   }
 
   function setActive(id: string): void {
@@ -195,7 +206,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
   async function send(
     content: MessageContent,
     citations: Citation[] = [],
-    opts?: { workoutCtx?: WorkoutPromptContext; attachments?: FileAttachment[] },
+    opts?: { workoutCtx?: WorkoutPromptContext; pomodoroCtx?: PomodoroPromptContext; attachments?: FileAttachment[] },
   ): Promise<void> {
     const configStore = useAiConfigStore();
     if (!configStore.isConfigured) {
@@ -212,6 +223,7 @@ export const useAiChatStore = defineStore("aiChat", () => {
       apiKey: cfg.apiKey,
       autoExecute: cfg.autoExecute,
       workoutCtx: opts?.workoutCtx,
+      pomodoroCtx: opts?.pomodoroCtx,
     };
     sending.value = true;
     try {
@@ -321,6 +333,8 @@ export const useAiChatStore = defineStore("aiChat", () => {
     createConversation,
     newWorkoutChat,
     ensureWorkoutConversation,
+    newPomodoroChat,
+    ensurePomodoroConversation,
     setActive,
     deleteConversation,
     togglePin,

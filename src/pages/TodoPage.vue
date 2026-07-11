@@ -10,6 +10,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useTodoStore } from "@/stores/todoStore";
+import { openPomodoro } from "@/composables/usePomodoroWindow";
 import BottomSheet from "@/components/ui/BottomSheet.vue";
 import {
   HOLIDAY_PRESETS,
@@ -692,6 +693,9 @@ watch(calMode, (m) => {
         <i class="bi bi-chevron-left" style="font-size:22px"></i>
       </button>
       <h2 class="sub-title">待办事项</h2>
+      <button class="pomo-btn" @click="openPomodoro" aria-label="番茄钟" title="番茄钟">
+        <i class="bi bi-clock" style="font-size:18px"></i>
+      </button>
       <button class="today-btn" @click="jumpToday">今天</button>
     </header>
 
@@ -1442,6 +1446,22 @@ watch(calMode, (m) => {
   cursor: pointer;
 }
 .today-btn:active { opacity: 0.7; }
+
+.pomo-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--danger-100, rgba(239, 68, 68, 0.12));
+  color: var(--danger-500, #ef4444);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.pomo-btn:active { transform: scale(0.92); }
 
 /* 顶层视图切换条 */
 .view-tabs-bar {

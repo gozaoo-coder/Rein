@@ -84,6 +84,11 @@ const router = createRouter({
       component: () => import("@/pages/TodoPage.vue"),
     },
     {
+      path: "/pomodoro",
+      name: "pomodoro",
+      component: () => import("@/pages/PomodoroPage.vue"),
+    },
+    {
       path: "/health/water",
       name: "health-water",
       component: () => import("@/pages/WaterPage.vue"),

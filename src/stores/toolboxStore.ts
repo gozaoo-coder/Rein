@@ -30,6 +30,7 @@ function defaultEntries(): ToolboxEntry[] {
   const defs: Array<Omit<ToolboxEntry, "pinned" | "order">> = [
     { key: "water", label: "饮水记录", icon: "cup-straw", path: "/health/water", accent: "blue" },
     { key: "todo", label: "待办", icon: "list-check", path: "/todo", accent: "purple" },
+    { key: "pomodoro", label: "番茄钟", icon: "clock", path: "/pomodoro", accent: "red" },
     { key: "food", label: "饮食记录", icon: "egg-fried", path: "/health/food", accent: "warm" },
     { key: "food-db", label: "食品数据库", icon: "egg", path: "/health/food-db", accent: "green" },
     { key: "courses", label: "课程库", icon: "collection", path: "/sports/courses", accent: "warm" },

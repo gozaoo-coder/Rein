@@ -18,8 +18,8 @@ import type {
   ToolCall as PiToolCall,
 } from "@earendil-works/pi-ai";
 import { getModelsCollection, resolvePiModel, registerCustomProvider } from "@/composables/usePiProvider";
-import { PI_TOOLS, PI_TOOLS_CORE, type PiToolDetails } from "@/composables/usePiTools";
-import { buildSystemPrompt, type WorkoutPromptContext } from "@/data/aiPrompt";
+import { PI_TOOLS, PI_TOOLS_CORE, PI_TOOLS_POMODORO, type PiToolDetails } from "@/composables/usePiTools";
+import { buildSystemPrompt, type WorkoutPromptContext, type PomodoroPromptContext } from "@/data/aiPrompt";
 import type {
   ChatMessage,
   Citation,
@@ -160,6 +160,8 @@ export interface RunPromptOptions {
   autoExecute: boolean;
   /** 运动模式上下文；存在则注入系统提示并启用运动模式工具 */
   workoutCtx?: WorkoutPromptContext;
+  /** 番茄钟模式上下文；存在则注入系统提示并启用番茄钟模式工具 */
+  pomodoroCtx?: PomodoroPromptContext;
 }
 
 /** 构造 Agent 实例（每次发送时按最新配置构造） */
@@ -173,13 +175,14 @@ function buildAgent(opts: RunPromptOptions): Agent | null {
 
   const collection = getModelsCollection();
   const isWorkout = Boolean(opts.workoutCtx);
+  const isPomodoro = Boolean(opts.pomodoroCtx);
   const tools = opts.autoExecute
-    ? (isWorkout ? PI_TOOLS : PI_TOOLS_CORE)
+    ? (isWorkout ? PI_TOOLS : (isPomodoro ? [...PI_TOOLS_CORE, ...PI_TOOLS_POMODORO] : PI_TOOLS_CORE))
     : [];
 
   const agent = new Agent({
     initialState: {
-      systemPrompt: buildSystemPrompt(opts.workoutCtx),
+      systemPrompt: buildSystemPrompt(opts.workoutCtx, opts.pomodoroCtx),
       model: piModel,
       thinkingLevel: "off",
       tools,

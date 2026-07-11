@@ -11,7 +11,15 @@ export interface WorkoutPromptContext {
   summary: string;
 }
 
-export function buildSystemPrompt(workoutCtx?: WorkoutPromptContext): string {
+export interface PomodoroPromptContext {
+  /** 已经组装好的番茄钟运行时上下文摘要 */
+  summary: string;
+}
+
+export function buildSystemPrompt(
+  workoutCtx?: WorkoutPromptContext,
+  pomodoroCtx?: PomodoroPromptContext,
+): string {
   const base = `你是 Rein 的 AI 健康与运动助手。
 
 # 你的能力
@@ -64,9 +72,14 @@ export function buildSystemPrompt(workoutCtx?: WorkoutPromptContext): string {
 - 用户引用上文或历史消息时，引用片段会以"引用："前缀出现在用户消息中，请基于引用内容作答
 - 工具调用结果会以 tool 角色消息返回，请综合所有 tool 结果再回复`;
 
-  if (!workoutCtx) return base;
+  // 无任何上下文：返回基础提示
+  if (!workoutCtx && !pomodoroCtx) return base;
 
-  return `${base}
+  let result = base;
+
+  // 运动上下文
+  if (workoutCtx) {
+    result += `
 
 # 当前运动上下文
 你正在辅助用户进行实时训练。以下是当前训练状态（已实时注入）：
@@ -82,6 +95,28 @@ ${workoutCtx.summary}
 - 不擅自跳过或缩短用户正在进行的训练步，除非用户明确要求
 - 用户问"现在该怎么做"时，基于当前步骤的器械/肌群/配重/注意事项给出具体执行建议
 - 训练模式下同样遵守动作变体规则：当前步涉及的力量动作按站距/体位/握距具名（如"高位宽踩倒蹬"而非泛指"倒蹬"），动作说明覆盖具体描述/动作要领/注意事项/锻炼部位四部分；若当前步变体不明确，先用 workout_current_get 取信息，仍不清楚则询问用户`;
+  }
+
+  // 番茄钟上下文
+  if (pomodoroCtx) {
+    result += `
+
+# 当前番茄钟上下文
+你正在辅助用户进行番茄钟专注。以下是当前状态（已实时注入）：
+
+${pomodoroCtx.summary}
+
+# 番茄钟模式下额外能力
+- 启动番茄钟：调用 pomodoro_start
+- 暂停：调用 pomodoro_pause
+- 跳过当前阶段：调用 pomodoro_skip
+- 修改配置（专注/休息时长、目标数）：调用 pomodoro_config_set
+- 查询当前状态：调用 pomodoro_status
+- 设置专注待办：调用 todo_focus_set，传入待办 id 或标题关键词
+- 重新排序待办：调用 todo_pomodoro_reorder，传入按新顺序排列的待办 id 列表`;
+  }
+
+  return result;
 }
 
 /**

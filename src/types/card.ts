@@ -21,7 +21,9 @@ export type CardType =
   | "weight-record" // 体重记录
   | "body-fat-quick-add" // 快速记体脂（1x1/1x2/2x1，只做快速加）
   | "body-fat-curve" // 体脂曲线
-  | "todo-quick-add"; // 快速新建待办
+  | "todo-quick-add" // 快速新建待办
+  | "pomodoro-entry" // 番茄钟入口
+  | "pomodoro-quick-start"; // 快速开始番茄钟
 
 /** 环形图可选数据源 */
 export type RingDataSource =
@@ -188,6 +190,24 @@ export const CARD_REGISTRY: Record<CardType, CardMeta> = {
     defaultSize: "1x1",
     accent: "var(--icon-orange)",
     icon: "plus-lg",
+  },
+  "pomodoro-entry": {
+    type: "pomodoro-entry",
+    title: "番茄钟",
+    description: "打开番茄钟专注计时",
+    sizes: ["1x1", "2x1", "1x2", "2x2"],
+    defaultSize: "2x1",
+    accent: "var(--danger-500)",
+    icon: "clock",
+  },
+  "pomodoro-quick-start": {
+    type: "pomodoro-quick-start",
+    title: "快速专注",
+    description: "一键启动番茄钟",
+    sizes: ["1x1", "2x1", "1x2", "2x2"],
+    defaultSize: "1x1",
+    accent: "var(--color-warm)",
+    icon: "play-circle-fill",
   },
 };
 

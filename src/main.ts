@@ -54,6 +54,7 @@ import { useUserStore } from "@/stores/userStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useCardLayoutStore } from "@/stores/cardLayoutStore";
+import { usePomodoroStore } from "@/stores/pomodoroStore";
 import { initSyncBridge } from "@/composables/useSyncBridge";
 
 const courseStore = useCourseStore(pinia);
@@ -63,6 +64,7 @@ const userStore = useUserStore(pinia);
 const todoStore = useTodoStore(pinia);
 const healthStore = useHealthDataStore(pinia);
 const cardLayoutStore = useCardLayoutStore(pinia);
+const pomodoroStore = usePomodoroStore(pinia);
 
 Promise.all([
   courseStore.load(),
@@ -72,6 +74,7 @@ Promise.all([
   todoStore.load(),
   healthStore.load(),
   cardLayoutStore.load(),
+  pomodoroStore.load(),
 ])
   .then(() => initSyncBridge())
   .finally(() => {

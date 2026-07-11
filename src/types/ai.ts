@@ -72,6 +72,7 @@ export interface ToolResult {
     | "body-metrics"
     | "workout-history"
     | "nutrition"
+    | "pomodoro"
     | "raw";
   /** 卡片渲染数据 */
   cardData?: unknown;
@@ -125,7 +126,7 @@ export interface ChatMessage {
   error?: string;
 }
 
-export type ConversationMode = "workout" | "normal";
+export type ConversationMode = "workout" | "pomodoro" | "normal";
 
 export interface Conversation {
   id: string;
