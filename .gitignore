@@ -21,6 +21,11 @@ nul
 .env.local
 .env.*.local
 
+# Signing keys (never commit)
+src-tauri/env/*.jks
+src-tauri/env/*.keystore
+src-tauri/env/keystore.properties
+
 # Logs
 *.log
 npm-debug.log*
