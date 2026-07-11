@@ -100,13 +100,61 @@
   --text-800: #3a3a3c;
   --text-900: #1c1c1e;
 
-  /* ===== TYPOGRAPHY ===== */
+  /* ===== TYPOGRAPHY (HarmonyOS spec) =====
+     5 levels × 3 sizes. Phone is default; PC (≥768px) overrides via media query.
+     watch values documented in comments (not applied — no watch UI yet).
+
+     Level    Weight        L / M / S (phone → PC, watch=phone unless noted)
+     Display  Light(300)    56/54  48/46  38/36      (watch = phone values)
+     Title    Bold(700)     30/28  24/22  20/18      (watch = phone values)
+     Subtitle Medium(500)   18/16  16/14  14/12      (watch = phone values)
+     Body     Med/Reg/Reg   16/14  14/14  12/14      (watch = phone values)
+     Caption  Medium(500)   12/12  10/9   8(watch)   (Caption_S = watch only)
+     =========================== */
   --font-sans: "HarmonyOS Sans", "HarmonyOSHans-Regular", "PingFang SC",
     "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", Consolas, ui-monospace, Menlo, monospace;
 
-  /* Type scale (HarmonyOS doc-aligned + page hero title) */
+  /* Font weights */
+  --fw-light: 300;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Display — 展示性文本 (Light) */
+  --font-display-l: 56px;  /* PC 54, watch 56 */
+  --font-display-m: 48px;  /* PC 46, watch 48 */
+  --font-display-s: 38px;  /* PC 36, watch 38 */
+
+  /* Title — 标题文本 (Bold) */
+  --font-title-l: 30px;    /* PC 28, watch 30 */
+  --font-title-m: 24px;    /* PC 22, watch 24 */
+  --font-title-s: 20px;    /* PC 18, watch 20 */
+
+  /* Subtitle — 副标题文本 (Medium) */
+  --font-subtitle-l: 18px; /* PC 16, watch 18 */
+  --font-subtitle-m: 16px; /* PC 14, watch 16 */
+  --font-subtitle-s: 14px; /* PC 12, watch 14 */
+
+  /* Body — 正文文本 (L=Medium, M/S=Regular) */
+  --font-body-l: 16px;     /* PC 14, watch 16 */
+  --font-body-m: 14px;     /* PC 14, watch 14 */
+  --font-body-s: 12px;     /* PC 14, watch 12 */
+
+  /* Caption — 说明文本 (Medium) */
+  --font-caption-l: 12px;  /* PC 12, watch 12 */
+  --font-caption-m: 10px;  /* PC 9,  watch 10 */
+  --font-caption-s: 8px;   /* watch only */
+
+  /* Line heights */
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-base: 1.5;
+  --lh-relaxed: 1.75;
+
+  /* --- Legacy type scale (kept at original values for backward compat) --- */
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
@@ -117,14 +165,6 @@
   --text-3xl: 36px;       /* page title / hero */
   --text-hero: 40px;
   --text-stat: 32px;       /* big stat numbers in cards */
-  --lh-tight: 1.2;
-  --lh-snug: 1.4;
-  --lh-base: 1.5;
-  --lh-relaxed: 1.75;
-  --fw-regular: 400;
-  --fw-medium: 500;
-  --fw-semibold: 600;
-  --fw-bold: 700;
 
   /* ===== RADIUS ===== */
   --radius-xs: 4px;
@@ -282,6 +322,28 @@
   --glow-warning: var(--glow-orange);
   --glow-danger: var(--glow-red);
   --glow-accent: var(--glow-purple);
+}
+
+/* ===== TYPOGRAPHY — PC overrides (≥768px) =====
+   Phone is the default (mobile-first). At ≥768px (pad/desktop),
+   HarmonyOS PC sizes take effect. Only values that differ from
+   phone are overridden here.
+   Body_M (14px) and Caption_L (12px) are identical across platforms. */
+@media (min-width: 768px) {
+  :root {
+    --font-display-l: 54px;
+    --font-display-m: 46px;
+    --font-display-s: 36px;
+    --font-title-l: 28px;
+    --font-title-m: 22px;
+    --font-title-s: 18px;
+    --font-subtitle-l: 16px;
+    --font-subtitle-m: 14px;
+    --font-subtitle-s: 12px;
+    --font-body-l: 14px;
+    --font-body-s: 14px;
+    --font-caption-m: 9px;
+  }
 }
 
 /* ===== DARK MODE ===== */

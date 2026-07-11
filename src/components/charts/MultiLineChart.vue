@@ -416,6 +416,7 @@ const gridLines = computed(() => (props.showGrid ? [0, 0.25, 0.5, 0.75, 1] : [])
 }
 .mlc-legend-text {
   font-size: calc(4px * var(--fs, 1));
+  font-weight: var(--fw-medium);
   color: var(--color-text-secondary);
   font-family: var(--font-sans);
 }
@@ -426,13 +427,15 @@ const gridLines = computed(() => (props.showGrid ? [0, 0.25, 0.5, 0.75, 1] : [])
 .axis-label {
   fill: var(--color-text-tertiary);
   font-size: calc(4px * var(--fs, 1));
+  font-weight: var(--fw-medium);
   font-family: var(--font-sans);
 }
 .axis-label-y {
-  font-size: calc(3.2px * var(--fs, 1));
+  font-size: calc(3px * var(--fs, 1));
 }
 .ref-label {
   fill: var(--color-text-secondary);
-  font-size: calc(3.4px * var(--fs, 1));
+  font-size: calc(4px * var(--fs, 1));
+  font-weight: var(--fw-medium);
 }
 </style>

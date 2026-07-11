@@ -179,9 +179,10 @@ const gridLines = computed(() => {
 .axis-label {
   fill: var(--color-text-tertiary);
   font-size: calc(4px * var(--fs, 1));
+  font-weight: var(--fw-medium);
   font-family: var(--font-sans);
 }
 .axis-label-y {
-  font-size: calc(3.2px * var(--fs, 1));
+  font-size: calc(3px * var(--fs, 1));
 }
 </style>

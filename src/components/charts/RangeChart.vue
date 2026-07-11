@@ -256,7 +256,8 @@ function zoneHeight(z: ChartZone) {
 }
 .axis-label {
   fill: var(--color-text-tertiary);
-  font-size: calc(3.8px * var(--fs, 1));
+  font-size: calc(4px * var(--fs, 1));
+  font-weight: var(--fw-medium);
   font-family: var(--font-sans);
 }
 .axis-label-y {
