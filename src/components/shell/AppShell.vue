@@ -1,11 +1,19 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import AppTopBar from "./AppTopBar.vue";
 import AppTabBar from "./AppTabBar.vue";
+import WindowTitleBar from "./WindowTitleBar.vue";
+import { useDevice } from "@/composables/useDevice";
+
+const { device } = useDevice();
+// 桌面平台使用自定义窗口标题栏，移动端使用 AppTopBar
+const isDesktop = computed(() => device.value.isDesktop);
 </script>
 
 <template>
   <div class="app-shell">
-    <AppTopBar />
+    <WindowTitleBar v-if="isDesktop" />
+    <AppTopBar v-else />
 
     <div class="app-body">
       <main class="app-main page-scroll">
