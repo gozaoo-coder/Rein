@@ -23,7 +23,13 @@
   padding: 0;
 }
 
-html,
+html {
+  /* Root font-size: keep browser default (100% = 16px) so rem unit is stable.
+     All --font-* tokens are in rem relative to this. Body text size is set
+     on body/#app below via var(--font-body-m). */
+  font-size: 100%;
+}
+
 body,
 #app {
   height: 100%;
