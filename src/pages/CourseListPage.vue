@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useCourseStore } from "@/stores/courseStore";
+import { useAnime } from "@/composables/useAnime";
 import {
   CATEGORY_LABEL,
   DIFFICULTY_LABEL,
@@ -12,6 +13,9 @@ import {
 const route = useRoute();
 const router = useRouter();
 const courseStore = useCourseStore();
+const listRef = ref<HTMLElement | null>(null);
+const { staggerEnter, reduced } = useAnime(listRef);
+let staggerPlayed = false;
 
 const difficultyFilter = computed<CourseDifficulty | null>(
   () => (route.query.difficulty as CourseDifficulty) ?? null,
@@ -79,13 +83,37 @@ function clearFilter() {
   router.replace({ path: "/sports/courses" });
 }
 
+// 列表数据首次到位后播放 stagger 入场。
+// useAnime.enter 仅设置目标值（from 取当前），故先手动预设起点 opacity:0 / translateY:12px。
+// 尊重 reduced-motion：降级时跳过预设与播放，元素保持默认可见。
+watch(
+  grouped,
+  () => {
+    if (staggerPlayed) return;
+    nextTick(() => {
+      if (!listRef.value || staggerPlayed) return;
+      const items = listRef.value.querySelectorAll(".course-item");
+      if (!items.length) return;
+      staggerPlayed = true;
+      if (reduced.value) return;
+      items.forEach((el) => {
+        const html = el as HTMLElement;
+        html.style.opacity = "0";
+        html.style.transform = "translateY(12px)";
+      });
+      staggerEnter(Array.from(items) as HTMLElement[], "fadeUp", "list");
+    });
+  },
+  { flush: "post" },
+);
+
 onMounted(() => {
   courseStore.load();
 });
 </script>
 
 <template>
-  <div class="course-list-page">
+  <div class="course-list-page" ref="listRef">
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
         <i class="bi bi-chevron-left" style="font-size:22px"></i>

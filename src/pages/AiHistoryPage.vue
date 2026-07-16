@@ -5,19 +5,47 @@
  * - 切换 / 置顶 / 重命名 / 删除
  * - 新建会话
  */
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useAiChatStore } from "@/stores/aiChatStore";
+import { useAnime } from "@/composables/useAnime";
 import type { Conversation } from "@/types/ai";
 
 const router = useRouter();
 const store = useAiChatStore();
+const listRef = ref<HTMLElement | null>(null);
+const { staggerEnter, reduced } = useAnime(listRef);
+let staggerPlayed = false;
 
 const renamingId = ref<string | null>(null);
 const renameText = ref("");
 const deleteConfirmId = ref<string | null>(null);
 
 const list = computed(() => store.sortedConversations);
+
+// 列表数据首次到位后播放 stagger 入场。
+// useAnime.enter 仅设置目标值（from 取当前），故先手动预设起点 opacity:0 / translateY:12px。
+// 尊重 reduced-motion：降级时跳过预设与播放，元素保持默认可见。
+watch(
+  list,
+  () => {
+    if (staggerPlayed) return;
+    nextTick(() => {
+      if (!listRef.value || staggerPlayed) return;
+      const items = listRef.value.querySelectorAll(".conv-item");
+      if (!items.length) return;
+      staggerPlayed = true;
+      if (reduced.value) return;
+      items.forEach((el) => {
+        const html = el as HTMLElement;
+        html.style.opacity = "0";
+        html.style.transform = "translateY(12px)";
+      });
+      staggerEnter(Array.from(items) as HTMLElement[], "fadeUp", "list");
+    });
+  },
+  { flush: "post" },
+);
 
 onMounted(async () => {
   await store.load();
@@ -92,7 +120,7 @@ function goBack() {
 </script>
 
 <template>
-  <div class="hist-page">
+  <div class="hist-page" ref="listRef">
     <header class="sub-header">
       <button class="back-btn" @click="goBack" aria-label="返回">
         <i class="bi bi-chevron-left" style="font-size:22px"></i>
