@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 type SheetDetent = "medium" | "large";
 
@@ -35,9 +36,14 @@ const dragState = ref<{
 
 const sheetEl = ref<HTMLElement | null>(null);
 const contentEl = ref<HTMLElement | null>(null);
+const maskEl = ref<HTMLElement | null>(null);
+// 延迟移除：visible 变 false 时先播退场动画，onComplete 再卸载 DOM
+const internalVisible = ref(props.visible);
 
 const isDesktop = ref(false);
 let resizeObserver: ResizeObserver | null = null;
+
+const { animate, enter, exit, spring } = useAnime();
 
 function updateViewport() {
   isDesktop.value = window.innerWidth >= 600;
@@ -47,20 +53,57 @@ onMounted(() => {
   updateViewport();
   resizeObserver = new ResizeObserver(updateViewport);
   resizeObserver.observe(document.documentElement);
+  if (props.visible) {
+    document.body.style.overflow = "hidden";
+    nextTick(() => playEnter());
+  }
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
 });
 
+function playEnter() {
+  if (maskEl.value) {
+    enter(maskEl.value, "fade", { duration: 250 });
+  }
+  if (sheetEl.value) {
+    if (isDesktop.value) {
+      enter(sheetEl.value, "popIn", { springName: "smooth", duration: 300 });
+    } else {
+      enter(sheetEl.value, "sheetUp", { springName: "sheet", duration: 420 });
+    }
+  }
+}
+
+async function playExit(): Promise<void> {
+  const tasks: Promise<unknown>[] = [];
+  if (maskEl.value) {
+    tasks.push(exit(maskEl.value, "fade", { duration: 250 }));
+  }
+  if (sheetEl.value) {
+    if (isDesktop.value) {
+      tasks.push(exit(sheetEl.value, "popIn", { springName: "smooth", duration: 300 }));
+    } else {
+      tasks.push(exit(sheetEl.value, "sheetUp", { springName: "sheet", duration: 420 }));
+    }
+  }
+  await Promise.all(tasks);
+}
+
 watch(
   () => props.visible,
-  (v) => {
+  async (v) => {
     if (v) {
       currentDetent.value = props.defaultDetent;
       document.body.style.overflow = "hidden";
+      internalVisible.value = true;
+      await nextTick();
+      playEnter();
     } else {
       document.body.style.overflow = "";
+      await playExit();
+      internalVisible.value = false;
     }
   },
 );
@@ -80,11 +123,24 @@ const sheetStyle = computed(() => {
     return {};
   }
   const drag = dragState.value;
-  const offset = drag?.offset ?? 0;
-  return {
-    transform: `translateY(${offset}px)`,
-    transition: drag?.active ? "none" : "transform 0.35s var(--ease-out)",
-  };
+  if (drag?.active) {
+    return {
+      transform: `translateY(${drag.offset}px)`,
+      transition: "none",
+    };
+  }
+  // 非拖拽时让 anime 完全接管 transform，不设 transition
+  return {};
+});
+
+// 标记拖拽结束导致的 detent 变化，避免 watch 重复触发归零动画
+let suppressDetentWatch = false;
+
+watch(currentDetent, () => {
+  if (suppressDetentWatch) return;
+  if (dragState.value?.active) return;
+  if (!sheetEl.value) return;
+  animate(sheetEl.value, { translateY: 0, ease: spring("sheet"), duration: 420 });
 });
 
 function contentAtTop(): boolean {
@@ -147,6 +203,7 @@ function onPointerUp(e: PointerEvent) {
   const dy = e.clientY - ds.startY;
   const target = e.currentTarget as HTMLElement;
   target.releasePointerCapture?.(e.pointerId);
+  const currentOffset = ds.offset;
   dragState.value = null;
 
   const threshold = 60;
@@ -156,15 +213,27 @@ function onPointerUp(e: PointerEvent) {
     return;
   }
 
+  // detent 切换由 onPointerUp 统一归零，抑制 watch 重复 animate
+  suppressDetentWatch = true;
   if (dy < -threshold && ds.startDetent === "medium" && hasLarge.value) {
     currentDetent.value = "large";
-    return;
-  }
-  if (dy > threshold && ds.startDetent === "large" && hasMedium.value) {
+  } else if (dy > threshold && ds.startDetent === "large" && hasMedium.value) {
     currentDetent.value = "medium";
-    return;
+  } else {
+    currentDetent.value = ds.startDetent;
   }
-  currentDetent.value = ds.startDetent;
+  nextTick(() => {
+    suppressDetentWatch = false;
+  });
+
+  // anime 接管归零：用 [currentOffset, 0] 显式 from，避免 Vue 移除 inline transform 后跳跃
+  if (sheetEl.value) {
+    animate(sheetEl.value, {
+      translateY: [currentOffset, 0],
+      ease: spring("sheet"),
+      duration: 420,
+    });
+  }
 }
 
 function onContentWheel(e: WheelEvent) {
@@ -203,7 +272,8 @@ function onClose() {
 <template>
   <Teleport to="body">
     <div
-      v-if="visible"
+      v-if="internalVisible"
+      ref="maskEl"
       class="bs-mask"
       :class="{ 'bs-mask--desktop': isDesktop }"
       @click.self="onMaskClick"
@@ -266,12 +336,6 @@ function onClose() {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  animation: bs-fade 0.25s ease-out;
-}
-
-@keyframes bs-fade {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
 
 .bs-sheet {
@@ -283,7 +347,6 @@ function onClose() {
   display: flex;
   flex-direction: column;
   box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.15);
-  animation: bs-slide-up 0.3s var(--ease-out);
   overflow: hidden;
   touch-action: none;
 }
@@ -296,11 +359,6 @@ function onClose() {
 .bs-sheet--large {
   height: calc(100vh - 40px - env(safe-area-inset-top, 0px));
   max-height: calc(100vh - 40px - env(safe-area-inset-top, 0px));
-}
-
-@keyframes bs-slide-up {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
 }
 
 .bs-handle-area {
@@ -392,18 +450,6 @@ function onClose() {
   max-height: 90vh;
   height: 560px;
   border-radius: var(--radius-2xl);
-  animation: bs-pop 0.25s var(--ease-out);
-}
-
-@keyframes bs-pop {
-  from {
-    transform: scale(0.92);
-    opacity: 0;
-  }
-  to {
-    transform: scale(1);
-    opacity: 1;
-  }
 }
 
 .bs-sheet--desktop.bs-sheet--large {

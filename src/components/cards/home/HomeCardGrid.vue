@@ -7,10 +7,13 @@
  *   - 调整尺寸：保持当前位置
  *   - 拖拽：悬停 0.5s 显示"顶开"预览，松手落入预览位置
  *
- * 动画：FLIP（First-Last-Invert-Play）实现网格位置切换的平滑过渡
+ * 动画：anime.js v4 createLayout（AutoLayout）实现 FLIP——record() 记录旧位置，
+ * DOM 更新后 animate() 自动播放从旧到新的过渡；reduced-motion 时跳过 animate。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { createLayout, type AutoLayout } from "animejs";
 import { useCardLayoutStore } from "@/stores/cardLayoutStore";
+import { useAnime } from "@/composables/useAnime";
 import { CARD_REGISTRY, CARD_SIZE_MAP, type CardConfig, type CardSize } from "@/types/card";
 import {
   packLayout,
@@ -41,6 +44,10 @@ function setCellRef(el: HTMLElement | null, idx: number) {
 
 const GAP = 12;
 const ROW_H = 88;
+
+// ===== anime.js v4 集成 =====
+const { spring, reduced } = useAnime(gridRef);
+let layout: AutoLayout | null = null;
 
 // ===== 拖拽状态（声明在 computed 之前，避免 TDZ） =====
 const dragState = ref<{
@@ -93,53 +100,29 @@ function gridStyle(pos: PlacedCard): Record<string, string> {
   };
 }
 
-// ===== FLIP 动画 =====
-const flipEnabled = ref(true);
-let firstRects: Map<HTMLElement, DOMRect> | null = null;
+// ===== FLIP 动画（anime.js v4 createLayout） =====
 
-function recordFirst() {
-  if (!flipEnabled.value) return;
-  firstRects = new Map();
-  for (const el of cellRefs.value) {
-    if (el) firstRects.set(el, el.getBoundingClientRect());
-  }
-}
-
-function playFlip() {
-  if (!firstRects || !flipEnabled.value) return;
-  const rects = firstRects;
-  firstRects = null;
+/**
+ * 触发一次 FLIP 过渡：
+ *   1. record() 记录当前（旧）布局快照——必须在 DOM 更新前调用
+ *   2. 等待 DOM 更新（nextTick）
+ *   3. animate() 自动从旧快照过渡到新位置
+ * 拖动中跳过（预览动画由 CSS 处理）；reduced-motion 时仅 record 跳过 animate。
+ */
+function runFlip() {
+  if (!layout) return;
+  if (dragState.value?.active) return; // 拖动中不 FLIP
+  layout.record();
+  if (reduced.value) return; // 降级：跳过动画，DOM 直接跳到新位置
   nextTick(() => {
-    for (const el of cellRefs.value) {
-      if (!el || !rects.has(el)) continue;
-      const first = rects.get(el)!;
-      const last = el.getBoundingClientRect();
-      const dx = first.left - last.left;
-      const dy = first.top - last.top;
-      if (dx === 0 && dy === 0) continue;
-      el.style.transition = "none";
-      el.style.transform = `translate(${dx}px, ${dy}px)`;
-      el.getBoundingClientRect(); // force reflow
-      el.style.transition = "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)";
-      el.style.transform = "";
-      const cleanup = () => {
-        el.style.transition = "";
-        el.style.transform = "";
-        el.removeEventListener("transitionend", cleanup);
-      };
-      el.addEventListener("transitionend", cleanup);
-    }
+    layout?.animate({ ease: spring("card"), duration: 400 });
   });
 }
 
 // 监听位置变化触发 FLIP
 watch(
   () => renderPlaced.value.map((p) => `${p.card.id}:${p.col},${p.row}`).join("|"),
-  () => {
-    if (dragState.value?.active) return; // 拖动中不 FLIP（预览动画由 CSS transition 处理）
-    recordFirst();
-    nextTick(() => playFlip());
-  },
+  () => runFlip(),
 );
 
 // ===== 拖拽换位（含 0.5s 悬停预览） =====
@@ -389,9 +372,8 @@ function onResizePointerUp(e: PointerEvent) {
   if (rs.previewSize) {
     const card = cards.value.find((c) => c.id === rs.cardId);
     if (card && rs.previewSize !== card.size) {
-      recordFirst();
+      runFlip();
       store.resizeCard(rs.cardId, rs.previewSize);
-      nextTick(() => playFlip());
     }
   }
   try {
@@ -403,6 +385,15 @@ function onResizePointerUp(e: PointerEvent) {
 
 // ===== Document-level listeners =====
 onMounted(() => {
+  // 创建 AutoLayout：children 选择器匹配模板里的 .card-cell
+  if (gridRef.value) {
+    layout = createLayout(gridRef.value, {
+      children: ".card-cell",
+      properties: ["x", "y", "width", "height"],
+    });
+    layout.record(); // 记录初始布局
+  }
+
   window.addEventListener("pointermove", docPointerMove, { passive: true });
   window.addEventListener("pointerup", docPointerUp);
   window.addEventListener("pointercancel", docPointerUp);
@@ -414,6 +405,9 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointercancel", docPointerUp);
   removeGhost();
   if (hoverTimer !== null) clearTimeout(hoverTimer);
+  // createLayout 不自动注册到 useAnime 的 scope，需手动 revert 清理
+  layout?.revert();
+  layout = null;
 });
 
 // ===== 长按进入编辑模式 =====
@@ -453,9 +447,8 @@ function onGridPointerUp() {
 // ===== 删除 =====
 function deleteCard(card: CardConfig, e: Event) {
   e.stopPropagation();
-  recordFirst();
+  runFlip();
   store.removeCard(card.id);
-  nextTick(() => playFlip());
 }
 
 function isDragging(id: string) {
@@ -552,14 +545,7 @@ const dropPlaceholder = computed(() => {
   gap: var(--space-3);
 }
 
-/* 预览中：所有 cell 平滑过渡到新位置 */
-.card-grid.is-previewing .card-cell {
-  transition: grid-column 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
-              grid-row 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
-              transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
-              opacity 0.2s;
-}
-
+/* 预览过渡由 createLayout 接管，不再需要 CSS transition */
 .card-cell {
   position: relative;
   display: flex;
