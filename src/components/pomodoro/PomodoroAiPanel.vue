@@ -21,7 +21,10 @@ import { usePomodoroStore } from "@/stores/pomodoroStore";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
 import MarkdownRenderer from "@/components/ai/MarkdownRenderer.vue";
 import AiChatInput from "@/components/ai/AiChatInput.vue";
+import { useAnime } from "@/composables/useAnime";
 import type { ChatMessage, Citation, ContentPart, Conversation, FileAttachment } from "@/types/ai";
+
+const props = withDefaults(defineProps<{ visible?: boolean }>(), { visible: true });
 
 const router = useRouter();
 const pomodoroStore = usePomodoroStore();
@@ -36,6 +39,27 @@ onMounted(async () => {
   await nextTick();
   void scrollToEnd();
 });
+
+const panelRef = ref<HTMLDivElement | null>(null);
+const { enter, reduced } = useAnime(panelRef);
+
+/** 面板可见时播放入场动画（fadeUp），尊重 reduced-motion */
+function playEnter() {
+  if (reduced.value || !props.visible) return;
+  void nextTick().then(() => {
+    if (!panelRef.value) return;
+    enter(panelRef.value, "fadeUp", { springName: "smooth", duration: 300 });
+  });
+}
+
+onMounted(() => playEnter());
+
+watch(
+  () => props.visible,
+  (v) => {
+    if (v) playEnter();
+  },
+);
 
 const listEl = ref<HTMLDivElement | null>(null);
 
@@ -244,7 +268,7 @@ function textOf(m: ChatMessage): string {
 </script>
 
 <template>
-  <div class="pai-panel">
+  <div ref="panelRef" class="pai-panel">
     <!-- Header -->
     <header class="pai-header">
       <div class="pai-header-left">

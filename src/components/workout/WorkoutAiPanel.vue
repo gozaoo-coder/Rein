@@ -18,8 +18,10 @@ import { useAiConfigStore } from "@/stores/aiConfigStore";
 import AiToolCard from "@/components/ai/AiToolCard.vue";
 import MarkdownRenderer from "@/components/ai/MarkdownRenderer.vue";
 import AiChatInput from "@/components/ai/AiChatInput.vue";
+import { useAnime } from "@/composables/useAnime";
 import type { ChatMessage, Citation, ContentPart, Conversation, FileAttachment } from "@/types/ai";
 
+const props = withDefaults(defineProps<{ visible?: boolean }>(), { visible: true });
 const emit = defineEmits<{
   (e: "close"): void;
 }>();
@@ -37,6 +39,27 @@ onMounted(async () => {
   await nextTick();
   void scrollToEnd();
 });
+
+const panelRef = ref<HTMLDivElement | null>(null);
+const { enter, reduced } = useAnime(panelRef);
+
+/** 面板可见时播放入场动画（fadeUp），尊重 reduced-motion */
+function playEnter() {
+  if (reduced.value || !props.visible) return;
+  void nextTick().then(() => {
+    if (!panelRef.value) return;
+    enter(panelRef.value, "fadeUp", { springName: "smooth", duration: 300 });
+  });
+}
+
+onMounted(() => playEnter());
+
+watch(
+  () => props.visible,
+  (v) => {
+    if (v) playEnter();
+  },
+);
 
 const listEl = ref<HTMLDivElement | null>(null);
 
@@ -200,7 +223,7 @@ function close() {
 
 <template>
   <div class="wai-mask" @click.self="close">
-    <div class="wai-panel clean-card">
+    <div ref="panelRef" class="wai-panel clean-card">
       <!-- Header -->
       <header class="wai-header">
         <div class="wai-header-left">
@@ -322,7 +345,6 @@ function close() {
   background: rgba(255, 255, 255, 0.97);
   -webkit-backdrop-filter: blur(40px) saturate(180%);
   backdrop-filter: blur(40px) saturate(180%);
-  animation: wai-slide 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
   overflow: hidden;
 }
 @keyframes wai-slide {

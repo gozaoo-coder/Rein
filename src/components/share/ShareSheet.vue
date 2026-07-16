@@ -7,16 +7,37 @@
  * - QQ / 微信 实际通过系统分享面板路由，UI 仅提示用户选择
  * - 图片模式下：先预览 SVG，再触发分享
  */
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type { ShareContent, ShareMode } from "@/types/share";
 import { useShare } from "@/composables/useShare";
 import { useToast } from "@/composables/useToast";
+import { useAnime } from "@/composables/useAnime";
 
 const props = defineProps<{ content: ShareContent }>();
 const emit = defineEmits<{ close: [] }>();
 
 const { canShareNative, canShareFiles, shareText, shareImage, copyText, saveImage } = useShare();
 const toast = useToast();
+
+const sheetRef = ref<HTMLDivElement | null>(null);
+const { enter, staggerEnter, reduced } = useAnime(sheetRef);
+
+onMounted(async () => {
+  if (reduced.value) return;
+  await nextTick();
+  if (!sheetRef.value) return;
+  // 桌面端中心缩放入场，移动端缩放淡入
+  const isDesktop = window.matchMedia("(min-width: 768px)").matches;
+  enter(sheetRef.value, isDesktop ? "popIn" : "scaleIn", {
+    springName: "smooth",
+    duration: 300,
+  });
+  // 渠道按钮错峰入场
+  const channels = sheetRef.value.querySelectorAll(".channel");
+  if (channels.length) {
+    staggerEnter(Array.from(channels), "fadeUp", "list");
+  }
+});
 
 const mode = ref<ShareMode>("text");
 const previewing = ref(false);
@@ -90,7 +111,7 @@ function handleSave() {
 
 <template>
   <div class="share-mask" @click.self="emit('close')">
-    <div class="share-sheet clean-card">
+    <div ref="sheetRef" class="share-sheet clean-card">
       <div class="sheet-handle" />
 
       <header class="sheet-head">
@@ -194,7 +215,6 @@ function handleSave() {
   padding: var(--space-3) var(--space-4) var(--space-5);
   background: var(--bg-50);
   box-shadow: var(--shadow-modal);
-  animation: sheet-up 0.3s var(--ease-out);
 }
 
 @keyframes sheet-up {

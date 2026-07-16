@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useWorkoutStore } from "@/stores/workoutStore";
+import { useAnime } from "@/composables/useAnime";
 
 const props = defineProps<{
   expanded?: boolean;
@@ -18,10 +19,27 @@ const setLabel = computed(() => {
 const heartBeatClass = computed(() => ({
   "hr-beating": store.heartRateConnected && store.workoutState === "running",
 }));
+
+// ===== 首次入场动画（anime.js） =====
+// 组件无独立进度条元素，按任务要求增强首次入场：scaleX 0→1 从左边缘展开
+const rootRef = ref<HTMLElement | null>(null);
+const { animate, spring, reduced } = useAnime(rootRef);
+
+onMounted(() => {
+  if (reduced.value) return;
+  const el = rootRef.value;
+  if (!el) return;
+  animate(el, {
+    scaleX: [0, 1],
+    opacity: [0, 1],
+    duration: 500,
+    ease: spring("smooth"),
+  });
+});
 </script>
 
 <template>
-  <div class="workout-minibar" :class="{ 'is-expanded': props.expanded }">
+  <div ref="rootRef" class="workout-minibar" :class="{ 'is-expanded': props.expanded }">
     <!-- Glow aura behind the pill -->
     <div class="minibar-glow" />
 
@@ -99,7 +117,9 @@ const heartBeatClass = computed(() => ({
   border-radius: var(--radius-pill);
   box-shadow: 0 8px 32px rgba(255, 102, 51, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
   overflow: hidden;
-  transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* 仅过渡 border-radius（compact↔expanded 形变）；排除 transform 以免与 anime.js 入场冲突 */
+  transition: border-radius 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: left center;
   isolation: isolate;
 }
 

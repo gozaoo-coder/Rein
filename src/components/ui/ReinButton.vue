@@ -14,7 +14,8 @@
  * <ReinButton variant="filled" size="md" @click="save">保存</ReinButton>
  * <ReinButton variant="glass" tier="thick" glow="primary">打开</ReinButton>
  */
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 type Variant = "filled" | "tinted" | "glass" | "plain";
 type Size = "sm" | "md" | "lg";
@@ -68,14 +69,40 @@ function onClick(ev: MouseEvent) {
   if (props.disabled || props.loading) return;
   emit("click", ev);
 }
+
+const rootRef = ref<HTMLButtonElement | null>(null);
+const { animate, spring, reduced } = useAnime(rootRef);
+
+/** tap 物理按压：pointerdown 压缩，pointerup/leave 回弹，spring snappy 自然 overshoot */
+function onPointerDown() {
+  if (props.disabled || props.loading || reduced.value || !rootRef.value) return;
+  animate(rootRef.value, {
+    scale: 0.94,
+    ease: spring("snappy"),
+    duration: 400,
+  });
+}
+
+function onPointerUp() {
+  if (props.disabled || props.loading || reduced.value || !rootRef.value) return;
+  animate(rootRef.value, {
+    scale: 1,
+    ease: spring("snappy"),
+    duration: 400,
+  });
+}
 </script>
 
 <template>
   <button
+    ref="rootRef"
     :type="type"
     :class="[classes, tierClass]"
     :disabled="disabled || loading"
     @click="onClick"
+    @pointerdown="onPointerDown"
+    @pointerup="onPointerUp"
+    @pointerleave="onPointerUp"
   >
     <span v-if="loading" class="rein-btn-spinner" aria-hidden="true" />
     <slot name="icon-left" />

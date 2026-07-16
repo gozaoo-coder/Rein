@@ -19,7 +19,8 @@
  * @example
  * <GlassCard tier="thick" glow="primary" hover-halo> ... </GlassCard>
  */
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 type MaterialTier =
   | "ultra-thin"
@@ -54,6 +55,28 @@ const props = withDefaults(
     radius: undefined,
   }
 );
+
+const rootRef = ref<HTMLElement | null>(null);
+const { animate, spring, reduced } = useAnime(rootRef);
+
+/** hover 微光晕：仅 interactive 时生效，anime 管 translateY，CSS 管 box-shadow */
+function onEnter() {
+  if (!props.interactive || reduced.value || !rootRef.value) return;
+  animate(rootRef.value, {
+    translateY: -2,
+    ease: spring("smooth"),
+    duration: 300,
+  });
+}
+
+function onLeave() {
+  if (!props.interactive || reduced.value || !rootRef.value) return;
+  animate(rootRef.value, {
+    translateY: 0,
+    ease: spring("smooth"),
+    duration: 300,
+  });
+}
 
 const tierClass = computed(() => `glass-${props.tier}`);
 
@@ -97,7 +120,13 @@ const rootStyle = computed(() => ({
 </script>
 
 <template>
-  <div :class="rootClasses" :style="rootStyle">
+  <div
+    ref="rootRef"
+    :class="rootClasses"
+    :style="rootStyle"
+    @mouseenter="onEnter"
+    @mouseleave="onLeave"
+  >
     <slot />
   </div>
 </template>

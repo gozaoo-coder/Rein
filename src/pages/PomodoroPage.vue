@@ -16,6 +16,7 @@ import { usePomodoroStore } from "@/stores/pomodoroStore";
 import { useTodoStore } from "@/stores/todoStore";
 import { useBreakpoint } from "@/composables/useBreakpoint";
 import { useTopBar } from "@/composables/useTopBar";
+import { useAnime } from "@/composables/useAnime";
 import PomodoroAiPanel from "@/components/pomodoro/PomodoroAiPanel.vue";
 import type { TodoItem } from "@/types/todo";
 
@@ -23,6 +24,30 @@ const store = usePomodoroStore();
 const todoStore = useTodoStore();
 const { mode } = useBreakpoint();
 const { setActions, clearActions } = useTopBar();
+
+// ===== 进度环动画（anime.js） =====
+const rootRef = ref<HTMLElement | null>(null);
+const ringWrapRef = ref<HTMLElement | null>(null);
+const { animate, spring, reduced } = useAnime(rootRef);
+
+/**
+ * 状态切换时对进度环做一次强调脉冲（spring('smooth')）。
+ * 不在每秒 tick 触发——仅 running / phase 变化（start/pause/reset/skip）时执行。
+ * stroke-dashoffset 的逐秒平滑仍由 CSS transition 处理。
+ */
+watch(
+  () => [store.running, store.phase] as const,
+  () => {
+    if (reduced.value) return;
+    const el = ringWrapRef.value;
+    if (!el) return;
+    animate(el, {
+      scale: [1, 1.04, 1],
+      duration: 500,
+      ease: spring("smooth"),
+    });
+  },
+);
 
 // ===== 计时器 =====
 let intervalId: number | null = null;
@@ -153,12 +178,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="pomo-page" :class="isWide ? 'pomo-wide' : 'pomo-scroll'">
+  <div ref="rootRef" class="pomo-page" :class="isWide ? 'pomo-wide' : 'pomo-scroll'">
     <!-- 左/上：计时器 + 控制 + 配置 -->
     <section class="pomo-left">
       <!-- 进度环 + 计时文字 -->
       <div class="timer-section">
-        <div class="ring-wrap">
+        <div ref="ringWrapRef" class="ring-wrap">
           <svg class="ring-svg" viewBox="0 0 200 200" aria-hidden="true">
             <!-- 轨道（SVG 属性无法用 CSS 变量，使用字面量 rgba） -->
             <circle

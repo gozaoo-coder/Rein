@@ -7,7 +7,8 @@
  *   每个句子完成后以淡入动画弹出显示，当前未完成的句子带闪烁光标。
  * - 完成后（isPending=false）：一次性显示全部文本（父组件负责 markdown 渲染）。
  */
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 const props = defineProps<{
   text: string;
@@ -92,10 +93,71 @@ watch(
   },
   { immediate: true },
 );
+
+// ===== 流式光标（anime.js 驱动闪烁） =====
+const rootRef = ref<HTMLElement | null>(null);
+const cursorRef = ref<HTMLElement | null>(null);
+const { animate, reduced } = useAnime(rootRef);
+
+/** 光标可见性：流式中显示，流式结束淡出后移除 */
+const showCursor = ref(false);
+let blinkInst: ReturnType<typeof animate> | null = null;
+
+/** 启动光标闪烁（macOS 风格 530ms 半周期，1060ms 完整循环） */
+async function startBlink() {
+  await nextTick();
+  const el = cursorRef.value;
+  if (!el) return;
+  if (reduced.value) {
+    // reduced-motion：常亮不闪烁
+    el.style.opacity = "1";
+    return;
+  }
+  blinkInst = animate(el, {
+    opacity: [1, 0, 1],
+    duration: 1060,
+    loop: true,
+    ease: "inOutSine",
+  });
+}
+
+/** 停止闪烁并淡出移除光标 */
+function stopBlink() {
+  const el = cursorRef.value;
+  if (blinkInst) {
+    blinkInst.pause();
+    blinkInst = null;
+  }
+  if (!el || reduced.value) {
+    showCursor.value = false;
+    return;
+  }
+  animate(el, {
+    opacity: 0,
+    duration: 200,
+    ease: "outQuad",
+    onComplete: () => {
+      showCursor.value = false;
+    },
+  });
+}
+
+watch(
+  () => props.isPending,
+  (pending) => {
+    if (pending) {
+      showCursor.value = true;
+      void startBlink();
+    } else {
+      stopBlink();
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
-  <div class="streaming-text" :class="{ pending: isPending }">
+  <div ref="rootRef" class="streaming-text" :class="{ pending: isPending }">
     <template v-if="isPending">
       <!-- 已完成句子 -->
       <span
@@ -104,19 +166,15 @@ watch(
         class="sentence-done"
         :class="{ 'sentence-enter': i >= animateFrom }"
       >{{ seg }}</span>
-      <!-- 当前草稿 + 光标 -->
-      <span v-if="draft" class="sentence-draft">
-        {{ draft }}<span class="cursor">|</span>
-      </span>
-      <!-- 无文本时的等待光标 -->
-      <span v-if="!committed.length && !draft" class="sentence-draft">
-        <span class="cursor">|</span>
-      </span>
+      <!-- 当前草稿 -->
+      <span v-if="draft" class="sentence-draft">{{ draft }}</span>
     </template>
     <!-- 非流式：显示原始文本（父组件处理 markdown） -->
     <template v-else>
       <span class="sentence-done">{{ text }}</span>
     </template>
+    <!-- 流式光标：独立于 isPending 块，便于 anime.js 控制 + 淡出移除 -->
+    <span v-if="showCursor" ref="cursorRef" class="cursor" aria-hidden="true">|</span>
   </div>
 </template>
 
@@ -153,7 +211,7 @@ watch(
   color: var(--color-text);
 }
 
-/* 闪烁光标 */
+/* 闪烁光标（闪烁由 anime.js 驱动；reduced-motion 下常亮） */
 .cursor {
   display: inline-block;
   width: 2px;
@@ -161,11 +219,6 @@ watch(
   background: var(--color-warm);
   margin-left: 1px;
   vertical-align: text-bottom;
-  animation: blink 0.8s step-end infinite;
-}
-
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  opacity: 1;
 }
 </style>
