@@ -5,7 +5,8 @@
  * 2x1: 当前体重 + 记体重按钮（打开 BottomSheet）
  * 2x2 / 4x2: 折线图（近 60 天）+ 记体重入口
  */
-import { computed, ref } from "vue";
+import { computed, ref, onMounted } from "vue";
+import { useAnime } from "@/composables/useAnime";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useUserStore } from "@/stores/userStore";
 import LineChart from "@/components/charts/LineChart.vue";
@@ -25,6 +26,21 @@ const currentWeight = computed<number | undefined>(
 const weightText = computed(() =>
   currentWeight.value != null ? currentWeight.value.toFixed(1) : "--",
 );
+
+const { animate, reduced } = useAnime();
+const display = ref("--");
+
+onMounted(() => {
+  if (currentWeight.value == null) { display.value = "--"; return; }
+  if (reduced.value) { display.value = currentWeight.value.toFixed(1); return; }
+  const obj = { val: 0 };
+  animate(obj, {
+    val: currentWeight.value,
+    duration: 800,
+    ease: "outExpo",
+    onUpdate: () => { display.value = obj.val.toFixed(1); },
+  });
+});
 
 // ===== 近 60 天趋势 =====
 const DAY_MS = 86400000;
@@ -118,7 +134,7 @@ const isCompact = computed(() => props.size === "2x1");
       <div class="left-block">
         <div class="sub-label">当前体重</div>
         <div class="weight-main">
-          <span class="weight-num">{{ weightText }}</span>
+          <span class="weight-num">{{ display }}</span>
           <span class="weight-unit">kg</span>
         </div>
       </div>
@@ -142,7 +158,7 @@ const isCompact = computed(() => props.size === "2x1");
 
       <div class="weight-now-row">
         <div class="weight-main">
-          <span class="weight-num weight-num--md">{{ weightText }}</span>
+          <span class="weight-num weight-num--md">{{ display }}</span>
           <span class="weight-unit">kg</span>
         </div>
         <span v-if="latestDelta" class="delta" :class="latestDelta.dir === 'up' ? 'delta--up' : 'delta--down'">

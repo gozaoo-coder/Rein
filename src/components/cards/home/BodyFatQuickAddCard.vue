@@ -6,7 +6,8 @@
  * （当前值显示 + 预设按钮 + 数字输入 + 确认）。
  * 1x1 / 1x2 / 2x1 共用同一个 BottomSheet。
  */
-import { computed, ref } from "vue";
+import { computed, ref, onMounted } from "vue";
+import { useAnime } from "@/composables/useAnime";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import { useToast } from "@/composables/useToast";
 import { BottomSheet } from "@/components/ui";
@@ -24,6 +25,21 @@ const currentFat = computed<number | undefined>(
 const fatText = computed(() =>
   currentFat.value != null ? currentFat.value.toFixed(1) : "--",
 );
+
+const { animate, reduced } = useAnime();
+const display = ref("--");
+
+onMounted(() => {
+  if (currentFat.value == null) { display.value = "--"; return; }
+  if (reduced.value) { display.value = currentFat.value.toFixed(1); return; }
+  const obj = { val: 0 };
+  animate(obj, {
+    val: currentFat.value,
+    duration: 800,
+    ease: "outExpo",
+    onUpdate: () => { display.value = obj.val.toFixed(1); },
+  });
+});
 
 const showSheet = ref(false);
 const fatInput = ref<string>("");
@@ -64,7 +80,7 @@ const isValid = computed(() => {
         <i class="bi bi-person-fill"></i>
       </span>
       <div class="bfq-amount-row" :class="`bfq-amount-row--${size}`">
-        <span class="bfq-amount">{{ fatText }}</span>
+        <span class="bfq-amount">{{ display }}</span>
         <span class="bfq-unit">%</span>
       </div>
     </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref, onMounted } from "vue"
+import { useAnime } from "@/composables/useAnime"
 
 const props = withDefaults(defineProps<{
   current?: number
@@ -10,6 +11,20 @@ const props = withDefaults(defineProps<{
 })
 
 const progress = computed(() => Math.min((props.current / props.target) * 100, 100))
+
+const { animate, reduced } = useAnime()
+const display = ref(0)
+
+onMounted(() => {
+  if (reduced.value) { display.value = props.current; return }
+  const obj = { val: 0 }
+  animate(obj, {
+    val: props.current,
+    duration: 600,
+    ease: "outExpo",
+    onUpdate: () => { display.value = Math.round(obj.val) },
+  })
+})
 </script>
 
 <template>
@@ -20,7 +35,7 @@ const progress = computed(() => Math.min((props.current / props.target) * 100, 1
     </div>
     <div class="card-body">
       <div class="glass-display">
-        <span class="glass-value">{{ current }}</span>
+        <span class="glass-value">{{ display }}</span>
         <span class="glass-target">/ {{ target }} 杯</span>
       </div>
     </div>

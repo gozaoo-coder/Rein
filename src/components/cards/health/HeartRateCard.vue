@@ -1,10 +1,27 @@
 <script setup lang="ts">
-withDefaults(defineProps<{
+import { ref, onMounted } from "vue"
+import { useAnime } from "@/composables/useAnime"
+
+const props = withDefaults(defineProps<{
   bpm?: number
   status?: "low" | "normal" | "high"
 }>(), {
   bpm: 72,
   status: "normal",
+})
+
+const { animate, reduced } = useAnime()
+const display = ref(0)
+
+onMounted(() => {
+  if (reduced.value) { display.value = props.bpm; return }
+  const obj = { val: 0 }
+  animate(obj, {
+    val: props.bpm,
+    duration: 700,
+    ease: "outExpo",
+    onUpdate: () => { display.value = Math.round(obj.val) },
+  })
 })
 </script>
 
@@ -17,7 +34,7 @@ withDefaults(defineProps<{
     <div class="card-body">
       <div class="pulse-dot" />
       <div class="bpm-display">
-        <span class="bpm-value">{{ bpm }}</span>
+        <span class="bpm-value">{{ display }}</span>
         <span class="bpm-unit">BPM</span>
       </div>
     </div>

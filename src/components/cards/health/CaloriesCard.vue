@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref, onMounted } from "vue"
+import { useAnime } from "@/composables/useAnime"
 
 const props = withDefaults(defineProps<{
   burned?: number
@@ -10,6 +11,20 @@ const props = withDefaults(defineProps<{
 })
 
 const progress = computed(() => Math.min((props.burned / props.goal) * 100, 100))
+
+const { animate, reduced } = useAnime()
+const display = ref(0)
+
+onMounted(() => {
+  if (reduced.value) { display.value = props.burned; return }
+  const obj = { val: 0 }
+  animate(obj, {
+    val: props.burned,
+    duration: 800,
+    ease: "outExpo",
+    onUpdate: () => { display.value = Math.round(obj.val) },
+  })
+})
 </script>
 
 <template>
@@ -19,7 +34,7 @@ const progress = computed(() => Math.min((props.burned / props.goal) * 100, 100)
       <span class="card-unit">千卡</span>
     </div>
     <div class="card-value-row">
-      <span class="stat-value">{{ burned }}</span>
+      <span class="stat-value">{{ display }}</span>
       <span class="goal-text">/ {{ goal }}</span>
     </div>
     <div class="bar-track">

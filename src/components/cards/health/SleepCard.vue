@@ -1,5 +1,8 @@
 <script setup lang="ts">
-withDefaults(defineProps<{
+import { ref, onMounted } from "vue"
+import { useAnime } from "@/composables/useAnime"
+
+const props = withDefaults(defineProps<{
   hours?: number
   quality?: "poor" | "fair" | "good" | "excellent"
 }>(), {
@@ -13,6 +16,20 @@ const qualityMap: Record<string, string> = {
   good: "良好",
   excellent: "优秀",
 }
+
+const { animate, reduced } = useAnime()
+const display = ref("0.0")
+
+onMounted(() => {
+  if (reduced.value) { display.value = props.hours.toFixed(1); return }
+  const obj = { val: 0 }
+  animate(obj, {
+    val: props.hours,
+    duration: 700,
+    ease: "outExpo",
+    onUpdate: () => { display.value = obj.val.toFixed(1) },
+  })
+})
 </script>
 
 <template>
@@ -22,7 +39,7 @@ const qualityMap: Record<string, string> = {
       <i class="bi bi-moon-stars-fill moon-icon" style="font-size:16px"></i>
     </div>
     <div class="card-body">
-      <span class="hours-value">{{ hours }}</span>
+      <span class="hours-value">{{ display }}</span>
       <span class="hours-unit">小时</span>
     </div>
     <div class="quality-row">

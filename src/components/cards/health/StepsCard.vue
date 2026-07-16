@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, ref, onMounted } from "vue"
+import { useAnime } from "@/composables/useAnime"
 
 const props = withDefaults(defineProps<{
   steps?: number
@@ -12,6 +13,20 @@ const props = withDefaults(defineProps<{
 const progress = computed(() => Math.min((props.steps / props.goal) * 100, 100))
 const circumference = 2 * Math.PI * 36
 const strokeDashoffset = computed(() => circumference - (progress.value / 100) * circumference)
+
+const { animate, reduced } = useAnime()
+const display = ref(0)
+
+onMounted(() => {
+  if (reduced.value) { display.value = props.steps; return }
+  const obj = { val: 0 }
+  animate(obj, {
+    val: props.steps,
+    duration: 800,
+    ease: "outExpo",
+    onUpdate: () => { display.value = Math.round(obj.val) },
+  })
+})
 </script>
 
 <template>
@@ -30,7 +45,7 @@ const strokeDashoffset = computed(() => circumference - (progress.value / 100) *
         />
       </svg>
       <div class="card-stats">
-        <span class="stat-value">{{ steps.toLocaleString() }}</span>
+        <span class="stat-value">{{ display.toLocaleString() }}</span>
         <span class="stat-unit">步</span>
       </div>
     </div>

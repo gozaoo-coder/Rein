@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, onMounted } from "vue";
+import { useAnime } from "@/composables/useAnime";
 import { useHealthDataStore } from "@/stores/healthDataStore";
 import type { CardSize } from "@/types/card";
 
@@ -15,6 +16,20 @@ const progress = computed(() => Math.min(amount.value / GOAL, 1));
 const C = computed(() => 2 * Math.PI * 14);
 const dashOffset = computed(() => C.value - progress.value * C.value);
 const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
+
+const { animate, reduced } = useAnime();
+const display = ref(0);
+
+onMounted(() => {
+  if (reduced.value) { display.value = amount.value; return; }
+  const obj = { val: 0 };
+  animate(obj, {
+    val: amount.value,
+    duration: 700,
+    ease: "outExpo",
+    onUpdate: () => { display.value = Math.round(obj.val); },
+  });
+});
 </script>
 
 <template>
@@ -33,13 +48,13 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
 
     <div v-if="size === '1x1'" class="mini">
       <div class="mini-label">饮水</div>
-      <div class="mini-num">{{ amount }}</div>
+      <div class="mini-num">{{ display }}</div>
       <div class="mini-label">ml</div>
     </div>
 
     <div v-else-if="size === '2x1'" class="body-2x1">
       <div class="amount-row">
-        <span class="amount-num">{{ amount }}</span>
+        <span class="amount-num">{{ display }}</span>
         <span class="amount-goal">/ {{ GOAL }}ml</span>
       </div>
       <div class="bar-track">
@@ -50,7 +65,7 @@ const isCompact = computed(() => props.size === "1x1" || props.size === "2x1");
     <div v-else class="body-2x2">
       <div class="amount-row">
         <div class="amount-text">
-          <span class="amount-num">{{ amount }}</span>
+          <span class="amount-num">{{ display }}</span>
           <span class="amount-goal">/ {{ GOAL }}ml</span>
         </div>
         <span class="pct">{{ Math.round(progress * 100) }}%</span>
