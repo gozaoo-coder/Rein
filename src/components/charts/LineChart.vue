@@ -24,7 +24,8 @@
  *   height      — plot area height (default 60)
  *   strokeWidth — line thickness (default 2)
  */
-import { computed } from "vue";
+import { computed, onMounted, nextTick, ref, type Ref } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 export interface ReferenceLine {
   value: number;
@@ -250,11 +251,47 @@ function refY(): number | null {
   if (!props.referenceLine) return null;
   return yAt(props.referenceLine.value);
 }
+
+const svgRef = ref<SVGSVGElement | null>(null);
+const { animate, reduced } = useAnime(
+  svgRef as unknown as Ref<HTMLElement | null>,
+);
+
+onMounted(() => {
+  nextTick(() => {
+    if (reduced.value) return;
+    const svg = svgRef.value;
+    if (!svg) return;
+    const lineEl = svg.querySelector<SVGPathElement>('path[fill="none"]');
+    const areaEl = svg.querySelector<SVGPathElement>(
+      'path:not([fill="none"])',
+    );
+    if (areaEl) {
+      areaEl.style.opacity = "0";
+      animate(areaEl, {
+        opacity: 1,
+        duration: 900,
+        ease: "outQuint",
+      });
+    }
+    if (lineEl) {
+      const len = lineEl.getTotalLength();
+      lineEl.style.strokeDasharray = String(len);
+      lineEl.style.strokeDashoffset = String(len);
+      animate(lineEl, {
+        strokeDashoffset: 0,
+        duration: 900,
+        ease: "outQuint",
+      });
+    }
+  });
+});
 </script>
 
 <template>
   <div class="line-chart-wrap" :style="{ '--fs': fontScale }">
     <svg
+      ref="svgRef"
       class="line-chart-svg"
       :viewBox="`0 0 ${VB_W} ${VB_H}`"
       width="100%"

@@ -20,7 +20,8 @@
  *   barRadius  — top corner radius (default 2)
  *   gapRatio   — gap between bars as fraction of bar width (default 0.6)
  */
-import { computed } from "vue";
+import { computed, onMounted, nextTick, ref, type Ref } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 const props = withDefaults(
   defineProps<{
@@ -109,11 +110,46 @@ const gridLines = computed(() => {
   if (!props.showGrid) return [];
   return [0.25, 0.5, 0.75, 1];
 });
+
+const svgRef = ref<SVGSVGElement | null>(null);
+const { animate, stagger, reduced } = useAnime(
+  svgRef as unknown as Ref<HTMLElement | null>,
+);
+
+onMounted(() => {
+  nextTick(() => {
+    if (reduced.value) return;
+    const svg = svgRef.value;
+    if (!svg) return;
+    const rects = Array.from(svg.querySelectorAll("rect"));
+    if (rects.length === 0) return;
+    const finalHeights = rects.map((r) =>
+      parseFloat(r.getAttribute("height") || "0"),
+    );
+    const finalYs = rects.map((r) => parseFloat(r.getAttribute("y") || "0"));
+    const bottoms = finalYs.map((y, i) => y + finalHeights[i]);
+    rects.forEach((r, i) => {
+      r.setAttribute("height", "0");
+      r.setAttribute("y", String(bottoms[i]));
+    });
+    const stg = stagger("list");
+    rects.forEach((r, i) => {
+      animate(r, {
+        height: finalHeights[i],
+        y: finalYs[i],
+        duration: 600,
+        ease: "outQuint",
+        delay: stg(r, i, rects),
+      });
+    });
+  });
+});
 </script>
 
 <template>
   <div class="bar-thin-wrap" :style="{ '--fs': fontScale }">
     <svg
+      ref="svgRef"
       class="bar-thin-svg"
       :viewBox="`0 0 ${VB_W} ${VB_H}`"
       preserveAspectRatio="none"

@@ -30,7 +30,8 @@
  * SVG viewBox with responsive width; font scaling by height like LineChart.
  * LTTB downsample per series when > 30 points. HarmonyOS style.
  */
-import { computed } from "vue";
+import { computed, onMounted, nextTick, ref, type Ref } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 export interface MultiSeries {
   data: number[];
@@ -270,6 +271,48 @@ const resolvedTicks = computed(() => {
 });
 
 const gridLines = computed(() => (props.showGrid ? [0, 0.25, 0.5, 0.75, 1] : []));
+
+const svgRef = ref<SVGSVGElement | null>(null);
+const { animate, stagger, reduced } = useAnime(
+  svgRef as unknown as Ref<HTMLElement | null>,
+);
+
+onMounted(() => {
+  nextTick(() => {
+    if (reduced.value) return;
+    const svg = svgRef.value;
+    if (!svg) return;
+    const lineEls = Array.from(
+      svg.querySelectorAll<SVGPathElement>('path[fill="none"]'),
+    );
+    const areaEls = Array.from(
+      svg.querySelectorAll<SVGPathElement>('path:not([fill="none"])'),
+    );
+    if (areaEls.length > 0) {
+      areaEls.forEach((el) => {
+        el.style.opacity = "0";
+      });
+      animate(areaEls, {
+        opacity: 1,
+        duration: 900,
+        ease: "outQuint",
+      });
+    }
+    if (lineEls.length === 0) return;
+    const stg = stagger("list");
+    lineEls.forEach((el, i) => {
+      const len = el.getTotalLength();
+      el.style.strokeDasharray = String(len);
+      el.style.strokeDashoffset = String(len);
+      animate(el, {
+        strokeDashoffset: 0,
+        duration: 900,
+        ease: "outQuint",
+        delay: stg(el, i, lineEls),
+      });
+    });
+  });
+});
 </script>
 
 <template>
@@ -285,6 +328,7 @@ const gridLines = computed(() => (props.showGrid ? [0, 0.25, 0.5, 0.75, 1] : [])
       </span>
     </div>
     <svg
+      ref="svgRef"
       class="mlc-svg"
       :viewBox="`0 0 ${VB_W} ${VB_H}`"
       width="100%"

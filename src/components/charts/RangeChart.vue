@@ -22,7 +22,8 @@
  *   height   — chart plot height (default 56)
  *   smooth   — smooth curve (default true)
  */
-import { computed } from "vue";
+import { computed, onMounted, nextTick, ref, type Ref } from "vue";
+import { useAnime } from "@/composables/useAnime";
 
 export interface ChartZone {
   from: number;
@@ -159,11 +160,53 @@ function zoneY0(z: ChartZone) {
 function zoneHeight(z: ChartZone) {
   return ((z.to - z.from) / yRange.value) * props.height;
 }
+
+const svgRef = ref<SVGSVGElement | null>(null);
+const { animate, stagger, reduced } = useAnime(
+  svgRef as unknown as Ref<HTMLElement | null>,
+);
+
+onMounted(() => {
+  nextTick(() => {
+    if (reduced.value) return;
+    const svg = svgRef.value;
+    if (!svg) return;
+    const zoneEls = Array.from(svg.querySelectorAll<SVGRectElement>("rect"));
+    if (zoneEls.length > 0) {
+      const stg = stagger("list");
+      zoneEls.forEach((el, i) => {
+        const targetOpacity = parseFloat(
+          el.getAttribute("opacity") || "0.55",
+        );
+        el.style.opacity = "0";
+        animate(el, {
+          opacity: targetOpacity,
+          duration: 500,
+          ease: "outQuint",
+          delay: stg(el, i, zoneEls),
+        });
+      });
+    }
+    const lineEl = svg.querySelector<SVGPathElement>('path[fill="none"]');
+    if (lineEl) {
+      const len = lineEl.getTotalLength();
+      lineEl.style.strokeDasharray = String(len);
+      lineEl.style.strokeDashoffset = String(len);
+      animate(lineEl, {
+        strokeDashoffset: 0,
+        duration: 900,
+        ease: "outQuint",
+        delay: 500,
+      });
+    }
+  });
+});
 </script>
 
 <template>
   <div class="range-chart-wrap" :style="{ '--fs': fontScale }">
     <svg
+      ref="svgRef"
       class="range-chart-svg"
       :viewBox="`0 0 ${VB_W} ${VB_H}`"
       width="100%"
