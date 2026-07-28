@@ -19,6 +19,7 @@ import {
   packLayout,
   pointerToCell,
   gridRowCount,
+  useGridColumns,
   type PlacedCard,
 } from "@/composables/useGridLayout";
 import HomeCardRenderer from "./HomeCardRenderer.vue";
@@ -44,6 +45,10 @@ function setCellRef(el: HTMLElement | null, idx: number) {
 
 const GAP = 12;
 const ROW_H = 88;
+
+// 响应式网格列数：phone/pad=4，desktop=8
+const { columns } = useGridColumns();
+const cols = computed(() => columns.value);
 
 // ===== anime.js v4 集成 =====
 const { spring, reduced } = useAnime(gridRef);
@@ -71,7 +76,7 @@ const ghostEl = ref<HTMLElement | null>(null);
 /** 当前布局位置（排除拖动中的卡） */
 const placed = computed<PlacedCard[]>(() => {
   const excludeId = dragState.value?.active ? dragState.value.cardId : undefined;
-  return packLayout(cards.value, excludeId);
+  return packLayout(cards.value, excludeId, undefined, cols.value);
 });
 
 /** 预览布局（悬停 0.5s 后计算的"顶开"效果） */
@@ -178,7 +183,7 @@ function docPointerMove(e: PointerEvent) {
 
   // 计算悬停 cell
   if (gridRef.value) {
-    const cell = pointerToCell(e.clientX, e.clientY, gridRef.value, GAP);
+    const cell = pointerToCell(e.clientX, e.clientY, gridRef.value, GAP, cols.value);
     if (cell) {
       if (!hoverCell.value || hoverCell.value.col !== cell.col || hoverCell.value.row !== cell.row) {
         hoverCell.value = cell;
@@ -188,16 +193,21 @@ function docPointerMove(e: PointerEvent) {
         const card = cards.value.find((c) => c.id === ds.cardId);
         if (card) {
           const m = CARD_SIZE_MAP[card.size];
-          const clampedCol = Math.max(1, Math.min(cell.col, 4 - m.cols + 1));
+          const clampedCol = Math.max(1, Math.min(cell.col, cols.value - m.cols + 1));
           hoverTimer = window.setTimeout(() => {
             // 计算顶开预览
-            previewPlaced.value = packLayout(cards.value, ds.cardId, {
-              id: ds.cardId,
-              col: clampedCol,
-              row: cell.row,
-              cols: m.cols,
-              rows: m.rows,
-            });
+            previewPlaced.value = packLayout(
+              cards.value,
+              ds.cardId,
+              {
+                id: ds.cardId,
+                col: clampedCol,
+                row: cell.row,
+                cols: m.cols,
+                rows: m.rows,
+              },
+              cols.value,
+            );
             hoverTimer = null;
           }, HOVER_MS);
         }
@@ -236,8 +246,8 @@ function docPointerUp(e: PointerEvent) {
       const card = cards.value.find((c) => c.id === ds.cardId);
       if (card) {
         const m = CARD_SIZE_MAP[card.size];
-        const col = Math.max(1, Math.min(hoverCell.value.col, 4 - m.cols + 1));
-        store.placeCardAt(ds.cardId, col, hoverCell.value.row);
+        const col = Math.max(1, Math.min(hoverCell.value.col, cols.value - m.cols + 1));
+        store.placeCardAt(ds.cardId, col, hoverCell.value.row, cols.value);
       }
     }
   }
@@ -318,7 +328,7 @@ function onResizePointerDown(e: PointerEvent, card: CardConfig, idx: number) {
   const gridEl = gridRef.value;
   const gridRect = gridEl?.getBoundingClientRect();
   const gap = GAP;
-  const cellW = gridRect ? (gridRect.width - gap * 3) / 4 : 80;
+  const cellW = gridRect ? (gridRect.width - gap * (cols.value - 1)) / cols.value : 80;
   const cellH = ROW_H;
 
   resizeState.value = {
@@ -345,7 +355,7 @@ function onResizePointerMove(e: PointerEvent) {
   const deltaCols = Math.round(dx / (rs.cellW + rs.gap));
   const deltaRows = Math.round(dy / (rs.cellH + rs.gap));
 
-  const targetCols = Math.max(1, Math.min(4, rs.startCols + deltaCols));
+  const targetCols = Math.max(1, Math.min(cols.value, rs.startCols + deltaCols));
   const targetRows = Math.max(1, Math.min(4, rs.startRows + deltaRows));
 
   const card = cards.value.find((c) => c.id === rs.cardId);
@@ -373,7 +383,7 @@ function onResizePointerUp(e: PointerEvent) {
     const card = cards.value.find((c) => c.id === rs.cardId);
     if (card && rs.previewSize !== card.size) {
       runFlip();
-      store.resizeCard(rs.cardId, rs.previewSize);
+      store.resizeCard(rs.cardId, rs.previewSize, cols.value);
     }
   }
   try {
@@ -465,7 +475,7 @@ const dropPlaceholder = computed(() => {
   const card = cards.value.find((c) => c.id === dragState.value!.cardId);
   if (!card) return null;
   const m = CARD_SIZE_MAP[card.size];
-  const col = Math.max(1, Math.min(hoverCell.value.col, 4 - m.cols + 1));
+  const col = Math.max(1, Math.min(hoverCell.value.col, cols.value - m.cols + 1));
   return { col, row: hoverCell.value.row, cols: m.cols, rows: m.rows };
 });
 </script>
@@ -478,7 +488,10 @@ const dropPlaceholder = computed(() => {
       'is-editing': editMode,
       'is-previewing': !!previewPlaced,
     }"
-    :style="{ gridAutoRows: ROW_H + 'px' }"
+    :style="{
+      gridAutoRows: ROW_H + 'px',
+      gridTemplateColumns: 'repeat(' + cols + ', 1fr)',
+    }"
     @pointerdown="onGridPointerDown"
     @pointermove="onGridPointerMove"
     @pointerup="onGridPointerUp"
@@ -533,7 +546,7 @@ const dropPlaceholder = computed(() => {
 <style scoped>
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* grid-template-columns 由 inline style 动态设置（4/8 列） */
   grid-auto-rows: 88px;
   gap: var(--space-3);
   width: 100%;

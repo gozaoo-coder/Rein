@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Default capabilities for the Rein app",
-  "windows": ["main", "pomodoro"],
+  "windows": ["main", "pomodoro", "split-*"],
   "permissions": [
     "core:default",
     "shell:allow-open",

@@ -6,10 +6,19 @@
  *
  * 活动指示器采用物理滑动：单个绝对定位的 .tab-indicator-active 元素，
  * 由 anime.js spring('snappy') 驱动 translateX + width 平滑滑到目标 tab。
+ *
+ * side 模式：宽型窗口（desktop）下作为左侧垂直侧栏渲染——
+ * tab 项纵向排列，激活态由各 tab 内的 .tab-indicator 静态背景呈现
+ * （跳过物理滑动指示器以避免方向分支）。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAnime } from "@/composables/useAnime";
+
+const props = defineProps<{
+  /** 侧栏模式：true 时为左侧垂直导航（desktop 宽型窗口） */
+  side?: boolean;
+}>();
 
 const route = useRoute();
 const router = useRouter();
@@ -37,7 +46,7 @@ const activeIndex = computed(() => {
   return idx >= 0 ? idx : 0;
 });
 
-// ===== 物理滑动指示器 =====
+// ===== 物理滑动指示器（仅水平模式启用） =====
 const tabItemRefs = ref<HTMLElement[]>([]);
 const activeIndicatorRef = ref<HTMLElement | null>(null);
 const { animate, spring } = useAnime();
@@ -49,6 +58,7 @@ function setTabItemRef(el: unknown, idx: number) {
 }
 
 function moveIndicator(animated: boolean) {
+  if (props.side) return; // 侧栏模式跳过物理滑动
   const indicator = activeIndicatorRef.value;
   const target = tabItemRefs.value[activeIndex.value];
   if (!indicator || !target) return;
@@ -90,9 +100,17 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <nav class="tab-bar-wrap safe-area-bottom">
-    <div class="tab-bar">
-      <div class="tab-indicator-active" ref="activeIndicatorRef" aria-hidden="true" />
+  <nav
+    class="tab-bar-wrap"
+    :class="{ 'tab-bar-side-wrap': side, 'safe-area-bottom': !side }"
+  >
+    <div class="tab-bar" :class="{ 'tab-bar-side': side }">
+      <div
+        v-if="!side"
+        class="tab-indicator-active"
+        ref="activeIndicatorRef"
+        aria-hidden="true"
+      />
       <button
         v-for="(tab, idx) in tabs"
         :key="tab.path"
@@ -115,6 +133,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ===== 水平模式（默认）：底部浮动胶囊 ===== */
 .tab-bar-wrap {
   position: fixed;
   bottom: 0;
@@ -234,5 +253,68 @@ onBeforeUnmount(() => {
   .tab-bar {
     max-width: 320px;
   }
+}
+
+/* ===== 侧栏模式（desktop 宽型窗口）：左侧垂直导航 ===== */
+.tab-bar-side-wrap {
+  position: sticky;
+  top: 0;
+  bottom: auto;
+  left: auto;
+  right: auto;
+  z-index: 50;
+  display: block;
+  flex-shrink: 0;
+  padding: 0;
+  pointer-events: auto;
+  align-self: stretch;
+}
+
+.tab-bar-side {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--space-1);
+  width: 88px;
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-3) var(--space-2);
+  border-radius: 0;
+  background: var(--material-ultra-thin-bg);
+  -webkit-backdrop-filter: blur(var(--material-ultra-thin-blur)) var(--glass-blur-saturate);
+  backdrop-filter: blur(var(--material-ultra-thin-blur)) var(--glass-blur-saturate);
+  box-shadow: none;
+  border: none;
+  border-right: 1px solid var(--material-thin-border);
+  max-width: none;
+}
+
+/* 侧栏模式：tab-item 占满宽度，纵向居中 */
+.tab-bar-side .tab-item {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 64px;
+  padding: var(--space-2) var(--space-1);
+  border-radius: var(--radius-lg);
+}
+
+/* 侧栏模式：激活态使用各 tab 内的 .tab-indicator 静态背景 */
+.tab-bar-side .tab-item.is-active .tab-indicator {
+  background: var(--color-warm);
+}
+
+.tab-bar-side .tab-item.is-active {
+  color: var(--color-primary-text);
+}
+
+.tab-bar-side .tab-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.tab-bar-side .tab-label {
+  font-size: 11px;
 }
 </style>

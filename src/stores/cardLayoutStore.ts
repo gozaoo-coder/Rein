@@ -10,7 +10,7 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import { readJSON, writeJSON } from "@/composables/useStorage";
-import { packLayout } from "@/composables/useGridLayout";
+import { DEFAULT_GRID_COLUMNS, packLayout } from "@/composables/useGridLayout";
 import type { CardConfig, CardLayout, CardSize, CardType, RingDataSource } from "@/types/card";
 import { CARD_REGISTRY, CARD_SIZE_MAP, DEFAULT_RINGS } from "@/types/card";
 import { pushChange, registerSyncEntity } from "@/composables/useSyncBridge";
@@ -105,8 +105,8 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
   }
 
   /** 重新计算所有卡的位置（保留已有显式位置，冲突推后） */
-  function reassignPositions(): void {
-    const placed = packLayout(layout.value.cards);
+  function reassignPositions(columns: number = DEFAULT_GRID_COLUMNS): void {
+    const placed = packLayout(layout.value.cards, undefined, undefined, columns);
     for (const p of placed) {
       p.card.col = p.col;
       p.card.row = p.row;
@@ -139,18 +139,20 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
   /**
    * 将卡片放置到指定网格 cell (col, row)。
    * 其他卡被推开（向下/向右），通过 packer 解决冲突。
+   *
+   * @param columns 当前网格列数（宽型窗口为 8，默认 4）
    */
-  function placeCardAt(cardId: string, col: number, row: number): void {
+  function placeCardAt(cardId: string, col: number, row: number, columns: number = DEFAULT_GRID_COLUMNS): void {
     const card = layout.value.cards.find((c) => c.id === cardId);
     if (!card) return;
     const m = CARD_SIZE_MAP[card.size];
-    card.col = Math.max(1, Math.min(col, 4 - m.cols + 1));
+    card.col = Math.max(1, Math.min(col, columns - m.cols + 1));
     card.row = Math.max(1, row);
-    reassignPositions();
+    reassignPositions(columns);
     void persist();
   }
 
-  function resizeCard(id: string, size: CardSize): void {
+  function resizeCard(id: string, size: CardSize, columns: number = DEFAULT_GRID_COLUMNS): void {
     const card = layout.value.cards.find((c) => c.id === id);
     if (!card) return;
     const meta = CARD_REGISTRY[card.type];
@@ -159,9 +161,9 @@ export const useCardLayoutStore = defineStore("cardLayout", () => {
     // 调整尺寸时保持当前位置（clamp col 使其不越界）
     const m = CARD_SIZE_MAP[size];
     if (card.col) {
-      card.col = Math.max(1, Math.min(card.col, 4 - m.cols + 1));
+      card.col = Math.max(1, Math.min(card.col, columns - m.cols + 1));
     }
-    reassignPositions();
+    reassignPositions(columns);
     void persist();
   }
 

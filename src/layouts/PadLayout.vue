@@ -11,8 +11,5 @@ import AppShell from "@/components/shell/AppShell.vue";
 </template>
 
 <style scoped>
-/* Pad layout overrides: wider cards, more grid columns */
-:deep(.card-grid) {
-  grid-template-columns: repeat(3, 1fr);
-}
+/* 列数由 HomeCardGrid 内的 useGridColumns 响应式控制（pad=3 列） */
 </style>

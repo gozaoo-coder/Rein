@@ -8,6 +8,10 @@
  *
  * 依赖 tauri.conf.json 中 decorations:false 隐藏原生标题栏。
  * Web 预览（无 Tauri 运行时）下窗口按钮自动降级为 no-op。
+ *
+ * Windows 平台常驻 "点击分窗" 按钮：在 win-actions 中显示一个"+"按钮，
+ * 点击后用 WebviewWindow 新建一个窗口，url 为当前 route.path，
+ * 即新窗口复用当前 router/page 的功能。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
@@ -34,6 +38,12 @@ const pageTitle = computed(() => {
   if (p.startsWith("/health/metrics")) return "健康概览";
   if (p.startsWith("/health")) return "健康";
   return "Rein";
+});
+
+// 检测 Windows 平台：UA 包含 Windows / Win32 / Win64
+const isWindows = computed(() => {
+  if (typeof navigator === "undefined") return false;
+  return /Windows|Win32|Win64/i.test(navigator.userAgent);
 });
 
 // ====== Tauri 窗口控制 ======
@@ -120,6 +130,32 @@ async function close() {
     /* ignore */
   }
 }
+
+// ====== Windows 平台：点击分窗 ======
+/**
+ * 用当前 route.path 创建一个新的 Tauri Webview 窗口。
+ * 窗口标签为 split-<base36 timestamp>，避免与 main/pomodoro 冲突。
+ * capabilities/default.json 的 windows 数组需包含 "split-*" 通配符。
+ */
+async function openSplitWindow() {
+  const path = route.path || "/";
+  try {
+    const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+    const label = `split-${Date.now().toString(36)}`;
+    new WebviewWindow(label, {
+      url: path,
+      title: pageTitle.value,
+      width: 900,
+      height: 680,
+      minWidth: 375,
+      minHeight: 540,
+      resizable: true,
+      decorations: false,
+    });
+  } catch {
+    /* Tauri 不可用：no-op */
+  }
+}
 </script>
 
 <template>
@@ -144,10 +180,21 @@ async function close() {
         :title="a.label"
         @click="a.onClick()"
       >
-        <i :class="['bi', `bi-${a.icon}`]" style="font-size: 18px" />
+        <i :class="['bi', `bi-${a.icon}`]" style="font-size: 12px" />
       </button>
 
-      <span v-if="actions.length > 0" class="win-divider" aria-hidden="true" />
+      <!-- Windows 平台常驻：点击分窗 -->
+      <button
+        v-if="isWindows"
+        class="win-icon-btn win-split-btn"
+        aria-label="点击分窗"
+        title="点击分窗：新建窗口使用当前页面"
+        @click="openSplitWindow"
+      >
+        <i class="bi bi-box-arrow-up-right" style="font-size: 12px" />
+      </button>
+
+      <span v-if="actions.length > 0 || isWindows" class="win-divider" aria-hidden="true" />
 
       <!-- 窗口控制：最小化 / 最大化 / 关闭 -->
       <button
@@ -156,7 +203,7 @@ async function close() {
         title="最小化"
         @click="minimize"
       >
-        <i class="bi bi-dash-lg" style="font-size: 18px" />
+        <i class="bi bi-dash-lg" style="font-size: 12px" />
       </button>
       <button
         class="win-icon-btn win-ctrl"
@@ -166,7 +213,7 @@ async function close() {
       >
         <i
           :class="['bi', isMaximized ? 'bi-fullscreen-exit' : 'bi-square']"
-          style="font-size: 15px"
+          style="font-size: 11px;transform: translateY(1px);"
         />
       </button>
       <button
@@ -175,7 +222,7 @@ async function close() {
         title="关闭"
         @click="close"
       >
-        <i class="bi bi-x-lg" style="font-size: 17px" />
+        <i class="bi bi-x-lg"  style="font-size: 12px" />
       </button>
     </div>
   </header>
@@ -283,6 +330,13 @@ async function close() {
 
 .win-ctrl-close:hover {
   background: var(--color-danger);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* Windows 分窗按钮：略带主色高亮，提示其为常驻入口 */
+.win-split-btn:hover {
+  background: var(--color-warm);
   color: #fff;
   border-color: transparent;
 }
