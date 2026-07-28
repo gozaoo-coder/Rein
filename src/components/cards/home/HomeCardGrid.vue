@@ -113,21 +113,38 @@ function gridStyle(pos: PlacedCard): Record<string, string> {
  *   2. 等待 DOM 更新（nextTick）
  *   3. animate() 自动从旧快照过渡到新位置
  * 拖动中跳过（预览动画由 CSS 处理）；reduced-motion 时仅 record 跳过 animate。
+ *
+ * 防抖：连续触发（如 resize 导致 cols 切换）时只执行最后一次，
+ * 避免 anime.js 动画堆积卡死主线程。
  */
-function runFlip() {
+let flipDebounceTimer: number | null = null;
+const FLIP_DEBOUNCE_MS = 80;
+
+function runFlip(skipAnimate = false) {
   if (!layout) return;
   if (dragState.value?.active) return; // 拖动中不 FLIP
-  layout.record();
-  if (reduced.value) return; // 降级：跳过动画，DOM 直接跳到新位置
-  nextTick(() => {
-    layout?.animate({ ease: spring("card"), duration: 400 });
-  });
+  if (flipDebounceTimer !== null) clearTimeout(flipDebounceTimer);
+  flipDebounceTimer = window.setTimeout(() => {
+    flipDebounceTimer = null;
+    if (!layout) return;
+    layout.record();
+    if (reduced.value || skipAnimate) return; // 降级/列数切换：跳过动画
+    nextTick(() => {
+      layout?.animate({ ease: spring("card"), duration: 400 });
+    });
+  }, FLIP_DEBOUNCE_MS);
 }
 
 // 监听位置变化触发 FLIP
+// cols 变化（列数切换）时跳过 animate——这是布局自适应，不需要过渡动画
+let lastCols = cols.value;
 watch(
   () => renderPlaced.value.map((p) => `${p.card.id}:${p.col},${p.row}`).join("|"),
-  () => runFlip(),
+  () => {
+    const colsChanged = cols.value !== lastCols;
+    lastCols = cols.value;
+    runFlip(colsChanged);
+  },
 );
 
 // ===== 拖拽换位（含 0.5s 悬停预览） =====
@@ -415,6 +432,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointercancel", docPointerUp);
   removeGhost();
   if (hoverTimer !== null) clearTimeout(hoverTimer);
+  if (flipDebounceTimer !== null) clearTimeout(flipDebounceTimer);
   // createLayout 不自动注册到 useAnime 的 scope，需手动 revert 清理
   layout?.revert();
   layout = null;

@@ -82,20 +82,28 @@ function moveIndicator(animated: boolean) {
 }
 
 function handleResize() {
-  moveIndicator(false);
+  // rAF 节流：拖动窗口时 resize 高频触发，避免 anime.js 调用堆积
+  if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
+  resizeRafId = requestAnimationFrame(() => {
+    resizeRafId = null;
+    moveIndicator(false);
+  });
 }
 
 watch(activeIndex, () => {
   nextTick(() => moveIndicator(true));
 });
 
+let resizeRafId: number | null = null;
+
 onMounted(() => {
   nextTick(() => moveIndicator(false));
-  window.addEventListener("resize", handleResize);
+  window.addEventListener("resize", handleResize, { passive: true });
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", handleResize);
+  if (resizeRafId !== null) cancelAnimationFrame(resizeRafId);
 });
 </script>
 
