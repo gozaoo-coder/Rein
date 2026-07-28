@@ -23,10 +23,8 @@ export interface PlacedCard {
   rows: number;
 }
 
-/** 默认列数（phone） */
+/** 默认列数（phone / pad） */
 export const DEFAULT_GRID_COLUMNS = 4;
-/** Pad 列数 */
-export const PAD_GRID_COLUMNS = 3;
 /** 宽型窗口列数（desktop） */
 export const WIDE_GRID_COLUMNS = 8;
 
@@ -96,6 +94,10 @@ function findNextFree(
 /**
  * 核心 packer：尊重显式位置，冲突向后推，不回填
  *
+ * 安全性：所有卡的 cols 都会 clamp 到 columns，避免 findNextFree
+ * 死循环（当卡 cols > columns 时，c + cols - 1 > columns 永远为 true，
+ * r 无限递增）。
+ *
  * @param cards 卡片列表（按顺序）
  * @param excludeId 排除的卡 id（拖动中的卡，不参与布局）
  * @param override 可选：覆盖某张卡的位置（用于预览）
@@ -114,7 +116,8 @@ export function packLayout(
   if (override && override.id !== excludeId) {
     const card = cards.find((c) => c.id === override.id);
     if (card) {
-      const cols = override.cols;
+      // clamp cols 到 columns，防止死循环
+      const cols = Math.min(override.cols, columns);
       const rows = override.rows;
       const col = Math.max(1, Math.min(override.col, columns - cols + 1));
       const row = Math.max(1, override.row);
@@ -126,7 +129,7 @@ export function packLayout(
   for (const card of cards) {
     if (card.id === excludeId) continue;
     if (override && card.id === override.id) {
-      const cols = override.cols;
+      const cols = Math.min(override.cols, columns);
       const rows = override.rows;
       const col = Math.max(1, Math.min(override.col, columns - cols + 1));
       const row = Math.max(1, override.row);
@@ -135,20 +138,22 @@ export function packLayout(
     }
 
     const m = CARD_SIZE_MAP[card.size];
+    // clamp cols 到 columns，防止 findNextFree 死循环
+    const cardCols = Math.min(m.cols, columns);
     let col = card.col ?? 1;
     let row = card.row ?? 1;
-    col = Math.max(1, Math.min(col, columns - m.cols + 1));
+    col = Math.max(1, Math.min(col, columns - cardCols + 1));
     row = Math.max(1, row);
 
     // 尝试显式位置，冲突则找下一个空位
-    if (!isFree(occ, col, row, m.cols, m.rows, columns)) {
-      const free = findNextFree(occ, row, col, m.cols, m.rows, columns);
+    if (!isFree(occ, col, row, cardCols, m.rows, columns)) {
+      const free = findNextFree(occ, row, col, cardCols, m.rows, columns);
       col = free.col;
       row = free.row;
     }
 
-    mark(occ, col, row, m.cols, m.rows);
-    result.push({ card, col, row, cols: m.cols, rows: m.rows });
+    mark(occ, col, row, cardCols, m.rows);
+    result.push({ card, col, row, cols: cardCols, rows: m.rows });
   }
 
   return result;
@@ -204,19 +209,15 @@ export { COLUMNS as GRID_COLUMNS };
 /**
  * useGridColumns — 响应式网格列数
  *
- * phone: 4 列（默认）
- * pad（768–1200px）: 3 列（保持现有 PadLayout 视觉行为）
+ * phone / pad: 4 列（three-ring 必须 4x2，3 列下 cols=4 会导致
+ *   packLayout.findNextFree 死循环）
  * desktop（≥1200px，宽型窗口）: 8 列
- *
- * 用于首页 HomeCardGrid 在不同窗口尺寸下切换列数。
  */
 export function useGridColumns(): { columns: ComputedRef<number> } {
   const { mode } = useBreakpoint();
-  const columns = computed(() => {
-    if (mode.value === "desktop") return WIDE_GRID_COLUMNS;
-    if (mode.value === "pad") return PAD_GRID_COLUMNS;
-    return DEFAULT_GRID_COLUMNS;
-  });
+  const columns = computed(() =>
+    mode.value === "desktop" ? WIDE_GRID_COLUMNS : DEFAULT_GRID_COLUMNS,
+  );
   return { columns };
 }
 
