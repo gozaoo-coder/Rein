@@ -1,32 +1,5 @@
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-target/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Logs
-*.log
-npm-debug.log*
-
-# Tauri
-src-tauri/target/
-src-tauri/gen/
-
-# Testing
-coverage/
+node_modules
+dist
+src-tauri/target
+src-tauri/gen/schemas
+*.local

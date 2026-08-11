@@ -1,39 +1,28 @@
-import { ref, onMounted, onUnmounted } from "vue";
-import type { BreakpointMode } from "@/types";
+import { onMounted, onUnmounted, ref } from "vue";
 
-const BREAKPOINTS = {
-  phone: 767,
-  pad: 1023,
-} as const;
+const WIDE_QUERY = "(min-width: 760px)";
 
 export function useBreakpoint() {
-  const mode = ref<BreakpointMode>("desktop");
+  const isWide = ref(false);
+  let mq: MediaQueryList | null = null;
 
-  function detect(): BreakpointMode {
-    const w = window.innerWidth;
-    if (w <= BREAKPOINTS.phone) return "phone";
-    if (w <= BREAKPOINTS.pad) return "pad";
-    return "desktop";
-  }
-
-  let timer: ReturnType<typeof setTimeout>;
-
-  function onResize() {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      mode.value = detect();
-    }, 100);
+  function update(e?: MediaQueryListEvent) {
+    isWide.value = e ? e.matches : mq!.matches;
   }
 
   onMounted(() => {
-    mode.value = detect();
-    window.addEventListener("resize", onResize);
+    mq = window.matchMedia(WIDE_QUERY);
+    update();
+    mq.addEventListener("change", update);
   });
 
   onUnmounted(() => {
-    window.removeEventListener("resize", onResize);
-    clearTimeout(timer);
+    mq?.removeEventListener("change", update);
   });
 
-  return { mode };
+  return isWide;
+}
+
+export function isWideNow(): boolean {
+  return window.matchMedia(WIDE_QUERY).matches;
 }

@@ -1,0 +1,29 @@
+[package]
+name = "rein"
+version = "0.1.0"
+description = "Rein - AI 聊天桌面应用"
+edition = "2021"
+
+[lib]
+name = "rein_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rig-core = "0.41"
+futures-util = "0.3"
+tokio = { version = "1", features = ["time", "sync"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "charset", "http2", "rustls"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
