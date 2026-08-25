@@ -1,0 +1,396 @@
+{
+  "plans": [
+    {
+      "id": "ppl-push",
+      "name": "推日",
+      "subtitle": "胸 · 肩 · 肱三头",
+      "workoutType": "strength",
+      "exercises": [
+        {
+          "id": "ppl-push-bench",
+          "name": "杠铃卧推",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 8,
+          "weightKg": 60,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "主攻胸大肌整体，前束与三头辅助；肩胛后收下沉，杆触胸不弹震，离心 2 秒。"
+        },
+        {
+          "id": "ppl-push-incline-db",
+          "name": "上斜哑铃卧推",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 22,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "主攻胸大肌上束与三角肌前束；上斜约 30°，哑铃落至上胸沿再推起。"
+        },
+        {
+          "id": "ppl-push-ohp",
+          "name": "坐姿哑铃肩推",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 10,
+          "weightKg": 14,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "主攻三角肌前中束、三头辅助；核心收紧不挺腰，下放至耳侧高度。"
+        },
+        {
+          "id": "ppl-push-lateral",
+          "name": "哑铃侧平举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 8,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "孤立三角肌中束，撑起肩宽；肘微屈锁住角度，举至与肩平、不耸肩。"
+        },
+        {
+          "id": "ppl-push-fly",
+          "name": "蝴蝶机夹胸",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 25,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "孤立胸大肌、刻画中缝；肘微屈固定，顶峰并拢停 1 秒（可用龙门架十字夹胸替代）。"
+        },
+        {
+          "id": "ppl-push-reverse-fly",
+          "name": "俯身反向飞鸟",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 6,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "主攻三角肌后束与上背；俯身 45° 固定躯干，轻重量找后束发力感即可。"
+        },
+        {
+          "id": "ppl-push-pushdown",
+          "name": "绳索下压",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 20,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "主攻肱三头外侧头；大臂夹紧躯干，下压到底挤压 1 秒再缓慢回放。"
+        },
+        {
+          "id": "ppl-push-overhead-ext",
+          "name": "颈后绳索臂屈伸",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 15,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "主攻肱三头长头（拉伸位）；肘朝上固定，下放至三头充分拉长。"
+        },
+        {
+          "id": "ppl-push-plank",
+          "name": "平板支撑",
+          "kind": "timed",
+          "sets": 3,
+          "reps": null,
+          "weightKg": null,
+          "targetSec": 45,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "推日收尾补核心：骨盆微后倾，腹臀绷紧成一条直线。"
+        }
+      ]
+    },
+    {
+      "id": "ppl-pull",
+      "name": "拉日",
+      "subtitle": "背 · 肱二头 · 前臂",
+      "workoutType": "strength",
+      "exercises": [
+        {
+          "id": "ppl-pull-pullup",
+          "name": "引体向上",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 8,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 120,
+          "tips": "主攻背阔肌与大圆肌，撑起背部宽度；做不满 8 次时用高位下拉补足组数。"
+        },
+        {
+          "id": "ppl-pull-row",
+          "name": "杠铃划船",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 10,
+          "weightKg": 40,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "厚度的来源：背阔肌、斜方肌中下束、大圆肌协同；俯身约 45°，杆沿大腿拉向小腹。"
+        },
+        {
+          "id": "ppl-pull-cable-row",
+          "name": "坐姿绳索划船",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 35,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "背阔肌与菱形肌、斜方肌中束；躯干不前后晃，肩胛先收再屈肘。"
+        },
+        {
+          "id": "ppl-pull-straight-arm",
+          "name": "直臂下拉",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 15,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "背阔肌孤立动作，几乎不借二头；肘微屈锁死角度，用背把杆压到大腿。"
+        },
+        {
+          "id": "ppl-pull-shrug",
+          "name": "杠铃耸肩",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 50,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "主攻斜方肌上束；垂直上提下放，顶峰停 1 秒，不做绕环。"
+        },
+        {
+          "id": "ppl-pull-face-pull",
+          "name": "面拉",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 15,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "主攻三角肌后束与肩袖外旋肌（冈下肌/小圆肌），护肩必练；绳索拉向额头，肘高于腕并向外旋开。"
+        },
+        {
+          "id": "ppl-pull-curl",
+          "name": "杠铃弯举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 20,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "主攻肱二头整体；大臂贴身固定，离心 2 秒不甩腰借力。"
+        },
+        {
+          "id": "ppl-pull-hammer",
+          "name": "锤式弯举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 12,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "中立握主攻肱桡肌与肱肌，加粗手臂外侧；腕保持中立不屈伸。"
+        },
+        {
+          "id": "ppl-pull-wrist-curl",
+          "name": "腕弯举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 20,
+          "weightKg": 10,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "主攻前臂屈肌群（腕屈肌与指屈肌），抓握力的来源；前臂贴凳固定，只动腕、幅度做完整。"
+        },
+        {
+          "id": "ppl-pull-reverse-wrist-curl",
+          "name": "反握腕弯举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 20,
+          "weightKg": 6,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "主攻前臂伸肌群（桡侧腕伸肌与指伸肌），与屈腕平衡防肘痛；轻重量、慢速全程控制。"
+        }
+      ]
+    },
+    {
+      "id": "ppl-legs",
+      "name": "腿日",
+      "subtitle": "全腿 · 臀 · 核心",
+      "workoutType": "strength",
+      "exercises": [
+        {
+          "id": "ppl-legs-squat",
+          "name": "杠铃深蹲",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 8,
+          "weightKg": 70,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 150,
+          "tips": "全腿基石：股四头与臀大肌主攻，腘绳肌、核心稳定；髋膝同时启动，蹲到大腿平行以下。"
+        },
+        {
+          "id": "ppl-legs-rdl",
+          "name": "罗马尼亚硬拉",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 60,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 120,
+          "tips": "主攻腘绳肌与臀大肌，竖脊肌等长受力；膝微屈固定，髋往后坐、杠贴腿下滑。"
+        },
+        {
+          "id": "ppl-legs-bulgarian",
+          "name": "保加利亚分腿蹲",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 16,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "单侧动作修正左右差，股四头与臀都吃重；步距足够、重心压前脚跟，每边各 10 次。"
+        },
+        {
+          "id": "ppl-legs-leg-curl",
+          "name": "坐姿腿弯举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 30,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "腘绳肌屈膝功能的孤立补充；回放要慢，不让配重砸落。"
+        },
+        {
+          "id": "ppl-legs-leg-ext",
+          "name": "腿屈伸",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 35,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "股四头孤立，尤其刺激股直肌；顶峰挤压 1 秒，缓慢回落。"
+        },
+        {
+          "id": "ppl-legs-standing-calf",
+          "name": "站姿提踵",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 15,
+          "weightKg": 40,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "主攻腓肠肌（直膝才吃得到）；底部充分拉伸 1 秒、顶部踮到最高停 1 秒。"
+        },
+        {
+          "id": "ppl-legs-seated-calf",
+          "name": "坐姿提踵",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 25,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "主攻比目鱼肌（屈膝 90° 时主导）；节奏放慢，次数做满。"
+        },
+        {
+          "id": "ppl-legs-hanging-leg-raise",
+          "name": "悬垂举腿",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "下腹与髂腰肌，兼练握力；骨盆微微上卷带动腿部，不靠惯性甩腿。"
+        }
+      ]
+    },
+    {
+      "id": "core",
+      "name": "核心计时",
+      "subtitle": "核心 · 短时高效",
+      "workoutType": "hiit",
+      "exercises": [
+        {
+          "id": "core-plank",
+          "name": "平板支撑",
+          "kind": "timed",
+          "sets": 3,
+          "reps": null,
+          "weightKg": null,
+          "targetSec": 60,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "肘撑于肩正下方，身体成一条直线，均匀呼吸。"
+        },
+        {
+          "id": "core-deadbug",
+          "name": "死虫式",
+          "kind": "timed",
+          "sets": 3,
+          "reps": null,
+          "weightKg": null,
+          "targetSec": 45,
+          "durationMin": null,
+          "restSec": 40,
+          "tips": "对侧手脚缓慢伸展，腰部始终贴地。"
+        },
+        {
+          "id": "core-run",
+          "name": "放松跑",
+          "kind": "cardio",
+          "sets": 1,
+          "reps": null,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": 20,
+          "restSec": 0,
+          "tips": "轻松对话强度，心率约 130 bpm，结束后拉伸 5 分钟。"
+        }
+      ]
+    }
+  ]
+}

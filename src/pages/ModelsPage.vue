@@ -1,234 +1,323 @@
 <script setup lang="ts">
-import { inject, onMounted, reactive, ref } from "vue";
-import { api } from "../api";
-import type { AppConfig } from "../types";
+import { computed, onMounted, ref } from 'vue'
+import {
+  BrainCircuit,
+  Eye,
+  Pencil,
+  Plus,
+  RefreshCw,
+  SlidersHorizontal,
+  Sparkles,
+  Star,
+  Trash2,
+} from 'lucide-vue-next'
 
-const showToast = inject<((text: string) => void) | undefined>("toast");
+import ActionSheet from '@/components/common/ActionSheet.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
+import PageHeader from '@/components/layout/PageHeader.vue'
+import ModelFormSheet from '@/components/ai/ModelFormSheet.vue'
+import { useToast } from '@/composables/useToast'
+import { useModelsStore } from '@/stores/models'
+import type { AiModel } from '@/types'
 
-const config = reactive<AppConfig>({
-  provider: "deepseek",
-  api_key: "",
-  base_url: "",
-  model: "deepseek-chat",
-  temperature: 0.7,
-  system_prompt: "",
-  memory_provider: "",
-  memory_base_url: "",
-  memory_api_key: "",
-  memory_model: "",
-  embedding_model: "",
-});
-const saved = ref(false);
-const probing = ref(false);
-const probeResult = ref<string>("");
+/** 模型管理：添加 / 编辑 / 删除 / 设默认，max_tokens=1 探测视觉·思考·努力。 */
+const store = useModelsStore()
+const toast = useToast()
 
-const PROVIDERS = [
-  { id: "deepseek", name: "DeepSeek", emoji: "🐋", desc: "deepseek-chat / reasoner", url: "https://api.deepseek.com", models: ["deepseek-chat", "deepseek-reasoner"] },
-  { id: "openai", name: "OpenAI", emoji: "🟢", desc: "GPT 系列", url: "https://api.openai.com/v1", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3-mini"] },
-  { id: "ollama", name: "Ollama", emoji: "🦙", desc: "本地模型，无需 Key", url: "http://localhost:11434/v1", models: ["llama3.1", "qwen2.5", "deepseek-r1"] },
-  { id: "compatible", name: "OpenAI 兼容", emoji: "🔌", desc: "任意兼容端点", url: "https://your-endpoint/v1", models: [] },
-];
+onMounted(() => {
+  void store.load().catch(() => toast.toast('模型列表加载失败'))
+})
 
-const current = computedProvider();
+const formOpen = ref(false)
+const editing = ref<AiModel | null>(null)
+const deleting = ref<AiModel | null>(null)
 
-function computedProvider() {
-  return PROVIDERS.find((p) => p.id === config.provider) ?? PROVIDERS[0];
+function onAdd(): void {
+  editing.value = null
+  formOpen.value = true
 }
 
-function pickProvider(id: string) {
-  const p = PROVIDERS.find((x) => x.id === id);
-  if (!p) return;
-  config.provider = id;
-  config.base_url = p.url;
-  if (p.models.length > 0) config.model = p.models[0];
-  saved.value = false;
+function onEdit(m: AiModel): void {
+  editing.value = m
+  formOpen.value = true
 }
 
-function pickModel(m: string) {
-  config.model = m;
-  saved.value = false;
+function onSaved(id: number): void {
+  void store.runProbe(id)
 }
 
-onMounted(async () => {
-  const c = await api.configGet();
-  Object.assign(config, c);
-  const p = PROVIDERS.find((x) => x.id === c.provider);
-  if (p && !config.base_url.trim()) config.base_url = p.url;
-});
-
-async function save() {
-  await api.configSave({ ...config });
-  saved.value = true;
-  showToast?.("配置已保存");
+function probe(m: AiModel): void {
+  void store.runProbe(m.id)
 }
 
-async function probe() {
-  probing.value = true;
-  probeResult.value = "";
-  try {
-    await api.modelProbe();
-    probeResult.value = `✅ 连接成功：${config.provider} / ${config.model}`;
-  } catch (e) {
-    probeResult.value = `❌ ${String(e)}`;
-  } finally {
-    probing.value = false;
-  }
+function setDefault(m: AiModel): void {
+  void store
+    .setDefault(m.id)
+    .then(() => toast.toast(`已设为默认：${m.name}`))
+    .catch(() => toast.toast('设置默认失败'))
 }
+
+const deleteActions = computed(() => [
+  { label: `删除「${deleting.value?.name ?? ''}」`, value: 'delete', danger: true },
+])
+
+function onDeleteAction(value: string): void {
+  if (value !== 'delete' || !deleting.value) return
+  const m = deleting.value
+  deleting.value = null
+  void store
+    .remove(m.id)
+    .then(() => toast.toast(`已删除 ${m.name}`))
+    .catch(() => toast.toast('删除失败'))
+}
+
+const capMeta = {
+  vision: { label: '视觉', icon: Eye },
+  thinking: { label: '思考', icon: Sparkles },
+  effort: { label: '努力', icon: SlidersHorizontal },
+} as const
 </script>
 
 <template>
   <div class="page">
-    <header class="topbar">
-      <div class="topbar-left" />
-      <div class="topbar-title">模型配置</div>
-      <div class="topbar-right">
-        <button class="topbar-btn" title="保存" @click="save">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    <PageHeader title="管理模型" subtitle="添加 AI 模型并测试能力后即可拍照识别" back>
+      <template #action>
+        <button class="hdr-btn accent" aria-label="添加模型" @click="onAdd">
+          <Plus :size="19" />
         </button>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
-    <div class="list-group">
-      <div class="group-title">选择服务商</div>
-      <div class="provider-grid">
-        <div
-          v-for="p in PROVIDERS"
-          :key="p.id"
-          class="provider-card"
-          :class="{ active: config.provider === p.id }"
-          @click="pickProvider(p.id)"
-        >
-          <span class="provider-emoji">{{ p.emoji }}</span>
-          <div>
-            <div class="provider-name">{{ p.name }}</div>
-            <div class="provider-desc">{{ p.desc }}</div>
+    <div class="intro t-2">
+      <p>每条模型保存后会自动发送 <b>max_tokens=1</b> 的测试包，探测「视觉（图片上传）、thinking 开关、effort 档位」三项能力，结果以徽章展示。</p>
+    </div>
+
+    <ul v-if="store.models.length > 0" class="cards">
+      <li v-for="m in store.models" :key="m.id" class="card m-card">
+        <div class="row between top">
+          <div class="flex-1 min0">
+            <p class="m-name">
+              {{ m.name }}
+              <span v-if="m.isDefault" class="chip-def">默认</span>
+            </p>
+            <p class="m-id t-2">{{ m.provider }} · {{ m.modelId }}</p>
           </div>
-        </div>
-      </div>
-
-      <div class="group-title">连接参数</div>
-      <div class="form-card">
-        <div class="form-row">
-          <span class="form-label">API Key（{{ config.provider }}）</span>
-          <input
-            v-model="config.api_key"
-            type="password"
-            class="form-input"
-            :placeholder="config.provider === 'ollama' ? '本地服务无需 Key，可留空' : 'sk-…'"
-          />
-        </div>
-        <div class="form-row">
-          <span class="form-label">Base URL</span>
-          <input v-model="config.base_url" class="form-input mono" placeholder="https://api.deepseek.com" />
-        </div>
-        <div class="form-row">
-          <span class="form-label">模型</span>
-          <input v-model="config.model" class="form-input mono" placeholder="deepseek-chat" />
-          <div v-if="current.models.length" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px">
+          <div class="acts">
             <button
-              v-for="m in current.models"
-              :key="m"
-              class="model-chip"
-              :class="{ on: config.model === m }"
-              @click="pickModel(m)"
+              v-if="!m.isDefault"
+              class="act"
+              aria-label="设为默认"
+              @click="setDefault(m)"
             >
-              {{ m }}
+              <Star :size="16" />
+            </button>
+            <button class="act" aria-label="编辑模型" @click="onEdit(m)">
+              <Pencil :size="16" />
+            </button>
+            <button class="act" aria-label="删除模型" @click="deleting = m">
+              <Trash2 :size="16" class="danger" />
             </button>
           </div>
         </div>
-        <div class="form-row">
-          <span class="form-label">温度（越低越严谨，越高越有创意）</span>
-          <div class="range-row">
-            <input v-model.number="config.temperature" type="range" min="0" max="2" step="0.1" />
-            <span class="range-val">{{ config.temperature.toFixed(1) }}</span>
-          </div>
-        </div>
-      </div>
 
-      <div class="group-title">默认系统提示词（未指定智能体时生效）</div>
-      <div class="form-card">
-        <div class="form-row">
-          <textarea v-model="config.system_prompt" class="form-input" rows="3" />
+        <div class="caps row">
+          <template v-for="(meta, key) in capMeta" :key="key">
+            <span class="cap" :class="`cap-${m[key] === true ? 'ok' : m[key] === false ? 'no' : 'unk'}`">
+              <component :is="meta.icon" :size="13" />
+              {{ meta.label }}
+              <span v-if="store.probing[m.id]" class="probe"><RefreshCw :size="11" class="spin" /></span>
+            </span>
+          </template>
+          <button
+            class="cap retest"
+            :disabled="store.probing[m.id]"
+            @click="probe(m)"
+          >
+            <RefreshCw :size="13" :class="{ spin: store.probing[m.id] }" />
+            重新测试
+          </button>
         </div>
-      </div>
 
-      <div class="group-title">记忆模型（摘要/事实抽取专用，留空则跟随主模型）</div>
-      <div class="form-card">
-        <div class="form-row">
-          <span class="form-label">服务商</span>
-          <select v-model="config.memory_provider" class="form-select">
-            <option value="">跟随主模型</option>
-            <option v-for="p in PROVIDERS" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <span class="form-label">API Key（留空跟随主模型）</span>
-          <input v-model="config.memory_api_key" type="password" class="form-input" placeholder="sk-…" />
-        </div>
-        <div class="form-row">
-          <span class="form-label">Base URL（留空跟随主模型）</span>
-          <input v-model="config.memory_base_url" class="form-input mono" placeholder="https://api.deepseek.com" />
-        </div>
-        <div class="form-row">
-          <span class="form-label">记忆模型</span>
-          <input v-model="config.memory_model" class="form-input mono" placeholder="留空则用主模型，如 deepseek-chat" />
-        </div>
-        <div class="form-row">
-          <span class="form-label">嵌入模型（向量检索用；Ollama 如 nomic-embed-text）</span>
-          <input v-model="config.embedding_model" class="form-input mono" placeholder="如 text-embedding-3-small / nomic-embed-text" />
-        </div>
-      </div>
+        <p v-if="m.lastError" class="err t-3">{{ m.lastError }}</p>
+      </li>
+    </ul>
 
-      <div style="display: flex; gap: 10px; padding: 6px 12px 16px">
-        <button class="btn btn-primary" style="flex: 1; margin: 0" :disabled="!config.api_key && config.provider !== 'ollama'" @click="probe">
-          {{ probing ? "连接中…" : "测试连接" }}
-        </button>
-        <button class="btn" style="flex: 1; margin: 0; background: var(--wx-white)" @click="save">保存配置</button>
-      </div>
-      <div v-if="probeResult" class="probe-result">{{ probeResult }}</div>
-      <div v-if="saved" class="probe-result ok">配置已保存，新的对话将使用当前模型</div>
-    </div>
+    <section v-else class="empty card">
+      <EmptyState
+        :icon="BrainCircuit"
+        title="还没有 AI 模型"
+        hint="点右上角或下方按钮添加模型，DeepSeek 视觉模型 deepseek-v4-flash-vision-exp 可直接拍照识别食物"
+      />
+    </section>
+
+    <button class="fab row center" aria-label="添加模型" @click="onAdd">
+      <Plus :size="17" />
+      添加模型
+    </button>
+
+    <ModelFormSheet :open="formOpen" :model="editing" @close="formOpen = false" @saved="onSaved" />
+    <ActionSheet
+      :open="deleting !== null"
+      :title="`删除后照片识别将无法使用该模型`"
+      :actions="deleteActions"
+      @close="deleting = null"
+      @select="onDeleteAction"
+    />
   </div>
 </template>
 
 <style scoped>
-.model-chip {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 12px;
-  background: var(--wx-bg);
-  color: var(--wx-text);
-  transition: all 0.12s;
-  font-family: Consolas, monospace;
+.page {
+  /* 与 AIPage 同因：可用高度还要扣 app-frame 的 safe-top 状态栏 padding，
+     以及悬浮运动条停靠 bottom 时的 --wbar-reserve（无运动 / 其他槽位为 0） */
+  height: calc(
+    100dvh - var(--safe-top) - var(--tabbar-h) - var(--safe-bottom) - var(--wbar-reserve, 0px)
+  );
+  overflow-y: auto;
+  padding: 10px var(--page-pad-x) 96px;
+  scrollbar-width: none;
 }
-.model-chip:hover {
-  background: #e0e0e0;
+
+.intro {
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  padding: 2px 2px 12px;
 }
-.model-chip.on {
-  background: #e7f8ee;
-  color: var(--wx-green);
-  font-weight: 600;
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
-.form-select {
-  width: 100%;
-  font-size: 14px;
-  padding: 8px 10px;
-  background: var(--wx-white);
-  border: 1px solid var(--wx-divider);
-  border-radius: 8px;
-  color: var(--wx-text);
-  outline: none;
+
+.m-card {
+  padding: 14px;
 }
-.probe-result {
-  margin: 0 12px 10px;
-  padding: 10px 14px;
-  background: var(--wx-white);
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.5;
+
+.m-name {
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+}
+
+.chip-def {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.m-id {
+  margin-top: 3px;
+  font-size: var(--fs-caption);
   word-break: break-all;
 }
-.probe-result.ok {
-  color: var(--wx-green);
+
+.acts {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.act {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.act .danger {
+  color: var(--danger, #ff5257);
+}
+
+.caps {
+  margin-top: 10px;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.cap-ok {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+
+.cap-no {
+  background: color-mix(in srgb, var(--danger, #ff5257) 14%, transparent);
+  color: var(--danger, #ff5257);
+}
+
+.cap .probe {
+  display: inline-flex;
+}
+
+.retest {
+  border: unset;
+  color: var(--text-2);
+  background: transparent;
+}
+
+.retest:disabled {
+  opacity: 0.4;
+}
+
+.spin {
+  animation: rotate 0.9s linear infinite;
+}
+
+@keyframes rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.err {
+  margin-top: 8px;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  word-break: break-all;
+  color: var(--text-3);
+}
+
+.empty {
+  margin-top: 6px;
+}
+
+.fab {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 14px);
+  z-index: 50;
+  gap: 5px;
+  padding: 13px 24px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow-float);
+  font-size: var(--fs-headline);
+  font-weight: 700;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.fab:active {
+  transform: translateX(-50%) scale(0.95);
 }
 </style>

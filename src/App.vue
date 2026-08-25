@@ -1,85 +1,87 @@
 <script setup lang="ts">
-import { computed, provide, ref } from "vue";
-import { useRoute } from "vue-router";
-import TabBar from "./components/TabBar.vue";
-import Rail from "./components/Rail.vue";
-import ChatList from "./pages/ChatList.vue";
-import ChatWindow from "./pages/ChatWindow.vue";
-import { useBreakpoint } from "./composables/useBreakpoint";
+import { useRoute } from 'vue-router'
+import { RouterView } from 'vue-router'
 
-const route = useRoute();
-const isWide = useBreakpoint();
+import TabBar from '@/components/layout/TabBar.vue'
+import DesktopRail from '@/components/layout/DesktopRail.vue'
+import DesktopInspector from '@/components/layout/DesktopInspector.vue'
+import ActiveWorkoutBar from '@/components/exercise/ActiveWorkoutBar.vue'
+import ToastHost from '@/components/common/ToastHost.vue'
+import { useMediaQuery } from '@/composables/useMediaQuery'
+import { DESKTOP_MIN } from '@/config/domain'
 
-const showTabBar = computed(() => !!route.meta.tab && !isWide.value);
-const isChatRoute = computed(() => route.name === "chat" || route.name === "chat-detail");
-const isChatDetail = computed(() => route.name === "chat-detail");
-const isChatList = computed(() => route.name === "chat");
-
-const toast = ref<{ text: string; key: number } | null>(null);
-let toastTimer: number | undefined;
-function showToast(text: string, duration = 2200) {
-  toast.value = { text, key: Date.now() };
-  window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (toast.value = null), duration);
-}
-provide("toast", showToast);
+const route = useRoute()
+/** 桌面工作台：视口 ≥ DESKTOP_MIN 时以三窗格壳（导航轨 + 主人区 + 右侧信息栏）替代底部 TabBar */
+const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 </script>
 
 <template>
-  <!-- 窄窗：手机式 -->
-  <div v-if="!isWide" class="app-shell">
-    <router-view v-slot="{ Component }">
-      <transition name="page-slide">
-        <component :is="Component" :key="route.fullPath" />
-      </transition>
-    </router-view>
-    <TabBar v-if="showTabBar" />
-    <div v-if="toast" :key="toast.key" class="toast">{{ toast.text }}</div>
+  <!-- 桌面三窗格壳：沉浸页（运动模式）同样隐藏导航轨 -->
+  <div v-if="isDesktop" class="desk-frame">
+    <DesktopRail v-if="!route.meta.fullscreen" />
+    <main class="desk-main" :class="{ wide: route.name === 'home' }">
+      <RouterView v-slot="{ Component }">
+        <Transition name="page" mode="out-in">
+          <component :is="Component" />
+        </Transition>
+      </RouterView>
+    </main>
+    <!-- 第三窗格 · 今日信息栏：全页面常驻（沉浸页除外），保证桌面构图平衡 -->
+    <DesktopInspector v-if="!route.meta.fullscreen" />
   </div>
 
-  <!-- 宽窗：桌面双栏 -->
-  <div v-else class="desktop-shell">
-    <Rail />
-    <ChatList v-if="isChatRoute" />
-    <router-view v-else v-slot="{ Component }">
-      <div class="desktop-page">
-        <component :is="Component" :key="route.fullPath" />
-      </div>
-    </router-view>
-    <ChatWindow v-if="isChatDetail" />
-    <div v-if="toast" :key="toast.key" class="toast">{{ toast.text }}</div>
+  <!-- 移动端（原结构）：内容居中窄栏 + 底部标签导航 -->
+  <div v-else class="app-frame">
+    <RouterView v-slot="{ Component }">
+      <Transition name="page" mode="out-in">
+        <component :is="Component" />
+      </Transition>
+    </RouterView>
+    <TabBar v-if="!route.meta.fullscreen" />
   </div>
+  <!-- 悬浮运动条：异常中断恢复提示，桌面/移动共用（沉浸页隐藏） -->
+  <ActiveWorkoutBar v-if="!route.meta.fullscreen" />
+  <ToastHost />
 </template>
 
 <style scoped>
-.app-shell {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
+.app-frame {
   position: relative;
-}
-.app-shell > :first-child {
-  flex: 1;
-  min-height: 0;
+  max-width: var(--frame-max);
+  min-height: 100dvh;
+  margin: 0 auto;
+  /* 避开手机状态栏/刘海；背景渐变铺满 body，内容在其下方滚动 */
+  padding-top: var(--safe-top);
 }
 
-.desktop-shell {
-  height: 100%;
+/* 桌面壳：导航轨 + 主人区 */
+.desk-frame {
   display: flex;
-  background: #f5f5f5;
-  position: relative;
+  height: 100dvh;
+  overflow: hidden;
 }
-.desktop-page {
+
+.desk-main {
   flex: 1;
   min-width: 0;
-  background: #f5f5f5;
+  height: 100%;
+  overflow-y: auto;
 }
 
-.page-slide-enter-active {
-  transition: opacity 0.16s ease, transform 0.16s ease;
+/* 桌面端非主页页面：内容窄栏居中（移动端布局即 iPad 观感），右侧有常驻信息栏配重 */
+.desk-main:not(.wide) :deep(.page) {
+  max-width: 560px;
+  margin: 0 auto;
 }
-.page-slide-enter-from {
+
+/* 标签页切换：轻微淡入即可，不做位移（iOS 标签切换习惯） */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+
+.page-enter-from,
+.page-leave-to {
   opacity: 0;
-  transform: translateX(14px);
 }
 </style>

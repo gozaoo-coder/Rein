@@ -1,0 +1,162 @@
+/* ============================================================
+   Rein 全局基础样式 · 苹果风格
+   只放：reset、画布、通用组件类（card 等）、少量工具类。
+   页面私有样式一律写在各自组件的 <style scoped> 中。
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  color: var(--text-1);
+  background:
+    radial-gradient(1200px 700px at 18% -10%, #ffffff 0%, #eef0f4 48%, #e6e8ee 100%)
+    var(--bg);
+  /* 渐变相对视口定位，不随页面滚动（body 背景默认相对文档画布） */
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background:
+      radial-gradient(1200px 700px at 18% -10%, #16161a 0%, #0b0b0d 52%, #000000 100%);
+    background-attachment: fixed;
+  }
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  border: none;
+  outline: none;
+  background: transparent;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+img,
+svg {
+  display: block;
+}
+
+/* 苹果风格：内容仍可滚动，但不显示滚动条 */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+* {
+  scrollbar-width: none;
+}
+
+/* 数字统一等宽，避免跳动 */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 即时按压反馈：pointer-down 生效（Apple 反馈原则） */
+button,
+.pressable {
+  transition:
+    transform var(--dur-fast) var(--ease-standard),
+    opacity var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard);
+}
+
+button:active,
+.pressable:active {
+  transform: scale(0.96);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+}
+
+.card + .card {
+  margin-top: 14px;
+}
+
+/* ---------- 少量布局工具类 ---------- */
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+}
+
+.between {
+  justify-content: space-between;
+}
+
+.center {
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-1 {
+  flex: 1;
+  min-width: 0;
+}
+
+.t-2 {
+  color: var(--text-2);
+}
+
+.t-3 {
+  color: var(--text-3);
+}
+
+/* ---------- 减弱动效 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

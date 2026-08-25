@@ -1,29 +1,34 @@
 {
   "name": "rein",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "description": "Rein · 健康生活运动管理（Tauri + Vue + Rust）",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json",
+    "icon": "node scripts/gen-icon.mjs",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.5.0",
-    "@tauri-apps/plugin-dialog": "^2.2.0",
-    "@tauri-apps/plugin-opener": "^2.2.6",
-    "vue": "^3.5.13",
+    "@earendil-works/pi-agent-core": "0.84.2",
+    "@earendil-works/pi-ai": "0.84.2",
+    "@tauri-apps/api": "^2.0.0",
+    "lucide-vue-next": "0.x",
+    "pinia": "^3.0.0",
+    "vue": "^3.5.0",
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.5.0",
-    "@vitejs/plugin-vue": "^5.2.1",
-    "typescript": "~5.7.2",
-    "vite": "^6.2.0",
-    "vue-tsc": "^2.2.0"
-  },
-  "allowScripts": {
-    "esbuild@0.25.12": true
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "playwright-core": "^1.62.1",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0",
+    "vue-tsc": "^3.0.0"
   }
 }

@@ -1,0 +1,185 @@
+/* ============================================================
+   Rein 设计令牌 · 苹果风格
+   规则：组件中禁止出现魔法颜色/圆角/阴影/时长，一律引用令牌。
+   修改令牌 = 全局换肤；暗色模式只改本文件的 dark 块。
+   ============================================================ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ---------- 画布与表面 ---------- */
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #f2f2f4; /* 分段控件、次级按钮、内嵌灰底 */
+  --surface-translucent: rgba(255, 255, 255, 0.72); /* 导航 / 标签栏毛玻璃 */
+
+  /* ---------- 文字 ---------- */
+  --text-1: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #a1a1a6;
+
+  /* ---------- 描边与分隔 ---------- */
+  --line: rgba(0, 0, 0, 0.07);
+  --line-strong: rgba(0, 0, 0, 0.12);
+
+  /* ---------- 语义色（iOS 系统色） ---------- */
+  --accent: #007aff;
+  --accent-soft: rgba(0, 122, 255, 0.12);
+  --ok: #34c759;
+  --warn: #ff9500;
+  --danger: #ff3b30;
+
+  /* ---------- 健康域色 ---------- */
+  /* 三环：摄入 / 运动 / 均衡（继承自 Apple Fitness 三环） */
+  --c-intake: #fa114f;
+  --c-exercise: #92e82a;
+  --c-exercise-soft: rgba(146, 232, 42, 0.2); /* 完成态底色（组格/标签） */
+  --heat-mid: rgba(146, 232, 42, 0.55); /* 肌群激活 · 辅助档（低档复用 soft，高档复用主色） */
+  --c-balance: #1eeaef;
+
+  /* ---------- 沉浸运动 · 深色轨迹剧场（跑步暗区，亮暗色同值） ---------- */
+  --hero-bg: #0b0b0e;
+  --hero-grid: rgba(255, 255, 255, 0.035);
+  --hero-chip-bg: rgba(18, 18, 22, 0.55);
+  --hero-chip-line: rgba(255, 255, 255, 0.14);
+  --hero-text: rgba(255, 255, 255, 0.92);
+  --hero-text-dim: rgba(255, 255, 255, 0.55);
+  --hero-end: #ff6961;
+  --hero-route-track: rgba(146, 232, 42, 0.3);
+  --hero-route-line: #92e82a;
+  --hero-route-glow: rgba(146, 232, 42, 0.65);
+
+  /* 宏量营养素 */
+  --c-protein: #34c759;
+  --c-carb: #ff9f0a;
+  --c-fat: #ffcc00;
+  --c-sodium: #ff3b30;
+  --c-water: #007aff;
+
+  /* ---------- 待办分类色 ---------- */
+  --cat-general: #8e8e93;
+  --cat-workout: #34c759;
+  --cat-health: #ff2d55;
+  --cat-study: #5856d6;
+  --cat-work: #ff9500;
+
+  /* ---------- 记账域色 ---------- */
+  --led-expense: #ff3b30; /* 支出（语义固定，亮暗色同用） */
+  --led-income: #34c759; /* 收入 */
+  --led-food: #ff9500;
+  --led-transport: #007aff;
+  --led-shopping: #af52de;
+  --led-entertainment: #ff2d55;
+  --led-housing: #8e8e93;
+  --led-medical: #ff3b30;
+  --led-education: #5e5ce6;
+  --led-bills: #32ade6;
+  --led-travel: #00c7be;
+  --led-salary: #34c759;
+  --led-bonus: #ffd60a;
+  --led-refund: #30d158;
+  --led-other: #8e8e93;
+
+  /* ---------- 圆角 ---------- */
+  --radius-s: 10px;
+  --radius-m: 14px;
+  --radius-l: 22px;
+  --radius-xl: 28px;
+  --radius-full: 999px;
+
+  /* ---------- 阴影 ---------- */
+  --shadow-card:
+    0 1px 2px rgba(0, 0, 0, 0.02),
+    0 12px 32px rgba(0, 0, 0, 0.05),
+    0 40px 80px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.12);
+
+  /* ---------- 字体 ---------- */
+  --font:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI',
+    system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+
+  /* 字号阶梯（iOS HIG，中文微调） */
+  --fs-large-title: 32px; /* 页面大标题 */
+  --fs-title1: 26px;
+  --fs-title2: 21px;
+  --fs-title3: 19px;
+  --fs-headline: 17px; /* 半粗强调正文 */
+  --fs-body: 17px;
+  --fs-callout: 15px;
+  --fs-subhead: 14px;
+  --fs-footnote: 13px;
+  --fs-caption: 12px;
+  --fs-micro: 11px;
+
+  /* ---------- 动效 ---------- */
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1); /* 默认 */
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1); /* 抽屉 / 弹层（Apple sheet 曲线） */
+  --dur-fast: 150ms;
+  --dur-base: 250ms;
+  --dur-sheet: 420ms;
+
+  /* ---------- 布局 ----------
+     --wbar-reserve：悬浮运动条停靠在 bottom 时由组件写入的高度预留，
+     让页面内容滚得出悬浮条盖住的区域；其他槽位 / 无运动时为缺省 0。 */
+  --frame-max: 480px;
+  --frame-max-wide: 1240px; /* 桌面工作台 · 主人区内容上限（便当总览/一日脊柱） */
+  --tabbar-h: 58px;
+  --page-pad-x: 18px;
+  --page-pad-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 40px + var(--wbar-reserve, 0px));
+
+  /* ---------- 安全区 ----------
+     Android WebView 的 env() 只报告状态栏 inset、不报告底部导航；
+     原生侧（MainActivity）监听 WindowInsets 注入 --safe-*-native 变量，
+     两边取 max：iOS 与桌面走 env()=0 分支，Android 真机取原生值。 */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--safe-top-native, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-bottom-native, 0px));
+  /* 左右：Android 手势导航在屏幕两缘保留 ~24dp 返回手势带（触点落带内直接触发
+     系统返回、App 收不到事件），停靠元素必须整体收进带外。原生侧注入
+     systemGestures 宽度（按钮导航为 0），末位 20px 是桌面 / 老机型的兜底下限。 */
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--safe-left-native, 0px), 20px);
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--safe-right-native, 0px), 20px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --surface: #1c1c1e;
+    --surface-2: #2c2c2e;
+    --surface-translucent: rgba(28, 28, 30, 0.72);
+
+    --text-1: #f5f5f7;
+    --text-2: rgba(235, 235, 245, 0.6);
+    --text-3: rgba(235, 235, 245, 0.33);
+
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.16);
+
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+
+    --shadow-card: none;
+    --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.6);
+
+    /* 暗色下提亮三环与宏量色，保持对比度 */
+    --c-fat: #ffd60a;
+    --c-balance: #40e8ec;
+    --c-exercise: #a4f04b;
+    --c-intake: #ff375f;
+
+    /* 轨迹线随三环运动色同步提亮 */
+    --hero-route-track: rgba(164, 240, 75, 0.32);
+    --hero-route-line: #a4f04b;
+    --hero-route-glow: rgba(164, 240, 75, 0.65);
+    --c-exercise-soft: rgba(164, 240, 75, 0.22);
+    --heat-mid: rgba(164, 240, 75, 0.58);
+
+    /* 记账分类色：暗色整体提亮一档，保持对比度 */
+    --led-transport: #0a84ff;
+    --led-shopping: #bf5af2;
+    --led-education: #7d7aff;
+    --led-bills: #5ac8fa;
+    --led-travel: #40c8e0;
+    --led-food: #ff9f0a;
+  }
+}

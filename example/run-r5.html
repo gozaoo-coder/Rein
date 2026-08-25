@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>跑步沉浸视图 · R5 深色轨迹头部（优化稿）</title>
+<style>
+  /* ============================================================
+     R5 优化版 · 交互设计稿（非应用代码）
+     令牌摘自 src/styles/tokens.css（亮色）
+     分区原则：空间数据（轨迹/距离/目标/GPS）住暗区，
+               时间数据（时长/双配速/千卡）住亮区，互不重复。
+     ============================================================ */
+  :root {
+    color-scheme: light;
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-2: #f2f2f4;
+    --surface-translucent: rgba(255, 255, 255, 0.72);
+    --text-1: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #a1a1a6;
+    --line: rgba(0, 0, 0, 0.07);
+    --danger: #ff3b30;
+    --c-exercise: #92e82a;
+    --c-balance: #1eeaef;
+    --radius-l: 22px;
+    --radius-m: 14px;
+    --radius-full: 999px;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.02), 0 12px 32px rgba(0, 0, 0, 0.05), 0 40px 80px rgba(0, 0, 0, 0.04);
+    --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI',
+      system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: linear-gradient(180deg, #e7e7ec, #dddde4);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 20px 12px;
+    overflow: hidden;
+  }
+
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- 演示控制条（不属于设计稿本体） ---------- */
+  .demobar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .demobar button {
+    height: 36px; padding: 0 18px; border: 0; border-radius: var(--radius-full);
+    background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+    font: 600 13px var(--font); color: var(--text-2); cursor: pointer;
+    transition: all 0.2s var(--ease-standard);
+  }
+  .demobar button.on { background: var(--text-1); color: #fff; }
+  .demofoot { font-size: 12px; color: #8a8a92; }
+
+  /* ---------- 手机框 ---------- */
+  .phone {
+    width: 480px; max-width: 100%;
+    height: min(880px, calc(100vh - 120px)); min-height: 620px;
+    border-radius: 44px; overflow: hidden; position: relative;
+    box-shadow: 0 34px 90px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.06);
+    display: flex; flex-direction: column;
+    background: var(--bg);
+  }
+
+  /* ---------- 暗区 · 轨迹剧场（42%） ---------- */
+  .hero {
+    position: relative; flex: 0 0 42%; min-height: 264px;
+    background: #0b0b0e; overflow: hidden;
+    transition: flex-basis 0.45s var(--ease-standard), filter 0.45s var(--ease-standard);
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(130% 110% at 62% 18%, #000 45%, transparent 100%);
+    mask-image: radial-gradient(130% 110% at 62% 18%, #000 45%, transparent 100%);
+  }
+  .hero svg.map { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* 顶栏（暗区上，深色毛玻璃） */
+  .shead {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+    height: 54px; padding: 0 18px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(rgba(6, 6, 8, 0.55), rgba(6, 6, 8, 0));
+  }
+  .shead .min { display: flex; align-items: center; gap: 2px; border: 0; background: none; cursor: pointer;
+    font: 600 14px var(--font); color: rgba(255, 255, 255, 0.92); }
+  .shead .min svg { width: 20px; height: 20px; }
+  .shead .ptitle { font: 700 13px var(--font); color: rgba(255, 255, 255, 0.62); }
+  .shead .end { border: 0; background: none; cursor: pointer; padding: 8px 4px;
+    font: 700 14px var(--font); color: #ff6961; }
+
+  /* 悬浮信息 chip */
+  .chip {
+    position: absolute; z-index: 4;
+    padding: 9px 13px; border-radius: 16px;
+    background: rgba(18, 18, 22, 0.55);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border: 0.5px solid rgba(255, 255, 255, 0.14);
+    color: #fff; transition: opacity 0.3s var(--ease-standard);
+  }
+  .chip .lab { font-size: 11px; font-weight: 600; letter-spacing: 0.4px; color: rgba(255, 255, 255, 0.55); }
+  .chip .val { font-size: 19px; font-weight: 700; }
+  .gps { bottom: 14px; left: 14px; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
+  .gps .gdot { width: 8px; height: 8px; border-radius: 50%; background: var(--c-exercise);
+    box-shadow: 0 0 8px rgba(146, 232, 42, 0.9); animation: breathe 1.8s infinite; }
+  .dist { bottom: 14px; right: 14px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+  .dist .bar { width: 112px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.16); overflow: hidden; }
+  .dist .bar i { display: block; height: 100%; border-radius: 2px; background: var(--c-exercise);
+    transition: width 1s linear; }
+
+  /* 暂停态 */
+  .paused-badge {
+    position: absolute; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    padding: 10px 22px; border-radius: var(--radius-full);
+    background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 0.5px solid rgba(255, 255, 255, 0.18);
+    color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 1px;
+    opacity: 0; transition: opacity 0.3s var(--ease-standard);
+  }
+  [data-phase="paused"] .paused-badge { opacity: 1; }
+  [data-phase="paused"] .hero { filter: brightness(0.55) saturate(0.75); }
+
+  /* ---------- 亮区 ---------- */
+  .bright {
+    flex: 1; display: flex; flex-direction: column; gap: 18px;
+    padding: 26px 24px calc(26px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .live-area { display: flex; flex-direction: column; gap: 18px; flex: 1; }
+  [data-phase="summary"] .live-area { display: none; }
+
+  /* 时间 hero + 千卡基线对齐 */
+  .time-row { display: flex; align-items: flex-end; justify-content: space-between; }
+  .tcol .tnum { font-size: 84px; font-weight: 200; letter-spacing: -3.5px; line-height: 0.95; }
+  .tcol .tcap { font-size: 12px; letter-spacing: 0.5px; color: var(--text-3); margin-top: 9px; }
+  .kcal { text-align: right; padding-bottom: 10px; }
+  .kcal b { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+  .kcal span { display: block; font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+  /* 配速对照卡：瞬时（活的）｜平均（稳的，更重） */
+  .pace {
+    display: flex; background: var(--surface); border-radius: var(--radius-l);
+    box-shadow: var(--shadow-card); overflow: hidden;
+  }
+  .pace > div {
+    flex: 1; padding: 16px 8px 15px;
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
+  }
+  .pace > div + div { border-left: 0.5px solid var(--line); }
+  .pace .lab { font-size: 11px; font-weight: 600; letter-spacing: 0.5px; color: var(--text-3);
+    display: flex; align-items: center; gap: 6px; }
+  .pace .pv { font-size: 30px; letter-spacing: -0.5px; font-weight: 600; }
+  .pace .pv.avg { font-weight: 800; }
+  .pace .unit { font-size: 10px; color: var(--text-3); }
+  .live { width: 7px; height: 7px; border-radius: 50%; background: var(--c-exercise); animation: breathe 1.6s infinite; }
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(0.55); opacity: 0.45; }
+  }
+
+  /* 控件 */
+  .ctl { margin-top: auto; display: flex; gap: 14px; justify-content: center; }
+  .ctl-run, .ctl-paused { display: none; width: 100%; justify-content: center; }
+  [data-phase="running"] .ctl-run { display: flex; }
+  [data-phase="paused"] .ctl-paused { display: flex; }
+  .primary {
+    height: 54px; min-width: 240px; padding: 0 40px; border: 0; border-radius: 27px;
+    background: var(--text-1); color: var(--bg); font: 600 17px var(--font);
+    box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22); cursor: pointer;
+    transition: transform 0.15s var(--ease-standard);
+  }
+  .primary:active { transform: scale(0.96); }
+  .ghost {
+    height: 50px; padding: 0 26px; border: 0; border-radius: 25px;
+    background: var(--surface); box-shadow: var(--shadow-card);
+    font: 600 15px var(--font); color: var(--text-1); cursor: pointer;
+  }
+  .ghost.danger { color: var(--danger); }
+
+  /* ---------- 总结页 ---------- */
+  [data-phase="summary"] .hero { flex-basis: 30%; }
+  [data-phase="summary"] .chip { opacity: 0; }
+  .sum { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+  [data-phase="summary"] .sum { display: flex; }
+  .sum .emoji { font-size: 52px; }
+  .sum h2 { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }
+  .sum .meta { font-size: 14px; color: var(--text-2); margin-bottom: 4px; }
+  .dist-input {
+    width: min(340px, 100%); display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; border-radius: var(--radius-m); background: var(--surface-2);
+    font-size: 14px; font-weight: 600; color: var(--text-2);
+  }
+  .dist-input input {
+    width: 130px; border: 0; background: transparent; text-align: right; outline: none;
+    font: 700 22px var(--font); color: var(--text-1);
+  }
+  .dist-input input::placeholder { font-size: 13px; font-weight: 500; color: var(--text-3); }
+  .sum .hint { font-size: 12px; color: var(--text-3); align-self: center; margin-top: -6px; }
+  .sum .ghost { width: min(340px, 100%); }
+</style>
+</head>
+<body data-phase="running">
+
+  <div class="demobar" id="phasebar">
+    <button data-p="running" class="on">进行中</button>
+    <button data-p="paused">已暂停</button>
+    <button data-p="summary">总结页</button>
+  </div>
+
+  <div class="phone" id="phone">
+
+    <!-- ========== 暗区：轨迹剧场 ========== -->
+    <div class="hero">
+      <svg class="map" viewBox="0 0 480 320" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+        <!-- 道路底纹 -->
+        <path d="M -20 180 C 120 158 270 224 500 140" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="34" stroke-linecap="round"/>
+        <path d="M 120 -20 C 162 110 84 220 176 340" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="26" stroke-linecap="round"/>
+        <!-- 规划路线（点状） -->
+        <path id="route" d="M 62 268 C 118 256 158 236 198 206 C 232 180 224 128 266 94 C 306 62 372 54 420 104 C 458 146 452 208 404 256 C 358 300 292 300 228 282 C 168 266 108 288 88 240"
+          fill="none" stroke="rgba(146,232,42,0.3)" stroke-width="5" stroke-linecap="round" stroke-dasharray="0.5 11"/>
+        <!-- 已跑轨迹（实线，JS 控制绘制长度） -->
+        <path id="done" d="M 62 268 C 118 256 158 236 198 206 C 232 180 224 128 266 94 C 306 62 372 54 420 104 C 458 146 452 208 404 256 C 358 300 292 300 228 282 C 168 266 108 288 88 240"
+          fill="none" stroke="#92e82a" stroke-width="5" stroke-linecap="round"
+          style="filter: drop-shadow(0 0 6px rgba(146,232,42,0.65));"/>
+        <!-- 起点 -->
+        <circle cx="62" cy="268" r="5.5" fill="rgba(255,255,255,0.85)"/>
+        <!-- 当前位置：实心点 + 扩散波纹 -->
+        <circle id="pulse" r="7" fill="none" stroke="#92e82a" stroke-width="2"
+          style="transform-box: fill-box; transform-origin: center; animation: ping 1.8s var(--ease-standard) infinite;"/>
+        <circle id="dot" r="7" fill="#ffffff" stroke="#92e82a" stroke-width="3"/>
+      </svg>
+
+      <header class="shead">
+        <button class="min" aria-label="收起运动模式">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          收起
+        </button>
+        <span class="ptitle num">跑步 · 目标 5 km</span>
+        <button class="end">结束</button>
+      </header>
+
+      <span class="chip gps"><span class="gdot"></span>GPS 已连接</span>
+
+      <span class="chip dist">
+        <span class="lab num" id="kmv">3.24 / 5.00 km</span>
+        <span class="bar"><i id="kmf" style="width: 64%"></i></span>
+      </span>
+
+      <span class="paused-badge">已暂停 · 计时停止</span>
+    </div>
+
+    <!-- ========== 亮区 ========== -->
+    <div class="bright">
+      <div class="live-area">
+        <!-- 时间 hero ＋ 千卡（基线对齐） -->
+        <div class="time-row">
+          <div class="tcol">
+            <div class="tnum num" id="tv">12:38</div>
+            <div class="tcap">运动时长</div>
+          </div>
+          <div class="kcal">
+            <b class="num" id="kv">312</b>
+            <span>千卡</span>
+          </div>
+        </div>
+
+        <!-- 双配速对照卡：瞬时（呼吸点·活）｜平均（更重·稳） -->
+        <div class="pace">
+          <div>
+            <span class="lab"><span class="live"></span>瞬时配速</span>
+            <b class="pv num" id="iv">5'48"</b>
+            <span class="unit">/km</span>
+          </div>
+          <div>
+            <span class="lab">平均配速</span>
+            <b class="pv avg num" id="av">6'12"</b>
+            <span class="unit">/km</span>
+          </div>
+        </div>
+
+        <!-- 控件：进行中只有暂停；暂停态为 结束＋继续 -->
+        <div class="ctl ctl-run">
+          <button class="primary">暂停</button>
+        </div>
+        <div class="ctl ctl-paused">
+          <button class="ghost danger">结束</button>
+          <button class="primary">继续</button>
+        </div>
+      </div>
+
+      <!-- 总结页 -->
+      <div class="sum">
+        <span class="emoji">🏃</span>
+        <h2>跑步完成</h2>
+        <p class="meta num" id="summeta">31:12 · 5.02 km · 6'13"/km · 约 318 大卡</p>
+        <label class="dist-input">
+          <span>距离（公里）</span>
+          <input class="num" type="number" inputmode="decimal" step="0.01" min="0" max="999" placeholder="未测得，可补填" />
+        </label>
+        <p class="hint">GPS 距离已预填，可按实际修正</p>
+        <button class="primary">保存训练</button>
+        <button class="ghost danger">放弃不保存</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="demofoot">交互设计稿 · 时间 / 轨迹 / 配速均为演示数据</p>
+
+  <style>
+    @keyframes ping {
+      0% { transform: scale(1); opacity: 0.9; }
+      100% { transform: scale(3); opacity: 0; }
+    }
+  </style>
+
+<script>
+  /* ---------- 演示状态机（仅驱动视觉，非业务逻辑） ---------- */
+  var state = { t: 758, km: 3.24, goal: 5, kcal: 312, inst: 348, avg: 372 };
+  var timer = null;
+
+  var $ = function (s) { return document.querySelector(s); };
+  var route = $('#route'), donePath = $('#done'), dot = $('#dot'), pulse = $('#pulse');
+  var L = route.getTotalLength();
+  donePath.style.strokeDasharray = L;
+  donePath.style.strokeDashoffset = L;
+
+  function fmtClock(sec) {
+    var m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+    return ('' + m).padStart(2, '0') + ':' + ('' + s).padStart(2, '0');
+  }
+  function fmtPace(sec) {
+    return Math.floor(sec / 60) + "'" + ('' + Math.round(sec % 60)).padStart(2, '0') + '"';
+  }
+
+  function render() {
+    var p = Math.min(state.km / state.goal, 1);
+    $('#tv').textContent = fmtClock(state.t);
+    $('#kv').textContent = Math.round(state.kcal);
+    $('#iv').textContent = fmtPace(state.inst);
+    $('#av').textContent = fmtPace(state.avg);
+    $('#kmv').textContent = state.km.toFixed(2) + ' / ' + state.goal.toFixed(2) + ' km';
+    $('#kmf').style.width = (p * 100).toFixed(1) + '%';
+    donePath.style.strokeDashoffset = L * (1 - p);
+    var pt = route.getPointAtLength(L * p);
+    dot.setAttribute('cx', pt.x); dot.setAttribute('cy', pt.y);
+    pulse.setAttribute('cx', pt.x); pulse.setAttribute('cy', pt.y);
+  }
+
+  function tick() {
+    state.t += 1;
+    state.km = Math.min(state.km + 0.004, state.goal);
+    state.kcal += 0.115;
+    state.avg += (state.inst - state.avg) * 0.02;
+    render();
+  }
+
+  function rerollInst() {
+    if (document.body.dataset.phase === 'running') {
+      state.inst = 320 + Math.random() * 80; /* 5'20" ~ 6'40" 区间抖动 */
+    }
+    setTimeout(rerollInst, 2500 + Math.random() * 1500);
+  }
+
+  function play() { if (!timer) timer = setInterval(tick, 1000); }
+  function stop() { clearInterval(timer); timer = null; }
+
+  /* 阶段切换 */
+  $('#phasebar').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-p]');
+    if (!btn) return;
+    document.querySelectorAll('#phasebar button').forEach(function (b) { b.classList.toggle('on', b === btn); });
+    var p = btn.dataset.p;
+    document.body.dataset.phase = p;
+    if (p === 'running') { play(); }
+    else {
+      stop();
+      if (p === 'summary') {
+        state.km = Math.max(state.km, 5.0); state.t = Math.max(state.t, 1872); state.kcal = Math.max(state.kcal, 318);
+        render();
+        $('#summeta').textContent = fmtClock(state.t) + ' · ' + state.km.toFixed(2) + ' km · '
+          + fmtPace(state.avg) + '"/km · 约 ' + Math.round(state.kcal) + ' 大卡';
+      }
+    }
+  });
+
+  /* 控件联动演示：暂停/继续/（结束仅在真实应用中经二级确认） */
+  document.querySelector('.ctl-run .primary').addEventListener('click', function () {
+    document.querySelector('#phasebar button[data-p="paused"]').click();
+  });
+  document.querySelector('.ctl-paused .primary').addEventListener('click', function () {
+    document.querySelector('#phasebar button[data-p="running"]').click();
+  });
+
+  render();
+  play();
+  rerollInst();
+</script>
+</body>
+</html>

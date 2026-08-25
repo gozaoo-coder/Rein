@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>课程训练沉浸视图 · 底部坞 + 组格矩阵（合并稿）</title>
+<style>
+  /* ============================================================
+     课程训练沉浸页 · C4 底部操作坞 × C5 组格矩阵 合并稿（非应用代码）
+     按需求调整：移除全部重量显示 · 保留动作名称 hero 与动作要点
+     休息「+15秒」改为图标 → 抽屉选择延长时长
+     令牌摘自 src/styles/tokens.css（亮色）
+     ============================================================ */
+  :root {
+    color-scheme: light;
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-2: #f2f2f4;
+    --surface-translucent: rgba(255, 255, 255, 0.72);
+    --text-1: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #a1a1a6;
+    --line: rgba(0, 0, 0, 0.07);
+    --line-strong: rgba(0, 0, 0, 0.12);
+    --danger: #ff3b30;
+    --c-exercise: #92e82a;
+    --c-balance: #1eeaef;
+    --radius-l: 22px;
+    --radius-m: 14px;
+    --radius-full: 999px;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.02), 0 12px 32px rgba(0, 0, 0, 0.05), 0 40px 80px rgba(0, 0, 0, 0.04);
+    --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI',
+      system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+    --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: linear-gradient(180deg, #e7e7ec, #dddde4);
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px; padding: 18px 12px; overflow: hidden;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- 演示控制条（不属于设计稿本体） ---------- */
+  .bar { display: flex; gap: 8px; }
+  .bar button {
+    height: 34px; padding: 0 15px; border: 0; border-radius: var(--radius-full);
+    background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+    font: 600 13px var(--font); color: var(--text-2); cursor: pointer;
+    transition: all 0.2s var(--ease-standard);
+  }
+  .bar button.on { background: var(--text-1); color: #fff; }
+  .demofoot { font-size: 12px; color: #8a8a92; }
+
+  /* ---------- 手机框 ---------- */
+  .phone {
+    width: 480px; max-width: 100%;
+    height: min(860px, calc(100vh - 128px)); min-height: 600px;
+    border-radius: 44px; overflow: hidden; position: relative;
+    box-shadow: 0 34px 90px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.06);
+    display: flex; flex-direction: column;
+    background: var(--bg);
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .shead {
+    flex: none; height: 54px; padding: 0 18px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface-translucent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 0.5px solid var(--line);
+  }
+  .shead .min { display: flex; align-items: center; gap: 2px; border: 0; background: none; cursor: pointer;
+    font: 600 14px var(--font); color: var(--text-1); }
+  .shead .min svg { width: 20px; height: 20px; }
+  .shead .ptitle { font: 700 13px var(--font); color: var(--text-2); }
+  .shead .end { border: 0; background: none; cursor: pointer; padding: 8px 4px;
+    font: 700 14px var(--font); color: var(--danger); }
+
+  /* ---------- 全课进度格条（固定 · 按动作分组留缝） ---------- */
+  .progwrap {
+    flex: none; padding: 12px 18px 11px;
+    background: var(--surface-translucent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 0.5px solid var(--line);
+  }
+  .obar { display: flex; gap: 2.5px; }
+  .obar i {
+    flex: 1; height: 8px; border-radius: 3px;
+    background: var(--surface-2);
+    transition: background 0.3s var(--ease-standard);
+  }
+  .obar i.grp { margin-left: 6px; }   /* 动作分组之间的缝 */
+  .obar i.on { background: var(--c-exercise); }
+  .obar i.cur { background: rgba(146, 232, 42, 0.35); animation: cellbreath 1.6s infinite; }
+  @keyframes cellbreath { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+  /* ---------- 可滚动内容区 ---------- */
+  .scrollbody { flex: 1; overflow-y: auto; min-height: 0; }
+  .ex, .rest {
+    display: none; flex-direction: column; align-items: center; gap: 12px;
+    padding: 26px 26px calc(190px + env(safe-area-inset-bottom, 0px));
+    animation: fadeUp 0.35s var(--ease-standard);
+  }
+  body[data-phase="exercise"] .ex { display: flex; }
+  body[data-phase="rest"] .rest { display: flex; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } }
+
+  .eyebrow { font-size: 13px; font-weight: 600; letter-spacing: 0.6px; color: var(--text-3); }
+  .actname { font-size: 40px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; text-align: center; }
+  .bigrow { display: flex; align-items: baseline; gap: 10px; justify-content: center; }
+  .big { font-size: 84px; font-weight: 200; letter-spacing: -4px; line-height: 1; }
+  .unit { font-size: 26px; font-weight: 300; color: var(--text-2); }
+
+  .blockcard {
+    width: 100%; border-radius: var(--radius-l); background: var(--surface);
+    box-shadow: var(--shadow-card); padding: 16px 18px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .blockcard h3 { font-size: 13px; font-weight: 700; color: var(--text-2); letter-spacing: 0.4px; }
+  .blockcard p { font-size: 14px; color: var(--text-1); line-height: 1.65; }
+  .nextrow { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-2); }
+  .nextrow b { color: var(--text-1); }
+
+  /* ---------- 休息环 ---------- */
+  .ringwrap { position: relative; width: 216px; height: 216px; }
+  .ringwrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ringwrap .tr { fill: none; stroke: var(--surface-2); stroke-width: 13; }
+  .ringwrap .rvl {
+    fill: none; stroke: var(--c-balance); stroke-width: 13; stroke-linecap: round;
+    stroke-dasharray: 276.46; stroke-dashoffset: 0;
+    transition: stroke-dashoffset 1s linear;
+  }
+  .ringwrap .ct {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px;
+  }
+  .restv { font-size: 76px; font-weight: 200; letter-spacing: -3px; line-height: 1; }
+  .restsec { font-size: 15px; font-weight: 500; color: var(--text-2); }
+  .meta { font-size: 14px; color: var(--text-2); text-align: center; }
+
+  /* ---------- 底部操作坞 ---------- */
+  .dock {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+    padding: 12px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface-translucent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-top: 0.5px solid var(--line);
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .dex, .drest { display: none; flex-direction: column; gap: 12px; }
+  body[data-phase="exercise"] .dex { display: flex; }
+  body[data-phase="rest"] .drest { display: flex; flex-direction: row; }
+
+  /* 组格矩阵（坞内 · 点击即完成） */
+  .tiles { display: flex; justify-content: center; gap: 12px; }
+  .dtile {
+    width: 58px; height: 58px; border: 2px solid transparent; border-radius: 17px;
+    background: var(--surface); box-shadow: var(--shadow-card);
+    display: flex; align-items: center; justify-content: center;
+    font: 700 22px var(--font); color: var(--text-2); cursor: pointer;
+    transition: all 0.2s var(--ease-standard);
+  }
+  .dtile:active { transform: scale(0.92); }
+  .dtile.done { background: rgba(146, 232, 42, 0.22); color: #3d7a00; }
+  .dtile.cur { background: var(--text-1); color: var(--bg); box-shadow: 0 6px 18px rgba(29, 29, 31, 0.3); }
+
+  .primary {
+    height: 54px; border: 0; border-radius: 27px;
+    background: var(--text-1); color: var(--bg);
+    font: 600 17px var(--font);
+    box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22); cursor: pointer;
+    transition: transform 0.15s var(--ease-standard);
+  }
+  .dex .primary { width: 100%; }
+  .drest .primary { flex: 1; }
+  .primary:active { transform: scale(0.96); }
+
+  /* 休息设置图标钮 → 打开抽屉 */
+  .iconbtn {
+    width: 54px; height: 54px; flex: none; border: 0; border-radius: 27px;
+    background: var(--surface); box-shadow: var(--shadow-card);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-1); cursor: pointer;
+    transition: transform 0.15s var(--ease-standard);
+  }
+  .iconbtn:active { transform: scale(0.92); }
+  .iconbtn svg { width: 24px; height: 24px; }
+
+  /* ---------- 抽屉（ActionSheet 风格） ---------- */
+  .scrim {
+    position: absolute; inset: 0; z-index: 19;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0; pointer-events: none; transition: opacity 0.3s var(--ease-standard);
+  }
+  .scrim.open { opacity: 1; pointer-events: auto; }
+  .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 20;
+    background: var(--surface);
+    border-radius: 22px 22px 0 0;
+    padding: 8px 0 calc(14px + env(safe-area-inset-bottom, 0px));
+    transform: translateY(110%);
+    transition: transform 420ms var(--ease-sheet);
+  }
+  .sheet.open { transform: none; }
+  .grab { width: 36px; height: 5px; border-radius: 3px; background: var(--line-strong); margin: 4px auto 12px; }
+  .sheet h3 { text-align: center; font-size: 13px; font-weight: 600; color: var(--text-2); margin-bottom: 2px; }
+  .sheet .sub { text-align: center; font-size: 12px; color: var(--text-3); margin-bottom: 6px; }
+  .act {
+    height: 54px; display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 17px; font-weight: 600; color: var(--text-1); cursor: pointer;
+  }
+  .act + .act { border-top: 0.5px solid var(--line); }
+  .act b { font-weight: 700; }
+  .act.cancel { margin: 10px 12px 0; height: 54px; border-radius: var(--radius-m);
+    background: var(--surface-2); font-weight: 700; border-top: 0; }
+</style>
+</head>
+<body data-phase="exercise">
+
+  <div class="bar" id="pbar">
+    <button data-p="exercise" class="on">动作中</button>
+    <button data-p="rest">组间休息</button>
+  </div>
+
+  <div class="phone">
+
+    <header class="shead">
+      <button class="min"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>收起</button>
+      <span class="ptitle num count">5/20 组</span>
+      <button class="end">结束</button>
+    </header>
+
+    <!-- 全课进度格条：每格一组，按动作分组留缝，当前组呼吸 -->
+    <div class="progwrap"><div class="obar" id="obar"></div></div>
+
+    <div class="scrollbody">
+
+      <!-- 动作中：名称 hero（无重量）+ 动作要点 + 下一动作 -->
+      <div class="ex">
+        <p class="eyebrow">当前动作 · 第 <b class="si">2</b> / 4 组</p>
+        <h1 class="actname">哑铃肩推</h1>
+        <div class="bigrow"><span class="big num">10</span><span class="unit">次</span></div>
+
+        <div class="blockcard">
+          <h3>动作要点</h3>
+          <p>腰背贴稳凳面，推起时肘部不完全锁死，下放至耳朵高度；手腕保持中立，不要向后翻折。</p>
+        </div>
+
+        <div class="blockcard">
+          <h3>接下来</h3>
+          <p class="nextrow">▸ 下一动作 · <b>双杠臂屈伸</b> · 10 次 × 3 组</p>
+        </div>
+      </div>
+
+      <!-- 组间休息：青环倒数 -->
+      <div class="rest">
+        <p class="eyebrow">组间休息</p>
+        <div class="ringwrap">
+          <svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="rvl" cx="50" cy="50" r="44"/></svg>
+          <div class="ct"><b class="restv num">45</b><span class="restsec">秒</span></div>
+        </div>
+        <p class="meta num" id="nextmeta">下一组 · 第 3 组 · 10 次</p>
+      </div>
+    </div>
+
+    <!-- 底部操作坞 -->
+    <div class="dock">
+      <div class="dex">
+        <div class="tiles" id="tiles">
+          <button class="dtile done">✓</button>
+          <button class="dtile cur">2</button>
+          <button class="dtile">3</button>
+          <button class="dtile">4</button>
+        </div>
+        <button class="primary docomplete">完成第 <b class="si">2</b> 组</button>
+      </div>
+      <div class="drest">
+        <button class="iconbtn" id="restCfg" aria-label="调整休息时长">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="13.5" r="7.5"/>
+            <path d="M11 13.5V9.5"/>
+            <path d="M9 2.5h4"/>
+            <path d="M18.5 4.5h4"/><path d="M20.5 2.5v4"/>
+          </svg>
+        </button>
+        <button class="primary skiprest">跳过休息</button>
+      </div>
+    </div>
+
+    <!-- 抽屉：延长休息 -->
+    <div class="scrim" id="scrim"></div>
+    <div class="sheet" id="sheet">
+      <div class="grab"></div>
+      <h3>还要休息多久？</h3>
+      <p class="sub num">当前剩余 <b id="leftInSheet">45</b> 秒</p>
+      <div class="act" data-add="15"><b class="num">+ 15 秒</b></div>
+      <div class="act" data-add="30"><b class="num">+ 30 秒</b></div>
+      <div class="act" data-add="60"><b class="num">+ 60 秒</b></div>
+      <div class="act" data-add="120"><b class="num">+ 2 分钟</b></div>
+      <div class="act cancel" id="sheetCancel">取消</div>
+    </div>
+  </div>
+
+  <p class="demofoot">合并稿 · 点组格或完成键自动进休息 · 数据为演示 · 「结束」在真实应用中经二级确认</p>
+
+<script>
+  /* ---------- 演示状态（仅驱动视觉，非业务逻辑） ---------- */
+  var setIndex = 2;      /* 当前动作第几组（1 起） */
+  var setsOfCur = 4;
+  var doneBefore = 4;    /* 之前动作已完成组数 */
+  var totalSets = 20;
+  var groups = [4, 4, 3, 3, 3, 3]; /* 各动作组数 → 格条分组 */
+  var restTotal = 45, restLeft = 45, restTimer = null;
+
+  /* 构建全课格条 */
+  (function buildBar() {
+    var bar = document.getElementById('obar');
+    var idx = 0, groupStart = 0;
+    groups.forEach(function (g) {
+      groupStart = idx;
+      for (var k = 0; k < g; k++, idx++) {
+        var cell = document.createElement('i');
+        if (k === 0 && groupStart > 0) cell.className = 'grp';
+        bar.appendChild(cell);
+      }
+    });
+  })();
+
+  function renderAll() {
+    document.querySelectorAll('.si').forEach(function (el) { el.textContent = setIndex; });
+    document.querySelectorAll('.count').forEach(function (el) {
+      el.textContent = (doneBefore + setIndex - 1) + '/' + totalSets + ' 组';
+    });
+    var tiles = document.getElementById('tiles');
+    Array.prototype.forEach.call(tiles.children, function (t, i) {
+      var done = i < setIndex - 1, cur = i === setIndex - 1;
+      t.className = 'dtile' + (done ? ' done' : cur ? ' cur' : '');
+      t.textContent = done ? '✓' : String(i + 1);
+    });
+    var doneCells = doneBefore + setIndex - 1;
+    var curCell = doneBefore + setIndex - 1; /* 下一格 = 即将完成的那组 */
+    Array.prototype.forEach.call(document.getElementById('obar').children, function (c, i) {
+      var base = c.classList.contains('grp') ? 'grp' : '';
+      c.className = base + (i < doneCells ? ' on' : i === curCell ? ' cur' : '');
+    });
+    document.getElementById('nextmeta').textContent =
+      '下一组 · 第 ' + Math.min(setIndex + 1, setsOfCur) + ' 组 · 10 次';
+  }
+
+  function setPhase(p) {
+    document.body.dataset.phase = p;
+    document.querySelectorAll('#pbar button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.p === p);
+    });
+    if (p === 'rest') startRest();
+    else { clearInterval(restTimer); restTimer = null; }
+  }
+
+  function startRest() {
+    restTotal = 45; restLeft = 45;
+    clearInterval(restTimer);
+    restTimer = setInterval(function () {
+      if (document.body.dataset.phase !== 'rest') { clearInterval(restTimer); return; }
+      restLeft--;
+      if (restLeft <= 0) { restLeft = 0; renderRest(); setPhase('exercise'); return; }
+      renderRest();
+    }, 1000);
+    renderRest();
+  }
+
+  function renderRest() {
+    document.querySelectorAll('.restv').forEach(function (e) { e.textContent = restLeft; });
+    document.getElementById('leftInSheet').textContent = restLeft;
+    var p = restTotal > 0 ? restLeft / restTotal : 0;
+    document.querySelectorAll('.rvl').forEach(function (c) {
+      c.style.strokeDashoffset = (276.46 * (1 - p)).toFixed(1);
+    });
+  }
+
+  function completeCur() {
+    if (setIndex < setsOfCur) { setIndex++; renderAll(); setPhase('rest'); }
+    else { setIndex = 1; renderAll(); } /* 演示：满组回卷，真实应用进入下一动作 */
+  }
+
+  document.querySelector('.docomplete').addEventListener('click', completeCur);
+  document.getElementById('tiles').addEventListener('click', function (e) {
+    var t = e.target.closest('.dtile');
+    if (!t) return;
+    var i = Array.prototype.indexOf.call(this.children, t);
+    if (i === setIndex - 1) { completeCur(); }   /* 点当前格 = 完成 */
+    else { setIndex = i + 1; renderAll(); }      /* 点其他格 = 跳转状态（演示） */
+  });
+  document.querySelector('.skiprest').addEventListener('click', function () { setPhase('exercise'); });
+
+  /* 抽屉 */
+  var sheet = document.getElementById('sheet'), scrim = document.getElementById('scrim');
+  function openSheet() { renderRest(); sheet.classList.add('open'); scrim.classList.add('open'); }
+  function closeSheet() { sheet.classList.remove('open'); scrim.classList.remove('open'); }
+  document.getElementById('restCfg').addEventListener('click', openSheet);
+  document.getElementById('sheetCancel').addEventListener('click', closeSheet);
+  scrim.addEventListener('click', closeSheet);
+  sheet.addEventListener('click', function (e) {
+    var a = e.target.closest('.act[data-add]');
+    if (!a) return;
+    restTotal += Number(a.dataset.add);
+    restLeft += Number(a.dataset.add);
+    renderRest();
+    closeSheet();
+  });
+
+  /* 阶段切换 */
+  document.getElementById('pbar').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-p]');
+    if (!btn) return;
+    setPhase(btn.dataset.p);
+  });
+
+  renderAll();
+  renderRest();
+</script>
+</body>
+</html>

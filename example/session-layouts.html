@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>课程训练沉浸视图 · C1–C5 布局参考稿</title>
+<style>
+  /* ============================================================
+     课程训练沉浸页 · 5 种布局参考稿（非应用代码）
+     令牌摘自 src/styles/tokens.css（亮色）；C3 自带暗色剧场
+     演示数据：上肢·推力日 · 共 20 组 · 当前 哑铃肩推 第 2/4 组
+     ============================================================ */
+  :root {
+    color-scheme: light;
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-2: #f2f2f4;
+    --surface-translucent: rgba(255, 255, 255, 0.72);
+    --text-1: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #a1a1a6;
+    --line: rgba(0, 0, 0, 0.07);
+    --line-strong: rgba(0, 0, 0, 0.12);
+    --danger: #ff3b30;
+    --c-exercise: #92e82a;
+    --c-balance: #1eeaef;
+    --radius-l: 22px;
+    --radius-xl: 28px;
+    --radius-m: 14px;
+    --radius-full: 999px;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.02), 0 12px 32px rgba(0, 0, 0, 0.05), 0 40px 80px rgba(0, 0, 0, 0.04);
+    --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI',
+      system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: linear-gradient(180deg, #e7e7ec, #dddde4);
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px; padding: 18px 12px; overflow: hidden;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- 演示控制条（不属于设计稿本体） ---------- */
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .bar button {
+    height: 34px; padding: 0 15px; border: 0; border-radius: var(--radius-full);
+    background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+    font: 600 13px var(--font); color: var(--text-2); cursor: pointer;
+    transition: all 0.2s var(--ease-standard);
+  }
+  .bar button.on { background: var(--text-1); color: #fff; }
+  .demofoot { font-size: 12px; color: #8a8a92; }
+
+  /* ---------- 手机框 ---------- */
+  .phone {
+    width: 480px; max-width: 100%;
+    height: min(860px, calc(100vh - 128px)); min-height: 600px;
+    border-radius: 44px; overflow: hidden; position: relative;
+    box-shadow: 0 34px 90px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.06);
+    display: flex; flex-direction: column;
+    background: var(--bg);
+  }
+
+  /* ---------- 方案显隐 ---------- */
+  .v { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  body[data-variant="1"] .v[data-v="1"], body[data-variant="2"] .v[data-v="2"],
+  body[data-variant="3"] .v[data-v="3"], body[data-variant="4"] .v[data-v="4"],
+  body[data-variant="5"] .v[data-v="5"] { display: flex; }
+
+  .ex, .rest { display: none; }
+  body[data-phase="exercise"] .ex,
+  body[data-phase="exercise"] .dex { display: flex; }
+  body[data-phase="rest"] .rest,
+  body[data-phase="rest"] .drest { display: flex; }
+  body[data-phase="exercise"] .v[data-v="4"] .ex { display: block; }
+  body[data-phase="rest"] .v[data-v="4"] .rest { display: block; }
+
+  /* ---------- 共享：顶栏 ---------- */
+  .shead {
+    flex: none; height: 54px; padding: 0 18px;
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface-translucent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-bottom: 0.5px solid var(--line);
+  }
+  .shead .min { display: flex; align-items: center; gap: 2px; border: 0; background: none; cursor: pointer;
+    font: 600 14px var(--font); color: var(--text-1); }
+  .shead .min svg { width: 20px; height: 20px; }
+  .shead .ptitle { font: 700 13px var(--font); color: var(--text-2); }
+  .shead .end { border: 0; background: none; cursor: pointer; padding: 8px 4px;
+    font: 700 14px var(--font); color: var(--danger); }
+
+  /* ---------- 共享：动作内容 ---------- */
+  .ex, .rest {
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; padding: 20px 28px calc(30px + env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+  }
+  .eyebrow { font-size: 13px; font-weight: 600; letter-spacing: 0.6px; color: var(--text-3); }
+  .actname { font-size: 40px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; text-align: center; }
+  .bigrow { display: flex; align-items: baseline; gap: 8px; justify-content: center; }
+  .big { font-size: 84px; font-weight: 200; letter-spacing: -4px; line-height: 1; }
+  .unit { font-size: 26px; font-weight: 300; color: var(--text-2); }
+  .reps { font-size: 30px; font-weight: 300; color: var(--text-2); margin-left: 6px; }
+  .meta { max-width: 330px; text-align: center; font-size: 14px; color: var(--text-2); line-height: 1.6; }
+  .hint { font-size: 12px; color: var(--text-3); text-align: center; }
+
+  .wrow { display: flex; gap: 16px; }
+  .wbtn {
+    min-width: 110px; height: 48px; border: 0; border-radius: 24px;
+    background: var(--surface); box-shadow: var(--shadow-card);
+    font: 600 17px var(--font); color: var(--text-1); cursor: pointer;
+  }
+
+  .sets { display: flex; gap: 18px; margin: 4px 0 8px; list-style: none; }
+  .setcol { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .setdot {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 600; color: var(--text-2);
+    background: var(--surface-2); transition: all 0.25s var(--ease-standard);
+  }
+  .setdot.done { background: var(--c-exercise); color: #1a2b00; }
+  .setdot.current { background: var(--text-1); color: var(--bg); box-shadow: 0 4px 12px rgba(29, 29, 31, 0.28); }
+  .setlabel { font-size: 11px; color: var(--text-3); }
+
+  .primary {
+    min-width: 240px; height: 54px; margin-top: 8px; padding: 0 38px;
+    border: 0; border-radius: 27px;
+    background: var(--text-1); color: var(--bg);
+    font: 600 17px var(--font);
+    box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22); cursor: pointer;
+    transition: transform 0.15s var(--ease-standard);
+  }
+  .primary:active { transform: scale(0.96); }
+  .ghost {
+    height: 50px; border: 0; border-radius: 25px; padding: 0 24px;
+    background: var(--surface); box-shadow: var(--shadow-card);
+    font: 600 15px var(--font); color: var(--text-1); cursor: pointer;
+  }
+  .ghost.danger { color: var(--danger); }
+  .btns { display: flex; width: 100%; gap: 14px; margin-top: 10px; justify-content: center; }
+  .btns .primary { margin-top: 0; }
+
+  /* ---------- 共享：休息环 ---------- */
+  .ringwrap { position: relative; width: 216px; height: 216px; }
+  .ringwrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ringwrap .tr { fill: none; stroke: var(--surface-2); stroke-width: 13; }
+  .ringwrap .rvl {
+    fill: none; stroke: var(--c-balance); stroke-width: 13; stroke-linecap: round;
+    stroke-dasharray: 276.46; stroke-dashoffset: 0;
+    transition: stroke-dashoffset 1s linear;
+  }
+  .ringwrap .ct {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 2px;
+  }
+  .restv { font-size: 76px; font-weight: 200; letter-spacing: -3px; line-height: 1; }
+  .restsec { font-size: 15px; font-weight: 500; color: var(--text-2); }
+
+  /* ============ C1 · 教练聚焦卡（Card Deck） ============ */
+  .deck { position: relative; width: min(360px, 100%); padding-top: 30px; }
+  .card {
+    position: relative; border-radius: var(--radius-xl);
+    background: var(--surface); box-shadow: var(--shadow-card);
+    padding: 22px 22px 20px;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+  }
+  .card.behind {
+    position: absolute; left: 14px; right: 14px; top: 0; height: 44px;
+    border-radius: 20px; background: var(--surface-2); box-shadow: none;
+    flex-direction: row; align-items: center; justify-content: center;
+    color: var(--text-3); font-size: 13px; font-weight: 600;
+  }
+  .deck .primary { width: 100%; margin-top: 6px; }
+  .card.restcard { gap: 12px; padding: 26px 22px; }
+
+  /* ============ C2 · 横向课表步骤条（Ribbon） ============ */
+  .ribbonwrap {
+    flex: none; border-bottom: 0.5px solid var(--line);
+    background: var(--surface-translucent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+  }
+  .ribbon {
+    display: flex; align-items: flex-start; padding: 14px 16px 10px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .ribbon::-webkit-scrollbar { display: none; }
+  .node { flex: none; width: 66px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .nd {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: var(--surface-2); color: var(--text-2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600; transition: all 0.25s var(--ease-standard);
+  }
+  .node.done .nd { background: var(--c-exercise); color: #1a2b00; }
+  .node.cur .nd { background: var(--text-1); color: var(--bg); transform: scale(1.18); box-shadow: 0 4px 12px rgba(29, 29, 31, 0.28); }
+  .nl { font-size: 10px; color: var(--text-3); text-align: center; line-height: 1.35; white-space: nowrap; }
+  .node.cur .nl { color: var(--text-1); font-weight: 700; }
+  .nl b { display: block; font-weight: 600; }
+  .lk { flex: none; width: 24px; height: 2px; background: var(--line-strong); border-radius: 1px; margin: 14px 3px 0; }
+  .lk.done { background: var(--c-exercise); }
+
+  /* ============ C3 · 深色剧场（Dark Theater） ============ */
+  .v[data-v="3"] {
+    --bg: #000; --surface: #1c1c1e; --surface-2: #2c2c2e;
+    --text-1: #f5f5f7; --text-2: rgba(235, 235, 245, 0.6); --text-3: rgba(235, 235, 245, 0.33);
+    --line: rgba(255, 255, 255, 0.08); --line-strong: rgba(255, 255, 255, 0.16);
+    --surface-translucent: rgba(18, 18, 20, 0.72);
+    --shadow-card: none;
+    background: #000; color: var(--text-1);
+    transition: background 0.45s var(--ease-standard);
+  }
+  body[data-phase="rest"] .v[data-v="3"] {
+    background: radial-gradient(130% 90% at 50% 0%, #064049 0%, #000 68%);
+  }
+  .v[data-v="3"] .big { font-size: 96px; font-weight: 100; }
+  .v[data-v="3"] .primary {
+    background: var(--c-exercise); color: #1a2b00;
+    box-shadow: 0 0 28px rgba(146, 232, 42, 0.38);
+  }
+  .v[data-v="3"] .setdot.done { box-shadow: 0 0 14px rgba(146, 232, 42, 0.55); }
+  .v[data-v="3"] .setdot.current { box-shadow: 0 0 16px rgba(245, 245, 247, 0.35); }
+  .v[data-v="3"] .wbtn { background: var(--surface); }
+  .v[data-v="3"] .ringwrap .tr { stroke: #232326; }
+  .v[data-v="3"] .restv { color: var(--c-balance); }
+
+  /* ============ C4 · 底部操作坞（Bottom Dock） ============ */
+  .scrollbody { flex: 1; overflow-y: auto; min-height: 0; padding: 20px 22px 200px; }
+  .v[data-v="4"] .ex, .v[data-v="4"] .rest {
+    display: none; overflow: visible; padding: 0;
+    justify-content: flex-start; align-items: stretch;
+  }
+  .blockcard {
+    border-radius: var(--radius-l); background: var(--surface); box-shadow: var(--shadow-card);
+    padding: 16px 18px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .blockcard h3 { font-size: 13px; font-weight: 700; color: var(--text-2); letter-spacing: 0.4px; }
+  .blockcard p { font-size: 14px; color: var(--text-1); line-height: 1.65; }
+  .donelist { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .donelist li { display: flex; justify-content: space-between; font-size: 14px; color: var(--text-1); }
+  .donelist li .tag {
+    font-size: 11px; font-weight: 700; color: #3d7a00;
+    background: rgba(146, 232, 42, 0.2); border-radius: var(--radius-full); padding: 2px 9px;
+  }
+  .nextrow { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-2); }
+  .nextrow b { color: var(--text-1); }
+  .dock {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+    padding: 12px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface-translucent);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-top: 0.5px solid var(--line);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .dex, .drest { display: none; flex-direction: column; gap: 10px; }
+  .dockrow { display: flex; align-items: center; justify-content: center; gap: 18px; }
+  .dockrow .wbtn { min-width: 92px; height: 44px; }
+  .dock .primary { width: 100%; margin-top: 0; }
+  .dock .sets { margin: 0; }
+  .drest .btns { margin-top: 0; }
+
+  /* ============ C5 · 组格矩阵（Set Matrix） ============ */
+  .obar { display: flex; gap: 3px; width: min(360px, 100%); }
+  .obar i { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); transition: background 0.3s; }
+  .obar i.on { background: var(--c-exercise); }
+  .obarlab { font-size: 11px; color: var(--text-3); align-self: flex-start; margin-top: -6px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; width: min(360px, 100%); }
+  .tile {
+    aspect-ratio: 1 / 1.02; border-radius: 18px;
+    background: var(--surface); box-shadow: var(--shadow-card);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    cursor: pointer; transition: all 0.2s var(--ease-standard);
+    border: 2px solid transparent;
+  }
+  .tile:active { transform: scale(0.94); }
+  .tile .n { font-size: 24px; font-weight: 700; }
+  .tile .w { font-size: 11px; color: var(--text-3); }
+  .tile.done { background: rgba(146, 232, 42, 0.2); }
+  .tile.done .n { color: #3d7a00; }
+  .tile.cur { border-color: var(--text-1); box-shadow: 0 6px 18px rgba(29, 29, 31, 0.16); }
+  .v[data-v="5"] .rest { gap: 18px; }
+</style>
+</head>
+<body data-variant="1" data-phase="exercise">
+
+  <!-- 演示控制（不属于设计稿本体） -->
+  <div class="bar" id="vbar">
+    <button data-v="1" class="on">C1 聚焦卡</button>
+    <button data-v="2">C2 课表条</button>
+    <button data-v="3">C3 深色剧场</button>
+    <button data-v="4">C4 底部坞</button>
+    <button data-v="5">C5 组格矩阵</button>
+  </div>
+  <div class="bar" id="pbar">
+    <button data-p="exercise" class="on">动作中</button>
+    <button data-p="rest">组间休息</button>
+  </div>
+
+  <div class="phone">
+
+    <!-- ================= C1 · 教练聚焦卡 ================= -->
+    <section class="v" data-v="1">
+      <header class="shead">
+        <button class="min"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>收起</button>
+        <span class="ptitle num count">5/20 组</span>
+        <button class="end">结束</button>
+      </header>
+
+      <div class="ex">
+        <div class="deck">
+          <article class="card behind">下一个 · 双杠臂屈伸 · 自重 × 10</article>
+          <article class="card">
+            <p class="eyebrow">当前动作 · 第 <b class="si">2</b> / 4 组</p>
+            <h1 class="actname">哑铃肩推</h1>
+            <div class="bigrow"><span class="big num">12</span><span class="unit">kg</span><span class="reps num">× 10</span></div>
+            <p class="meta">腰背贴稳凳面，推起时肘部不完全锁死，下放至耳朵高度。</p>
+            <div class="wrow"><button class="wbtn">− 2.5</button><button class="wbtn">+ 2.5</button></div>
+            <ul class="sets">
+              <li class="setcol"><span class="setdot done">✓</span><span class="setlabel num">12kg</span></li>
+              <li class="setcol"><span class="setdot current">2</span><span class="setlabel num">目标</span></li>
+              <li class="setcol"><span class="setdot">3</span><span class="setlabel num">目标</span></li>
+              <li class="setcol"><span class="setdot">4</span><span class="setlabel num">目标</span></li>
+            </ul>
+            <button class="primary docomplete">完成第 <b class="si">2</b> 组</button>
+          </article>
+        </div>
+        <p class="hint">底层卡片为下一动作 · 完成全部组后自动翻上来</p>
+      </div>
+
+      <div class="rest">
+        <article class="card restcard">
+          <p class="eyebrow">组间休息</p>
+          <div class="ringwrap">
+            <svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="rvl" cx="50" cy="50" r="44"/></svg>
+            <div class="ct"><b class="restv num">45</b><span class="restsec">秒</span></div>
+          </div>
+          <p class="meta">下一组 · 第 3 组 · 12 kg × 10</p>
+          <div class="btns"><button class="ghost add15">+ 15 秒</button><button class="primary skiprest">跳过休息</button></div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ================= C2 · 横向课表步骤条 ================= -->
+    <section class="v" data-v="2">
+      <header class="shead">
+        <button class="min"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>收起</button>
+        <span class="ptitle num count">5/20 组</span>
+        <button class="end">结束</button>
+      </header>
+
+      <div class="ribbonwrap">
+        <div class="ribbon" id="ribbon">
+          <div class="node done"><span class="nd">✓</span><span class="nl">卧推<b>4 组完成</b></span></div>
+          <i class="lk done"></i>
+          <div class="node cur"><span class="nd">2</span><span class="nl">肩推<b class="num">第 2/4 组</b></span></div>
+          <i class="lk"></i>
+          <div class="node"><span class="nd">3</span><span class="nl">双杠<b>自重 ×10</b></span></div>
+          <i class="lk"></i>
+          <div class="node"><span class="nd">4</span><span class="nl">平板支撑<b>60 秒</b></span></div>
+          <i class="lk"></i>
+          <div class="node"><span class="nd">5</span><span class="nl">绳索下拉<b>25kg ×12</b></span></div>
+          <i class="lk"></i>
+          <div class="node"><span class="nd">6</span><span class="nl">卷腹<b>自重 ×15</b></span></div>
+        </div>
+      </div>
+
+      <div class="ex">
+        <p class="eyebrow">当前动作 · 第 <b class="si">2</b> / 4 组</p>
+        <h1 class="actname">哑铃肩推</h1>
+        <div class="bigrow"><span class="big num">12</span><span class="unit">kg</span><span class="reps num">× 10</span></div>
+        <p class="meta">腰背贴稳凳面，推起时肘部不完全锁死，下放至耳朵高度。</p>
+        <div class="wrow"><button class="wbtn">− 2.5</button><button class="wbtn">+ 2.5</button></div>
+        <ul class="sets">
+          <li class="setcol"><span class="setdot done">✓</span><span class="setlabel num">12kg</span></li>
+          <li class="setcol"><span class="setdot current">2</span><span class="setlabel num">目标</span></li>
+          <li class="setcol"><span class="setdot">3</span><span class="setlabel num">目标</span></li>
+          <li class="setcol"><span class="setdot">4</span><span class="setlabel num">目标</span></li>
+        </ul>
+        <button class="primary docomplete">完成第 <b class="si">2</b> 组</button>
+      </div>
+
+      <div class="rest">
+        <p class="eyebrow">组间休息</p>
+        <div class="ringwrap">
+          <svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="rvl" cx="50" cy="50" r="44"/></svg>
+          <div class="ct"><b class="restv num">45</b><span class="restsec">秒</span></div>
+        </div>
+        <p class="meta">下一组 · 第 3 组 · 12 kg × 10</p>
+        <div class="btns"><button class="ghost add15">+ 15 秒</button><button class="primary skiprest">跳过休息</button></div>
+      </div>
+    </section>
+
+    <!-- ================= C3 · 深色剧场 ================= -->
+    <section class="v" data-v="3">
+      <header class="shead">
+        <button class="min"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>收起</button>
+        <span class="ptitle num count">5/20 组</span>
+        <button class="end">结束</button>
+      </header>
+
+      <div class="ex">
+        <p class="eyebrow">当前动作 · 第 <b class="si">2</b> / 4 组</p>
+        <h1 class="actname">哑铃肩推</h1>
+        <div class="bigrow"><span class="big num">12</span><span class="unit">kg</span><span class="reps num">× 10</span></div>
+        <p class="meta">腰背贴稳凳面，推起时肘部不完全锁死，下放至耳朵高度。</p>
+        <div class="wrow"><button class="wbtn">− 2.5</button><button class="wbtn">+ 2.5</button></div>
+        <ul class="sets">
+          <li class="setcol"><span class="setdot done">✓</span><span class="setlabel num">12kg</span></li>
+          <li class="setcol"><span class="setdot current">2</span><span class="setlabel num">目标</span></li>
+          <li class="setcol"><span class="setdot">3</span><span class="setlabel num">目标</span></li>
+          <li class="setcol"><span class="setdot">4</span><span class="setlabel num">目标</span></li>
+        </ul>
+        <button class="primary docomplete">完成第 <b class="si">2</b> 组</button>
+      </div>
+
+      <div class="rest">
+        <p class="eyebrow">组间休息</p>
+        <div class="ringwrap">
+          <svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="rvl" cx="50" cy="50" r="44"/></svg>
+          <div class="ct"><b class="restv num">45</b><span class="restsec">秒</span></div>
+        </div>
+        <p class="meta">下一组 · 第 3 组 · 12 kg × 10</p>
+        <div class="btns"><button class="ghost add15">+ 15 秒</button><button class="primary skiprest">跳过休息</button></div>
+      </div>
+    </section>
+
+    <!-- ================= C4 · 底部操作坞 ================= -->
+    <section class="v" data-v="4">
+      <header class="shead">
+        <button class="min"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>收起</button>
+        <span class="ptitle num count">5/20 组</span>
+        <button class="end">结束</button>
+      </header>
+
+      <div class="scrollbody">
+        <div class="ex" style="display:flex; flex-direction:column; gap:14px;">
+          <div>
+            <p class="eyebrow" style="text-align:left;">当前动作 · 第 <b class="si">2</b> / 4 组</p>
+            <h1 class="actname" style="text-align:left; font-size:34px;">哑铃肩推</h1>
+            <div class="bigrow" style="justify-content:flex-start;">
+              <span class="big num" style="font-size:64px;">12</span><span class="unit">kg</span><span class="reps num">× 10</span>
+            </div>
+          </div>
+          <div class="blockcard">
+            <h3>动作要点</h3>
+            <p>腰背贴稳凳面，推起时肘部不完全锁死，下放至耳朵高度；手腕保持中立，不要向后翻折。</p>
+          </div>
+          <div class="blockcard">
+            <h3>已完成</h3>
+            <ul class="donelist">
+              <li><span class="num">第 1 组 · 12 kg × 10</span><span class="tag">完成</span></li>
+              <li><span class="num">杠铃卧推 · 4 组 · 40 kg</span><span class="tag">完成</span></li>
+            </ul>
+          </div>
+          <div class="blockcard">
+            <h3>接下来</h3>
+            <p class="nextrow">▸ 下一动作 · <b>双杠臂屈伸</b> 自重 × 10 · 3 组（休息 90 秒）</p>
+          </div>
+        </div>
+
+        <div class="rest" style="display:none; flex-direction:column; gap:14px;">
+          <div class="blockcard" style="align-items:center; padding:22px;">
+            <p class="eyebrow">组间休息</p>
+            <div class="ringwrap" style="width:180px; height:180px;">
+              <svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="rvl" cx="50" cy="50" r="44"/></svg>
+              <div class="ct"><b class="restv num" style="font-size:60px;">45</b><span class="restsec">秒</span></div>
+            </div>
+            <p class="meta">下一组 · 第 3 组 · 12 kg × 10</p>
+          </div>
+          <div class="blockcard">
+            <h3>接下来</h3>
+            <p class="nextrow">▸ 下一动作 · <b>双杠臂屈伸</b> 自重 × 10 · 3 组（休息 90 秒）</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="dock">
+        <div class="dex">
+          <div class="dockrow">
+            <button class="wbtn">− 2.5</button>
+            <ul class="sets">
+              <li class="setcol"><span class="setdot done">✓</span></li>
+              <li class="setcol"><span class="setdot current">2</span></li>
+              <li class="setcol"><span class="setdot">3</span></li>
+              <li class="setcol"><span class="setdot">4</span></li>
+            </ul>
+            <button class="wbtn">+ 2.5</button>
+          </div>
+          <button class="primary docomplete">完成第 <b class="si">2</b> 组</button>
+        </div>
+        <div class="drest">
+          <div class="btns"><button class="ghost add15">+ 15 秒</button><button class="primary skiprest">跳过休息</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= C5 · 组格矩阵 ================= -->
+    <section class="v" data-v="5">
+      <header class="shead">
+        <button class="min"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>收起</button>
+        <span class="ptitle num count">5/20 组</span>
+        <button class="end">结束</button>
+      </header>
+
+      <div class="ex">
+        <div class="obar" id="obar">
+          <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i>
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          <i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <span class="obarlab num">全课进度 5 / 20 组</span>
+
+        <h1 class="actname">哑铃肩推</h1>
+        <div class="wrow">
+          <button class="wbtn">− 2.5</button>
+          <div class="bigrow" style="gap:6px;"><span class="big num" style="font-size:56px;">12</span><span class="unit">kg</span></div>
+          <button class="wbtn">+ 2.5</button>
+        </div>
+
+        <div class="tiles">
+          <div class="tile done"><span class="n">✓</span><span class="w num">12kg ×10</span></div>
+          <div class="tile cur"><span class="n">2</span><span class="w num">12kg ×10</span></div>
+          <div class="tile"><span class="n">3</span><span class="w num">目标</span></div>
+          <div class="tile"><span class="n">4</span><span class="w num">目标</span></div>
+        </div>
+        <p class="hint">点击格子即完成对应组 · 格下标注该组实际重量</p>
+      </div>
+
+      <div class="rest">
+        <p class="eyebrow">组间休息</p>
+        <div class="ringwrap">
+          <svg viewBox="0 0 100 100"><circle class="tr" cx="50" cy="50" r="44"/><circle class="rvl" cx="50" cy="50" r="44"/></svg>
+          <div class="ct"><b class="restv num">45</b><span class="restsec">秒</span></div>
+        </div>
+        <p class="meta">下一组 · 第 3 组 · 12 kg × 10</p>
+        <div class="btns"><button class="ghost add15">+ 15 秒</button><button class="primary skiprest">跳过休息</button></div>
+      </div>
+    </section>
+  </div>
+
+  <p class="demofoot">布局参考稿 · 数据与计时为演示 · 「结束」在真实应用中经二级确认</p>
+
+<script>
+  /* ---------- 演示交互（仅驱动视觉，非业务逻辑） ---------- */
+  var setIndex = 2;      /* 当前动作第几组（1 起） */
+  var setsOfCur = 4;     /* 当前动作总组数 */
+  var doneBefore = 4;    /* 当前动作之前已完成的组数 */
+  var totalSets = 20;
+  var restTotal = 45, restLeft = 45, restTimer = null;
+
+  function renderSets() {
+    document.querySelectorAll('.si').forEach(function (el) { el.textContent = setIndex; });
+    document.querySelectorAll('.count').forEach(function (el) {
+      el.textContent = (doneBefore + setIndex - 1) + '/' + totalSets + ' 组';
+    });
+    document.querySelectorAll('ul.sets').forEach(function (ul) {
+      Array.prototype.forEach.call(ul.children, function (li, i) {
+        var d = li.querySelector('.setdot');
+        var done = i < setIndex - 1, cur = i === setIndex - 1;
+        d.className = 'setdot' + (done ? ' done' : cur ? ' current' : '');
+        d.textContent = done ? '✓' : String(i + 1);
+      });
+    });
+    document.querySelectorAll('.tiles').forEach(function (tl) {
+      Array.prototype.forEach.call(tl.children, function (t, i) {
+        var done = i < setIndex - 1, cur = i === setIndex - 1;
+        t.className = 'tile' + (done ? ' done' : cur ? ' cur' : '');
+        t.querySelector('.n').textContent = done ? '✓' : String(i + 1);
+      });
+    });
+    var obar = document.getElementById('obar');
+    if (obar) {
+      var done = doneBefore + setIndex - 1;
+      Array.prototype.forEach.call(obar.children, function (seg, i) {
+        seg.className = i < done ? 'on' : '';
+      });
+      document.querySelector('.obarlab').textContent = '全课进度 ' + done + ' / ' + totalSets + ' 组';
+    }
+  }
+
+  function setPhase(p) {
+    document.body.dataset.phase = p;
+    document.querySelectorAll('#pbar button').forEach(function (b) {
+      b.classList.toggle('on', b.dataset.p === p);
+    });
+    if (p === 'rest') startRest();
+    else { clearInterval(restTimer); restTimer = null; }
+  }
+
+  function startRest() {
+    restTotal = 45; restLeft = 45;
+    clearInterval(restTimer);
+    restTimer = setInterval(function () {
+      if (document.body.dataset.phase !== 'rest') { clearInterval(restTimer); return; }
+      restLeft--;
+      if (restLeft <= 0) { restLeft = 0; renderRest(); setPhase('exercise'); return; }
+      renderRest();
+    }, 1000);
+    renderRest();
+  }
+
+  function renderRest() {
+    document.querySelectorAll('.restv').forEach(function (e) { e.textContent = restLeft; });
+    var p = restTotal > 0 ? restLeft / restTotal : 0;
+    document.querySelectorAll('.rvl').forEach(function (c) {
+      c.style.strokeDashoffset = (276.46 * (1 - p)).toFixed(1);
+    });
+  }
+
+  /* 完成一组：推进组点 / 组格 / 计数，满组后进休息（演示） */
+  document.querySelectorAll('.docomplete').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (setIndex < setsOfCur) { setIndex++; renderSets(); setPhase('rest'); }
+      else { setIndex = 1; renderSets(); }
+    });
+  });
+
+  document.querySelectorAll('.add15').forEach(function (btn) {
+    btn.addEventListener('click', function () { restTotal += 15; restLeft += 15; renderRest(); });
+  });
+  document.querySelectorAll('.skiprest').forEach(function (btn) {
+    btn.addEventListener('click', function () { setPhase('exercise'); });
+  });
+
+  /* C5：点击组格直接完成对应组 */
+  document.querySelectorAll('.tiles').forEach(function (tl) {
+    tl.addEventListener('click', function (e) {
+      var t = e.target.closest('.tile');
+      if (!t) return;
+      var i = Array.prototype.indexOf.call(tl.children, t);
+      setIndex = i + 1;
+      renderSets();
+    });
+  });
+
+  /* 方案 / 阶段切换 */
+  document.getElementById('vbar').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-v]');
+    if (!btn) return;
+    document.querySelectorAll('#vbar button').forEach(function (b) { b.classList.toggle('on', b === btn); });
+    document.body.dataset.variant = btn.dataset.v;
+    if (btn.dataset.v === '2') {
+      var cur = document.querySelector('#ribbon .node.cur');
+      if (cur) cur.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  });
+  document.getElementById('pbar').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-p]');
+    if (!btn) return;
+    setPhase(btn.dataset.p);
+  });
+
+  renderSets();
+  renderRest();
+</script>
+</body>
+</html>

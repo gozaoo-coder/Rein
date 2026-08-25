@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Rein",
-  "version": "0.1.0",
-  "identifier": "com.rein.chat",
+  "version": "0.2.0",
+  "identifier": "com.gozaoo.rein",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,13 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "Rein · 智能对话",
-        "width": 900,
-        "height": 680,
-        "minWidth": 380,
-        "minHeight": 600,
-        "resizable": true,
-        "center": true
+        "title": "Rein",
+        "width": 430,
+        "height": 932,
+        "minWidth": 390,
+        "minHeight": 640,
+        "center": true,
+        "resizable": true
       }
     ],
     "security": {
@@ -27,13 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"]
   }
 }
