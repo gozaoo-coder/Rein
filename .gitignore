@@ -1,5 +1,31 @@
-node_modules
-dist
-src-tauri/target
-src-tauri/gen/schemas
+# 依赖与产物
+node_modules/
+dist/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Android 工程（gen/android 只入库源码与 gradle 配置）
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/build/
+src-tauri/gen/android/local.properties
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/app/.cxx/
+src-tauri/gen/android/app/src/main/jniLibs/
+
+# ZCode 会话本地文件
+.zcode/
+
+# Android 签名（密钥库与凭据绝不入库）
+src-tauri/rein-release.keystore
+src-tauri/gen/android/keystore.properties
+
+# 本地构建脚本
+build-arm64.cmd
+
+# 日志与临时文件
+*.log
 *.local
+.DS_Store
+Thumbs.db
