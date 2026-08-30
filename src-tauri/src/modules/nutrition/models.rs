@@ -59,6 +59,16 @@ pub struct Profile {
     pub activity_level: String,
     pub goal: String,
     pub targets: DailyTargets,
+    /// 每周可训练天数（方案生成的频率上限）；NULL = 未设置
+    pub training_days_per_week: Option<i64>,
+    /// 偏好运动时段（morning/noon/evening 子集，JSON 文本列）
+    pub preferred_time_slots: Option<Vec<String>>,
+    /// 器械条件：gym（健身房）/ home（居家徒手）/ mixed；NULL = 未设置
+    pub equipment: Option<String>,
+    /// 忌口 / 过敏关键词列表（JSON 文本列），方案生成时过滤食谱
+    pub diet_restrictions: Option<Vec<String>>,
+    /// 训练经验：beginner / intermediate / advanced
+    pub experience: Option<String>,
 }
 
 /// 方案计算器参数快照：`saved_at` 为 NULL 表示从未保存过（前端回落到资料推导）。

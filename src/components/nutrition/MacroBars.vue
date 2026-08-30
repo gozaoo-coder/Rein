@@ -22,8 +22,7 @@ const pctOf = (m: MacroStat): number => (m.target <= 0 ? 0 : Math.min((m.current
       <div class="bar">
         <div
           class="fill"
-          :class="{ over: m.isLimit && m.current > m.target }"
-          :style="{ width: `${pctOf(m)}%`, background: `var(${m.colorVar})` }"
+          :style="{ '--p': `${pctOf(m)}%`, background: m.isLimit && m.current > m.target ? 'var(--danger)' : `var(${m.colorVar})` }"
         />
       </div>
     </li>
@@ -73,14 +72,11 @@ const pctOf = (m: MacroStat): number => (m.target <= 0 ? 0 : Math.min((m.current
   overflow: hidden;
 }
 
+/* 填充走 clip-path：不触发 layout，圆头随填充比例保持 */
 .fill {
   height: 100%;
   border-radius: inherit;
-  transition: width 600ms var(--ease-sheet);
-}
-
-/* 上限类营养超标：变红警示 */
-.fill.over {
-  background: var(--danger) !important;
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 </style>

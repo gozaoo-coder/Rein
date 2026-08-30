@@ -18,7 +18,9 @@ const editorOpen = ref(false)
 <template>
   <li class="item row" :class="{ done: todo.status === 'done' }">
     <button class="check" :aria-label="todo.status === 'done' ? '标记未完成' : '标记完成'" @click="store.toggle(todo)">
-      <Check v-if="todo.status === 'done'" :size="13" :stroke-width="3.2" />
+      <Transition name="ckin">
+        <Check v-if="todo.status === 'done'" :size="13" :stroke-width="3.2" />
+      </Transition>
     </button>
     <div class="flex-1 body" @click="editorOpen = true">
       <p class="title">{{ todo.title }}</p>
@@ -68,8 +70,22 @@ const editorOpen = ref(false)
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
-  transition: all var(--dur-fast) var(--ease-standard);
+  color: var(--on-accent);
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
+}
+
+/* 对勾弹入：120ms 不拖累连点 */
+.ckin-enter-active {
+  transition:
+    transform 120ms var(--ease-standard),
+    opacity 120ms var(--ease-standard);
+}
+
+.ckin-enter-from {
+  transform: scale(0.5);
+  opacity: 0;
 }
 
 .done .check {
@@ -79,16 +95,28 @@ const editorOpen = ref(false)
 
 .body {
   min-width: 0;
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.body:active {
+  opacity: 0.55;
 }
 
 .title {
   font-size: var(--fs-body);
   font-weight: 500;
+  /* 删除线常驻、颜色透明过渡：完成时划线像手写划过而非硬蹦 */
+  text-decoration: line-through;
+  text-decoration-color: transparent;
+  transition:
+    color var(--dur-base) var(--ease-standard),
+    text-decoration-color var(--dur-base) var(--ease-standard);
 }
 
 .done .title {
   color: var(--text-3);
-  text-decoration: line-through;
+  text-decoration-color: currentColor;
 }
 
 .meta {

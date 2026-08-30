@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
-import { Camera, Check, ChartPie, Eraser, History, SendHorizontal, Trash2, Wrench, X } from 'lucide-vue-next'
+import { useRoute, useRouter } from 'vue-router'
+import { Camera, Check, ChartPie, History, Plus, SendHorizontal, Trash2, Wrench, X } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
@@ -18,12 +18,13 @@ import { useAiStore } from '@/stores/ai'
 import { copyText } from '@/utils/clipboard'
 import { listFoodDrafts, removeFoodDraft, type FoodDraft } from '@/utils/foodDrafts'
 import { resizeImageAsJpeg } from '@/utils/image'
-import { fmtDateCn } from '@/utils/date'
+import { fmtDateCn, toDateStr } from '@/utils/date'
 import type { AiMessage, MealType } from '@/types'
 
 /** AI 页：拍照直识别（可编辑卡片 + 草稿箱）/ 文字记饮食 / 数据工具对话。 */
 const ai = useAiStore()
 const route = useRoute()
+const router = useRouter()
 const toast = useToast()
 
 /** 该工具是否为删除类高危操作（过程卡红色标注） */
@@ -59,7 +60,9 @@ function deleteDraft(id: string): void {
 
 function fmtDraftTime(iso: string): string {
   const d = new Date(iso)
-  return `${fmtDateCn(d.toISOString().slice(0, 10))} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  // 日期与时刻都用本地时区：toISOString() 取的是 UTC，两者混用会出现
+  // 「昨天 07:00」这类错位
+  return `${fmtDateCn(toDateStr(d))} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 const draft = ref('')
@@ -71,9 +74,8 @@ const attachment = ref<{ full: string; small: string | null } | null>(null)
 /** 每张解析卡选择的目标餐次，默认按当前时间推荐 */
 const mealByMsg = reactive<Record<string, MealType>>({})
 
-/** 历史抽屉 / 清空确认 / 长按菜单 / 引用 */
+/** 历史抽屉 / 长按菜单 / 引用 */
 const drawerOpen = ref(false)
-const clearTarget = ref(false)
 const menuTarget = ref<AiMessage | null>(null)
 const quote = ref<AiMessage | null>(null)
 
@@ -83,6 +85,18 @@ onMounted(() => {
   void scrollToBottom()
   if (route.query.intent === 'photo') fileEl.value?.click()
 })
+
+/* 其他页（桌面信息栏「问点什么」）带来的问题：预填进输入框并清掉 URL 参数 */
+watch(
+  () => route.query.ask,
+  (v) => {
+    if (typeof v === 'string' && v) {
+      draft.value = v
+      void router.replace({ query: { ...route.query, ask: undefined } })
+    }
+  },
+  { immediate: true },
+)
 
 watch(
   () => ai.messages.length,
@@ -193,11 +207,6 @@ async function onMenuSelect(value: string): Promise<void> {
     void ai.retract(m.id)
   }
 }
-
-function doClear(): void {
-  clearTarget.value = false
-  void ai.clearContext()
-}
 </script>
 
 <template>
@@ -209,8 +218,8 @@ function doClear(): void {
         </button>
       </template>
       <template #action>
-        <button class="hdr-btn" aria-label="清空上下文" @click="clearTarget = true">
-          <Eraser :size="16" />
+        <button class="hdr-btn accent" aria-label="新建对话" @click="ai.newChat()">
+          <Plus :size="17" :stroke-width="2.6" />
         </button>
         <ManageModelsButton />
       </template>
@@ -394,15 +403,6 @@ function doClear(): void {
       :actions="menuActions"
       @close="menuTarget = null"
       @select="onMenuSelect"
-    />
-
-    <!-- 清空上下文确认 -->
-    <ActionSheet
-      :open="clearTarget"
-      title="清空当前对话的上下文？聊天记录将被删除。"
-      :actions="[{ label: '清空上下文', value: 'clear', danger: true }]"
-      @close="clearTarget = false"
-      @select="doClear"
     />
   </div>
 </template>

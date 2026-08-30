@@ -13,6 +13,16 @@
           "sets": 4,
           "reps": 8,
           "weightKg": 60,
+          "warmups": [
+            {
+              "weightKg": 30,
+              "reps": 8
+            },
+            {
+              "weightKg": 45,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 90,
@@ -25,6 +35,12 @@
           "sets": 3,
           "reps": 10,
           "weightKg": 22,
+          "warmups": [
+            {
+              "weightKg": 10,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 90,
@@ -37,6 +53,12 @@
           "sets": 4,
           "reps": 10,
           "weightKg": 14,
+          "warmups": [
+            {
+              "weightKg": 7.5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 90,
@@ -61,6 +83,12 @@
           "sets": 3,
           "reps": 12,
           "weightKg": 25,
+          "warmups": [
+            {
+              "weightKg": 12.5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -85,6 +113,12 @@
           "sets": 3,
           "reps": 12,
           "weightKg": 20,
+          "warmups": [
+            {
+              "weightKg": 10,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -97,6 +131,12 @@
           "sets": 3,
           "reps": 12,
           "weightKg": 15,
+          "warmups": [
+            {
+              "weightKg": 7.5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -114,7 +154,9 @@
           "restSec": 45,
           "tips": "推日收尾补核心：骨盆微后倾，腹臀绷紧成一条直线。"
         }
-      ]
+      ],
+      "equipment": "gym",
+      "estDurationMin": 60
     },
     {
       "id": "ppl-pull",
@@ -141,6 +183,16 @@
           "sets": 4,
           "reps": 10,
           "weightKg": 40,
+          "warmups": [
+            {
+              "weightKg": 20,
+              "reps": 8
+            },
+            {
+              "weightKg": 30,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 90,
@@ -153,6 +205,16 @@
           "sets": 3,
           "reps": 12,
           "weightKg": 35,
+          "warmups": [
+            {
+              "weightKg": 17.5,
+              "reps": 8
+            },
+            {
+              "weightKg": 27.5,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 90,
@@ -165,6 +227,12 @@
           "sets": 3,
           "reps": 12,
           "weightKg": 15,
+          "warmups": [
+            {
+              "weightKg": 7.5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -177,6 +245,16 @@
           "sets": 3,
           "reps": 15,
           "weightKg": 50,
+          "warmups": [
+            {
+              "weightKg": 25,
+              "reps": 8
+            },
+            {
+              "weightKg": 37.5,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -189,6 +267,12 @@
           "sets": 3,
           "reps": 15,
           "weightKg": 15,
+          "warmups": [
+            {
+              "weightKg": 7.5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -201,6 +285,12 @@
           "sets": 3,
           "reps": 10,
           "weightKg": 20,
+          "warmups": [
+            {
+              "weightKg": 10,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -213,6 +303,12 @@
           "sets": 3,
           "reps": 12,
           "weightKg": 12,
+          "warmups": [
+            {
+              "weightKg": 5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -242,7 +338,9 @@
           "restSec": 45,
           "tips": "主攻前臂伸肌群（桡侧腕伸肌与指伸肌），与屈腕平衡防肘痛；轻重量、慢速全程控制。"
         }
-      ]
+      ],
+      "equipment": "gym",
+      "estDurationMin": 65
     },
     {
       "id": "ppl-legs",
@@ -257,6 +355,16 @@
           "sets": 4,
           "reps": 8,
           "weightKg": 70,
+          "warmups": [
+            {
+              "weightKg": 35,
+              "reps": 8
+            },
+            {
+              "weightKg": 52.5,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 150,
@@ -269,6 +377,16 @@
           "sets": 3,
           "reps": 10,
           "weightKg": 60,
+          "warmups": [
+            {
+              "weightKg": 30,
+              "reps": 8
+            },
+            {
+              "weightKg": 45,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 120,
@@ -281,6 +399,12 @@
           "sets": 3,
           "reps": 10,
           "weightKg": 16,
+          "warmups": [
+            {
+              "weightKg": 7.5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 90,
@@ -293,6 +417,16 @@
           "sets": 3,
           "reps": 12,
           "weightKg": 30,
+          "warmups": [
+            {
+              "weightKg": 15,
+              "reps": 8
+            },
+            {
+              "weightKg": 22.5,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -305,6 +439,16 @@
           "sets": 3,
           "reps": 15,
           "weightKg": 35,
+          "warmups": [
+            {
+              "weightKg": 17.5,
+              "reps": 8
+            },
+            {
+              "weightKg": 27.5,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -317,6 +461,16 @@
           "sets": 4,
           "reps": 15,
           "weightKg": 40,
+          "warmups": [
+            {
+              "weightKg": 20,
+              "reps": 8
+            },
+            {
+              "weightKg": 30,
+              "reps": 4
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 60,
@@ -329,6 +483,12 @@
           "sets": 3,
           "reps": 15,
           "weightKg": 25,
+          "warmups": [
+            {
+              "weightKg": 12.5,
+              "reps": 12
+            }
+          ],
           "targetSec": null,
           "durationMin": null,
           "restSec": 45,
@@ -346,7 +506,9 @@
           "restSec": 60,
           "tips": "下腹与髂腰肌，兼练握力；骨盆微微上卷带动腿部，不靠惯性甩腿。"
         }
-      ]
+      ],
+      "equipment": "gym",
+      "estDurationMin": 65
     },
     {
       "id": "core",
@@ -389,6 +551,690 @@
           "durationMin": 20,
           "restSec": 0,
           "tips": "轻松对话强度，心率约 130 bpm，结束后拉伸 5 分钟。"
+        }
+      ],
+      "equipment": null,
+      "estDurationMin": 20
+    },
+    {
+      "id": "gym-upper",
+      "name": "上肢日",
+      "subtitle": "胸背肩臂 · 器械",
+      "workoutType": "strength",
+      "equipment": "gym",
+      "estDurationMin": 55,
+      "exercises": [
+        {
+          "id": "gym-up-bench",
+          "name": "杠铃卧推",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 8,
+          "weightKg": 60,
+          "warmups": [
+            {
+              "weightKg": 30,
+              "reps": 8
+            },
+            {
+              "weightKg": 45,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "胸背肩臂的综合日主项：肩胛后收下沉，杆触胸不弹震，离心 2 秒。"
+        },
+        {
+          "id": "gym-up-row",
+          "name": "杠铃划船",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 10,
+          "weightKg": 40,
+          "warmups": [
+            {
+              "weightKg": 20,
+              "reps": 8
+            },
+            {
+              "weightKg": 30,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "俯身约 45°，杆沿大腿拉向小腹，背阔肌与中下束协同。"
+        },
+        {
+          "id": "gym-up-ohp",
+          "name": "坐姿哑铃肩推",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 14,
+          "warmups": [
+            {
+              "weightKg": 7.5,
+              "reps": 12
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "核心收紧不挺腰，下放至耳侧高度再推起。"
+        },
+        {
+          "id": "gym-up-lat",
+          "name": "高位下拉",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 35,
+          "warmups": [
+            {
+              "weightKg": 17.5,
+              "reps": 8
+            },
+            {
+              "weightKg": 27.5,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 75,
+          "tips": "肘朝下拉向口袋方向，用背发力而不是手臂硬拽。"
+        },
+        {
+          "id": "gym-up-lateral",
+          "name": "哑铃侧平举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 8,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "孤立三角肌中束；肘微屈锁住角度，举至与肩平。"
+        },
+        {
+          "id": "gym-up-pushdown",
+          "name": "绳索下压",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 20,
+          "warmups": [
+            {
+              "weightKg": 10,
+              "reps": 12
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "大臂夹紧躯干，下压到底挤压 1 秒再缓慢回放。"
+        },
+        {
+          "id": "gym-up-curl",
+          "name": "杠铃弯举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 20,
+          "warmups": [
+            {
+              "weightKg": 10,
+              "reps": 12
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "大臂贴身固定，离心 2 秒不甩腰借力。"
+        }
+      ]
+    },
+    {
+      "id": "gym-lower",
+      "name": "下肢日",
+      "subtitle": "全腿臀 · 器械",
+      "workoutType": "strength",
+      "equipment": "gym",
+      "estDurationMin": 60,
+      "exercises": [
+        {
+          "id": "gym-lo-squat",
+          "name": "杠铃深蹲",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 8,
+          "weightKg": 70,
+          "warmups": [
+            {
+              "weightKg": 35,
+              "reps": 8
+            },
+            {
+              "weightKg": 52.5,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 150,
+          "tips": "髋膝同时启动，蹲到大腿平行以下，核心全程绷住。"
+        },
+        {
+          "id": "gym-lo-rdl",
+          "name": "罗马尼亚硬拉",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 60,
+          "warmups": [
+            {
+              "weightKg": 30,
+              "reps": 8
+            },
+            {
+              "weightKg": 45,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 120,
+          "tips": "膝微屈固定，髋往后坐、杠贴腿下滑，腘绳肌有拉伸感。"
+        },
+        {
+          "id": "gym-lo-ext",
+          "name": "腿屈伸",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": 35,
+          "warmups": [
+            {
+              "weightKg": 17.5,
+              "reps": 8
+            },
+            {
+              "weightKg": 27.5,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "股四头孤立顶峰挤压 1 秒，缓慢回落。"
+        },
+        {
+          "id": "gym-lo-curl",
+          "name": "坐姿腿弯举",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": 30,
+          "warmups": [
+            {
+              "weightKg": 15,
+              "reps": 8
+            },
+            {
+              "weightKg": 22.5,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "回放要慢，不让配重砸落。"
+        },
+        {
+          "id": "gym-lo-calf",
+          "name": "站姿提踵",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 15,
+          "weightKg": 40,
+          "warmups": [
+            {
+              "weightKg": 20,
+              "reps": 8
+            },
+            {
+              "weightKg": 30,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "底部充分拉伸 1 秒、顶部踮到最高停 1 秒。"
+        },
+        {
+          "id": "gym-lo-raise",
+          "name": "悬垂举腿",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "骨盆微微上卷带动腿部，不靠惯性甩腿。"
+        }
+      ]
+    },
+    {
+      "id": "gym-fullbody",
+      "name": "全身日",
+      "subtitle": "蹲推拉 · 全身 2~3 次/周",
+      "workoutType": "strength",
+      "equipment": "gym",
+      "estDurationMin": 50,
+      "exercises": [
+        {
+          "id": "gym-fb-squat",
+          "name": "杠铃深蹲",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 8,
+          "weightKg": 70,
+          "warmups": [
+            {
+              "weightKg": 35,
+              "reps": 8
+            },
+            {
+              "weightKg": 52.5,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 120,
+          "tips": "髋膝同时启动，蹲到大腿平行以下；全身日容量适中，留 2~3 次余量。"
+        },
+        {
+          "id": "gym-fb-bench",
+          "name": "杠铃卧推",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 8,
+          "weightKg": 60,
+          "warmups": [
+            {
+              "weightKg": 30,
+              "reps": 8
+            },
+            {
+              "weightKg": 45,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 120,
+          "tips": "肩胛后收下沉，杆触胸不弹震，离心 2 秒。"
+        },
+        {
+          "id": "gym-fb-row",
+          "name": "杠铃划船",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 50,
+          "warmups": [
+            {
+              "weightKg": 25,
+              "reps": 8
+            },
+            {
+              "weightKg": 37.5,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "躯干前倾 45° 固定，杠拉到下腹，背阔肌发力带肘。"
+        },
+        {
+          "id": "gym-fb-ohp",
+          "name": "坐姿哑铃肩推",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 14,
+          "warmups": [
+            {
+              "weightKg": 7.5,
+              "reps": 12
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 90,
+          "tips": "核心收紧不挺腰，下放至耳侧高度。"
+        },
+        {
+          "id": "gym-fb-rdl",
+          "name": "罗马尼亚硬拉",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": 60,
+          "warmups": [
+            {
+              "weightKg": 30,
+              "reps": 8
+            },
+            {
+              "weightKg": 45,
+              "reps": 4
+            }
+          ],
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 120,
+          "tips": "膝微屈固定，髋往后坐、杠贴腿下滑，腘绳肌有拉伸感。"
+        },
+        {
+          "id": "gym-fb-plank",
+          "name": "平板支撑",
+          "kind": "timed",
+          "sets": 3,
+          "reps": null,
+          "weightKg": null,
+          "targetSec": 45,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "肘撑于肩正下方，身体成一条直线，均匀呼吸。"
+        }
+      ]
+    },
+    {
+      "id": "home-fullbody",
+      "name": "居家全身循环",
+      "subtitle": "徒手 · 全身唤醒",
+      "workoutType": "strength",
+      "equipment": "home",
+      "estDurationMin": 30,
+      "exercises": [
+        {
+          "id": "home-fb-pushup",
+          "name": "俯卧撑",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 12,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "身体成一条直线，胸部贴近地面再推起；做不动就跪姿完成。"
+        },
+        {
+          "id": "home-fb-squat",
+          "name": "徒手深蹲",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 15,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "脚与肩同宽，蹲到大腿平行，膝盖对准脚尖方向。"
+        },
+        {
+          "id": "home-fb-lunge",
+          "name": "反向弓步",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "每边各 10 次；后腿膝盖轻落地，重心压前脚跟。"
+        },
+        {
+          "id": "home-fb-glute",
+          "name": "臀桥",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "顶峰收紧臀部停 1 秒，不要用腰顶起来。"
+        },
+        {
+          "id": "home-fb-plank",
+          "name": "平板支撑",
+          "kind": "timed",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": 45,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "腹臀绷紧成一条直线，塌腰就休息。"
+        }
+      ]
+    },
+    {
+      "id": "home-upper",
+      "name": "居家上肢",
+      "subtitle": "推撑拉 · 徒手",
+      "workoutType": "strength",
+      "equipment": "home",
+      "estDurationMin": 30,
+      "exercises": [
+        {
+          "id": "home-up-pushup",
+          "name": "俯卧撑",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 12,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 75,
+          "tips": "标准俯卧撑为主项；力竭后跪姿补完组数。"
+        },
+        {
+          "id": "home-up-decline",
+          "name": "下斜俯卧撑（脚垫高）",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "脚垫高增加上胸与肩前束负荷，核心收紧防塌腰。"
+        },
+        {
+          "id": "home-up-dip",
+          "name": "椅式臂屈伸",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "手撑稳固椅沿，肘向后弯曲到底再撑起。"
+        },
+        {
+          "id": "home-up-row",
+          "name": "桌沿反向划船",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 15,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "仰卧抓稳固桌沿，身体拉向桌面，肩胛先收。"
+        },
+        {
+          "id": "home-up-plank",
+          "name": "平板支撑",
+          "kind": "timed",
+          "sets": 2,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": 45,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "上肢日收尾补核心。"
+        }
+      ]
+    },
+    {
+      "id": "home-lower",
+      "name": "居家下肢",
+      "subtitle": "蹲类提踵 · 徒手",
+      "workoutType": "strength",
+      "equipment": "home",
+      "estDurationMin": 35,
+      "exercises": [
+        {
+          "id": "home-lo-squat",
+          "name": "徒手深蹲",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 20,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "次数堆容量；节奏放慢、蹲到位比数量重要。"
+        },
+        {
+          "id": "home-lo-bulgarian",
+          "name": "保加利亚分腿蹲（自重）",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 75,
+          "tips": "后脚搭在凳上，每边各 10 次，重心压前脚跟。"
+        },
+        {
+          "id": "home-lo-single-glute",
+          "name": "单腿臀桥",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 60,
+          "tips": "每边各 12 次；骨盆保持水平不歪斜。"
+        },
+        {
+          "id": "home-lo-calf",
+          "name": "提踵",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 20,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "扶墙稳定，底部拉伸顶部踮满，节奏均匀。"
+        },
+        {
+          "id": "home-lo-wall-sit",
+          "name": "靠墙静蹲",
+          "kind": "timed",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": 45,
+          "durationMin": null,
+          "restSec": 45,
+          "tips": "大腿平行地面，膝盖不超过脚尖太多。"
+        }
+      ]
+    },
+    {
+      "id": "home-hiit",
+      "name": "居家燃脂间歇",
+      "subtitle": "HIIT · 无器械",
+      "workoutType": "hiit",
+      "equipment": "home",
+      "estDurationMin": 22,
+      "exercises": [
+        {
+          "id": "home-hiit-jumping-jack",
+          "name": "开合跳",
+          "kind": "timed",
+          "sets": 4,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": 40,
+          "durationMin": null,
+          "restSec": 20,
+          "tips": "热身兼燃脂，落地轻盈护膝踝。"
+        },
+        {
+          "id": "home-hiit-burpee",
+          "name": "波比跳",
+          "kind": "strength",
+          "sets": 4,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 30,
+          "tips": "动作质量优先：撑地—蹬跳—起身连贯但不含胸。"
+        },
+        {
+          "id": "home-hiit-high-knees",
+          "name": "高抬腿",
+          "kind": "timed",
+          "sets": 4,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": 30,
+          "durationMin": null,
+          "restSec": 30,
+          "tips": "膝盖抬至髋高，核心收紧节奏快。"
+        },
+        {
+          "id": "home-hiit-mountain",
+          "name": "登山跑",
+          "kind": "timed",
+          "sets": 3,
+          "reps": 10,
+          "weightKg": null,
+          "targetSec": 30,
+          "durationMin": null,
+          "restSec": 30,
+          "tips": "肩在腕正上方，膝盖快速交替拉向胸口。"
+        },
+        {
+          "id": "home-hiit-squat-jump",
+          "name": "深蹲跳",
+          "kind": "strength",
+          "sets": 3,
+          "reps": 12,
+          "weightKg": null,
+          "targetSec": null,
+          "durationMin": null,
+          "restSec": 30,
+          "tips": "蹲到平行再轻跳起，落地屈膝缓冲。"
         }
       ]
     }

@@ -169,6 +169,7 @@ async function save(): Promise<void> {
           :class="{ on: isDefault }"
           role="switch"
           :aria-checked="isDefault"
+          aria-label="设为默认"
           @click="isDefault = !isDefault"
         >
           <i />
@@ -264,7 +265,7 @@ async function save(): Promise<void> {
   padding: 14px 0;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-headline);
   font-weight: 700;
 }

@@ -46,7 +46,7 @@ onMounted(() => {
     <template v-if="store.allTodos.length > 3">
       <p class="foot t-3">
         按紧急程度排序 · 另有 {{ store.allTodos.length - 3 }} 条未展示
-        <router-link class="more" to="/todos">查看全部</router-link>
+        <router-link class="more pressable" to="/todos">查看全部</router-link>
       </p>
     </template>
     <p v-else-if="urgent.length" class="foot t-3">

@@ -225,7 +225,16 @@ async function onEntrySelect(value: string): Promise<void> {
 
       <!-- 历史 -->
       <ul class="hist">
-        <li v-for="(m, i) in n.metrics.slice(0, 5)" :key="m.id" @click="tapEntry(m)">
+        <li
+          v-for="(m, i) in n.metrics.slice(0, 5)"
+          :key="m.id"
+          role="button"
+          tabindex="0"
+          :aria-label="`编辑 ${fmtShort(m.date)} 的身体记录`"
+          @click="tapEntry(m)"
+          @keydown.enter.prevent="tapEntry(m)"
+          @keydown.space.prevent="tapEntry(m)"
+        >
           <span class="date num">
             {{ fmtShort(m.date) }}
             <i v-if="m.date === todayStr()">今天</i>
@@ -335,7 +344,7 @@ header > div > p {
 .stats b {
   display: block;
   margin-top: 2px;
-  font-size: 20px;
+  font-size: var(--fs-title2);
   font-weight: 700;
   letter-spacing: -0.3px;
 }
@@ -377,17 +386,17 @@ header > div > p {
 }
 
 .bmi-tag.ok {
-  background: rgba(52, 199, 89, 0.14);
+  background: var(--ok-soft);
   color: var(--c-protein);
 }
 
 .bmi-tag.warn {
-  background: rgba(255, 159, 10, 0.14);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
   color: var(--c-carb);
 }
 
 .bmi-tag.bad {
-  background: rgba(255, 59, 48, 0.12);
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
@@ -504,7 +513,7 @@ header > div > p {
   padding: 13px 0;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-headline);
   font-weight: 700;
 }

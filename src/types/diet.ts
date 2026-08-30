@@ -92,3 +92,10 @@ export interface FoodCreateResult {
   /** false = 库里已有同名，food 是既有记录 */
   created: boolean
 }
+
+/** 食谱偏好（食谱库 / AI 生成 / 方案引擎选菜共用）：1=喜欢 -1=不喜欢 */
+export interface RecipePref {
+  recipeId: string
+  rating: 1 | -1
+  updatedAt: string
+}

@@ -1,0 +1,155 @@
+/**
+ * 结营成绩单：把一份方案的执行数据聚合成「有没有用、改变了什么、下一步」。
+ *
+ * 复用 buildProgramReport 的口径（同一份 schedule/training/recordedDays），
+ * 在其上补齐：起点对照（体重 / 摄入 / 训练频率）、最长连续打卡、徽章判定、
+ * 下一期档位建议——全部纯前端规则，不引入新表。
+ */
+
+import { dietService } from '@/services/dietService'
+import { exerciseService } from '@/services/exerciseService'
+import { nutritionService } from '@/services/nutritionService'
+import { todoService } from '@/services/todoService'
+import { GOAL_LABELS, mealKcal } from '@/config/domain'
+import { addDays } from '@/utils/date'
+import { parseBlob } from '@/utils/programEngine'
+import { buildProgramReport, fmtRate, type ProgramReport } from '@/utils/programReport'
+import type { ProgramRecord, ProgramTier } from '@/types'
+
+export interface WrapupBadge {
+  emoji: string
+  title: string
+  sub: string
+}
+
+export interface WrapupCompare {
+  weight: { before: number | null; after: number | null }
+  intake: { before: number | null; after: number | null }
+  trainingFreq: { before: number; after: number }
+}
+
+export interface WrapupData {
+  report: ProgramReport
+  /** 完成度 0-1（日程 done/planned；planned=0 时 null） */
+  completion: number | null
+  /** 最长连续打卡天数（方案日程任一条目完成记 1 天） */
+  streakDays: number
+  compare: WrapupCompare
+  badges: WrapupBadge[]
+  /** 下一期档位建议（按完成率） */
+  nextTier: ProgramTier
+  nextTierText: string
+}
+
+/** 最长连续日期段长度（YYYY-MM-DD 字符串连续性） */
+function longestStreak(dates: string[]): number {
+  const sorted = [...new Set(dates)].sort()
+  let best = 0
+  let run = 0
+  let prev: string | null = null
+  for (const d of sorted) {
+    if (prev != null && addDays(prev, 1) === d) run += 1
+    else run = 1
+    best = Math.max(best, run)
+    prev = d
+  }
+  return best
+}
+
+const avg = (xs: number[]): number | null =>
+  xs.length ? Math.round(xs.reduce((s, x) => s + x, 0) / xs.length) : null
+
+/** 汇总一份方案的结营成绩单（只读） */
+export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
+  const blob = parseBlob(record)
+  const startDate = blob.days[0]?.date ?? ''
+  const endDate = blob.days.at(-1)?.date ?? startDate
+
+  const [report, metrics] = await Promise.all([buildProgramReport(record), nutritionService.listBodyMetrics(100)])
+
+  /* 连续打卡：方案日程任一条目完成即算当天打卡 */
+  const all = await todoService.listAllTodos()
+  const doneDates = all
+    .filter((t) => t.programId === record.id && t.status === 'done' && t.date)
+    .map((t) => t.date as string)
+  const streakDays = longestStreak(doneDates)
+
+  /* 起点对照：方案开始前 7 天的摄入与训练频率 + 体重首尾 */
+  const [beforeMeals, beforeWorkouts] = await Promise.all([
+    dietService.listMealsRange(addDays(startDate, -7), addDays(startDate, -1)),
+    exerciseService.listWorkouts(addDays(startDate, -7), addDays(startDate, -1)),
+  ])
+  const intakeBefore = avg(beforeMeals.map((m) => mealKcal(m) ?? 0).filter((x) => x > 0))
+
+  const weights = metrics
+    .filter((m) => m.weightKg != null && m.date >= startDate && m.date <= endDate)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((m) => m.weightKg as number)
+  const weightAfter = weights.length ? weights.at(-1)! : null
+  const weightBefore = weights.length ? weights[0]! : null
+
+  const completion =
+    report.schedule.planned > 0 ? report.schedule.done / report.schedule.planned : null
+
+  /* 徽章（纯前端规则） */
+  const badges: WrapupBadge[] = []
+  if (streakDays >= 3) {
+    badges.push({ emoji: '🔥', title: `连续打卡 ${streakDays} 天`, sub: '最长一段未间断的执行' })
+  }
+  const recordRate = report.plannedDays > 0 ? report.recordedDays / report.plannedDays : 0
+  if (report.recordedDays > 0 && recordRate >= 0.8) {
+    badges.push({ emoji: '🥗', title: `饮食记录 ${report.recordedDays} 天`, sub: `记录率 ${Math.round(recordRate * 100)}%，数据完整是复盘的前提` })
+  }
+  const trainingRate = report.training.planned > 0 ? report.training.done / report.training.planned : 0
+  if (report.training.planned > 0 && trainingRate >= 0.9) {
+    badges.push({ emoji: '💪', title: `训练完成率 ${Math.round(trainingRate * 100)}%`, sub: `${report.training.done}/${report.training.planned} 次全部兑现` })
+  } else if (report.weightDeltaKg != null && report.weightDeltaKg !== 0) {
+    const good =
+      (record.goal === 'cut' && report.weightDeltaKg < 0) ||
+      (record.goal === 'bulk' && report.weightDeltaKg > 0) ||
+      record.goal === 'keep'
+    if (good) {
+      badges.push({ emoji: '🎯', title: `体重变化 ${report.weightDeltaKg > 0 ? '+' : ''}${report.weightDeltaKg}kg`, sub: '朝目标方向真实移动了' })
+    }
+  }
+
+  /* 下一期档位：完成率决定，完成率比野心更重要 */
+  const rate = completion ?? 0.7
+  const nextTier: ProgramTier = rate < 0.6 ? 'conservative' : rate < 0.85 ? 'balanced' : 'aggressive'
+  const tierLabel = { conservative: '保守', balanced: '均衡', aggressive: '进取' }[nextTier]
+  const nextTierText =
+    completion == null
+      ? '这份方案没有日程记录，下一期建议从保守档起步，先把「完成」建立起来。'
+      : rate < 0.6
+        ? `完成率 ${fmtRate(report.schedule.done, report.schedule.planned)} 是唯一短板。下一期降为 ${tierLabel}档但保证完成，比高配只做一半更有效。`
+        : rate < 0.85
+          ? `完成率 ${fmtRate(report.schedule.done, report.schedule.planned)}，节奏可以稳住。下一期维持 ${tierLabel}档，在执行质量上做提升。`
+          : `完成率 ${fmtRate(report.schedule.done, report.schedule.planned)}，执行力有富余。下一期可以上 ${tierLabel}档试试更高的目标。`
+
+  return {
+    report,
+    completion,
+    streakDays,
+    compare: {
+      weight: { before: weightBefore, after: weightAfter },
+      intake: { before: intakeBefore, after: report.avgIntake },
+      trainingFreq: { before: beforeWorkouts.length, after: report.training.done },
+    },
+    badges,
+    nextTier,
+    nextTierText,
+  }
+}
+
+/** 成绩单副标题：`28 天 · 减脂 · 均衡档` */
+export function wrapupSubtitle(record: ProgramRecord): string {
+  const blobDays = (() => {
+    try {
+      return parseBlob(record).days.length
+    } catch {
+      return record.weeks * 7
+    }
+  })()
+  const tier = record.tier === 'conservative' ? '保守' : record.tier === 'aggressive' ? '进取' : '均衡'
+  return `${blobDays} 天 · ${GOAL_LABELS[record.goal]} · ${tier}档`
+}

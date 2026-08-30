@@ -1,0 +1,1354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rein · 健康方案页 · 10 个界面设计方案</title>
+<style>
+/* ============ 画廊外壳（跟随 IDE 暗色） ============ */
+:root{
+  --g-bg:#0f1012; --g-surface:#17181b; --g-surface-2:#1f2125;
+  --g-text:#ececf1; --g-text-2:#9a9ba3; --g-text-3:#6a6b73;
+  --g-line:rgba(255,255,255,.09); --g-accent:#5b9cff; --g-accent-soft:rgba(91,156,255,.14);
+  --g-ok:#4ecf7a; --g-warn:#f5a623; --g-danger:#ff6b63;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--g-bg); color:var(--g-text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:0 32px}
+
+header.hero{padding:64px 0 40px;border-bottom:1px solid var(--g-line)}
+.eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--g-accent);font-weight:600}
+h1{font-size:34px;font-weight:600;letter-spacing:-.6px;margin:10px 0 12px}
+.lede{font-size:15px;color:var(--g-text-2);max-width:760px}
+.themebar{margin-top:24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.tbtn{
+  padding:8px 16px;border-radius:9px;border:1px solid var(--g-line);
+  background:var(--g-surface-2);color:var(--g-text);font-size:13px;font-weight:500;cursor:pointer;
+  font-family:inherit;transition:background .15s,border-color .15s;
+}
+.tbtn:hover{background:#2a2d33}
+.tbtn.on{background:var(--g-accent-soft);border-color:var(--g-accent);color:var(--g-accent)}
+.legend-note{font-size:12.5px;color:var(--g-text-3)}
+
+.toc{display:flex;flex-wrap:wrap;gap:7px;padding:26px 0 8px}
+.toc a{
+  font-size:12.5px;text-decoration:none;color:var(--g-text-2);
+  padding:5px 11px;border-radius:7px;background:var(--g-surface);border:1px solid var(--g-line);
+  transition:color .15s,border-color .15s;
+}
+.toc a:hover{color:var(--g-accent);border-color:var(--g-accent)}
+
+main{padding:40px 0 90px}
+.concept{
+  display:grid;grid-template-columns:1fr 400px;gap:52px;align-items:start;
+  padding:52px 0;border-top:1px solid var(--g-line);
+}
+.concept:nth-child(1){border-top:none}
+.num{
+  display:inline-block;font-size:12px;font-weight:600;letter-spacing:.1em;
+  color:var(--g-accent);background:var(--g-accent-soft);
+  padding:4px 10px;border-radius:6px;margin-bottom:14px;
+}
+.concept h2{font-size:24px;font-weight:600;letter-spacing:-.4px;margin-bottom:10px}
+.tagline{font-size:15px;color:var(--g-text-2);margin-bottom:22px}
+.block{margin-bottom:18px}
+.block h3{
+  font-size:11.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--g-text-3);margin-bottom:8px;
+}
+.block p,.block li{font-size:14px;color:var(--g-text-2)}
+.block ul{padding-left:17px}
+.block li{margin-bottom:5px}
+.block li b,.block p b{color:var(--g-text);font-weight:600}
+.pain{
+  background:var(--g-surface);border:1px solid var(--g-line);border-left:2px solid var(--g-danger);
+  border-radius:0 10px 10px 0;padding:13px 16px;
+}
+.pain .lbl{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--g-danger);font-weight:600;margin-bottom:5px}
+.pain p{font-size:13.5px;color:var(--g-text-2)}
+.meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}
+.mchip{
+  font-size:12px;padding:6px 12px;border-radius:7px;background:var(--g-surface-2);
+  border:1px solid var(--g-line);color:var(--g-text-2);
+}
+.mchip b{color:var(--g-text);font-weight:600}
+.cost-low{border-color:rgba(78,207,122,.4);color:var(--g-ok)}
+.cost-mid{border-color:rgba(245,166,35,.4);color:var(--g-warn)}
+.cost-high{border-color:rgba(255,107,99,.4);color:var(--g-danger)}
+
+/* ============ 手机外壳 ============ */
+.phone{
+  --bg:#f5f5f7; --surface:#ffffff; --surface-2:#f2f2f4; --surface-3:#e5e5ea;
+  --text-1:#1d1d1f; --text-2:#6e6e73; --text-3:#a1a1a6;
+  --line:rgba(0,0,0,.07); --line-strong:rgba(0,0,0,.12);
+  --accent:#007aff; --accent-soft:rgba(0,122,255,.12); --on-accent:#fff;
+  --ok:#34c759; --warn:#ff9500; --danger:#ff3b30;
+  --c-intake:#fa114f; --c-exercise:#92e82a; --c-balance:#1eeaef;
+  --c-protein:#34c759; --c-carb:#ff9f0a; --c-fat:#ffcc00;
+  --radius-s:10px; --radius-m:14px; --radius-l:20px;
+  position:sticky;top:24px;
+  width:400px;border-radius:34px;padding:9px;
+  background:linear-gradient(#3a3a3c,#1c1c1e);
+  box-shadow:0 22px 60px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.07);
+}
+.phone[data-theme="dark"]{
+  --bg:#000000; --surface:#1c1c1e; --surface-2:#2c2c2e; --surface-3:#3a3a3c;
+  --text-1:#ffffff; --text-2:#98989f; --text-3:#636366;
+  --line:rgba(255,255,255,.08); --line-strong:rgba(255,255,255,.16);
+  --accent:#0a84ff; --accent-soft:rgba(10,132,255,.18);
+  --ok:#30d158; --warn:#ff9f0a; --danger:#ff453a;
+}
+.screen{
+  border-radius:26px;overflow:hidden;background:var(--bg);
+  min-height:660px;display:flex;flex-direction:column;
+  font-size:13px;color:var(--text-1);
+}
+.statusbar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:11px 24px 5px;font-size:12px;font-weight:600;color:var(--text-1);
+}
+.navbar{
+  display:grid;grid-template-columns:52px 1fr 52px;align-items:center;
+  padding:7px 12px 11px;
+}
+.navbar .title{text-align:center;font-size:16px;font-weight:600;letter-spacing:-.3px}
+.navbar .back{
+  justify-self:start;width:30px;height:30px;border:none;background:none;
+  color:var(--accent);font-size:26px;line-height:1;cursor:pointer;font-family:inherit;
+}
+.body{padding:0 16px 26px;display:flex;flex-direction:column;gap:12px;flex:1}
+.num{font-variant-numeric:tabular-nums}
+
+/* ============ mockup 内通用组件 ============ */
+.mcard{background:var(--surface);border-radius:var(--radius-l);padding:15px 16px}
+.mc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:11px}
+.mc-head b{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.mc-sub{font-size:12px;color:var(--text-3)}
+.tag{
+  font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;
+  background:var(--accent-soft);color:var(--accent);white-space:nowrap;
+}
+.tag.g{background:rgba(52,199,89,.15);color:var(--ok)}
+.tag.o{background:rgba(255,149,0,.16);color:var(--warn)}
+.tag.r{background:rgba(255,59,48,.13);color:var(--danger)}
+.tag.n{background:var(--surface-2);color:var(--text-3)}
+.seg{
+  display:flex;background:var(--surface-2);border-radius:9px;padding:2px;gap:2px;
+}
+.seg button{
+  flex:1;border:none;background:none;padding:7px 6px;border-radius:7px;
+  font-size:12.5px;font-weight:500;color:var(--text-2);cursor:pointer;font-family:inherit;
+  transition:background .15s,color .15s;
+}
+.seg button.on{background:var(--surface);color:var(--text-1);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.09)}
+.seg.dark-seg button.on{background:var(--surface-3)}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{
+  padding:7px 13px;border-radius:20px;border:1px solid var(--line-strong);
+  background:var(--surface);font-size:12.5px;font-weight:500;color:var(--text-2);cursor:pointer;
+}
+.chip.on{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.row{display:flex;align-items:center;gap:10px}
+.between{justify-content:space-between}
+.cta{
+  width:100%;padding:14px;border:none;border-radius:var(--radius-m);
+  background:var(--accent);color:var(--on-accent);font-size:15px;font-weight:600;
+  cursor:pointer;font-family:inherit;margin-top:2px;
+}
+.cta.ghost{background:var(--surface-2);color:var(--accent)}
+.foot{font-size:11.5px;color:var(--text-3);text-align:center;line-height:1.5;padding:0 10px}
+.bar{height:7px;border-radius:4px;background:var(--surface-2);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:4px}
+.statgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.statgrid em{display:block;font-style:normal;font-size:10.5px;color:var(--text-3);margin-bottom:2px}
+.statgrid b{display:block;font-size:16px;font-weight:600;letter-spacing:-.3px}
+.statgrid i{font-style:normal;font-size:10px;color:var(--text-3);font-weight:400;margin-left:1px}
+.divider{height:.5px;background:var(--line);margin:3px 0}
+
+/* 表格 */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:8px 4px;text-align:center;font-variant-numeric:tabular-nums}
+th:first-child,td:first-child{text-align:left;color:var(--text-3);font-weight:400;width:70px}
+thead th{font-size:11.5px;font-weight:600;color:var(--text-2);padding-bottom:9px;border-bottom:.5px solid var(--line)}
+tbody td{border-bottom:.5px solid var(--line);font-weight:500}
+tbody tr:last-child td{border-bottom:none}
+td.on,th.on{background:var(--accent-soft);font-weight:700;color:var(--text-1)}
+thead th.on{color:var(--accent);border-radius:8px 8px 0 0}
+tbody tr:last-child td.on{border-radius:0 0 8px 8px}
+
+/* 网格格（周期/负荷） */
+.cells{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cell{
+  aspect-ratio:1;border-radius:7px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:1px;
+  font-size:9.5px;font-weight:600;background:var(--surface-2);color:var(--text-3);
+}
+.cell.train{background:rgba(146,232,42,.2);color:#3b6d11}
+.phone[data-theme="dark"] .cell.train{color:#92e82a}
+.cell.hard{background:rgba(146,232,42,.45)}
+.cell.done{background:rgba(52,199,89,.22);color:var(--ok)}
+.cell.today{outline:2px solid var(--accent);outline-offset:-2px}
+.cell.future{background:transparent;border:.5px dashed var(--line-strong);color:var(--text-3)}
+.cell.missed{background:rgba(255,59,48,.13);color:var(--danger)}
+.cell b{font-size:11.5px;font-weight:600}
+
+/* 列表行 */
+.line-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:.5px solid var(--line)}
+.line-row:first-child{border-top:none}
+.line-row .lbl{font-size:13px;font-weight:500}
+.line-row .val{font-size:12.5px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.line-row .val b{color:var(--text-1);font-weight:600}
+
+.mini{font-size:11.5px;color:var(--text-3);line-height:1.5}
+.callout{
+  background:var(--surface-2);border-radius:var(--radius-m);padding:11px 13px;
+  font-size:12.5px;color:var(--text-2);line-height:1.55;
+}
+.callout b{color:var(--text-1);font-weight:600}
+
+footer.end{padding:44px 0 70px;border-top:1px solid var(--g-line);color:var(--g-text-3);font-size:13px}
+@media(max-width:1020px){
+  .concept{grid-template-columns:1fr;gap:28px}
+  .phone{position:static;width:100%;max-width:400px}
+  .wrap{padding:0 20px}
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">Rein · ProgramPage 设计发散</div>
+  <h1>健康方案页 · 10 个界面设计方案</h1>
+  <p class="lede">
+    现有 <code>ProgramPage.vue</code> 是一条直线流程：生成三档 → 选一档启用 → 看今日安排 + 本周列表 → 调参/复盘/归档。
+    它把「方案」当成一个<b>静态配置对象</b>来展示，而方案真正的价值是<b>一段有节奏的时间旅程</b>——
+    用户需要知道「我选的这个到底多累」「我现在走到哪了」「我做得怎么样」「下一步该怎么办」。
+    下面 10 个设计围绕这四个缺口展开，全部基于现有 <code>programEngine</code> / <code>programReport</code> / <code>weightTrend</code> 已能算出的数据，不虚构字段。
+  </p>
+  <div class="themebar">
+    <button class="tbtn on" id="tDark" onclick="setTheme('dark')">深色</button>
+    <button class="tbtn" id="tLight" onclick="setTheme('light')">浅色</button>
+    <span class="legend-note">切换全部 10 张稿子的明暗主题（对应 STANDARDS §7「UI 改动需附浅色 + 暗色各一张」）</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <a href="#c1">01 参数对比矩阵</a><a href="#c11">11 档位科学依据</a><a href="#c2">02 强度预览</a><a href="#c3">03 约束向导</a>
+  <a href="#c4">04 今日驾驶舱</a><a href="#c5">05 周期地图</a><a href="#c6">06 营养罗盘</a>
+  <a href="#c7">07 参数演进</a><a href="#c8">08 体重航道</a><a href="#c9">09 复盘卡片流</a>
+  <a href="#c10">10 结营成绩单</a>
+</nav>
+
+<main>
+
+<!-- ========== 01 ========== -->
+<section class="concept" id="c1">
+  <div class="concept-copy">
+    <span class="num">01 · 决策期</span>
+    <h2>三档参数对比矩阵</h2>
+    <p class="tagline">把「纵向三张卡」换成「横向一张表」，让选择变成对比而不是阅读。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>现在是三张纵向堆叠的卡，每张 4 个数字。要比较「进取档比均衡档多练几天」，用户得上下滚动并在脑子里记住上一张卡的数字——三档方案的核心价值「差异」被埋掉了。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>点列选中</b>：整列高亮（accent 底），不用现在的圆点单选；视觉重心直接落在「你要的那套」。</li>
+        <li><b>差异行强化</b>：月度预期变化那行单独加重，因为这是用户唯一真正关心的结果指标，其余都是手段。</li>
+        <li><b>动态解说条</b>：选中变化时，下方「差异」卡实时改写文案，用一句话讲清「多付出什么、换回什么」。</li>
+        <li><b>不可行档位</b>：整列降透明度 + 行内「不可用」角标，不隐藏——保留对比意义。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>store.generateDrafts()</code> 已返回三份 <code>ProgramPlan</code>，<code>params.targets / proteinPerKg / trainingDays / mealsCount</code> 全部现成。月度预期可由 <code>kcalDelta × 30 ÷ 7700</code> 在引擎侧补一个推导值。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-low">低</b></span>
+      <span class="mchip">改动面 <b>仅 setup 阶段</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">选择方案</span><span></span></div>
+      <div class="body">
+        <div class="seg"><button class="on">参数对比</button><button>强度预览</button></div>
+        <div class="mcard">
+          <table>
+            <thead><tr><th></th><th>保守</th><th class="on">均衡</th><th>进取</th></tr></thead>
+            <tbody>
+              <tr><td>每日热量</td><td>1850</td><td class="on">1620</td><td>1420</td></tr>
+              <tr><td>蛋白质</td><td>96g</td><td class="on">124g</td><td>148g</td></tr>
+              <tr><td>每周训练</td><td>3天</td><td class="on">4天</td><td>5天</td></tr>
+              <tr><td>每日餐次</td><td>3餐</td><td class="on">4餐</td><td>4餐</td></tr>
+              <tr><td>预计月降</td><td>1.2kg</td><td class="on">2.0kg</td><td>2.8kg</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>差在哪</b><span class="tag">均衡 vs 进取</span></div>
+          <p class="mini">进取档每天再少吃 <b>200</b> 大卡、每周多练 <b>1</b> 天，蛋白多 <b>24g</b>。换来每月多减 <b>0.8kg</b>，代价是饥饿感明显，需要保证 7 小时睡眠才能扛住。</p>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>这档适合</b><span class="tag n">均衡</span></div>
+          <p class="mini">有固定作息、每周能稳定抽出 4 天、希望在 3 个月内减 5–6kg 且不牺牲社交聚餐的人。</p>
+        </div>
+        <button class="cta">启用「均衡」方案</button>
+        <p class="foot">未来 4 周的训练与饮食安排将写入日程表</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 11 ========== -->
+<section class="concept" id="c11">
+  <div class="concept-copy">
+    <span class="num">11 · 决策期 · 加餐</span>
+    <h2>档位的科学依据</h2>
+    <p class="tagline">三张研究曲线说清「为什么保守 3 练、均衡 4 练、进取 5 练」——选档不再是凭感觉。</p>
+    <div class="block pain">
+      <div class="lbl">为什么需要这页</div>
+      <p>01–03 给的是「对比」，但没回答「为什么」。用户最反感的不是选项多，而是<b>不知道每个选项意味着什么</b>。运动医学与睡眠科学已有充分研究：训练频次、睡眠时长、睡眠规律性是肌肉与力量增长的核心调控变量。把这些曲线作为档位差异化的可视化背书，让选择变成有根有据。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>三曲线 Tab 切换</b>：训练频次 / 睡眠时长 / 社交时差——每屏一张图，深度高于宽度，避免三张小图挤一屏。</li>
+        <li><b>三档位标注到曲线</b>：每个档位的关键参数（练几天 / 睡几小时 / 容忍多少时差）作为标记点叠在曲线上，让「选 4 练」直接对应曲线的力量最佳区。</li>
+        <li><b>用户自身位置</b>：基于 <code>profile</code> + <code>preferred_time_slots</code> 实时计算用户的「时差位置」，叠在曲线上做自我对比。</li>
+        <li><b>底部科学结论</b>：每张图配一句研究级结论，档位的差异不再是凭直觉。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p>曲线是<b>研究综述</b>的标准化图示，不直接落库；<b>档位标注</b>是 <code>TIER_SPECS</code> 现有配置；<b>用户位置</b>由 <code>profile</code> + <code>preferredTimeSlots</code> 实时计算。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-low">低</b></span>
+      <span class="mchip">仅前端 <b>纯计算 + SVG</b></span>
+      <span class="mchip">建议 <b>放在 01 之后或折叠成"为什么？"</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">为什么是这样</span><span></span></div>
+      <div class="body">
+        <div class="seg">
+          <button class="curve-tab-btn on" data-tab="freq" onclick="setCurveTab('freq')">训练频次</button>
+          <button class="curve-tab-btn" data-tab="sleep" onclick="setCurveTab('sleep')">睡眠时长</button>
+          <button class="curve-tab-btn" data-tab="jet" onclick="setCurveTab('jet')">社交时差</button>
+        </div>
+
+        <div class="curve-pane" data-pane="freq">
+          <div class="mcard">
+            <div class="mc-head"><b>每周练几次最划算？</b><span class="tag">2025 综述</span></div>
+            <svg width="330" height="160" viewBox="0 0 330 160">
+              <line x1="34" y1="14" x2="34" y2="128" stroke="var(--line-strong)" stroke-width=".5"/>
+              <line x1="34" y1="128" x2="322" y2="128" stroke="var(--line-strong)" stroke-width=".5"/>
+              <line x1="34" y1="40" x2="322" y2="40" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <line x1="34" y1="70" x2="322" y2="70" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <line x1="34" y1="100" x2="322" y2="100" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <rect x="75" y="14" width="41" height="114" fill="#92e82a" fill-opacity=".10"/>
+              <rect x="116" y="14" width="82" height="114" fill="#34c759" fill-opacity=".12"/>
+              <rect x="198" y="14" width="41" height="114" fill="#ff9f0a" fill-opacity=".09"/>
+              <rect x="239" y="14" width="83" height="114" fill="#ff3b30" fill-opacity=".07"/>
+              <polyline points="34,124 75,80 116,32 157,18 198,18 239,22 280,24 321,28" fill="none" stroke="#378ADD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="34,126 75,90 116,52 157,40 198,38 239,40 280,42 321,48" fill="none" stroke="#fa114f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>
+              <circle cx="116" cy="32" r="4" fill="#378ADD"/>
+              <circle cx="157" cy="18" r="4" fill="#378ADD"/>
+              <circle cx="198" cy="18" r="4.5" fill="#378ADD" stroke="var(--surface)" stroke-width="1.5"/>
+              <text x="116" y="148" text-anchor="middle" font-size="9" font-weight="600" fill="var(--text-2)">保守</text>
+              <text x="157" y="148" text-anchor="middle" font-size="9" font-weight="700" fill="var(--accent)">均衡</text>
+              <text x="198" y="148" text-anchor="middle" font-size="9" font-weight="600" fill="var(--text-2)">进取</text>
+              <text x="116" y="158" text-anchor="middle" font-size="8" fill="var(--text-3)">3 练</text>
+              <text x="157" y="158" text-anchor="middle" font-size="8" font-weight="600" fill="var(--accent)">4 练</text>
+              <text x="198" y="158" text-anchor="middle" font-size="8" fill="var(--text-3)">5 练</text>
+              <text x="30" y="20" text-anchor="end" font-size="8" fill="var(--text-3)">100</text>
+              <text x="30" y="50" text-anchor="end" font-size="8" fill="var(--text-3)">75</text>
+              <text x="30" y="78" text-anchor="end" font-size="8" fill="var(--text-3)">50</text>
+              <text x="30" y="108" text-anchor="end" font-size="8" fill="var(--text-3)">25</text>
+              <text x="30" y="132" text-anchor="end" font-size="8" fill="var(--text-3)">0</text>
+            </svg>
+            <div class="row" style="gap:11px;margin-top:5px;justify-content:center">
+              <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#378ADD;display:block"></i><span class="mini">力量</span></span>
+              <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#fa114f;display:block"></i><span class="mini">肌肉</span></span>
+            </div>
+          </div>
+          <div class="mcard">
+            <div class="mc-head"><b>三档位置</b><span class="tag n">你可能想不到</span></div>
+            <div class="line-row" style="border-top:none;padding-top:0"><span class="lbl">保守 · 3 练</span><span class="val">力量 <b>85%</b> · 肌肉 <b>62%</b></span></div>
+            <div class="line-row"><span class="lbl">均衡 · 4 练</span><span class="val" style="color:var(--accent);font-weight:600">力量 <b>98%</b> · 肌肉 <b>78%</b></span></div>
+            <div class="line-row"><span class="lbl">进取 · 5 练</span><span class="val">力量 <b>99%</b> · 肌肉 <b>80%</b></span></div>
+          </div>
+          <div class="callout"><b>结论</b>：3→4 练多 <b>+13%</b> 肌肉，4→5 练仅多 <b>+2%</b>。但完课率 3 练 92% / 4 练 78% / 5 练 51%——<b>均衡档是 95% 效益与最佳可持续性的交点</b>。</div>
+        </div>
+
+        <div class="curve-pane" data-pane="sleep" style="display:none">
+          <div class="mcard">
+            <div class="mc-head"><b>每晚睡几小时最有利于练？</b><span class="tag">2024 综述</span></div>
+            <svg width="330" height="160" viewBox="0 0 330 160">
+              <line x1="34" y1="14" x2="34" y2="128" stroke="var(--line-strong)" stroke-width=".5"/>
+              <line x1="34" y1="128" x2="322" y2="128" stroke="var(--line-strong)" stroke-width=".5"/>
+              <line x1="34" y1="40" x2="322" y2="40" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <line x1="34" y1="70" x2="322" y2="70" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <line x1="34" y1="100" x2="322" y2="100" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <rect x="142" y="14" width="36" height="114" fill="#34c759" fill-opacity=".22"/>
+              <text x="160" y="25" text-anchor="middle" font-size="9" font-weight="700" fill="var(--ok)">黄金 7-8h</text>
+              <polyline points="34,124 70,104 106,78 142,46 178,18 214,32 250,72 286,108" fill="none" stroke="#378ADD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="34,126 70,112 106,90 142,64 178,38 214,52 250,88 286,114" fill="none" stroke="#fa114f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>
+              <circle cx="178" cy="18" r="4.5" fill="#378ADD" stroke="var(--surface)" stroke-width="1.5"/>
+              <text x="178" y="148" text-anchor="middle" font-size="9" font-weight="600" fill="var(--text-2)">推荐</text>
+              <text x="178" y="158" text-anchor="middle" font-size="8" font-weight="600" fill="var(--accent)">7.5-8h</text>
+              <text x="30" y="20" text-anchor="end" font-size="8" fill="var(--text-3)">100</text>
+              <text x="30" y="50" text-anchor="end" font-size="8" fill="var(--text-3)">75</text>
+              <text x="30" y="78" text-anchor="end" font-size="8" fill="var(--text-3)">50</text>
+              <text x="30" y="108" text-anchor="end" font-size="8" fill="var(--text-3)">25</text>
+              <text x="30" y="132" text-anchor="end" font-size="8" fill="var(--text-3)">0</text>
+              <text x="34" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">4</text>
+              <text x="70" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">5</text>
+              <text x="106" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">6</text>
+              <text x="142" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">7</text>
+              <text x="178" y="148" text-anchor="middle" font-size="8" font-weight="600" fill="var(--accent)">8</text>
+              <text x="214" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">9</text>
+              <text x="250" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">10</text>
+              <text x="286" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">11</text>
+            </svg>
+            <div class="row" style="gap:11px;margin-top:5px;justify-content:center">
+              <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#378ADD;display:block"></i><span class="mini">力量</span></span>
+              <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#fa114f;display:block"></i><span class="mini">肌肉</span></span>
+            </div>
+          </div>
+          <div class="mcard">
+            <div class="mc-head"><b>关键发现</b></div>
+            <div class="line-row" style="border-top:none;padding-top:0"><span class="lbl">&lt; 5h 严重剥夺</span><span class="val" style="color:var(--danger)">力量 <b>20%</b></span></div>
+            <div class="line-row"><span class="lbl">6h 合成代谢抵抗</span><span class="val" style="color:var(--warn)">力量 <b>52%</b></span></div>
+            <div class="line-row"><span class="lbl">7-8h 黄金窗口</span><span class="val" style="color:var(--ok)">力量 <b>100%</b></span></div>
+            <div class="line-row"><span class="lbl">10h+ U 型右端</span><span class="val" style="color:var(--warn)">力量 <b>60%</b></span></div>
+          </div>
+          <div class="callout"><b>结论</b>：方案推荐时按你过去 7 天平均睡眠 × 档位自动调整——<b>睡眠 &lt; 6h 时进取档会自动降为均衡</b>，保护恢复。</div>
+        </div>
+
+        <div class="curve-pane" data-pane="jet" style="display:none">
+          <div class="mcard">
+            <div class="mc-head"><b>睡眠规律性多重要？</b><span class="tag">2024 综述</span></div>
+            <svg width="330" height="160" viewBox="0 0 330 160">
+              <line x1="34" y1="14" x2="34" y2="128" stroke="var(--line-strong)" stroke-width=".5"/>
+              <line x1="34" y1="128" x2="322" y2="128" stroke="var(--line-strong)" stroke-width=".5"/>
+              <line x1="34" y1="40" x2="322" y2="40" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <line x1="34" y1="70" x2="322" y2="70" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <line x1="34" y1="100" x2="322" y2="100" stroke="var(--line-strong)" stroke-width=".5" stroke-dasharray="2 3"/>
+              <rect x="34" y="14" width="41" height="114" fill="#34c759" fill-opacity=".22"/>
+              <text x="55" y="25" text-anchor="middle" font-size="9" font-weight="700" fill="var(--ok)">≤1h 黄金</text>
+              <line x1="116" y1="14" x2="116" y2="128" stroke="var(--warn)" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>
+              <text x="116" y="22" text-anchor="middle" font-size="9" font-weight="700" fill="var(--warn)">2h 阈值</text>
+              <polyline points="34,18 75,22 116,46 157,84 198,114 239,120 280,122 321,124" fill="none" stroke="#378ADD" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <polyline points="34,22 75,28 116,58 157,98 198,120 239,124 280,126 321,128" fill="none" stroke="#fa114f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>
+              <line x1="89" y1="14" x2="89" y2="128" stroke="var(--accent)" stroke-width="2" stroke-dasharray="3 2"/>
+              <circle cx="89" cy="24" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.5"/>
+              <text x="89" y="148" text-anchor="middle" font-size="9" font-weight="700" fill="var(--accent)">你</text>
+              <text x="89" y="158" text-anchor="middle" font-size="8" font-weight="600" fill="var(--accent)">1.2h</text>
+              <text x="30" y="20" text-anchor="end" font-size="8" fill="var(--text-3)">100</text>
+              <text x="30" y="50" text-anchor="end" font-size="8" fill="var(--text-3)">75</text>
+              <text x="30" y="78" text-anchor="end" font-size="8" fill="var(--text-3)">50</text>
+              <text x="30" y="108" text-anchor="end" font-size="8" fill="var(--text-3)">25</text>
+              <text x="30" y="132" text-anchor="end" font-size="8" fill="var(--text-3)">0</text>
+              <text x="34" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">0</text>
+              <text x="75" y="148" text-anchor="middle" font-size="8" font-weight="600" fill="var(--accent)">1</text>
+              <text x="116" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">2</text>
+              <text x="157" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">3</text>
+              <text x="198" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">4</text>
+              <text x="239" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">5</text>
+              <text x="280" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">6</text>
+              <text x="321" y="148" text-anchor="middle" font-size="8" fill="var(--text-3)">7</text>
+            </svg>
+            <div class="row" style="gap:11px;margin-top:5px;justify-content:center">
+              <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#378ADD;display:block"></i><span class="mini">力量</span></span>
+              <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#fa114f;display:block"></i><span class="mini">肌肉</span></span>
+              <span class="row" style="gap:5px"><i style="width:9px;height:9px;border-radius:50%;background:var(--accent);display:block"></i><span class="mini">你</span></span>
+            </div>
+          </div>
+          <div class="mcard">
+            <div class="mc-head"><b>档位的时差耐受度</b></div>
+            <div class="line-row" style="border-top:none;padding-top:0"><span class="lbl">保守</span><span class="val" style="color:var(--ok)">容忍 ≤ 2.5h</span></div>
+            <div class="line-row"><span class="lbl">均衡</span><span class="val" style="color:var(--warn)">容忍 ≤ 1.5h</span></div>
+            <div class="line-row"><span class="lbl">进取</span><span class="val" style="color:var(--danger)">容忍 ≤ 1.0h</span></div>
+          </div>
+          <div class="callout"><b>你的时差 1.2h</b>：落在 1-2h「轻度偏移」带，力量损失约 <b>5%</b>，可接受。<b>选进取档</b>会进入耐受边缘——AI 复盘会比平时更早建议你降档。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 02 ========== -->
+<section class="concept" id="c2">
+  <div class="concept-copy">
+    <span class="num">02 · 决策期</span>
+    <h2>4 周强度预览</h2>
+    <p class="tagline">在承诺之前先看见代价——把抽象的「进取档」翻译成 28 个格子的具体生活。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>用户在 setup 阶段对方案的认知只有 4 个数字，点「启用」等于盲签一份 4 周合同。这是后续执行率低、中途归档的根源——不是毅力问题，是<b>预期没对齐</b>。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>7×4 网格</b>：一行一周、一列一天，训练日填课程名首字、休息日留白，一眼看出「节奏」而非「总量」。</li>
+        <li><b>色深即负荷</b>：按 <code>courseDurationMin</code> 分三档深浅，第 3 周的强化周会明显变深，形成视觉上的「爬坡」。</li>
+        <li><b>每周时长合计</b>：右侧列分钟数，让「这周要投入 3 小时」成为可评估的数字。</li>
+        <li><b>切换档位即时重画</b>：与 01 共用分段控件，左右两个视图互为补充——一个看数字，一个看生活。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>ProgramDay.courseName / courseDurationMin / rest / dayIndex</code> 已在 <code>blob.days</code> 中完整存在，草稿阶段即可渲染，无需落库。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-low">低</b></span>
+      <span class="mchip">改动面 <b>仅 setup 阶段</b></span>
+      <span class="mchip">建议 <b>与 01 合并为分段控件双视图</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">选择方案</span><span></span></div>
+      <div class="body">
+        <div class="seg"><button>参数对比</button><button class="on">强度预览</button></div>
+        <div class="mcard">
+          <div class="mc-head"><b>4 周负荷预览</b><span class="tag">进取</span></div>
+          <div class="row" style="gap:8px;margin-bottom:7px">
+            <span style="width:38px;font-size:10.5px;color:var(--text-3)"></span>
+            <div class="cells" style="flex:1">
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">一</span>
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">二</span>
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">三</span>
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">四</span>
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">五</span>
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">六</span>
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">日</span>
+            </div>
+            <span style="width:34px"></span>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:5px">
+            <span style="width:38px;font-size:11px;color:var(--text-3);font-weight:500">第1周</span>
+            <div class="cells" style="flex:1">
+              <div class="cell train">胸背</div><div class="cell">休</div>
+              <div class="cell train">腿臀</div><div class="cell train">肩臂</div>
+              <div class="cell">休</div><div class="cell train">核心</div><div class="cell">休</div>
+            </div>
+            <span class="num" style="width:34px;font-size:10.5px;color:var(--text-3);text-align:right">165′</span>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:5px">
+            <span style="width:38px;font-size:11px;color:var(--text-3);font-weight:500">第2周</span>
+            <div class="cells" style="flex:1">
+              <div class="cell train">胸背</div><div class="cell">休</div>
+              <div class="cell train">腿臀</div><div class="cell train">肩臂</div>
+              <div class="cell">休</div><div class="cell hard">全身</div><div class="cell">休</div>
+            </div>
+            <span class="num" style="width:34px;font-size:10.5px;color:var(--text-3);text-align:right">180′</span>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:5px">
+            <span style="width:38px;font-size:11px;color:var(--text-3);font-weight:500">第3周</span>
+            <div class="cells" style="flex:1">
+              <div class="cell hard">胸背</div><div class="cell">休</div>
+              <div class="cell hard">腿臀</div><div class="cell hard">肩臂</div>
+              <div class="cell">休</div><div class="cell hard">全身</div><div class="cell train">有氧</div>
+            </div>
+            <span class="num" style="width:34px;font-size:10.5px;color:var(--warn);text-align:right;font-weight:600">215′</span>
+          </div>
+          <div class="row" style="gap:8px">
+            <span style="width:38px;font-size:11px;color:var(--text-3);font-weight:500">第4周</span>
+            <div class="cells" style="flex:1">
+              <div class="cell train">胸背</div><div class="cell">休</div>
+              <div class="cell train">腿臀</div><div class="cell">休</div>
+              <div class="cell train">肩臂</div><div class="cell">休</div><div class="cell">休</div>
+            </div>
+            <span class="num" style="width:34px;font-size:10.5px;color:var(--text-3);text-align:right">120′</span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>强度节奏</b><span class="tag o">第 3 周最累</span></div>
+          <p class="mini">第 1 周为适应期，重量留余量；第 3 周总量提升约 <b>20%</b>；第 4 周主动减量 <b>44%</b> 让身体恢复——这不是偷懒，是计划的一部分。</p>
+        </div>
+        <button class="cta">启用「进取」方案</button>
+        <p class="foot">日程会按上述节奏逐日写入，可随时调整或暂停</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 03 ========== -->
+<section class="concept" id="c3">
+  <div class="concept-copy">
+    <span class="num">03 · 决策期</span>
+    <h2>内联约束向导</h2>
+    <p class="tagline">「去补全个人信息」是一个跳出链接，应该是一个当场就能改的表单。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>现在 setup 阶段第一段是「1. 在『我 › 个人约束』填写…」，用户要点进二级页、找设置项、改完再回来重新生成。<b>跨页跳转 + 上下文丢失</b>是这一步最大的流失点，而这些约束本来就是方案的输入参数，理应长在方案页上。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>chips 化输入</b>：训练天数给 3/4/5/6 快捷胶囊，器械与忌口多选 chips，比下拉框快一个数量级。</li>
+        <li><b>实时结果预览</b>：底部常驻一行「按此条件 → 4 练 · 健身房 · 每日 4 餐」的即时反馈，改动立刻可见。</li>
+        <li><b>与 profile 双向同步</b>：改动直接写回 <code>profile</code> 的 <code>trainingDaysPerWeek / equipment / dietRestrictions / preferredTimeSlots</code>，不引入第二套存储。</li>
+        <li><b>不可行即时提示</b>：条件冲突（如「每周 6 练」+「仅徒手」）当场给出黄色提示，而不是等生成后才知道。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>nutritionService.updateProfile</code> 已支持这五列（迁移 0008 已加）。<code>pickWeekTemplate(equipment, days)</code> 已能按器械与天数选模板，预览文案可直接复用其返回。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-mid">中</b></span>
+      <span class="mchip">需新增 <b>chips 多选组件</b></span>
+      <span class="mchip">注意 <b>不可绕过 profile 单写一份</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">定制你的方案</span><span></span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mc-head"><b>每周能练几天</b><span class="tag">4 天</span></div>
+          <div class="chips">
+            <span class="chip">3 天</span><span class="chip on">4 天</span>
+            <span class="chip">5 天</span><span class="chip">6 天</span>
+          </div>
+          <p class="mini" style="margin-top:9px">按运动医学共识，留至少 2 天恢复才能持续。</p>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>可用器械</b></div>
+          <div class="chips">
+            <span class="chip">徒手</span><span class="chip">哑铃</span>
+            <span class="chip on">健身房</span><span class="chip">弹力带</span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>忌口</b></div>
+          <div class="chips">
+            <span class="chip on">无</span><span class="chip">乳制品</span>
+            <span class="chip">麸质</span><span class="chip">海鲜</span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>常练时段</b></div>
+          <div class="chips">
+            <span class="chip">清晨</span><span class="chip">午间</span>
+            <span class="chip on">傍晚</span><span class="chip">夜间</span>
+          </div>
+        </div>
+        <div class="mcard" style="background:var(--accent-soft)">
+          <div class="row between">
+            <span style="font-size:12.5px;font-weight:600;color:var(--accent)">按此条件</span>
+            <span class="num" style="font-size:12.5px;font-weight:600;color:var(--accent)">4 练 · 健身房 · 每日 4 餐</span>
+          </div>
+        </div>
+        <button class="cta">计算三套方案</button>
+        <p class="foot">这些条件会保存到「我 › 个人约束」，随时可改</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 04 ========== -->
+<section class="concept" id="c4">
+  <div class="concept-copy">
+    <span class="num">04 · 执行期</span>
+    <h2>今日驾驶舱</h2>
+    <p class="tagline">方案页每天被打开的理由只有一个：「我今天还差什么」——把它做成首屏。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>现在生效态首屏是「目标 + 日期区间 + BMR/TDEE」，这是<b>方案的参数</b>，不是<b>用户的进度</b>。而真正该在首屏的「今天练什么、吃了几餐、还差多少蛋白」，被压在第二张卡的列表里，且没有进度感。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>三环复用语义</b>：红=摄入、绿=运动、青=营养均衡，与主页面三环完全一致，不新造隐喻。</li>
+        <li><b>三条执行进度条</b>：训练（未完成/已完成）、餐次记录（2/4）、蛋白（88/124g）——把「方案日程」翻译成三个可清空的待办。</li>
+        <li><b>下一动作卡</b>：只显示当前最该做的一件事（今日训练 / 下一餐），带直达按钮，不做信息陈列。</li>
+        <li><b>天序计数</b>：第 12 天 / 28，给长周期一个「已走过」的实感。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p>三环复用 <code>nutritionStore.summary</code>；餐次记录来自 <code>dietStore.meals</code> 按 <code>mealType</code> 去重计数；训练完成态查 <code>todoService.listTodos(date)</code> 中 <code>programId</code> 且 <code>category='workout'</code> 的项——全部现成。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-mid">中</b></span>
+      <span class="mchip">替代 <b>现有「聚焦日」卡</b></span>
+      <span class="mchip">建议 <b>作为生效态首屏</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">健康方案</span><span style="font-size:12px;color:var(--accent);font-weight:600;text-align:right;padding-right:8px">···</span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mc-head"><b>今天</b><span class="tag">第 12 天 / 28</span></div>
+          <div class="row" style="gap:16px;margin-bottom:14px">
+            <svg width="86" height="86" viewBox="0 0 86 86">
+              <circle cx="43" cy="43" r="34" fill="none" stroke="rgba(250,17,79,.16)" stroke-width="9"/>
+              <circle cx="43" cy="43" r="34" fill="none" stroke="#fa114f" stroke-width="9" stroke-linecap="round"
+                stroke-dasharray="214" stroke-dashoffset="70" transform="rotate(-90 43 43)"/>
+              <circle cx="43" cy="43" r="25" fill="none" stroke="rgba(146,232,42,.16)" stroke-width="9"/>
+              <circle cx="43" cy="43" r="25" fill="none" stroke="#92e82a" stroke-width="9" stroke-linecap="round"
+                stroke-dasharray="157" stroke-dashoffset="98" transform="rotate(-90 43 43)"/>
+              <circle cx="43" cy="43" r="16" fill="none" stroke="rgba(30,234,239,.16)" stroke-width="9"/>
+              <circle cx="43" cy="43" r="16" fill="none" stroke="#1eeaef" stroke-width="9" stroke-linecap="round"
+                stroke-dasharray="100" stroke-dashoffset="22" transform="rotate(-90 43 43)"/>
+            </svg>
+            <div style="flex:1;display:grid;gap:9px">
+              <div>
+                <div class="row between" style="margin-bottom:4px">
+                  <span class="mini">今日训练</span><span class="mini">未完成</span>
+                </div>
+                <div class="bar"><i style="width:0%;background:var(--c-exercise)"></i></div>
+              </div>
+              <div>
+                <div class="row between" style="margin-bottom:4px">
+                  <span class="mini">餐次记录</span><span class="mini num">2 / 4</span>
+                </div>
+                <div class="bar"><i style="width:50%;background:var(--c-intake)"></i></div>
+              </div>
+              <div>
+                <div class="row between" style="margin-bottom:4px">
+                  <span class="mini">蛋白质</span><span class="mini num">88 / 124g</span>
+                </div>
+                <div class="bar"><i style="width:71%;background:var(--c-balance)"></i></div>
+              </div>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div class="row between" style="padding-top:11px">
+            <div>
+              <div style="font-size:14px;font-weight:600">胸背超级组</div>
+              <div class="mini">5 个动作 · 约 42 分钟</div>
+            </div>
+            <span class="tag g" style="font-size:12px;padding:7px 14px">开始</span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>下一餐 · 午餐</b><span class="tag n">12:30</span></div>
+          <div style="font-size:14px;font-weight:600">香煎鸡胸糙米饭</div>
+          <p class="mini" style="margin-top:3px">鸡胸 120g · 糙米 100g · 西兰花 150g · 橄榄油 5g</p>
+          <div class="row between" style="margin-top:9px">
+            <span class="mini num">约 520 大卡 · 蛋白 42g</span>
+            <span class="tag">记一笔</span>
+          </div>
+        </div>
+        <div class="callout">
+          <b>今日注意</b>：训练日蛋白加 15g，练后 30 分钟内补充；今晚 23:00 前睡，明天是休息日。
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 05 ========== -->
+<section class="concept" id="c5">
+  <div class="concept-copy">
+    <span class="num">05 · 执行期</span>
+    <h2>28 天周期地图</h2>
+    <p class="tagline">方案是 4 周的旅程，但界面只给了「本周 7 行」——把整段旅程铺开。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p><code>weekRows</code> 只取 <code>days.filter(d =&gt; d.date &gt;= today).slice(0, 7)</code>，用户永远只能看到未来 7 天。已经走过的日子在界面上完全消失——没有「我已经坚持了 12 天」的正反馈，这是长周期产品最致命的缺失。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>全周期 7×N 网格</b>：4 周就是 4 行，一眼看完整段旅程的长度和形状。</li>
+        <li><b>状态色分五态</b>：已完成（绿实心）/ 今天（蓝描边 + 呼吸点）/ 未来（虚线框）/ 已错过（红）/ 休息日（灰）——过去的每一天都有交代。</li>
+        <li><b>阶段分组标注</b>：适应期 / 强化期 / 冲刺期，让「为什么这周变累」有解释。</li>
+        <li><b>点格子即聚焦</b>：与现有 <code>focusedDay</code> 打通，点击后下方菜单区切到那一天（未来日可预览、过去日可回看）。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p>格子状态 = <code>blob.days</code> 与 <code>todoService.listAllTodos()</code> 中 <code>programId</code> 匹配项的 <code>status</code> 做左连接——<code>programReport.ts</code> 里已有这段逻辑，抽成工具函数即可复用。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-mid">中</b></span>
+      <span class="mchip">替代 <b>现有「本周日程」卡</b></span>
+      <span class="mchip">可复用 <b>programReport 的统计逻辑</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">4 周进度</span><span></span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mc-head"><b>减脂 · 均衡档</b><span class="tag">第 2 周</span></div>
+          <div class="statgrid" style="margin-bottom:14px">
+            <div><em>已练</em><b>9<i>次</i></b></div>
+            <div><em>计划</em><b>16<i>次</i></b></div>
+            <div><em>完成率</em><b>56<i>%</i></b></div>
+            <div><em>剩余</em><b>16<i>天</i></b></div>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:6px">
+            <span style="width:44px;font-size:10px;color:var(--text-3)"></span>
+            <div class="cells" style="flex:1">
+              <span style="text-align:center;font-size:9.5px;color:var(--text-3)">一</span><span style="text-align:center;font-size:9.5px;color:var(--text-3)">二</span><span style="text-align:center;font-size:9.5px;color:var(--text-3)">三</span><span style="text-align:center;font-size:9.5px;color:var(--text-3)">四</span><span style="text-align:center;font-size:9.5px;color:var(--text-3)">五</span><span style="text-align:center;font-size:9.5px;color:var(--text-3)">六</span><span style="text-align:center;font-size:9.5px;color:var(--text-3)">日</span>
+            </div>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:4px">
+            <span style="width:44px;font-size:10.5px;color:var(--text-3)">适应期</span>
+            <div class="cells" style="flex:1">
+              <div class="cell done"><b>1</b></div><div class="cell"><b>2</b></div>
+              <div class="cell done"><b>3</b></div><div class="cell done"><b>4</b></div>
+              <div class="cell"><b>5</b></div><div class="cell done"><b>6</b></div><div class="cell"><b>7</b></div>
+            </div>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:4px">
+            <span style="width:44px;font-size:10.5px;color:var(--text-3)">强化期</span>
+            <div class="cells" style="flex:1">
+              <div class="cell done"><b>8</b></div><div class="cell"><b>9</b></div>
+              <div class="cell done"><b>10</b></div><div class="cell missed"><b>11</b></div>
+              <div class="cell today"><b>12</b></div><div class="cell future">13</div><div class="cell future">14</div>
+            </div>
+          </div>
+          <div class="row" style="gap:8px;margin-bottom:4px">
+            <span style="width:44px;font-size:10.5px;color:var(--text-3)">强化期</span>
+            <div class="cells" style="flex:1">
+              <div class="cell future">15</div><div class="cell future">16</div><div class="cell future">17</div>
+              <div class="cell future">18</div><div class="cell future">19</div><div class="cell future">20</div><div class="cell future">21</div>
+            </div>
+          </div>
+          <div class="row" style="gap:8px">
+            <span style="width:44px;font-size:10.5px;color:var(--text-3)">冲刺期</span>
+            <div class="cells" style="flex:1">
+              <div class="cell future">22</div><div class="cell future">23</div><div class="cell future">24</div>
+              <div class="cell future">25</div><div class="cell future">26</div><div class="cell future">27</div><div class="cell future">28</div>
+            </div>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="row between" style="margin-bottom:9px">
+            <span class="mini">已完成 9 · 休息 8 · 错过 1 · 未到 10</span>
+          </div>
+          <div class="chips" style="gap:11px">
+            <span class="row" style="gap:5px"><i style="width:11px;height:11px;border-radius:3px;background:rgba(52,199,89,.35);display:block"></i><span class="mini">已完成</span></span>
+            <span class="row" style="gap:5px"><i style="width:11px;height:11px;border-radius:3px;background:rgba(255,59,48,.3);display:block"></i><span class="mini">错过</span></span>
+            <span class="row" style="gap:5px"><i style="width:11px;height:11px;border-radius:3px;border:1.5px solid var(--accent);display:block"></i><span class="mini">今天</span></span>
+            <span class="row" style="gap:5px"><i style="width:11px;height:11px;border-radius:3px;border:1px dashed var(--line-strong);display:block"></i><span class="mini">未开始</span></span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>第 12 天 · 今天</b><span class="tag g">训练日</span></div>
+          <div style="font-size:14px;font-weight:600">胸背超级组</div>
+          <p class="mini" style="margin-top:3px">5 个动作 · 约 42 分钟 · 上次完成于 3 天前</p>
+        </div>
+        <div class="callout">
+          <b>错过 1 次</b>：第 11 天的肩臂训练未打卡。不用补，按今天继续即可，连续比完美更重要。
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 06 ========== -->
+<section class="concept" id="c6">
+  <div class="concept-copy">
+    <span class="num">06 · 执行期</span>
+    <h2>营养结构罗盘</h2>
+    <p class="tagline">菜单现在是纯文本列表，看不到「结构」——而饮食方案的核心恰恰是结构。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>现在每餐只给「约 520 大卡 · 蛋白 42g」两个数字，用户无法判断这天的饮食是否均衡。而 <code>ProgramMeal</code> 里 <code>protein / carb / fat</code> 三个字段都已算好，却从未被可视化过。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>三色堆叠环</b>：蛋白 / 碳水 / 脂肪的供能占比，颜色沿用 <code>--c-protein/--c-carb/--c-fat</code>，与营养页同源。</li>
+        <li><b>按餐次堆叠条</b>：四餐各一条，宽度即热量占比，让用户看到「加餐是不是吃太多了」。</li>
+        <li><b>目标对照刻度</b>：环下方一条目标区间标尺，实际值落在区间内显示绿点、越界显示橙点。</li>
+        <li><b>左右滑动切日期</b>：与 05 的周期地图联动，滑动即切换聚焦日，保持同一份 <code>focusedDay</code> 状态。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>ProgramMeal.protein/carb/fat/kcal</code> 由 <code>programEngine</code> 装配模板时算好；AI 菜单路径由 <code>recipeGen</code> 用食物库实算后写入 <code>program_meals</code>，字段一致，两条路径都能渲染。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-mid">中</b></span>
+      <span class="mchip">增强 <b>现有聚焦日菜单区</b></span>
+      <span class="mchip">纯前端 <b>无 schema 变更</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">今日营养结构</span><span></span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mc-head"><b>8 月 28 日</b><span class="tag n">训练日</span></div>
+          <div class="row" style="gap:18px">
+            <svg width="104" height="104" viewBox="0 0 104 104">
+              <circle cx="52" cy="52" r="40" fill="none" stroke="var(--surface-2)" stroke-width="15"/>
+              <circle cx="52" cy="52" r="40" fill="none" stroke="#34c759" stroke-width="15"
+                stroke-dasharray="109 251" stroke-dashoffset="0" transform="rotate(-90 52 52)"/>
+              <circle cx="52" cy="52" r="40" fill="none" stroke="#ff9f0a" stroke-width="15"
+                stroke-dasharray="113 251" stroke-dashoffset="-109" transform="rotate(-90 52 52)"/>
+              <circle cx="52" cy="52" r="40" fill="none" stroke="#ffcc00" stroke-width="15"
+                stroke-dasharray="29 251" stroke-dashoffset="-222" transform="rotate(-90 52 52)"/>
+              <text x="52" y="48" text-anchor="middle" font-size="19" font-weight="600" fill="var(--text-1)">1620</text>
+              <text x="52" y="64" text-anchor="middle" font-size="10" fill="var(--text-3)">大卡</text>
+            </svg>
+            <div style="flex:1;display:grid;gap:8px">
+              <div class="row between">
+                <span class="row" style="gap:6px"><i style="width:9px;height:9px;border-radius:2px;background:#34c759;display:block"></i><span class="mini">蛋白质</span></span>
+                <span class="mini num"><b style="color:var(--text-1)">124g</b> · 31%</span>
+              </div>
+              <div class="row between">
+                <span class="row" style="gap:6px"><i style="width:9px;height:9px;border-radius:2px;background:#ff9f0a;display:block"></i><span class="mini">碳水</span></span>
+                <span class="mini num"><b style="color:var(--text-1)">162g</b> · 40%</span>
+              </div>
+              <div class="row between">
+                <span class="row" style="gap:6px"><i style="width:9px;height:9px;border-radius:2px;background:#ffcc00;display:block"></i><span class="mini">脂肪</span></span>
+                <span class="mini num"><b style="color:var(--text-1)">52g</b> · 29%</span>
+              </div>
+            </div>
+          </div>
+          <div class="divider" style="margin:14px 0 11px"></div>
+          <div class="row between" style="margin-bottom:6px">
+            <span class="mini">目标区间</span><span class="mini num">蛋白 110–135g</span>
+          </div>
+          <div style="position:relative;height:8px;background:var(--surface-2);border-radius:4px">
+            <i style="position:absolute;left:22%;width:34%;height:100%;background:rgba(52,199,89,.3);border-radius:4px;display:block"></i>
+            <i style="position:absolute;left:52%;width:9px;height:9px;margin-top:-.5px;background:var(--ok);border-radius:50%;display:block"></i>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>按餐次分布</b><span class="tag n">4 餐</span></div>
+          <div style="display:flex;height:26px;border-radius:7px;overflow:hidden;gap:2px">
+            <i style="flex:26;background:#34c759;opacity:.85"></i>
+            <i style="flex:34;background:#ff9f0a;opacity:.85"></i>
+            <i style="flex:12;background:#1eeaef;opacity:.85"></i>
+            <i style="flex:28;background:#ffcc00;opacity:.85"></i>
+          </div>
+          <div style="margin-top:11px">
+            <div class="line-row"><span class="lbl">早餐 · 07:30</span><span class="val"><b>420</b> 大卡 · 蛋白 28g</span></div>
+            <div class="line-row"><span class="lbl">午餐 · 12:30</span><span class="val"><b>545</b> 大卡 · 蛋白 45g</span></div>
+            <div class="line-row"><span class="lbl">加餐 · 16:00</span><span class="val"><b>195</b> 大卡 · 蛋白 20g</span></div>
+            <div class="line-row"><span class="lbl">晚餐 · 19:00</span><span class="val"><b>460</b> 大卡 · 蛋白 31g</span></div>
+          </div>
+        </div>
+        <div class="callout">
+          <b>结构正常</b>：蛋白供能 31%，处于增肌保留肌肉的推荐区间；碳水集中在午餐与加餐，与傍晚训练时间匹配。
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="cta ghost" style="margin:0">换一批菜单</button>
+          <button class="cta" style="margin:0">全部记入饮食</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 07 ========== -->
+<section class="concept" id="c7">
+  <div class="concept-copy">
+    <span class="num">07 · 执行期</span>
+    <h2>参数演进图</h2>
+    <p class="tagline">调整历史现在是纯文本流水，看不出「方案被改成了什么样」的趋势。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>现在每次调整渲染成「v3 热量缺口：-400 → -550」这样的文本行。三次调整之后就是一堵文字墙，用户看不出自己是在<b>逐步加码</b>还是<b>反复摇摆</b>——而这恰恰是判断方案健康度最重要的信号。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>双线叠加</b>：热量偏移用连续折线、训练天数用阶梯线，两种量纲共享时间轴，看清「是不是靠加训练硬扛」。</li>
+        <li><b>节点区分来源</b>：实心点=AI 复盘、空心点=手动，一眼看出哪些改动是你自己拍的、哪些是数据驱动的。</li>
+        <li><b>点节点看 diff</b>：点击弹出该次变更的 before → after，保留现有文本细节但不占常驻空间。</li>
+        <li><b>摇摆检测提示</b>：同一参数在 3 次内来回变动超过阈值时，给出「你在反复调整，建议先稳定一周」的温和提示。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>ProgramAdjustment[]</code>（<code>adjustmentsJson</code>）已含 <code>version / at / summary / changes[] / source</code>，<code>ProgramChange.before/after</code> 是字符串，图上解析为数值即可，无需改结构。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-mid">中</b></span>
+      <span class="mchip">替代 <b>现有「调整历史」卡</b></span>
+      <span class="mchip">纯前端 <b>SVG 折线</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">参数演进</span><span></span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mc-head"><b>4 次调整</b><span class="tag">v1 → v5</span></div>
+          <svg width="330" height="150" viewBox="0 0 330 150">
+            <line x1="34" y1="18" x2="34" y2="112" stroke="var(--line-strong)" stroke-width=".5"/>
+            <line x1="34" y1="112" x2="322" y2="112" stroke="var(--line-strong)" stroke-width=".5"/>
+            <text x="30" y="22" text-anchor="end" font-size="8.5" fill="var(--text-3)">-200</text>
+            <text x="30" y="68" text-anchor="end" font-size="8.5" fill="var(--text-3)">-450</text>
+            <text x="30" y="115" text-anchor="end" font-size="8.5" fill="var(--text-3)">-700</text>
+            <polyline points="52,96 124,74 196,52 268,38 310,38" fill="none" stroke="#fa114f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="52,60 124,60 196,60 268,60 310,60" fill="none" stroke="#92e82a" stroke-width="2" stroke-linejoin="round" opacity=".55"/>
+            <circle cx="52" cy="96" r="4.5" fill="var(--surface)" stroke="#fa114f" stroke-width="2"/>
+            <circle cx="124" cy="74" r="4.5" fill="#fa114f"/>
+            <circle cx="196" cy="52" r="4.5" fill="var(--surface)" stroke="#fa114f" stroke-width="2"/>
+            <circle cx="268" cy="38" r="4.5" fill="#fa114f"/>
+            <circle cx="310" cy="38" r="5.5" fill="#fa114f" stroke="var(--surface)" stroke-width="2"/>
+            <text x="52" y="132" text-anchor="middle" font-size="8.5" fill="var(--text-3)">8/03</text>
+            <text x="124" y="132" text-anchor="middle" font-size="8.5" fill="var(--text-3)">8/10</text>
+            <text x="196" y="132" text-anchor="middle" font-size="8.5" fill="var(--text-3)">8/17</text>
+            <text x="268" y="132" text-anchor="middle" font-size="8.5" fill="var(--text-3)">8/24</text>
+            <text x="310" y="132" text-anchor="middle" font-size="8.5" fill="var(--accent)">今天</text>
+          </svg>
+          <div class="row" style="gap:14px;margin-top:8px;justify-content:center">
+            <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#fa114f;display:block"></i><span class="mini">热量偏移</span></span>
+            <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:#92e82a;display:block;opacity:.6"></i><span class="mini">训练天数</span></span>
+            <span class="row" style="gap:5px"><i style="width:8px;height:8px;border-radius:50%;background:#fa114f;display:block"></i><span class="mini">AI</span></span>
+            <span class="row" style="gap:5px"><i style="width:8px;height:8px;border-radius:50%;border:2px solid #fa114f;display:block"></i><span class="mini">手动</span></span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>趋势</b><span class="tag g">稳定加码</span></div>
+          <p class="mini">热量缺口从 -300 逐步拉到 -600，训练天数自 8/10 起稳定在 4 天未再变动。<b>没有来回摇摆</b>，这是好信号——说明调整是有依据的，而不是焦虑驱动的。</p>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>调整记录</b><span class="tag n">4 次</span></div>
+          <div class="line-row">
+            <div><div style="font-size:13px;font-weight:600">v5 · 缺口再扩 100</div><div class="mini">8/24 · AI 复盘</div></div>
+            <span class="tag">-500 → -600</span>
+          </div>
+          <div class="line-row">
+            <div><div style="font-size:13px;font-weight:600">v4 · 蛋白提到 2.0</div><div class="mini">8/17 · 手动</div></div>
+            <span class="tag">1.8 → 2.0</span>
+          </div>
+          <div class="line-row">
+            <div><div style="font-size:13px;font-weight:600">v3 · 训练加到 4 天</div><div class="mini">8/10 · AI 复盘</div></div>
+            <span class="tag">3 → 4 天</span>
+          </div>
+          <div class="line-row">
+            <div><div style="font-size:13px;font-weight:600">v2 · 起步缺口</div><div class="mini">8/03 · 手动</div></div>
+            <span class="tag">-200 → -300</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 08 ========== -->
+<section class="concept" id="c8">
+  <div class="concept-copy">
+    <span class="num">08 · 执行期</span>
+    <h2>体重航道图</h2>
+    <p class="tagline">减脂/增肌唯一的真相指标是体重曲线，但它现在只以「提醒卡」的形式闪现在主页。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p><code>utils/weightTrend.ts</code> 已经能按目标分带判定（掉秤过快 / 反向增重 / 停滞），但产出只用在主页一张「可忽略的提醒卡」。<b>判定逻辑有了，可视化没有</b>——用户看到「掉秤过快」却不知道自己偏离了多少、该往哪拉回来。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>目标走廊</b>：不是一条目标线，而是一条<b>半透明带</b>（每周 ±0.3kg 的合理波动区间），落在带内即健康——这比单点目标更符合真实生理。</li>
+        <li><b>偏离点标色</b>：带内绿点、带外橙点，连续 2 次带外才升级为红色告警，避免单日水分波动造成误报。</li>
+        <li><b>判定文案复用</b>：图表下方直接渲染 <code>weightTrend</code> 的结论文本，逻辑不重写。</li>
+        <li><b>与方案联动</b>：走廊宽度按方案档位计算（进取档走廊更陡），图上的带就是「这个方案本来预期的轨迹」。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>nutritionService.listBodyMetrics</code> 提供按天体重；<code>weightTrend.ts</code> 提供分带与判定；<code>profile.targetWeightKg</code> 提供终点——三者已齐备，缺的只是把它们画在一起。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-mid">中</b></span>
+      <span class="mchip">复用 <b>weightTrend 判定逻辑</b></span>
+      <span class="mchip">建议 <b>放在方案页而非主页</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">体重航道</span><span></span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="row between" style="margin-bottom:12px">
+            <div>
+              <div style="font-size:27px;font-weight:600;letter-spacing:-.6px">68.4<span style="font-size:14px;color:var(--text-3);font-weight:400"> kg</span></div>
+              <div class="mini num" style="margin-top:2px">较起点 <b style="color:var(--ok)">-2.1kg</b> · 距目标还差 3.4kg</div>
+            </div>
+            <span class="tag g">航道内</span>
+          </div>
+          <svg width="330" height="160" viewBox="0 0 330 160">
+            <path d="M36 34 L60 42 L96 54 L132 66 L168 78 L204 90 L240 102 L276 114 L312 126 L312 138 L36 126 Z"
+              fill="rgba(52,199,89,.13)"/>
+            <line x1="36" y1="34" x2="312" y2="126" stroke="rgba(52,199,89,.5)" stroke-width="1" stroke-dasharray="3 3"/>
+            <line x1="36" y1="126" x2="312" y2="138" stroke="rgba(52,199,89,.5)" stroke-width="1" stroke-dasharray="3 3"/>
+            <polyline points="36,28 60,44 96,52 132,70 168,76 204,94 240,98 276,116 312,118"
+              fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="36" cy="28" r="3" fill="var(--accent)"/><circle cx="60" cy="44" r="3" fill="var(--accent)"/>
+            <circle cx="96" cy="52" r="3" fill="var(--accent)"/><circle cx="132" cy="70" r="3" fill="var(--accent)"/>
+            <circle cx="168" cy="76" r="3" fill="var(--accent)"/><circle cx="204" cy="94" r="3" fill="var(--accent)"/>
+            <circle cx="240" cy="98" r="3" fill="var(--accent)"/><circle cx="276" cy="116" r="4" fill="var(--warn)"/>
+            <circle cx="312" cy="118" r="4" fill="var(--ok)"/>
+            <text x="36" y="154" text-anchor="middle" font-size="8" fill="var(--text-3)">8/03</text>
+            <text x="132" y="154" text-anchor="middle" font-size="8" fill="var(--text-3)">8/12</text>
+            <text x="240" y="154" text-anchor="middle" font-size="8" fill="var(--text-3)">8/22</text>
+            <text x="312" y="154" text-anchor="middle" font-size="8" fill="var(--accent)">今天</text>
+          </svg>
+          <div class="row" style="gap:14px;margin-top:6px;justify-content:center">
+            <span class="row" style="gap:5px"><i style="width:11px;height:8px;background:rgba(52,199,89,.25);display:block;border-radius:2px"></i><span class="mini">目标走廊</span></span>
+            <span class="row" style="gap:5px"><i style="width:11px;height:2px;background:var(--accent);display:block"></i><span class="mini">实际体重</span></span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>判定</b><span class="tag g">稳定</span></div>
+          <p class="mini">近 4 周周均 <b>-0.52kg</b>，处于进取档推荐的 0.5–0.8kg/周区间内。8/24 有一次轻微上扬（橙点），但次日回落——属于正常水分波动，<b>无需调整参数</b>。</p>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>按此速度</b></div>
+          <div class="statgrid">
+            <div><em>周均</em><b>-0.52<i>kg</i></b></div>
+            <div><em>已达</em><b>38<i>%</i></b></div>
+            <div><em>预计达标</em><b>6.5<i>周</i></b></div>
+            <div><em>还需</em><b>3.4<i>kg</i></b></div>
+          </div>
+        </div>
+        <div class="callout">
+          <b>要不要提速？</b> 当前速度偏保守但可持续。若想加快，可让 AI 复盘评估扩大缺口——但不建议每周降幅超过体重的 1%。
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 09 ========== -->
+<section class="concept" id="c9">
+  <div class="concept-copy">
+    <span class="num">09 · 复盘期</span>
+    <h2>复盘卡片流 · 单条采纳</h2>
+    <p class="tagline">现在的复盘是「全盘接受或全部放弃」——把颗粒度拆到单条，采纳率会完全不同。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>AI 复盘给出 <code>diagnosis + advice[] + changes[]</code>，但 UI 只提供一个「采纳建议」按钮，一次性应用整个 <code>patch</code>。如果三条建议里有两条认同、一条不接受，用户只能<b>全部放弃</b>——这是设计在逼用户做二选一。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>建议卡片化</b>：每条建议独立成卡，带自己的开关，勾选状态实时反映在下方的汇总 diff 上。</li>
+        <li><b>汇总实时计算</b>：勾选变化时，底部「将变更为」区域即时重算——用户能试算「只采纳前两条会怎样」。</li>
+        <li><b>数据先行</b>：诊断之前先放本周 vs 上周的三条对比条，让用户自己先有判断，再看 AI 怎么说（避免盲目信任）。</li>
+        <li><b>仍然走钳制</b>：无论勾选几条，最终仍经 <code>clampAdjustment</code>——越界值在卡片上直接标注「已钳制」。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>reviewProgram()</code> 已返回结构化 <code>changes[]</code>；增量采纳只需把勾选子集重新喂给 <code>clampAdjustment</code>，<b>store.adjust 与后端契约完全不变</b>。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-mid">中</b></span>
+      <span class="mchip">改造 <b>现有复盘弹层</b></span>
+      <span class="mchip">后端 <b>零改动</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">本周复盘</span><span style="font-size:12px;color:var(--text-3);text-align:right;padding-right:8px">关闭</span></div>
+      <div class="body">
+        <div class="mcard">
+          <div class="mc-head"><b>本周执行度</b><span class="tag g">78%</span></div>
+          <div style="display:grid;gap:9px">
+            <div>
+              <div class="row between" style="margin-bottom:3px"><span class="mini">摄入达标</span><span class="mini num">5.2 → 5.8 天 <b style="color:var(--ok)">↑</b></span></div>
+              <div class="bar"><i style="width:83%;background:var(--c-intake)"></i></div>
+            </div>
+            <div>
+              <div class="row between" style="margin-bottom:3px"><span class="mini">训练完成</span><span class="mini num">3 → 3 次 <b style="color:var(--text-3)">—</b></span></div>
+              <div class="bar"><i style="width:75%;background:var(--c-exercise)"></i></div>
+            </div>
+            <div>
+              <div class="row between" style="margin-bottom:3px"><span class="mini">蛋白达标</span><span class="mini num">98 → 112g <b style="color:var(--ok)">↑</b></span></div>
+              <div class="bar"><i style="width:71%;background:var(--c-balance)"></i></div>
+            </div>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>诊断</b><span class="tag n">AI</span></div>
+          <p class="mini">训练次数卡在 3 次已满三周，而热量摄入仍有缺口空间。<b>瓶颈不在饮食，在训练依从性</b>——继续扩大缺口会让恢复变差，反而掉肌肉。</p>
+        </div>
+        <div class="mcard" style="padding:13px 15px">
+          <div class="mc-head" style="margin-bottom:9px"><b>建议（可逐条采纳）</b><span class="tag">已选 2 / 3</span></div>
+          <div class="row" style="gap:10px;padding:10px 0;border-top:.5px solid var(--line);align-items:flex-start">
+            <i style="width:19px;height:19px;border-radius:50%;background:var(--accent);flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px">✓</i>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600">蛋白提到 2.0 g/kg</div>
+              <p class="mini" style="margin-top:2px">保护肌肉，避免在缺口下流失</p>
+              <span class="tag n" style="margin-top:6px;display:inline-block">1.8 → 2.0 g/kg</span>
+            </div>
+          </div>
+          <div class="row" style="gap:10px;padding:10px 0;border-top:.5px solid var(--line);align-items:flex-start">
+            <i style="width:19px;height:19px;border-radius:50%;background:var(--accent);flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px">✓</i>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600">晚餐碳水减 30g</div>
+              <p class="mini" style="margin-top:2px">晚间活动量低，碳水前置到午餐</p>
+              <span class="tag n" style="margin-top:6px;display:inline-block">碳水 190 → 160g</span>
+            </div>
+          </div>
+          <div class="row" style="gap:10px;padding:10px 0;border-top:.5px solid var(--line);align-items:flex-start">
+            <i style="width:19px;height:19px;border-radius:50%;border:1.5px solid var(--line-strong);flex:none;margin-top:1px"></i>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:600;color:var(--text-3)">训练加到 5 天</div>
+              <p class="mini" style="margin-top:2px">已连续三周未完成 4 天，不建议加量</p>
+              <span class="tag o" style="margin-top:6px;display:inline-block">超出建议 · 已钳制为 4 天</span>
+            </div>
+          </div>
+        </div>
+        <div class="mcard" style="background:var(--accent-soft)">
+          <div class="mc-head" style="margin-bottom:8px"><b style="color:var(--accent)">将变更为</b><span class="tag">v6</span></div>
+          <div class="line-row" style="border-top:none;padding-top:0"><span class="lbl" style="color:var(--text-1)">蛋白质</span><span class="val"><b>1.8</b> → <b style="color:var(--accent)">2.0</b> g/kg</span></div>
+          <div class="line-row"><span class="lbl" style="color:var(--text-1)">碳水</span><span class="val"><b>190</b> → <b style="color:var(--accent)">160</b> g</span></div>
+          <div class="line-row"><span class="lbl" style="color:var(--text-1)">训练天数</span><span class="val"><b>4</b> → <b style="color:var(--text-3)">4</b> 天（未采纳）</span></div>
+        </div>
+        <button class="cta">应用这 2 条并重排日程</button>
+        <p class="foot">日程将从今天起重排，已完成的记录不受影响</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ========== 10 ========== -->
+<section class="concept" id="c10">
+  <div class="concept-copy">
+    <span class="num">10 · 归档期</span>
+    <h2>结营成绩单</h2>
+    <p class="tagline">坚持 28 天是一件值得被庆祝的事，现在它只是一个弹层和一行历史列表。</p>
+    <div class="block pain">
+      <div class="lbl">现状痛点</div>
+      <p>归档后方案变成历史列表里的一行「减脂 · 均衡 · v5」，点开是一个中等高度的弹层，四个统计格加一行小字。<b>没有对比、没有闭环、没有下一步</b>——用户拿不到「我到底改变了什么」的答案，也就没有动力开启下一期。</p>
+    </div>
+    <div class="block">
+      <h3>关键交互</h3>
+      <ul>
+        <li><b>开始 vs 结束对照</b>：体重、摄入、训练频率三项并排对比，这是唯一能回答「有没有用」的形式。</li>
+        <li><b>完成度大数字</b>：<code>ProgramReport</code> 的 <code>schedule.done/planned</code> 直接换算，诚实呈现（82% 比「已完成」更可信）。</li>
+        <li><b>成就徽章</b>：按数据规则颁发（全勤 / 首次连续打卡 / 蛋白达标率高），纯前端判定，不引入新表。</li>
+        <li><b>下一步 CTA</b>：底部直接给「开启下一期」按钮，把归档从终点变成中转站。</li>
+      </ul>
+    </div>
+    <div class="block">
+      <h3>数据来源</h3>
+      <p><code>buildProgramReport()</code> 已返回全部字段；<code>recordedDays / workoutKcal / weightDeltaKg</code> 齐备。起点体重需从 <code>body_metrics</code> 取方案开始日最近一条——<code>listBodyMetrics(100)</code> 已在报告中调用，加一步筛选即可。</p>
+    </div>
+    <div class="meta">
+      <span class="mchip">落地代价 <b class="cost-high">高</b></span>
+      <span class="mchip">新增 <b>二级页 /program/wrapup</b></span>
+      <span class="mchip">需 <b>报告字段小幅扩展</b></span>
+    </div>
+  </div>
+  <div class="phone" data-theme="dark">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌾</span></div>
+      <div class="navbar"><button class="back">‹</button><span class="title">结营成绩单</span><span></span></div>
+      <div class="body">
+        <div class="mcard" style="text-align:center;padding:22px 16px">
+          <div style="font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);font-weight:600;margin-bottom:6px">28 天 · 减脂 · 均衡档</div>
+          <div style="font-size:21px;font-weight:600;letter-spacing:-.4px;margin-bottom:16px">你坚持下来了</div>
+          <svg width="112" height="112" viewBox="0 0 112 112">
+            <circle cx="56" cy="56" r="45" fill="none" stroke="var(--surface-2)" stroke-width="11"/>
+            <circle cx="56" cy="56" r="45" fill="none" stroke="#92e82a" stroke-width="11" stroke-linecap="round"
+              stroke-dasharray="283" stroke-dashoffset="51" transform="rotate(-90 56 56)"/>
+            <text x="56" y="54" text-anchor="middle" font-size="27" font-weight="600" fill="var(--text-1)">82%</text>
+            <text x="56" y="72" text-anchor="middle" font-size="10.5" fill="var(--text-3)">完成度</text>
+          </svg>
+          <div class="statgrid" style="margin-top:18px">
+            <div><em>坚持</em><b>26<i>天</i></b></div>
+            <div><em>训练</em><b>14<i>次</i></b></div>
+            <div><em>记录</em><b>24<i>天</i></b></div>
+            <div><em>调整</em><b>4<i>次</i></b></div>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>开始 → 结束</b></div>
+          <div class="line-row" style="border-top:none;padding-top:0">
+            <span class="lbl">体重</span>
+            <span class="val num">70.5 → <b style="color:var(--ok)">68.4 kg</b></span>
+          </div>
+          <div class="line-row">
+            <span class="lbl">日均摄入</span>
+            <span class="val num">2180 → <b>1620 大卡</b></span>
+          </div>
+          <div class="line-row">
+            <span class="lbl">训练频率</span>
+            <span class="val num">1 → <b>4 次/周</b></span>
+          </div>
+          <div class="line-row">
+            <span class="lbl">蛋白达标</span>
+            <span class="val num">41% → <b style="color:var(--ok)">79%</b></span>
+          </div>
+        </div>
+        <div class="mcard">
+          <div class="mc-head"><b>获得 3 枚徽章</b></div>
+          <div style="display:grid;gap:9px">
+            <div class="row" style="gap:10px">
+              <i style="width:30px;height:30px;border-radius:50%;background:rgba(146,232,42,.22);display:flex;align-items:center;justify-content:center;font-size:14px;flex:none">🔥</i>
+              <div><div style="font-size:13px;font-weight:600">连续打卡 12 天</div><div class="mini">8/06 – 8/17 未间断</div></div>
+            </div>
+            <div class="row" style="gap:10px">
+              <i style="width:30px;height:30px;border-radius:50%;background:rgba(52,199,89,.2);display:flex;align-items:center;justify-content:center;font-size:14px;flex:none">🥗</i>
+              <div><div style="font-size:13px;font-weight:600">饮食记录 24 天</div><div class="mini">记录率 86%，超过 8 成用户</div></div>
+            </div>
+            <div class="row" style="gap:10px">
+              <i style="width:30px;height:30px;border-radius:50%;background:rgba(255,149,0,.18);display:flex;align-items:center;justify-content:center;font-size:14px;flex:none">💪</i>
+              <div><div style="font-size:13px;font-weight:600">蛋白达标率翻倍</div><div class="mini">41% → 79%，肌肉保住了</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="callout">
+          <b>下一期建议</b>：训练依从性是唯一短板（14/16 次）。建议下一期<b>降为 3 练</b>但保证完成，比 4 练只做 3 次更有效。
+        </div>
+        <button class="cta">开启下一期（3 练 · 保守档）</button>
+        <button class="cta ghost">查看完整报告</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="end">
+  <div class="wrap">
+    <p><b style="color:var(--g-text)">优先级建议</b>：04 今日驾驶舱 与 05 周期地图 解决的是「每天打开的理由」，收益最大、改动集中，建议先做。
+    01/02/03 属于 setup 阶段的决策体验，适合与方案生成流一起重构。
+    09 复盘卡片流后端零改动、纯 UI 拆分，性价比高。
+    10 结营成绩单是新增页，工程量最大，但对留存的价值也最高，建议放在最后单独排期。</p>
+    <p style="margin-top:12px">所有方案均未虚构字段，数据均来自现有 <code>programEngine</code> / <code>programReport</code> / <code>weightTrend</code> / 各域 service。落地时需同步更新 <code>docs/ARCHITECTURE.md</code> 路由清单与 <code>docs/ui-reviews/</code>。</p>
+  </div>
+</footer>
+</div>
+
+<script>
+function setTheme(t){
+  document.querySelectorAll('.phone').forEach(function(p){ p.setAttribute('data-theme', t); });
+  document.getElementById('tDark').classList.toggle('on', t === 'dark');
+  document.getElementById('tLight').classList.toggle('on', t === 'light');
+}
+function setCurveTab(t){
+  document.querySelectorAll('.curve-tab-btn').forEach(function(b){ b.classList.toggle('on', b.dataset.tab === t); });
+  document.querySelectorAll('.curve-pane').forEach(function(p){ p.style.display = p.dataset.pane === t ? 'block' : 'none'; });
+}
+</script>
+</body>
+</html>

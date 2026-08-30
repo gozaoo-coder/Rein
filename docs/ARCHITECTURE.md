@@ -34,6 +34,11 @@
 | `src/services/*` | 命令名 → 类型化函数 | 业务逻辑 |
 | `src/mock/server.ts` | 与 Rust 相同的命令契约 | 生产分支逻辑 |
 | `src/ai/*` | AI 推理层（pi-ai / pi-agent-core）：`runtime.ts` 模型装配、`probe.ts` max_tokens=1 能力探测、`vision.ts` 照片食物识别。模型请求由 WebView 直连 provider，不经 Rust | 直接 import '@tauri-apps/api'；同步 import 进主包（store 侧动态 import） |
+| `src/components/program/*` | 健康方案的十块 UI：`ProgramDashboard`（今日驾驶舱）、`ProgramCycleMap`（全周期网格）、`ProgramEvidenceSheet`（三条研究曲线）、`ProgramCompare`（三档对比矩阵 + 4 周强度预览双视图）、`ProgramConstraints`（内联约束向导，chips 写回 profile）、`ProgramNutritionCompass`（聚焦日宏量环 + 餐次分布）、`ProgramEvolutionChart`（参数演进双泳道图 + 节点 diff + 摇摆检测）、`ProgramWeightChannel`（体重航道：档位速率走廊 ±0.3kg）、`ProgramReviewSheet`（AI 复盘：数据先行 + 建议逐条采纳 + 实时汇总） | 直连 IPC；方案参数的写入 |
+| `src/utils/programCurves.ts` | 档位科学依据的**纯数据 + 纯函数**：训练频次 / 睡眠时长 / 社交时差三条曲线、线性插值 `sampleCurve`、档位耐受度判定、SVG 坐标映射。不落库、不参与方案计算 | 任何 IPC / store 依赖；把它当作方案参数来源（唯一事实仍是 `TIER_SPECS`） |
+| `src/utils/programProgress.ts` | 周期地图的格子状态计算：`buildDayCells`（`blob.days` × 方案日程待办左连接，六态判定）+ `cycleStats` + `groupByWeek` + `phaseLabel`。统计口径与 `programReport.ts` 保持一致 | 写操作 |
+| `src/utils/programSetup.ts` | setup 阶段纯函数：约束快照对比（`constraintSnapshotOf`/`sameConstraint`）、三档矩阵行 `matrixRows`、月度预期 `monthlyDeltaKg`、档位差异解说、4 周强度预览 `weekPreview`、约束即时预览 `constraintSummary` | 写操作 |
+| `src/utils/programWrapup.ts` | 结营成绩单聚合：`buildWrapup`（复用 buildProgramReport 口径，补起点对照/最长连续打卡/徽章判定/下一期档位建议，纯前端规则） | 新增持久化 |
 | `resources/foods.json` | 种子数据单一来源 | 运行时可变数据 |
 | `src-tauri/gen/android/.../RunTrackingService.kt` · `TrackingBridge.kt` | 跑步前台保活（Android 原生侧，与 MainActivity 同为手工维护；`tauri android init` 重新生成会丢） | 业务逻辑、SQL |
 
@@ -54,9 +59,14 @@
 - **食物匹配与自动补录（2026-08-25）**：foodId 一律由模型自己调 `search_food`（Rust `search_foods_fuzzy` 按字包含/顺序相似度打分排序）选定；`ai/foodMatch.ts::toParsedItems` 对幻觉/缺省 foodId **直接自动补录**（create_food 同名幂等，营养取模型输出的 `nutrition` 字段，缺省回退 kcalEstimate）——解析卡不再出现"未匹配不可写入"。无模型时的本地关键词解析兜底保持只读不写入。
 - **智能添加统一抽屉 `SmartAddSheet`（2026-08-25）**：替代原 `TodoAddSheet` 与 `QuickLogSheet`（均已删除）。`mode: 'todo'|'food'` 决定标题与手动入口（待办表单 / 食物库选择器），智能添加与 AI 聊天同款交互——选图先进草稿区（附件芯片可移除），可同时粘贴文字，点「生成」由 `ai/smartGen.ts` 单轮 Agent（挂 search_food/create_food/get_food 最小工具集）后台解析，任务类内容→待办草稿、吃吃喝喝→食物卡（估算重量），分区出卡供确认编辑后添加。
 - **AI 联网工具（2026-08-25）**：Rust `modules/web`（ureq + html2text）提供 `web_search`（默认必应）/ `web_fetch`（任意 URL→纯文本，SSRF 私网防护、15s 超时、6000 字符截断）；前端 `ai/tools/web.ts` 注册进统一工具层，聊天提示词已纳入。WebView 内 JS fetch 会被 CORS 拦，抓取必须走 Rust。
-- **待办智能解析 `todoGen.ts`**：与聊天同款前端 pi-ai 单轮 Agent（粘贴文本 / 图片 → 提示词约束 JSON 数组 → `TodoDraft[]`），草稿必须先经用户确认/编辑（现由 `SmartAddSheet` 承载）才落库；头像/文本共用 `src/ai/json.ts` 的 JSON 提取工具。`SmartAddSheet` 右上角提供「管理模型 ›」入口（`components/ai/ManageModelsButton.vue`，经 SheetModal `#action` 插槽放入）。`list_all_todos` 返回全部待办（含收件箱 date IS NULL），供主页紧急列表、全部待办页与虚拟时间线（`VirtualTimeline`，虚拟化渲染 + 双指/Ctrl+滚轮缩放）使用，排序：未完成 → 日期 → 时间 → 优先级。
+- **待办智能解析 `todoGen.ts`**：与聊天同款前端 pi-ai 单轮 Agent（粘贴文本 / 图片 → 提示词约束 JSON 数组 → `TodoDraft[]`），草稿必须先经用户确认/编辑（现由 `SmartAddSheet` 承载）才落库；头像/文本共用 `src/ai/json.ts` 的 JSON 提取工具。`SmartAddSheet` 右上角提供「管理模型 ›」入口（`components/ai/ManageModelsButton.vue`，经 SheetModal `#action` 插槽放入）。`list_all_todos` 返回全部待办（含收件箱 date IS NULL），供主页紧急列表、待办页与虚拟时间线（`VirtualTimeline`，虚拟化渲染 + 双指/Ctrl+滚轮缩放）使用，排序：未完成 → 日期 → 时间 → 优先级。
+- **今日画布（2026-08-28）**：`/todos` = 未安排池（date=今天且 start_min 为空）+ 单日时间轴（`CanvasTimeline`：重叠贪心分列、指针拖拽改位、现在线、过去块降透明）+ 桌面右栏详情（`DayDetailPanel`，子任务可勾选）；移动端点块直接进编辑抽屉。智能排程 `autoSchedule.ts`：AI（单轮 pi-agent）产出建议槽位 → 幽灵块预览 → 用户确认才落库（L2 契约），无模型回落启发式（优先级×时长装填最早空档）。每日规划仪式 `DailyRitual`（当天首次打开，localStorage 打标）。周段 = `WeekView` + `WeekSummary`（完成率环 + 按天分布 + 本地洞察）。清单段 = `AllTodoList`（原分组列表）。前端每次 `loadAll` 先调 `sync_recurrences` 物化重复实例（幂等，失败静默跳过）。
 - **聊天历史**：多会话（`ai_chats`，前端 `chatId` 指向当前会话，启动打开最近会话，历史抽屉 `HistoryDrawer` 切换/新建）；消息按 id 幂等 upsert（commit 状态变更不产生新行、不改变原 seq）；food-parse 的 items/source/committedAt 与 text 的 thinking/quote 序列化在 `payload`；图片存 1600px 压缩图（识别与追问复用同一张）。**照片静默入会话**（不自动识别、不输出内容，识别由用户提问触发，模型经历史图片块看图）。撤回 = `ai_chat_cut`（按消息 id 删该条及其后全部，级联）；清空上下文 = `ai_chat_clear` + 重写欢迎语；会话首条用户消息后自动把标题"AI 对话"改为前 16 字（`ai_chat_rename`）。
 - **AI 工具与消息操作**：`chat.ts` 给 Agent 注入 `search_context` 工具（TypeBox schema，后端 `ai_chat_search` 跨会话 LIKE 搜索、命中含会话标题），模型可自主调用回忆历史。长按消息（450ms，移动 8px 取消）或右键 → ActionSheet：复制 / 引用 / 撤回（仅用户消息，级联）；引用以 payload 持久化、气泡内引用块渲染、发给模型时作为消息前缀上下文。
+- **健康方案与 AI 调参（2026-08-26）**：方案基线由纯函数引擎 `src/utils/programEngine.ts` 确定性生成（三档参数表 × Mifflin-St Jeor 计算 × `resources/recipe_templates.json` 食谱模板装配 × 周计划模板组合），食谱模板营养值由 `scripts/gen-recipes.mjs` 从 foods.json 实算生成、禁止手填。**训练频率以用户设置的「每周可训练天数」为权威**（未设置时用档位默认；周模板覆盖 3~7 练，1~2 练从最低频模板裁剪）。AI 侧入口：聊天工具 `get_program`（只读）/ `generate_program`（生成并启用新方案，与页面同一引擎与激活链路，dangerous：会归档现有方案）/ `adjust_program`（调参，走 store.adjust 同一钳制链路）；周复盘在方案页发起（`src/ai/programReview.ts` 汇总近 7 天执行数据 → 无工具单轮分析 → 结构化建议 → 用户确认后应用），AI 不生成新计划结构。
+- **AI 定制菜单（2026-08-27）**：`src/ai/recipeGen.ts` —— 模型只出「结构」（餐次 + 库内食物 + 克重，经 search_food 选 id），营养一律由前端用食物库每 100g 数据实算，再按目标热量整体缩放（钳制 0.6~1.5，越界提示）。两个入口共用核心 `generateDayMenu`：食谱库的一日菜单、方案页的**按天生成**（上下文含日期/训练日/近期已吃避免重复/忌口与偏好）。**每日菜单不再是模板写死**：方案启用时仍铺模板菜单作回落，聚焦日的菜单按需 AI 生成并落 `program_meals` 缓存（生成一次即稳定，可「换一批」重新生成；同步更新当天饮食锚点待办备注）；方案调整后从当天起清缓存按新参数重生成；无模型用户始终回落模板菜单。**食谱偏好闭环**：`recipe_prefs` 表存喜欢(1)/不喜欢(-1)，食谱库页标记 → 方案引擎选菜（喜欢优先、不喜欢排除）与 AI 生成提示词共用。
+- **体重趋势自动提醒（2026-08-27）**：`src/utils/weightTrend.ts` 纯函数按目标分带判定（减脂掉秤过快/反向增重/停滞、增肌同理、保持期波动过大），主页出现可忽略的提醒卡，直达方案页复盘。
+- **归档执行报告（2026-08-27）**：`src/utils/programReport.ts` 汇总归档方案的执行数据（日程/训练/饮食锚点完成率、有记录日均摄入、体重变化、运动消耗、调整次数），ProgramPage「历史方案」区点开弹层查看。
 
 ### 数据不变量
 
@@ -65,14 +75,15 @@
 3. 时间用「距 00:00 的分钟数」（`start_min`），不用 `HH:mm` 字符串存储。
 4. `profile` 恒有一行（id=1），迁移里插入；目标字段以它为准。
 5. **训练课会话**：`workout_sessions` 存在 `status='active'` 行 = 有未正常结束的训练。只有用户经「结束键 → 二级确认」调用 `session_finish/session_abort` 才会离开 active；其余一切（切页/收起/关机/崩溃）都视为**异常中断**，启动时由运动系统运行时（`system/workoutRuntime`）自动接管续跑，悬浮运动条（`ActiveWorkoutBar`）提示接续。前端每个训练事件调用 `session_snapshot` 落盘（`elapsed_sec` 由服务端按快照间隔累加）。
-6. **训练课程**：课程是用户数据，存 `workout_plans` 表；内置课程种子来自根目录 `resources/workout_plans.json`（与前端 mock 共用的单一来源），启动时**按 id 幂等补齐缺失项**（Rust `seed_builtin_plans` 用 `INSERT OR IGNORE`，mock 用种子版本标记 `PLAN_SEED_VERSION`），已有行永不覆盖；代价是被用户删除的内置课会在下次启动补回。`last_used_at` 在每次开始训练时由 `touch_workout_plan` 更新，「最近使用的三个课程」按它倒序取前三。
+6. **训练课程**：课程是用户数据，存 `workout_plans` 表；内置课程种子来自根目录 `resources/workout_plans.json`（与前端 mock 共用的单一来源），启动时**按 id 幂等补齐缺失项**（Rust `seed_builtin_plans` 用 `INSERT OR IGNORE`，mock 用种子版本标记 `PLAN_SEED_VERSION`），已有行永不覆盖；代价是被用户删除的内置课会在下次启动补回。**种子内容版本**（Rust `app_meta[plan_seed_version]` = `PLAN_SEED_CONTENT_VERSION`，mock = `PLAN_SEED_VERSION`，当前 4）：种子里的课程内容（exercises/subtitle）变更时 +1，老库检测到版本落后会**按 id 刷新内置课的 exercises/subtitle**（覆盖用户对内置课的编辑——结构改进如激活热身组需要送达存量库）。`last_used_at` 在每次开始训练时由 `touch_workout_plan` 更新，「最近使用的三个课程」按它倒序取前三。
 7. **跑步会话**：复用 `workout_sessions`，约定 `plan_id='__run__'`（常量 `RUN_PLAN_ID`）；跑步专属状态（目标/累计时长/GPS 距离）全部放在 `state_json`，恢复时强制进入暂停态由用户手动继续。
+8. **健康方案**：`programs` 同一时刻至多一行 `status='active'`（`program_create` 事务内自动归档旧方案）；方案内容由前端引擎确定性生成并整体存 `params_json`（Rust 不做计算），调整历史存 `adjustments_json`、每次调参版本自增。方案日程 = 带 `program_id` 的 todos：`program_schedule_replace` 在事务内「删 fromDate 起未完成 → 整批写入」，删除方案时未完成日程一并清除、已完成的保留为普通待办。AI 的角色被限制为参数复盘（缺口/蛋白配比/训练天数），任何建议必须经 `clampAdjustment` 钳制与用户确认，禁止生成新计划结构。
 
 ## 4. 数据库
 
 迁移规则：`db.rs::MIGRATIONS` 数组下标即版本号，**只追加不改历史**。新迁移 = 末尾加一条 SQL。
 
-表：`foods` / `food_units` / `meal_logs` / `profile` / `todos` / `workouts` / `pomodoro_sessions`（MIGRATION_0001）、`workout_sessions`（0002）、`workout_plans`（0003）、`ledger_entries` / `ledger_settings`（0004）、`calc_params` / `body_metrics`（0005）、`ai_models` / `ai_chats` / `ai_chat_messages`（0006）。营养值单位约定：宏量与纤维/糖为 g，钠钾钙等为 mg，维生素 A/D/B12/叶酸为 μg，C/E 为 mg。记账金额一律整数分（`amount_cents`）、恒为正，正负由 `kind`（expense/income）表达；`ledger_settings` 单行（id=1）存月度总预算。`calc_params` 单行快照方案计算器的身体参数（含手输年龄；改动静默自动落库）；`body_metrics` 体重身高按天一条、同日补录 COALESCE 合并，非空值同步写回 `profile` 保持计算器与「我」页同源。AI：`ai_models` 含能力探测三态（vision/thinking/effort 可空）、部分唯一索引保证至多一个默认；`ai_chat_messages` 的 `(chat_id, seq)` 唯一，`ai_chat_append` 按消息 id 幂等 upsert。
+表：`foods` / `food_units` / `meal_logs` / `profile` / `todos` / `workouts` / `pomodoro_sessions`（MIGRATION_0001）、`workout_sessions`（0002）、`workout_plans`（0003）、`ledger_entries` / `ledger_settings`（0004）、`calc_params` / `body_metrics`（0005）、`ai_models` / `ai_chats` / `ai_chat_messages`（0006）、`workouts.session_id`（0007）、profile 个性化约束五列 + `workout_plans.equipment/est_duration_min` + `programs` + `todos.program_id`（0008）、`recipe_prefs`（0009）、`program_meals`（0010，方案每日 AI 菜单缓存，PK(program_id,date)，随方案级联删除）、`todos.rec_rule/rec_key/subtasks`（0011，重复规则/实例键/子任务 JSON 列，rec_key 部分唯一索引保证物化幂等）、`shopping_checks`（0012，采购清单勾选）、`workout_sets` + `app_meta`（0013，逐组做组记录与通用键值元数据）。营养值单位约定：宏量与纤维/糖为 g，钠钾钙等为 mg，维生素 A/D/B12/叶酸为 μg，C/E 为 mg。记账金额一律整数分（`amount_cents`）、恒为正，正负由 `kind`（expense/income）表达；`ledger_settings` 单行（id=1）存月度总预算。`calc_params` 单行快照方案计算器的身体参数（含手输年龄；改动静默自动落库）；`body_metrics` 体重身高按天一条、同日补录 COALESCE 合并，非空值同步写回 `profile` 保持计算器与「我」页同源。AI：`ai_models` 含能力探测三态（vision/thinking/effort 可空）、部分唯一索引保证至多一个默认；`ai_chat_messages` 的 `(chat_id, seq)` 唯一，`ai_chat_append` 按消息 id 幂等 upsert。健康方案：`programs.params_json` 存前端引擎的完整内容快照 `{params, days}`；`profile` 新列中 `preferred_time_slots`/`diet_restrictions` 为 JSON 数组文本列（NULL=未设置）；`workout_plans.equipment/est_duration_min` 是内置课程 meta（用户编辑不感知，upsert COALESCE 保留原值）。逐组记录：`workout_sets` 在 `session_finish` 事务内由前端提交的做组明细展开落行（workout_id 外键随 workouts 级联删除；exercise_name 跨课程/编辑稳定，是重量曲线的聚合键；warmup=1 的行不计入正式组）；查询命令 `strength_history`（单动作全部做组行）/ `strength_exercises`（有记录的动作清单）/ `strength_last_weights`（批量取各动作最近一次做组重量，沉浸页预填「上次重量」）。
 
 ## 5. 设计系统
 
@@ -111,10 +122,13 @@
 | `/ai/models` | ai-models | 管理模型（二级内容页：模型增删改 / 设默认 / max_tokens=1 能力探测徽章：视觉·思考·努力） |
 | `/me` | me | 我 |
 | `/focus` | focus | 专注（二级内容页：番茄钟 + 待办 + 日程时间线预览；完整时间线、超量待办收抽屉） |
-| `/todos` | todos | 全部待办（二级内容页：紧急程度排序 + 按日期分组；主页「待办」卡入口） |
+| `/todos` | todos | 待办 · 今日画布（二级内容页：未安排池 + 单日时间轴 + 详情联动 + 智能排程；周视图含周回顾；清单保留原分组列表；桌面端宽栏三窗格） |
 | `/nutrition` | nutrition | 营养全览（二级内容页：能量/宏量/微量元素详解 + 记饮食、改目标快捷入口） |
 | `/nutrition/adjust` | nutrition-adjust | 饮食调整（二级内容页：目标计算器（参数快照持久化） · 体重身高追踪 · AI 目标建议 · 手动微调） |
 | `/nutrition/foods` | nutrition-foods | 饮食库（二级内容页：全部食物浏览，搜索 + 分类筛选，点行弹详情抽屉；右下角「记录」悬浮按钮直接记一笔） |
+| `/nutrition/recipes` | nutrition-recipes | 食谱库（二级内容页：22 个内置食谱模板，餐次筛选 + 忌口灰标 + 喜欢/不喜欢标记，偏好实时影响方案选菜；AI 定制一日菜单，营养由食物库实算并整体缩放） |
+| `/program` | program | 健康方案（二级内容页：内联约束向导 → 三档对比矩阵/强度预览双视图 → 日程级展开；生效后展示今日驾驶舱/营养罗盘/周期地图/体重航道/参数演进图，支持手动调参、AI 复盘逐条采纳与档位科学依据；入口在主页快捷行与「我 › 个人约束」） |
+| `/program/wrapup/:id` | program-wrapup | 结营成绩单（二级内容页：完成度环 + 开始→结束对照 + 数据徽章 + 下一期档位建议 + 完整报告；`:id`=方案记录 id，生效中的方案查看时提供归档入口；入口为方案页「生成本期成绩单」与历史方案列表） |
 | `/ledger` | ledger | 记账（二级内容页：月度统计 + 预算跟踪 + 流水列表 + 记一笔） |
 | `/sports/plans` | sports-plans | 全部课程（二级内容页：课程列表 + 新建入口） |
 | `/sports/plans/:id` | sports-plan-detail | 课程详情（二级内容页：动作明细 + 开始训练 + 删除） |
@@ -125,7 +139,7 @@
 
 页面分级约定：一级页 `meta.tab`（TabBar 四个页签）；二级内容页 `meta.title`（保留 TabBar，`PageHeader back` 提供返回键）；沉浸页 `meta.fullscreen`。每日目标的编辑入口收敛在「饮食调整」二级页，「我」页只展示摘要。训练课程的全部管理动作收敛在「全部课程」及其详情/编辑二级页，运动主页只放跑步/手动记快速入口与最近使用的三个课程。
 
-**桌面工作台（2026-08-24）**：视口 ≥ `config/domain.ts::DESKTOP_MIN`（1100px）时 `App.vue` 切换到三窗格壳——左侧导航轨 `layout/DesktopRail.vue`（替代底部 TabBar）、主人区 `RouterView`、右侧信息栏 `layout/DesktopInspector.vue`（**全部页面常驻**，保证构图平衡：三环小结 + 今日待办快切 + AI 问句）。主页本身提供两个可切换视图（页头分段控件，选择持久化 `localStorage:'rein.homeView.v1'`）：`workbench/BentoOverview.vue`（便当总览：能量磁贴 + 待办 + 番茄/AI + 快捷入口 + 记账/运动概览）与 `workbench/DaySpine.vue`（一日脊柱：体重/饮食/运动/番茄/收支/待办按分钟聚合的纵向时间线，未来安排虚线 + 「现在」呼吸点）。移动端（< DESKTOP_MIN）保持原底部导航四页结构，桌面端其他页面内容以 560px 窄栏居中（`App.vue` `.desk-main:not(.wide)` 约束）。断点检测用 `composables/useMediaQuery.ts`（matchMedia 响应式），不依赖窗口 resize 监听。沉浸页（`meta.fullscreen`）在两形态下都隐藏导航。
+**桌面工作台（2026-08-24）**：视口 ≥ `config/domain.ts::DESKTOP_MIN`（1100px）时 `App.vue` 切换到三窗格壳——左侧导航轨 `layout/DesktopRail.vue`（替代底部 TabBar）、主人区 `RouterView`、右侧信息栏 `layout/DesktopInspector.vue`（**全部页面常驻**，保证构图平衡：三环小结 + 今日待办快切 + AI 问句）。主页本身提供两个可切换视图（页头分段控件，选择持久化 `localStorage:'rein.homeView.v1'`）：`workbench/BentoOverview.vue`（便当总览：能量磁贴 + 待办 + 番茄/AI + 快捷入口 + 记账/运动概览）与 `workbench/DaySpine.vue`（一日脊柱：体重/饮食/运动/番茄/收支/待办按分钟聚合的纵向时间线，未来安排虚线 + 「现在」呼吸点）。移动端（< DESKTOP_MIN）保持底部导航四页结构，主页为「状态条 + 主页画布 + 常用工具栏」（2026-08-26 起：无壳能量状态条 → 2026-08-29 升级为 `home/HomeCanvas.vue` **主页画布**：未安排池 chips（点卡片进编辑抽屉快排）+ 紧凑版 `todo/CanvasTimeline.vue`（现在线/打勾/拖拽改位，与 /todos 画布同组件同数据，216px 视窗锚定「现在」）+ 餐次摘要 chips → 查阅文字链 → 移动便当风格 2 列工具格：图标章+标题+副标，覆盖记饮食/记运动/专注/AI/记账/健康方案六动作），桌面端其他页面内容以 560px 窄栏居中（`App.vue` `.desk-main:not(.wide)` 约束）。断点检测用 `composables/useMediaQuery.ts`（matchMedia 响应式），不依赖窗口 resize 监听。沉浸页（`meta.fullscreen`）在两形态下都隐藏导航。
 
 ## 9. 训练课会话与跑步（stores/session.ts · stores/run.ts · system/workoutRuntime.ts）
 
@@ -140,7 +154,7 @@
 
 - 单窗口单连接（Mutex<Connection>）：桌面场景足够，出现并发瓶颈再引入连接池/rusqlite pool。
 - 目标按天覆盖（daily_targets）未启用：`get_targets/set_targets` 的 date 参数已预留。
-- 待办无重复规则、无子任务；饮食自定义食物目前仅经 AI `create_food` / 智能添加自动补录落库（手动新建 UI 未做，表结构与命令已就绪）。
+- 重复任务为轻量规则（每天/每周几/间隔 N 天 + 结束日期），模板行持有规则、实例按 `rec_key="模板id:日期"` 物化到滚动窗口 [今天-1, 今天+7]，`sync_recurrences` 幂等（改规则后未来未完成实例自动重建）；仅支持改单条实例，无"整个系列"编辑。子任务为单层 checklist（JSON 列，无嵌套/指派）。饮食自定义食物目前仅经 AI `create_food` / 智能添加自动补录落库（手动新建 UI 未做，表结构与命令已就绪）。
 - 记账为轻量单账本模型：支出/收入两类（无转账/多账户/多币种）、预设分类（自定义分类与层级未启用）、单一月度总预算（无分类预算/结转/提醒）、无周期账与 CSV 导出；流水搜备注 + 分类筛选。
 - 跑步 GPS 依赖系统定位服务：桌面端常不可用或漂移大，此时自动退化为纯计时模式，距离在总结页手动补填（跑步机场景同理）。
 - AI：`ai_models.api_key` 目前明文存 SQLite（单机单用户应用可接受，未上系统钥匙串）。

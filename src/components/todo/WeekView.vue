@@ -32,18 +32,19 @@ const countOf = computed(
 
 <template>
   <ul class="week row">
-    <li
-      v-for="(d, i) in dates"
-      :key="d"
-      class="col center"
-      :class="{ today: d === today, selected: d === props.selected }"
-      @click="emit('select', d)"
-    >
-      <span class="label">周{{ WEEKDAY_LABELS[i] }}</span>
-      <span class="track">
-        <i class="fill" :style="{ height: `${ratioOf(d) * 100}%` }" :class="{ full: ratioOf(d) >= 1 }" />
-      </span>
-      <span class="num count">{{ countOf(d).done }}/{{ countOf(d).total }}</span>
+    <li v-for="(d, i) in dates" :key="d">
+      <button
+        type="button"
+        class="wcell col center"
+        :class="{ today: d === today, selected: d === props.selected }"
+        @click="emit('select', d)"
+      >
+        <span class="label">周{{ WEEKDAY_LABELS[i] }}</span>
+        <span class="track">
+          <i class="fill" :style="{ '--p': `${ratioOf(d) * 100}%` }" :class="{ full: ratioOf(d) >= 1 }" />
+        </span>
+        <span class="num count">{{ countOf(d).done }}/{{ countOf(d).total }}</span>
+      </button>
     </li>
   </ul>
 </template>
@@ -56,6 +57,12 @@ const countOf = computed(
 
 .week li {
   flex: 1;
+  display: flex;
+}
+
+/* 列是真按钮：键盘可达，按压反馈走全局 :active */
+.wcell {
+  width: 100%;
   gap: 7px;
   padding: 10px 0 8px;
   border-radius: var(--radius-m);
@@ -63,7 +70,7 @@ const countOf = computed(
   transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-.week li.selected {
+.wcell.selected {
   background: var(--accent-soft);
 }
 
@@ -82,14 +89,14 @@ const countOf = computed(
   overflow: hidden;
 }
 
+/* 自底部生长走 clip-path：不触发 layout */
 .fill {
   position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  inset: 0;
   border-radius: inherit;
   background: var(--accent);
-  transition: height var(--dur-base) var(--ease-sheet);
+  clip-path: inset(calc(100% - var(--p, 0%)) 0 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .fill.full {
@@ -101,7 +108,7 @@ const countOf = computed(
   color: var(--text-2);
 }
 
-li.today .label {
+.wcell.today .label {
   color: var(--accent);
 }
 </style>

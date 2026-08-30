@@ -4,6 +4,7 @@ import { Type } from '@earendil-works/pi-ai'
 
 import { todoService } from '@/services/todoService'
 import type { Todo, TodoCategory, TodoStatus } from '@/types'
+import { describeRule } from '@/utils/recurrence'
 import { defineTool, hhmmToMin, optDate, resolveDate, type AppTool } from './types'
 
 const CATEGORY = Type.Union(
@@ -34,6 +35,12 @@ function brief(t: Todo) {
     category: t.category,
     priority: t.priority,
     status: t.status,
+    /** 子任务进度（如有） */
+    subtasks: t.subtasks?.length
+      ? `${t.subtasks.filter((s) => s.done).length}/${t.subtasks.length} 完成`
+      : undefined,
+    /** 重复规则摘要（模板行才有） */
+    repeat: t.recRule ? describeRule(t.recRule) : undefined,
   }
 }
 
@@ -79,8 +86,27 @@ export const todoTools: AppTool[] = [
       durationMin: Type.Optional(Type.Number({ description: '预计时长（分钟）' })),
       category: Type.Optional(CATEGORY),
       priority: Type.Optional(PRIORITY),
+      repeat: Type.Optional(
+        Type.Object(
+          {
+            freq: Type.Union([Type.Literal('daily'), Type.Literal('weekly'), Type.Literal('interval')]),
+            weekdays: Type.Optional(Type.Array(Type.Number(), { description: 'weekly 专用：周一=0…周日=6' })),
+            intervalDays: Type.Optional(Type.Number({ description: 'interval 专用：每 N 天' })),
+            endDate: Type.Optional(Type.String({ description: '结束日期 YYYY-MM-DD，缺省永不' })),
+          },
+          { description: '重复规则；用户说"每天/每周X/每N天"时才传' },
+        ),
+      ),
     }),
     async execute(args) {
+      const recRule = args.repeat
+        ? {
+            freq: args.repeat.freq,
+            weekdays: args.repeat.weekdays ?? [],
+            intervalDays: args.repeat.intervalDays ?? 0,
+            endDate: args.repeat.endDate ?? null,
+          }
+        : null
       const todo = await todoService.createTodo({
         title: args.title.trim(),
         notes: args.notes ?? null,
@@ -89,6 +115,7 @@ export const todoTools: AppTool[] = [
         durationMin: args.durationMin ?? null,
         category: (args.category as TodoCategory | undefined) ?? 'general',
         priority: args.priority ?? 0,
+        recRule,
       })
       return { ok: true, id: todo.id, todo: brief(todo) }
     },

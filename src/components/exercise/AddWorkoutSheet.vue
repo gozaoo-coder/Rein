@@ -100,12 +100,14 @@ async function save(): Promise<void> {
   font-size: var(--fs-subhead);
   font-weight: 600;
   color: var(--text-2);
-  transition: all var(--dur-fast) var(--ease-standard);
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
 
 .chip.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .stepper {
@@ -120,14 +122,14 @@ async function save(): Promise<void> {
   height: 44px;
   border-radius: 50%;
   background: var(--surface);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1), 0 0 0 0.5px var(--line);
+  box-shadow: var(--shadow-thumb);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .stepper b {
-  font-size: 26px;
+  font-size: var(--fs-title1);
   font-weight: 700;
   letter-spacing: -0.5px;
   margin-right: 4px;
@@ -147,7 +149,7 @@ async function save(): Promise<void> {
   padding: 12px 26px;
   border-radius: var(--radius-full);
   background: var(--ok);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-body);
   font-weight: 600;
 }

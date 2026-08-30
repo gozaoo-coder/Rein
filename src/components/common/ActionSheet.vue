@@ -13,10 +13,17 @@ const emit = defineEmits<{
   select: [value: string]
 }>()
 
+/** 锁背景滚动；恢复打开前的值而非直接清空，避免盖在 SheetModal 上时提前解锁背景 */
+let prevOverflow = ''
 watch(
   () => props.open,
   (open) => {
-    document.documentElement.style.overflow = open ? 'hidden' : ''
+    if (open) {
+      prevOverflow = document.documentElement.style.overflow
+      document.documentElement.style.overflow = 'hidden'
+    } else {
+      document.documentElement.style.overflow = prevOverflow
+    }
   },
 )
 
@@ -55,7 +62,7 @@ function pick(value: string): void {
   position: fixed;
   inset: 0;
   z-index: 110;
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--scrim);
 }
 
 .card-wrap {
@@ -108,13 +115,19 @@ function pick(value: string): void {
   opacity: 0;
 }
 
-/* 进出同路径：自底弹起 */
-.as-card-enter-active,
-.as-card-leave-active {
+/* 进出同路径：自底弹起；退出更快（取消操作要干脆） */
+.as-card-enter-active {
   transition:
     transform var(--dur-sheet) var(--ease-sheet),
     opacity var(--dur-sheet) var(--ease-sheet);
 }
+
+.as-card-leave-active {
+  transition:
+    transform 200ms var(--ease-standard),
+    opacity 200ms var(--ease-standard);
+}
+
 .as-card-enter-from,
 .as-card-leave-to {
   transform: translate(-50%, 24px);

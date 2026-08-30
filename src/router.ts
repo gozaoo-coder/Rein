@@ -70,6 +70,26 @@ export const routes = [
     meta: { title: '饮食库' },
   },
   {
+    path: '/nutrition/recipes',
+    name: 'nutrition-recipes',
+    component: () => import('@/pages/RecipeLibraryPage.vue'),
+    meta: { title: '食谱库' },
+  },
+  {
+    path: '/program',
+    name: 'program',
+    component: () => import('@/pages/ProgramPage.vue'),
+    // 二级内容页：健康方案（程序计算基线 + AI 复盘调参，日程级展开）
+    meta: { title: '健康方案' },
+  },
+  {
+    path: '/program/wrapup/:id',
+    name: 'program-wrapup',
+    component: () => import('@/pages/WrapupPage.vue'),
+    // :id = 方案记录 id；生效中的方案也可查看（成绩单页内提供归档入口）
+    meta: { title: '结营成绩单' },
+  },
+  {
     path: '/ledger',
     name: 'ledger',
     component: () => import('@/pages/LedgerPage.vue'),

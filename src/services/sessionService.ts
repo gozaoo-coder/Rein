@@ -1,6 +1,15 @@
 /** 训练课会话 IPC 封装 · 对应 modules/session/commands.rs */
 
-import type { RunSnapshot, SessionRecord, SessionSnapshotState, Workout } from '@/types'
+import type {
+  RunSnapshot,
+  SessionRecord,
+  SessionSnapshotState,
+  StrengthExerciseRef,
+  StrengthLastWeight,
+  StrengthSetRecord,
+  StrengthSetRow,
+  Workout,
+} from '@/types'
 import { invoke } from './transport'
 
 /** 会话状态快照：课程与跑步两种结构（Rust state_json 透传） */
@@ -34,7 +43,7 @@ export const sessionService = {
   /** 存在进行中（含异常中断）的训练时返回记录，否则 null */
   getActive: () => invoke<SessionRecord | null>('session_active'),
 
-  /** 正常结束（保存）：事务内写入训练记录并关闭会话 */
+  /** 正常结束（保存）：事务内写入训练记录 + 逐组做组明细（重量曲线数据源）并关闭会话 */
   finish: (p: {
     id: number
     name: string
@@ -44,6 +53,7 @@ export const sessionService = {
     intensity: string
     kcal: number
     note: string | null
+    sets: StrengthSetRow[]
   }) => invoke<Workout>('session_finish', { input: p }),
 
   /** 正常结束（放弃）：仅关闭会话 */
@@ -52,4 +62,15 @@ export const sessionService = {
   /** 按训练记录反查来源会话（含最后一帧快照）；手动添加的记录返回 null */
   forWorkout: (workoutId: number) =>
     invoke<SessionRecord | null>('session_for_workout', { workoutId }),
+
+  /** 某动作的全部做组记录（按日期升序，含热身组）——重量曲线数据源 */
+  strengthHistory: (exerciseName: string) =>
+    invoke<StrengthSetRecord[]>('strength_history', { exerciseName }),
+
+  /** 有力量记录的动作（按最近训练倒序）——曲线动作选择 */
+  strengthExercises: () => invoke<StrengthExerciseRef[]>('strength_exercises'),
+
+  /** 一批动作各自的「最近一次做组重量」——沉浸页预填上次重量 */
+  strengthLastWeights: (names: string[]) =>
+    invoke<StrengthLastWeight[]>('strength_last_weights', { names }),
 }

@@ -80,7 +80,7 @@ function onMask(): void {
   position: fixed;
   inset: 0;
   z-index: 110;
-  background: rgba(0, 0, 0, 0.32);
+  background: var(--scrim);
 }
 
 .dk-panel {
@@ -115,7 +115,7 @@ function onMask(): void {
   padding: 7px 12px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-caption);
   font-weight: 700;
   flex: none;
@@ -184,9 +184,13 @@ function onMask(): void {
   opacity: 0;
 }
 
-.dk-panel-enter-active,
+.dk-panel-enter-active {
+  transition: transform var(--dur-sheet) var(--ease-sheet);
+}
+
+/* 退出更快：收起不恋战 */
 .dk-panel-leave-active {
-  transition: transform var(--dur-sheet, 0.32s) var(--ease-sheet, cubic-bezier(0.32, 0.72, 0, 1));
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .dk-panel-enter-from,

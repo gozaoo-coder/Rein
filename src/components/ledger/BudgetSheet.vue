@@ -173,7 +173,7 @@ async function clear(): Promise<void> {
   padding: 10px 34px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-headline);
   font-weight: 700;
   transition: opacity var(--dur-fast) var(--ease-standard);

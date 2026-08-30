@@ -31,6 +31,23 @@ export type Level = 1 | 2 | 3
 
 export type ActivationMap = Partial<Record<MuscleKey, Level>>
 
+/** 全部肌群键（AI 工具 schema 与数据校验共用） */
+export const MUSCLE_KEYS: MuscleKey[] = [
+  'scm',
+  'deltoid',
+  'chest',
+  'biceps',
+  'triceps',
+  'forearm',
+  'core',
+  'traps',
+  'lats',
+  'glutes',
+  'quads',
+  'hamstrings',
+  'calves',
+]
+
 export const MUSCLE_LABELS: Record<MuscleKey, string> = {
   scm: '胸锁乳突肌',
   deltoid: '三角肌',
@@ -149,6 +166,16 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
   {
     match: /登山|爬楼|爬坡/,
     act: { quads: 3, glutes: 2, calves: 2, core: 2 },
+  },
+  // ---- 快走（先于泛「跑」，走≠跑）----
+  {
+    match: /快走|健走|步行|散步/,
+    act: { quads: 2, glutes: 2, calves: 3, core: 1 },
+  },
+  // ---- 间歇/HIIT（含「间歇跑」，须先于泛「跑」）----
+  {
+    match: /hiit|间歇/i,
+    act: { quads: 3, glutes: 3, hamstrings: 2, calves: 3, core: 2 },
   },
   // ---- 核心----
   {

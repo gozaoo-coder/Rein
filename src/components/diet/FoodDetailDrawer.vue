@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Plus } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
@@ -47,11 +47,29 @@ function fmt(n: number): string {
   if (!n) return '0'
   return n >= 100 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
 }
+
+/* 数据入场：抽屉展开后供能条/微量条从零生长（双 rAF 确保初始态先上屏） */
+const grown = ref(false)
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) {
+      grown.value = false
+      return
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        grown.value = true
+      })
+    })
+  },
+)
 </script>
 
 <template>
   <SheetModal :open="open" :title="food?.name ?? '食品详情'" @close="emit('close')">
     <template v-if="food">
+      <div class="anim" :class="{ grown }">
       <!-- 热量 + 宏量 -->
       <section class="card hero">
       <div class="row between top">
@@ -71,9 +89,9 @@ function fmt(n: number): string {
       <!-- 供能占比堆叠条 -->
       <div v-if="share.length" class="share" :style="{ '--n': share.length }">
         <span
-          v-for="m in share"
+          v-for="(m, i) in share"
           :key="m.label"
-          :style="{ flex: m.pct, background: `var(${m.colorVar})` }"
+          :style="{ flex: m.pct, background: `var(${m.colorVar})`, '--i': i }"
         />
       </div>
       <p v-if="share.length" class="share-label num t-3">
@@ -108,7 +126,7 @@ function fmt(n: number): string {
             <span class="num mval">{{ fmt(m.value) }} {{ m.unit }}</span>
           </div>
           <div class="bar">
-            <div class="fill" :class="{ limit: m.isLimit }" :style="{ width: `${Math.min(m.pct, 100)}%` }" />
+            <div class="fill" :class="{ limit: m.isLimit }" :style="{ '--p': `${Math.min(m.pct, 100)}%` }" />
           </div>
           <p class="num mpct t-3">每 100g 约占每日{{ m.isLimit ? '建议上限' : '推荐摄入' }}的 {{ m.pct }}%</p>
         </li>
@@ -122,6 +140,7 @@ function fmt(n: number): string {
         <Plus :size="18" /> 记录这一食物
       </button>
     </div>
+      </div>
     </template>
     <p v-else class="missing">食物不存在或已下架</p>
   </SheetModal>
@@ -157,7 +176,7 @@ function fmt(n: number): string {
 }
 
 .kcal b {
-  font-size: 40px;
+  font-size: var(--fs-display-m);
   font-weight: 800;
   letter-spacing: -1px;
 }
@@ -219,6 +238,17 @@ function fmt(n: number): string {
   border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
+/* 入场：供能段从左向右逐个展开（30ms stagger），微量条同步生长 */
+.anim:not(.grown) .share span {
+  transform: scaleX(0);
+}
+
+.share span {
+  transform-origin: left center;
+  transition: transform var(--dur-base) var(--ease-standard);
+  transition-delay: calc(var(--i, 0) * 30ms);
+}
+
 .share-label {
   margin-top: 7px;
   font-size: var(--fs-caption);
@@ -262,7 +292,7 @@ function fmt(n: number): string {
   margin-left: 6px;
   padding: 1px 7px;
   border-radius: var(--radius-full);
-  background: rgba(255, 59, 48, 0.12);
+  background: var(--danger-soft);
   color: var(--c-sodium);
   font-size: var(--fs-micro);
   font-weight: 700;
@@ -280,9 +310,16 @@ function fmt(n: number): string {
 }
 
 .fill {
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--accent);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
+}
+
+.anim:not(.grown) .fill {
+  clip-path: inset(0 100% 0 0 round var(--radius-full));
 }
 
 .fill.limit {

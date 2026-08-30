@@ -88,3 +88,21 @@ pub struct MealLog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub food: Option<Food>,
 }
+
+/// 食谱偏好（食谱库 / AI 生成 / 方案引擎选菜共用）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipePref {
+    pub recipe_id: String,
+    /// 1 = 喜欢，-1 = 不喜欢
+    pub rating: i64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecipePrefInput {
+    pub recipe_id: String,
+    /// 1 = 喜欢，-1 = 不喜欢
+    pub rating: i64,
+}

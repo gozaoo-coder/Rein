@@ -26,8 +26,11 @@ import type {
   MealLog,
   NutrientIntake,
   ParsedFoodItem,
+  RecipePref,
   PomodoroSession,
+  ProgramRecord,
   Profile,
+  ScheduleTodoInput,
   TargetAdjustProposal,
   TargetChange,
   Todo,
@@ -36,6 +39,7 @@ import type {
   WorkoutPlanRecord,
 } from '@/types'
 import { addDays, startOfMonth, startOfWeek, todayStr } from '@/utils/date'
+import { ruleMatchesDate } from '@/utils/recurrence'
 
 /* ---------------- 种子载入 ---------------- */
 
@@ -90,8 +94,21 @@ const weekStart = startOfWeek(today)
 let mealId = 0
 const meals: MealLog[] = []
 
+/** 食谱偏好（与 Rust recipe_prefs 表同契约） */
+const recipePrefs: RecipePref[] = []
+
 let todoId = 0
 const todos: Todo[] = []
+
+/** 健康方案（与 Rust programs 表同契约） */
+let programId = 0
+const programs: ProgramRecord[] = []
+
+/** 每日 AI 菜单缓存（与 Rust program_meals 表同契约） */
+const programMeals: { programId: number; date: string; mealsJson: string; updatedAt: string }[] = []
+
+/** 采购清单勾选状态（与 Rust shopping_checks 表同契约） */
+const shoppingChecks: { itemKey: string; checkedAt: string }[] = []
 
 let workoutId = 0
 const workouts: Workout[] = []
@@ -138,6 +155,70 @@ function saveSessions(): void {
 
 loadSessions()
 
+/* ---------------- 逐组做组记录（与 Rust workout_sets 表同契约） ---------------- */
+
+/** 重量曲线数据源：session_finish 时展开落行；exercise_name 跨课程/编辑稳定 */
+interface MockStrengthSet {
+  id: number
+  workoutId: number
+  planId: string | null
+  exerciseKey: string
+  exerciseName: string
+  setNo: number
+  kind: string
+  weightKg: number | null
+  reps: number | null
+  sec: number | null
+  warmup: boolean
+  createdAt: string
+}
+
+let strengthSetId = 0
+const strengthSets: MockStrengthSet[] = []
+const SETS_STORE_KEY = 'rein.mock.sets.v1'
+/**
+ * 演示做组明细的种子版本。strengthSets 持久化在 localStorage，而演示播种写在模块
+ * 顶层——若不设版本闸门，每次页面加载都会再叠一份演示行（20 → 40 → 60…），
+ * 污染力量曲线与「上次重量」，且 localStorage 无上限增长。
+ */
+const SETS_SEED_VER_KEY = 'rein.mock.sets.seedVer.v1'
+const SETS_SEED_VERSION = 1
+let setsSeeded = false
+
+function loadSets(): void {
+  try {
+    const raw = localStorage.getItem(SETS_STORE_KEY)
+    if (raw) {
+      const list = JSON.parse(raw) as MockStrengthSet[]
+      strengthSets.push(...list)
+      strengthSetId = Math.max(strengthSetId, ...list.map((s) => s.id), 0)
+    }
+    setsSeeded = Number(localStorage.getItem(SETS_SEED_VER_KEY) ?? '0') >= SETS_SEED_VERSION
+  } catch {
+    /* 忽略损坏数据，按空处理 */
+  }
+}
+
+/** 播种完成后落版本位；升版或用户清库后自动补种一次 */
+function markSetsSeeded(): void {
+  setsSeeded = true
+  try {
+    localStorage.setItem(SETS_SEED_VER_KEY, String(SETS_SEED_VERSION))
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+function saveSets(): void {
+  try {
+    localStorage.setItem(SETS_STORE_KEY, JSON.stringify(strengthSets))
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+loadSets()
+
 /* ---------------- 课程库（与 Rust workout_plans 表同契约） ---------------- */
 
 interface SeedPlan {
@@ -146,18 +227,25 @@ interface SeedPlan {
   subtitle: string
   workoutType: string
   exercises: unknown[]
+  equipment?: 'gym' | 'home' | null
+  estDurationMin?: number | null
 }
 
 const plans: WorkoutPlanRecord[] = []
 const PLAN_STORE_KEY = 'rein.mock.plans.v1'
-/** 内置课程种子版本：种子内容变更时 +1，本地库会按 id 补进缺失的内置课程 */
-const PLAN_SEED_VERSION = 2
+/**
+ * 内置课程种子版本：种子内容变更时 +1。
+ * v4 起新增语义：低于该版本的本地库会把内置课的 exercises/subtitle 刷新为新种子
+ * （激活热身组等结构改进要送达老库；与 Rust 端 app_meta 'plan_seed_version' 同语义）。
+ */
+const PLAN_SEED_VERSION = 4
 const PLAN_SEED_VER_KEY = 'rein.mock.plans.seedVer.v1'
 
 /**
  * 与会话一致：localStorage 持久化，模拟真实库的「用户编辑不丢失」。
  * 种子导入与 Rust 端 seed_builtin_plans 同语义：按 id 幂等补齐缺失项，
- * 已有行（含用户改过的）永不覆盖；种子版本升级后老库自动拿到新增内置课。
+ * 已有行（含用户改过的）永不覆盖；种子版本升级后老库自动拿到新增内置课，
+ * 并刷新内置课内容（v4 起）。
  */
 function loadPlans(): void {
   try {
@@ -181,17 +269,28 @@ function loadPlans(): void {
   const known = new Set(plans.map((p) => p.id))
   const now = new Date().toISOString()
   for (const p of (seedPlansJson as { plans: SeedPlan[] }).plans) {
-    if (known.has(p.id)) continue
-    plans.push({
-      id: p.id,
-      name: p.name,
-      subtitle: p.subtitle,
-      workoutType: p.workoutType as WorkoutPlanRecord['workoutType'],
-      exercises: structuredClone(p.exercises) as WorkoutPlanRecord['exercises'],
-      lastUsedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    })
+    if (!known.has(p.id)) {
+      plans.push({
+        id: p.id,
+        name: p.name,
+        subtitle: p.subtitle,
+        workoutType: p.workoutType as WorkoutPlanRecord['workoutType'],
+        exercises: structuredClone(p.exercises) as WorkoutPlanRecord['exercises'],
+        lastUsedAt: null,
+        createdAt: now,
+        updatedAt: now,
+        equipment: p.equipment ?? null,
+        estDurationMin: p.estDurationMin ?? null,
+      })
+      continue
+    }
+    // 版本升级路径：内置课内容刷新为新种子（激活热身组等送达老库，覆盖用户对内置课的编辑）
+    {
+      const row = plans.find((x) => x.id === p.id)!
+      row.exercises = JSON.parse(JSON.stringify(p.exercises))
+      row.subtitle = p.subtitle
+      row.updatedAt = now
+    }
   }
   savePlans()
   try {
@@ -349,6 +448,11 @@ const profile: Profile = {
   activityLevel: 'light',
   goal: 'cut',
   targets: { ...defaultTargets },
+  trainingDaysPerWeek: 3,
+  preferredTimeSlots: ['evening'],
+  equipment: 'gym',
+  dietRestrictions: [],
+  experience: 'beginner',
 }
 
 /* ---------------- 演示数据 ---------------- */
@@ -410,6 +514,10 @@ function addTodo(t: Partial<Todo> & { title: string; date: string }): void {
     status: t.status ?? 'todo',
     completedAt: t.status === 'done' ? `${t.date}T09:00:00` : null,
     createdAt: `${t.date}T07:00:00`,
+    programId: t.programId ?? null,
+    recRule: t.recRule ?? null,
+    recKey: t.recKey ?? null,
+    subtasks: t.subtasks ?? null,
   })
 }
 
@@ -417,9 +525,22 @@ addTodo({ title: '晨间拉伸', date: today, startMin: 7 * 60 + 20, durationMin
 addTodo({ title: '午休散步 20 分钟', date: today, startMin: 12 * 60 + 40, durationMin: 20, category: 'health', priority: 1 })
 addTodo({ title: '力量训练 · 上肢', date: today, startMin: 18 * 60 + 30, durationMin: 45, category: 'workout', priority: 2 })
 addTodo({ title: '写今日复盘', date: today, startMin: 21 * 60 + 30, category: 'study' })
+// 未安排池演示：今天要做但还没定时间
+addTodo({ title: '预约牙医', date: today, durationMin: 10, category: 'health' })
+addTodo({ title: '回复产品反馈', date: today, durationMin: 15, category: 'work', priority: 1 })
+addTodo({ title: '阅读《睡眠革命》', date: today, durationMin: 30, category: 'study' })
 addTodo({ title: '跑步 5 公里', date: yesterday, startMin: 19 * 60, durationMin: 30, category: 'workout', status: 'done' })
 addTodo({ title: '蔬菜摄入达标', date: yesterday, category: 'health', status: 'done' })
 addTodo({ title: '整理周报提纲', date: addDays(today, 1), startMin: 10 * 60, durationMin: 30, category: 'work', priority: 1 })
+// 重复模板演示：工作日每天 10 分钟拉伸（实例由 sync_recurrences 物化）
+addTodo({
+  title: '通勤骑行',
+  date: today,
+  startMin: 8 * 60 + 30,
+  durationMin: 25,
+  category: 'workout',
+  recRule: { freq: 'weekly', weekdays: [0, 1, 2, 3, 4], intervalDays: 0, endDate: null },
+})
 
 function addWorkout(w: Partial<Workout> & { name: string; type: Workout['type']; date: string; durationMin: number; kcal: number }): void {
   workouts.push({
@@ -512,14 +633,17 @@ function synthTrack(totalKm: number, totalSec: number, laps = 4): { lat: number;
 
 // 演示二：腿日（ppl-legs 前四个动作）→ 详情抽屉的课程做组明细视图
 {
-  const doneSets: Record<string, { weight: number | null; sec: number | null }[]> = {
+  const doneSets: Record<string, { weight: number | null; sec: number | null; warmup?: boolean }[]> = {
     'ppl-legs-squat': [
+      { weight: 35, sec: null, warmup: true },
+      { weight: 52.5, sec: null, warmup: true },
       { weight: 70, sec: null },
       { weight: 72.5, sec: null },
       { weight: 75, sec: null },
       { weight: 75, sec: null },
     ],
     'ppl-legs-rdl': [
+      { weight: 30, sec: null, warmup: true },
       { weight: 60, sec: null },
       { weight: 60, sec: null },
       { weight: 62.5, sec: null },
@@ -549,6 +673,91 @@ function synthTrack(totalKm: number, totalSec: number, laps = 4): { lat: number;
   })
   workouts[1]!.sessionId = sid
   workouts[1]!.note = '11/26 组完成 · 提前结束 · 总容量约 5005 kg'
+  // 深蹲/罗马尼亚硬拉的逐组明细（含热身行）→ 重量曲线演示数据
+  const legSets: [string, string, { w: number | null; reps: number; warmup?: boolean }[]][] = [
+    ['ppl-legs-squat', '杠铃深蹲', [{ w: 35, reps: 8, warmup: true }, { w: 52.5, reps: 4, warmup: true }, { w: 70, reps: 8 }, { w: 72.5, reps: 8 }, { w: 75, reps: 8 }, { w: 75, reps: 8 }]],
+    ['ppl-legs-rdl', '罗马尼亚硬拉', [{ w: 30, reps: 12, warmup: true }, { w: 60, reps: 10 }, { w: 60, reps: 10 }, { w: 62.5, reps: 10 }]],
+  ]
+  if (!setsSeeded) {
+    for (const [key, name, list] of legSets) {
+      let warmNo = 0
+      let setNo = 0
+      for (const it of list) {
+        if (it.warmup) warmNo++
+        else setNo++
+        strengthSets.push({
+          id: ++strengthSetId,
+          workoutId: workouts[1]!.id,
+          planId: 'ppl-legs',
+          exerciseKey: key,
+          exerciseName: name,
+          setNo: it.warmup ? warmNo : setNo,
+          kind: 'strength',
+          weightKg: it.w,
+          reps: it.reps,
+          sec: null,
+          warmup: !!it.warmup,
+          createdAt: new Date().toISOString(),
+        })
+      }
+    }
+    saveSets()
+  }
+}
+
+// 演示三：杠铃卧推近 4 周渐进超负荷（推日，供力量曲线卡与「上次重量」演示）
+{
+  const benchWeeks = [
+    { daysAgo: 27, sets: [55, 57.5, 57.5] },
+    { daysAgo: 20, sets: [57.5, 60, 60] },
+    { daysAgo: 13, sets: [60, 60, 60] },
+    { daysAgo: 6, sets: [60, 62.5, 62.5] },
+  ]
+  for (const wk of benchWeeks) {
+    const w: Workout = {
+      id: ++workoutId,
+      name: '推日',
+      type: 'strength',
+      date: addDays(today, -wk.daysAgo),
+      startMin: 18 * 60 + 30,
+      durationMin: 55,
+      kcal: 320,
+      intensity: 'moderate',
+      note: null,
+      sessionId: null,
+      createdAt: new Date().toISOString(),
+    }
+    workouts.push(w)
+    // 30×8 + 45×4 激活热身，正式组递增
+    const rows: { w: number; reps: number; warmup?: boolean }[] = [
+      { w: 30, reps: 8, warmup: true },
+      { w: 45, reps: 4, warmup: true },
+      ...wk.sets.map((weight) => ({ w: weight, reps: 8 })),
+    ]
+    if (setsSeeded) continue
+    let warmNo = 0
+    let setNo = 0
+    for (const r of rows) {
+      if (r.warmup) warmNo++
+      else setNo++
+      strengthSets.push({
+        id: ++strengthSetId,
+        workoutId: w.id,
+        planId: 'ppl-push',
+        exerciseKey: 'ppl-push-bench',
+        exerciseName: '杠铃卧推',
+        setNo: r.warmup ? warmNo : setNo,
+        kind: 'strength',
+        weightKg: r.w,
+        reps: r.reps,
+        sec: null,
+        warmup: !!r.warmup,
+        createdAt: new Date().toISOString(),
+      })
+    }
+  }
+  if (!setsSeeded) saveSets()
+  markSetsSeeded()
 }
 
 // 历史演示记录：过去约 5 个月每周 1–2 次，确定性模式生成（供日/周/年视图浏览）
@@ -947,6 +1156,15 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return delay(structuredClone(list) as T)
     }
 
+    case 'list_meals_range': {
+      const start = String(args.startDate)
+      const end = String(args.endDate)
+      const list = meals
+        .filter((m) => m.date >= start && m.date <= end)
+        .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+      return delay(structuredClone(list) as T)
+    }
+
     case 'log_meal': {
       const f = foods.find((x) => x.id === args.foodId)!
       const log: MealLog = {
@@ -970,6 +1188,28 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'delete_meal': {
       const i = meals.findIndex((m) => m.id === args.id)
       if (i !== -1) meals.splice(i, 1)
+      return delay(undefined as T)
+    }
+
+    case 'recipe_prefs_list':
+      return delay(structuredClone(recipePrefs) as T)
+
+    case 'recipe_prefs_set': {
+      const input = args.input as { recipeId: string; rating: number }
+      if (input.rating !== 1 && input.rating !== -1) throw new Error('rating 应为 1（喜欢）或 -1（不喜欢）')
+      const now = new Date().toISOString()
+      const i = recipePrefs.findIndex((p) => p.recipeId === input.recipeId)
+      if (i !== -1) {
+        recipePrefs[i] = { recipeId: input.recipeId, rating: input.rating, updatedAt: now }
+      } else {
+        recipePrefs.push({ recipeId: input.recipeId, rating: input.rating, updatedAt: now })
+      }
+      return delay(structuredClone(recipePrefs.find((p) => p.recipeId === input.recipeId)) as T)
+    }
+
+    case 'recipe_prefs_delete': {
+      const i = recipePrefs.findIndex((p) => p.recipeId === args.recipeId)
+      if (i !== -1) recipePrefs.splice(i, 1)
       return delay(undefined as T)
     }
 
@@ -1090,22 +1330,76 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         status: 'todo',
         completedAt: null,
         createdAt: new Date().toISOString(),
+        programId: null,
+        recRule: (args.recRule as Todo['recRule']) ?? null,
+        recKey: null,
+        subtasks: (args.subtasks as Todo['subtasks']) ?? null,
       }
+      // 重复模板：自身即首日实例
+      if (t.recRule && t.date) t.recKey = `${t.id}:${t.date}`
       todos.push(t)
       return delay(structuredClone(t) as T)
     }
 
     case 'update_todo': {
-      const patch = args.todo as Todo
+      // 注意：浏览器模式下入参可能是 Vue reactive 代理，structuredClone 会抛
+      // DataCloneError，必须走 JSON 克隆（真实后端经 IPC 序列化无此问题）。
+      const patch = JSON.parse(JSON.stringify(args.todo)) as Todo
       const i = todos.findIndex((t) => t.id === patch.id)
-      if (i !== -1) todos[i] = structuredClone(patch)
-      return delay(structuredClone(patch) as T)
+      if (i !== -1) todos[i] = patch
+      return delay(JSON.parse(JSON.stringify(patch)) as T)
     }
 
     case 'delete_todo': {
       const i = todos.findIndex((t) => t.id === args.id)
       if (i !== -1) todos.splice(i, 1)
       return delay(undefined as T)
+    }
+
+    case 'sync_recurrences': {
+      // 与 Rust sync_recurrences 同语义：清失效未来实例 + 补窗口 [今天-1, 今天+7] 缺失实例
+      const todayS = String(args.today)
+      const winStart = addDays(todayS, -1)
+      const winEnd = addDays(todayS, 7)
+      let inserted = 0
+      for (let i = todos.length - 1; i >= 0; i--) {
+        const inst = todos[i]!
+        if (!inst.recKey || inst.status === 'done' || !inst.date || inst.date <= todayS) continue
+        const tid = Number(inst.recKey.split(':')[0])
+        const tpl = todos.find((x) => x.id === tid)
+        const match =
+          tpl?.recRule && tpl.date
+            ? ruleMatchesDate(tpl.recRule, tpl.date, inst.date)
+            : false
+        if (!match) todos.splice(i, 1)
+      }
+      for (const tpl of todos) {
+        if (!tpl.recRule || !tpl.date) continue
+        for (let d = winStart; d <= winEnd; d = addDays(d, 1)) {
+          if (d === tpl.date || !ruleMatchesDate(tpl.recRule, tpl.date, d)) continue
+          const key = `${tpl.id}:${d}`
+          if (todos.some((x) => x.recKey === key)) continue
+          todos.push({
+            id: ++todoId,
+            title: tpl.title,
+            notes: tpl.notes,
+            date: d,
+            startMin: tpl.startMin,
+            durationMin: tpl.durationMin,
+            category: tpl.category,
+            priority: tpl.priority,
+            status: 'todo',
+            completedAt: null,
+            createdAt: new Date().toISOString(),
+            programId: null,
+            recRule: null,
+            recKey: key,
+            subtasks: tpl.subtasks?.map((s) => ({ title: s.title, done: false })) ?? null,
+          })
+          inserted++
+        }
+      }
+      return delay(inserted as T)
     }
 
     case 'list_workouts': {
@@ -1145,6 +1439,11 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'delete_workout': {
       const i = workouts.findIndex((w) => w.id === args.id)
       if (i !== -1) workouts.splice(i, 1)
+      // 与 Rust FK ON DELETE CASCADE 同语义：记录删除时清掉其逐组明细
+      for (let k = strengthSets.length - 1; k >= 0; k--) {
+        if (strengthSets[k]!.workoutId === Number(args.id)) strengthSets.splice(k, 1)
+      }
+      saveSets()
       return delay(undefined as T)
     }
 
@@ -1212,6 +1511,16 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         intensity: string
         kcal: number
         note: string | null
+        sets?: {
+          exerciseKey: string
+          exerciseName: string
+          kind: string
+          setNo: number
+          weightKg: number | null
+          reps: number | null
+          sec: number | null
+          warmup: boolean
+        }[]
       }
       const s = sessions.find((x) => x.id === input.id)
       if (s) {
@@ -1232,6 +1541,25 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         createdAt: new Date().toISOString(),
       }
       workouts.push(w)
+      // 逐组做组明细落库（重量曲线数据源，与 Rust session_finish 事务内写入同语义）
+      const nowIso = new Date().toISOString()
+      for (const st of input.sets ?? []) {
+        strengthSets.push({
+          id: ++strengthSetId,
+          workoutId: w.id,
+          planId: s?.planId ?? null,
+          exerciseKey: st.exerciseKey,
+          exerciseName: st.exerciseName,
+          setNo: st.setNo,
+          kind: st.kind,
+          weightKg: st.weightKg,
+          reps: st.reps,
+          sec: st.sec,
+          warmup: !!st.warmup,
+          createdAt: nowIso,
+        })
+      }
+      if (input.sets?.length) saveSets()
       return delay(structuredClone(w) as T)
     }
 
@@ -1248,6 +1576,67 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       const w = workouts.find((x) => x.id === Number(args.workoutId))
       const s = w?.sessionId != null ? sessions.find((x) => x.id === w.sessionId) : undefined
       return delay((s ? structuredClone(s) : null) as T)
+    }
+
+    /* ---------- 重量曲线（逐组记录查询，与 Rust 同语义） ---------- */
+
+    case 'strength_history': {
+      const name = String(args.exerciseName)
+      const rows = strengthSets
+        .filter((r) => r.exerciseName === name)
+        .map((r) => {
+          const w = workouts.find((x) => x.id === r.workoutId)
+          return {
+            workoutId: r.workoutId,
+            date: w?.date ?? r.createdAt.slice(0, 10),
+            exerciseName: r.exerciseName,
+            setNo: r.setNo,
+            weightKg: r.weightKg,
+            reps: r.reps,
+            sec: r.sec,
+            warmup: r.warmup,
+          }
+        })
+        .sort((a, b) => a.date.localeCompare(b.date) || a.workoutId - b.workoutId)
+      return delay(structuredClone(rows) as T)
+    }
+
+    case 'strength_exercises': {
+      const agg = new Map<string, { lastDate: string; sessions: Set<number> }>()
+      for (const r of strengthSets) {
+        if (r.warmup || r.weightKg == null) continue
+        const w = workouts.find((x) => x.id === r.workoutId)
+        const date = w?.date ?? r.createdAt.slice(0, 10)
+        const cur = agg.get(r.exerciseName) ?? { lastDate: '', sessions: new Set<number>() }
+        if (date > cur.lastDate) cur.lastDate = date
+        cur.sessions.add(r.workoutId)
+        agg.set(r.exerciseName, cur)
+      }
+      const rows = [...agg.entries()]
+        .map(([name, v]) => ({ name, lastDate: v.lastDate, sessions: v.sessions.size }))
+        .sort((a, b) => b.lastDate.localeCompare(a.lastDate))
+      return delay(structuredClone(rows) as T)
+    }
+
+    case 'strength_last_weights': {
+      const names = (args.names as string[]) ?? []
+      const rows = names
+        .map((name) => {
+          const done = strengthSets
+            .filter((r) => r.exerciseName === name && !r.warmup && r.weightKg != null)
+            .map((r) => {
+              const w = workouts.find((x) => x.id === r.workoutId)
+              return { ...r, date: w?.date ?? r.createdAt.slice(0, 10) }
+            })
+            // 与 Rust ORDER BY date DESC, workout_id DESC, id DESC 对齐：id 决胜保证取「最后一组」
+            .sort((a, b) => b.date.localeCompare(a.date) || b.workoutId - a.workoutId || b.id - a.id)
+          const last = done[0]
+          return last
+            ? { name, weightKg: last.weightKg!, reps: last.reps, date: last.date }
+            : null
+        })
+        .filter((x): x is NonNullable<typeof x> => x != null)
+      return delay(structuredClone(rows) as T)
     }
 
     case 'list_workout_plans':
@@ -1270,6 +1659,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         existing.subtitle = String(input.subtitle ?? '').trim()
         existing.workoutType = input.workoutType
         existing.exercises = JSON.parse(JSON.stringify(input.exercises)) as WorkoutPlanRecord['exercises']
+        // meta 字段编辑器不提供：缺省保留原值（与 Rust upsert 的 COALESCE 语义一致）
+        if (input.equipment != null) existing.equipment = input.equipment
+        if (input.estDurationMin != null) existing.estDurationMin = input.estDurationMin
         existing.updatedAt = now
         savePlans()
         return delay(structuredClone(existing) as T)
@@ -1283,6 +1675,8 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         lastUsedAt: null,
         createdAt: now,
         updatedAt: now,
+        equipment: input.equipment ?? null,
+        estDurationMin: input.estDurationMin ?? null,
       }
       plans.push(rec)
       savePlans()
@@ -1584,6 +1978,214 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       }
       hits.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       return delay(hits.slice(0, Number.isFinite(limit) ? Math.max(1, Math.min(50, limit)) : 8) as T)
+    }
+
+    // ---- 健康方案（与 Rust modules/program 同契约：持久化 + 单激活 + 日程重排）----
+    case 'program_list':
+      return delay(
+        structuredClone(programs.sort((a, b) => b.id - a.id).slice(0, 20)) as T,
+      )
+
+    case 'program_get_active': {
+      const p = [...programs].filter((x) => x.status === 'active').sort((a, b) => b.id - a.id)[0]
+      return delay((p ? structuredClone(p) : null) as T)
+    }
+
+    case 'program_create': {
+      const input = args.input as {
+        goal: ProgramRecord['goal']
+        tier: ProgramRecord['tier']
+        weeks: number
+        paramsJson: string
+      }
+      if (!(input.weeks >= 1 && input.weeks <= 26)) throw new Error('方案周期应为 1~26 周')
+      // 单激活约束：旧 active 自动归档，并回收归档方案今天起未完成的日程待办
+      // （与 Rust 的 program_create 同语义，含历史归档方案的脏数据自愈）
+      for (const x of programs) {
+        if (x.status === 'active') {
+          x.status = 'archived'
+          x.updatedAt = new Date().toISOString()
+        }
+      }
+      for (let i = todos.length - 1; i >= 0; i--) {
+        const t = todos[i]!
+        if (
+          t.programId != null &&
+          t.date != null &&
+          t.date >= today &&
+          t.status !== 'done' &&
+          programs.some((x) => x.id === t.programId && x.status === 'archived')
+        ) {
+          todos.splice(i, 1)
+        }
+      }
+      const now = new Date().toISOString()
+      const rec: ProgramRecord = {
+        id: ++programId,
+        goal: input.goal,
+        tier: input.tier,
+        status: 'active',
+        version: 1,
+        weeks: input.weeks,
+        paramsJson: input.paramsJson,
+        adjustmentsJson: '[]',
+        createdAt: now,
+        activatedAt: now,
+        updatedAt: now,
+      }
+      programs.push(rec)
+      return delay(structuredClone(rec) as T)
+    }
+
+    case 'program_update_params': {
+      const p = programs.find((x) => x.id === args.id)
+      if (!p) throw new Error('方案不存在')
+      const input = args.input as { paramsJson: string; adjustmentsJson: string }
+      p.paramsJson = input.paramsJson
+      p.adjustmentsJson = input.adjustmentsJson
+      p.version += 1
+      p.updatedAt = new Date().toISOString()
+      return delay(structuredClone(p) as T)
+    }
+
+    case 'program_archive': {
+      const p = programs.find((x) => x.id === args.id)
+      if (p) {
+        p.status = 'archived'
+        p.updatedAt = new Date().toISOString()
+      }
+      // 与 Rust 同语义：归档即回收 from_date（含）起未完成的日程待办
+      const from = String(args.fromDate ?? today)
+      let removed = 0
+      for (let i = todos.length - 1; i >= 0; i--) {
+        const t = todos[i]!
+        if (t.programId === args.id && t.date != null && t.date >= from && t.status !== 'done') {
+          todos.splice(i, 1)
+          removed++
+        }
+      }
+      return delay(removed as T)
+    }
+
+    case 'program_meals_get': {
+      const row = programMeals.find(
+        (m) => m.programId === Number(args.programId) && m.date === String(args.date),
+      )
+      return delay((row ? structuredClone(row) : null) as T)
+    }
+
+    case 'program_meals_range': {
+      const pid = Number(args.programId)
+      const from = String(args.startDate)
+      const to = String(args.endDate)
+      const rows = programMeals
+        .filter((m) => m.programId === pid && m.date >= from && m.date <= to)
+        .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+        .map((m) => structuredClone(m))
+      return delay(rows as T)
+    }
+
+    case 'program_meals_set': {
+      const pid = Number(args.programId)
+      const date = String(args.date)
+      const mealsJson = String(args.mealsJson)
+      if (!date || !mealsJson) throw new Error('date 与 mealsJson 不能为空')
+      if (!programs.some((x) => x.id === pid)) throw new Error('方案不存在')
+      const now = new Date().toISOString()
+      const i = programMeals.findIndex((m) => m.programId === pid && m.date === date)
+      if (i !== -1) programMeals[i] = { programId: pid, date, mealsJson, updatedAt: now }
+      else programMeals.push({ programId: pid, date, mealsJson, updatedAt: now })
+      return delay(structuredClone(programMeals.find((m) => m.programId === pid && m.date === date)) as T)
+    }
+
+    case 'program_meals_clear': {
+      const pid = Number(args.programId)
+      const from = String(args.fromDate)
+      let n = 0
+      for (let i = programMeals.length - 1; i >= 0; i--) {
+        if (programMeals[i]!.programId === pid && programMeals[i]!.date >= from) {
+          programMeals.splice(i, 1)
+          n++
+        }
+      }
+      return delay(n as T)
+    }
+
+    case 'shopping_checks_list':
+      return delay(structuredClone(shoppingChecks) as T)
+
+    case 'shopping_check_set': {
+      const key = String(args.itemKey)
+      const checked = Boolean(args.checked)
+      const i = shoppingChecks.findIndex((c) => c.itemKey === key)
+      if (checked) {
+        const now = new Date().toISOString()
+        if (i !== -1) shoppingChecks[i]!.checkedAt = now
+        else shoppingChecks.push({ itemKey: key, checkedAt: now })
+      } else if (i !== -1) {
+        shoppingChecks.splice(i, 1)
+      }
+      return delay(undefined as T)
+    }
+
+    case 'shopping_checks_clear': {
+      const n = shoppingChecks.length
+      shoppingChecks.length = 0
+      return delay(n as T)
+    }
+
+    case 'program_delete': {
+      const id = Number(args.id)
+      let removed = 0
+      for (let i = todos.length - 1; i >= 0; i--) {
+        if (todos[i]!.programId !== id) continue
+        if (todos[i]!.status === 'done') todos[i]!.programId = null
+        else {
+          todos.splice(i, 1)
+          removed++
+        }
+      }
+      const pi = programs.findIndex((x) => x.id === id)
+      if (pi !== -1) programs.splice(pi, 1)
+      // 与 Rust 的 ON DELETE CASCADE 同语义：方案删除时清掉每日菜单缓存
+      for (let i = programMeals.length - 1; i >= 0; i--) {
+        if (programMeals[i]!.programId === id) programMeals.splice(i, 1)
+      }
+      return delay(removed as T)
+    }
+
+    case 'program_schedule_replace': {
+      const id = Number(args.id)
+      const fromDate = String(args.fromDate)
+      const list = args.todos as ScheduleTodoInput[]
+      if (!programs.some((x) => x.id === id)) throw new Error('方案不存在')
+      for (let i = todos.length - 1; i >= 0; i--) {
+        const t = todos[i]!
+        if (t.programId === id && t.date !== null && t.date >= fromDate && t.status !== 'done') {
+          todos.splice(i, 1)
+        }
+      }
+      for (const item of list) {
+        if (!item.title?.trim() || !item.date) continue
+        todos.push({
+          id: ++todoId,
+          title: item.title.trim(),
+          notes: item.notes ?? null,
+          date: item.date,
+          startMin: item.startMin ?? null,
+          durationMin: item.durationMin ?? null,
+          category: (item.category as Todo['category']) ?? 'general',
+          priority: item.priority ?? 0,
+          status: 'todo',
+          completedAt: null,
+          createdAt: new Date().toISOString(),
+          programId: id,
+          recRule: null,
+          recKey: null,
+          subtasks: null,
+        })
+      }
+      return delay(list.length as T)
     }
 
     // tracking（跑步前台保活）：纯浏览器开发无需保活，空实现保持契约可见

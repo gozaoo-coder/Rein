@@ -1,4 +1,4 @@
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 
 /**
  * 悬浮条拖拽停靠 · 手势与弹簧物理（组件无关，可单测）。
@@ -185,13 +185,15 @@ export function useDragDock(posEl: Ref<HTMLElement | null>) {
     }
   }
 
-  /** 拖拽活动范围（静止槽位都在界内，越界部分交给橡皮筋） */
+  /** 拖拽活动范围（以元素中心表达：槽位中心都落在界内，越界部分交给橡皮筋）。
+   *  条形态宽近整屏时左右可能没余量（x0 ≥ x1），该轴退化——调用方锁死不滑，
+   *  且避免倒置区间让橡皮筋按 span=1 硬吞到边界（表现为抓取瞬间横跳半屏）。 */
   function bounds(w = curW, h = curH): { x0: number; x1: number; y0: number; y1: number } {
     return {
-      x0: M.safeL,
-      x1: M.vw - M.safeR - w,
-      y0: M.safeT + EDGE_GAP,
-      y1: M.vh - (M.safeB + M.tabH) - EDGE_GAP - h,
+      x0: M.safeL + w / 2,
+      x1: M.vw - M.safeR - w / 2,
+      y0: M.safeT + EDGE_GAP + h / 2,
+      y1: M.vh - (M.safeB + M.tabH) - EDGE_GAP - h / 2,
     }
   }
 
@@ -356,6 +358,16 @@ export function useDragDock(posEl: Ref<HTMLElement | null>) {
 
   /** 越过 slop 才算真正抓住：此前松手是点按，原生 click 照常触发 */
   function engage(e: PointerEvent): void {
+    // 以渲染实况重基准，保证任何异常时序下抓取瞬间零跳变：
+    // 按下时 body 是 scale(0.97)，但尺测的是 posEl 盒，不受子级 transform 影响；
+    // rect 中心在均匀缩放下不变，故这里可安全取真值。
+    syncSize()
+    const el = posEl.value
+    if (el) {
+      const r = el.getBoundingClientRect()
+      cx = r.left + r.width / 2
+      cy = r.top + r.height / 2
+    }
     pressing.value = false
     dragging.value = true
     if (settling) stopSpring() // 飞行途中接住：以当前位置接管，速度由新的采样接管
@@ -372,10 +384,8 @@ export function useDragDock(posEl: Ref<HTMLElement | null>) {
       engage(e)
     }
     const b = bounds()
-    const sx = Math.max(b.x1 - b.x0, 1)
-    const sy = Math.max(b.y1 - b.y0, 1)
-    cx = rubber(e.clientX + grabDX, b.x0, b.x1, sx)
-    cy = rubber(e.clientY + grabDY, b.y0, b.y1, sy)
+    if (b.x1 > b.x0) cx = rubber(e.clientX + grabDX, b.x0, b.x1, b.x1 - b.x0)
+    if (b.y1 > b.y0) cy = rubber(e.clientY + grabDY, b.y0, b.y1, b.y1 - b.y0)
     writePos()
   }
 
@@ -472,14 +482,26 @@ export function useDragDock(posEl: Ref<HTMLElement | null>) {
     writePos()
   }
 
+  // 落位时机：浮条元素可能迟于 composable 挂载才渲染（view 从空到有——
+  // 冷启动恢复即如此；或视图重挂载，且 transform 不跨卸载保留）。
+  // 元素一出现就藏一帧、落在持久化槽位再显示，避免 (0,0) 闪现；
+  // 重挂载时先停掉可能遗留的飞行。
+  watch(
+    posEl,
+    (el) => {
+      if (!el) return
+      stopSpring()
+      el.style.visibility = 'hidden'
+      void nextTick(() => {
+        if (posEl.value !== el) return
+        placeInstant()
+        el.style.visibility = ''
+      })
+    },
+    { flush: 'post' },
+  )
+
   onMounted(() => {
-    // 冷启动恢复：静默落在持久化槽位（首个出现动画由组件层的 mute 控制）。
-    // 落位前先藏一帧，避免元素在 (0,0) 闪现
-    if (posEl.value) posEl.value.style.visibility = 'hidden'
-    void nextTick(() => {
-      placeInstant()
-      if (posEl.value) posEl.value.style.visibility = ''
-    })
     window.addEventListener('resize', onResize)
   })
 

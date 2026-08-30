@@ -70,8 +70,8 @@ const metaLine = computed(() => {
   height: 40px;
   flex: none;
   border-radius: var(--radius-m);
-  background: rgba(146, 232, 42, 0.18);
-  color: #5ba800;
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
   font-weight: 800;
   font-size: var(--fs-callout);
 }
@@ -93,7 +93,7 @@ const metaLine = computed(() => {
 }
 
 .kcal {
-  color: #5ba800;
+  color: var(--c-exercise-deep);
   font-weight: 800;
   font-size: var(--fs-callout);
 }

@@ -24,12 +24,25 @@ const emit = defineEmits<{ done: [] }>()
 const text = ref('')
 const isGo = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
+/** done 延迟回调句柄：show 提前关闭时必须撤销，否则会在错误时机触发下游计时 */
+let doneTimer: ReturnType<typeof setTimeout> | null = null
 
 function stopTimer(): void {
   if (timer) {
     clearInterval(timer)
     timer = null
   }
+  if (doneTimer) {
+    clearTimeout(doneTimer)
+    doneTimer = null
+  }
+}
+
+function finishAfter(ms: number): void {
+  doneTimer = setTimeout(() => {
+    doneTimer = null
+    emit('done')
+  }, ms)
 }
 
 watch(
@@ -50,13 +63,13 @@ watch(
           stopTimer()
           isGo.value = true
           text.value = 'GO!'
-          setTimeout(() => emit('done'), 800)
+          finishAfter(800)
         }
       }, 1000)
     } else {
       isGo.value = true
       text.value = props.label || 'GO!'
-      setTimeout(() => emit('done'), 1200)
+      finishAfter(1200)
     }
   },
   { immediate: true },
@@ -95,7 +108,7 @@ watch(
 .big.go {
   color: var(--c-intake);
   font-weight: 300;
-  text-shadow: 0 0 40px rgba(250, 17, 79, 0.35);
+  text-shadow: 0 0 40px var(--intake-glow);
 }
 
 .sub {

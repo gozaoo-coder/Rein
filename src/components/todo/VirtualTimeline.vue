@@ -176,6 +176,7 @@ function onWheel(e: WheelEvent): void {
 }
 
 interface PinchState {
+  /** 上一帧的两指间距：因子相对上一帧取增量，相对起点累计会越捏越快 */
   d0: number
   yCenter: number
 }
@@ -210,6 +211,7 @@ function onTouchMove(e: TouchEvent): void {
   // 双指缩放：以两指中点（相对视口）为轴，滚动交给 zoom 保持时刻
   e.preventDefault()
   zoom(st.d / pinch.d0, pinch.yCenter)
+  pinch.d0 = st.d
   pinch.yCenter = st.yCenter
 }
 
@@ -524,7 +526,7 @@ button.block {
   padding: 1px 7px;
   border-radius: var(--radius-full);
   background: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 10px;
 }
 

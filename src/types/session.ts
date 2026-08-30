@@ -1,8 +1,17 @@
 /** 训练课域类型 · 纯前端状态机（保存时落库为 Workout） */
 
+import type { ActivationMap } from '@/config/muscles'
+
 import type { WorkoutType } from './exercise'
 
 export type PlanExerciseKind = 'strength' | 'timed' | 'cardio'
+
+/** 力量动作的激活热身组：小重量找发力感 / 复合动作渐进 ramp-up */
+export interface WarmupSet {
+  /** 热身重量 kg（约为正式组的一半起步） */
+  weightKg: number
+  reps: number
+}
 
 /** 计划中的一个动作 */
 export interface PlanExercise {
@@ -15,6 +24,11 @@ export interface PlanExercise {
   reps: number | null
   /** 力量：建议重量 kg */
   weightKg: number | null
+  /**
+   * 激活热身组（strength 用，可选）：正式组前依次完成；不计入组数进度与总容量。
+   * 约定：≥30kg 复合项两段 ramp（50%×8 + 75%×4）；12~30kg 单组激活（50%×12）；<12kg 不配。
+   */
+  warmups?: WarmupSet[]
   /** 计时动作：每组目标秒 */
   targetSec: number | null
   /** 有氧：时长分钟 */
@@ -25,6 +39,11 @@ export interface PlanExercise {
   group?: string
   /** 动作要点（列表展开显示） */
   tips: string
+  /**
+   * 显式肌群激活表（AI/种子提供时优先展示；缺省按动作名关键词匹配）。
+   * exercises_json 旧数据无此字段，读取时按 undefined 处理。
+   */
+  muscles?: ActivationMap
 }
 
 export interface WorkoutPlan {
@@ -36,14 +55,17 @@ export interface WorkoutPlan {
   exercises: PlanExercise[]
 }
 
-/** 一组已完成记录：力量存重量，计时存秒数 */
+/** 一组已完成记录：力量存重量，计时存秒数；热身组带 warmup 标记（不计入正式进度） */
 export interface DoneSet {
   weight: number | null
   sec: number | null
+  /** true = 激活热身组 */
+  warmup?: boolean
 }
 
 export type SessionPhase =
   | 'idle'
+  | 'warmup' // 力量：激活热身中（动作配了 warmups 且未完成/跳过）
   | 'exercise' // 力量：做组中
   | 'rest' // 组间休息
   | 'timed-ready' // 计时/有氧：准备
@@ -63,8 +85,51 @@ export interface SessionSnapshotState {
   /** 临时休息：不推进流程，倒计时结束回到 resumePhase */
   restIsTemp?: boolean
   resumePhase?: 'exercise' | 'timed-ready' | 'timed-run'
+  /** 激活热身组间休息：不推进正式组数 */
+  restWarmup?: boolean
   /** 「再加一组」：动作 id → 追加的组数 */
   extraSets?: Record<string, number>
+}
+
+/** 逐组重量落库行（session_finish 事务内写入 workout_sets 表；重量曲线的数据源） */
+export interface StrengthSetRow {
+  exerciseKey: string
+  exerciseName: string
+  kind: PlanExerciseKind
+  setNo: number
+  weightKg: number | null
+  reps: number | null
+  sec: number | null
+  warmup: boolean
+}
+
+/** workout_sets 查询返回行（含 JOIN workouts 的日期） */
+export interface StrengthSetRecord extends StrengthSetRow {
+  workoutId: number
+  date: string
+}
+
+/** 单次训练里某动作的聚合（曲线/明细展示用，由前端按 date 聚合） */
+export interface StrengthDayEntry {
+  workoutId: number
+  date: string
+  planName?: string
+  sets: { setNo: number; weightKg: number | null; reps: number | null; warmup: boolean }[]
+}
+
+/** 有力量记录的动作（按最近训练排序） */
+export interface StrengthExerciseRef {
+  name: string
+  lastDate: string
+  sessions: number
+}
+
+/** 某动作最近一次做组重量（沉浸页「上次重量」预填用） */
+export interface StrengthLastWeight {
+  name: string
+  weightKg: number
+  reps: number | null
+  date: string
 }
 
 /** 跑步目标类型 */

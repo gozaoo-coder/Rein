@@ -4,6 +4,7 @@ import { Trash2 } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import ActionSheet from '@/components/common/ActionSheet.vue'
 import { categoriesOf, fmtCents } from '@/config/ledger'
 import { useToast } from '@/composables/useToast'
 import { useLedgerStore } from '@/stores/ledger'
@@ -116,6 +117,14 @@ async function remove(): Promise<void> {
   emit('saved')
   emit('close')
 }
+
+/* 删除是破坏性操作：先经 ActionSheet 确认 */
+const confirmDel = ref(false)
+
+async function onConfirmDelete(value: string): Promise<void> {
+  if (value !== 'delete') return
+  await remove()
+}
 </script>
 
 <template>
@@ -176,13 +185,21 @@ async function remove(): Promise<void> {
       <input v-model="note" class="note" type="text" placeholder="备注（可选，如 午餐、房租）" />
 
       <div class="row between actions">
-        <button v-if="editing" type="button" class="danger" aria-label="删除该账目" @click="remove">
+        <button v-if="editing" type="button" class="danger" aria-label="删除该账目" @click="confirmDel = true">
           <Trash2 :size="17" /> 删除
         </button>
         <span v-else class="empty" />
         <button type="button" class="save" :disabled="!canSave" @click="save">保存</button>
       </div>
     </div>
+
+    <ActionSheet
+      :open="confirmDel"
+      title="删除这笔账目？"
+      :actions="[{ label: '删除', value: 'delete', danger: true }]"
+      @select="onConfirmDelete"
+      @close="confirmDel = false"
+    />
   </SheetModal>
 </template>
 
@@ -226,7 +243,7 @@ async function remove(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--on-accent);
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 
@@ -344,7 +361,7 @@ async function remove(): Promise<void> {
   gap: 5px;
   padding: 10px 18px;
   border-radius: var(--radius-full);
-  background: rgba(255, 59, 48, 0.1);
+  background: var(--danger-soft);
   color: var(--danger);
   font-size: var(--fs-subhead);
   font-weight: 600;
@@ -354,7 +371,7 @@ async function remove(): Promise<void> {
   padding: 10px 34px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-headline);
   font-weight: 700;
   transition: opacity var(--dur-fast) var(--ease-standard);

@@ -234,12 +234,21 @@ interface CourseExRow {
   kind: 'strength' | 'timed' | 'cardio'
   plannedSets: number
   reps: number | null
+  /** 正式组（热身组已拆出） */
   done: DoneSet[]
+  /** 激活热身组（不计入组数与总容量，单独展示） */
+  warmups: DoneSet[]
+  /** 热身组定义（课程存在时有，用于显示热身次数） */
+  warmupDefs?: { weightKg: number; reps: number }[]
 }
 
 const courseRows = computed<CourseExRow[]>(() => {
   if (detail.value?.source !== 'course') return []
   const d = detail.value
+  const split = (sets: DoneSet[]) => ({
+    done: sets.filter((x) => !x.warmup),
+    warmups: sets.filter((x) => x.warmup),
+  })
   if (!d.exercises) {
     // 课程已删除：按落盘顺序以序号展示原始做组数据
     return Object.entries(d.doneSets).map(([key, sets], i) => ({
@@ -248,16 +257,17 @@ const courseRows = computed<CourseExRow[]>(() => {
       kind: typeof sets[0]?.sec === 'number' ? ('timed' as const) : ('strength' as const),
       plannedSets: sets.length,
       reps: null,
-      done: sets,
+      ...split(sets),
     }))
   }
-  const rows = d.exercises.map((ex) => ({
+  const rows = d.exercises.map((ex): CourseExRow => ({
     key: ex.id,
     name: ex.name,
     kind: ex.kind,
     plannedSets: ex.sets,
     reps: ex.reps,
-    done: d.doneSets[ex.id] ?? [],
+    warmupDefs: ex.warmups,
+    ...split(d.doneSets[ex.id] ?? []),
   }))
   // 快照里有但课程里已不存在的动作 id（课程后来被编辑过）
   for (const [key, sets] of Object.entries(d.doneSets)) {
@@ -268,7 +278,7 @@ const courseRows = computed<CourseExRow[]>(() => {
       kind: typeof sets[0]?.sec === 'number' ? 'timed' : 'strength',
       plannedSets: sets.length,
       reps: null,
-      done: sets,
+      ...split(sets),
     })
   }
   return rows
@@ -280,6 +290,17 @@ function setChip(ex: CourseExRow, d: DoneSet): string {
     return `${Number(d.weight)}kg × ${ex.reps ?? '?'}`
   }
   return d.sec != null ? fmtClock(d.sec) : '完成'
+}
+
+/** 热身组芯片：重量 × 热身次数（次数取课程定义；课程已删时只显示重量） */
+function warmupChip(row: CourseExRow, d: DoneSet, i: number): string {
+  const reps = row.warmupDefs?.[i]?.reps
+  if (d.weight == null) return '热身'
+  return `热身 ${fmtWeight(d.weight)}${reps != null ? ` × ${reps}` : ''}`
+}
+
+function fmtWeight(w: number): string {
+  return `${Number.isInteger(w) ? w : w.toFixed(1)}kg`
 }
 
 const courseTotals = computed(() => {
@@ -339,7 +360,7 @@ const courseTotals = computed(() => {
           <div v-for="(row, i) in splitRows" :key="i" class="splitrow row">
             <span class="k num">{{ row.label }}</span>
             <div class="bar">
-              <i :style="{ width: `${row.widthPct}%`, background: row.color }" />
+              <i :style="{ '--p': `${row.widthPct}%`, background: row.color }" />
             </div>
             <span class="v num">{{ row.text }}<b v-if="isCycle" class="unit">km/h</b></span>
           </div>
@@ -362,6 +383,7 @@ const courseTotals = computed(() => {
             <span class="num excount">{{ row.done.length }}/{{ row.plannedSets }} 组</span>
           </div>
           <div class="chips">
+            <span v-for="(d, i) in row.warmups" :key="'w' + i" class="chip warm num">{{ warmupChip(row, d, i) }}</span>
             <span v-for="(d, i) in row.done" :key="i" class="chip num">{{ setChip(row, d) }}</span>
             <span v-for="i in Math.max(0, row.plannedSets - row.done.length)" :key="'miss' + i" class="chip miss">未完成</span>
           </div>
@@ -490,9 +512,11 @@ const courseTotals = computed(() => {
 
 .bar i {
   display: block;
+  width: 100%;
   height: 100%;
-  border-radius: 7px;
-  transition: width var(--dur-slow) var(--ease-standard);
+  border-radius: inherit;
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .splitrow .v {
@@ -524,13 +548,13 @@ const courseTotals = computed(() => {
 }
 
 .cell .v {
-  font-size: 26px;
+  font-size: var(--fs-title1);
   font-weight: 200;
   letter-spacing: -0.5px;
 }
 
 .cell .v .sub {
-  font-size: 15px;
+  font-size: var(--fs-callout);
   font-weight: 500;
   color: var(--text-3);
 }
@@ -574,10 +598,18 @@ const courseTotals = computed(() => {
 .chip {
   padding: 5px 11px;
   border-radius: 999px;
-  background: rgba(146, 232, 42, 0.16);
-  color: #5ba800;
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
   font-size: var(--fs-caption);
   font-weight: 600;
+}
+
+/* 热身组：中性描边样式与正式组区分 */
+.chip.warm {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-strong, var(--line));
+  color: var(--text-3);
+  font-weight: 500;
 }
 
 .chip.miss {

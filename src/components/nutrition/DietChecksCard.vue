@@ -103,14 +103,8 @@ const doneCount = computed(() => checks.value.filter((c) => c.done).length)
 }
 
 .chip.done {
-  background: rgba(52, 199, 89, 0.16);
-  color: #248a3d;
-}
-
-@media (prefers-color-scheme: dark) {
-  .chip.done {
-    color: #30d158;
-  }
+  background: var(--ok-soft);
+  color: var(--ok-strong);
 }
 
 .tip {

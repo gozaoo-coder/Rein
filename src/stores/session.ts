@@ -25,6 +25,8 @@ import type {
   SessionPhase,
   SessionRecord,
   SessionSnapshotState,
+  StrengthLastWeight,
+  StrengthSetRow,
   WorkoutPlan,
 } from '@/types'
 
@@ -52,8 +54,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   /** 临时休息：不推进流程，倒计时结束回到 resumePhase */
   const restIsTemp = ref(false)
   const resumePhase = ref<'exercise' | 'timed-ready' | 'timed-run'>('exercise')
+  /** 激活热身组间休息：倒计时结束回到热身（或进入第一个正式组），不推进正式组数 */
+  const restWarmup = ref(false)
   /** 「再加一组」追加的组数（动作 id → 追加数），随快照落盘 */
   const extraSets = ref<Record<string, number>>({})
+  /** 各动作「最近一次做组重量」（开始课程时批量查询），预填用 */
+  const lastWeights = ref<Record<string, StrengthLastWeight>>({})
   const timedTotal = ref(0)
   const timedElapsed = ref(0)
 
@@ -89,6 +95,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       timedTotal: timedTotal.value,
       restIsTemp: restIsTemp.value,
       resumePhase: resumePhase.value,
+      restWarmup: restWarmup.value,
       extraSets: extraSets.value,
     }
   }
@@ -133,9 +140,21 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     return e.sets + (extraSets.value[e.id] ?? 0)
   }
 
-  const doneCount = computed(() =>
-    Object.values(doneSets.value).reduce((s, arr) => s + arr.length, 0),
-  )
+  /** 某动作已完成的激活热身组数 */
+  function warmupDone(e: PlanExercise): number {
+    return (doneSets.value[e.id] ?? []).filter((d) => d.warmup).length
+  }
+
+  /** 该动作是否还有待做的激活热身组 */
+  function warmupPending(e: PlanExercise): boolean {
+    return e.kind === 'strength' && !!e.warmups?.length && warmupDone(e) < e.warmups.length
+  }
+
+  const doneCount = computed(() => {
+    let n = 0
+    for (const arr of Object.values(doneSets.value)) n += arr.filter((d) => !d.warmup).length
+    return n
+  })
 
   const totalCount = computed(() =>
     plan.value ? plan.value.exercises.reduce((s, e) => s + effSets(e), 0) : 0,
@@ -146,7 +165,10 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     for (const ex of plan.value?.exercises ?? []) {
       if (ex.kind !== 'strength') continue
       const reps = ex.reps ?? 0
-      for (const d of doneSets.value[ex.id] ?? []) v += (d.weight ?? 0) * reps
+      for (const d of doneSets.value[ex.id] ?? []) {
+        if (d.warmup) continue // 激活热身不计入训练容量
+        v += (d.weight ?? 0) * reps
+      }
     }
     return Math.round(v)
   })
@@ -171,6 +193,25 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   /* ---------- 流程 ---------- */
 
+  /** 批量拉取各动作「上次做组重量」；失败静默为空（预填退回计划重量） */
+  async function loadLastWeights(names: string[]): Promise<void> {
+    if (!names.length) return
+    try {
+      const rows = await sessionService.strengthLastWeights(names)
+      const map: Record<string, StrengthLastWeight> = {}
+      for (const r of rows) map[r.name] = r
+      lastWeights.value = map
+    } catch (e) {
+      console.warn('[session] 上次重量查询失败', e)
+      lastWeights.value = {}
+    }
+  }
+
+  /** 重量预填：上次实际做组重量优先（渐进超负荷对照），无历史退回计划建议值 */
+  function weightFor(e: PlanExercise): number {
+    return lastWeights.value[e.name]?.weightKg ?? e.weightKg ?? 0
+  }
+
   /**
    * 开始新训练。已有进行中会话时返回 'conflict'（conflictRoute 指向应接续的
    * 页面：训练课 /session 或跑步 /session/run），由调用方给出「前往继续」。
@@ -193,7 +234,9 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     doneSets.value = {}
     extraSets.value = {}
     restIsTemp.value = false
-    weight.value = p.exercises[0]?.weightKg ?? 0
+    restWarmup.value = false
+    await loadLastWeights(p.exercises.map((e) => e.name))
+    weight.value = p.exercises[0] ? weightFor(p.exercises[0]) : 0
     const rec = await sessionService.start({
       planId: p.id,
       planName: p.name,
@@ -211,7 +254,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     stopTimer()
     const ex = currentEx.value
     if (!ex || !plan.value) return endLocal()
-    phase.value = ex.kind === 'strength' ? 'exercise' : 'timed-ready'
+    restWarmup.value = false
+    phase.value = warmupPending(ex) ? 'warmup' : ex.kind === 'strength' ? 'exercise' : 'timed-ready'
     touch()
   }
 
@@ -220,6 +264,33 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     if (!ex || phase.value !== 'exercise') return
     ;(doneSets.value[ex.id] ??= []).push({ weight: weight.value, sec: null })
     startRest(setIndex.value >= effSets(ex))
+  }
+
+  /** 完成一组激活热身：按热身定义重量登记，随后 45 秒短休息 */
+  function completeWarmup(): void {
+    const ex = currentEx.value
+    if (!ex || phase.value !== 'warmup') return
+    const idx = warmupDone(ex)
+    const def = ex.warmups?.[idx]
+    if (!def) return
+    ;(doneSets.value[ex.id] ??= []).push({ weight: def.weightKg, sec: null, warmup: true })
+    // 热身组间固定短休息；结束回热身（还有剩余组）或进入第一个正式组
+    restWarmup.value = true
+    phase.value = 'rest'
+    restTotal.value = 45
+    restLeft.value = restTotal.value
+    startRestTimer()
+    touch()
+  }
+
+  /** 跳过剩余热身，直接开始正式组 */
+  function skipWarmup(): void {
+    const ex = currentEx.value
+    if (!ex || phase.value !== 'warmup') return
+    restWarmup.value = false
+    phase.value = 'exercise'
+    flashOverlay(`开始第 1 组`, ex.reps != null ? `${ex.reps} 次` : '')
+    touch()
   }
 
   function startRest(toNext: boolean): void {
@@ -291,6 +362,22 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       return
     }
 
+    // 热身组间休息：还有剩余热身组回热身，否则进入第一个正式组
+    if (restWarmup.value) {
+      restWarmup.value = false
+      if (warmupPending(ex)) {
+        phase.value = 'warmup'
+        touch()
+        return
+      }
+      // 恢复正式组预填重量（热身定义重量不应带进正式组）
+      weight.value = weightFor(ex)
+      phase.value = 'exercise'
+      flashOverlay(`开始第 1 组`, ex.reps != null ? `${ex.reps} 次` : '')
+      touch()
+      return
+    }
+
     if (restTargetIsNextSet.value) {
       setIndex.value++
       phase.value = 'exercise'
@@ -307,12 +394,18 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     exIndex.value++
     setIndex.value = 1
     const next = currentEx.value!
-    weight.value = next.weightKg ?? 0
-    phase.value = next.kind === 'strength' ? 'exercise' : 'timed-ready'
+    weight.value = weightFor(next)
+    phase.value = warmupPending(next)
+      ? 'warmup'
+      : next.kind === 'strength'
+        ? 'exercise'
+        : 'timed-ready'
     if (next.kind === 'strength') {
       flashOverlay(
         `下一个：${next.name}`,
-        `${effSets(next)} 组${next.reps != null ? ` × ${next.reps} 次` : ''}`,
+        warmupPending(next)
+          ? '先做激活热身'
+          : `${effSets(next)} 组${next.reps != null ? ` × ${next.reps} 次` : ''}`,
       )
     }
     touch()
@@ -372,6 +465,16 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     touch()
   }
 
+  /**
+   * 直接设定当前重量（页面上的「上次 62.5kg」等快捷 chip 走这里）。
+   * 必须由 store 写入并 touch()，否则快照不落盘、进程被杀后恢复回预填值。
+   */
+  function setWeight(kg: number): void {
+    if (!Number.isFinite(kg) || kg < 0) return
+    weight.value = Math.round(kg * 10) / 10
+    touch()
+  }
+
   /** 再加一组：当前动作追加一组加量训练；休息若已流向下一动作则拉回本动作续打 */
   function addExtraSet(): void {
     const ex = currentEx.value
@@ -385,15 +488,15 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   }
 
   /**
-   * 上一组：撤销最近完成的一组并回到该组重做（可能跳回上一个动作）。
-   * 返回 false = 没有可重做的组。
+   * 上一组：撤销最近完成的一组正式组并回到该组重做（可能跳回上一个动作）。
+   * 激活热身组不可重做；返回 false = 没有可重做的组。
    */
   function redoLastSet(): boolean {
     if (!plan.value) return false
     let idx = -1
     for (let i = exIndex.value; i >= 0; i--) {
       const arr = doneSets.value[plan.value.exercises[i].id]
-      if (arr?.length) {
+      if (arr?.some((d) => !d.warmup)) {
         idx = i
         break
       }
@@ -402,13 +505,19 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
     const ex = plan.value.exercises[idx]
     const arr = doneSets.value[ex.id]!
-    arr.pop()
+    for (let k = arr.length - 1; k >= 0; k--) {
+      if (!arr[k]!.warmup) {
+        arr.splice(k, 1)
+        break
+      }
+    }
 
     stopTimer()
     restIsTemp.value = false
+    restWarmup.value = false
     exIndex.value = idx
-    setIndex.value = Math.min(effSets(ex), arr.length + 1)
-    weight.value = ex.weightKg ?? 0
+    setIndex.value = Math.min(effSets(ex), arr.filter((d) => !d.warmup).length + 1)
+    weight.value = ex.kind === 'strength' ? weightFor(ex) : 0
     phase.value = ex.kind === 'strength' ? 'exercise' : 'timed-ready'
     flashOverlay(`${ex.name} · 重做`, `第 ${setIndex.value} 组`)
     touch()
@@ -417,7 +526,33 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   /* ---------- 结束（用户显式操作） ---------- */
 
-  /** 结束并保存：后端事务内写训练记录 + 关闭会话（允许提前结束，保存已完成进度） */
+  /** 把最终快照展开为逐组明细行（session_finish 事务内写入 workout_sets，重量曲线数据源） */
+  function buildSetRows(): StrengthSetRow[] {
+    const rows: StrengthSetRow[] = []
+    for (const ex of plan.value?.exercises ?? []) {
+      const list = doneSets.value[ex.id]
+      if (!list?.length) continue
+      let warmNo = 0
+      let setNo = 0
+      for (const d of list) {
+        if (d.warmup) warmNo++
+        else setNo++
+        rows.push({
+          exerciseKey: ex.id,
+          exerciseName: ex.name,
+          kind: ex.kind,
+          setNo: d.warmup ? warmNo : setNo,
+          weightKg: d.weight,
+          reps: d.warmup ? (ex.warmups?.[warmNo - 1]?.reps ?? null) : ex.reps,
+          sec: d.sec,
+          warmup: !!d.warmup,
+        })
+      }
+    }
+    return rows
+  }
+
+  /** 结束并保存：后端事务内写训练记录 + 逐组明细 + 关闭会话（允许提前结束，保存已完成进度） */
   async function finishAndSave(): Promise<SessionFinishResult | null> {
     if (!plan.value || !sessionId.value) return null
     const duration = durationMin.value
@@ -437,6 +572,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       intensity: 'moderate',
       kcal,
       note: noteParts.join(' · '),
+      sets: buildSetRows(),
     })
     const result = { durationMin: duration, kcal, volume, done }
     await Promise.all([
@@ -469,6 +605,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     phase.value = 'idle'
     plan.value = null
     restIsTemp.value = false
+    restWarmup.value = false
     extraSets.value = {}
   }
 
@@ -532,9 +669,11 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     doneSets.value = rec.state.doneSets ?? {}
     extraSets.value = rec.state.extraSets ?? {}
     restIsTemp.value = false
+    restWarmup.value = rec.state.restWarmup ?? false
     restTargetIsNextSet.value = rec.state.restTargetIsNextSet ?? true
     timedTotal.value = rec.state.timedTotal ?? 0
     timedElapsed.value = 0
+    void loadLastWeights(p.exercises.map((e) => e.name)) // 供后续动作的重量预填
 
     const st = rec.state
     switch (st.phase) {
@@ -561,6 +700,10 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
         break
       case 'summary':
         phase.value = 'summary'
+        break
+      case 'warmup':
+        // 激活热身中被打断：原地续做（已完成的组保留在 doneSets）
+        phase.value = 'warmup'
         break
       default:
         phase.value = 'exercise'
@@ -591,6 +734,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     restTotal,
     restTargetIsNextSet,
     restIsTemp,
+    restWarmup,
+    lastWeights,
     timedTotal,
     timedElapsed,
     overlay,
@@ -607,6 +752,10 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     isActive,
     start,
     completeSet,
+    completeWarmup,
+    skipWarmup,
+    warmupDone,
+    warmupPending,
     addRest,
     skipRest,
     startTempRest,
@@ -618,6 +767,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     finishTimed,
     abortTimed,
     bumpWeight,
+    setWeight,
     finishAndSave,
     discard,
     discardById,

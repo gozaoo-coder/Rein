@@ -8,15 +8,22 @@ export interface WorkoutPlanRecord extends WorkoutPlan {
   lastUsedAt: string | null
   createdAt: string
   updatedAt: string
+  /** 器械要求：gym（健身房）/ home（居家徒手）/ null = 通用；内置课程 meta */
+  equipment: 'gym' | 'home' | null
+  /** 预估训练时长（分钟）；null = 未标注。方案日程排布用它当 durationMin */
+  estDurationMin: number | null
 }
 
-/** 新建 / 更新提交体：id 由前端生成（新建用 crypto.randomUUID()） */
+/** 新建 / 更新提交体：id 由前端生成（新建用 crypto.randomUUID()）。
+ * equipment / estDurationMin 是内置课程 meta，编辑器不感知：缺省时后端保留原值。 */
 export interface WorkoutPlanInput {
   id: string
   name: string
   subtitle: string
   workoutType: WorkoutPlan['workoutType']
   exercises: PlanExercise[]
+  equipment?: 'gym' | 'home' | null
+  estDurationMin?: number | null
 }
 
 /** 跑步会话在 workout_sessions 中使用的虚拟 planId */

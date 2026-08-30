@@ -126,7 +126,7 @@ function dismiss(): void {
   padding: 9px 16px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-subhead);
   font-weight: 700;
 }
@@ -230,7 +230,7 @@ function dismiss(): void {
   padding: 9px 18px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-subhead);
   font-weight: 700;
 }

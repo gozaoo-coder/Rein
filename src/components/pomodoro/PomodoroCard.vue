@@ -93,7 +93,7 @@ function onPickTodo(event: Event): void {
 }
 
 .time {
-  font-size: 38px;
+  font-size: var(--fs-display-m);
   font-weight: 200;
   letter-spacing: -1px;
   line-height: 1.1;
@@ -119,7 +119,7 @@ function onPickTodo(event: Event): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-float);
 }
 
 .ghost {

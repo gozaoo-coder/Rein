@@ -7,7 +7,7 @@ use crate::state::AppState;
 use chrono::Utc;
 
 use super::{attach_units, food_from_row, food_from_row_at, FOOD_COLS};
-use super::models::{Food, FoodCreateInput, FoodCreateResult, MealLog};
+use super::models::{Food, FoodCreateInput, FoodCreateResult, MealLog, RecipePref, RecipePrefInput};
 
 #[tauri::command]
 pub fn list_foods(
@@ -267,6 +267,26 @@ pub fn list_meals(state: State<AppState>, date: String) -> Result<Vec<MealLog>> 
     Ok(logs)
 }
 
+/// 区间饮食记录（历史回看）；闭区间 [start_date, end_date]，日期降序。
+#[tauri::command]
+pub fn list_meals_range(
+    state: State<AppState>,
+    start_date: String,
+    end_date: String,
+) -> Result<Vec<MealLog>> {
+    let conn = state.db.lock().unwrap();
+    let sql = format!(
+        "SELECT {MEAL_SELECT}, {FOOD_COLS} \
+         FROM meal_logs ml JOIN foods f ON f.id = ml.food_id \
+         WHERE ml.date BETWEEN ?1 AND ?2 ORDER BY ml.date DESC, ml.id DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let logs = stmt
+        .query_map([&start_date, &end_date], meal_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(logs)
+}
+
 fn meal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MealLog> {
     Ok(MealLog {
         id: row.get(0)?,
@@ -317,5 +337,62 @@ pub fn log_meal(
 pub fn delete_meal(state: State<AppState>, id: i64) -> Result<()> {
     let conn = state.db.lock().unwrap();
     conn.execute("DELETE FROM meal_logs WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/* ---------------- 食谱偏好（食谱库 / 方案引擎选菜共用） ---------------- */
+
+/// 全部食谱偏好：喜欢/不喜欢标记，食谱库页与方案生成共用
+#[tauri::command]
+pub fn recipe_prefs_list(state: State<AppState>) -> Result<Vec<RecipePref>> {
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT recipe_id, rating, updated_at FROM recipe_prefs ORDER BY updated_at DESC",
+    )?;
+    let list = stmt
+        .query_map([], |r| {
+            Ok(RecipePref {
+                recipe_id: r.get(0)?,
+                rating: r.get(1)?,
+                updated_at: r.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(list)
+}
+
+/// 记录一条食谱偏好（upsert，同一食谱覆盖旧标记）
+#[tauri::command]
+pub fn recipe_prefs_set(state: State<AppState>, input: RecipePrefInput) -> Result<RecipePref> {
+    if input.recipe_id.trim().is_empty() {
+        return Err(ReinError::Message("recipe_id 不能为空".into()));
+    }
+    if input.rating != 1 && input.rating != -1 {
+        return Err(ReinError::Message("rating 应为 1（喜欢）或 -1（不喜欢）".into()));
+    }
+    let conn = state.db.lock().unwrap();
+    conn.execute(
+        "INSERT INTO recipe_prefs (recipe_id, rating, updated_at) VALUES (?1, ?2, datetime('now')) \
+         ON CONFLICT(recipe_id) DO UPDATE SET rating = excluded.rating, updated_at = excluded.updated_at",
+        rusqlite::params![input.recipe_id.trim(), input.rating],
+    )?;
+    Ok(conn.query_row(
+        "SELECT recipe_id, rating, updated_at FROM recipe_prefs WHERE recipe_id = ?1",
+        [input.recipe_id.trim()],
+        |r| {
+            Ok(RecipePref {
+                recipe_id: r.get(0)?,
+                rating: r.get(1)?,
+                updated_at: r.get(2)?,
+            })
+        },
+    )?)
+}
+
+/// 清除一条食谱偏好（再次点按已选标记时取消）
+#[tauri::command]
+pub fn recipe_prefs_delete(state: State<AppState>, recipe_id: String) -> Result<()> {
+    let conn = state.db.lock().unwrap();
+    conn.execute("DELETE FROM recipe_prefs WHERE recipe_id = ?1", [recipe_id])?;
     Ok(())
 }

@@ -112,6 +112,10 @@ const view = computed<WorkoutBarView | null>(() => {
     let stat = ''
     let blob = ''
     switch (s.phase) {
+      case 'warmup':
+        stat = ex ? `${ex.name} · 激活热身 ${s.warmupDone(ex)}/${ex.warmups?.length ?? 0}` : ''
+        blob = '热身'
+        break
       case 'exercise':
         stat = ex ? `${ex.name} · 第 ${s.setIndex}/${s.effSets(ex)} 组 × ${ex.reps ?? '—'} 次` : ''
         blob = ex ? `${s.setIndex}/${s.effSets(ex)} 组` : ''
@@ -119,9 +123,11 @@ const view = computed<WorkoutBarView | null>(() => {
       case 'rest':
         stat =
           `休息 ${s.restLeft}s · ` +
-          (s.restTargetIsNextSet
-            ? `第 ${s.setIndex + 1} 组`
-            : `下一个 ${s.plan?.exercises[s.exIndex + 1]?.name ?? ''}`)
+          (s.restWarmup
+            ? '热身中'
+            : s.restTargetIsNextSet
+              ? `第 ${s.setIndex + 1} 组`
+              : `下一个 ${s.plan?.exercises[s.exIndex + 1]?.name ?? ''}`)
         blob = `${s.restLeft}s`
         break
       case 'timed-ready':

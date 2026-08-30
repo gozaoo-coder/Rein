@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, type Component } from 'vue'
-import { Apple, ChevronRight, Coffee, Dumbbell, Scale, Timer, TrendingUp, Utensils, Wallet } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref, type Component } from 'vue'
+import { ChevronRight, Dumbbell, Scale, Timer, TrendingUp, Wallet } from 'lucide-vue-next'
 
-import { CATEGORY_META, MEAL_LABELS } from '@/config/domain'
+import { CATEGORY_META, MEAL_LABELS, MEAL_META, mealKcal } from '@/config/domain'
 import { categoryOf, fmtCents } from '@/config/ledger'
 import { useDietStore } from '@/stores/diet'
 import { useExerciseStore } from '@/stores/exercise'
@@ -29,7 +29,9 @@ interface SpineEvent {
 }
 
 const today = todayStr()
-const now = nowMin()
+/* 挂载时算一次会随时间失真：每 30s 刷新，保证「现在」分界与计划/已发生判定始终成立 */
+const now = ref(nowMin())
+let clockTimer: ReturnType<typeof setInterval> | null = null
 
 const nutrition = useNutritionStore()
 const diet = useDietStore()
@@ -46,15 +48,14 @@ onMounted(() => {
   void pomo.loadToday()
   void ledger.loadMonth()
   void todo.loadDay(today)
+  clockTimer = setInterval(() => {
+    now.value = nowMin()
+  }, 30_000)
 })
 
-const MEAL_ICON: Record<string, Component> = { breakfast: Coffee, lunch: Utensils, dinner: Utensils, snack: Apple }
-const MEAL_COLOR: Record<string, string> = {
-  breakfast: 'var(--led-food)',
-  lunch: 'var(--c-protein)',
-  dinner: 'var(--cat-study)',
-  snack: 'var(--c-carb)',
-}
+onBeforeUnmount(() => {
+  if (clockTimer) clearInterval(clockTimer)
+})
 
 const events = computed<SpineEvent[]>(() => {
   const out: SpineEvent[] = []
@@ -75,15 +76,15 @@ const events = computed<SpineEvent[]>(() => {
   // 饮食记录
   for (const m of diet.meals) {
     const food = m.food
-    const kcal = food ? Math.round((food.kcal * m.grams) / 100) : null
+    const kcal = mealKcal(m)
     out.push({
       key: `meal-${m.id}`,
       min: minFromIso(m.createdAt),
       label: food?.name ?? MEAL_LABELS[m.mealType],
       sub: `${MEAL_LABELS[m.mealType]} · ${m.grams} g`,
       value: kcal != null ? `${kcal} kcal` : null,
-      colorVar: MEAL_COLOR[m.mealType],
-      icon: MEAL_ICON[m.mealType],
+      colorVar: MEAL_META[m.mealType].colorVar,
+      icon: MEAL_META[m.mealType].icon,
     })
   }
 
@@ -117,7 +118,7 @@ const events = computed<SpineEvent[]>(() => {
   if (pomo.running) {
     out.push({
       key: 'pomo-live',
-      min: now,
+      min: now.value,
       label: pomo.phase === 'focus' ? '专注进行中' : '休息中',
       sub: pomo.displayTime,
       value: null,
@@ -155,7 +156,7 @@ const events = computed<SpineEvent[]>(() => {
       colorVar: CATEGORY_META[t.category].colorVar,
       icon: ChevronRight,
       done,
-      planned: !done && t.startMin > now,
+      planned: !done && t.startMin > now.value,
     })
   }
 
@@ -173,7 +174,7 @@ const rows = computed<Row[]>(() => {
   const arr: Row[] = []
   let inserted = false
   for (const e of events.value) {
-    if (!inserted && e.min != null && e.min > now) {
+    if (!inserted && e.min != null && e.min > now.value) {
       arr.push({ type: 'now' })
       inserted = true
     }
@@ -196,7 +197,7 @@ function fmtMin(min: number | null): string {
 <template>
   <div class="spine">
     <div v-if="events.length" class="tl">
-      <template v-for="(row, i) in rows" :key="i">
+      <template v-for="row in rows" :key="row.type === 'now' ? 'now' : row.e.key">
         <div v-if="row.type === 'now'" class="nowrow">
           <span class="nowchip num">现在<br />{{ fmtMin(now) }}</span>
           <i class="nowdot" />

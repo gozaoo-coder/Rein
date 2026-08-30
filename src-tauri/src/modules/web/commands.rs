@@ -37,7 +37,12 @@ fn is_private_ip(ip: &IpAddr) -> bool {
                 || v4.is_unspecified()
                 || v4.octets()[0] == 0
         }
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || v6.is_unique_local(),
+        // is_unique_local 稳定于 1.84（MSRV 1.77）：按 RFC 4193 手写 fc00::/7 判断
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (u32::from(v6.segments()[0]) & 0xfe00) == 0xfc00
+        }
     }
 }
 

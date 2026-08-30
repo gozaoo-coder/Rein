@@ -277,6 +277,106 @@ const MIGRATION_0007: &str = r#"
 ALTER TABLE workouts ADD COLUMN session_id INTEGER REFERENCES workout_sessions(id);
 "#;
 
+/// 0008 · 健康方案：
+/// - profile 补充个性化约束（训练频率/时段/器械条件/忌口/经验），供方案引擎过滤生成
+/// - workout_plans 补充课程 meta（器械要求 / 预估时长），供周计划组合与日程排布
+/// - programs：程序计算的周期方案（内容快照存 params_json，AI 调整历史存 adjustments_json）
+/// - todos.program_id：方案生成的日程待办来源标记，重排/清理按它事务化处理
+const MIGRATION_0008: &str = r#"
+ALTER TABLE profile ADD COLUMN training_days_per_week INTEGER;
+ALTER TABLE profile ADD COLUMN preferred_time_slots TEXT;
+ALTER TABLE profile ADD COLUMN equipment TEXT;
+ALTER TABLE profile ADD COLUMN diet_restrictions TEXT;
+ALTER TABLE profile ADD COLUMN experience TEXT;
+
+ALTER TABLE workout_plans ADD COLUMN equipment TEXT;
+ALTER TABLE workout_plans ADD COLUMN est_duration_min INTEGER;
+
+CREATE TABLE programs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  goal TEXT NOT NULL,
+  -- conservative | balanced | aggressive（保守 / 均衡 / 进取档）
+  tier TEXT NOT NULL,
+  -- active | archived；同一时刻至多一个 active（创建新方案时自动归档旧方案）
+  status TEXT NOT NULL DEFAULT 'active',
+  version INTEGER NOT NULL DEFAULT 1,
+  weeks INTEGER NOT NULL DEFAULT 4,
+  -- 方案内容快照 JSON：{ params, days }，结构由前端 types/program.ts 约束
+  params_json TEXT NOT NULL,
+  -- AI / 手动调整历史 JSON 数组，每项含版本号与变更明细
+  adjustments_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  activated_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+ALTER TABLE todos ADD COLUMN program_id INTEGER REFERENCES programs(id);
+"#;
+
+/// 0009 · 食谱偏好：方案引擎选菜与食谱库「喜欢/不喜欢」共用，rating 1=喜欢 -1=不喜欢。
+const MIGRATION_0009: &str = r#"
+CREATE TABLE recipe_prefs (
+  recipe_id TEXT PRIMARY KEY,
+  rating INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+"#;
+
+/// 0010 · 方案每日菜单缓存：AI 按天生成的菜单落库（未生成的日期回落模板菜单）。
+const MIGRATION_0010: &str = r#"
+CREATE TABLE program_meals (
+  program_id INTEGER NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  meals_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (program_id, date)
+);
+"#;
+
+/// 0011 · 今日画布：待办重复规则 / 实例键 / 子任务清单。
+/// rec_rule 模板行持有规则；实例行 rec_key = "模板id:日期"（部分唯一索引保证物化幂等）。
+const MIGRATION_0011: &str = r#"
+ALTER TABLE todos ADD COLUMN rec_rule TEXT;
+ALTER TABLE todos ADD COLUMN rec_key TEXT;
+ALTER TABLE todos ADD COLUMN subtasks TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_rec_key ON todos(rec_key) WHERE rec_key IS NOT NULL;
+"#;
+
+/// 0012 · 采购清单勾选状态：清单本身由菜单实时聚合（不落库），这里只存「已买」标记。
+/// item_key = 聚合行键（AI 行 `f:<foodId>` / 模板行 `n:<名称>[|u:<单位>]`），跨方案稳定复用。
+const MIGRATION_0012: &str = r#"
+CREATE TABLE shopping_checks (
+  item_key TEXT PRIMARY KEY,
+  checked_at TEXT NOT NULL
+);
+"#;
+
+/// 0013 · 逐组重量记录：session_finish 事务内把最终快照的做组明细展开落行，
+/// 是「动作重量变化曲线」的查询数据源（exercise_name 跨课程/跨编辑稳定）。
+/// app_meta 为通用键值元数据（当前用于内置课程种子内容版本号）。
+const MIGRATION_0013: &str = r#"
+CREATE TABLE workout_sets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
+  plan_id TEXT,
+  exercise_key TEXT NOT NULL,
+  exercise_name TEXT NOT NULL,
+  set_no INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'strength',
+  weight_kg REAL,
+  reps INTEGER,
+  sec INTEGER,
+  warmup INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_sets_name ON workout_sets(exercise_name, workout_id);
+CREATE INDEX idx_sets_workout ON workout_sets(workout_id);
+CREATE TABLE app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -285,6 +385,12 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0005,
     MIGRATION_0006,
     MIGRATION_0007,
+    MIGRATION_0008,
+    MIGRATION_0009,
+    MIGRATION_0010,
+    MIGRATION_0011,
+    MIGRATION_0012,
+    MIGRATION_0013,
 ];
 
 fn migrate(conn: &Connection) -> Result<()> {

@@ -17,6 +17,10 @@ pub struct PlanRecord {
     pub last_used_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// 器械要求：gym（健身房）/ home（居家徒手）/ NULL = 通用；内置课程 meta，方案引擎用
+    pub equipment: Option<String>,
+    /// 预估训练时长（分钟），用于日程排布的 durationMin；NULL = 未标注
+    pub est_duration_min: Option<i64>,
 }
 
 /// 新建 / 更新课程提交体（id 由前端生成：新建用 randomUUID）
@@ -31,6 +35,11 @@ pub struct PlanInput {
     pub workout_type: String,
     #[serde(default)]
     pub exercises: Value,
+    /// 编辑器不感知这两个 meta 字段：缺省时 upsert 保留原值（COALESCE）
+    #[serde(default)]
+    pub equipment: Option<String>,
+    #[serde(default)]
+    pub est_duration_min: Option<i64>,
 }
 
 fn default_workout_type() -> String {

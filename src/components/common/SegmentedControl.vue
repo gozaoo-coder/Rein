@@ -13,14 +13,16 @@ const index = computed(() => Math.max(0, props.options.findIndex((o) => o.value 
 </script>
 
 <template>
-  <div class="seg" :style="{ '--n': options.length }">
+  <div class="seg" role="tablist" :style="{ '--n': options.length }">
     <div class="thumb" :style="{ transform: `translateX(${index * 100}%)` }" />
     <button
       v-for="o in options"
       :key="o.value"
       type="button"
+      role="tab"
       class="seg-item"
       :class="{ on: o.value === modelValue }"
+      :aria-selected="o.value === modelValue"
       @click="emit('update:modelValue', o.value)"
     >
       {{ o.label }}
@@ -45,7 +47,7 @@ const index = computed(() => Math.max(0, props.options.findIndex((o) => o.value 
   height: calc(100% - 4px);
   background: var(--surface);
   border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12), 0 0 0 0.5px var(--line);
+  box-shadow: var(--shadow-thumb);
   transition: transform var(--dur-base) var(--ease-standard);
 }
 

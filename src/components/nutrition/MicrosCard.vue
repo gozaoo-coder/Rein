@@ -37,7 +37,7 @@ const cells = computed(() => {
           </span>
         </div>
         <div class="bar">
-          <i :style="{ width: `${c.pct}%`, background: `var(${c.over ? '--danger' : '--accent'})` }" />
+          <i :style="{ '--p': `${c.pct}%`, background: `var(${c.over ? '--danger' : '--accent'})` }" />
         </div>
         <p class="desc">{{ c.desc }}</p>
       </li>
@@ -109,9 +109,11 @@ const cells = computed(() => {
 
 .bar i {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: inherit;
-  transition: width 600ms var(--ease-sheet);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .desc {

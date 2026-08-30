@@ -7,6 +7,7 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import QuickTile from '@/components/common/QuickTile.vue'
 import ExerciseWeekCard from '@/components/exercise/ExerciseWeekCard.vue'
 import PlanRecentCard from '@/components/exercise/PlanRecentCard.vue'
+import StrengthProgressCard from '@/components/exercise/StrengthProgressCard.vue'
 import AddWorkoutSheet from '@/components/exercise/AddWorkoutSheet.vue'
 import WorkoutDetailDrawer from '@/components/exercise/WorkoutDetailDrawer.vue'
 import WorkoutRow from '@/components/exercise/WorkoutRow.vue'
@@ -67,6 +68,9 @@ function openDetail(w: Workout): void {
 
     <!-- 训练启动：最近使用的三个课程（全部课程在二级页） -->
     <PlanRecentCard />
+
+    <!-- 力量进步：按动作查看重量变化曲线（有逐组记录才显示） -->
+    <StrengthProgressCard />
 
     <!-- 运动类待办（与待办域联动） -->
     <TodoListCard :date="today" title="运动计划" filter-category="workout" />

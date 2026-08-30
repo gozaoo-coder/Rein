@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>手机主页 · 排版探索 R1（四方向对比稿）</title>
+<style>
+  /* ============================================================
+     手机主页排版探索 · 4 方向对比稿（非应用代码）
+     令牌摘自 src/styles/tokens.css（亮 / 暗双色）
+     演示数据：8月26日 周三 · 摄入 856/2000 · 运动 +212
+     方向：
+       V1 现状基线 —— 现有结构复刻，作对照锚点
+       V2 驾驶舱   —— 状态紧凑化 + 导航合并收纳（保守演进）
+       V3 一日脊柱 —— 主页即「今天」，时间轴主导（理念统一）
+       V4 移动便当 —— 双列混合网格，一屏尽收（密度最高）
+     ============================================================ */
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-2: #f2f2f4;
+    --surface-translucent: rgba(255, 255, 255, 0.72);
+    --text-1: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #a1a1a6;
+    --line: rgba(0, 0, 0, 0.07);
+    --line-strong: rgba(0, 0, 0, 0.12);
+    --accent: #007aff;
+    --accent-soft: rgba(0, 122, 255, 0.12);
+    --on-accent: #ffffff;
+    --danger: #ff3b30;
+    --c-intake: #fa114f;
+    --c-exercise: #92e82a;
+    --c-exercise-deep: #5ba800;
+    --c-exercise-soft: rgba(146, 232, 42, 0.2);
+    --c-balance: #1eeaef;
+    --c-protein: #34c759;
+    --c-carb: #ff9f0a;
+    --c-fat: #ffcc00;
+    --c-sodium: #ff3b30;
+    --cat-workout: #34c759;
+    --cat-health: #ff2d55;
+    --cat-study: #5856d6;
+    --cat-general: #8e8e93;
+    --radius-s: 10px;
+    --radius-m: 14px;
+    --radius-l: 22px;
+    --radius-xl: 28px;
+    --radius-full: 999px;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.02), 0 12px 32px rgba(0, 0, 0, 0.05), 0 40px 80px rgba(0, 0, 0, 0.04);
+    --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI',
+      system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+    --fs-title3: 19px; --fs-headline: 17px; --fs-callout: 15px; --fs-subhead: 14px;
+    --fs-footnote: 13px; --fs-caption: 12px; --fs-micro: 11px;
+    --fs-display-l: 44px; --fs-display-m: 40px; --fs-display-s: 34px;
+    --intake-soft: rgba(250, 17, 79, 0.14);
+    --balance-soft: rgba(30, 234, 239, 0.16);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000; --surface: #1c1c1e; --surface-2: #2c2c2e;
+      --surface-translucent: rgba(28, 28, 30, 0.72);
+      --text-1: #f5f5f7; --text-2: rgba(235, 235, 245, 0.6); --text-3: rgba(235, 235, 245, 0.33);
+      --line: rgba(255, 255, 255, 0.08); --line-strong: rgba(255, 255, 255, 0.16);
+      --accent: #0a84ff; --accent-soft: rgba(10, 132, 255, 0.18);
+      --shadow-card: none;
+      --c-exercise: #a4f04b; --c-exercise-deep: #a4f04b; --c-balance: #40e8ec;
+      --c-intake: #ff375f; --intake-soft: rgba(255, 55, 95, 0.18);
+    }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font); color: var(--text-1);
+    background: linear-gradient(180deg, #e7e7ec, #dddde4);
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px; padding: 16px 12px; overflow: hidden;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: linear-gradient(180deg, #16161a, #0b0b0d); }
+  }
+  ul, ol { list-style: none; }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; user-select: none; }
+  .num { font-variant-numeric: tabular-nums; }
+  .row { display: flex; align-items: center; }
+  .col { display: flex; flex-direction: column; }
+  .between { justify-content: space-between; }
+  .center { align-items: center; justify-content: center; }
+  .t2 { color: var(--text-2); } .t3 { color: var(--text-3); }
+  .card {
+    background: var(--surface); border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card); padding: 18px;
+  }
+  .card + .card, .card + .gap, .gap + .card { margin-top: 14px; }
+  .gap { height: 14px; }
+  .ctitle { font-size: var(--fs-title3); font-weight: 700; letter-spacing: -0.3px; }
+  .more-chip {
+    display: inline-flex; align-items: center; gap: 2px; padding: 5px 10px;
+    border-radius: var(--radius-full); background: var(--surface-2);
+    font-size: var(--fs-caption); font-weight: 600; color: var(--text-2);
+  }
+  button.pressable, .pressable { transition: transform 150ms var(--ease-standard), opacity 150ms var(--ease-standard); }
+  button.pressable:active, .pressable:active { transform: scale(0.96); }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  /* ---------- 切换条（非设计稿本体） ---------- */
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .bar button {
+    height: 34px; padding: 0 15px; border-radius: var(--radius-full);
+    background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+    font: 600 13px var(--font); color: var(--text-2);
+    transition: all 0.2s var(--ease-standard);
+  }
+  @media (prefers-color-scheme: dark) {
+    .bar button { background: #2c2c2e; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.5); color: var(--text-2); }
+  }
+  .bar button.on { background: var(--text-1); color: var(--bg); }
+  .demofoot { font-size: 12px; color: #8a8a92; text-align: center; max-width: 560px; line-height: 1.5; }
+  @media (prefers-color-scheme: dark) { .demofoot { color: #6a6a72; } }
+
+  /* ---------- 手机框 ---------- */
+  .stage { display: none; }
+  .stage.on { display: block; }
+  .phone {
+    width: 414px; max-width: 94vw; height: 86vh; min-height: 640px;
+    margin: 0 auto; border-radius: 44px; border: 10px solid #0b0b0e;
+    background: var(--bg); overflow: hidden; position: relative;
+  }
+  .screen {
+    position: absolute; inset: 0; overflow-y: auto; scrollbar-width: none;
+    padding: 16px 18px calc(58px + 26px);
+  }
+  .screen::-webkit-scrollbar { width: 0; }
+  .ph { display: flex; align-items: flex-end; gap: 12px; padding: 4px 2px 14px; }
+  .ph h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.6px; line-height: 1.15; }
+  .ph p { margin-top: 2px; font-size: var(--fs-footnote); color: var(--text-2); font-weight: 500; }
+
+  /* ---------- 底部导航（场景道具） ---------- */
+  .tabbar {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 58px; z-index: 5;
+    display: flex; background: var(--surface-translucent);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-top: 0.5px solid var(--line);
+  }
+  .tabbar span {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; font-size: 10px; font-weight: 600; color: var(--text-3);
+  }
+  .tabbar span.on { color: var(--accent); }
+  .tabbar svg { width: 21px; height: 21px; }
+
+  /* ---------- 三环 ---------- */
+  .rings { width: var(--rs, 106px); height: var(--rs, 106px); flex: none; }
+  .r {
+    width: 100%; height: 100%; border-radius: 50%; padding: var(--th, 9px);
+    background: conic-gradient(var(--rc) calc(var(--p) * 1%), var(--soft) 0);
+  }
+  .r1 { --rc: var(--c-intake); --soft: var(--intake-soft); }
+  .r2 { --rc: var(--c-exercise); --soft: var(--c-exercise-soft); }
+  .r3 { --rc: var(--c-balance); --soft: var(--balance-soft); }
+  .rc { width: 100%; height: 100%; border-radius: 50%; background: var(--surface); }
+
+  /* ---------- 宏量条 ---------- */
+  .mb { display: grid; grid-template-columns: 44px 1fr 64px; gap: 10px; align-items: center; }
+  .mb + .mb { margin-top: 10px; }
+  .mb .l { font-size: var(--fs-caption); color: var(--text-3); }
+  .mb .track { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .mb .track i { display: block; height: 100%; border-radius: 3px; background: var(--bc); }
+  .mb .v { font-size: var(--fs-caption); color: var(--text-2); text-align: right; }
+  .mb .v b { color: var(--text-1); font-weight: 600; }
+
+  /* ---------- 快捷四宫格 ---------- */
+  .quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .qt {
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    padding: 13px 4px 11px; border-radius: var(--radius-l);
+    background: var(--surface); box-shadow: var(--shadow-card);
+    font-size: var(--fs-caption); font-weight: 600; color: var(--text-1);
+  }
+  .qt .ic { width: 38px; height: 38px; border-radius: 13px; display: grid; place-items: center; }
+  .qt .ic svg { width: 19px; height: 19px; }
+
+  /* ---------- 横贯行入口（现状） ---------- */
+  .lrow {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    padding: 12px 14px; border-radius: var(--radius-l);
+    background: var(--surface); box-shadow: var(--shadow-card); text-align: left;
+  }
+  .lrow + .lrow { margin-top: 10px; }
+  .lrow .ic {
+    width: 40px; height: 40px; flex: none; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center;
+  }
+  .lrow .ic svg { width: 19px; height: 19px; }
+  .lrow b { display: block; font-size: var(--fs-subhead); font-weight: 700; }
+  .lrow em { display: block; margin-top: 1px; font-style: normal; font-size: var(--fs-footnote); font-weight: 500; color: var(--text-3); }
+  .lrow .chev { margin-left: auto; flex: none; color: var(--text-3); }
+
+  /* ---------- 待办条目 ---------- */
+  .td { display: flex; align-items: center; gap: 11px; padding: 9px 0; }
+  .td + .td { border-top: 0.5px solid var(--line); }
+  .td .ck {
+    width: 21px; height: 21px; flex: none; border-radius: 50%;
+    border: 1.6px solid var(--line-strong); display: grid; place-items: center;
+  }
+  .td .ck.done { background: var(--cat-workout); border-color: var(--cat-workout); }
+  .td .ck.done svg { width: 11px; height: 11px; color: #fff; }
+  .td .tt { flex: 1; min-width: 0; font-size: var(--fs-subhead); font-weight: 600; }
+  .td .tt.done { text-decoration: line-through; color: var(--text-3); font-weight: 500; }
+  .td .meta { font-size: var(--fs-caption); color: var(--text-3); white-space: nowrap; }
+  .prio { font-size: var(--fs-micro); font-weight: 700; padding: 2px 7px; border-radius: var(--radius-full); }
+  .prio.hot { background: var(--intake-soft); color: var(--c-intake); }
+
+  /* ---------- 时间线 ---------- */
+  .tl { position: relative; padding-left: 52px; }
+  .tl::before {
+    content: ''; position: absolute; left: 44px; top: 8px; bottom: 8px;
+    width: 2px; border-radius: 1px; background: var(--line);
+  }
+  .te { position: relative; padding: 7px 0; }
+  .te .tm {
+    position: absolute; left: -52px; top: 9px; width: 36px; text-align: right;
+    font-size: var(--fs-caption); color: var(--text-3); font-variant-numeric: tabular-nums;
+  }
+  .te .dot {
+    position: absolute; left: -13px; top: 12px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--surface); border: 2px solid var(--line-strong);
+  }
+  .te.done .dot { background: var(--cat-workout); border-color: var(--cat-workout); }
+  .te .tx { font-size: var(--fs-subhead); font-weight: 600; }
+  .te .tx small { font-weight: 500; color: var(--text-3); margin-left: 6px; font-size: var(--fs-caption); }
+  .te.now .dot {
+    background: var(--accent); border-color: var(--accent);
+    animation: breathe 2.2s var(--ease-standard) infinite;
+  }
+  @keyframes breathe {
+    0%, 100% { box-shadow: 0 0 0 0 var(--accent-soft); }
+    50% { box-shadow: 0 0 0 6px var(--accent-soft); }
+  }
+  .te .sub { margin-top: 2px; font-size: var(--fs-caption); color: var(--text-3); }
+
+  /* ---------- 工具 2×2（V2） ---------- */
+  .tools { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tool {
+    display: flex; align-items: center; gap: 10px; padding: 12px 13px;
+    border-radius: var(--radius-m); background: var(--surface);
+    box-shadow: var(--shadow-card); text-align: left;
+  }
+  .tool .ic {
+    width: 34px; height: 34px; flex: none; border-radius: 11px;
+    background: var(--accent-soft); color: var(--accent); display: grid; place-items: center;
+  }
+  .tool .ic svg { width: 17px; height: 17px; }
+  .tool b { display: block; font-size: var(--fs-subhead); font-weight: 700; }
+  .tool em { display: block; font-style: normal; font-size: var(--fs-micro); color: var(--text-3); margin-top: 1px; }
+
+  /* ---------- V3 顶部状态条 ---------- */
+  .strip { display: flex; align-items: center; gap: 14px; padding: 4px 2px 2px; }
+  .strip .nums .big { display: flex; align-items: baseline; gap: 6px; }
+  .strip .nums .big b { font-size: var(--fs-display-s); font-weight: 200; letter-spacing: -1px; line-height: 1; color: var(--c-intake); }
+  .strip .nums .big span { font-size: var(--fs-caption); color: var(--text-2); }
+  .strip .nums .sub { margin-top: 6px; display: flex; gap: 12px; font-size: var(--fs-caption); color: var(--text-2); }
+  .strip .nums .sub b { color: var(--text-1); font-weight: 600; }
+  .strip .nums .sub .d { display: inline-flex; align-items: center; gap: 5px; }
+  .strip .nums .sub i { width: 7px; height: 7px; border-radius: 50%; }
+  .strip .fab {
+    margin-left: auto; width: 46px; height: 46px; flex: none; border-radius: 50%;
+    background: var(--accent); color: var(--on-accent); display: grid; place-items: center;
+    box-shadow: 0 4px 14px var(--accent-soft);
+  }
+  .strip .fab.ghost { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-card); margin-left: 0; }
+  .strip .fabs { display: flex; gap: 10px; margin-left: auto; }
+
+  /* ---------- 文字链行（V3 底部工具） ---------- */
+  .textlinks { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; padding: 2px 0; }
+  .textlinks button {
+    padding: 7px 13px; border-radius: var(--radius-full);
+    background: var(--surface-2); font-size: var(--fs-footnote); font-weight: 600; color: var(--text-2);
+  }
+
+  /* ---------- V4 便当网格 ---------- */
+  .bento { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .bento .span2 { grid-column: 1 / -1; }
+  .bento .card { padding: 16px; }
+  .bento .ctitle { font-size: var(--fs-callout); }
+  .mini-te { padding: 5px 0; }
+  .mini-te .tx { font-size: var(--fs-caption); }
+</style>
+</head>
+<body>
+
+  <div class="bar" role="tablist" aria-label="排版方向">
+    <button class="on" data-v="v1">V1 现状基线</button>
+    <button data-v="v2">V2 驾驶舱</button>
+    <button data-v="v3">V3 一日脊柱</button>
+    <button data-v="v4">V4 移动便当</button>
+  </div>
+
+  <!-- ============ V1 现状基线 ============ -->
+  <div class="stage on" id="v1">
+    <div class="phone">
+      <div class="screen">
+        <div class="ph"><div><h1>今天</h1><p>8月26日 周三</p></div></div>
+
+        <section class="card">
+          <div class="row between">
+            <b class="ctitle">能量与营养</b>
+            <span class="more-chip">详情 ›</span>
+          </div>
+          <div class="row" style="gap: 18px; margin-top: 14px">
+            <div class="rings" style="--rs: 106px">
+              <div class="r r1" style="--p: 43"><div class="r r2" style="--p: 30"><div class="r r3" style="--p: 55"><div class="rc"></div></div></div></div>
+            </div>
+            <div class="col" style="flex: 1; min-width: 0">
+              <div class="row" style="align-items: baseline; gap: 6px">
+                <b class="num" style="font-size: var(--fs-display-l); font-weight: 200; letter-spacing: -1.5px; line-height: 1; color: var(--c-intake)">856</b>
+                <span class="num" style="font-size: var(--fs-callout); color: var(--text-2)">/ 2000 大卡</span>
+              </div>
+              <p style="font-size: var(--fs-caption); color: var(--text-3); margin: 4px 0 10px">摄入 / 目标</p>
+              <div class="col" style="gap: 6px; font-size: var(--fs-subhead); color: var(--text-2)">
+                <span class="row"><i style="width: 8px; height: 8px; border-radius: 50%; background: var(--c-exercise); margin-right: 6px"></i>运动消耗<b class="num" style="color: var(--text-1)">&nbsp;+212</b>&nbsp;大卡</span>
+                <span class="row"><i style="width: 8px; height: 8px; border-radius: 50%; background: var(--c-balance); margin-right: 6px"></i>剩余可吃<b class="num" style="color: var(--text-1)">&nbsp;1356</b>&nbsp;大卡</span>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top: 16px">
+            <div class="mb"><span class="l">蛋白质</span><div class="track"><i style="width: 62%; --bc: var(--c-protein)"></i></div><span class="v num"><b>62</b>/100 g</span></div>
+            <div class="mb"><span class="l">碳水</span><div class="track"><i style="width: 47%; --bc: var(--c-carb)"></i></div><span class="v num"><b>118</b>/250 g</span></div>
+            <div class="mb"><span class="l">脂肪</span><div class="track"><i style="width: 35%; --bc: var(--c-fat)"></i></div><span class="v num"><b>23</b>/65 g</span></div>
+            <div class="mb"><span class="l">钠</span><div class="track"><i style="width: 59%; --bc: var(--c-sodium)"></i></div><span class="v num"><b>890</b>/1500 mg</span></div>
+          </div>
+        </section>
+
+        <div class="gap"></div>
+        <div class="quick">
+          <button class="qt pressable"><span class="ic" style="background: var(--accent-soft); color: var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span>记饮食</button>
+          <button class="qt pressable"><span class="ic" style="background: var(--c-exercise-soft); color: var(--c-exercise-deep)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg></span>记运动</button>
+          <button class="qt pressable"><span class="ic" style="background: var(--intake-soft); color: var(--c-intake)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg></span>专注</button>
+          <button class="qt pressable"><span class="ic" style="background: rgba(88, 86, 214, 0.14); color: var(--cat-study)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></svg></span>AI 助手</button>
+        </div>
+
+        <div class="gap"></div>
+        <button class="lrow pressable"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h4"/></svg></span><span class="col" style="flex: 1; min-width: 0"><b>记账</b><em class="num">本月支出 ¥1,284</em></span><span class="chev">›</span></button>
+        <button class="lrow pressable"><span class="ic" style="background: rgba(255, 159, 10, 0.14); color: var(--c-carb)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21c-4 0-7-3-7-7 0-5 4-8 7-11 3 3 7 6 7 11 0 4-3 7-7 7z"/></svg></span><span class="col" style="flex: 1; min-width: 0"><b>饮食库</b><em>食物营养速查 · 每 100g 全成分</em></span><span class="chev">›</span></button>
+        <button class="lrow pressable"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span><span class="col" style="flex: 1; min-width: 0"><b>饮食历史</b><em>按日回看每餐记录与热量</em></span><span class="chev">›</span></button>
+        <button class="lrow pressable"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg></span><span class="col" style="flex: 1; min-width: 0"><b>健康方案</b><em>程序计算训练与饮食计划 · AI 复盘调参</em></span><span class="chev">›</span></button>
+
+        <div class="gap"></div>
+        <section class="card">
+          <div class="row between">
+            <b class="ctitle">待办</b>
+            <span class="more-chip">全部 6 ›</span>
+          </div>
+          <div style="margin-top: 4px">
+            <div class="td"><span class="ck"></span><span class="tt">力量训练 · 上肢</span><span class="prio hot">紧急</span><span class="meta num">18:00</span></div>
+            <div class="td"><span class="ck"></span><span class="tt">写产品周报</span><span class="meta num">今天</span></div>
+            <div class="td"><span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span><span class="tt done">晨间拉伸</span><span class="meta num">已完成</span></div>
+          </div>
+          <p style="font-size: var(--fs-footnote); color: var(--text-3); padding-top: 8px">按紧急程度排序 · 另有 3 条未展示 <span style="color: var(--accent); font-weight: 700">查看全部 ›</span></p>
+        </section>
+
+        <div class="gap"></div>
+        <section class="card">
+          <div class="row between" style="margin-bottom: 8px">
+            <b class="ctitle">待办时间线</b>
+            <span style="font-size: var(--fs-caption); color: var(--text-3)">5 个安排</span>
+          </div>
+          <div class="tl">
+            <div class="te done"><span class="tm num">07:20</span><span class="dot"></span><div class="tx">早餐<small>已记 3 笔 · 356 大卡</small></div></div>
+            <div class="te done"><span class="tm num">12:40</span><span class="dot"></span><div class="tx">午餐<small>已记 2 笔 · 500 大卡</small></div></div>
+            <div class="te now"><span class="tm num">现在</span><span class="dot"></span><div class="tx">14:06</div></div>
+            <div class="te"><span class="tm num">18:00</span><span class="dot"></span><div class="tx">力量训练 · 上肢<small>45 分钟</small></div></div>
+            <div class="te"><span class="tm num">21:30</span><span class="dot"></span><div class="tx">睡前复盘</div></div>
+          </div>
+        </section>
+      </div>
+      <div class="tabbar">
+        <span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11l8-7 8 7v9h-5v-6h-6v6H4z"/></svg>主页</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg>运动</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></svg>AI</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>我</span>
+      </div>
+    </div>
+    <p class="demofoot">V1 · 现状基线：能量大卡 → 4 宫格 → 4 条行入口 → 待办 → 时间线。约 1.9 屏；两组导航把「状态」与「安排」隔开，4 连同构行节奏单调。</p>
+  </div>
+
+  <!-- ============ V2 驾驶舱 ============ -->
+  <div class="stage" id="v2">
+    <div class="phone">
+      <div class="screen">
+        <div class="ph"><div><h1>今天</h1><p>8月26日 周三</p></div></div>
+
+        <!-- 能量紧凑卡：环 76px，宏量条压为双列 -->
+        <section class="card">
+          <div class="row between">
+            <b class="ctitle">能量与营养</b>
+            <span class="more-chip">详情 ›</span>
+          </div>
+          <div class="row" style="gap: 16px; margin-top: 12px">
+            <div class="rings" style="--rs: 76px; --th: 7px">
+              <div class="r r1" style="--p: 43"><div class="r r2" style="--p: 30"><div class="r r3" style="--p: 55"><div class="rc"></div></div></div></div>
+            </div>
+            <div class="col" style="flex: 1; min-width: 0">
+              <div class="row" style="align-items: baseline; gap: 6px">
+                <b class="num" style="font-size: var(--fs-display-s); font-weight: 200; letter-spacing: -1px; line-height: 1; color: var(--c-intake)">856</b>
+                <span class="num" style="font-size: var(--fs-caption); color: var(--text-2)">/ 2000 大卡</span>
+              </div>
+              <div class="row" style="gap: 12px; margin-top: 7px; font-size: var(--fs-caption); color: var(--text-2)">
+                <span class="row" style="gap: 5px"><i style="width: 7px; height: 7px; border-radius: 50%; background: var(--c-exercise)"></i>运动 <b class="num" style="color: var(--text-1)">+212</b></span>
+                <span class="row" style="gap: 5px"><i style="width: 7px; height: 7px; border-radius: 50%; background: var(--c-balance)"></i>剩余 <b class="num" style="color: var(--text-1)">1356</b></span>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top: 13px">
+            <div class="mb"><span class="l">蛋白</span><div class="track"><i style="width: 62%; --bc: var(--c-protein)"></i></div><span class="v num"><b>62</b>/100 g</span></div>
+            <div class="mb"><span class="l">碳水</span><div class="track"><i style="width: 47%; --bc: var(--c-carb)"></i></div><span class="v num"><b>118</b>/250 g</span></div>
+            <div class="mb"><span class="l">脂肪</span><div class="track"><i style="width: 35%; --bc: var(--c-fat)"></i></div><span class="v num"><b>23</b>/65 g</span></div>
+            <div class="mb"><span class="l">钠</span><div class="track"><i style="width: 59%; --bc: var(--c-sodium)"></i></div><span class="v num"><b>890</b>/1500 mg</span></div>
+          </div>
+        </section>
+
+        <div class="gap"></div>
+        <div class="quick">
+          <button class="qt pressable"><span class="ic" style="background: var(--accent-soft); color: var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span>记饮食</button>
+          <button class="qt pressable"><span class="ic" style="background: var(--c-exercise-soft); color: var(--c-exercise-deep)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg></span>记运动</button>
+          <button class="qt pressable"><span class="ic" style="background: var(--intake-soft); color: var(--c-intake)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg></span>专注</button>
+          <button class="qt pressable"><span class="ic" style="background: rgba(88, 86, 214, 0.14); color: var(--cat-study)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></svg></span>AI 助手</button>
+        </div>
+
+        <div class="gap"></div>
+
+        <!-- 今日合并卡：时间线锚点 + 紧急待办，一个「接下来」心智 -->
+        <section class="card">
+          <div class="row between" style="margin-bottom: 6px">
+            <b class="ctitle">接下来</b>
+            <span style="font-size: var(--fs-caption); color: var(--text-3)">2 个安排 · 3 条待办</span>
+          </div>
+          <div class="tl">
+            <div class="te now"><span class="tm num">现在</span><span class="dot"></span><div class="tx">14:06 · 下午<small>距训练还有 3 小时 54 分</small></div></div>
+            <div class="te"><span class="tm num">17:30</span><span class="dot"></span><div class="tx">买菜<small>鸡胸肉 + 西兰花</small></div></div>
+            <div class="te"><span class="tm num">18:00</span><span class="dot"></span><div class="tx">力量训练 · 上肢<small>45 分钟</small></div></div>
+          </div>
+          <div style="border-top: 0.5px solid var(--line); margin: 8px -18px 0; padding: 2px 18px 0">
+            <div class="td"><span class="ck"></span><span class="tt">写产品周报</span><span class="meta">随时</span></div>
+            <div class="td"><span class="ck"></span><span class="tt">预约体检</span><span class="prio hot">紧急</span><span class="meta">本周内</span></div>
+          </div>
+          <p style="font-size: var(--fs-footnote); color: var(--text-3); padding-top: 8px">全部待办与历史 <span style="color: var(--accent); font-weight: 700">查看 ›</span></p>
+        </section>
+
+        <div class="gap"></div>
+
+        <!-- 工具 2×2：四个同构行收纳为格 -->
+        <div class="tools">
+          <button class="tool pressable"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h4"/></svg></span><span><b>记账</b><em>本月 ¥1,284</em></span></button>
+          <button class="tool pressable"><span class="ic" style="background: rgba(255, 159, 10, 0.14); color: var(--c-carb)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21c-4 0-7-3-7-7 0-5 4-8 7-11 3 3 7 6 7 11 0 4-3 7-7 7z"/></svg></span><span><b>饮食库</b><em>营养速查</em></span></button>
+          <button class="tool pressable"><span class="ic" style="background: var(--c-exercise-soft); color: var(--c-exercise-deep)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span><span><b>饮食历史</b><em>按日回看</em></span></button>
+          <button class="tool pressable"><span class="ic" style="background: var(--intake-soft); color: var(--c-intake)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg></span><span><b>健康方案</b><em>增肌 · 第 1 周</em></span></button>
+        </div>
+      </div>
+      <div class="tabbar">
+        <span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11l8-7 8 7v9h-5v-6h-6v6H4z"/></svg>主页</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg>运动</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></svg>AI</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>我</span>
+      </div>
+    </div>
+    <p class="demofoot">V2 · 驾驶舱：状态紧凑化（环 106→76、数字降档），待办与时间线合并为「接下来」一张卡，4 连行收纳为 2×2 工具格。约 1.2 屏；阅读顺序 = 状态 → 动作 → 安排 → 工具。</p>
+  </div>
+
+  <!-- ============ V3 一日脊柱 ============ -->
+  <div class="stage" id="v3">
+    <div class="phone">
+      <div class="screen">
+        <div class="ph">
+          <div><h1>今天</h1><p>8月26日 周三</p></div>
+        </div>
+
+        <!-- 顶部状态条：无卡片壳，贴页面；记录动作贴着状态 -->
+        <div class="strip">
+          <div class="rings" style="--rs: 62px; --th: 6px">
+            <div class="r r1" style="--p: 43"><div class="r r2" style="--p: 30"><div class="r r3" style="--p: 55"><div class="rc"></div></div></div></div>
+          </div>
+          <div class="nums">
+            <div class="big"><b class="num">856</b><span class="num">/ 2000 大卡</span></div>
+            <div class="sub num">
+              <span class="d"><i style="background: var(--c-exercise)"></i>+212</span>
+              <span class="d"><i style="background: var(--c-balance)"></i>剩 1356</span>
+            </div>
+          </div>
+          <div class="fabs">
+            <button class="fab ghost pressable" aria-label="记运动"><svg style="width: 19px; height: 19px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg></button>
+            <button class="fab pressable" aria-label="记饮食"><svg style="width: 19px; height: 19px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+          </div>
+        </div>
+
+        <div style="height: 16px"></div>
+
+        <!-- 主体：一天的时间轴（记录 + 安排 + 待办同轴） -->
+        <section class="card" style="padding: 18px 18px 14px">
+          <div class="row between" style="margin-bottom: 4px">
+            <b class="ctitle">一日脊柱</b>
+            <span style="font-size: var(--fs-caption); color: var(--text-3)">5 个安排 · 3 条待办</span>
+          </div>
+          <div class="tl">
+            <div class="te done"><span class="tm num">07:20</span><span class="dot"></span><div class="tx">早餐<small>燕麦+蛋+奶 · 356 大卡</small></div></div>
+            <div class="te done"><span class="tm num">09:00</span><span class="dot"></span><div class="tx">晨间拉伸<small>已完成</small></div></div>
+            <div class="te done"><span class="tm num">12:40</span><span class="dot"></span><div class="tx">午餐<small>鸡胸饭 · 500 大卡</small></div></div>
+            <div class="te now"><span class="tm num">现在</span><span class="dot"></span><div class="tx">14:06<small>写产品周报 · 随时可做</small></div></div>
+            <div class="te"><span class="tm num">17:30</span><span class="dot"></span><div class="tx">买菜<small>鸡胸肉 + 西兰花</small></div></div>
+            <div class="te"><span class="tm num">18:00</span><span class="dot"></span><div class="tx">力量训练 · 上肢<small>45 分钟 · 紧急</small></div></div>
+            <div class="te"><span class="tm num">21:30</span><span class="dot"></span><div class="tx">睡前复盘<small>预约体检 · 本周内</small></div></div>
+          </div>
+        </section>
+
+        <div class="gap"></div>
+
+        <!-- 工具收为文字链行：低频不占版面 -->
+        <div class="textlinks">
+          <button class="pressable">记账 ¥1,284</button>
+          <button class="pressable">饮食库</button>
+          <button class="pressable">饮食历史</button>
+          <button class="pressable">健康方案</button>
+        </div>
+      </div>
+      <div class="tabbar">
+        <span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11l8-7 8 7v9h-5v-6h-6v6H4z"/></svg>主页</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg>运动</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></svg>AI</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>我</span>
+      </div>
+    </div>
+    <p class="demofoot">V3 · 一日脊柱：主页即「今天」。能量压为无壳状态条 + 记录 FAB；饮食/待办/日程全部上同一根时间轴（与桌面 DaySpine 双端同构）；低频工具降为文字链。约 1 屏。</p>
+  </div>
+
+  <!-- ============ V4 移动便当 ============ -->
+  <div class="stage" id="v4">
+    <div class="phone">
+      <div class="screen">
+        <div class="ph"><div><h1>今天</h1><p>8月26日 周三</p></div></div>
+
+        <div class="bento">
+          <!-- 能量：跨两列的紧凑磁贴 -->
+          <section class="card span2">
+            <div class="row between" style="margin-bottom: 10px">
+              <b class="ctitle">能量与营养</b>
+              <span class="more-chip">详情 ›</span>
+            </div>
+            <div class="row" style="gap: 14px">
+              <div class="rings" style="--rs: 68px; --th: 6px">
+                <div class="r r1" style="--p: 43"><div class="r r2" style="--p: 30"><div class="r r3" style="--p: 55"><div class="rc"></div></div></div></div>
+              </div>
+              <div class="col" style="flex: 1; min-width: 0">
+                <div class="row" style="align-items: baseline; gap: 6px">
+                  <b class="num" style="font-size: 30px; font-weight: 200; letter-spacing: -1px; line-height: 1; color: var(--c-intake)">856</b>
+                  <span class="num" style="font-size: var(--fs-caption); color: var(--text-2)">/ 2000</span>
+                </div>
+                <div class="row" style="gap: 10px; margin-top: 6px; font-size: var(--fs-caption); color: var(--text-2)">
+                  <span class="row" style="gap: 4px"><i style="width: 6px; height: 6px; border-radius: 50%; background: var(--c-exercise)"></i>+212</span>
+                  <span class="row" style="gap: 4px"><i style="width: 6px; height: 6px; border-radius: 50%; background: var(--c-balance)"></i>剩 <b class="num" style="color: var(--text-1)">1356</b></span>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top: 12px">
+              <div class="mb"><span class="l">蛋白</span><div class="track"><i style="width: 62%; --bc: var(--c-protein)"></i></div><span class="v num"><b>62</b>/100</span></div>
+              <div class="mb"><span class="l">碳水</span><div class="track"><i style="width: 47%; --bc: var(--c-carb)"></i></div><span class="v num"><b>118</b>/250</span></div>
+            </div>
+          </section>
+
+          <!-- 待办 / 日程并排小卡 -->
+          <section class="card">
+            <div class="row between" style="margin-bottom: 2px">
+              <b class="ctitle">待办</b>
+              <span style="font-size: var(--fs-caption); color: var(--text-3)">6</span>
+            </div>
+            <div class="td"><span class="ck"></span><span class="tt" style="font-size: var(--fs-caption)">力量训练 · 上肢</span></div>
+            <div class="td"><span class="ck"></span><span class="tt" style="font-size: var(--fs-caption)">写产品周报</span></div>
+            <div class="td"><span class="ck done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12l5 5L20 6"/></svg></span><span class="tt done" style="font-size: var(--fs-caption)">晨间拉伸</span></div>
+          </section>
+          <section class="card">
+            <div class="row between" style="margin-bottom: 2px">
+              <b class="ctitle">日程</b>
+              <span style="font-size: var(--fs-caption); color: var(--text-3)">5 个</span>
+            </div>
+            <div class="tl">
+              <div class="te mini-te now"><span class="tm num">现在</span><span class="dot"></span><div class="tx">14:06</div></div>
+              <div class="te mini-te"><span class="tm num">18:00</span><span class="dot"></span><div class="tx">上肢训练</div></div>
+              <div class="te mini-te"><span class="tm num">21:30</span><span class="dot"></span><div class="tx">睡前复盘</div></div>
+            </div>
+          </section>
+
+          <!-- 快捷四宫格 -->
+          <div class="quick span2" style="gap: 10px">
+            <button class="qt pressable" style="padding: 11px 4px 9px"><span class="ic" style="width: 34px; height: 34px; background: var(--accent-soft); color: var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 17px; height: 17px"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span>记饮食</button>
+            <button class="qt pressable" style="padding: 11px 4px 9px"><span class="ic" style="width: 34px; height: 34px; background: var(--c-exercise-soft); color: var(--c-exercise-deep)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 17px; height: 17px"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg></span>记运动</button>
+            <button class="qt pressable" style="padding: 11px 4px 9px"><span class="ic" style="width: 34px; height: 34px; background: var(--intake-soft); color: var(--c-intake)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 17px; height: 17px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg></span>专注</button>
+            <button class="qt pressable" style="padding: 11px 4px 9px"><span class="ic" style="width: 34px; height: 34px; background: rgba(88, 86, 214, 0.14); color: var(--cat-study)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 17px; height: 17px"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></svg></span>AI 助手</button>
+          </div>
+
+          <!-- 工具 2×2 -->
+          <button class="tool pressable"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="13" rx="3"/><path d="M3 10h18M7 15h4"/></svg></span><span><b>记账</b><em>本月 ¥1,284</em></span></button>
+          <button class="tool pressable"><span class="ic" style="background: rgba(255, 159, 10, 0.14); color: var(--c-carb)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21c-4 0-7-3-7-7 0-5 4-8 7-11 3 3 7 6 7 11 0 4-3 7-7 7z"/></svg></span><span><b>饮食库</b><em>营养速查</em></span></button>
+          <button class="tool pressable"><span class="ic" style="background: var(--c-exercise-soft); color: var(--c-exercise-deep)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span><span><b>饮食历史</b><em>按日回看</em></span></button>
+          <button class="tool pressable"><span class="ic" style="background: var(--intake-soft); color: var(--c-intake)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg></span><span><b>健康方案</b><em>增肌 · 第 1 周</em></span></button>
+        </div>
+      </div>
+      <div class="tabbar">
+        <span class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11l8-7 8 7v9h-5v-6h-6v6H4z"/></svg>主页</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8v8M18 8v8M6 12h12M3 10v4M21 10v4"/></svg>运动</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9z"/></svg>AI</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>我</span>
+      </div>
+    </div>
+    <p class="demofoot">V4 · 移动便当：双列混合网格（桌面 Bento 的移动投影）。待办/日程并排小卡、宏量只留两条主项。约 0.9 屏；信息密度最高，但触控目标变小、小屏显挤。</p>
+  </div>
+
+  <script>
+    // 每个方向自带脚注（随 stage 显隐），这里只负责切换
+    const stages = [...document.querySelectorAll('.stage')]
+    const tabs = [...document.querySelectorAll('.bar button')]
+    tabs.forEach((b) => {
+      b.addEventListener('click', () => {
+        tabs.forEach((x) => x.classList.toggle('on', x === b))
+        stages.forEach((s) => s.classList.toggle('on', s.id === b.dataset.v))
+      })
+    })
+  </script>
+</body>
+</html>

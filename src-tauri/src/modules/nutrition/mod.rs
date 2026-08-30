@@ -10,7 +10,8 @@ use models::{DailyTargets, Profile};
 
 const PROFILE_COLS: &str = "nickname, sex, birthday, height_cm, weight_kg, target_weight_kg, \
      activity_level, goal, target_kcal, target_protein, target_carb, target_fat, \
-     target_sodium_mg, target_water_ml";
+     target_sodium_mg, target_water_ml, training_days_per_week, preferred_time_slots, \
+     equipment, diet_restrictions, experience";
 
 pub(crate) fn profile_targets(conn: &Connection) -> Result<DailyTargets> {
     Ok(DailyTargets {
@@ -21,6 +22,11 @@ pub(crate) fn profile_targets(conn: &Connection) -> Result<DailyTargets> {
         sodium_mg: conn.query_row("SELECT target_sodium_mg FROM profile WHERE id = 1", [], |r| r.get(0))?,
         water_ml: conn.query_row("SELECT target_water_ml FROM profile WHERE id = 1", [], |r| r.get(0))?,
     })
+}
+
+/// JSON 文本列 → Vec<String>；列值为 NULL 或内容损坏时回落 None（不阻塞资料读取）
+fn json_text_list(raw: Option<String>) -> Option<Vec<String>> {
+    raw.and_then(|s| serde_json::from_str(&s).ok())
 }
 
 pub(crate) fn load_profile(conn: &Connection) -> Result<Profile> {
@@ -43,6 +49,11 @@ pub(crate) fn load_profile(conn: &Connection) -> Result<Profile> {
                 sodium_mg: r.get(12)?,
                 water_ml: r.get(13)?,
             },
+            training_days_per_week: r.get(14)?,
+            preferred_time_slots: json_text_list(r.get(15)?),
+            equipment: r.get(16)?,
+            diet_restrictions: json_text_list(r.get(17)?),
+            experience: r.get(18)?,
         })
     })?;
     Ok(p)

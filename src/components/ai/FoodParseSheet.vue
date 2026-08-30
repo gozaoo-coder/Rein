@@ -65,21 +65,29 @@ function saveDraft(): void {
   close()
 }
 
+const committing = ref(false)
+
 async function commit(): Promise<void> {
-  const r = await ai.commitParsedItems(items.value, meal.value, 'photo_ai')
-  if (r.written === 0) {
-    toast.toast('没有可写入的食物（全部未匹配食物库）')
-    return
+  if (committing.value || stats.value.matched === 0) return
+  committing.value = true
+  try {
+    const r = await ai.commitParsedItems(items.value, meal.value, 'photo_ai')
+    if (r.written === 0) {
+      toast.toast('没有可写入的食物（全部未匹配食物库）')
+      return
+    }
+    const skipped = items.value.length - r.written
+    toast.toast(
+      skipped > 0
+        ? `已写入 ${r.written} 项，跳过 ${skipped} 项未匹配`
+        : `已写入 ${r.written} 项到今日${MEAL_LABELS[meal.value]}`,
+    )
+    if (draftId.value) removeFoodDraft(draftId.value)
+    emit('committed')
+    close()
+  } finally {
+    committing.value = false
   }
-  const skipped = items.value.length - r.written
-  toast.toast(
-    skipped > 0
-      ? `已写入 ${r.written} 项，跳过 ${skipped} 项未匹配`
-      : `已写入 ${r.written} 项到今日${MEAL_LABELS[meal.value]}`,
-  )
-  if (draftId.value) removeFoodDraft(draftId.value)
-  emit('committed')
-  close()
 }
 
 function close(): void {
@@ -110,8 +118,8 @@ function close(): void {
         <button class="ghost row center" :disabled="!items.length" @click="saveDraft">
           <Archive :size="15" /> 存草稿箱
         </button>
-        <button class="primary" :disabled="stats.matched === 0" @click="commit">
-          写入今日{{ MEAL_LABELS[meal] }}
+        <button class="primary" :disabled="committing || stats.matched === 0" @click="commit">
+          {{ committing ? '写入中…' : `写入今日${MEAL_LABELS[meal]}` }}
         </button>
       </div>
       <p v-if="stats.matched === 0" class="hint">所有条目都未匹配到食物库，无法写入；可存草稿稍后处理。</p>
@@ -166,7 +174,7 @@ function close(): void {
   padding: 11px 22px;
   border-radius: var(--radius-full);
   background: var(--ok);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-subhead);
   font-weight: 700;
 }

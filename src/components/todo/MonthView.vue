@@ -53,21 +53,22 @@ const ratioOf = (date: string): number => {
     </header>
 
     <ul class="grid">
-      <li
-        v-for="(c, i) in cells"
-        :key="i"
-        class="cell col center"
-        :class="{
-          empty: !c.date,
-          today: c.date === today,
-          selected: c.date && c.date === props.selected,
-        }"
-        @click="c.date && emit('select', c.date)"
-      >
-        <span v-if="c.date" class="num day">{{ c.day }}</span>
-        <span v-if="c.date" class="bar">
-          <i :style="{ width: `${ratioOf(c.date) * 100}%` }" :class="{ full: ratioOf(c.date) >= 1 }" />
-        </span>
+      <li v-for="(c, i) in cells" :key="i">
+        <button
+          type="button"
+          class="cell col center"
+          :class="{
+            today: c.date === today,
+            selected: c.date && c.date === props.selected,
+          }"
+          :disabled="!c.date"
+          @click="c.date && emit('select', c.date)"
+        >
+          <span v-if="c.date" class="num day">{{ c.day }}</span>
+          <span v-if="c.date" class="bar">
+            <i :style="{ '--p': `${ratioOf(c.date) * 100}%` }" :class="{ full: ratioOf(c.date) >= 1 }" />
+          </span>
+        </button>
       </li>
     </ul>
   </div>
@@ -99,14 +100,20 @@ const ratioOf = (date: string): number => {
   gap: 2px;
 }
 
-.cell {
+.grid > li {
   aspect-ratio: 1 / 1.06;
+}
+
+/* 格子是真按钮：键盘可达，按压反馈走全局 :active */
+.cell {
+  width: 100%;
+  height: 100%;
   border-radius: var(--radius-s);
   cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-.cell.empty {
+.cell:disabled {
   cursor: default;
 }
 
@@ -135,10 +142,12 @@ const ratioOf = (date: string): number => {
 
 .bar i {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width var(--dur-base) var(--ease-standard);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .bar i.full {

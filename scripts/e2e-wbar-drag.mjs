@@ -1,0 +1,215 @@
+/* 验证：运动浮条修复后行为（mock + Edge headless）。
+ * A 窄屏 bar：垂直 1:1 跟手（逐采样 delta 一致）、水平锁死不横跳、释放 settle 进槽位
+ * D 点按按钮不误触（点击=暂停/继续切换，不触发拖拽）
+ * C 横向轻弹 → 右泊车 blob */
+import { chromium } from 'playwright-core'
+
+const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
+const BASE = 'http://127.0.0.1:1420'
+
+const SESSION = [
+  {
+    id: 999,
+    planId: '__run__',
+    planName: '户外跑',
+    status: 'active',
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    exIndex: 0,
+    setIndex: 1,
+    weightKg: 0,
+    elapsedSec: 0,
+    state: {
+      kind: 'run',
+      phase: 'paused',
+      goalKind: 'open',
+      goalTimeMin: 30,
+      goalDistanceKm: 5,
+      accumMs: 0,
+      segStartedAt: null,
+      distanceM: 0,
+      points: [],
+    },
+  },
+]
+
+let failed = 0
+function ok(name, cond, extra = '') {
+  console.log(`${cond ? '  ✓' : '  ✗'} ${name}${extra ? ' — ' + extra : ''}`)
+  if (!cond) failed++
+}
+
+async function centerOf(page) {
+  const r = await page.locator('.dock-pos').boundingBox()
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+}
+
+const browser = await chromium.launch({ executablePath: EDGE, headless: true })
+
+/* ---------- 窄屏 420x820 ---------- */
+const page = await browser.newPage({ viewport: { width: 420, height: 820 } })
+await page.addInitScript(
+  (sess) => {
+    if (localStorage.getItem('rein.mock.sessions.v1') == null)
+      localStorage.setItem('rein.mock.sessions.v1', JSON.stringify(sess))
+  },
+  SESSION,
+)
+await page.goto(`${BASE}/#/`)
+await page.waitForSelector('.wdock-root', { state: 'attached' })
+await page.waitForTimeout(700)
+
+let c = await centerOf(page)
+ok('A1 冷启动落位底部居中', Math.abs(c.x - 210) < 2 && Math.abs(c.y - 719.5) < 2, JSON.stringify(c))
+
+/* D：点按主按钮（“继续”→点击→“暂停”）——点击必须不被拖拽吞掉 */
+const btn = page.locator('.abtn.main')
+const dBefore = (await btn.textContent())?.trim()
+const bb = await btn.boundingBox()
+await page.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2)
+await page.mouse.down()
+await page.mouse.up()
+await page.waitForTimeout(300)
+const dAfter = (await btn.textContent())?.trim()
+ok('D1 按钮点按生效（继续↔暂停）', dBefore === '继续' && dAfter === '暂停', `${dBefore} → ${dAfter}`)
+// 点回暂停态，保持后续场景与原种子一致
+await btn.click()
+await page.waitForTimeout(300)
+ok('D2 再点恢复暂停态', (await btn.textContent())?.trim() === '继续')
+
+/* A2：垂直拖拽，逐采样检查与手指 1:1（用相邻采样 delta 比较，免抓取偏移干扰） */
+c = await centerOf(page)
+{
+  const seq = []
+  await page.mouse.move(c.x, c.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    const y = c.y - i * 25
+    await page.mouse.move(c.x, y, { steps: 2 })
+    const r = await page.locator('.dock-pos').boundingBox()
+    seq.push({ f: y, c: r.y + r.height / 2 })
+  }
+  await page.mouse.up()
+  let okLag = true
+  let worst = 0
+  for (let i = 1; i < seq.length; i++) {
+    const deltaC = seq[i].c - seq[i - 1].c
+    const deltaF = seq[i].f - seq[i - 1].f
+    worst = Math.max(worst, Math.abs(deltaC - deltaF))
+    if (Math.abs(deltaC - deltaF) > 1.5) okLag = false
+  }
+  ok('A2 垂直拖拽逐采样 1:1 跟手', okLag, `worst=${worst.toFixed(2)}px`)
+  const r = await page.locator('.dock-pos').boundingBox()
+  const x = r.x + r.width / 2
+  ok('A2b 水平轴锁死（条宽近整屏无余量）', Math.abs(x - 210) < 1, `x=${x.toFixed(1)}`)
+}
+await page.waitForTimeout(900)
+c = await centerOf(page)
+ok('A3 慢速松手 settle 进槽位（顶或底居中）', Math.abs(c.x - 210) < 2 && (Math.abs(c.y - 42.5) < 6 || Math.abs(c.y - 719.5) < 6), JSON.stringify(c))
+
+/* A4：水平快速轻弹 → 右泊车 blob（速度解算仍可用，y 沿用当前位置对应的侧档） */
+const afterA3 = c
+const sideYExpect = afterA3.y < 100 ? 44 : 718
+await page.mouse.move(c.x, c.y)
+await page.mouse.down()
+await page.mouse.move(c.x + 130, c.y, { steps: 5 })
+await page.waitForTimeout(50)
+await page.mouse.up()
+await page.waitForTimeout(900)
+c = await centerOf(page)
+ok(
+  'A4 横向轻弹进入右泊车 blob',
+  Math.abs(c.x - 368) < 5 && Math.abs(c.y - sideYExpect) < 10,
+  `期望 (368,${sideYExpect}) 实际 ${JSON.stringify(c)}`,
+)
+
+/* A5：blob 拖拽跟手（非退化轴；逐采样 delta 验证） */
+{
+  const seq = []
+  await page.mouse.move(c.x, c.y)
+  await page.mouse.down()
+  for (const [dx, dy] of [
+    [-40, 90],
+    [-80, 180],
+    [-120, 250],
+  ]) {
+    await page.mouse.move(c.x + dx, c.y + dy, { steps: 2 })
+    const r = await page.locator('.dock-pos').boundingBox()
+    seq.push({ x: r.x + r.width / 2, y: r.y + r.height / 2, tf: await page.locator('.dock-pos').evaluate((el) => el.style.transform) })
+  }
+  await page.mouse.up()
+  let okFollow = true
+  let worst = 0
+  const seg = [
+    [-40, 90],
+    [-40, 70],
+  ]
+  for (let i = 1; i < seq.length; i++) {
+    const dd = Math.hypot(
+      seq[i].x - seq[i - 1].x - seg[i - 1][0],
+      seq[i].y - seq[i - 1].y - seg[i - 1][1],
+    )
+    worst = Math.max(worst, dd)
+    if (dd > 3) okFollow = false
+  }
+  ok('A5 blob 拖拽逐采样 1:1 跟手', okFollow, `worst=${worst.toFixed(2)}px`)
+}
+await page.waitForTimeout(900)
+c = await centerOf(page)
+const slots = [
+  { x: 210, y: 719.5 },
+  { x: 210, y: 42.5 },
+  { x: 52, y: 44 },
+  { x: 368, y: 44 },
+]
+const dSlot = Math.min(...slots.map((s) => Math.hypot(c.x - s.x, c.y - s.y)))
+ok('A6 blob 松手回槽位', dSlot < 12, `距最近槽位 ${dSlot.toFixed(1)}px：${JSON.stringify(c)}`)
+
+/* ---------- 宽屏 1440x900：bar 456px 宽，x 轴非退化 ---------- */
+{
+  const page2 = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  await page2.addInitScript(
+    (sess) => {
+      if (localStorage.getItem('rein.mock.sessions.v1') == null)
+        localStorage.setItem('rein.mock.sessions.v1', JSON.stringify(sess))
+    },
+    SESSION,
+  )
+  await page2.goto(`${BASE}/#/`)
+  await page2.waitForSelector('.wdock-root', { state: 'attached' })
+  await page2.waitForTimeout(700)
+  let d = await centerOf(page2)
+  ok('B1 宽屏落位底部居中', Math.abs(d.x - 720) < 2 && Math.abs(d.y - 801) < 2, JSON.stringify(d))
+  const seq = []
+  await page2.mouse.move(d.x, d.y)
+  await page2.mouse.down()
+  for (let i = 1; i <= 5; i++) {
+    await page2.mouse.move(d.x + i * 50, d.y, { steps: 2 })
+    const r = await page2.locator('.dock-pos').boundingBox()
+    seq.push({ x: r.x + r.width / 2, y: r.y + r.height / 2 })
+  }
+  await page2.mouse.up()
+  let okWide = true
+  let worst = 0
+  for (let i = 1; i < seq.length; i++) {
+    const dd = Math.hypot(seq[i].x - seq[i - 1].x - 50, seq[i].y - seq[i - 1].y)
+    worst = Math.max(worst, dd)
+    if (dd > 3) okWide = false
+  }
+  ok('B2 宽屏水平拖拽 1:1 跟手', okWide, `worst=${worst.toFixed(2)}px`)
+  await page2.waitForTimeout(900)
+  d = await centerOf(page2)
+  const slots2 = [
+    { x: 720, y: 799.5 },
+    { x: 720, y: 42.5 },
+    { x: 52, y: 798 },
+    { x: 1388, y: 798 },
+  ]
+  const dSlot2 = Math.min(...slots2.map((s) => Math.hypot(d.x - s.x, d.y - s.y)))
+  ok('B3 宽屏松手回槽位', dSlot2 < 12, `距最近槽位 ${dSlot2.toFixed(1)}px：${JSON.stringify(d)}`)
+  await page2.close()
+}
+
+await browser.close()
+console.log(failed === 0 ? '== 全部通过 ==' : `== 失败 ${failed} 项 ==`)
+process.exit(failed === 0 ? 0 : 1)

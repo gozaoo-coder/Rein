@@ -35,4 +35,55 @@ pub struct FinishInput {
     pub intensity: Option<String>,
     pub kcal: f64,
     pub note: Option<String>,
+    /// 逐组做组明细（session_finish 事务内展开写入 workout_sets）；旧客户端缺省 = 空
+    #[serde(default)]
+    pub sets: Vec<FinishSet>,
+}
+
+/// 一行逐组记录 · 与前端 `StrengthSetRow` 对应
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinishSet {
+    pub exercise_key: String,
+    pub exercise_name: String,
+    pub kind: String,
+    pub set_no: i64,
+    pub weight_kg: Option<f64>,
+    pub reps: Option<i64>,
+    pub sec: Option<i64>,
+    #[serde(default)]
+    pub warmup: bool,
+}
+
+/// 重量曲线查询行（JOIN workouts 取日期）· 与前端 `StrengthSetRow` 查询返回对应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrengthSetRecord {
+    pub workout_id: i64,
+    pub date: String,
+    pub exercise_name: String,
+    pub set_no: i64,
+    pub weight_kg: Option<f64>,
+    pub reps: Option<i64>,
+    pub sec: Option<i64>,
+    pub warmup: bool,
+}
+
+/// 有力量记录的动作引用（按最近训练在前）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrengthExerciseRef {
+    pub name: String,
+    pub last_date: String,
+    pub sessions: i64,
+}
+
+/// 某动作最近一次做组重量（沉浸页「上次重量」预填）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrengthLastWeight {
+    pub name: String,
+    pub weight_kg: f64,
+    pub reps: Option<i64>,
+    pub date: String,
 }

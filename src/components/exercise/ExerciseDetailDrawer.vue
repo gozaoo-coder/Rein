@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
+import WeightCurve from '@/components/exercise/WeightCurve.vue'
 import { resolveActivation } from '@/config/muscles'
+import { sessionService } from '@/services/sessionService'
+import { fmtDateCn } from '@/utils/date'
+import { aggregateStrengthDays, fmtKg, type StrengthDay } from '@/utils/strength'
 import type { PlanExercise } from '@/types'
 import { exerciseBadge, exerciseSub } from '@/utils/plan'
 
 /** 动作详情抽屉：课程详情页点击动作唤起。
- *  内容 = 动作名与参数摘要 + 激活肌群图（未识别时不展示猜测）+ 训练参数格 + 动作要点。 */
+ *  内容 = 动作名与参数摘要 + 激活肌群图 + 训练参数格 + 重量变化曲线（有记录才显示）+ 动作要点。 */
 const props = defineProps<{
   open: boolean
   exercise: PlanExercise | null
@@ -16,18 +20,57 @@ const props = defineProps<{
 
 defineEmits<{ close: [] }>()
 
-const activation = computed(() => resolveActivation(props.exercise?.name))
+/** 激活肌群：显式 muscles 优先（AI/种子提供），否则按动作名关键词识别 */
+const activation = computed(() => props.exercise?.muscles ?? resolveActivation(props.exercise?.name))
+
+/* ---------- 重量曲线：打开且动作有力量记录时加载 ---------- */
+
+const curveDays = ref<StrengthDay[]>([])
+const curveLoadedFor = ref('')
+
+watch(
+  () => [props.open, props.exercise?.name] as const,
+  ([open, name]) => {
+    if (!open || !name || curveLoadedFor.value === name) return
+    curveLoadedFor.value = name
+    curveDays.value = []
+    void sessionService
+      .strengthHistory(name)
+      .then((rows) => {
+        curveDays.value = aggregateStrengthDays(rows).slice(-10)
+      })
+      .catch(() => {
+        curveDays.value = []
+      })
+  },
+  { immediate: true },
+)
+
+/** 最近一次的做组摘要行 */
+const lastSetLine = computed(() => {
+  const d = curveDays.value[curveDays.value.length - 1]
+  if (!d) return ''
+  const chips = d.sets.map((s) => `${fmtKg(s.weightKg ?? 0)}×${s.reps ?? '?'}`).join(' · ')
+  return `${chips}（${fmtDateCn(d.date)}）`
+})
 
 const stats = computed<{ k: string; v: string }[]>(() => {
   const e = props.exercise
   if (!e) return []
   if (e.kind === 'strength') {
-    return [
+    const rows = [
       { k: '组数', v: `${e.sets} 组` },
       { k: '每组次数', v: e.reps != null ? `${e.reps} 次` : '—' },
       { k: '建议重量', v: e.weightKg != null ? `${e.weightKg} kg` : '自重' },
       { k: '组间休息', v: `${e.restSec} 秒` },
     ]
+    if (e.warmups?.length) {
+      rows.push({
+        k: '激活热身',
+        v: e.warmups.map((w) => `${fmtKg(w.weightKg)}kg×${w.reps}`).join(' / '),
+      })
+    }
+    return rows
   }
   if (e.kind === 'timed') {
     return [
@@ -64,6 +107,14 @@ const stats = computed<{ k: string; v: string }[]>(() => {
           <div class="k">{{ s.k }}</div>
         </div>
       </div>
+
+      <template v-if="curveDays.length">
+        <p class="sec">重量曲线<span class="secsub">每次训练的最大重量组</span></p>
+        <div class="curvebox">
+          <WeightCurve :days="curveDays" :height="130" />
+          <p class="lastline num">{{ lastSetLine }}</p>
+        </div>
+      </template>
 
       <template v-if="exercise.tips">
         <p class="sec">动作要点</p>
@@ -115,6 +166,24 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   color: var(--text-3);
 }
 
+.secsub {
+  margin-left: 8px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.curvebox {
+  border-radius: var(--radius-l);
+  background: var(--surface-2);
+  padding: 14px 12px 10px;
+}
+
+.lastline {
+  margin-top: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
 .mapcard {
   border-radius: var(--radius-l);
   background: var(--surface-2);
@@ -143,7 +212,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
 }
 
 .cell .v {
-  font-size: 22px;
+  font-size: var(--fs-title2);
   font-weight: 300;
   letter-spacing: -0.5px;
 }

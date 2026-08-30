@@ -43,14 +43,25 @@ const PROTEIN_PER_KG: Record<Goal, number> = { cut: 1.8, keep: 1.2, bulk: 1.6 }
 const FAT_ENERGY_SHARE = 0.25
 
 /** 热量安全下限，避免推荐值过低 */
-const KCAL_FLOOR = 1200
+export const KCAL_FLOOR = 1200
 
-export function calcTargets(p: CalcParams): CalcResult {
+/** 覆盖默认公式的可调参数（方案引擎按档位传入不同缺口 / 蛋白配比） */
+export interface TargetOverrides {
+  /** 覆盖按目标取的默认热量偏移 */
+  kcalDelta?: number
+  /** 覆盖按目标取的默认蛋白 g/kg */
+  proteinPerKg?: number
+}
+
+export function calcTargetsWith(p: CalcParams, o: TargetOverrides = {}): CalcResult {
   const sexOffset = p.sex === 'male' ? 5 : -161
   const bmr = Math.round(10 * p.weightKg + 6.25 * p.heightCm - 5 * p.age + sexOffset)
   const tdee = Math.round(bmr * ACTIVITY_FACTORS[p.activityLevel])
-  const kcal = Math.max(KCAL_FLOOR, Math.round((tdee + GOAL_KCAL_DELTA[p.goal]) / 10) * 10)
-  const protein = Math.round(p.weightKg * PROTEIN_PER_KG[p.goal])
+  const kcal = Math.max(
+    KCAL_FLOOR,
+    Math.round((tdee + (o.kcalDelta ?? GOAL_KCAL_DELTA[p.goal])) / 10) * 10,
+  )
+  const protein = Math.round(p.weightKg * (o.proteinPerKg ?? PROTEIN_PER_KG[p.goal]))
   const fat = Math.round((kcal * FAT_ENERGY_SHARE) / 9)
   const carb = Math.max(50, Math.round((kcal - protein * 4 - fat * 9) / 4))
   return {
@@ -65,4 +76,8 @@ export function calcTargets(p: CalcParams): CalcResult {
       waterMl: Math.round((p.weightKg * 30) / 100) * 100,
     },
   }
+}
+
+export function calcTargets(p: CalcParams): CalcResult {
+  return calcTargetsWith(p)
 }

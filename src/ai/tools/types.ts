@@ -20,6 +20,7 @@ export type ToolGroup =
   | 'ledger' // 记账
   | 'exercise' // 运动记录
   | 'plan' // 训练课程
+  | 'program' // 健康方案（程序计算 + AI 调参）
   | 'pomodoro' // 番茄钟
   | 'session' // 进行中的训练课会话（只读）
   | 'context' // 历史聊天检索

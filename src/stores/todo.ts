@@ -24,8 +24,14 @@ export const useTodoStore = defineStore('todo', () => {
     dayTodos.value = await todoService.listTodos(date, date)
   }
 
-  /** 拉取全部待办（过期手动清理无需调用，写操作会自动刷新） */
+  /** 拉取全部待办（过期手动清理无需调用，写操作会自动刷新）。
+   *  先物化重复实例（幂等；旧后端无此命令时静默跳过）。 */
   async function loadAll(): Promise<void> {
+    try {
+      await todoService.syncRecurrences(todayStr())
+    } catch {
+      /* 旧后端 / mock 未升级时不阻塞列表 */
+    }
     allTodos.value = await todoService.listAllTodos()
   }
 

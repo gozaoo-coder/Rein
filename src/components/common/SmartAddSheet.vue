@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Check, ImagePlus, LoaderCircle, Plus, Search, Sparkles } from 'lucide-vue-next'
+import { Check, ImagePlus, LoaderCircle, Pencil, Plus, Search, Sparkles, X } from 'lucide-vue-next'
 
 import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -12,7 +12,7 @@ import { CATEGORY_META, MEAL_LABELS, MEAL_ORDER, priorityMeta, suggestMeal } fro
 import { useAiStore } from '@/stores/ai'
 import { useModelsStore } from '@/stores/models'
 import { useTodoStore } from '@/stores/todo'
-import { minToHHmm } from '@/utils/date'
+import { minToHHmm, parseDate } from '@/utils/date'
 import { resizeImageAsJpeg } from '@/utils/image'
 import { useToast } from '@/composables/useToast'
 import type { MealType, ParsedFoodItem, Todo, TodoCategory, TodoDraft } from '@/types'
@@ -171,12 +171,22 @@ function onEditorSaved(todo: Todo): void {
   d.added = true
 }
 
+/** AI 会推断日期（明天/下周…），不等于当前日期时必须显式展示，否则用户看不到排错天 */
+function shortDate(s: string): string {
+  const d = parseDate(s)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
 function fmtMeta(d: TodoDraft): string {
   const parts: string[] = []
+  if (d.date !== props.date) parts.push(shortDate(d.date))
   if (d.startMin != null) parts.push(minToHHmm(d.startMin))
-  parts.push(CATEGORY_META[d.category].label)
-  if (d.priority > 0) parts.push(priorityMeta(d.priority).label)
-  return parts.join(' · ')
+  return parts.join(' ')
+}
+
+/** AI 幻觉条目直接移除，而不是只能不勾一直留着 */
+function removeDraft(key: string): void {
+  todos.value = todos.value.filter((x) => x.key !== key)
 }
 
 /* ---------- 食物确认 ---------- */
@@ -207,6 +217,7 @@ async function commitFoods(): Promise<void> {
 const pickerOpen = ref(false)
 
 function clearAll(): void {
+  if (busy.value) return // 生成中清空会让完成后的结果凭空回填
   text.value = ''
   attachment.value = null
   todos.value = []
@@ -227,7 +238,7 @@ function clearAll(): void {
       <div class="smart card">
         <div class="row between">
           <p class="tag row center"><Sparkles :size="14" /> 智能添加</p>
-          <button v-if="text || attachment || todos.length || foods.length" class="clear" @click="clearAll">清空</button>
+          <button v-if="text || attachment || todos.length || foods.length" class="clear" :disabled="busy" @click="clearAll">清空</button>
         </div>
 
         <textarea
@@ -289,13 +300,19 @@ function clearAll(): void {
         </div>
       </template>
 
-      <!-- 待办草稿 -->
+      <!-- 待办草稿：标题可换行、异日显性、分类色点、备注预览、可移除 -->
       <template v-if="todos.length">
         <p class="count t-3 num">
-          识别到 {{ todos.length }} 条待办<template v-if="pendingCount"> · 待添加 {{ pendingCount }}</template>
+          识别到 {{ todos.length }} 条待办<template v-if="pendingCount"> · 待添加 {{ pendingCount }}</template><template v-else-if="!todos.some((d) => !d.added)"> · 全部已处理</template><span class="t-3"> · 点卡片改细节</span>
         </p>
-        <ul class="list">
-          <li v-for="d in todos" :key="d.key" class="draft row between" :class="{ added: d.added }">
+        <TransitionGroup tag="ul" name="tdl" class="list">
+          <li
+            v-for="(d, di) in todos"
+            :key="d.key"
+            class="draft"
+            :class="{ added: d.added }"
+            :style="{ '--i': di }"
+          >
             <button
               class="pick"
               :class="{ on: d.checked }"
@@ -303,16 +320,38 @@ function clearAll(): void {
               :disabled="d.added"
               @click="d.checked = !d.checked"
             >
-              <Check v-if="d.checked || d.added" :size="13" :stroke-width="3.2" />
+              <Transition name="ckin">
+                <Check v-if="d.checked || d.added" :size="13" :stroke-width="3.2" />
+              </Transition>
             </button>
             <button class="info col grow" @click="openEditor(d)">
-              <b class="dt">{{ d.title }}</b>
-              <em class="num t-3">{{ fmtMeta(d) }}</em>
-              <em v-if="d.added">已添加</em>
-              <em v-else>点击调整细节</em>
+              <span class="trow">
+                <i class="catdot" :style="{ background: `var(${CATEGORY_META[d.category].colorVar})` }" />
+                <b class="dt">{{ d.title }}</b>
+              </span>
+              <span class="meta num">
+                <em v-if="fmtMeta(d)" class="mt">{{ fmtMeta(d) }}</em>
+                <em class="mchip">
+                  <i :style="{ background: `var(${CATEGORY_META[d.category].colorVar})` }" />
+                  {{ CATEGORY_META[d.category].label }}
+                </em>
+                <em v-if="d.priority > 0" class="mchip" :class="d.priority === 2 ? 'urgent' : 'major'">
+                  {{ priorityMeta(d.priority).label }}
+                </em>
+                <em v-if="d.added" class="mchip ok"><Check :size="10" :stroke-width="3" /> 已添加</em>
+              </span>
+              <span v-if="d.notes" class="notes t-3">{{ d.notes }}</span>
             </button>
+            <span class="acts">
+              <button class="act" aria-label="编辑细节" @click="openEditor(d)">
+                <Pencil :size="14" />
+              </button>
+              <button v-if="!d.added" class="act danger" aria-label="移除该条" @click="removeDraft(d.key)">
+                <X :size="14" />
+              </button>
+            </span>
           </li>
-        </ul>
+        </TransitionGroup>
         <button class="commit" :disabled="pendingCount === 0 || adding" @click="addChecked">
           <LoaderCircle v-if="adding" :size="15" class="spin" />
           <template v-else><Plus :size="15" /> 添加{{ pendingCount ? ` ${pendingCount} 条` : '' }}</template>
@@ -327,7 +366,6 @@ function clearAll(): void {
         <Plus :size="15" /> 手动填写待办
       </button>
     </div>
-    <div class="pad" />
 
     <!-- 嵌套弹层：待办完整表单 / 食物库选择器 -->
     <TodoEditorSheet
@@ -371,6 +409,10 @@ function clearAll(): void {
   color: var(--text-3);
 }
 
+.clear:disabled {
+  opacity: 0.4;
+}
+
 .paste {
   padding: 10px 12px;
   border-radius: var(--radius-s);
@@ -399,7 +441,7 @@ function clearAll(): void {
   padding: 8px 18px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-footnote);
   font-weight: 700;
   transition: opacity var(--dur-fast) var(--ease-standard);
@@ -438,7 +480,7 @@ function clearAll(): void {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 14px;
+  border-radius: var(--radius-m);
   background: var(--surface);
 }
 
@@ -487,6 +529,7 @@ function clearAll(): void {
   padding: 12px;
   border-radius: var(--radius-m);
   background: var(--surface-2);
+  animation: draft-in 250ms var(--ease-standard) both;
 }
 
 .meal {
@@ -500,11 +543,50 @@ function clearAll(): void {
   gap: 6px;
 }
 
+/* 增删时其余卡 FLIP 平滑让位 */
+.tdl-move {
+  transition: transform var(--dur-base) var(--ease-standard);
+}
+
+.tdl-enter-active {
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+
+.tdl-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.tdl-leave-active {
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+
+.tdl-leave-to {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+/* AI 揭晓时刻：逐条浮出（stagger 40ms，不阻塞交互；reduced-motion 全局归零） */
 .draft {
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-m);
   background: var(--surface-2);
+  animation: draft-in 250ms var(--ease-standard) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+@keyframes draft-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 
 .draft.added {
@@ -515,14 +597,15 @@ function clearAll(): void {
   width: 24px;
   height: 24px;
   flex: none;
+  margin-top: 1px;
   border-radius: 7px;
   border: 1.5px solid var(--line-strong);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--surface);
-  transition: all var(--dur-fast) var(--ease-standard);
+  transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
 }
 
 .pick.on {
@@ -534,24 +617,132 @@ function clearAll(): void {
   opacity: 0.6;
 }
 
+/* 对勾弹入 */
+.ckin-enter-active {
+  transition:
+    transform 120ms var(--ease-standard),
+    opacity 120ms var(--ease-standard);
+}
+
+.ckin-enter-from {
+  transform: scale(0.5);
+  opacity: 0;
+}
+
 .info {
   text-align: left;
-  gap: 2px;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+}
+
+.trow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   min-width: 0;
 }
 
+.catdot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+
+/* AI 标题可能很长：换行到两行而非截断丢信息 */
 .dt {
   font-size: var(--fs-subhead);
   font-weight: 600;
-  white-space: nowrap;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.info em {
+.meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.meta .mt {
   font-style: normal;
   font-size: var(--fs-micro);
   color: var(--text-3);
+}
+
+.mchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mchip i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.mchip.major {
+  background: color-mix(in srgb, var(--c-carb) 14%, transparent);
+  color: color-mix(in srgb, var(--c-carb) 80%, var(--text-1));
+}
+
+.mchip.urgent {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.mchip.ok {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok-strong);
+}
+
+/* AI 可能带来源说明：一行截断预览，点了编辑器里看全文 */
+.notes {
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.acts {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.act {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+
+.act:active {
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.act.danger:active {
+  color: var(--danger);
 }
 
 .commit {
@@ -563,7 +754,7 @@ function clearAll(): void {
   padding: 12px;
   border-radius: var(--radius-m);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-subhead);
   font-weight: 700;
 }

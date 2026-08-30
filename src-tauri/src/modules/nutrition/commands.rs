@@ -121,11 +121,22 @@ pub fn get_profile(state: State<AppState>) -> Result<Profile> {
 #[tauri::command]
 pub fn update_profile(state: State<AppState>, profile: Profile) -> Result<Profile> {
     let conn = state.db.lock().unwrap();
+    // JSON 数组字段以文本列存储（NULL 保持 NULL，不写 "null"）
+    let slots = profile
+        .preferred_time_slots
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()));
+    let restrictions = profile
+        .diet_restrictions
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()));
     conn.execute(
         "UPDATE profile SET nickname = ?1, sex = ?2, birthday = ?3, height_cm = ?4, \
          weight_kg = ?5, target_weight_kg = ?6, activity_level = ?7, goal = ?8, \
          target_kcal = ?9, target_protein = ?10, target_carb = ?11, target_fat = ?12, \
-         target_sodium_mg = ?13, target_water_ml = ?14 WHERE id = 1",
+         target_sodium_mg = ?13, target_water_ml = ?14, training_days_per_week = ?15, \
+         preferred_time_slots = ?16, equipment = ?17, diet_restrictions = ?18, experience = ?19 \
+         WHERE id = 1",
         rusqlite::params![
             profile.nickname,
             profile.sex,
@@ -140,7 +151,12 @@ pub fn update_profile(state: State<AppState>, profile: Profile) -> Result<Profil
             profile.targets.carb,
             profile.targets.fat,
             profile.targets.sodium_mg,
-            profile.targets.water_ml
+            profile.targets.water_ml,
+            profile.training_days_per_week,
+            slots,
+            profile.equipment,
+            restrictions,
+            profile.experience,
         ],
     )?;
     ensure_found(load_profile(&conn))

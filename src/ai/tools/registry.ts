@@ -16,6 +16,7 @@ import { ledgerTools } from './ledger'
 import { nutritionTools } from './nutrition'
 import { planTools } from './plan'
 import { pomodoroTools } from './pomodoro'
+import { programTools } from './program'
 import { sessionTools } from './session'
 import type { AppTool } from './types'
 import { todoTools } from './todo'
@@ -29,6 +30,7 @@ export const APP_TOOLS: AppTool[] = [
   ...ledgerTools,
   ...exerciseTools,
   ...planTools,
+  ...programTools,
   ...pomodoroTools,
   ...sessionTools,
   ...contextTools,

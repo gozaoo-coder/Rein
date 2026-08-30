@@ -5,6 +5,23 @@ export type TodoCategory = (typeof TODO_CATEGORIES)[number]
 
 export type TodoStatus = 'todo' | 'doing' | 'done'
 
+/** 重复规则：模板行持有，实例按 recKey = "模板id:日期" 物化（与 Rust RecRule 对应） */
+export interface RecRule {
+  /** daily = 每天 / weekly = 每周选中星期 / interval = 每 N 天 */
+  freq: 'daily' | 'weekly' | 'interval'
+  /** weekly 专用：周一=0 … 周日=6 */
+  weekdays: number[]
+  /** interval 专用：每 N 天 */
+  intervalDays: number
+  /** 结束日期（含），null = 永不 */
+  endDate: string | null
+}
+
+export interface TodoSubtask {
+  title: string
+  done: boolean
+}
+
 export interface Todo {
   id: number
   title: string
@@ -19,6 +36,14 @@ export interface Todo {
   status: TodoStatus
   completedAt: string | null
   createdAt: string
+  /** 来源健康方案的 id；null = 用户手动创建。方案重排/删除按它清理 */
+  programId: number | null
+  /** 重复规则；null = 不重复。模板行自身即首日实例 */
+  recRule: RecRule | null
+  /** 重复实例键 "模板id:日期"；null = 非实例 */
+  recKey: string | null
+  /** 子任务清单；null/空 = 无 */
+  subtasks: TodoSubtask[] | null
 }
 
 export interface TodoInput {
@@ -29,6 +54,8 @@ export interface TodoInput {
   durationMin?: number | null
   category?: TodoCategory
   priority?: number
+  recRule?: RecRule | null
+  subtasks?: TodoSubtask[] | null
 }
 
 /**

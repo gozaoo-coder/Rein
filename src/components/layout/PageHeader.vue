@@ -82,7 +82,7 @@ function goBack(): void {
 
 .page-header :slotted(.hdr-btn.accent) {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 h1 {

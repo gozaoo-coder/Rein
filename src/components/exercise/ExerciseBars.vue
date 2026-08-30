@@ -14,7 +14,7 @@ const maxMin = computed(() => Math.max(60, ...props.bars.map((b) => b.value)))
   <ul class="bars row">
     <li v-for="b in bars" :key="b.label" class="col center barcol">
       <span class="track col">
-        <i :style="{ height: `${(b.value / maxMin) * 100}%` }" :class="{ today: b.highlight }" />
+        <i :style="{ '--p': `${(b.value / maxMin) * 100}%` }" :class="{ today: b.highlight }" />
       </span>
       <span class="num label" :class="{ today: b.highlight }">{{ b.label }}</span>
     </li>
@@ -41,13 +41,16 @@ const maxMin = computed(() => Math.max(60, ...props.bars.map((b) => b.value)))
   overflow: hidden;
 }
 
+/* 柱体自底部生长走 clip-path：不触发 layout，圆头随比例保持 */
 .track i {
   display: block;
   width: 100%;
+  height: 100%;
   border-radius: inherit;
   background: var(--c-exercise);
   opacity: 0.45;
-  transition: height var(--dur-base) var(--ease-sheet);
+  clip-path: inset(calc(100% - var(--p, 0%)) 0 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .track i.today {

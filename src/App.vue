@@ -19,7 +19,7 @@ const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
   <!-- 桌面三窗格壳：沉浸页（运动模式）同样隐藏导航轨 -->
   <div v-if="isDesktop" class="desk-frame">
     <DesktopRail v-if="!route.meta.fullscreen" />
-    <main class="desk-main" :class="{ wide: route.name === 'home' }">
+    <main class="desk-main" :class="{ wide: route.name === 'home' || route.name === 'todos' }">
       <RouterView v-slot="{ Component }">
         <Transition name="page" mode="out-in">
           <component :is="Component" />

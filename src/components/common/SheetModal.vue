@@ -14,6 +14,11 @@ type SnapLevel = 'small' | 'medium' | 'large'
 /** 定位高度档位（占屏幕高度的比例） */
 const SNAP_RATIOS: Record<SnapLevel, number> = { small: 0.2, medium: 0.4, large: 0.9 }
 const SNAP_ORDER: SnapLevel[] = ['small', 'medium', 'large']
+/** 轻拂判定速度（px/ms）：超过则无论松手位置，朝拂动方向跳一档 */
+const FLICK_V = 0.35
+
+/** 打开中的抽屉栈：Esc 只关最上层，嵌套弹层（智能添加 → 编辑器）逐层退出 */
+const sheetStack: ((e: KeyboardEvent) => void)[] = []
 
 const props = withDefaults(
   defineProps<{
@@ -33,6 +38,17 @@ const snap = ref<SnapLevel>('medium')
 /** 拖动中的组件高度；null = 静止，吸附在定位档位上 */
 const dragHeight = ref<number | null>(null)
 const dragging = ref(false)
+/** 拖动末段垂直速度（px/ms，正=向下拖）：松手时用于轻拂跳档 */
+let velY = 0
+let lastY = 0
+let lastT = 0
+
+function trackVelocity(y: number): void {
+  const t = performance.now()
+  if (t > lastT) velY = (y - lastY) / (t - lastT)
+  lastY = y
+  lastT = t
+}
 
 const minH = computed(() => Math.round(SNAP_RATIOS.small * viewportH.value))
 const maxH = computed(() => Math.round(SNAP_RATIOS.large * viewportH.value))
@@ -44,8 +60,8 @@ function clampH(h: number): number {
   return Math.min(maxH.value, Math.max(minH.value, h))
 }
 
-/** 吸附到离目标组件高度最近的定位档位 */
-function snapTo(h: number): void {
+/** 离目标组件高度最近的定位档位 */
+function nearestLevel(h: number): SnapLevel {
   let best: SnapLevel = SNAP_ORDER[0]
   let bestDist = Infinity
   for (const lv of SNAP_ORDER) {
@@ -55,7 +71,19 @@ function snapTo(h: number): void {
       best = lv
     }
   }
+  return best
+}
+
+/** 松手吸附：距离取最近档；轻拂（速度超阈值）时朝拂动方向强制跳一档 */
+function settle(h: number): void {
+  let best = nearestLevel(h)
+  if (Math.abs(velY) > FLICK_V) {
+    const dir = velY < 0 ? 1 : -1 // 上拂（velY<0）= 扩张
+    const idx = Math.min(SNAP_ORDER.length - 1, Math.max(0, SNAP_ORDER.indexOf(best) + dir))
+    best = SNAP_ORDER[idx]!
+  }
   snap.value = best
+  velY = 0
 }
 
 function onViewportResize(): void {
@@ -63,14 +91,26 @@ function onViewportResize(): void {
 }
 window.addEventListener('resize', onViewportResize)
 
+/** Esc 关闭：仅响应栈顶抽屉，嵌套弹层逐层退出 */
+function onEsc(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return
+  if (sheetStack[sheetStack.length - 1] !== onEsc) return
+  emit('close')
+}
+
 watch(
   () => props.open,
   (open) => {
-    document.documentElement.style.overflow = open ? 'hidden' : ''
     if (open) {
+      // 栈深 0→1 才锁背景滚动；嵌套打开/关闭不互相干扰
+      if (sheetStack.length === 0) document.documentElement.style.overflow = 'hidden'
+      sheetStack.push(onEsc)
       snap.value = props.initialSnap // 每次打开回到初始定位档位
       dragHeight.value = null
     } else {
+      const i = sheetStack.indexOf(onEsc)
+      if (i >= 0) sheetStack.splice(i, 1)
+      if (sheetStack.length === 0) document.documentElement.style.overflow = ''
       teardownGesture()
     }
   },
@@ -86,6 +126,9 @@ function onHandleDown(e: PointerEvent): void {
   handleStartY = e.clientY
   handleStartH = snapHeight.value
   dragHeight.value = handleStartH
+  velY = 0
+  lastY = e.clientY
+  lastT = performance.now()
   try {
     handleEl.value?.setPointerCapture(e.pointerId)
   } catch {
@@ -95,13 +138,14 @@ function onHandleDown(e: PointerEvent): void {
 
 function onHandleMove(e: PointerEvent): void {
   if (!dragging.value || dragHeight.value === null) return
+  trackVelocity(e.clientY)
   dragHeight.value = clampH(handleStartH + (handleStartY - e.clientY))
 }
 
 function onHandleUp(): void {
   if (!dragging.value) return
   dragging.value = false
-  snapTo(dragHeight.value ?? snapHeight.value)
+  settle(dragHeight.value ?? snapHeight.value)
   dragHeight.value = null
 }
 
@@ -141,6 +185,9 @@ function beginGesture(x: number, y: number): void {
   startY = y
   startH = panelHeight.value
   startScrollTop = bodyEl.value?.scrollTop ?? 0
+  velY = 0
+  lastY = y
+  lastT = performance.now()
 }
 
 /** 由位移方向决策本手势归属：调整定位高度 or 原生滚动 */
@@ -178,7 +225,7 @@ function applyResize(dy: number): void {
 function endGesture(): void {
   if (!gestureActive) return
   gestureActive = false
-  if (mode === 'resize') snapTo(dragHeight.value ?? snapHeight.value)
+  if (mode === 'resize') settle(dragHeight.value ?? snapHeight.value)
   dragging.value = false
   dragHeight.value = null
   mode = 'undecided'
@@ -203,6 +250,7 @@ function onTouchMove(e: TouchEvent): void {
     window.removeEventListener('touchmove', onTouchMove)
     return
   }
+  trackVelocity(t.clientY)
   applyResize(dy)
   e.preventDefault()
 }
@@ -231,6 +279,7 @@ function onBodyPointerMove(e: PointerEvent): void {
     } catch {
       /* 指针已释放等竞态可忽略 */
     }
+    trackVelocity(e.clientY)
     applyResize(dy)
   }
 }
@@ -248,6 +297,9 @@ function teardownGesture(): void {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportResize)
+  const i = sheetStack.indexOf(onEsc)
+  if (i >= 0) sheetStack.splice(i, 1)
+  if (sheetStack.length === 0) document.documentElement.style.overflow = ''
   teardownGesture()
 })
 </script>
@@ -255,7 +307,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <Transition name="backdrop">
-      <div v-if="open" class="backdrop" @click="emit('close')" />
+      <div v-if="open" class="backdrop" aria-hidden="true" @click="emit('close')" />
     </Transition>
     <Transition name="sheet">
       <section
@@ -315,7 +367,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 90;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
 }
 
 .panel {
@@ -341,6 +393,7 @@ onBeforeUnmount(() => {
 }
 
 .grabber-zone {
+  position: relative;
   flex: none;
   display: flex;
   justify-content: center;
@@ -348,6 +401,16 @@ onBeforeUnmount(() => {
   cursor: grab;
   touch-action: none;
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+}
+
+/* 视觉不变，伪元素把触控热区向上下各扩 10px */
+.grabber-zone::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -10px;
+  bottom: -10px;
 }
 
 .grabber-zone:active {

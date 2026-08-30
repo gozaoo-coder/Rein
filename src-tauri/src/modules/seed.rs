@@ -67,6 +67,12 @@ struct PlanSeed {
     subtitle: String,
     workout_type: String,
     exercises: Value,
+    /// 器械要求：gym / home / 缺省 = NULL（通用）
+    #[serde(default)]
+    equipment: Option<String>,
+    /// 预估时长（分钟）；缺省 = NULL
+    #[serde(default)]
+    est_duration_min: Option<i64>,
 }
 
 /// 食物种子：按 name 幂等补齐（见模块注释）。
@@ -112,8 +118,15 @@ pub fn seed_foods(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// 内置课程种子内容版本：种子里的课程内容（exercises/subtitle）变更时 +1。
+/// 首次安装直接按最新版本导入；老库升级后低于该版本时会**按 id 刷新课程内容**
+/// （覆盖内置课的 exercises_json —— 激活热身组等结构改进需要送达已存在的库；
+/// 用户对内置课的编辑会被重置为新种子，此语义与「内置课程始终可用优先」一致）。
+const PLAN_SEED_CONTENT_VERSION: i64 = 4;
+
 /// 内置课程种子：按 id 幂等补齐（INSERT OR IGNORE）。
-/// 老库升级后自动拿到新增的内置课程；已有课程（含用户改过的）永不覆盖。
+/// 老库升级后自动拿到新增的内置课程；已有课程（含用户改过的）永不覆盖——
+/// 但种子内容版本升级时会按 id 刷新内置课内容（见 PLAN_SEED_CONTENT_VERSION）。
 /// 代价：用户删除的内置课程会在下次启动时补回——内置课程始终可用优先。
 pub fn seed_builtin_plans(conn: &Connection) -> Result<()> {
     let seed: PlanSeedFile = serde_json::from_str(WORKOUT_PLANS_JSON)?;
@@ -121,11 +134,49 @@ pub fn seed_builtin_plans(conn: &Connection) -> Result<()> {
 
     conn.execute_batch("BEGIN")?;
     let result = (|| {
+        let mut stmt = conn.prepare(
+            "INSERT OR IGNORE INTO workout_plans (id, name, subtitle, workout_type, exercises_json, equipment, est_duration_min, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        )?;
         for p in &seed.plans {
+            stmt.execute(rusqlite::params![
+                p.id,
+                p.name,
+                p.subtitle,
+                p.workout_type,
+                p.exercises.to_string(),
+                p.equipment,
+                p.est_duration_min,
+                now
+            ])?;
+        }
+        drop(stmt);
+
+        // 内容版本刷新：老库（含 0003 前导入的旧版课程）拿到最新的内置课内容
+        let stored: i64 = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM app_meta WHERE key = 'plan_seed_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if stored < PLAN_SEED_CONTENT_VERSION {
+            let mut upd = conn.prepare(
+                "UPDATE workout_plans SET exercises_json = ?2, subtitle = ?3, updated_at = ?4 WHERE id = ?1",
+            )?;
+            for p in &seed.plans {
+                upd.execute(rusqlite::params![
+                    p.id,
+                    p.exercises.to_string(),
+                    p.subtitle,
+                    now
+                ])?;
+            }
+            drop(upd);
             conn.execute(
-                "INSERT OR IGNORE INTO workout_plans (id, name, subtitle, workout_type, exercises_json, created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-                rusqlite::params![p.id, p.name, p.subtitle, p.workout_type, p.exercises.to_string(), now],
+                "INSERT INTO app_meta (key, value) VALUES ('plan_seed_version', ?1) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [PLAN_SEED_CONTENT_VERSION.to_string()],
             )?;
         }
         Ok(())

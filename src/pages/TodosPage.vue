@@ -1,72 +1,259 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ListTodo, Plus } from 'lucide-vue-next'
+import { CalendarDays, ListTodo, Plus, Sparkles } from 'lucide-vue-next'
 
-import EmptyState from '@/components/common/EmptyState.vue'
+import { useMediaQuery } from '@/composables/useMediaQuery'
+import { useToast } from '@/composables/useToast'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
-import TodoItem from '@/components/todo/TodoItem.vue'
+import { DESKTOP_MIN } from '@/config/domain'
+import { autoSchedule, type Placement } from '@/ai/autoSchedule'
+import { useModelsStore } from '@/stores/models'
 import { useTodoStore } from '@/stores/todo'
-import { diffDays, fmtDateCn, todayStr } from '@/utils/date'
-import { cmpUrgency } from '@/utils/todo'
-import type { Todo } from '@/types'
-
-/** 全部待办二级页：按紧急程度排序、按日期分组（收件箱 / 今天 / 明天 / 历史）。 */
-const store = useTodoStore()
-const addOpen = ref(false)
-const today = todayStr()
-
-onMounted(() => {
-  void store.loadAll()
-})
-
-const openCount = computed(() => store.allTodos.filter((t) => t.status !== 'done').length)
-
-function groupLabel(d: string | null): string {
-  if (!d) return '收件箱'
-  const diff = diffDays(today, d)
-  if (diff === 0) return '今天'
-  if (diff === 1) return '明天'
-  if (diff === -1) return '昨天'
-  return fmtDateCn(d)
-}
-
-interface Group {
-  label: string
-  date: string | null
-  items: Todo[]
-}
+import CanvasTimeline from '@/components/todo/CanvasTimeline.vue'
+import DailyRitual from '@/components/todo/DailyRitual.vue'
+import DayDetailPanel from '@/components/todo/DayDetailPanel.vue'
+import AllTodoList from '@/components/todo/AllTodoList.vue'
+import WeekSummary from '@/components/todo/WeekSummary.vue'
+import WeekView from '@/components/todo/WeekView.vue'
+import { addDays, fmtDateCn, nowMin, todayStr } from '@/utils/date'
+import { busyIntervals, freeGaps } from '@/utils/schedule'
+import type { Todo, TodoSubtask } from '@/types'
+import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
 
 /**
- * 分组顺序：今天 → 明天 → 未来 → 历史（近到远）→ 收件箱。
- * 组内按紧急程度排序（cmpUrgency），保证同日期相邻聚合。
+ * 今日画布：待办与日程熔成一条时间轴。
+ * - 画布 = 未安排池 + 单日时间轴 + 详情联动（桌面右栏 / 移动端直接进编辑抽屉）；
+ * - 智能排程 = AI 建议 → 幽灵块预览 → 用户确认落库（L2 契约），无模型走启发式；
+ * - 周 = 周选择 + 周回顾；清单 = 全部待办分组列表。
  */
-function groupKey(d: string | null): number {
-  if (!d) return 1e9
-  const diff = diffDays(today, d)
-  return diff >= 0 ? diff : 1000 - diff
+const store = useTodoStore()
+const models = useModelsStore()
+const { toast } = useToast()
+const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
+
+type Segment = 'canvas' | 'week' | 'list'
+const segment = ref<Segment>('canvas')
+const canvasDate = ref(todayStr())
+const today = todayStr()
+
+/* ---------- 数据 ---------- */
+
+onMounted(async () => {
+  await store.loadAll()
+  maybeOpenRitual()
+})
+
+const dayTodos = computed(() => store.allTodos.filter((t) => t.date === canvasDate.value))
+const scheduled = computed(() => dayTodos.value.filter((t) => t.startMin != null))
+const pool = computed(() => dayTodos.value.filter((t) => t.startMin == null && t.status !== 'done'))
+const doneCount = computed(() => dayTodos.value.filter((t) => t.status === 'done').length)
+
+const headTitle = computed(() =>
+  segment.value === 'canvas' ? fmtDateCn(canvasDate.value) : segment.value === 'week' ? '本周' : '全部待办',
+)
+const headSub = computed(() => {
+  if (segment.value === 'list') return '按日期分组'
+  if (segment.value === 'week') return '完成度与回顾'
+  return `${doneCount.value}/${dayTodos.value.length} 已完成 · 未安排 ${pool.value.length}`
+})
+
+function shiftDay(n: number): void {
+  canvasDate.value = addDays(canvasDate.value, n)
 }
 
-const groups = computed<Group[]>(() => {
-  const byDate = new Map<string | null, Todo[]>()
-  for (const t of store.allTodos) {
-    const arr = byDate.get(t.date) ?? []
-    arr.push(t)
-    byDate.set(t.date, arr)
+/* ---------- 选中与编辑 ---------- */
+
+const selectedId = ref<number | null>(null)
+const selectedTodo = computed<Todo | null>(
+  () => store.allTodos.find((t) => t.id === selectedId.value) ?? null,
+)
+const editorOpen = ref(false)
+const editorTarget = computed<Todo | null>(
+  () => store.allTodos.find((t) => t.id === (editorId.value ?? -1)) ?? null,
+)
+const editorId = ref<number | null>(null)
+const addOpen = ref(false)
+
+function onSelect(t: Todo): void {
+  selectedId.value = t.id
+  if (!isDesktop.value) {
+    editorId.value = t.id
+    editorOpen.value = true
   }
-  return [...byDate.entries()]
-    .sort((a, b) => groupKey(a[0]) - groupKey(b[0]))
-    .map(([date, items]) => ({
-      date,
-      label: groupLabel(date),
-      items: [...items].sort(cmpUrgency),
-    }))
+}
+
+function onToggle(t: Todo): void {
+  clearGhosts()
+  void store.toggle(t)
+}
+
+function onMove(t: Todo, startMin: number): void {
+  clearGhosts()
+  void store.update({ ...t, date: canvasDate.value, startMin })
+}
+
+async function onSubtasks(next: TodoSubtask[]): Promise<void> {
+  const t = selectedTodo.value
+  if (!t) return
+  await store.update({ ...t, subtasks: next.length ? next : null })
+}
+
+function editSelected(): void {
+  editorId.value = selectedId.value
+  editorOpen.value = true
+}
+
+async function removeSelected(): Promise<void> {
+  const t = selectedTodo.value
+  if (!t) return
+  await store.remove(t)
+  selectedId.value = null
+}
+
+/* ---------- 未安排池：点击快排 + 拖入时间轴 ---------- */
+
+const tlWrap = ref<HTMLElement | null>(null)
+const tlComp = ref<InstanceType<typeof CanvasTimeline> | null>(null)
+const dropMin = ref<number | null>(null)
+const chipDrag = ref<Todo | null>(null)
+
+/** 把未安排事项放进"现在之后"的第一个装得下的空档 */
+async function placeInNextGap(t: Todo): Promise<void> {
+  const busy = busyIntervals(scheduled.value, canvasDate.value)
+  const from = canvasDate.value === today ? Math.max(nowMin(), 6 * 60) : 6 * 60
+  const gaps = freeGaps(busy, from, 22 * 60)
+  const dur = t.durationMin ?? 30
+  const gap = gaps.find((g) => g.end - g.start >= dur)
+  if (!gap) {
+    toast('今天 22 点前没有装得下的空档了')
+    return
+  }
+  await store.update({ ...t, date: canvasDate.value, startMin: gap.start })
+  toast(`已排到 ${String(Math.floor(gap.start / 60)).padStart(2, '0')}:${String(gap.start % 60).padStart(2, '0')}`)
+}
+
+function onChipDown(e: PointerEvent, t: Todo): void {
+  if (e.button !== 0) return
+  const el = e.currentTarget as HTMLElement
+  el.setPointerCapture(e.pointerId)
+  chipDrag.value = t
+  chipStart = { x: e.clientX, y: e.clientY }
+  chipMoved = false
+}
+
+let chipStart = { x: 0, y: 0 }
+let chipMoved = false
+
+function onChipMove(e: PointerEvent): void {
+  const t = chipDrag.value
+  if (!t) return
+  if (!chipMoved && Math.hypot(e.clientX - chipStart.x, e.clientY - chipStart.y) < 6) return
+  chipMoved = true
+  const sc = tlWrap.value?.querySelector('.scroll') as HTMLElement | null
+  const wrap = tlWrap.value?.getBoundingClientRect()
+  const ppm = tlComp.value?.getPxPerMin() ?? 0.5
+  if (!sc || !wrap) return
+  if (e.clientX < wrap.left || e.clientX > wrap.right || e.clientY < wrap.top || e.clientY > wrap.bottom) {
+    dropMin.value = null
+    return
+  }
+  const min = (e.clientY - wrap.top + sc.scrollTop) / ppm
+  dropMin.value = Math.max(0, Math.min(1435, Math.round(min / 5) * 5))
+}
+
+async function onChipUp(): Promise<void> {
+  const t = chipDrag.value
+  const min = dropMin.value
+  chipDrag.value = null
+  dropMin.value = null
+  if (t && chipMoved && min != null) {
+    await store.update({ ...t, date: canvasDate.value, startMin: min })
+  }
+}
+
+/* ---------- 智能排程（AI 建议 → 确认 → 落库） ---------- */
+
+const aiRunning = ref(false)
+const ghosts = ref<{ todo: Todo; startMin: number }[]>([])
+const aiReason = ref('')
+const aiSource = ref<'ai' | 'heuristic'>('heuristic')
+
+function clearGhosts(): void {
+  if (ghosts.value.length) ghosts.value = []
+}
+
+async function runSchedule(): Promise<void> {
+  if (aiRunning.value || !pool.value.length) return
+  clearGhosts()
+  aiRunning.value = true
+  try {
+    if (!models.loaded) await models.load()
+    const from = canvasDate.value === today ? Math.max(nowMin(), 6 * 60) : 6 * 60
+    const res = await autoSchedule(pool.value, scheduled.value, canvasDate.value, from, models.defaultModel())
+    const byId = new Map(pool.value.map((t) => [t.id, t]))
+    ghosts.value = res.placements
+      .filter((p: Placement) => byId.has(p.id))
+      .map((p) => ({ todo: byId.get(p.id)!, startMin: p.startMin }))
+    aiReason.value = res.reason
+    aiSource.value = res.source
+    if (!ghosts.value.length) toast('今天装不下更多安排了，试试改天或减时长')
+  } finally {
+    aiRunning.value = false
+  }
+}
+
+async function applyGhosts(): Promise<void> {
+  const list = ghosts.value
+  ghosts.value = []
+  for (const g of list) {
+    const cur = store.allTodos.find((t) => t.id === g.todo.id)
+    if (cur) await store.update({ ...cur, date: canvasDate.value, startMin: g.startMin })
+  }
+  toast(`已排入 ${list.length} 项，可拖动微调`)
+}
+
+/* ---------- 每日规划仪式 ---------- */
+
+const ritualOpen = ref(false)
+
+const ritualCandidates = computed(() => {
+  const inbox = store.allTodos.filter((t) => t.date === null && t.status !== 'done')
+  const overdue = store.allTodos.filter(
+    (t) => t.date !== null && t.date < today && t.status !== 'done',
+  )
+  return [...inbox, ...overdue, ...pool.value]
 })
+
+function maybeOpenRitual(): void {
+  const key = `rein.ritual.${today}`
+  if (localStorage.getItem(key)) return
+  if (!ritualCandidates.value.length) return
+  ritualOpen.value = true
+}
+
+function closeRitual(): void {
+  localStorage.setItem(`rein.ritual.${today}`, '1')
+  ritualOpen.value = false
+}
+
+async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<void> {
+  closeRitual()
+  for (const id of ids) {
+    const t = store.allTodos.find((x) => x.id === id)
+    if (!t) continue
+    const next: Todo = { ...t, date: t.date === null || t.date < today ? today : t.date }
+    if (next.date === today && next.startMin != null && t.date === null) next.startMin = null
+    if (t.date !== today) await store.update(next)
+  }
+  if (mode === 'ai') await runSchedule()
+  else toast('已加入今天，拖进时间轴安排时间')
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="全部待办" subtitle="按紧急程度排序" back>
+    <PageHeader :title="headTitle" :subtitle="headSub" back>
       <template #action>
         <button class="hdr-btn" aria-label="添加待办" @click="addOpen = true">
           <Plus :size="20" />
@@ -74,29 +261,121 @@ const groups = computed<Group[]>(() => {
       </template>
     </PageHeader>
 
-    <template v-if="groups.length">
-      <section v-for="g in groups" :key="g.date ?? 'inbox'" class="card group">
-        <header class="row between ghead">
-          <h2 class="glabel">{{ g.label }}</h2>
-          <span class="num gcount">{{ g.items.length }}</span>
+    <!-- 视图切换 + 智能排程 -->
+    <div class="toolbar row">
+      <div class="segrow" role="tablist" aria-label="视图">
+        <button role="tab" class="seg" :class="{ on: segment === 'canvas' }" :aria-selected="segment === 'canvas'" data-testid="seg-canvas" @click="segment = 'canvas'">
+          <CalendarDays :size="14" /> 画布
+        </button>
+        <button role="tab" class="seg" :class="{ on: segment === 'week' }" :aria-selected="segment === 'week'" data-testid="seg-week" @click="segment = 'week'">
+          周
+        </button>
+        <button role="tab" class="seg" :class="{ on: segment === 'list' }" :aria-selected="segment === 'list'" data-testid="seg-list" @click="segment = 'list'">
+          <ListTodo :size="14" /> 清单
+        </button>
+      </div>
+      <button
+        v-if="segment === 'canvas'"
+        class="ai-btn"
+        :disabled="aiRunning || !pool.length"
+        data-testid="ai-schedule"
+        @click="runSchedule"
+      >
+        <Sparkles :size="14" /> {{ aiRunning ? '排程中…' : '智能排程' }}
+      </button>
+    </div>
+
+    <!-- ═══ 画布 ═══ -->
+    <template v-if="segment === 'canvas'">
+      <div class="dateline row between">
+        <button class="daynav" aria-label="前一天" @click="shiftDay(-1)">‹</button>
+        <span class="num dlabel">{{ canvasDate === today ? '今天' : fmtDateCn(canvasDate) }}</span>
+        <button class="daynav" aria-label="后一天" @click="shiftDay(1)">›</button>
+      </div>
+
+      <!-- 未安排池 -->
+      <section class="pool" data-testid="pool">
+        <header class="row between poolh">
+          <b>未安排</b>
+          <span class="hint">拖进时间轴，或点卡片快排</span>
         </header>
-        <ul class="list">
-          <TodoItem v-for="t in g.items" :key="t.id" :todo="t" />
-        </ul>
+        <div class="chips">
+          <button
+            v-for="t in pool"
+            :key="t.id"
+            class="pchip"
+            :class="{ sel: selectedId === t.id, drag: chipDrag?.id === t.id }"
+            :data-title="t.title"
+            @pointerdown="onChipDown($event, t)"
+            @pointermove="onChipMove"
+            @pointerup="onChipUp"
+            @pointercancel="onChipUp"
+            @click="!chipMoved && onSelect(t)"
+          >
+            <i class="pdot" />{{ t.title }}
+            <em v-if="t.durationMin" class="num">{{ t.durationMin }} 分钟</em>
+          </button>
+          <p v-if="!pool.length" class="pool-empty">池子空了 — 该安排的都安排上了。</p>
+        </div>
       </section>
-      <p class="foot t-3 num">
-        共 {{ store.allTodos.length }} 条 · {{ openCount }} 条未完成
-      </p>
+
+      <!-- 智能排程确认条 -->
+      <section v-if="ghosts.length" class="confirm" data-testid="ai-confirm">
+        <p class="cr">
+          <b>{{ aiSource === 'ai' ? 'AI 建议' : '规则排程' }}</b>
+          {{ aiReason }}
+        </p>
+        <div class="row gap">
+          <button class="cbtn ghost" @click="clearGhosts">取消</button>
+          <button class="cbtn primary" data-testid="ai-apply" @click="applyGhosts">应用（{{ ghosts.length }}）</button>
+        </div>
+      </section>
+
+      <!-- 时间轴 + 详情（桌面右栏，移动端点击块进编辑抽屉） -->
+      <div class="cgrid" :class="{ wide: isDesktop && selectedTodo }">
+        <div ref="tlWrap" class="tlwrap">
+          <CanvasTimeline
+            ref="tlComp"
+            :date="canvasDate"
+            :todos="scheduled"
+            :ghosts="ghosts"
+            :drop-min="dropMin"
+            :selected-id="selectedId"
+            :compact="!isDesktop"
+            data-testid="canvas-timeline"
+            @select="onSelect"
+            @toggle="onToggle"
+            @move="onMove"
+          />
+        </div>
+        <DayDetailPanel
+          v-if="isDesktop"
+          :todo="selectedTodo"
+          @toggle="selectedTodo && onToggle(selectedTodo)"
+          @edit="editSelected"
+          @remove="removeSelected"
+          @place="selectedTodo && placeInNextGap(selectedTodo)"
+          @subtasks="onSubtasks"
+        />
+      </div>
     </template>
 
-    <EmptyState
-      v-else
-      :icon="ListTodo"
-      title="还没有待办"
-      hint="点右上角「+」，粘贴一句话让 AI 帮你拆成待办"
-    />
+    <!-- ═══ 周 ═══ -->
+    <template v-else-if="segment === 'week'">
+      <section class="card">
+        <WeekView :selected="canvasDate" @select="(d) => { canvasDate = d; segment = 'canvas' }" />
+      </section>
+      <WeekSummary />
+    </template>
 
-    <SmartAddSheet :open="addOpen" :date="today" @close="addOpen = false" />
+    <!-- ═══ 清单 ═══ -->
+    <template v-else>
+      <AllTodoList />
+    </template>
+
+    <DailyRitual :open="ritualOpen" :candidates="ritualCandidates" @close="closeRitual" @confirm="onRitualConfirm" />
+    <TodoEditorSheet :open="editorOpen" :todo="editorTarget" :date="canvasDate" @close="editorOpen = false" />
+    <SmartAddSheet :open="addOpen" :date="canvasDate" @close="addOpen = false" />
   </div>
 </template>
 
@@ -105,28 +384,215 @@ const groups = computed<Group[]>(() => {
   padding: 10px var(--page-pad-x) var(--page-pad-bottom);
 }
 
-.group {
+.toolbar {
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 12px;
-  padding-bottom: 4px;
 }
 
-.ghead {
-  padding-bottom: 4px;
+.segrow {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
 }
 
-.glabel {
-  font-size: var(--fs-subhead);
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  border-radius: var(--radius-s);
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-2);
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.seg.on {
+  background: var(--surface);
+  color: var(--text-1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 15px;
+  border-radius: var(--radius-m);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-footnote);
   font-weight: 700;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+
+.ai-btn:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+.dateline {
+  margin: 0 0 8px;
+}
+
+.daynav {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.dlabel {
+  font-size: var(--fs-footnote);
+  font-weight: 650;
   color: var(--text-2);
 }
 
-.gcount {
+.pool {
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  border-radius: var(--radius-m);
+  padding: 10px 14px 12px;
+  margin-bottom: 12px;
+}
+
+.poolh b {
+  font-size: var(--fs-footnote);
+}
+
+.poolh .hint {
   font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
-.foot {
-  text-align: center;
-  padding: 14px 0 4px;
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  min-height: 20px;
+}
+
+.pchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  border: 0.5px solid var(--line);
+  font-size: var(--fs-footnote);
+  font-weight: 550;
+  touch-action: none;
+  cursor: grab;
+}
+
+.pchip:active {
+  cursor: grabbing;
+}
+
+.pchip.sel {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.pchip.drag {
+  opacity: 0.55;
+  transform: scale(1.03);
+}
+
+.pdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.pchip em {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.pool-empty {
+  font-size: var(--fs-footnote);
+  color: var(--text-3);
+  padding: 4px 0;
+}
+
+.confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--accent-soft);
+  border-radius: var(--radius-m);
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
+.confirm .cr {
+  font-size: var(--fs-footnote);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+
+.confirm b {
+  color: var(--accent);
+  margin-right: 6px;
+}
+
+.gap {
+  gap: 8px;
+}
+
+.cbtn {
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-footnote);
+  font-weight: 700;
+}
+
+.cbtn.ghost {
+  color: var(--text-2);
+}
+
+.cbtn.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.cgrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.cgrid.wide {
+  grid-template-columns: 1fr 292px;
+}
+
+.tlwrap {
+  min-width: 0;
+}
+
+/* 画布时间轴默认高度（.scroll 撑起） */
+.tlwrap :deep(.ctl .scroll) {
+  height: min(62vh, 620px);
+}
+
+@media (max-width: 1099px) {
+  .tlwrap :deep(.ctl .scroll) {
+    height: 56vh;
+  }
 }
 </style>

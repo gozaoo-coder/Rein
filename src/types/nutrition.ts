@@ -44,6 +44,13 @@ export type Sex = 'male' | 'female'
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active'
 export type Goal = 'cut' | 'keep' | 'bulk'
 
+/** 偏好运动时段 */
+export type TimeSlot = 'morning' | 'noon' | 'evening'
+/** 器械条件：健身房 / 居家徒手 / 都可以 */
+export type Equipment = 'gym' | 'home' | 'mixed'
+/** 训练经验 */
+export type Experience = 'beginner' | 'intermediate' | 'advanced'
+
 export interface Profile {
   nickname: string
   sex: Sex | null
@@ -54,6 +61,16 @@ export interface Profile {
   activityLevel: ActivityLevel
   goal: Goal
   targets: DailyTargets
+  /** 每周可训练天数；null = 未设置（方案生成的频率上限） */
+  trainingDaysPerWeek: number | null
+  /** 偏好运动时段；null = 未设置 */
+  preferredTimeSlots: TimeSlot[] | null
+  /** 器械条件；null = 未设置 */
+  equipment: Equipment | null
+  /** 忌口 / 过敏关键词；null = 未设置（方案生成时过滤食谱） */
+  dietRestrictions: string[] | null
+  /** 训练经验；null = 未设置 */
+  experience: Experience | null
 }
 
 /** 方案计算器参数快照：savedAt 为 null 表示从未保存过 */

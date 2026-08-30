@@ -351,6 +351,7 @@ export const useRunStore = defineStore('run', () => {
         intensity: tier,
         kcal: kcalFinal,
         note: noteParts.length > 0 ? noteParts.join(' · ') : null,
+        sets: [], // 跑步无逐组重量
       })
     }
     await Promise.all([

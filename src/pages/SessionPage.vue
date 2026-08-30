@@ -16,11 +16,11 @@ import { useToast } from '@/composables/useToast'
 /**
  * 运动模式 · 二级沉浸页（底部坞 × 组格矩阵）：覆盖整个窗口（含底部导航栏）。
  * 结构：顶栏 → 全课分格进度条（每格一组，按动作分组留缝）→ 可滚动内容区
- * （动作名 hero ＋ 次数 ＋ 动作要点 ＋ 接下来）→ 常驻底部操作坞（组格
- * 即完成控件；休息态为时长抽屉图标＋跳过）。坞内「更多」菜单提供临时休息 /
- * 再加一组 / 上一组 / 当前动作详解。界面不展示重量（数据层保留）。
- * 只有「结束 → 二级确认」才结束会话；收起/关闭/退出都不会结束，
- * 会话全程落盘，主页恢复卡可接续。
+ * （动作名 hero ＋ 重量调节条 ＋ 次数 ＋ 动作要点 ＋ 接下来）→ 常驻底部操作坞
+ * （组格即完成控件；热身态为小重量激活格；休息态为时长抽屉图标＋跳过）。
+ * 坞内「更多」菜单提供临时休息 / 再加一组 / 上一组 / 当前动作详解。
+ * 重量登记：做组页实时调节（±2.5kg），预填上次实际重量；完成组即落当前重量，
+ * 结束保存后展开为逐组记录（重量曲线数据源）。只有「结束 → 二级确认」才结束会话。
  */
 const s = useSessionStore()
 const router = useRouter()
@@ -31,6 +31,21 @@ const restSheetOpen = ref(false)
 const moreOpen = ref(false)
 const tempRestSheetOpen = ref(false)
 const detailOpen = ref(false)
+
+/** 重量显示：整数不带小数，62.5 保留一位 */
+function fmtKg(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1)
+}
+
+/** 上次做组参照（渐进超负荷对照） */
+const lastRef = computed(() => s.lastWeights[s.currentEx?.name ?? ''])
+
+const WEIGHT_STEP = 2.5
+
+function applyWeight(v: number | null): void {
+  // 走 store action：直接改 s.weight 不会 touch()，快照不落盘
+  if (v != null && v >= 0) s.setWeight(v)
+}
 
 onMounted(async () => {
   // 先等运动系统运行时的启动接管；已激活（收起后再进入）则原样展示。
@@ -67,7 +82,8 @@ const cells = computed<ProgressCell[]>(() => {
 
 /* ---------- 坞与内容派生 ---------- */
 
-const dockMode = computed<'exercise' | 'rest' | 'timed' | 'none'>(() => {
+const dockMode = computed<'warmup' | 'exercise' | 'rest' | 'timed' | 'none'>(() => {
+  if (s.phase === 'warmup' && s.currentEx) return 'warmup'
   if (s.phase === 'exercise' && s.currentEx) return 'exercise'
   if (s.phase === 'rest') return 'rest'
   if (s.phase === 'timed-run') return 'timed'
@@ -75,12 +91,15 @@ const dockMode = computed<'exercise' | 'rest' | 'timed' | 'none'>(() => {
 })
 
 /** 坞内组格的当前序号：exercise 用 setIndex；rest 中下一组 = 已完成 + 1 */
-const curTile = computed(() => (s.phase === 'exercise' ? s.setIndex : s.exDoneSets.length + 1))
+const curTile = computed(() => (s.phase === 'exercise' ? s.setIndex : s.exDoneSets.filter((d) => !d.warmup).length + 1))
+
+/** 当前动作已完成正式组数（热身行不计入组格） */
+const workingDone = computed(() => s.exDoneSets.filter((d) => !d.warmup).length)
 
 const nextEx = computed(() => s.plan?.exercises[s.exIndex + 1] ?? null)
 
-/** 当前动作的肌群激活表（关键词规则匹配，未识别时为 null → 隐藏卡片） */
-const activation = computed(() => resolveActivation(s.currentEx?.name))
+/** 当前动作的肌群激活表（显式 muscles 优先，否则按动作名关键词匹配；均无 → 隐藏卡片） */
+const activation = computed(() => s.currentEx?.muscles ?? resolveActivation(s.currentEx?.name))
 
 const nextExDesc = computed(() => {
   const n = nextEx.value
@@ -91,10 +110,13 @@ const nextExDesc = computed(() => {
 })
 
 const restMetaText = computed(() => {
+  if (s.restWarmup) return '激活热身组间 · 准备下一次小重量激活'
   if (s.restIsTemp) return '临时休息 · 结束后继续当前训练'
   if (s.restTargetIsNextSet) {
-    const reps = s.currentEx?.reps
-    return `下一组 · 第 ${s.setIndex + 1} 组${reps != null ? ` · ${reps} 次` : ''}`
+    const parts = [`下一组 · 第 ${s.setIndex + 1} 组`]
+    if (s.currentEx?.reps != null) parts.push(`${s.currentEx.reps} 次`)
+    if (s.weight > 0) parts.push(`${fmtKg(s.weight)} kg`)
+    return parts.join(' · ')
   }
   return `下一个 · ${nextEx.value?.name ?? ''}`
 })
@@ -227,10 +249,58 @@ async function saveNow(): Promise<void> {
     </div>
 
     <main class="scrollbody">
-      <!-- 动作中：名称 hero（无重量）＋ 要点 ＋ 接下来 -->
-      <div v-if="s.phase === 'exercise' && s.currentEx" class="pane col center">
-        <p class="eyebrow">当前动作 · 第 {{ s.setIndex }} / {{ s.currentEx.sets }} 组</p>
+      <!-- 激活热身：小重量找发力感 / 复合动作渐进 ramp-up -->
+      <div v-if="s.phase === 'warmup' && s.currentEx" class="pane col center">
+        <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ s.currentEx.warmups!.length }} 组</p>
         <h1 class="actname">{{ s.currentEx.name }}</h1>
+        <p class="meta">先用小重量激活目标肌群与动作模式，找发力感后再上正式重量</p>
+        <div class="wlist">
+          <span
+            v-for="(wd, i) in s.currentEx.warmups"
+            :key="i"
+            class="wstep num"
+            :class="{ done: i < s.warmupDone(s.currentEx!), cur: i === s.warmupDone(s.currentEx!) }"
+          >
+            {{ i < s.warmupDone(s.currentEx!) ? '✓' : '' }} {{ fmtKg(wd.weightKg) }} kg × {{ wd.reps }}
+          </span>
+        </div>
+
+        <div v-if="activation" class="blockcard">
+          <h3>肌群激活</h3>
+          <MuscleMap :activation="activation" interactive />
+        </div>
+
+        <div v-if="s.currentEx.tips" class="blockcard">
+          <h3>动作要点</h3>
+          <p>{{ s.currentEx.tips }}</p>
+        </div>
+      </div>
+
+      <!-- 动作中：名称 hero ＋ 重量调节条 ＋ 次数 ＋ 要点 ＋ 接下来 -->
+      <div v-else-if="s.phase === 'exercise' && s.currentEx" class="pane col center">
+        <p class="eyebrow">当前动作 · 第 {{ s.setIndex }} / {{ s.effSets(s.currentEx) }} 组</p>
+        <h1 class="actname">{{ s.currentEx.name }}</h1>
+
+        <!-- 重量登记：±2.5kg 调节，预填上次实际重量；完成本组即记录当前重量 -->
+        <div class="weightcard">
+          <div class="wstepper row center">
+            <button class="wbtn" aria-label="减 2.5 公斤" @click="s.bumpWeight(-WEIGHT_STEP)">−</button>
+            <div class="wval">
+              <b class="num">{{ fmtKg(s.weight) }}</b>
+              <span class="wunit">kg</span>
+            </div>
+            <button class="wbtn" aria-label="加 2.5 公斤" @click="s.bumpWeight(WEIGHT_STEP)">＋</button>
+          </div>
+          <div v-if="lastRef || s.currentEx.weightKg != null" class="wchips row center">
+            <button v-if="lastRef" class="wchip num" :aria-label="`设为上次重量 ${fmtKg(lastRef.weightKg)} 公斤`" @click="applyWeight(lastRef.weightKg)">
+              上次 {{ fmtKg(lastRef.weightKg) }}kg{{ lastRef.reps != null ? ` × ${lastRef.reps}` : '' }}
+            </button>
+            <button v-if="s.currentEx.weightKg != null" class="wchip num" :aria-label="`设为计划重量 ${fmtKg(s.currentEx.weightKg)} 公斤`" @click="applyWeight(s.currentEx.weightKg)">
+              计划 {{ fmtKg(s.currentEx.weightKg) }}kg
+            </button>
+          </div>
+        </div>
+
         <div class="bigrow row">
           <b class="num big">{{ s.currentEx.reps ?? '—' }}</b>
           <span class="unit">次</span>
@@ -252,9 +322,9 @@ async function saveNow(): Promise<void> {
         </div>
       </div>
 
-      <!-- 组间休息：青环倒数（临时休息同视图，结束后回到原阶段） -->
+      <!-- 组间休息：青环倒数（临时休息/热身组间同视图，结束后回到对应流程） -->
       <div v-else-if="s.phase === 'rest'" class="pane col center">
-        <p class="eyebrow">{{ s.restIsTemp ? '临时休息' : '组间休息' }}</p>
+        <p class="eyebrow">{{ s.restIsTemp ? '临时休息' : s.restWarmup ? '热身组间' : '组间休息' }}</p>
         <RingProgress :value="restProgress" color-var="--c-balance" :size="216" :stroke="13">
           <b class="num restnum">{{ s.restLeft }}</b>
           <span class="restsec">秒</span>
@@ -301,20 +371,44 @@ async function saveNow(): Promise<void> {
       </div>
     </main>
 
-    <!-- 底部操作坞：组格即完成控件；休息态 = 时长抽屉 ＋ 跳过 -->
+    <!-- 底部操作坞：热身态=激活格；组格即完成控件；休息态 = 时长抽屉 ＋ 跳过 -->
     <div v-if="dockMode !== 'none'" class="dock col">
-      <template v-if="dockMode === 'exercise'">
+      <template v-if="dockMode === 'warmup'">
+        <div class="tiles row">
+          <button
+            v-for="(wd, i) in s.currentEx!.warmups"
+            :key="i"
+            type="button"
+            class="dtile wtile num"
+            :class="{ done: i < s.warmupDone(s.currentEx!), cur: i === s.warmupDone(s.currentEx!) }"
+            :disabled="i !== s.warmupDone(s.currentEx!)"
+            @click="s.completeWarmup()"
+          >
+            <template v-if="i < s.warmupDone(s.currentEx!)">✓</template>
+            <template v-else>{{ fmtKg(wd.weightKg) }}</template>
+          </button>
+        </div>
+        <div class="drow row">
+          <button class="iconbtn" aria-label="更多功能" @click="moreOpen = true">
+            <Ellipsis :size="24" />
+          </button>
+          <button class="ghost flex-1" @click="s.skipWarmup()">跳过热身</button>
+          <button class="primary" @click="s.completeWarmup()">完成热身组</button>
+        </div>
+      </template>
+
+      <template v-else-if="dockMode === 'exercise'">
         <div class="tiles row">
           <button
             v-for="i in s.effSets(s.currentEx!)"
             :key="i"
             type="button"
             class="dtile num"
-            :class="{ done: i <= s.exDoneSets.length, cur: i === curTile }"
+            :class="{ done: i <= workingDone, cur: i === curTile }"
             :disabled="i !== curTile"
             @click="s.completeSet()"
           >
-            <template v-if="i <= s.exDoneSets.length">✓</template>
+            <template v-if="i <= workingDone">✓</template>
             <template v-else>{{ i }}</template>
           </button>
         </div>
@@ -574,6 +668,116 @@ async function saveNow(): Promise<void> {
   line-height: 1.6;
 }
 
+/* 重量登记条：±2.5kg 调节 + 上次/计划参照 chips */
+.weightcard {
+  width: min(360px, 100%);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  padding: 12px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wstepper {
+  gap: 18px;
+}
+
+.wbtn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  font-size: 30px;
+  font-weight: 400;
+  color: var(--text-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.wbtn:active {
+  transform: scale(0.9);
+}
+
+.wval {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 128px;
+  justify-content: center;
+}
+
+.wval b {
+  font-size: 44px;
+  font-weight: 200;
+  letter-spacing: -1.5px;
+  line-height: 1;
+}
+
+.wunit {
+  font-size: var(--fs-callout);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.wchips {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wchip {
+  padding: 6px 13px;
+  border-radius: var(--radius-full);
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.wchip:active {
+  transform: scale(0.94);
+}
+
+/* 热身清单步骤 chips */
+.wlist {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.wstep {
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  font-size: var(--fs-callout);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.wstep.cur {
+  background: var(--text-1);
+  color: var(--bg);
+  animation: cellbreath 1.6s infinite;
+}
+
+.wstep.done {
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
+  box-shadow: none;
+}
+
+/* 热身组格：重量标注，小一号 */
+.dtile.wtile {
+  height: 52px;
+  font-size: var(--fs-body);
+}
+
 .hint {
   font-size: var(--fs-caption);
   color: var(--text-3);
@@ -676,9 +880,11 @@ async function saveNow(): Promise<void> {
   width: 100%;
 }
 
-/* 坞内主按钮随行伸缩：休息态两枚图标钮 + 主键在窄屏也要放得下 */
+/* 坞内主按钮随行伸缩：休息态两枚图标钮 + 主键在窄屏也要放得下；
+   热身坞三键并排（图标 + 跳过 + 完成），收窄内边距避免 390px 挤爆 */
 .drow .primary {
   min-width: 0;
+  padding: 0 26px;
 }
 
 /* 组格矩阵：点当前格 = 完成该组 */

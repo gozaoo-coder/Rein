@@ -169,7 +169,16 @@ function onMapTap(): void {
 </script>
 
 <template>
-  <div class="mmap col" :class="{ interactive }" @click="onMapTap">
+  <div
+    class="mmap col"
+    :class="{ interactive }"
+    :role="interactive ? 'button' : undefined"
+    :tabindex="interactive ? 0 : undefined"
+    :aria-label="interactive ? '查看全部激活肌群' : '肌群激活图'"
+    @click="onMapTap"
+    @keydown.enter.prevent="onMapTap"
+    @keydown.space.prevent="onMapTap"
+  >
     <div class="figs row">
       <!-- 正面 -->
       <figure>

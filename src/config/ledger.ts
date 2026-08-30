@@ -52,11 +52,16 @@ export function categoryOf(key: string): LedgerCategory | undefined {
   return LEDGER_CATEGORIES.find((c) => c.key === key)
 }
 
-/** 金额（分）→ 字符串，如 12.50 → "12.5"；2550 → "25.5"；-3000 → "-30" */
-export function fmtCents(cents: number): string {
+/**
+ * 金额（分）→ 字符串，如 12.50 → "12.5"；2550 → "25.5"；-3000 → "-30"
+ * `group` 为 true 时整数部分加千分位（大数字展示用）。
+ * 全站金额展示都走这里，避免各自 Math.round(cents/100) 丢掉分位、口径打架。
+ */
+export function fmtCents(cents: number, opts?: { group?: boolean }): string {
   const sign = cents < 0 ? '-' : ''
   const abs = Math.abs(cents)
-  const yuan = Math.floor(abs / 100)
+  const int = Math.floor(abs / 100)
+  const yuan = opts?.group ? int.toLocaleString('zh-CN') : String(int)
   const rest = abs % 100
   if (rest === 0) return `${sign}${yuan}`
   if (rest % 10 === 0) return `${sign}${yuan}.${rest / 10}`

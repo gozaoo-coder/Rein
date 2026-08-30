@@ -12,6 +12,7 @@
   --surface: #ffffff;
   --surface-2: #f2f2f4; /* 分段控件、次级按钮、内嵌灰底 */
   --surface-translucent: rgba(255, 255, 255, 0.72); /* 导航 / 标签栏毛玻璃 */
+  --scrim: rgba(0, 0, 0, 0.4); /* 全屏遮罩，弹层统一深浅 */
 
   /* ---------- 文字 ---------- */
   --text-1: #1d1d1f;
@@ -25,14 +26,20 @@
   /* ---------- 语义色（iOS 系统色） ---------- */
   --accent: #007aff;
   --accent-soft: rgba(0, 122, 255, 0.12);
+  --on-accent: #ffffff; /* accent 及语义色实底按钮 / 分类彩底图标的前景白 */
   --ok: #34c759;
+  --ok-soft: rgba(52, 199, 89, 0.16); /* 完成态 soft 底 */
+  --ok-strong: #248a3d; /* ok-soft 底上的文字绿（亮色加深保对比，暗色提亮） */
   --warn: #ff9500;
   --danger: #ff3b30;
+  --danger-soft: rgba(255, 59, 48, 0.12); /* 危险操作 soft 底 */
 
   /* ---------- 健康域色 ---------- */
   /* 三环：摄入 / 运动 / 均衡（继承自 Apple Fitness 三环） */
   --c-intake: #fa114f;
+  --intake-glow: rgba(250, 17, 79, 0.35); /* 倒计时 GO! 光晕（随主色走） */
   --c-exercise: #92e82a;
+  --c-exercise-deep: #5ba800; /* 运动绿文字档：亮底上保证对比，暗色提亮 */
   --c-exercise-soft: rgba(146, 232, 42, 0.2); /* 完成态底色（组格/标签） */
   --heat-mid: rgba(146, 232, 42, 0.55); /* 肌群激活 · 辅助档（低档复用 soft，高档复用主色） */
   --c-balance: #1eeaef;
@@ -93,6 +100,7 @@
     0 12px 32px rgba(0, 0, 0, 0.05),
     0 40px 80px rgba(0, 0, 0, 0.04);
   --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-thumb: 0 1px 4px rgba(0, 0, 0, 0.12), 0 0 0 0.5px var(--line); /* 分段滑块 / 步进小圆钮 */
 
   /* ---------- 字体 ---------- */
   --font:
@@ -111,9 +119,14 @@
   --fs-footnote: 13px;
   --fs-caption: 12px;
   --fs-micro: 11px;
+  /* 展示级大数字（卡片主数值），阶梯外禁止再出现裸字号 */
+  --fs-display-l: 44px;
+  --fs-display-m: 40px;
+  --fs-display-s: 34px;
 
   /* ---------- 动效 ---------- */
   --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1); /* 默认 */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* 轻微过冲：开关滑块等小位移弹性 */
   --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1); /* 抽屉 / 弹层（Apple sheet 曲线） */
   --dur-fast: 150ms;
   --dur-base: 250ms;
@@ -157,6 +170,7 @@
 
     --accent: #0a84ff;
     --accent-soft: rgba(10, 132, 255, 0.18);
+    --ok-strong: #30d158;
 
     --shadow-card: none;
     --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.6);
@@ -165,6 +179,8 @@
     --c-fat: #ffd60a;
     --c-balance: #40e8ec;
     --c-exercise: #a4f04b;
+    --c-exercise-deep: #a4f04b;
+    --intake-glow: rgba(255, 55, 95, 0.4);
     --c-intake: #ff375f;
 
     /* 轨迹线随三环运动色同步提亮 */

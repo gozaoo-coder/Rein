@@ -24,9 +24,19 @@ export function addDays(s: string, n: number): string {
   return toDateStr(d)
 }
 
+/**
+ * 日历日的 UTC 纪元毫秒。仅用于「两个日期相差几天」这类纯日历运算：
+ * 用本地午夜相减时，夏令时切换日只有 23 或 25 小时，与 Rust 端 NaiveDate
+ * 的日历日相减不再等价（mock 与真实后端可能物化出不同的重复实例）。
+ */
+function epochDayMs(s: string): number {
+  const [y, m, d] = s.split('-').map(Number)
+  return Date.UTC(y!, (m ?? 1) - 1, d ?? 1)
+}
+
 /** 两个 YYYY-MM-DD 相差天数（b − a，可负） */
 export function diffDays(a: string, b: string): number {
-  return Math.round((parseDate(b).getTime() - parseDate(a).getTime()) / 86400000)
+  return Math.round((epochDayMs(b) - epochDayMs(a)) / 86400000)
 }
 
 /** 周一为一周起点 */

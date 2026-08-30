@@ -91,7 +91,7 @@ function barH(cents: number): string {
       </header>
       <template v-if="budgetSet">
         <div class="track" :class="budgetState">
-          <i :style="{ width: `${Math.min(progress * 100, 100)}%` }" />
+          <i :style="{ '--p': `${Math.min(progress * 100, 100)}%` }" />
         </div>
         <p class="bmeta t-2">
           已用 <b class="num">¥{{ fmtCents(spend) }}</b> / 预算
@@ -226,10 +226,12 @@ h3 {
 
 .track i {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--accent);
-  transition: width var(--dur-sheet) var(--ease-sheet);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .track.warn i {
@@ -274,7 +276,7 @@ h3 {
 }
 
 .seg-ring {
-  transition: stroke-dasharray var(--dur-sheet) var(--ease-sheet);
+  transition: stroke-dasharray var(--dur-base) var(--ease-standard);
 }
 
 .donut-center {
@@ -365,10 +367,10 @@ h3 {
   height: 72px;
 }
 
+/* 趋势柱：切月频率极低，柱高直接落位不参与过渡（height 动画触发 layout） */
 .bars i {
   width: 7px;
   border-radius: 4px 4px 2px 2px;
-  transition: height var(--dur-sheet) var(--ease-sheet);
 }
 
 .bars .ex {

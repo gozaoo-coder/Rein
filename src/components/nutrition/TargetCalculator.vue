@@ -305,7 +305,7 @@ function onConfirm(value: string): void {
 }
 
 .kcal b {
-  font-size: 34px;
+  font-size: var(--fs-display-s);
   font-weight: 200;
   letter-spacing: -1px;
   color: var(--accent);
@@ -378,7 +378,7 @@ function onConfirm(value: string): void {
   padding: 13px 0;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-headline);
   font-weight: 700;
 }

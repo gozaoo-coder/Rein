@@ -29,7 +29,8 @@ pub fn get_workout_plan(state: State<AppState>, id: String) -> Result<PlanRecord
     plan_by_id(&conn, &id)
 }
 
-/// 新建或整体更新一门课程（前端每次提交全量字段）
+/// 新建或整体更新一门课程（前端每次提交全量字段）。
+/// equipment / est_duration_min 是内置课程 meta，编辑器不提供：缺省时 COALESCE 保留原值。
 #[tauri::command]
 pub fn upsert_workout_plan(state: State<AppState>, input: PlanInput) -> Result<PlanRecord> {
     let name = input.name.trim().to_string();
@@ -38,18 +39,22 @@ pub fn upsert_workout_plan(state: State<AppState>, input: PlanInput) -> Result<P
     }
     let conn = state.db.lock().unwrap();
     conn.execute(
-        "INSERT INTO workout_plans (id, name, subtitle, workout_type, exercises_json, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), datetime('now')) \
+        "INSERT INTO workout_plans (id, name, subtitle, workout_type, exercises_json, equipment, est_duration_min, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'), datetime('now')) \
          ON CONFLICT(id) DO UPDATE SET \
            name = excluded.name, subtitle = excluded.subtitle, \
            workout_type = excluded.workout_type, exercises_json = excluded.exercises_json, \
+           equipment = COALESCE(excluded.equipment, workout_plans.equipment), \
+           est_duration_min = COALESCE(excluded.est_duration_min, workout_plans.est_duration_min), \
            updated_at = datetime('now')",
         rusqlite::params![
             input.id,
             name,
             input.subtitle.trim(),
             input.workout_type,
-            input.exercises.to_string()
+            input.exercises.to_string(),
+            input.equipment,
+            input.est_duration_min,
         ],
     )?;
     plan_by_id(&conn, &input.id)

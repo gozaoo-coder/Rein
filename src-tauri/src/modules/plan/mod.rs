@@ -13,8 +13,8 @@ use crate::error::Result;
 use models::PlanRecord;
 
 /// workout_plans 表列清单（SELECT 时必须使用，保证行映射下标稳定）
-pub(crate) const PLAN_COLS: &str =
-    "id, name, subtitle, workout_type, exercises_json, last_used_at, created_at, updated_at";
+pub(crate) const PLAN_COLS: &str = "id, name, subtitle, workout_type, exercises_json, last_used_at, \
+     created_at, updated_at, equipment, est_duration_min";
 
 pub(crate) fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<PlanRecord> {
     let exercises: String = row.get(4)?;
@@ -27,6 +27,9 @@ pub(crate) fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<PlanRecord> {
         last_used_at: row.get(5)?,
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
+        // 器械要求与预估时长是内置课程 meta：用户编辑课程不提供这两个字段（保持 NULL）
+        equipment: row.get(8)?,
+        est_duration_min: row.get(9)?,
     })
 }
 

@@ -14,6 +14,10 @@ defineProps<{
     <component :is="icon" :size="34" :stroke-width="1.6" />
     <p class="title">{{ title }}</p>
     <p v-if="hint" class="hint">{{ hint }}</p>
+    <!-- 行动出口：空状态的终点是引导用户走出空态 -->
+    <div v-if="$slots.action" class="act">
+      <slot name="action" />
+    </div>
   </div>
 </template>
 
@@ -33,5 +37,9 @@ defineProps<{
 
 .hint {
   font-size: var(--fs-caption);
+}
+
+.act {
+  margin-top: 10px;
 }
 </style>

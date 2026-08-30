@@ -90,7 +90,7 @@ function goDetail(): void {
 }
 
 .intake {
-  font-size: 44px;
+  font-size: var(--fs-display-l);
   font-weight: 200;
   letter-spacing: -1.5px;
   line-height: 1;

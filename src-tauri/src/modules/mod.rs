@@ -8,6 +8,7 @@ pub mod exercise;
 pub mod nutrition;
 pub mod plan;
 pub mod pomodoro;
+pub mod program;
 pub mod seed;
 pub mod session;
 pub mod todo;

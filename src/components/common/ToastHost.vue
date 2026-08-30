@@ -17,7 +17,7 @@ const { toasts } = useToast()
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--tabbar-h) + 26px);
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 26px + var(--wbar-reserve, 0px));
   z-index: 120;
   display: flex;
   flex-direction: column;

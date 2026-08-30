@@ -1,7 +1,10 @@
 /** 领域展示元数据：标签、图标色、MET 表。UI 文案统一从这里取，避免散落硬编码。 */
 
+import type { Component } from 'vue'
+import { Apple, Coffee, Utensils } from 'lucide-vue-next'
+
 import type { Goal, ActivityLevel, DailyTargets } from '@/types/nutrition'
-import type { MealType } from '@/types/diet'
+import type { MealLog, MealType } from '@/types/diet'
 import type { Intensity, WorkoutType } from '@/types/exercise'
 import type { TodoCategory } from '@/types/todo'
 
@@ -13,6 +16,34 @@ export const MEAL_LABELS: Record<MealType, string> = {
 }
 
 export const MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack']
+
+/**
+ * 餐次展示名 → MealType。方案菜单的槽位名比 MEAL_LABELS 更细
+ * （「上午加餐 / 下午加餐」都对不上 MEAL_LABELS.snack 的「加餐」），
+ * 所以用包含匹配而非相等比较，且必须先判「加餐」再判「午」，否则
+ * 「上午加餐」会被 '午' 命中成午餐。未识别的一律归为加餐。
+ */
+export function mealTypeOfSlot(slot: string): MealType {
+  if (slot.includes('加餐')) return 'snack'
+  if (slot.includes('早')) return 'breakfast'
+  if (slot.includes('午')) return 'lunch'
+  if (slot.includes('晚')) return 'dinner'
+  return 'snack'
+}
+
+/** 各餐次展示元数据：图标与主题色（一日脊柱、饮食历史共用） */
+export const MEAL_META: Record<MealType, { icon: Component; colorVar: string }> = {
+  breakfast: { icon: Coffee, colorVar: 'var(--led-food)' },
+  lunch: { icon: Utensils, colorVar: 'var(--c-protein)' },
+  dinner: { icon: Utensils, colorVar: 'var(--cat-study)' },
+  snack: { icon: Apple, colorVar: 'var(--c-carb)' },
+}
+
+/** 单笔记录热量：每 100g 营养 × 克重 ÷ 100；food 未 join 时返回 null */
+export function mealKcal(log: MealLog): number | null {
+  if (!log.food) return null
+  return Math.round((log.food.kcal * log.grams) / 100)
+}
 
 /** 桌面工作台断点：视口 ≥ 此宽度启用三窗格壳（导航轨）与主页双视图（便当总览/一日脊柱） */
 export const DESKTOP_MIN = 1100
@@ -62,6 +93,25 @@ export const GOAL_LABELS: Record<Goal, string> = {
   cut: '减脂',
   keep: '保持',
   bulk: '增肌',
+}
+
+/** 偏好运动时段 / 器械条件 / 训练经验的展示标签（「我」页约束卡与方案页共用） */
+export const TIME_SLOT_LABELS: Record<string, string> = {
+  morning: '早晨',
+  noon: '午间',
+  evening: '晚间',
+}
+
+export const EQUIPMENT_LABELS: Record<string, string> = {
+  gym: '健身房',
+  home: '居家徒手',
+  mixed: '都可以',
+}
+
+export const EXPERIENCE_LABELS: Record<string, string> = {
+  beginner: '新手',
+  intermediate: '有基础',
+  advanced: '进阶',
 }
 
 /** 可编辑目标字段元数据：标签 / 单位（计算器差异、AI 建议卡共用） */

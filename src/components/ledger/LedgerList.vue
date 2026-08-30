@@ -111,7 +111,6 @@ const groups = computed<DayGroup[]>(() => {
   height: 34px;
   flex: none;
   border-radius: 50%;
-  color: #fff;
 }
 
 .meta {

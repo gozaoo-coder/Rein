@@ -11,12 +11,25 @@ import { useToast } from '@/composables/useToast'
 import { todayStr } from '@/utils/date'
 import type { Food, MealType } from '@/types'
 
-/** 食物库选择器：搜索 → 选食物 → 克重 / 份量 → 餐次 → 写入当日记录。
- *  initialFood：外部已选定食物时（如食品详情页）跳过搜索，直接进数量/餐次。 */
-const props = defineProps<{ open: boolean; initialFood?: Food | null }>()
+/**
+ * 食物库选择器：搜索 → 选食物 → 克重 / 份量 → 餐次 → 写入当日记录。
+ *  initialFood：外部已选定食物时（如食品详情页）跳过搜索，直接进数量/餐次。
+ *  selectOnly：纯选择模式（识别结果换匹配用）——点结果即回传 pick 并关闭，不落库。
+ */
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    initialFood?: Food | null
+    selectOnly?: boolean
+    title?: string
+  }>(),
+  { initialFood: null, selectOnly: false, title: '添加食物' },
+)
 
 const emit = defineEmits<{
   close: []
+  /** selectOnly 模式：选中某个食物 */
+  pick: [Food]
 }>()
 
 const diet = useDietStore()
@@ -61,6 +74,11 @@ async function search(): Promise<void> {
 }
 
 function pick(f: Food): void {
+  if (props.selectOnly) {
+    emit('pick', f)
+    emit('close')
+    return
+  }
   selected.value = f
   const hasUnits = f.units.length > 0
   mode.value = hasUnits ? 'unit' : 'grams'
@@ -80,23 +98,30 @@ const kcalPreview = computed(() =>
   selected.value ? Math.round((selected.value.kcal * effGrams.value) / 100) : 0,
 )
 
+const adding = ref(false)
+
 async function confirmAdd(): Promise<void> {
   const f = selected.value
-  if (!f || effGrams.value <= 0) return
-  await diet.add({
-    foodId: f.id,
-    date: todayStr(),
-    mealType: mealType.value,
-    quantityMode: mode.value,
-    grams: effGrams.value,
-    units: mode.value === 'unit' ? unitCount.value : null,
-    unitName: mode.value === 'unit' ? unitName.value : null,
-    source: 'search',
-    note: null,
-  })
-  toast(`已记录 ${f.name} ${kcalPreview.value} 大卡`)
-  selected.value = null
-  emit('close')
+  if (!f || effGrams.value <= 0 || adding.value) return
+  adding.value = true
+  try {
+    await diet.add({
+      foodId: f.id,
+      date: todayStr(),
+      mealType: mealType.value,
+      quantityMode: mode.value,
+      grams: effGrams.value,
+      units: mode.value === 'unit' ? unitCount.value : null,
+      unitName: mode.value === 'unit' ? unitName.value : null,
+      source: 'search',
+      note: null,
+    })
+    toast(`已记录 ${f.name} ${kcalPreview.value} 大卡`)
+    selected.value = null
+    emit('close')
+  } finally {
+    adding.value = false
+  }
 }
 
 function bump(delta: number): void {
@@ -106,7 +131,7 @@ function bump(delta: number): void {
 </script>
 
 <template>
-  <SheetModal :open title="添加食物" @close="emit('close')">
+  <SheetModal :open :title @close="emit('close')">
     <!-- 搜索（外部带食物时隐藏） -->
     <div v-if="!external" class="finder row">
       <Search :size="17" class="t-3" />
@@ -175,7 +200,7 @@ function bump(delta: number): void {
 
       <div class="row preview between">
         <span>约 <b class="num">{{ kcalPreview }}</b> 大卡</span>
-        <button class="add" :disabled="effGrams <= 0" @click="confirmAdd">加入{{ MEAL_LABELS[mealType] }}</button>
+        <button class="add" :disabled="adding || effGrams <= 0" @click="confirmAdd">加入{{ MEAL_LABELS[mealType] }}</button>
       </div>
     </div>
   </SheetModal>
@@ -278,14 +303,14 @@ function bump(delta: number): void {
   height: 44px;
   border-radius: 50%;
   background: var(--surface);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1), 0 0 0 0.5px var(--line);
+  box-shadow: var(--shadow-thumb);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .stepper b {
-  font-size: 26px;
+  font-size: var(--fs-title1);
   font-weight: 700;
   letter-spacing: -0.5px;
   margin-right: 3px;
@@ -312,11 +337,11 @@ function bump(delta: number): void {
 
 .uchip.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .uchip.on small {
-  color: rgba(255, 255, 255, 0.75);
+  color: color-mix(in srgb, var(--on-accent) 75%, transparent);
 }
 
 .preview span {
@@ -333,7 +358,7 @@ function bump(delta: number): void {
   padding: 12px 22px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-body);
   font-weight: 600;
 }

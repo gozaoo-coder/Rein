@@ -38,8 +38,8 @@ function sendAsk(): void {
   const q = ask.value.trim()
   if (!q) return
   ask.value = ''
-  void router.push({ name: 'ai' })
-  void q
+  // 问题随路由带过去，AI 页接住预填——不能让用户的输入石沉大海
+  void router.push({ name: 'ai', query: { ask: q } })
 }
 
 function hhmm(startMin: number): string {
@@ -86,7 +86,9 @@ function hhmm(startMin: number): string {
             @click="void todo.toggle(t)"
           >
             <i class="tick" :class="{ on: t.status === 'done' }">
-              <Check :size="13" :stroke-width="3" />
+              <Transition name="ckin">
+                <Check v-if="t.status === 'done'" :size="13" :stroke-width="3" />
+              </Transition>
             </i>
             <span class="flex-1 line" :class="{ done: t.status === 'done' }">{{ t.title }}</span>
             <span v-if="t.startMin != null" class="num t-3 time">{{ hhmm(t.startMin) }}</span>
@@ -172,7 +174,19 @@ function hhmm(startMin: number): string {
 .tick.on {
   background: var(--tc, var(--cat-general));
   box-shadow: none;
-  color: #fff;
+  color: var(--on-accent);
+}
+
+/* 对勾弹入 */
+.ckin-enter-active {
+  transition:
+    transform 120ms var(--ease-standard),
+    opacity 120ms var(--ease-standard);
+}
+
+.ckin-enter-from {
+  transform: scale(0.5);
+  opacity: 0;
 }
 
 .line {
@@ -181,11 +195,16 @@ function hhmm(startMin: number): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-decoration: line-through;
+  text-decoration-color: transparent;
+  transition:
+    color var(--dur-base) var(--ease-standard),
+    text-decoration-color var(--dur-base) var(--ease-standard);
 }
 
 .line.done {
   color: var(--text-3);
-  text-decoration: line-through;
+  text-decoration-color: currentColor;
 }
 
 .time {
@@ -222,7 +241,7 @@ function hhmm(startMin: number): string {
   flex: none;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   display: flex;
   align-items: center;
   justify-content: center;
