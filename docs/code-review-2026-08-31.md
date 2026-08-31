@@ -107,16 +107,42 @@ mock 与真实后端可能物化出不同实例。已改 UTC 日历日，并让 
 
 ---
 
-## 五、未处理项（需你决定）
+## 五、第二轮修复（提交 `6efc479`）
+
+审查报告列出后，继续处理了原「未处理项」中的高价值部分：
+
+- **结营对照口径不一致（漏网的 P0）**：`intake.before` 按餐平均 vs `after` 按天平均；
+  `trainingFreq.before` 是 7 天计数 vs `after` 全期次数。28 天方案会显示
+  「3 → 12 次/期」这种虚假的 4 倍提升。已统一为日均与周均，UI 单位改「次/周」。
+- **周期网格星期错位**：新增 `weekLead()`，按首日星期几补首行空位（周四开跑 → 第 4 列）。
+- **忌口过滤失效**：改双向子串匹配，并把 `programEngine` 与食谱库页重复的两份实现
+  收敛到新增的 `utils/recipeFilter.ts`。实测预设 6 类结果不变（无回归），
+  而「不要坚果」0→2、「无麸质饮食」0→4 开始生效，中性词无误伤。
+- **AI 提示词兜底失效**：`busyLine` 用 `?.join() ?? '无'`，空数组 join 出空串，
+  兜底永不触发 → 整天没安排时提示词传过去是一片空白。
+- **模板内重算 TDEE**：`ProgramReviewSheet` 每卡片在模板里调 2–3 次
+  `clampAdjustment`（内部全量重算目标），改为按字段缓存的 computed。
+- **常量收敛**：训练天数 / 热量 / 蛋白上下界统一取 `ADJUSTMENT_LIMITS`。
+- **死代码**：删除零引用的 `jetlagRisk` / `JetlagRisk` / `sleepVerdict`。
+  注：`TIER_JETLAG_TOLERANCE` 被 ProgramEvidenceSheet 使用，不属于死代码。
+- **令牌违规**：`ProgramCompare` 硬编码 `var(--bg, #000)` 改用 `--on-accent`。
+
+门槛复验：`typecheck` ✅ ｜ `clippy -D warnings` ✅ ｜ `vite build` ✅
+
+---
+
+## 六、仍未处理（需你决定）
 
 | 项 | 说明 | 建议 |
 | --- | --- | --- |
 | 生产包含 mock chunk | `server-*.js` 896 kB（gzip 132 kB）进产物。Tauri 下永不 fetch，但增大安装包 | 用 `import.meta.env.DEV` 门控，让 Rollup 从生产构建摇掉 |
 | `ProgramPage.vue` 1225 行 | script 段 558 行；另有 `ProgramEvolutionChart`(515)、`ProgramEvidenceSheet`(489) | 拆出采购清单 / 手动调参 / 历史列表子组件 |
-| 训练天数上限三处不一致 | ProgramPage 6、`ProgramConstraints` [3,4,5,6]、`programEngine` 7 | 收敛到 `ADJUSTMENT_LIMITS` 单一来源 |
-| 忌口过滤单向匹配 | 只做 `allergen.includes(kw)`，自定义整句（如「花生过敏」）静默不排除；同名逻辑在 RecipeLibraryPage 重复一份 | 抽公共函数并补反方向 |
-| 周期网格星期错位 | 固定「一…日」表头 vs 按 startDate 每 7 天切片，startDate 非周一时整列错位 | 按 `dowOf(startDate)` 算首行偏移 |
+| 训练天数在向导只给 3–6 | 硬上限已是 `ADJUSTMENT_LIMITS.trainingDaysMax`（7），向导是刻意收窄的起步建议 | 确认这是产品意图而非疏漏 |
 | `bodyMetrics` 三处硬上限 100 | 长方案取不到起点体重 | 改为按方案区间查询 |
-| 死代码 | `programCurves.ts` 的 `jetlagRisk` / `sleepVerdict` / `TIER_JETLAG_TOLERANCE` 零引用 | 删除 |
+| 热身组时长存疑 | `utils/plan.ts` 原注释写「热身组 30s」，代码一直是 45s。已按实际行为修正注释，未改数值 | 确认 30s 是否为原始设计意图 |
 | `Rein/{[sS]})()` | 0 字节乱码文件（误操作产物），未提交 | 确认后删除 |
 | `Rein/.workbuddy/` | 项目记忆目录，未提交 | 视需要决定是否入库 |
+
+另有一项经复核后**判定不修**：`stores/program.ts` 采购清单里的
+`blob.days.find` 虽是 O(n·m)，但实际规模是 14 次循环 × ≤56 项（约 780 次比较），
+建 Map 属过早优化，收益可忽略而代码更啰嗦。
