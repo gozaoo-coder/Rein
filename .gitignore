@@ -1,6 +1,7 @@
 # 依赖与产物
 node_modules/
 dist/
+dist-android/
 
 # Tauri / Rust
 src-tauri/target/
