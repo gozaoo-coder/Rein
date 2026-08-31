@@ -92,7 +92,13 @@ export async function aiSchedule(
     return { placements: [], unplaced: [], reason: '池子里没有待安排的事项', source: 'ai' }
   }
   const busy = busyIntervals(busyTodos, date)
-  const busyLine = busy.map((b) => `${minToHHmm(b.start)}-${minToHHmm(b.end)}${b.title ? ` ${b.title}` : ''}`)?.join('、')
+  // 空数组 join 出来是空串（不是 null），`?? '无'` 永远不会兜底 ——
+  // 「整天没安排」时提示词里传过去的是一片空白。这里显式判空。
+  const busyLine = busy.length
+    ? busy
+        .map((b) => `${minToHHmm(b.start)}-${minToHHmm(b.end)}${b.title ? ` ${b.title}` : ''}`)
+        .join('、')
+    : '无'
   const poolLine = pool.map((t) => `${t.id}|${t.title}|${t.durationMin ?? 30}|${t.priority}`).join('；')
 
   const { models, byId } = buildRuntime([config])

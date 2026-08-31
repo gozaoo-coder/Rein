@@ -9,6 +9,7 @@
  */
 
 import type { ProgramBlob, ProgramDay, Todo } from '@/types'
+import { dowOf } from '@/utils/recurrence'
 
 /** 地图格子的六种状态 */
 export type CellState =
@@ -149,13 +150,23 @@ export function cycleStats(cells: DayCell[]): CycleStats {
   }
 }
 
-/** 按自然周切分（每 7 天一行，与方案的「周」对齐，因为方案总是从起始日连续铺开） */
+/** 按 7 天一行切分（方案的「周」= 从起始日连续铺开，不按自然周对齐） */
 export function groupByWeek(cells: DayCell[]): DayCell[][] {
   const weeks: DayCell[][] = []
   for (let i = 0; i < cells.length; i += 7) {
     weeks.push(cells.slice(i, i + 7))
   }
   return weeks
+}
+
+/**
+ * 首行需要在「周一」列之前留空的格数。
+ *
+ * groupByWeek 是从第 0 天起每 7 天切一片，而表头固定是「一…日」——
+ * 方案支持「今天/明天开跑」，首日未必是周一，不留空会让每一格与表头错位。
+ */
+export function weekLead(firstDate: string | undefined): number {
+  return firstDate ? dowOf(firstDate) : 0
 }
 
 /**

@@ -93,11 +93,27 @@ function patchOf(f: FieldMeta): AdjustmentPatch {
   return p
 }
 
+/**
+ * 各字段的钳制结果，按字段缓存一次。
+ *
+ * clampAdjustment 内部会用最新身体数据重算一遍 TDEE 与目标，而模板里每张卡片
+ * 会引用 cardChange 两到三次 —— 直接在模板里调等于每次渲染做十几次全量重算。
+ */
+const changeByField = computed<Map<keyof AdjustmentPatch, ProgramChange>>(() => {
+  const m = new Map<keyof AdjustmentPatch, ProgramChange>()
+  if (!props.current || !n.profile) return m
+  for (const f of FIELD_META) {
+    if (props.proposed[f.key] == null) continue
+    const { changes } = clampAdjustment(n.profile, props.current, patchOf(f))
+    const hit = changes.find((c) => c.field === f.key)
+    if (hit) m.set(f.key, hit)
+  }
+  return m
+})
+
 /** 单条卡片的钳制结果（A → B / 已钳制标注） */
 function cardChange(f: FieldMeta): ProgramChange | null {
-  if (!props.current || !n.profile || props.proposed[f.key] == null) return null
-  const { changes } = clampAdjustment(n.profile, props.current, patchOf(f))
-  return changes.find((c) => c.field === f.key) ?? null
+  return changeByField.value.get(f.key) ?? null
 }
 
 function isClamped(f: FieldMeta, c: ProgramChange | null): boolean {

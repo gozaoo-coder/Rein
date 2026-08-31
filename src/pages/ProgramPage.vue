@@ -58,7 +58,12 @@ import type {
 } from '@/types'
 import type { AiMenuMeal } from '@/ai/recipeGen'
 import { diffDays, fmtDateCn, todayStr } from '@/utils/date'
-import { parseBlob, programEndDate, type AdjustmentPatch } from '@/utils/programEngine'
+import {
+  ADJUSTMENT_LIMITS,
+  parseBlob,
+  programEndDate,
+  type AdjustmentPatch,
+} from '@/utils/programEngine'
 import { buildDayCells, cycleStats } from '@/utils/programProgress'
 import { constraintSnapshotOf, sameConstraint, type ConstraintSnapshot } from '@/utils/programSetup'
 import {
@@ -795,9 +800,27 @@ function adjustmentsOf(r: ProgramRecord): number {
       <!-- 手动调参 -->
       <SheetModal :open="adjustOpen" title="手动调参" @close="adjustOpen = false">
         <div class="form">
-          <NumberStepper v-model="patchDelta" label="每日热量偏移（大卡）" :step="50" :min="-800" :max="600" />
-          <NumberStepper v-model="patchProtein" label="蛋白质（g/kg 体重）" :step="0.1" :min="1.0" :max="2.4" />
-          <NumberStepper v-model="patchDays" label="每周训练天数" :min="0" :max="6" />
+          <!-- 上下界一律取 ADJUSTMENT_LIMITS，避免与引擎的钳制口径漂移 -->
+          <NumberStepper
+            v-model="patchDelta"
+            label="每日热量偏移（大卡）"
+            :step="50"
+            :min="ADJUSTMENT_LIMITS.kcalDeltaMin"
+            :max="ADJUSTMENT_LIMITS.kcalDeltaMax"
+          />
+          <NumberStepper
+            v-model="patchProtein"
+            label="蛋白质（g/kg 体重）"
+            :step="0.1"
+            :min="ADJUSTMENT_LIMITS.proteinPerKgMin"
+            :max="ADJUSTMENT_LIMITS.proteinPerKgMax"
+          />
+          <NumberStepper
+            v-model="patchDays"
+            label="每周训练天数"
+            :min="0"
+            :max="ADJUSTMENT_LIMITS.trainingDaysMax"
+          />
           <input v-model="manualSummary" class="sumin" placeholder="一句话原因（可选）">
           <button class="primary" :disabled="adjusting" @click="applyManual">
             {{ adjusting ? '应用中…' : '应用并重排今日起的日程' }}

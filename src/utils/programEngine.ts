@@ -10,8 +10,6 @@
  *    AI 永远不能自由生成新计划。
  */
 
-import seedRecipes from '@resources/recipe_templates.json'
-
 import type {
   Equipment,
   Goal,
@@ -33,28 +31,11 @@ import { calcTargetsWith, type CalcParams } from './nutritionCalc'
 
 /* ---------------- 食谱模板库（构建期生成的静态内容） ---------------- */
 
-interface RecipeItem {
-  food: string
-  grams?: number
-  unit?: string
-  count?: number
-  /** 单位制条目的单位克重（gen-recipes 生成时写入），供缩放展示 */
-  unitGrams?: number | null
-}
+// 模板数据与忌口匹配规则统一收敛到 recipeFilter，供食谱库页共用同一口径
+import { RECIPES, restrictedRecipeIds } from '@/utils/recipeFilter'
+import type { RecipeItem, RecipeTemplate } from '@/utils/recipeFilter'
 
-export interface RecipeTemplate {
-  id: string
-  name: string
-  mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack'
-  items: RecipeItem[]
-  baseKcal: number
-  baseProtein: number
-  baseCarb: number
-  baseFat: number
-  allergens: string[]
-}
-
-const RECIPES = (seedRecipes as { recipes: RecipeTemplate[] }).recipes
+export type { RecipeItem, RecipeTemplate }
 
 /* ---------------- 档位参数表：初始方案 = 各目标的平均线 ---------------- */
 
@@ -220,20 +201,6 @@ function missingDataIssues(profile: Profile): string[] {
   if (!profile.heightCm) issues.push('身高未填写')
   if (!profile.weightKg) issues.push('体重未填写')
   return issues.map((x) => `缺少身体数据（${x}），请先在「我」页补全`)
-}
-
-/** 忌口关键词命中的模板 id 集合（过敏原标签与食材名双向子串匹配） */
-function restrictedRecipeIds(restrictions: string[] | null): Set<string> {
-  const ids = new Set<string>()
-  const kws = (restrictions ?? []).map((r) => r.trim()).filter(Boolean)
-  if (!kws.length) return ids
-  for (const r of RECIPES) {
-    const hit = kws.some(
-      (kw) => r.allergens.some((a) => a.includes(kw)) || r.items.some((it) => it.food.includes(kw)),
-    )
-    if (hit) ids.add(r.id)
-  }
-  return ids
 }
 
 interface MealSlotDef {
@@ -437,7 +404,9 @@ export function buildProgramPlans(
     // 档位差异体现在热量缺口 / 蛋白配比 / 餐次结构上
     const available = profile.trainingDaysPerWeek
     const trainingDays =
-      available == null ? spec.trainingDays : Math.min(Math.max(available, 0), 7)
+      available == null
+        ? spec.trainingDays
+        : Math.min(Math.max(available, 0), ADJUSTMENT_LIMITS.trainingDaysMax)
 
     const equipment: Equipment | null = profile.equipment ?? 'gym'
     const tpl = pickWeekTemplate(equipment, trainingDays)

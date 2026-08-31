@@ -8,6 +8,7 @@
 import { EQUIPMENT_LABELS } from '@/config/domain'
 import type { Goal, ProgramPlan, ProgramTier } from '@/types'
 import { pickWeekTemplate, weekMuscleFreq } from './programEngine'
+import { weekLead } from './programProgress'
 
 /** 约束快照：判断「草稿生成后约束又改过」用（含开始日与首练选择——同样要求重算） */
 export interface ConstraintSnapshot {
@@ -180,6 +181,11 @@ export interface PreviewWeek {
   cells: PreviewCell[]
   /** 本周训练总时长（分钟） */
   totalMin: number
+  /**
+   * 本行开头需要留空的格数（仅首周可能 > 0）。
+   * 表头固定「一…日」，而方案支持「今天/明天开跑」，首日未必是周一。
+   */
+  lead: number
 }
 
 /** 课程名 → 1 字缩写（格子太小）：居家前缀剥掉后取首字（全身循环→全） */
@@ -201,6 +207,7 @@ export function weekPreview(plan: ProgramPlan): PreviewWeek[] {
         min: d.courseDurationMin,
       })),
       totalMin: days.reduce((s, d) => s + (d.rest ? 0 : (d.courseDurationMin ?? 0)), 0),
+      lead: i === 0 ? weekLead(plan.days[0]?.date) : 0,
     })
   }
   return out

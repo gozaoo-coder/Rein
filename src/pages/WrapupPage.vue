@@ -165,7 +165,7 @@ async function nextPhase(): Promise<void> {
           </li>
           <li>
             <span class="lbl">训练频率</span>
-            <span class="val num">{{ data.compare.trainingFreq.before }} → <b>{{ data.compare.trainingFreq.after }} 次/期</b></span>
+            <span class="val num">{{ data.compare.trainingFreq.before }} → <b>{{ data.compare.trainingFreq.after }} 次/周</b></span>
           </li>
           <li>
             <span class="lbl">日程完成</span>

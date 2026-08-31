@@ -9,8 +9,8 @@ import { dietService } from '@/services/dietService'
 import { useModelsStore } from '@/stores/models'
 import { useNutritionStore } from '@/stores/nutrition'
 import { generateAiMenu, type AiMenuMeal } from '@/ai/recipeGen'
-import type { RecipeTemplate } from '@/utils/programEngine'
-import seedRecipes from '@resources/recipe_templates.json'
+import type { RecipeTemplate } from '@/utils/recipeFilter'
+import { isRestricted, RECIPES } from '@/utils/recipeFilter'
 
 /**
  * 食谱库：浏览内置食谱模板（营养由食物库实算），标记喜欢/不喜欢——
@@ -18,8 +18,6 @@ import seedRecipes from '@resources/recipe_templates.json'
  */
 const n = useNutritionStore()
 const models = useModelsStore()
-
-const RECIPES = (seedRecipes as { recipes: RecipeTemplate[] }).recipes
 
 const filter = ref<string>('all')
 const prefs = ref<Record<string, 1 | -1>>({})
@@ -46,11 +44,8 @@ const restrictions = computed(() =>
   (n.profile?.dietRestrictions ?? []).map((r) => r.trim()).filter(Boolean),
 )
 
-function isRestricted(r: RecipeTemplate): boolean {
-  return restrictions.value.some(
-    (kw) => r.allergens.some((a) => a.includes(kw)) || r.items.some((it) => it.food.includes(kw)),
-  )
-}
+/** 忌口命中（与方案引擎共用 recipeFilter 的双向匹配规则） */
+const isRestrictedFor = (r: RecipeTemplate): boolean => isRestricted(r, restrictions.value)
 
 const visible = computed(() =>
   filter.value === 'all' ? RECIPES : RECIPES.filter((r) => r.mealType === filter.value),
@@ -154,11 +149,11 @@ const aiTotal = computed(() =>
 
     <!-- 食谱列表 -->
     <ul class="rlist">
-      <li v-for="r in visible" :key="r.id" class="row rrow" :class="{ off: isRestricted(r) }">
+      <li v-for="r in visible" :key="r.id" class="row rrow" :class="{ off: isRestrictedFor(r) }">
         <div class="col flex-1" style="gap: 3px; min-width: 0">
           <p class="rname">
             {{ r.name }}<em class="slot">{{ MEAL_TYPE_LABEL[r.mealType] }}</em>
-            <span v-if="isRestricted(r)" class="badge">忌口</span>
+            <span v-if="isRestrictedFor(r)" class="badge">忌口</span>
           </p>
           <p class="num rmeta">
             <b>{{ r.baseKcal }}</b> 大卡 · 蛋白 <b>{{ r.baseProtein }}</b>g · 碳水

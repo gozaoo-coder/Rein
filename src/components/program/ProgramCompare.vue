@@ -134,6 +134,8 @@ const peakWeekIdx = computed(() => {
         <div v-for="(w, wi) in weeks" :key="w.label" class="week-row">
           <span class="wlabel">{{ w.label }}</span>
           <div class="cells">
+            <!-- 首行星期占位：把第 1 天推到它真正的星期列 -->
+            <span v-for="b in w.lead" :key="`b${b}`" class="cell blank" aria-hidden="true" />
             <span
               v-for="c in w.cells"
               :key="c.date"
@@ -384,6 +386,11 @@ th.off {
   color: var(--text-3);
 }
 
+/* 首行星期占位：占列但不呈现成一天 */
+.cell.blank {
+  background: transparent;
+}
+
 /* 色深即负荷 */
 .cell.l1 {
   background: var(--c-exercise-soft);
@@ -398,7 +405,7 @@ th.off {
 
 .cell.l3 {
   background: var(--c-exercise);
-  color: var(--bg, #000);
+  color: var(--on-accent);
   font-weight: 700;
 }
 

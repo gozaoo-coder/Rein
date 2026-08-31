@@ -13,7 +13,12 @@ import { todoService } from '@/services/todoService'
 import { GOAL_LABELS, mealKcal } from '@/config/domain'
 import { addDays } from '@/utils/date'
 import { parseBlob } from '@/utils/programEngine'
-import { buildProgramReport, fmtRate, type ProgramReport } from '@/utils/programReport'
+import {
+  buildProgramReport,
+  fmtRate,
+  reportSpanDays,
+  type ProgramReport,
+} from '@/utils/programReport'
 import type { ProgramRecord, ProgramTier } from '@/types'
 
 export interface WrapupBadge {
@@ -24,7 +29,9 @@ export interface WrapupBadge {
 
 export interface WrapupCompare {
   weight: { before: number | null; after: number | null }
+  /** 日均摄入（大卡）：两侧同为「有记录的自然日」的平均，不是按餐平均 */
   intake: { before: number | null; after: number | null }
+  /** 周均训练次数：两侧同为「每周完成几次」，不是整期累计次数 */
   trainingFreq: { before: number; after: number }
 }
 
@@ -56,8 +63,10 @@ function longestStreak(dates: string[]): number {
   return best
 }
 
-const avg = (xs: number[]): number | null =>
-  xs.length ? Math.round(xs.reduce((s, x) => s + x, 0) / xs.length) : null
+/** 基线窗口长度：方案开始前 7 天，作为「起点」对照 */
+const BASELINE_DAYS = 7
+
+const round1 = (x: number): number => Math.round(x * 10) / 10
 
 /** 汇总一份方案的结营成绩单（只读） */
 export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
@@ -74,12 +83,22 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
     .map((t) => t.date as string)
   const streakDays = longestStreak(doneDates)
 
-  /* 起点对照：方案开始前 7 天的摄入与训练频率 + 体重首尾 */
+  /* 起点对照：方案开始前 7 天（基线窗口）vs 方案全期。
+     两侧必须同口径，否则对照不成立：摄入都按「有记录的自然日」日均（不是按餐平均），
+     训练都折算成周均（不是「7 天计数 vs 全期计数」那种虚假跳变）。 */
   const [beforeMeals, beforeWorkouts] = await Promise.all([
-    dietService.listMealsRange(addDays(startDate, -7), addDays(startDate, -1)),
-    exerciseService.listWorkouts(addDays(startDate, -7), addDays(startDate, -1)),
+    dietService.listMealsRange(addDays(startDate, -BASELINE_DAYS), addDays(startDate, -1)),
+    exerciseService.listWorkouts(addDays(startDate, -BASELINE_DAYS), addDays(startDate, -1)),
   ])
-  const intakeBefore = avg(beforeMeals.map((m) => mealKcal(m) ?? 0).filter((x) => x > 0))
+  // 与 report.avgIntake 同口径：总摄入 ÷ 有记录的自然日数
+  const beforeDays = new Set(beforeMeals.map((m) => m.date)).size
+  const intakeBefore = beforeDays > 0
+    ? Math.round(beforeMeals.reduce((s, m) => s + (mealKcal(m) ?? 0), 0) / beforeDays)
+    : null
+  // 基线窗口正好一周，窗口内次数即周均；全期次数需除以周数
+  const weeks = Math.max(reportSpanDays(startDate, endDate), 1) / BASELINE_DAYS
+  const trainingBefore = beforeWorkouts.length
+  const trainingAfter = round1(report.training.done / weeks)
 
   const weights = metrics
     .filter((m) => m.weightKg != null && m.date >= startDate && m.date <= endDate)
@@ -133,7 +152,7 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
     compare: {
       weight: { before: weightBefore, after: weightAfter },
       intake: { before: intakeBefore, after: report.avgIntake },
-      trainingFreq: { before: beforeWorkouts.length, after: report.training.done },
+      trainingFreq: { before: trainingBefore, after: trainingAfter },
     },
     badges,
     nextTier,

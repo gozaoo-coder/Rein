@@ -187,29 +187,6 @@ export const TIER_JETLAG_TOLERANCE: Record<ProgramTier, number> = {
   aggressive: 1.0,
 }
 
-/** 时差相对某档位的安全判定 */
-export type JetlagRisk = 'ok' | 'edge' | 'over'
-
-/**
- * ok = 留有余量（≤ 耐受值的 80%）；
- * edge = 进入耐受边缘（80%~100%）；
- * over = 超出该档位耐受度。
- */
-export function jetlagRisk(tier: ProgramTier, jetlagHours: number): JetlagRisk {
-  const tolerance = TIER_JETLAG_TOLERANCE[tier]
-  if (jetlagHours <= tolerance * 0.8) return 'ok'
-  if (jetlagHours <= tolerance) return 'edge'
-  return 'over'
-}
-
-/** 睡眠时长分档（用于睡眠曲线的要点列表） */
-export function sleepVerdict(hours: number): { label: string; tone: CurveBand['tone'] } {
-  if (hours < 5) return { label: '严重剥夺', tone: 'risk' }
-  if (hours < 6) return { label: '合成代谢抵抗', tone: 'warn' }
-  if (hours >= 7 && hours <= 8) return { label: '黄金窗口', tone: 'best' }
-  if (hours > 9) return { label: '过长风险', tone: 'warn' }
-  return { label: '接近理想', tone: 'good' }
-}
 
 /* ---------------- SVG 绘制辅助（与具体组件解耦） ---------------- */
 

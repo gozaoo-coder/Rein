@@ -3,15 +3,19 @@
 import { WORKOUT_META } from '@/config/domain'
 import type { PlanExercise, WorkoutPlan } from '@/types'
 
-/** 粗估课程时长：力量每组按 45s（热身组 30s），计时按目标秒，有氧按分钟数；含组间休息 */
+/**
+ * 粗估课程时长（分钟）：有氧按分钟数；计时组按目标秒（缺省 30s）；
+ * 力量正式组按 45s；激活热身组同样按 45s 计（不额外加组间休息）；含组间休息。
+ */
 export function estimatePlanMinutes(plan: WorkoutPlan): number {
+  const WORKING_SET_SEC = 45
   let s = 0
   for (const e of plan.exercises) {
     if (e.kind === 'cardio') s += (e.durationMin ?? 0) * 60
     else {
-      const per = e.kind === 'timed' ? (e.targetSec ?? 30) : 45
+      const per = e.kind === 'timed' ? (e.targetSec ?? 30) : WORKING_SET_SEC
       s += e.sets * (per + e.restSec)
-      if (e.kind === 'strength') s += (e.warmups?.length ?? 0) * 45
+      if (e.kind === 'strength') s += (e.warmups?.length ?? 0) * WORKING_SET_SEC
     }
   }
   return Math.max(1, Math.round(s / 60))

@@ -58,6 +58,11 @@ watch(
   { immediate: true },
 )
 
+/**
+ * 向导只提供 3–6 天：这是「起步建议」而非硬上限（硬上限是
+ * ADJUSTMENT_LIMITS.trainingDaysMax）。开方案时给到 7 天会诱导过度承诺，
+ * 真需要更高频率可以在方案页手动调参里加。
+ */
 const DAY_OPTIONS = [3, 4, 5, 6]
 const dayOptions = computed(() => {
   const list = DAY_OPTIONS.includes(draftDays.value) ? DAY_OPTIONS : [draftDays.value, ...DAY_OPTIONS]

@@ -5,6 +5,7 @@ import {
   cellText,
   groupByWeek,
   phaseLabel,
+  weekLead,
   type CellState,
   type CycleStats,
   type DayCell,
@@ -30,6 +31,8 @@ const emit = defineEmits<{
 }>()
 
 const weeks = computed(() => groupByWeek(props.cells))
+/** 首日不是周一时，首行前面补空位，否则整列与「一…日」表头错位 */
+const lead = computed(() => weekLead(props.cells[0]?.date))
 const focused = computed(() => props.cells.find((c) => c.date === props.focusedDate) ?? null)
 
 const weekdayHead = ['一', '二', '三', '四', '五', '六', '日']
@@ -76,6 +79,8 @@ const rateText = computed(() => `${Math.round(props.stats.rate * 100)}%`)
       <div v-for="(week, wi) in weeks" :key="wi" class="week-row">
         <span class="phase">{{ phaseLabel(wi, weeks.length) }}</span>
         <div class="cells">
+          <!-- 首行的星期占位：把第 1 天推到它真正的星期列 -->
+          <span v-for="b in (wi === 0 ? lead : 0)" :key="`b${b}`" class="cell blank" aria-hidden="true" />
           <button
             v-for="c in week"
             :key="c.date"
@@ -225,6 +230,11 @@ h2 {
   background: var(--surface-2);
   color: var(--text-3);
   transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* 首行星期占位：占据网格列但不呈现成可点的日子 */
+.cell.blank {
+  background: transparent;
 }
 
 .cell b {
