@@ -2,6 +2,7 @@
 node_modules/
 dist/
 dist-android/
+*.apk
 
 # Tauri / Rust
 src-tauri/target/
