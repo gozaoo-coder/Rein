@@ -89,6 +89,29 @@ export interface SessionSnapshotState {
   restWarmup?: boolean
   /** 「再加一组」：动作 id → 追加的组数 */
   extraSets?: Record<string, number>
+  /** 已跳过的正式组：动作 id → 被跳过的组号（1-based）。跳过 = 未做，不计入完成统计 */
+  skippedSets?: Record<string, number[]>
+}
+
+/** 全课扁平化后每一组的状态（抽屉与顶部进度格条的唯一数据源） */
+export type SessionSetState =
+  | 'done' // 已真实完成（进入统计）
+  | 'skipped' // 已跳过（未做 / 不统计）
+  | 'current' // 当前待做（或正在做）
+  | 'pending' // 排在后面，尚未轮到
+
+/** 全课组清单的一格：动作坐标 + 组号 + 状态 + 完成登记值 */
+export interface SessionSetSlot {
+  /** 该组所属动作在课程中的下标 */
+  exIdx: number
+  exId: string
+  exName: string
+  kind: PlanExerciseKind
+  /** 1-based 组号（含「再加一组」追加出来的组） */
+  setNo: number
+  state: SessionSetState
+  /** 已完成组登记的实际重量 / 秒数；其余状态为 null */
+  done: { weight: number | null; sec: number | null } | null
 }
 
 /** 逐组重量落库行（session_finish 事务内写入 workout_sets 表；重量曲线的数据源） */

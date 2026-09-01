@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronDown, Ellipsis } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, Ellipsis } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
 import RingProgress from '@/components/common/RingProgress.vue'
 import ExerciseDetailDrawer from '@/components/exercise/ExerciseDetailDrawer.vue'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
+import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
 import { resolveActivation } from '@/config/muscles'
 import { useSessionStore } from '@/stores/session'
 import { workoutRuntime } from '@/system/workoutRuntime'
@@ -18,7 +19,8 @@ import { useToast } from '@/composables/useToast'
  * 结构：顶栏 → 全课分格进度条（每格一组，按动作分组留缝）→ 可滚动内容区
  * （动作名 hero ＋ 重量调节条 ＋ 次数 ＋ 动作要点 ＋ 接下来）→ 常驻底部操作坞
  * （组格即完成控件；热身态为小重量激活格；休息态为时长抽屉图标＋跳过）。
- * 坞内「更多」菜单提供临时休息 / 再加一组 / 上一组 / 当前动作详解。
+ * 坞内「更多」菜单提供跳过当前组 / 临时休息 / 再加一组 / 上一组 / 当前动作详解。
+ * 顶部组数胶囊（带 ›）唤起全课浏览抽屉：逐动作逐组浏览、跳至某组、临时更换未做的动作。
  * 重量登记：做组页实时调节（±2.5kg），预填上次实际重量；完成组即落当前重量，
  * 结束保存后展开为逐组记录（重量曲线数据源）。只有「结束 → 二级确认」才结束会话。
  */
@@ -31,6 +33,7 @@ const restSheetOpen = ref(false)
 const moreOpen = ref(false)
 const tempRestSheetOpen = ref(false)
 const detailOpen = ref(false)
+const courseOpen = ref(false)
 
 /** 重量显示：整数不带小数，62.5 保留一位 */
 function fmtKg(v: number): string {
@@ -61,24 +64,19 @@ onMounted(async () => {
 interface ProgressCell {
   grp: boolean // 动作分组间的缝
   on: boolean // 已完成
+  skip: boolean // 已跳过（未做 / 不统计）
   cur: boolean // 呼吸提示：下一组
 }
 
-const cells = computed<ProgressCell[]>(() => {
-  const out: ProgressCell[] = []
-  const groups = s.plan?.exercises.map((e) => s.effSets(e)) ?? []
-  let i = 0
-  for (const g of groups) {
-    for (let k = 0; k < g; k++, i++) {
-      out.push({
-        grp: k === 0 && i > 0,
-        on: i < s.doneCount,
-        cur: i === s.doneCount && s.phase !== 'summary',
-      })
-    }
-  }
-  return out
-})
+/** 直接消费 store 的全课组清单：跳过与完成用同一份状态，避免两处各算一套 */
+const cells = computed<ProgressCell[]>(() =>
+  s.setSlots.map((slot, i) => ({
+    grp: slot.setNo === 1 && i > 0,
+    on: slot.state === 'done',
+    skip: slot.state === 'skipped',
+    cur: slot.state === 'current',
+  })),
+)
 
 /* ---------- 坞与内容派生 ---------- */
 
@@ -134,12 +132,22 @@ const REST_ADD_ACTIONS = [
 
 const MORE_TITLE = computed(() => `更多 · ${s.currentEx?.name ?? '训练中'}`)
 
-const MORE_ACTIONS = [
-  { label: '临时休息', value: 'temp-rest' },
-  { label: '再加一组', value: 'extra-set' },
-  { label: '上一组（重做）', value: 'redo-last' },
-  { label: '当前动作详解', value: 'detail' },
-]
+/** 跳过当前组只在真正「手上有一组」的阶段出现：热身态有专门的跳过热身，休息态当前组已经做完了 */
+const CAN_SKIP_PHASES = ['exercise', 'timed-ready', 'timed-run'] as const
+
+const MORE_ACTIONS = computed(() => {
+  const list: { label: string; value: string; danger?: boolean }[] = []
+  if (CAN_SKIP_PHASES.includes(s.phase as (typeof CAN_SKIP_PHASES)[number])) {
+    list.push({ label: '跳过当前组', value: 'skip-set' })
+  }
+  list.push(
+    { label: '临时休息', value: 'temp-rest' },
+    { label: '再加一组', value: 'extra-set' },
+    { label: '上一组（重做）', value: 'redo-last' },
+    { label: '当前动作详解', value: 'detail' },
+  )
+  return list
+})
 
 const TEMP_REST_ACTIONS = [
   { label: '1 分钟', value: '1' },
@@ -156,7 +164,11 @@ const detailExercise = computed(() => {
 })
 
 function onMorePick(value: string): void {
-  if (value === 'temp-rest') {
+  if (value === 'skip-set') {
+    // 跳过 = 未做 = 不统计：只推进流程，不写 doneSets
+    if (s.skipCurrentSet()) toast('已跳过当前组 · 不计入统计')
+    else toast('当前没有可跳过的组')
+  } else if (value === 'temp-rest') {
     if (s.phase === 'rest') toast('已在休息中，可用休息页加时')
     else tempRestSheetOpen.value = true
   } else if (value === 'extra-set') {
@@ -235,7 +247,12 @@ async function saveNow(): Promise<void> {
       <button class="min" aria-label="收起运动模式" @click="minimize">
         <ChevronDown :size="20" /> 收起
       </button>
-      <span class="ptitle num">{{ s.doneCount }}/{{ s.totalCount }} 组</span>
+      <!-- 组数胶囊：点击唤起全课浏览抽屉（逐组进度 / 跳至该组 / 换动作） -->
+      <button class="pcapsule" aria-label="查看全课程进度" @click="courseOpen = true">
+        <span class="num">{{ s.doneCount }}/{{ s.totalCount }}</span>
+        <span class="punit">组</span>
+        <ChevronRight :size="13" class="chev" />
+      </button>
       <button class="end" @click="endOpen = true">结束</button>
     </header>
 
@@ -244,7 +261,11 @@ async function saveNow(): Promise<void> {
     <!-- 全课进度格条：每格一组，动作分组留缝，下一组呼吸 -->
     <div v-if="cells.length" class="progwrap">
       <div class="obar">
-        <i v-for="(c, i) in cells" :key="i" :class="{ grp: c.grp, on: c.on, cur: c.cur }" />
+        <i
+          v-for="(c, i) in cells"
+          :key="i"
+          :class="{ grp: c.grp, on: c.on, skip: c.skip, cur: c.cur }"
+        />
       </div>
     </div>
 
@@ -501,6 +522,9 @@ async function saveNow(): Promise<void> {
 
     <!-- 当前动作详解 -->
     <ExerciseDetailDrawer :open="detailOpen" :exercise="detailExercise" @close="detailOpen = false" />
+
+    <!-- 全课浏览抽屉：逐组进度 / 跳至该组 / 临时换动作 -->
+    <SessionCourseDrawer :open="courseOpen" @close="courseOpen = false" />
   </div>
 </template>
 
@@ -544,10 +568,30 @@ async function saveNow(): Promise<void> {
   padding: 8px 4px;
 }
 
-.ptitle {
+/* 组数胶囊：点击进全课抽屉；› 提示可展开 */
+.pcapsule {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 30px;
+  padding: 0 8px 0 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
   font-size: var(--fs-footnote);
   font-weight: 700;
   color: var(--text-2);
+}
+
+.pcapsule:active {
+  transform: scale(0.94);
+}
+
+.punit {
+  margin-right: 1px;
+}
+
+.pcapsule .chev {
+  color: var(--text-3);
 }
 
 .warn {
@@ -588,6 +632,11 @@ async function saveNow(): Promise<void> {
 
 .obar i.on {
   background: var(--c-exercise);
+}
+
+/* 跳过的组：压暗留在原位，一眼看出「这组没做」且不计入统计 */
+.obar i.skip {
+  background: var(--line-strong);
 }
 
 .obar i.cur {

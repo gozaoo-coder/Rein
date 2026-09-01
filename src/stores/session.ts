@@ -24,6 +24,7 @@ import type {
   PlanExercise,
   SessionPhase,
   SessionRecord,
+  SessionSetSlot,
   SessionSnapshotState,
   StrengthLastWeight,
   StrengthSetRow,
@@ -58,6 +59,11 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   const restWarmup = ref(false)
   /** 「再加一组」追加的组数（动作 id → 追加数），随快照落盘 */
   const extraSets = ref<Record<string, number>>({})
+  /**
+   * 已跳过的正式组：动作 id → 被跳过的组号（1-based）。
+   * 跳过 = 未做 = 不统计：不写 doneSets，但仍占据全课组位（进度分母不变）。
+   */
+  const skippedSets = ref<Record<string, number[]>>({})
   /** 各动作「最近一次做组重量」（开始课程时批量查询），预填用 */
   const lastWeights = ref<Record<string, StrengthLastWeight>>({})
   const timedTotal = ref(0)
@@ -97,6 +103,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       resumePhase: resumePhase.value,
       restWarmup: restWarmup.value,
       extraSets: extraSets.value,
+      skippedSets: skippedSets.value,
     }
   }
 
@@ -173,6 +180,68 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     return Math.round(v)
   })
 
+  /**
+   * 当前「待做 / 正在做」的组在全课组清单中的下标（0-based）；全部完成时为 length。
+   * 休息中的推进方向决定游标：临时休息与热身组间停在原组，其余按已完成 +1 或进入下一动作。
+   */
+  const cursorIndex = computed<number>(() => {
+    const p = plan.value
+    if (!p) return 0
+    let base = 0
+    for (let i = 0; i < exIndex.value; i++) base += effSets(p.exercises[i]!)
+    const cur = p.exercises[exIndex.value]
+    if (!cur) return base
+    switch (phase.value) {
+      case 'idle':
+        return base
+      case 'summary':
+        return totalCount.value
+      case 'rest':
+        // 临时休息 / 热身组间：不推进，游标仍停在当前组
+        if (restIsTemp.value || restWarmup.value) return base + setIndex.value - 1
+        // restTargetIsNextSet 时 setIndex 是刚做完的那一组，游标落到下一组
+        return restTargetIsNextSet.value ? base + setIndex.value : base + effSets(cur)
+      default:
+        return base + setIndex.value - 1
+    }
+  })
+
+  /**
+   * 全课扁平化组清单（动作 × 组号），含每格状态。
+   * 状态由「游标 + 跳过记录」唯一决定：游标之前的格子非完成即跳过，游标之后的都是待做。
+   * 顶部进度格条与全课抽屉共用这一份数据，避免两处各算一套。
+   */
+  const setSlots = computed<SessionSetSlot[]>(() => {
+    const p = plan.value
+    if (!p) return []
+    const cursor = cursorIndex.value
+    const out: SessionSetSlot[] = []
+    p.exercises.forEach((ex, exIdx) => {
+      const skipped = skippedSets.value[ex.id]
+      // 完成登记按完成顺序对齐：游标之前的非跳过的格子依次对应 nonWarmup 记录
+      const nonWarm = (doneSets.value[ex.id] ?? []).filter((d) => !d.warmup)
+      let k = 0
+      for (let setNo = 1; setNo <= effSets(ex); setNo++) {
+        const idx = out.length
+        let state: SessionSetSlot['state'] = 'pending'
+        if (idx < cursor) state = skipped?.includes(setNo) ? 'skipped' : 'done'
+        else if (idx === cursor) state = 'current'
+        const rec = state === 'done' ? (nonWarm[k] ?? null) : null
+        if (state === 'done') k++
+        out.push({
+          exIdx,
+          exId: ex.id,
+          exName: ex.name,
+          kind: ex.kind,
+          setNo,
+          state,
+          done: rec ? { weight: rec.weight, sec: rec.sec } : null,
+        })
+      }
+    })
+    return out
+  })
+
   /** 会话墙钟时长（跨重启仍准确，因为 startedAt 持久化） */
   const durationMin = computed(() =>
     startedAtIso.value ? Math.max(1, Math.round((Date.now() - Date.parse(startedAtIso.value)) / 60_000)) : 0,
@@ -226,13 +295,15 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       await applyRecord(existing)
       return 'conflict'
     }
-    plan.value = p
+    // 深拷贝动作列表：会话内允许临时换动作，不能直接改 planStore 里那份课程
+    plan.value = { ...p, exercises: p.exercises.map(cloneExercise) }
     sessionId.value = null
     startedAtIso.value = new Date().toISOString()
     exIndex.value = 0
     setIndex.value = 1
     doneSets.value = {}
     extraSets.value = {}
+    skippedSets.value = {}
     restIsTemp.value = false
     restWarmup.value = false
     await loadLastWeights(p.exercises.map((e) => e.name))
@@ -250,6 +321,15 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     return 'ok'
   }
 
+  /** 动作浅拷贝（热身组与肌群表也复制一层，保证会话内改动不外溢到课程库） */
+  function cloneExercise(e: PlanExercise): PlanExercise {
+    return {
+      ...e,
+      warmups: e.warmups?.map((w) => ({ ...w })),
+      muscles: e.muscles ? { ...e.muscles } : undefined,
+    }
+  }
+
   function beginExercise(): void {
     stopTimer()
     const ex = currentEx.value
@@ -262,6 +342,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   function completeSet(): void {
     const ex = currentEx.value
     if (!ex || phase.value !== 'exercise') return
+    unmarkSkipped(ex.id, setIndex.value) // 跳过后又重做并完成的组，不再是「已跳过」
     ;(doneSets.value[ex.id] ??= []).push({ weight: weight.value, sec: null })
     startRest(setIndex.value >= effSets(ex))
   }
@@ -450,6 +531,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     const ex = currentEx.value
     if (!ex || phase.value !== 'timed-run') return
     stopTimer()
+    unmarkSkipped(ex.id, setIndex.value)
     ;(doneSets.value[ex.id] ??= []).push({ weight: null, sec: Math.round(timedElapsed.value) })
     startRest(setIndex.value >= effSets(ex))
   }
@@ -517,9 +599,134 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     restWarmup.value = false
     exIndex.value = idx
     setIndex.value = Math.min(effSets(ex), arr.filter((d) => !d.warmup).length + 1)
+    clearSkippedFrom(idx, setIndex.value) // 回退后该区间重新变成待做
     weight.value = ex.kind === 'strength' ? weightFor(ex) : 0
     phase.value = ex.kind === 'strength' ? 'exercise' : 'timed-ready'
     flashOverlay(`${ex.name} · 重做`, `第 ${setIndex.value} 组`)
+    touch()
+    return true
+  }
+
+  /* ---------- 跳过：跳过 = 未做 = 不统计 ---------- */
+
+  /** 某动作已完成（且计入统计）的正式组数 */
+  function exDoneCount(exId: string): number {
+    return (doneSets.value[exId] ?? []).filter((d) => !d.warmup).length
+  }
+
+  function markSkipped(exId: string, setNo: number): void {
+    const arr = (skippedSets.value[exId] ??= [])
+    if (!arr.includes(setNo)) arr.push(setNo)
+  }
+
+  function unmarkSkipped(exId: string, setNo: number): void {
+    const arr = skippedSets.value[exId]
+    if (!arr) return
+    const i = arr.indexOf(setNo)
+    if (i >= 0) arr.splice(i, 1)
+  }
+
+  /**
+   * 清除 (exIdx, fromSetNo) 及其之后的所有跳过登记。
+   * 回退进度（上一组重做）后该区间重新变成待做，留着旧标记会让「重新完成过的组」
+   * 被误判成已跳过 —— 跳过登记必须与「游标之前的格子非完成即跳过」这条不变量一致。
+   */
+  function clearSkippedFrom(exIdx: number, fromSetNo: number): void {
+    const p = plan.value
+    if (!p) return
+    for (let i = p.exercises.length - 1; i > exIdx; i--) {
+      const ex = p.exercises[i]
+      if (ex) delete skippedSets.value[ex.id]
+    }
+    const ex = p.exercises[exIdx]
+    if (!ex) return
+    const arr = skippedSets.value[ex.id]
+    if (!arr) return
+    const kept = arr.filter((n) => n < fromSetNo)
+    if (kept.length) skippedSets.value[ex.id] = kept
+    else delete skippedSets.value[ex.id]
+  }
+
+  /**
+   * 跳过当前组：不写 doneSets（不计入完成数与总容量），只登记跳过并推进流程。
+   * 推进规则与「完成一组」完全一致（最后一组 → 下一动作 / 总结），
+   * 保证跳过不会把状态机留在非法位置；返回 false = 当前阶段没有可跳过的组。
+   */
+  function skipCurrentSet(): boolean {
+    const ex = currentEx.value
+    if (!ex) return false
+    const p = phase.value
+    if (p !== 'exercise' && p !== 'timed-ready' && p !== 'timed-run') return false
+    if (p === 'timed-run') stopTimer()
+    markSkipped(ex.id, setIndex.value)
+    startRest(setIndex.value >= effSets(ex))
+    return true
+  }
+
+  /**
+   * 跳至该组：把当前组到目标组之间（不含目标）的所有组登记为跳过，然后定位到目标组。
+   * 只允许向前跳到「未做」的组（含当前待做组）——回跳会抹掉已完成的真实记录，不提供。
+   * 目标动作仍有未完成的热身组时直接跳过热身，因为「跳至该组」的语义就是立刻开始这一组。
+   */
+  function skipToSet(exIdx: number, setNo: number): boolean {
+    const p = plan.value
+    if (!p) return false
+    const target = p.exercises[exIdx]
+    if (!target) return false
+    if (setNo < 1 || setNo > effSets(target)) return false
+
+    const slots = setSlots.value
+    const targetIdx = slots.findIndex((s) => s.exIdx === exIdx && s.setNo === setNo)
+    if (targetIdx < 0 || targetIdx < cursorIndex.value) return false
+
+    stopTimer()
+    for (let i = cursorIndex.value; i < targetIdx; i++) {
+      const slot = slots[i]!
+      markSkipped(slot.exId, slot.setNo)
+    }
+    unmarkSkipped(target.id, setNo)
+
+    restIsTemp.value = false
+    restWarmup.value = false
+    exIndex.value = exIdx
+    setIndex.value = setNo
+    weight.value = target.kind === 'strength' ? weightFor(target) : 0
+    phase.value = target.kind === 'strength' ? 'exercise' : 'timed-ready'
+    flashOverlay(
+      `跳至 ${target.name}`,
+      `第 ${setNo} 组${target.reps != null ? ` · ${target.reps} 次` : ''}`,
+    )
+    touch()
+    return true
+  }
+
+  /* ---------- 临时更换未做的动作 ---------- */
+
+  /** 该动作是否还没做任何一组（含跳过但一组未完成的情形）——可换动作的前提 */
+  function canSwapExercise(exIdx: number): boolean {
+    const ex = plan.value?.exercises[exIdx]
+    return !!ex && exDoneCount(ex.id) === 0
+  }
+
+  /**
+   * 临时把某个未做的动作换成另一个动作：只换动作本体（名称 / 要点 / 肌群），
+   * 组数、次数、休息、热身组等编排全部沿用本课程原动作——全课组数不变，
+   * 因此不会打乱已有进度与全课组清单的下标。仅允许换成同类型动作。
+   */
+  function swapExercise(exIdx: number, src: PlanExercise): boolean {
+    const p = plan.value
+    if (!p) return false
+    const cur = p.exercises[exIdx]
+    if (!cur || cur.kind !== src.kind || !canSwapExercise(exIdx)) return false
+    p.exercises[exIdx] = {
+      ...cur,
+      name: src.name,
+      tips: src.tips || cur.tips,
+      muscles: src.muscles,
+    }
+    if (exIdx === exIndex.value) {
+      weight.value = cur.kind === 'strength' ? weightFor(p.exercises[exIdx]!) : 0
+    }
     touch()
     return true
   }
@@ -607,6 +814,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     restIsTemp.value = false
     restWarmup.value = false
     extraSets.value = {}
+    skippedSets.value = {}
   }
 
   /* ---------- 中断恢复 ---------- */
@@ -662,12 +870,13 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     }
     sessionId.value = rec.id
     startedAtIso.value = rec.startedAt
-    plan.value = p
+    plan.value = { ...p, exercises: p.exercises.map(cloneExercise) }
     exIndex.value = Math.min(rec.exIndex, p.exercises.length - 1)
     setIndex.value = Math.max(1, rec.setIndex)
     weight.value = rec.weightKg
     doneSets.value = rec.state.doneSets ?? {}
     extraSets.value = rec.state.extraSets ?? {}
+    skippedSets.value = rec.state.skippedSets ?? {}
     restIsTemp.value = false
     restWarmup.value = rec.state.restWarmup ?? false
     restTargetIsNextSet.value = rec.state.restTargetIsNextSet ?? true
@@ -747,6 +956,9 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     doneCount,
     totalCount,
     totalVolume,
+    cursorIndex,
+    setSlots,
+    skippedSets,
     durationMin,
     estimateKcalValue,
     isActive,
@@ -762,6 +974,11 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     addExtraSet,
     redoLastSet,
     effSets,
+    exDoneCount,
+    skipCurrentSet,
+    skipToSet,
+    canSwapExercise,
+    swapExercise,
     onOverlayDone,
     prepareTimed,
     finishTimed,

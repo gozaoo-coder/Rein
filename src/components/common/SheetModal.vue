@@ -295,6 +295,9 @@ function teardownGesture(): void {
   handoff = false
 }
 
+/** 内容滚动容器：外部（如全课抽屉）需要它做「滚到当前项」定位 */
+defineExpose({ bodyEl })
+
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportResize)
   const i = sheetStack.indexOf(onEsc)
