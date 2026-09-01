@@ -5,6 +5,7 @@ import { ChevronRight, Plus } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import PlanSeedUpgradeBanner from '@/components/exercise/PlanSeedUpgradeBanner.vue'
 import { usePlanStore } from '@/stores/plan'
 import { estimatePlanMinutes, planTypeLabel } from '@/utils/plan'
 
@@ -31,6 +32,9 @@ function fmtUsed(lastUsedAt: string | null): string {
 <template>
   <div class="page">
     <PageHeader back title="全部课程" subtitle="最近使用的排在前面" />
+
+    <!-- 内置课程新版本：不再自动覆盖，交给用户三选一 -->
+    <PlanSeedUpgradeBanner />
 
     <button class="new row center" @click="void router.push('/sports/plans/new/edit')">
       <Plus :size="18" /> 新建课程

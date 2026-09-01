@@ -3,10 +3,55 @@
 use tauri::State;
 
 use crate::error::{ReinError, Result};
+use crate::modules::seed::{plan_seed_keep, plan_seed_migrate, plan_seed_override, plan_seed_status, PlanSeedStatus};
 use crate::state::AppState;
 
 use super::models::{PlanInput, PlanRecord};
 use super::{plan_by_id, plan_from_row, PLAN_COLS};
+
+/// 内置课程种子升级状态（前端据此决定是否弹「新版本」横幅）
+#[tauri::command]
+pub fn plan_seed_status_cmd(state: State<AppState>) -> Result<PlanSeedStatus> {
+    let conn = state.db.lock().unwrap();
+    plan_seed_status(&conn)
+}
+
+/// 兼容合并：把新种子内容按动作字段级合并进本地内置课，绝不覆盖用户设置。
+/// 仅当确实有待升级的种子时执行，否则幂等返回当前状态。
+#[tauri::command]
+pub fn apply_plan_seed_migrate(state: State<AppState>) -> Result<PlanSeedStatus> {
+    let conn = state.db.lock().unwrap();
+    let status = plan_seed_status(&conn)?;
+    if status.current_version >= status.latest_version {
+        return Ok(status);
+    }
+    plan_seed_migrate(&conn)?;
+    plan_seed_status(&conn)
+}
+
+/// 使用新版本：按 id 把本地内置课内容整体替换为新种子。
+#[tauri::command]
+pub fn apply_plan_seed_override(state: State<AppState>) -> Result<PlanSeedStatus> {
+    let conn = state.db.lock().unwrap();
+    let status = plan_seed_status(&conn)?;
+    if status.current_version >= status.latest_version {
+        return Ok(status);
+    }
+    plan_seed_override(&conn)?;
+    plan_seed_status(&conn)
+}
+
+/// 保留我的：本版本不再刷新内置课内容，只结清版本提示。
+#[tauri::command]
+pub fn apply_plan_seed_keep(state: State<AppState>) -> Result<PlanSeedStatus> {
+    let conn = state.db.lock().unwrap();
+    let status = plan_seed_status(&conn)?;
+    if status.current_version >= status.latest_version {
+        return Ok(status);
+    }
+    plan_seed_keep(&conn)?;
+    plan_seed_status(&conn)
+}
 
 /// 课程列表：最近使用的在前（未用过的按更新时间排后）
 #[tauri::command]

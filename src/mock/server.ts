@@ -28,6 +28,7 @@ import type {
   ParsedFoodItem,
   RecipePref,
   PomodoroSession,
+  PlanSeedStatus,
   ProgramRecord,
   Profile,
   ScheduleTodoInput,
@@ -235,17 +236,18 @@ const plans: WorkoutPlanRecord[] = []
 const PLAN_STORE_KEY = 'rein.mock.plans.v1'
 /**
  * 内置课程种子版本：种子内容变更时 +1。
- * v4 起新增语义：低于该版本的本地库会把内置课的 exercises/subtitle 刷新为新种子
- * （激活热身组等结构改进要送达老库；与 Rust 端 app_meta 'plan_seed_version' 同语义）。
+ * v5 起语义：启动只做增量补种（补齐缺失的内置课），内容升级不再自动覆盖；
+ * 由前端发起「兼容合并 / 使用新版本 / 保留我的」三选一（与 Rust 端 seed.rs 一致）。
  */
-const PLAN_SEED_VERSION = 4
+const PLAN_SEED_VERSION = 5
 const PLAN_SEED_VER_KEY = 'rein.mock.plans.seedVer.v1'
+/** 已应用（兼容合并或使用新版本）的目标版本；0 = 未应用 */
+const PLAN_SEED_APPLIED_KEY = 'rein.mock.plans.applied.v1'
 
 /**
  * 与会话一致：localStorage 持久化，模拟真实库的「用户编辑不丢失」。
  * 种子导入与 Rust 端 seed_builtin_plans 同语义：按 id 幂等补齐缺失项，
- * 已有行（含用户改过的）永不覆盖；种子版本升级后老库自动拿到新增内置课，
- * 并刷新内置课内容（v4 起）。
+ * 已有行（含用户改过的）永不覆盖；种子版本升级后由前端决定如何应用（v5 起）。
  */
 function loadPlans(): void {
   try {
@@ -258,14 +260,13 @@ function loadPlans(): void {
     /* 损坏数据按空处理，走种子 */
   }
 
-  let ver = 0
+  let applied = 0
   try {
-    ver = Number(localStorage.getItem(PLAN_SEED_VER_KEY) ?? '0')
+    applied = Number(localStorage.getItem(PLAN_SEED_APPLIED_KEY) ?? '0')
   } catch {
-    /* 读不到按 0，走补种 */
+    /* 读不到按 0 */
   }
-  if (ver >= PLAN_SEED_VERSION) return
-
+  // 已应用当前版本：仍要补缺失的内置课，但不再改动已有行
   const known = new Set(plans.map((p) => p.id))
   const now = new Date().toISOString()
   for (const p of (seedPlansJson as { plans: SeedPlan[] }).plans) {
@@ -282,22 +283,99 @@ function loadPlans(): void {
         equipment: p.equipment ?? null,
         estDurationMin: p.estDurationMin ?? null,
       })
-      continue
     }
-    // 版本升级路径：内置课内容刷新为新种子（激活热身组等送达老库，覆盖用户对内置课的编辑）
-    {
-      const row = plans.find((x) => x.id === p.id)!
-      row.exercises = JSON.parse(JSON.stringify(p.exercises))
-      row.subtitle = p.subtitle
-      row.updatedAt = now
-    }
+  }
+  // 从未导入过种子（首次安装）：直接按最新版本导入并结清
+  let ver = 0
+  try {
+    ver = Number(localStorage.getItem(PLAN_SEED_VER_KEY) ?? '0')
+  } catch {
+    /* 读不到按 0 */
+  }
+  if (ver === 0 && applied === 0) {
+    localStorage.setItem(PLAN_SEED_VER_KEY, String(PLAN_SEED_VERSION))
   }
   savePlans()
+}
+
+/** 种子升级状态（模拟 Rust plan_seed_status）：已应用版本 = 决策版本 */
+function planSeedStatus(): PlanSeedStatus {
+  let applied = 0
   try {
+    applied = Number(localStorage.getItem(PLAN_SEED_APPLIED_KEY) ?? '0')
+  } catch {
+    applied = 0
+  }
+  return {
+    currentVersion: applied || Number(localStorage.getItem(PLAN_SEED_VER_KEY) ?? '0'),
+    latestVersion: PLAN_SEED_VERSION,
+  }
+}
+
+function settleSeed(appliedVersion: number): void {
+  try {
+    localStorage.setItem(PLAN_SEED_APPLIED_KEY, String(appliedVersion))
     localStorage.setItem(PLAN_SEED_VER_KEY, String(PLAN_SEED_VERSION))
   } catch {
-    /* 写不进去时下次启动重跑补种，幂等无害 */
+    /* 写不进去时下次启动重跑，幂等无害 */
   }
+}
+
+/** 兼容合并：字段级合并新种子到本地内置课，不覆盖用户设置（与 Rust merge_plan_exercises 同语义） */
+function migratePlans(): void {
+  const seed = (seedPlansJson as { plans: SeedPlan[] }).plans
+  const now = new Date().toISOString()
+  for (const p of seed) {
+    const row = plans.find((x) => x.id === p.id)
+    if (!row) continue
+    const local = (Array.isArray(row.exercises) ? row.exercises : []) as unknown as Array<Record<string, unknown>>
+    const seedEx = (Array.isArray(p.exercises) ? p.exercises : []) as unknown as Array<Record<string, unknown>>
+    const localMap = new Map(local.map((e) => [e.id, e]))
+    const out: Array<Record<string, unknown>> = []
+    for (const se of seedEx) {
+      const id = se.id as string | undefined
+      const le = id ? localMap.get(id) : undefined
+      if (le) {
+        // 只补本地缺失的字段，已有的（含用户改过的）保留
+        const merged = { ...le }
+        for (const [k, v] of Object.entries(se)) {
+          if (!(k in merged)) merged[k] = v
+        }
+        out.push(merged)
+      } else {
+        out.push(se) // 新动作：整条补上
+      }
+    }
+    // 本地独有的动作（用户新增）保留
+    const seedIds = new Set(seedEx.map((e) => e.id))
+    for (const le of local) {
+      if (le.id && !seedIds.has(le.id)) out.push(le)
+    }
+    row.exercises = out as unknown as WorkoutPlanRecord['exercises']
+    row.updatedAt = now
+  }
+  settleSeed(PLAN_SEED_VERSION)
+  savePlans()
+}
+
+/** 使用新版本：内置课内容整体替换为新种子 */
+function overridePlans(): void {
+  const seed = (seedPlansJson as { plans: SeedPlan[] }).plans
+  const now = new Date().toISOString()
+  for (const p of seed) {
+    const row = plans.find((x) => x.id === p.id)
+    if (!row) continue
+    row.subtitle = p.subtitle
+    row.exercises = structuredClone(p.exercises) as WorkoutPlanRecord['exercises']
+    row.updatedAt = now
+  }
+  settleSeed(PLAN_SEED_VERSION)
+  savePlans()
+}
+
+/** 保留我的：本版本不再刷新内置课内容，只结清提示 */
+function keepPlans(): void {
+  settleSeed(PLAN_SEED_VERSION)
 }
 
 function savePlans(): void {
@@ -1698,6 +1776,24 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         savePlans()
       }
       return delay(undefined as T)
+    }
+
+    case 'plan_seed_status_cmd':
+      return delay(planSeedStatus() as unknown as T)
+
+    case 'apply_plan_seed_migrate': {
+      if (planSeedStatus().currentVersion < planSeedStatus().latestVersion) migratePlans()
+      return delay(planSeedStatus() as unknown as T)
+    }
+
+    case 'apply_plan_seed_override': {
+      if (planSeedStatus().currentVersion < planSeedStatus().latestVersion) overridePlans()
+      return delay(planSeedStatus() as unknown as T)
+    }
+
+    case 'apply_plan_seed_keep': {
+      if (planSeedStatus().currentVersion < planSeedStatus().latestVersion) keepPlans()
+      return delay(planSeedStatus() as unknown as T)
     }
 
     case 'ai_parse_food_text':

@@ -82,6 +82,10 @@ pub fn run() {
             modules::plan::commands::upsert_workout_plan,
             modules::plan::commands::delete_workout_plan,
             modules::plan::commands::touch_workout_plan,
+            modules::plan::commands::plan_seed_status_cmd,
+            modules::plan::commands::apply_plan_seed_migrate,
+            modules::plan::commands::apply_plan_seed_override,
+            modules::plan::commands::apply_plan_seed_keep,
             // program（健康方案：持久化 + 单激活 + 日程重排；计算在前端引擎）
             modules::program::commands::program_list,
             modules::program::commands::program_get_active,

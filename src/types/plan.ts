@@ -28,3 +28,12 @@ export interface WorkoutPlanInput {
 
 /** 跑步会话在 workout_sessions 中使用的虚拟 planId */
 export const RUN_PLAN_ID = '__run__'
+
+/**
+ * 内置课程种子升级状态（来自 plan_seed_status_cmd）。
+ * currentVersion 落后于 latestVersion 表示有新版本待用户决策。
+ */
+export interface PlanSeedStatus {
+  currentVersion: number
+  latestVersion: number
+}
