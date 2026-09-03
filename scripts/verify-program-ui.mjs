@@ -155,10 +155,11 @@ try {
 
   /* ---------- 6. 点格子切换聚焦日 ---------- */
   const cells = page.locator('.cell')
-  const before = await page.textContent('.focus')
+  // 聚焦摘要已并入菜单卡：点格子后菜单卡标题从「今日菜单」切到该日日期
+  const before = await page.textContent('.pod-head b')
   await cells.nth(20).click()
   await page.waitForTimeout(500)
-  const after = await page.textContent('.focus')
+  const after = await page.textContent('.pod-head b')
   ok('点格子切换聚焦日', before !== after, `${(before ?? '').trim().slice(0, 24)} → ${(after ?? '').trim().slice(0, 24)}`)
   await shot('07-cycle-focus')
 

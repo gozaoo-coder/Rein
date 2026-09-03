@@ -120,8 +120,22 @@ const peakWeekIdx = computed(() => {
     <section v-else class="pod">
       <header class="pod-head">
         <b>{{ selPlan?.tierLabel }}档 · 4 周负荷</b>
-        <span class="pill">下方按钮切换档位</span>
       </header>
+
+      <!-- 档位切换：紧贴标题，切换即重画网格 -->
+      <div class="tier-pick">
+        <button
+          v-for="p in orderedPlans"
+          :key="p.tier"
+          class="chip"
+          :class="{ on: p.tier === selectedTier, off: !p.feasible }"
+          :aria-pressed="p.tier === selectedTier"
+          :disabled="!p.feasible"
+          @click="emit('select', p.tier)"
+        >
+          {{ p.tierLabel }}
+        </button>
+      </div>
 
       <div class="grid">
         <div class="week-row head">
@@ -147,19 +161,6 @@ const peakWeekIdx = computed(() => {
           </div>
           <span class="wtotal num" :class="{ hot: wi === peakWeekIdx }">{{ w.totalMin }}′</span>
         </div>
-      </div>
-
-      <div class="tier-pick">
-        <button
-          v-for="p in orderedPlans"
-          :key="p.tier"
-          class="chip"
-          :class="{ on: p.tier === selectedTier }"
-          :aria-pressed="p.tier === selectedTier"
-          @click="emit('select', p.tier)"
-        >
-          {{ p.tierLabel }}
-        </button>
       </div>
     </section>
 
@@ -328,7 +329,7 @@ th.off {
 .off-tag {
   display: block;
   font-size: 9px;
-  color: var(--danger);
+  color: var(--text-3);
   font-weight: 600;
 }
 
@@ -415,9 +416,9 @@ th.off {
   opacity: 0.6;
 }
 
-/* 预览视图的档位切换 chips */
+/* 预览视图的档位切换 chips：紧贴标题，不可用档不可点 */
 .tier-pick {
-  margin-top: 12px;
+  margin-bottom: 12px;
   display: flex;
   gap: 7px;
 }
@@ -441,6 +442,10 @@ th.off {
   border-color: var(--accent);
   color: var(--on-accent);
   font-weight: 700;
+}
+
+.chip.off {
+  opacity: 0.45;
 }
 
 .primary {

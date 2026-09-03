@@ -22,6 +22,8 @@ const props = withDefaults(
     initialFood?: Food | null
     selectOnly?: boolean
     title?: string
+    /** 预选餐次（智能添加跟随其餐次选择）；缺省早餐 */
+    defaultMeal?: MealType | null
   }>(),
   { initialFood: null, selectOnly: false, title: '添加食物' },
 )
@@ -56,6 +58,7 @@ watch(
     query.value = ''
     results.value = []
     selected.value = null
+    mealType.value = props.defaultMeal ?? 'breakfast'
     if (props.initialFood) pick(props.initialFood)
     else void search()
   },

@@ -195,7 +195,7 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
                 </span>
               </div>
               <div class="bar-track">
-                <i class="bar-fill" :style="{ width: `${compareBar(p) * 100}%` }" />
+                <i class="bar-fill" :style="{ transform: `scaleX(${compareBar(p)})` }" />
               </div>
             </div>
           </div>
@@ -359,11 +359,13 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
 
 .bar-fill {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--accent);
   opacity: 0.75;
-  transition: width var(--dur-base) var(--ease-standard);
+  transform-origin: left center;
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .diag {

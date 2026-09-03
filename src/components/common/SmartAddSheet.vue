@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Check, ImagePlus, LoaderCircle, Pencil, Plus, Search, Sparkles, X } from 'lucide-vue-next'
 
 import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
@@ -31,6 +31,8 @@ const props = withDefaults(
     mode?: 'todo' | 'food'
     /** 手动添加待办时的默认分类（如运动页只加运动待办） */
     category?: TodoCategory
+    /** 食物模式的预选餐次（如方案页「下一餐」）；缺省按当前时间推测 */
+    defaultMeal?: MealType | null
   }>(),
   { mode: 'todo' },
 )
@@ -54,6 +56,14 @@ const todos = ref<TodoDraft[]>([])
 const foods = ref<ParsedFoodItem[]>([])
 const foodStats = ref({ totalKcal: 0, total: 0, matched: 0 })
 const meal = ref<MealType>(suggestMeal())
+
+// 每次打开重置餐次：调用方给了预选（如「下一餐」）就跟随，否则按当前时间推测
+watch(
+  () => props.open,
+  (open) => {
+    if (open) meal.value = props.defaultMeal ?? suggestMeal()
+  },
+)
 const foodCommitted = ref(false)
 /** 待发送附图（草稿区）：选图后先挂这里，可移除，点「生成」才随文字一起处理 */
 const attachment = ref<{ full: string; small: string | null } | null>(null)
@@ -376,7 +386,7 @@ function clearAll(): void {
       @close="editorOpen = false"
       @saved="onEditorSaved"
     />
-    <FoodPickerSheet :open="pickerOpen" @close="pickerOpen = false" />
+    <FoodPickerSheet :open="pickerOpen" :default-meal="meal" @close="pickerOpen = false" />
   </SheetModal>
 </template>
 

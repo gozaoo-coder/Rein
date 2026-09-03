@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Play, UtensilsCrossed } from 'lucide-vue-next'
+import { Play } from 'lucide-vue-next'
 
 import ActivityRings from '@/components/common/ActivityRings.vue'
 import { useDietStore } from '@/stores/diet'
@@ -29,6 +29,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   start: [courseId: string]
+  /** 记一笔：打开智能添加（携带下一餐的餐次供预选） */
   log: [mealType: MealType | null]
 }>()
 
@@ -89,87 +90,70 @@ const bars = computed(() => {
 </script>
 
 <template>
-  <!-- 单根：页面卡片间距靠相邻选择器，fragment 会打断链条（项目规范） -->
-  <div v-if="day" class="dash">
-    <section class="pod">
-      <header class="pod-head">
-        <h2>{{ dateLabel }}</h2>
-        <span class="pill">第 {{ dayNo }} 天 / {{ totalDays }}</span>
-      </header>
+  <!-- 单根卡：三环+进度、训练动作、下一餐压进一屏，回答「今天还差什么」 -->
+  <section v-if="day" class="pod">
+    <header class="pod-head">
+      <h2>{{ dateLabel }}</h2>
+      <span class="day-no num">第 {{ dayNo }} / {{ totalDays }} 天</span>
+    </header>
 
-      <div class="cockpit">
-        <ActivityRings :rings="n.rings" :size="86" />
-        <div class="bars">
-          <div v-for="b in bars" :key="b.key" class="bar-row">
-            <div class="bar-top">
-              <span>{{ b.label }}</span>
-              <span class="num">{{ b.text }}</span>
-            </div>
-            <div class="bar-track">
-              <i class="bar-fill" :style="{ width: `${b.value * 100}%`, background: `var(${b.colorVar})` }" />
-            </div>
+    <div class="cockpit">
+      <ActivityRings :rings="n.rings" :size="86" />
+      <div class="bars">
+        <div v-for="b in bars" :key="b.key" class="bar-row">
+          <div class="bar-top">
+            <span>{{ b.label }}</span>
+            <span class="num">{{ b.text }}</span>
+          </div>
+          <div class="bar-track">
+            <i class="bar-fill" :style="{ transform: `scaleX(${b.value})`, background: `var(${b.colorVar})` }" />
           </div>
         </div>
       </div>
+    </div>
 
+    <div class="split" />
+
+    <!-- 今日训练：只呈现当前最该做的一件事 -->
+    <div class="action">
+      <div class="action-copy">
+        <p class="action-title">{{ day.courseName ?? '无训练安排 · 散步拉伸即可' }}</p>
+        <p class="action-sub num">
+          <template v-if="day.courseDurationMin">约 {{ day.courseDurationMin }} 分钟</template>
+          <template v-else-if="!day.rest">时长未标注</template>
+          <template v-else>休息日 · 让身体恢复</template>
+        </p>
+      </div>
+      <button
+        v-if="day.courseId && !trainingDone"
+        class="go"
+        :aria-label="`开始训练 ${day.courseName ?? ''}`"
+        @click="emit('start', day.courseId)"
+      >
+        <Play :size="13" :stroke-width="2.6" />
+        开始
+      </button>
+      <span v-else-if="day.courseId && trainingDone" class="done-tag">已完成</span>
+    </div>
+
+    <!-- 下一餐：并入驾驶舱的单行（明细见「今日菜单」卡）；记一笔打开智能添加并预选本餐次 -->
+    <template v-if="nextMeal">
       <div class="split" />
-
-      <!-- 今日训练：只呈现当前最该做的一件事 -->
-      <div class="action">
-        <div class="action-copy">
-          <p class="action-title">{{ day.courseName ?? '无训练安排 · 散步拉伸即可' }}</p>
-          <p class="action-sub num">
-            <template v-if="day.courseDurationMin">约 {{ day.courseDurationMin }} 分钟</template>
-            <template v-else-if="!day.rest">时长未标注</template>
-            <template v-else>休息日 · 让身体恢复</template>
-          </p>
+      <div class="next-meal">
+        <div class="nm-copy">
+          <p class="nm-slot">下一餐 · {{ nextMeal.slot }}</p>
+          <p class="nm-name">{{ nextMeal.name }}</p>
         </div>
-        <button
-          v-if="day.courseId && !trainingDone"
-          class="go"
-          :aria-label="`开始训练 ${day.courseName ?? ''}`"
-          @click="emit('start', day.courseId)"
-        >
-          <Play :size="13" :stroke-width="2.6" />
-          开始
-        </button>
-        <span v-else-if="day.courseId && trainingDone" class="done-tag">已完成</span>
+        <div class="nm-acts">
+          <button class="mini" @click="emit('log', nextMeal.mealType)">记一笔</button>
+        </div>
       </div>
-    </section>
-
-    <!-- 下一餐 -->
-    <section v-if="nextMeal" class="pod meal">
-      <header class="pod-head">
-        <h2>下一餐 · {{ nextMeal.slot }}</h2>
-        <span class="pill ghost">
-          <UtensilsCrossed :size="11" />
-        </span>
-      </header>
-      <p class="meal-name">{{ nextMeal.name }}</p>
-      <p class="meal-items">{{ nextMeal.items.join(' · ') }}</p>
-      <div class="meal-foot">
-        <span class="num">约 {{ Math.round(nextMeal.kcal) }} 大卡 · 蛋白 {{ Math.round(nextMeal.protein) }}g</span>
-        <button class="link" @click="emit('log', nextMeal.mealType)">记一笔</button>
-      </div>
-    </section>
-
-    <!-- 当日注意 -->
-    <section v-if="day.rules.length" class="pod rules">
-      <h2>今日注意</h2>
-      <ul>
-        <li v-for="r in day.rules" :key="r">{{ r }}</li>
-      </ul>
-    </section>
-  </div>
+    </template>
+  </section>
 </template>
 
 <style scoped>
-/* 三张 pod 归入同一根节点，内部间距用 gap（不再依赖跨组件的相邻选择器） */
-.dash {
-  display: grid;
-  gap: 12px;
-}
-
+/* 单根卡：不再依赖跨组件的相邻选择器 */
 .pod {
   padding: 15px 16px;
   border-radius: var(--radius-l);
@@ -189,22 +173,10 @@ h2 {
   letter-spacing: -0.3px;
 }
 
-.pill {
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.pill.ghost {
-  background: var(--surface-2);
+.day-no {
+  font-size: var(--fs-caption);
   color: var(--text-3);
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 9px;
+  font-weight: 600;
 }
 
 /* 驾驶舱：三环 + 三条进度 */
@@ -241,9 +213,11 @@ h2 {
 
 .bar-fill {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
-  transition: width var(--dur-base) var(--ease-standard);
+  transform-origin: left center;
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .split {
@@ -300,54 +274,53 @@ h2 {
   color: var(--ok-strong);
 }
 
-/* 下一餐 */
-.meal-name {
-  margin-top: 11px;
+/* 下一餐：并入驾驶舱的紧凑行 */
+.next-meal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nm-copy {
+  min-width: 0;
+}
+
+.nm-slot {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+.nm-name {
+  margin-top: 3px;
   font-size: var(--fs-callout);
   font-weight: 600;
 }
 
-.meal-items {
-  margin-top: 3px;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  line-height: 1.5;
-}
-
-.meal-foot {
-  margin-top: 10px;
+.nm-acts {
+  flex: none;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: var(--fs-caption);
-  color: var(--text-2);
+  gap: 7px;
 }
 
-.link {
+.mini {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 13px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
   color: var(--accent);
   font-size: var(--fs-caption);
-  font-weight: 600;
+  font-weight: 700;
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
-/* 当日注意 */
-.rules h2 {
-  font-size: var(--fs-subhead);
-  margin-bottom: 8px;
+.mini:active {
+  transform: scale(0.95);
 }
 
-.rules ul {
-  display: grid;
-  gap: 5px;
-  padding-left: 17px;
-  list-style: disc;
-}
-
-.rules li {
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-  line-height: 1.5;
-}
 
 @media (prefers-reduced-motion: reduce) {
   .bar-fill,

@@ -33,7 +33,6 @@ const emit = defineEmits<{
 const weeks = computed(() => groupByWeek(props.cells))
 /** 首日不是周一时，首行前面补空位，否则整列与「一…日」表头错位 */
 const lead = computed(() => weekLead(props.cells[0]?.date))
-const focused = computed(() => props.cells.find((c) => c.date === props.focusedDate) ?? null)
 
 const weekdayHead = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -103,22 +102,6 @@ const rateText = computed(() => `${Math.round(props.stats.rate * 100)}%`)
         {{ l.label }}
       </li>
     </ul>
-
-    <!-- 聚焦日详情：点格子即切换，与页面共享 focusedDay -->
-    <div v-if="focused" class="focus">
-      <div class="focus-head">
-        <b>第 {{ focused.dayNo }} 天 · {{ focused.date }}</b>
-        <span class="pill" :class="{ ghost: focused.rest }">
-          {{ focused.rest ? '休息日' : '训练日' }}
-        </span>
-      </div>
-      <p class="focus-sub">
-        {{ focused.courseName ?? '休息日 · 散步拉伸即可' }}
-        <template v-if="focused.kcal > 0">
-          <span class="num"> · {{ Math.round(focused.kcal) }} 大卡</span>
-        </template>
-      </p>
-    </div>
   </section>
 </template>
 
@@ -152,28 +135,26 @@ h2 {
   white-space: nowrap;
 }
 
-.pill.ghost {
-  background: var(--surface-2);
-  color: var(--text-3);
+.stats {
+  margin: 11px 0 13px;
+  display: flex;
+  gap: 16px;
 }
 
-.stats {
-  margin: 12px 0 14px;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+.stats li {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
 }
 
 .stats em {
-  display: block;
   font-style: normal;
   font-size: var(--fs-micro);
   color: var(--text-3);
+  white-space: nowrap;
 }
 
 .stats b {
-  display: block;
-  margin-top: 1px;
   font-size: var(--fs-subhead);
   font-weight: 700;
 }
@@ -345,27 +326,6 @@ h2 {
 
 .swatch.restPast {
   background: var(--surface-2);
-}
-
-/* 聚焦日 */
-.focus {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 0.5px solid var(--line);
-}
-
-.focus-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: var(--fs-subhead);
-}
-
-.focus-sub {
-  margin-top: 3px;
-  font-size: var(--fs-caption);
-  color: var(--text-2);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -3,21 +3,22 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Archive,
-  CalendarDays,
   CheckCircle2,
   ChevronRight,
   Circle,
   Info,
-  RefreshCw,
+  MoreHorizontal,
   ShoppingBag,
   Sparkles,
   Trash2,
   Wand2,
 } from 'lucide-vue-next'
 
+import ActionSheet from '@/components/common/ActionSheet.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import ProgramCompare from '@/components/program/ProgramCompare.vue'
 import ProgramConstraints from '@/components/program/ProgramConstraints.vue'
 import ProgramCycleMap from '@/components/program/ProgramCycleMap.vue'
@@ -47,6 +48,7 @@ import {
 } from '@/stores/program'
 import type {
   BodyMetric,
+  MealType,
   ProgramAdjustment,
   ProgramBlob,
   ProgramMeal,
@@ -200,6 +202,31 @@ const parsedBlob = computed<{ blob: ProgramBlob | null; error: string }>(() => {
   }
 })
 const blob = computed(() => parsedBlob.value.blob)
+
+/** 状态条展开（静态参数详情）与页头「⋯」操作菜单 */
+const stripOpen = ref(false)
+const moreOpen = ref(false)
+
+const activeTierLabel = computed(() =>
+  store.active?.tier === 'conservative' ? '保守' : store.active?.tier === 'aggressive' ? '进取' : '均衡',
+)
+
+/** ⋯ 菜单项：方案结束后归档项让位给成绩单 */
+const moreActions = computed(() => {
+  if (!store.active) return []
+  const items: { label: string; value: string; danger?: boolean }[] = []
+  if (isEnded.value) items.push({ label: '生成本期成绩单', value: 'wrapup' })
+  if (!isEnded.value) items.push({ label: '归档方案', value: 'archive' })
+  items.push({ label: '删除方案', value: 'delete', danger: true })
+  return items
+})
+
+function onMore(value: string): void {
+  moreOpen.value = false
+  if (value === 'wrapup' && store.active) openWrapup(store.active)
+  else if (value === 'archive') void archiveCurrent()
+  else if (value === 'delete') void deleteCurrent()
+}
 const blobError = computed(() => parsedBlob.value.error)
 const startDate = computed(() => blob.value?.days[0]?.date ?? null)
 const endDate = computed(() => (blob.value ? programEndDate(blob.value) : null))
@@ -323,9 +350,18 @@ function startCourse(courseId: string): void {
   void router.push(`/sports/plans/${courseId}`)
 }
 
-/** 驾驶舱「记一笔」：进饮食库，右下角悬浮按钮可直接记 */
-function quickLog(): void {
-  void router.push('/nutrition/foods')
+/** 驾驶舱「记一笔」：打开智能添加（可带下一餐的餐次预选） */
+function quickLog(mealType: MealType | null = null): void {
+  openSmartAdd(mealType)
+}
+
+/** 「记一笔」：打开智能添加（food 模式）；下一餐入口会带餐次预选 */
+const smartAddOpen = ref(false)
+const smartAddMeal = ref<MealType | null>(null)
+
+function openSmartAdd(mealType: MealType | null): void {
+  smartAddMeal.value = mealType
+  smartAddOpen.value = true
 }
 
 /* ---------------- 聚焦日的 AI 菜单（未生成回落模板菜单） ---------------- */
@@ -593,7 +629,13 @@ function adjustmentsOf(r: ProgramRecord): number {
 
 <template>
   <div class="page">
-    <PageHeader title="健康方案" subtitle="程序算基线 · 日程级安排 · AI 只复盘调参" back />
+    <PageHeader title="健康方案" subtitle="程序算基线 · 日程级安排 · AI 只复盘调参" back>
+      <template v-if="phase === 'active'" #action>
+        <button class="hdr-btn" aria-label="更多方案操作" @click="moreOpen = true">
+          <MoreHorizontal :size="19" />
+        </button>
+      </template>
+    </PageHeader>
 
     <!-- 加载 -->
     <section v-if="phase === 'loading'" class="card center empty">
@@ -657,18 +699,22 @@ function adjustmentsOf(r: ProgramRecord): number {
 
     <!-- 生效中 -->
     <template v-else-if="blob && store.active && startDate && endDate">
-      <section class="card head-card">
-        <header class="row between center">
-          <h2>{{ GOAL_LABELS[store.active.goal] }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</h2>
-          <span class="pill">{{ store.active.tier === 'conservative' ? '保守' : store.active.tier === 'aggressive' ? '进取' : '均衡' }} · v{{ store.active.version }}</span>
-        </header>
-        <p class="range t-2 num"><CalendarDays :size="14" style="vertical-align:-2px;margin-right:4px" />{{ startDate }} ~ {{ endDate }}<template v-if="!isEnded"> · 第 {{ currentWeek }} 周</template></p>
-        <ul class="stats num">
-          <li><em>每日热量</em><b>{{ Math.round(blob.params.targets.kcal) }}<i>大卡</i></b></li>
-          <li><em>蛋白</em><b>{{ Math.round(blob.params.targets.protein) }}<i>g</i></b></li>
-          <li><em>热量偏移</em><b>{{ blob.params.kcalDelta > 0 ? '+' : '' }}{{ blob.params.kcalDelta }}</b></li>
-          <li><em>BMR/TDEE</em><b>{{ blob.params.bmr }}/{{ blob.params.tdee }}</b></li>
-        </ul>
+      <!-- 方案状态条：一行概要（目标·档位·周次·截止），静态参数点开展开（example 对齐） -->
+      <section class="head-strip">
+        <button class="strip" :aria-expanded="stripOpen" @click="stripOpen = !stripOpen">
+          <span class="grow">{{ GOAL_LABELS[store.active.goal] }} · {{ activeTierLabel }} v{{ store.active.version }} · 第 {{ currentWeek }} 周 / {{ store.active.weeks }}</span>
+          <span class="end num">{{ endDate!.slice(5) }} 结束</span>
+          <ChevronRight :size="12" class="chev" :class="{ open: stripOpen }" />
+        </button>
+        <div class="strip-detail" :class="{ open: stripOpen }">
+          <ul class="stats num">
+            <li><em>每日热量</em><b>{{ Math.round(blob.params.targets.kcal) }}<i>大卡</i></b></li>
+            <li><em>蛋白</em><b>{{ Math.round(blob.params.targets.protein) }}<i>g</i></b></li>
+            <li><em>热量偏移</em><b>{{ blob.params.kcalDelta > 0 ? '+' : '' }}{{ blob.params.kcalDelta }}</b></li>
+            <li><em>BMR/TDEE</em><b>{{ blob.params.bmr }}/{{ blob.params.tdee }}</b></li>
+          </ul>
+          <p class="strip-meta num">{{ startDate }} ~ {{ endDate }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</p>
+        </div>
       </section>
 
       <!-- 今日驾驶舱：进度 + 训练 + 下一餐，回答「我今天还差什么」 -->
@@ -684,66 +730,24 @@ function adjustmentsOf(r: ProgramRecord): number {
         @log="quickLog"
       />
 
-      <!-- 营养罗盘：聚焦日的宏量结构与餐次分布（模板 / AI 菜单同源可渲染） -->
+      <!-- 今日菜单：供能结构 + 餐次列表一张卡（罗盘与全天菜单合并，消除双环与菜单双写） -->
       <ProgramNutritionCompass
         v-if="focusDay && dashboardMenu.length"
         :meals="dashboardMenu"
         :target-protein="Math.round(blob.params.targets.protein)"
         :training-day="!focusDay.rest"
+        :title="focusIsToday ? '今日菜单' : fmtDateCn(focusDay.date)"
+        :subtitle="!focusIsToday && focusDay.date > todayStr() ? '该日尚未到来 · 提前查看当日安排' : ''"
+        :ai-generated="!!dayMenu"
+        :ai-loading="dayMenuLoading"
+        :ai-error="dayMenuError"
+        :loggable="focusIsToday"
+        @regenerate="genDayMenu"
+        @log="openSmartAdd(null)"
       />
 
-      <section v-if="focusDay" class="card">
-        <header class="row between">
-          <h2>全天菜单</h2>
-          <span class="pill" :class="{ rest: focusDay.rest }">{{ focusDay.rest ? '休息日' : '训练日' }}</span>
-        </header>
-        <p v-if="!focusIsToday && focusDay.date > todayStr()" class="future-note t-3">该日尚未到来 · 提前查看当日安排</p>
-        <div class="today-train">
-          <span class="t-2">{{ focusDay.courseName ?? '无训练安排 · 散步拉伸即可' }}</span>
-          <button
-            v-if="focusDay.courseId"
-            class="linkbtn"
-            @click="router.push(`/sports/plans/${focusDay.courseId}`)"
-          >查看课程<ChevronRight :size="13" /></button>
-        </div>
-        <div v-if="dayMenuLoading" class="center menu-loading">
-          <span class="t-2">正在按你的目标与偏好生成本日菜单…</span>
-        </div>
-        <template v-else-if="dayMenu">
-          <p class="ai-tag t-3"><Sparkles :size="12" style="vertical-align:-1px;margin-right:3px" />AI 菜单 · 数值来自食物库实算</p>
-          <ul class="menu">
-            <li v-for="m in dayMenu" :key="m.slot">
-              <em>{{ m.slot }}</em>
-              <div>
-                <p>{{ m.name }}<b class="num"> 约{{ m.kcal }}大卡 · 蛋白{{ m.protein }}g</b></p>
-                <p class="items t-3">{{ m.items.map((it) => `${it.label} ${it.grams}g`).join('、') }}</p>
-              </div>
-            </li>
-          </ul>
-          <div class="row menu-acts">
-            <button class="linkbtn" @click="genDayMenu"><RefreshCw :size="13" style="margin-right:3px" />换一批</button>
-            <span v-if="dayMenuError" class="ai-err">{{ dayMenuError }}</span>
-          </div>
-        </template>
-        <template v-else>
-          <p class="t-3 menu-fallback">模板菜单 · 配置模型后可按偏好生成</p>
-          <ul class="menu">
-            <li v-for="m in focusDay.meals" :key="m.slot">
-              <em>{{ m.slot }}</em>
-              <div>
-                <p>{{ m.name }}<b class="num"> 约{{ m.kcal }}大卡</b></p>
-                <p class="items t-3">{{ m.items.join('、') }}</p>
-              </div>
-            </li>
-          </ul>
-          <div class="row menu-acts">
-            <button class="linkbtn" @click="genDayMenu"><Sparkles :size="13" style="margin-right:3px" />AI 生成这一天的菜单</button>
-            <span v-if="dayMenuError" class="ai-err">{{ dayMenuError }}</span>
-          </div>
-        </template>
-      </section>
-
-      <!-- 全周期地图：已经走过的日子同样在场，长周期需要「已坚持」的实感 -->
+      <!-- 全周期地图：已经走过的日子同样在场，长周期需要「已坚持」的实感；
+           点格子即把上方驾驶舱 / 今日菜单切到那一天 -->
       <ProgramCycleMap
         :cells="dayCells"
         :stats="cycle"
@@ -765,29 +769,32 @@ function adjustmentsOf(r: ProgramRecord): number {
       />
 
       <section class="card acts">
-        <button class="act row center" @click="evidenceOpen = true">
-          <Info :size="16" />为什么是这样<span class="t-3">3 条研究曲线</span>
+        <button v-if="isEnded" class="primary" @click="openWrapup(store.active!)">
+          生成本期成绩单<span class="t-3">方案期已结束 · 对照与下一期建议</span>
         </button>
-        <button class="act row center" @click="startReview">
-          <Wand2 :size="16" />AI 本周复盘<span class="t-3">看数据调下一周</span>
-        </button>
-        <button v-if="!isEnded" class="act row center" @click="openShopping">
-          <ShoppingBag :size="16" />本周采购清单<span class="t-3">未来 7 天食材汇总</span>
-        </button>
-        <button class="act row center" @click="openAdjust">
-          <Sparkles :size="16" />手动调参<span class="t-3">缺口 / 蛋白 / 频率</span>
-        </button>
-        <button v-if="isEnded" class="act row center" @click="openWrapup(store.active!)">
-          <Wand2 :size="16" />生成本期成绩单<span class="t-3">方案期已结束 · 对照与下一期建议</span>
-        </button>
-        <button v-if="!isEnded" class="act row center" @click="archiveCurrent">
-          <Archive :size="16" />归档方案<span class="t-3">保留记录停止日程</span>
-        </button>
-        <button class="act danger row center" @click="deleteCurrent">
-          <Trash2 :size="16" />
-          {{ deleteArmed ? '再点一次确认删除（清除未来日程）' : '删除方案' }}
-          <span class="t-3">已完成记录保留</span>
-        </button>
+        <div class="acts-grid">
+          <button class="act" @click="evidenceOpen = true">
+            <Info :size="17" />为什么是这样<span>3 条研究曲线</span>
+          </button>
+          <button class="act" @click="startReview">
+            <Wand2 :size="17" />AI 本周复盘<span>看数据调下一周</span>
+          </button>
+          <button v-if="!isEnded" class="act" @click="openShopping">
+            <ShoppingBag :size="17" />本周采购清单<span>未来 7 天食材汇总</span>
+          </button>
+          <button class="act" @click="openAdjust">
+            <Sparkles :size="17" />手动调参<span>缺口 / 蛋白 / 频率</span>
+          </button>
+        </div>
+        <div class="acts-minor">
+          <button v-if="!isEnded" class="cap" @click="archiveCurrent">
+            <Archive :size="14" />归档方案
+          </button>
+          <button class="cap danger" :class="{ armed: deleteArmed }" @click="deleteCurrent">
+            <Trash2 :size="14" />
+            {{ deleteArmed ? '再点一次确认删除' : '删除方案' }}
+          </button>
+        </div>
       </section>
 
       <!-- 参数演进：调整历史画成双泳道图，点节点看 diff -->
@@ -875,6 +882,12 @@ function adjustmentsOf(r: ProgramRecord): number {
           </button>
         </template>
       </SheetModal>
+
+      <!-- 智能添加（food 模式）：文字/图片描述 → 食物卡确认写入；餐次可由下一餐预选 -->
+      <SmartAddSheet :open="smartAddOpen" mode="food" :date="todayStr()" :default-meal="smartAddMeal" @close="smartAddOpen = false" />
+
+      <!-- 页头「⋯」：低频方案操作的收纳入口（胶囊快捷钮的双通道备份） -->
+      <ActionSheet :open="moreOpen" title="方案操作" :actions="moreActions" @select="onMore" @close="moreOpen = false" />
 
     </template>
 
@@ -973,7 +986,6 @@ function adjustmentsOf(r: ProgramRecord): number {
 }
 
 .stats {
-  margin-top: 10px;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 8px;
@@ -1002,40 +1014,169 @@ function adjustmentsOf(r: ProgramRecord): number {
   margin-left: 1px;
 }
 
-/* 生效卡 */
-.pill {
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
+/* 状态条：一行概要 + 可展开参数详情（example 对齐） */
+.head-strip {
+  flex: none;
+}
+
+.strip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-radius: var(--radius-m);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-subhead);
   font-weight: 700;
+  text-align: left;
+}
+
+.strip .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pill.rest {
-  background: var(--surface-2);
-  color: var(--text-3);
-}
-
-.range {
-  margin-top: 8px;
+.strip .end {
+  flex: none;
   font-size: var(--fs-caption);
 }
 
-.today-train {
-  margin-top: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: var(--fs-callout);
-  font-weight: 600;
+.strip .chev {
+  flex: none;
+  transition: transform var(--dur-base) var(--ease-sheet);
 }
 
-.menu {
-  margin-top: 10px;
+.strip .chev.open {
+  transform: rotate(90deg);
+}
+
+.strip-detail {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition:
+    max-height var(--dur-sheet) var(--ease-sheet),
+    opacity var(--dur-base) var(--ease-standard);
+}
+
+.strip-detail.open {
+  max-height: 160px;
+  opacity: 1;
+}
+
+.strip-detail .stats {
+  margin: 10px 0 0;
+  padding: 11px 14px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.strip-meta {
+  margin: 7px 2px 0;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .strip-detail,
+  .strip .chev {
+    transition: none;
+  }
+}
+
+/* 操作区：高频操作 2 列网格，归档 / 删除降级为文字链 */
+.acts {
   display: grid;
+  gap: 12px;
+}
+
+.acts-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+}
+
+.act {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 8px 12px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  text-align: center;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.act:active {
+  transform: scale(0.97);
+}
+
+.act span {
+  font-weight: 400;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.acts-minor {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* 归档 / 删除：胶囊按钮——低频但有引导性，危险项 armed 态红底强化 */
+.cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+
+.cap:active {
+  transform: scale(0.96);
+}
+
+.cap.danger {
+  color: var(--danger);
+}
+
+.cap.danger.armed {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.acts .primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.acts .primary .t-3 {
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  opacity: 0.8;
 }
 
 /* 采购清单弹层 */
@@ -1135,98 +1276,6 @@ function adjustmentsOf(r: ProgramRecord): number {
   margin-top: 14px;
 }
 
-.menu li {
-  display: grid;
-  grid-template-columns: 62px 1fr;
-  gap: 10px;
-  padding: 9px 0;
-  border-top: 0.5px solid var(--line);
-}
-
-.menu li:first-child {
-  border-top: none;
-}
-
-.menu em {
-  font-style: normal;
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  color: var(--text-2);
-  padding-top: 1px;
-}
-
-.menu p {
-  font-size: var(--fs-subhead);
-}
-
-.menu p b {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  margin-left: 4px;
-  font-weight: 400;
-}
-
-.items {
-  margin-top: 2px;
-  line-height: 1.5;
-}
-
-.menu-loading {
-  padding: 16px 0 6px;
-}
-
-.menu-fallback {
-  margin-top: 10px;
-  font-size: var(--fs-caption);
-}
-
-.menu-acts {
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.ai-tag {
-  margin-top: 10px;
-  font-size: var(--fs-micro);
-}
-
-.ai-err {
-  font-size: var(--fs-caption);
-  color: var(--danger);
-}
-
-.future-note {
-  margin-top: 6px;
-}
-
-/* 操作区 */
-.acts {
-  display: grid;
-  gap: 8px;
-}
-
-.act {
-  width: 100%;
-  gap: 8px;
-  padding: 11px 12px;
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  font-size: var(--fs-subhead);
-  font-weight: 600;
-  text-align: left;
-}
-
-.act span {
-  margin-left: auto;
-  font-weight: 400;
-  font-size: var(--fs-caption);
-}
-
-.act.danger {
-  color: var(--danger);
-}
-
-/* 历史 */
 /* 历史方案列表 */
 .hist-list li + li {
   border-top: 0.5px solid var(--line);

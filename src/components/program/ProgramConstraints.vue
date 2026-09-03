@@ -421,28 +421,29 @@ async function applyAndGenerate(): Promise<void> {
   font-weight: 600;
 }
 
-/* 即时结果预览：方案输入参数的直接反馈 */
+/* 即时结果预览：方案输入参数的直接反馈（上下堆叠，长条件串不与标签挤一行） */
 .preview {
   margin-top: 14px;
   padding: 11px 13px;
   border-radius: var(--radius-m);
   background: var(--accent-soft);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  display: block;
 }
 
 .pv-label {
-  font-size: var(--fs-caption);
+  display: block;
+  margin-bottom: 3px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   color: var(--accent);
 }
 
 .pv-value {
+  display: block;
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--accent);
+  line-height: 1.5;
 }
 
 .warn-note {

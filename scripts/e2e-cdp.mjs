@@ -356,15 +356,29 @@ async function main() {
     await waitFor(`!!document.querySelector('.cockpit')`, 15000, 'active 态驾驶舱渲染')
 
     /* ---------- C. 生效态（驾驶舱/罗盘/菜单/地图/航道） ---------- */
-    const headText = await evalJS(`document.querySelector('.head-card').textContent`)
-    ok('C1 头卡显示 减脂·4餐5练·v1（频率按用户设置）', /减脂/.test(headText) && /4餐5练/.test(headText) && headText.includes('v1'), headText.slice(0, 70))
+    /* C0 页头 ⋯ → ActionSheet（成绩单/归档/删除收纳） */
+    await evalJS(`document.querySelector('.hdr-btn')?.click()`)
+    await waitFor(`[...document.querySelectorAll('.card-wrap .opt')].some(o => o.textContent.includes('删除方案'))`, 6000, '更多菜单')
+    ok('C0 ⋯ 菜单含 归档/删除', await evalJS(
+      `(() => { const t = document.body.textContent; const okMenu = t.includes('归档方案') && t.includes('删除方案'); document.querySelector('.opt.cancel')?.click(); return okMenu })()`,
+    ))
+
+    const headText = await evalJS(`document.querySelector('.head-strip').textContent`)
+    ok('C1 状态条显示 减脂·v1·第1周，参数详情含 4餐5练', /减脂/.test(headText) && /4餐5练/.test(headText) && headText.includes('v1') && /第 1 周/.test(headText), headText.slice(0, 70))
+    await evalJS(`document.querySelector('.strip')?.click()`)
+    await sleep(500)
+    ok('C1b 状态条展开参数四格', await evalJS(
+      `!!document.querySelector('.strip-detail.open .stats') && document.querySelectorAll('.strip-detail .stats li').length === 4`,
+    ))
     ok('C2 驾驶舱三环 + 三条执行进度', await evalJS(
       `!!document.querySelector('.cockpit svg') && document.querySelectorAll('.bar-row').length === 3`,
     ))
     ok('C2b 今日训练动作行（含课程名）', await evalJS(
       `!!document.querySelector('.action-title') && document.querySelector('.action-title').textContent.length > 0`,
     ), await evalJS(`document.querySelector('.action-title')?.textContent`))
-    ok('C3 当日禁忌规则展示', await evalJS(`document.querySelectorAll('.rules li').length >= 3`))
+    ok('C3 下一餐并入驾驶舱（餐次+菜名+记一笔）', await evalJS(
+      `!!document.querySelector('.nm-slot') && document.querySelector('.nm-slot').textContent.includes('下一餐') && !!document.querySelector('.nm-name')`,
+    ), await evalJS(`document.querySelector('.nm-slot')?.textContent`))
     ok('C4 未生成回落模板菜单并提示', await evalJS(
       `!!document.querySelector('.menu-fallback') && document.querySelectorAll('.menu li').length >= 3`,
     ))
@@ -374,6 +388,34 @@ async function main() {
     await clickUntil('AI 生成这一天的菜单', `!!document.querySelector('.ai-err') || !!document.querySelector('.ai-tag')`, 10000, 'AI 菜单错误提示')
     ok('C4c 无模型时按天生成给出可读错误', await evalJS(
       `document.body.textContent.includes('未配置 AI 模型')`,
+    ))
+
+    /* C4d 记一笔 → 智能添加（food 模式）→ 手动从食物库选择 → 落库 */
+    const mealsBefore = await evalJS(`(async () => {
+      const { invoke } = await import('/src/services/transport.ts')
+      const d = new Date()
+      const pad = (n) => String(n).padStart(2, '0')
+      const meals = await invoke('list_meals', { date: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) })
+      return meals.length
+    })()`)
+    await evalJS(`document.querySelector('.mini')?.click()`)
+    await waitFor(`[...document.querySelectorAll('.panel')].some(p => p.textContent.includes('记饮食'))`, 6000, '记饮食抽屉')
+    ok('C4d 记一笔打开智能添加（food 模式）', true)
+    await evalJS(`document.querySelector('.panel .manual')?.click()`)
+    await waitFor(`!!document.querySelector('.list .item')`, 6000, '食物库列表')
+    await evalJS(`document.querySelector('.list .item')?.click()`)
+    await sleep(500)
+    await evalJS(`[...document.querySelectorAll('.panel button')].find(b => b.textContent.includes('加入'))?.click()`)
+    await sleep(1200)
+    ok('C4d2 食物库选择写入成功', await evalJS(`(async () => {
+      const { invoke } = await import('/src/services/transport.ts')
+      const d = new Date()
+      const pad = (n) => String(n).padStart(2, '0')
+      const meals = await invoke('list_meals', { date: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) })
+      return meals.length > ${mealsBefore}
+    })()`))
+    ok('C4d3 菜单卡记一笔仅聚焦今天展示（当前聚焦未来日，不应出现）', await evalJS(
+      `![...document.querySelectorAll('.linkbtn')].some(b => b.textContent.includes('＋ 记一笔'))`,
     ))
 
     /* ---------- S. 本周采购清单（无模型 → 全模板菜单聚合路径） ---------- */
@@ -403,11 +445,11 @@ async function main() {
     await evalJS(`document.querySelector('.shop-list')?.closest('.panel')?.querySelector('.close')?.click()`)
     await waitFor(`!document.querySelector('.shop-list')`, 4000, '弹层关闭')
 
-    // 06 营养罗盘
-    ok('C5 营养罗盘（三色环 + 餐次分布行）', await evalJS(
-      `[...document.querySelectorAll('.pod-head b')].some(b => b.textContent.includes('营养结构')) && document.querySelectorAll('.meal-rows li').length >= 3`,
+    // 06 今日菜单（罗盘与全天菜单合并后的单卡；卡题=今日菜单或聚焦日期，故按结构断言）
+    ok('C5 今日菜单卡（供能结构三行 + 餐次列表）', await evalJS(
+      `document.querySelectorAll('.macro-row').length === 3 && document.querySelectorAll('.menu li').length >= 3 && [...document.querySelectorAll('.pill')].some(p => p.textContent === '训练日' || p.textContent === '休息日')`,
     ))
-    ok('C5b 罗盘蛋白判定文案', await evalJS(`[...document.querySelectorAll('.verdict')].some(v => v.textContent.includes('蛋白供能'))`))
+    ok('C5b 供能解读文案', await evalJS(`[...document.querySelectorAll('.verdict')].some(v => v.textContent.includes('蛋白供能'))`))
     ok('C5c 蛋白目标对照刻度', await evalJS(`!!document.querySelector('.ptarget-track')`))
 
     // 05 周期地图
@@ -418,8 +460,8 @@ async function main() {
     ))
     await evalJS(`[...document.querySelectorAll('.pod')].find(p => p.textContent.includes('周期地图')).querySelector('.cell').click()`)
     await sleep(400)
-    ok('C6c 点格子切聚焦日', await evalJS(
-      `[...document.querySelectorAll('.pod')].some(p => p.textContent.includes('第 1 天 ·'))`,
+    ok('C6c 点格子把菜单卡切到该日（标题变日期）', await evalJS(
+      `[...document.querySelectorAll('.pod-head b')].some(b => /\\d+月\\d+日 周./.test(b.textContent))`,
     ))
 
     // 08 体重航道
@@ -478,7 +520,7 @@ async function main() {
     await waitFor(`!!document.querySelector('.records')`, 15000, '参数演进图出现')
     const recText = await evalJS(`document.querySelector('.records').textContent`)
     ok('E1 演进图记录含 v2 与 -400 → -500', recText.includes('v2') && recText.includes('-400') && recText.includes('-500'), recText.slice(0, 90))
-    ok('E2 头卡版本升到 v2', await evalJS(`document.querySelector('.head-card .pill').textContent.includes('v2')`), await evalJS(`document.querySelector('.head-card .pill')?.textContent`))
+    ok('E2 状态条版本升到 v2', await evalJS(`/v2/.test(document.querySelector('.head-strip .grow').textContent)`), await evalJS(`document.querySelector('.head-strip .grow')?.textContent`))
     ok('E3 演进图双泳道 + 图例', await evalJS(
       `document.querySelectorAll('.chart polyline').length >= 2 && !!document.querySelector('.legend')`,
     ))
@@ -582,7 +624,7 @@ async function main() {
     await clickUntil('启用「进取」方案', `[...document.querySelectorAll('button')].some(b => b.textContent.trim() === '确认启用')`, 10000, '进取确认抽屉')
     await clickUntil('确认启用', `!!document.querySelector('.cockpit')`, 20000, '进取激活完成')
     ok('G2 换档激活成功（进取）', await evalJS(
-      `document.querySelector('.head-card').textContent.includes('进取')`,
+      `document.querySelector('.head-strip').textContent.includes('进取')`,
     ))
 
     // 两段式删除

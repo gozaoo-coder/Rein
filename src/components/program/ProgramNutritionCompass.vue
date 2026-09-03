@@ -1,21 +1,37 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Sparkles } from 'lucide-vue-next'
 
 import type { ProgramMeal } from '@/types'
 
 /**
- * 营养结构罗盘：聚焦日的宏量供能占比（三色环）+ 餐次分布 + 蛋白目标对照。
+ * 今日菜单：聚焦日的宏量供能结构（堆叠条 + 三行）+ 完整餐次列表，一张卡。
  *
- * 菜单不再只是一列文字——ProgramMeal.protein/carb/fat 一直都有，这里把它们
- * 画出来，让「这天吃得均不均衡」一眼可判。数值来自模板实算或 AI 菜单实算，
- * 两条路径字段一致。
+ * 原是「营养结构罗盘（三色大环）+ 全天菜单」两张卡：同一份菜单在相邻两卡
+ * 各渲染一遍。合并后供能结构用横向堆叠条替代大环（驾驶舱已有三环，避免
+ * 双环隐喻），餐次列表是唯一事实源；AI 菜单与模板回落共用同一渲染。
  */
 const props = defineProps<{
   meals: ProgramMeal[]
   /** 方案的每日蛋白目标（g），对照刻度用 */
   targetProtein: number
-  /** 训练日 / 休息日（影响结论文案） */
+  /** 训练日 / 休息日（影响结论文案与 pill） */
   trainingDay: boolean
+  /** 卡题：今天显示「今日菜单」，聚焦其他天显示日期 */
+  title: string
+  /** 非今天的附加提示（如「该日尚未到来」） */
+  subtitle: string
+  /** 菜单是否由 AI 生成（决定来源标注与按钮文案） */
+  aiGenerated: boolean
+  aiLoading: boolean
+  aiError: string
+  /** 是否展示「记一笔」入口（仅聚焦今天时展示，写入恒落今天） */
+  loggable: boolean
+}>()
+
+const emit = defineEmits<{
+  regenerate: []
+  log: []
 }>()
 
 const totals = computed(() => {
@@ -41,29 +57,13 @@ const totals = computed(() => {
   }
 })
 
-/* ---------------- 三色环（dasharray 拼接，间隙留给描边） ---------------- */
+/* ---------------- 供能堆叠条（三色，替代大环） ---------------- */
 
-const R = 40
-const CIRC = 2 * Math.PI * R
-
-/** 餐次堆叠条配色（与设计稿一致：绿/橙/青/黄循环） */
-const MEAL_COLORS = ['var(--c-protein)', 'var(--c-carb)', 'var(--c-balance)', 'var(--c-fat)']
-
-const ringSegments = computed(() => {
-  const s = totals.value.share
-  const defs = [
-    { key: 'p', color: 'var(--c-protein)', v: s.p },
-    { key: 'c', color: 'var(--c-carb)', v: s.c },
-    { key: 'f', color: 'var(--c-fat)', v: s.f },
-  ]
-  let acc = 0
-  return defs.map((d) => {
-    const len = (d.v / 100) * CIRC
-    const seg = { ...d, len, offset: -acc }
-    acc += len
-    return seg
-  })
-})
+const macroBars = computed(() => [
+  { key: 'p', label: '蛋白质', color: 'var(--c-protein)', v: totals.value.share.p, g: Math.round(totals.value.protein) },
+  { key: 'c', label: '碳水', color: 'var(--c-carb)', v: totals.value.share.c, g: Math.round(totals.value.carb) },
+  { key: 'f', label: '脂肪', color: 'var(--c-fat)', v: totals.value.share.f, g: Math.round(totals.value.fat) },
+])
 
 /* ---------------- 蛋白目标对照刻度 ---------------- */
 
@@ -101,43 +101,31 @@ const verdict = computed(() => {
 <template>
   <section class="pod">
     <header class="pod-head">
-      <b>营养结构</b>
-      <span class="pill num">{{ Math.round(totals.kcal) }} 大卡</span>
+      <b>{{ title }}</b>
+      <span class="pill" :class="{ ghost: !trainingDay }">{{ trainingDay ? '训练日' : '休息日' }}</span>
     </header>
+    <p v-if="subtitle" class="sub-note">{{ subtitle }}</p>
 
-    <div class="compass">
-      <svg width="104" height="104" viewBox="0 0 104 104" role="img" aria-label="三大营养素供能占比">
-        <circle cx="52" cy="52" :r="R" fill="none" stroke="var(--surface-2)" stroke-width="15" />
-        <circle
-          v-for="seg in ringSegments"
-          :key="seg.key"
-          cx="52"
-          cy="52"
-          :r="R"
-          fill="none"
-          :stroke="seg.color"
-          stroke-width="15"
-          :stroke-dasharray="`${seg.len} ${CIRC - seg.len}`"
-          :stroke-dashoffset="seg.offset"
-          transform="rotate(-90 52 52)"
-        />
-        <text x="52" y="50" text-anchor="middle" font-size="19" font-weight="600" fill="var(--text-1)" class="num">
-          {{ Math.round(totals.kcal) }}
-        </text>
-        <text x="52" y="66" text-anchor="middle" font-size="10" fill="var(--text-3)">大卡</text>
-      </svg>
-
-      <div class="macros">
-        <div v-for="seg in ringSegments" :key="`l${seg.key}`" class="macro-row">
-          <span class="macro-name">
-            <i class="dot" :style="{ background: seg.color }" />
-            {{ seg.key === 'p' ? '蛋白质' : seg.key === 'c' ? '碳水' : '脂肪' }}
-          </span>
-          <span class="num macro-val">
-            <b>{{ seg.key === 'p' ? totals.protein : seg.key === 'c' ? totals.carb : totals.fat }}g</b>
-            · {{ seg.v }}%
-          </span>
-        </div>
+    <!-- 供能结构：横向堆叠条 + 三行宏量 -->
+    <div class="stack-head">
+      <span>供能结构</span>
+      <span class="num">{{ Math.round(totals.kcal) }} 大卡</span>
+    </div>
+    <div class="stack" role="img" aria-label="三大营养素供能占比">
+      <i
+        v-for="m in macroBars"
+        :key="m.key"
+        :style="{ flex: Math.max(m.v, 1), background: m.color }"
+        :title="`${m.label} ${m.v}%`"
+      />
+    </div>
+    <div class="macros">
+      <div v-for="m in macroBars" :key="`l${m.key}`" class="macro-row">
+        <span class="macro-name">
+          <i class="dot" :style="{ background: m.color }" />
+          {{ m.label }}
+        </span>
+        <span class="num macro-val"><b>{{ m.g }}g</b> · {{ m.v }}%</span>
       </div>
     </div>
 
@@ -153,26 +141,34 @@ const verdict = computed(() => {
       </div>
     </div>
 
+    <p v-if="verdict" class="verdict">{{ verdict }}</p>
+
     <div class="split" />
 
-    <!-- 按餐次分布 -->
-    <p class="sub-label">按餐次分布 · {{ meals.length }} 餐</p>
-    <div v-if="meals.length" class="stack">
-      <i
-        v-for="(m, i) in meals"
-        :key="m.slot"
-        :style="{ flex: Math.max(m.kcal, 1), background: MEAL_COLORS[i % MEAL_COLORS.length] }"
-        :title="`${m.slot} ${Math.round(m.kcal)} 大卡`"
-      />
-    </div>
-    <ul class="meal-rows">
-      <li v-for="m in meals" :key="`r${m.slot}`">
-        <span class="lbl">{{ m.slot }} · {{ m.name }}</span>
-        <span class="val num"><b>{{ Math.round(m.kcal) }}</b> 大卡 · 蛋白 {{ Math.round(m.protein) }}g</span>
+    <!-- 餐次列表：AI 菜单与模板回落共用一行式渲染 -->
+    <p v-if="!aiGenerated" class="menu-fallback">模板菜单 · 配置模型后可按偏好生成</p>
+    <p v-else class="ai-tag"><Sparkles :size="12" style="vertical-align:-1px;margin-right:3px" />AI 菜单 · 数值来自食物库实算</p>
+    <ul class="menu">
+      <li v-for="m in meals" :key="m.slot">
+        <em>{{ m.slot }}</em>
+        <div>
+          <p>{{ m.name }}<b class="num"> 约{{ Math.round(m.kcal) }}大卡 · 蛋白{{ Math.round(m.protein) }}g</b></p>
+          <p class="items">{{ m.items.join('、') }}</p>
+        </div>
       </li>
     </ul>
 
-    <p v-if="verdict" class="verdict">{{ verdict }}</p>
+    <div class="menu-acts">
+      <button v-if="loggable" class="linkbtn" @click="emit('log')">＋ 记一笔</button>
+      <button class="linkbtn" :disabled="aiLoading" @click="emit('regenerate')">
+        <template v-if="aiLoading">正在按你的目标与偏好生成…</template>
+        <template v-else>
+          <Sparkles v-if="!aiGenerated" :size="13" style="margin-right:3px" />
+          {{ aiGenerated ? '换一批' : 'AI 生成这一天的菜单' }}
+        </template>
+      </button>
+      <span v-if="aiError" class="ai-err">{{ aiError }}</span>
+    </div>
   </section>
 </template>
 
@@ -203,27 +199,58 @@ const verdict = computed(() => {
   color: var(--accent);
   font-size: var(--fs-micro);
   font-weight: 700;
+  white-space: nowrap;
 }
 
-.compass {
+.pill.ghost {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.sub-note {
+  margin-top: 5px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* 供能堆叠条 */
+.stack-head {
   margin-top: 14px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.stack {
+  display: flex;
+  height: 10px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  gap: 2px;
+}
+
+.stack i {
+  display: block;
+  height: 100%;
+  opacity: 0.9;
+  min-width: 4px;
 }
 
 .macros {
-  flex: 1;
-  min-width: 0;
+  margin-top: 10px;
   display: grid;
-  gap: 9px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
 }
 
 .macro-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   font-size: var(--fs-caption);
   color: var(--text-2);
 }
@@ -231,12 +258,12 @@ const verdict = computed(() => {
 .macro-name {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .dot {
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 2px;
 }
 
@@ -247,7 +274,7 @@ const verdict = computed(() => {
 
 /* 蛋白对照刻度 */
 .ptarget {
-  margin-top: 14px;
+  margin-top: 13px;
 }
 
 .ptarget-head {
@@ -287,76 +314,98 @@ const verdict = computed(() => {
   background: var(--warn);
 }
 
-.split {
-  height: 0.5px;
-  margin: 14px 0 11px;
-  background: var(--line);
-}
-
-/* 餐次分布 */
-.sub-label {
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-  margin-bottom: 7px;
-}
-
-.stack {
-  display: flex;
-  height: 26px;
-  border-radius: 7px;
-  overflow: hidden;
-  gap: 2px;
-}
-
-.stack i {
-  display: block;
-  height: 100%;
-  opacity: 0.85;
-}
-
-.meal-rows {
-  margin-top: 4px;
-}
-
-.meal-rows li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 9px 0;
-  border-top: 0.5px solid var(--line);
-  font-size: var(--fs-caption);
-}
-
-.meal-rows li:first-child {
-  border-top: none;
-}
-
-.lbl {
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.val {
-  color: var(--text-2);
-  white-space: nowrap;
-}
-
-.val b {
-  color: var(--text-1);
-  font-weight: 600;
-}
-
 .verdict {
   margin-top: 11px;
-  padding: 11px 13px;
+  padding: 10px 13px;
   border-radius: var(--radius-m);
   background: var(--surface-2);
   font-size: var(--fs-caption);
   color: var(--text-2);
   line-height: 1.55;
+}
+
+.split {
+  height: 0.5px;
+  margin: 14px 0 4px;
+  background: var(--line);
+}
+
+/* 来源标注 */
+.menu-fallback {
+  margin-top: 10px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.ai-tag {
+  margin-top: 10px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* 餐次列表 */
+.menu {
+  margin-top: 4px;
+  display: grid;
+}
+
+.menu li {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 0.5px solid var(--line);
+}
+
+.menu li:first-child {
+  border-top: none;
+}
+
+.menu em {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-2);
+  padding-top: 1px;
+}
+
+.menu p {
+  font-size: var(--fs-subhead);
+}
+
+.menu p b {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  margin-left: 4px;
+  font-weight: 400;
+}
+
+.items {
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.menu-acts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.linkbtn {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.linkbtn:disabled {
+  opacity: 0.55;
+}
+
+.ai-err {
+  font-size: var(--fs-caption);
+  color: var(--danger);
 }
 </style>
