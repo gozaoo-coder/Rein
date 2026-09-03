@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>健康方案 · 信息架构交互稿（首屏 / 入口 / 组件选型）</title>
+<style>
+/* ============================================================
+   Rein 健康方案 · IA 交互稿
+   左：可交互手机 mock（打卡 / 抽屉 / 菜单真实可点）
+   右：三条决策标注（首屏判定 / 入口地图 / 组件选型准则）
+   视觉令牌与 app 同源（src/styles/tokens.css）
+   ============================================================ */
+:root {
+  color-scheme: light dark;
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #f2f2f4;
+  --text-1: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #a1a1a6;
+  --line: rgba(0, 0, 0, 0.07);
+  --line-strong: rgba(0, 0, 0, 0.12);
+  --accent: #007aff;
+  --accent-soft: rgba(0, 122, 255, 0.12);
+  --on-accent: #ffffff;
+  --ok: #34c759;
+  --ok-soft: rgba(52, 199, 89, 0.16);
+  --ok-strong: #248a3d;
+  --warn: #ff9500;
+  --danger: #ff3b30;
+  --danger-soft: rgba(255, 59, 48, 0.12);
+  --c-intake: #fa114f;
+  --c-exercise: #92e82a;
+  --c-exercise-deep: #5ba800;
+  --c-exercise-soft: rgba(146, 232, 42, 0.2);
+  --c-balance: #1eeaef;
+  --c-protein: #34c759;
+  --c-carb: #ff9f0a;
+  --c-fat: #ffcc00;
+  --scrim: rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 1px 2px rgba(0,0,0,0.02), 0 12px 32px rgba(0,0,0,0.05), 0 40px 80px rgba(0,0,0,0.04);
+  --radius-s: 10px; --radius-m: 14px; --radius-l: 22px; --radius-full: 999px;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-fast: 150ms; --dur-base: 250ms; --dur-sheet: 420ms;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000; --surface: #1c1c1e; --surface-2: #2c2c2e;
+    --text-1: #f5f5f7; --text-2: rgba(235,235,245,0.6); --text-3: rgba(235,235,245,0.33);
+    --line: rgba(255,255,255,0.08); --line-strong: rgba(255,255,255,0.16);
+    --accent: #0a84ff; --accent-soft: rgba(10,132,255,0.18);
+    --ok-strong: #30d158;
+    --shadow-card: none;
+    --c-intake: #ff375f; --c-balance: #40e8ec; --c-exercise: #a4f04b;
+    --c-exercise-deep: #a4f04b; --c-exercise-soft: rgba(164,240,75,0.22); --c-fat: #ffd60a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #000000; --surface: #1c1c1e; --surface-2: #2c2c2e;
+  --text-1: #f5f5f7; --text-2: rgba(235,235,245,0.6); --text-3: rgba(235,235,245,0.33);
+  --line: rgba(255,255,255,0.08); --line-strong: rgba(255,255,255,0.16);
+  --accent: #0a84ff; --accent-soft: rgba(10,132,255,0.18);
+  --ok-strong: #30d158;
+  --shadow-card: none;
+  --c-intake: #ff375f; --c-balance: #40e8ec; --c-exercise: #a4f04b;
+  --c-exercise-deep: #a4f04b; --c-exercise-soft: rgba(164,240,75,0.22); --c-fat: #ffd60a;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text-1); font-family: var(--font);
+  font-size: 14px; line-height: 1.6;
+  transition: background var(--dur-base) var(--ease-standard);
+}
+button { font-family: inherit; border: none; background: none; color: inherit; cursor: pointer; }
+
+/* ---------- 文档头部 ---------- */
+.doc-head {
+  max-width: 1180px; margin: 0 auto; padding: 44px 24px 8px;
+}
+.doc-head .kicker {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+  color: var(--accent); text-transform: uppercase;
+}
+.doc-head h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin: 6px 0 10px; }
+.doc-head .lede { max-width: 720px; color: var(--text-2); font-size: 15px; }
+.doc-head .lede b { color: var(--text-1); }
+.theme-btn {
+  position: fixed; top: 16px; right: 16px; z-index: 50;
+  padding: 6px 13px; border-radius: var(--radius-full);
+  background: var(--surface); color: var(--text-2);
+  font-size: 12px; font-weight: 600;
+  box-shadow: 0 0 0 0.5px var(--line-strong);
+}
+
+/* ---------- 双栏布局 ---------- */
+.layout {
+  max-width: 1180px; margin: 0 auto; padding: 20px 24px 80px;
+  display: grid; grid-template-columns: 448px 1fr; gap: 48px; align-items: start;
+}
+@media (max-width: 980px) { .layout { grid-template-columns: 1fr; justify-items: center; } .doc-col { max-width: 560px; } }
+
+/* ============================================================
+   左栏 · 手机 mock
+   ============================================================ */
+.mock-col { position: sticky; top: 24px; }
+@media (max-width: 980px) { .mock-col { position: static; } }
+.phone {
+  width: 430px; max-width: 100%; height: 880px;
+  border-radius: 44px; padding: 10px;
+  background: var(--surface);
+  box-shadow: 0 0 0 0.5px var(--line-strong), 0 30px 80px rgba(0,0,0,0.25);
+  position: relative; overflow: hidden;
+}
+.screen {
+  height: 100%; border-radius: 35px; overflow: hidden;
+  background: var(--bg); overflow-y: auto; scrollbar-width: none;
+  position: relative;
+}
+.screen::-webkit-scrollbar { display: none; }
+
+.p-pad { padding: 0 16px; }
+/* 页头 */
+.pg-head { padding: 18px 16px 12px; display: flex; align-items: center; gap: 10px; }
+.pg-head .back {
+  width: 30px; height: 30px; border-radius: var(--radius-full);
+  background: var(--surface-2); display: grid; place-items: center; color: var(--text-2);
+}
+.pg-head h2 { font-size: 19px; font-weight: 800; letter-spacing: -0.3px; }
+.pg-head .sub { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+
+/* 卡片基座 */
+.card {
+  background: var(--surface); border-radius: var(--radius-l);
+  padding: 15px 16px; margin-bottom: 12px;
+}
+
+/* ① 状态条：一行概要，可展开 */
+.status-strip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px; border-radius: var(--radius-m);
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  user-select: none; transition: border-radius var(--dur-fast) var(--ease-standard);
+}
+.status-strip .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-strip .chev { transition: transform var(--dur-base) var(--ease-sheet); flex: none; font-size: 11px; opacity: 0.8; }
+.status-strip.open .chev { transform: rotate(90deg); }
+.strip-detail {
+  overflow: hidden; max-height: 0; opacity: 0;
+  transition: max-height var(--dur-sheet) var(--ease-sheet), opacity var(--dur-base) var(--ease-standard);
+}
+.strip-detail.open { max-height: 120px; opacity: 1; }
+.strip-detail .inner {
+  margin-top: 8px; padding: 11px 14px; border-radius: var(--radius-m);
+  background: var(--surface-2); display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+}
+.strip-detail em { display: block; font-style: normal; font-size: 10px; color: var(--text-3); }
+.strip-detail b { font-size: 13px; font-weight: 700; }
+.strip-detail i { font-style: normal; font-size: 10px; color: var(--text-3); font-weight: 400; }
+
+/* 卡头 */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card-head h3 { font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
+.card-head .meta { font-size: 12px; color: var(--text-3); font-weight: 600; }
+.pill {
+  padding: 3px 10px; border-radius: var(--radius-full);
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.pill.ghost { background: var(--surface-2); color: var(--text-3); }
+
+/* ② 驾驶舱：三环 + 三进度 */
+.cockpit { margin-top: 13px; display: flex; align-items: center; gap: 16px; }
+.rings { flex: none; position: relative; width: 86px; height: 86px; }
+.rings svg { display: block; }
+.rings .center {
+  position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+}
+.rings .center b { font-size: 17px; font-weight: 800; line-height: 1.1; }
+.rings .center span { font-size: 9px; color: var(--text-3); }
+.bars { flex: 1; min-width: 0; display: grid; gap: 10px; }
+.bar-top { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.bar-top .num { font-variant-numeric: tabular-nums; }
+.bar-track { height: 7px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
+.bar-fill { display: block; width: 100%; height: 100%; border-radius: var(--radius-full); transform-origin: left center; transition: transform var(--dur-base) var(--ease-standard); }
+
+.split { height: 0.5px; background: var(--line); margin: 13px 0; }
+
+/* ③ 训练动作行：首屏主确认 */
+.action { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.action .t { font-size: 15px; font-weight: 700; }
+.action .s { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.go {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  padding: 8px 16px; border-radius: var(--radius-full);
+  background: var(--c-exercise-soft); color: var(--c-exercise-deep);
+  font-size: 13px; font-weight: 800;
+  transition: transform var(--dur-fast) var(--ease-standard), background var(--dur-base) var(--ease-standard), color var(--dur-base) var(--ease-standard);
+}
+.go:active { transform: scale(0.95); }
+.go.done { background: var(--ok-soft); color: var(--ok-strong); }
+.done-tag { font-size: 12px; font-weight: 700; color: var(--ok-strong); }
+
+/* ④ 下一餐行 */
+.next-meal { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.nm-slot { font-size: 12px; font-weight: 700; color: var(--text-2); }
+.nm-name { font-size: 15px; font-weight: 700; margin-top: 3px; }
+.nm-acts { flex: none; display: flex; gap: 7px; }
+.mini {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 7px 13px; border-radius: var(--radius-full);
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 12px; font-weight: 700;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.mini:active { transform: scale(0.95); }
+
+.cap {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 8px 16px; border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--text-2); font-size: 12px; font-weight: 600;
+  transition: background var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
+}
+.cap:active { transform: scale(0.96); }
+.cap.danger { color: var(--danger); }
+.cap.danger.armed { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); font-weight: 700; }
+
+/* 更多按钮（⋯） */
+.more-btn {
+  width: 28px; height: 28px; border-radius: var(--radius-full);
+  background: var(--surface-2); color: var(--text-3);
+  display: grid; place-items: center; font-size: 15px; letter-spacing: 1px; font-weight: 800;
+}
+
+/* 卡底入口行（⑤ 调整/说明入口） */
+.card-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 13px; }
+.act {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 13px 8px 11px; border-radius: var(--radius-m);
+  background: var(--surface-2); font-size: 14px; font-weight: 700; text-align: center;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.act:active { transform: scale(0.97); }
+.act span { font-size: 11px; font-weight: 400; color: var(--text-3); }
+.acts-minor { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 11px; font-size: 12px; color: var(--text-3); }
+.acts-minor .minor { color: var(--text-3); font-size: 12px; font-weight: 500; }
+.acts-minor .minor.danger { color: var(--danger); }
+
+/* 今日菜单卡（节选） */
+.stack-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); margin: 13px 0 6px; }
+.stack { display: flex; height: 10px; border-radius: var(--radius-full); overflow: hidden; gap: 2px; }
+.stack i { display: block; height: 100%; opacity: 0.9; }
+.macros { display: grid; grid-template-columns: repeat(3, auto); justify-content: space-between; gap: 8px; margin-top: 10px; }
+.macro { font-size: 11px; color: var(--text-2); display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.macro .dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.macro b { color: var(--text-1); font-weight: 600; }
+.verdict {
+  margin-top: 11px; padding: 10px 13px; border-radius: var(--radius-m);
+  background: var(--surface-2); font-size: 12px; color: var(--text-2); line-height: 1.55;
+}
+.menu-fade { position: relative; }
+.menu-fade::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 56px;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
+}
+.menu-row { display: grid; grid-template-columns: 56px 1fr; gap: 10px; padding: 9px 0; border-top: 0.5px solid var(--line); }
+.menu-row em { font-style: normal; font-size: 12px; font-weight: 700; color: var(--text-2); padding-top: 1px; }
+.menu-row .t { font-size: 14px; font-weight: 600; }
+.menu-row .t b { font-size: 12px; color: var(--text-3); font-weight: 400; margin-left: 4px; }
+.menu-row .d { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+
+/* 下滑提示 */
+.fold-hint {
+  text-align: center; padding: 4px 0 28px; font-size: 12px; color: var(--text-3);
+}
+.fold-hint .arr { display: block; font-size: 14px; margin-top: 2px; animation: bob 1.8s var(--ease-standard) infinite; }
+@keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+
+/* 标注热点 */
+.hot {
+  position: absolute; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 800;
+  display: grid; place-items: center; cursor: help; z-index: 5;
+  box-shadow: 0 0 0 2px var(--bg);
+  font-family: var(--font);
+}
+.anno-off .hot { display: none; }
+
+/* ============================================================
+   弹层（作用域限定在 phone 内）
+   ============================================================ */
+.scrim {
+  position: absolute; inset: 0; background: var(--scrim); z-index: 20;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease-standard);
+}
+.scrim.show { opacity: 1; pointer-events: auto; }
+.panel {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 21;
+  background: var(--surface); border-radius: 28px;
+  padding: 18px 18px calc(18px + 12px);
+  transform: translateY(110%); transition: transform var(--dur-sheet) var(--ease-sheet);
+  max-height: 78%; overflow-y: auto; scrollbar-width: none;
+}
+.panel::-webkit-scrollbar { display: none; }
+.panel.show { transform: translateY(0); }
+.panel .grab { width: 36px; height: 5px; border-radius: var(--radius-full); background: var(--line-strong); margin: 0 auto 14px; }
+sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+sheet-head h4 { font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
+sheet-head .close { color: var(--text-3); font-size: 13px; font-weight: 600; }
+
+/* ActionSheet */
+.as-group { background: var(--surface-2); border-radius: var(--radius-m); overflow: hidden; margin-bottom: 9px; }
+.as-item {
+  display: block; width: 100%; padding: 14px 0; text-align: center;
+  font-size: 16px; font-weight: 500; color: var(--text-1);
+  border-top: 0.5px solid var(--line);
+}
+.as-item:first-child { border-top: none; }
+.as-item small { display: block; font-size: 11px; color: var(--text-3); font-weight: 400; margin-top: 1px; }
+.as-item.danger { color: var(--danger); font-weight: 700; }
+.as-cancel { width: 100%; padding: 14px 0; border-radius: var(--radius-m); background: var(--surface-2); font-size: 16px; font-weight: 700; color: var(--accent); }
+
+/* 抽屉 · 手动调参 */
+.stepper { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; }
+.stepper .lbl { font-size: 14px; font-weight: 600; }
+.stepper .lbl small { display: block; font-size: 11px; color: var(--text-3); font-weight: 400; }
+.step-ctl { display: flex; align-items: center; gap: 10px; }
+.step-ctl button {
+  width: 30px; height: 30px; border-radius: 50%; background: var(--surface-2);
+  font-size: 16px; font-weight: 700; color: var(--text-1); display: grid; place-items: center;
+}
+.step-ctl .val { min-width: 58px; text-align: center; font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sumin {
+  width: 100%; margin-top: 6px; padding: 11px 13px; border: none; border-radius: var(--radius-s);
+  background: var(--surface-2); font-size: 14px; color: var(--text-1); font-family: inherit;
+}
+.sumin::placeholder { color: var(--text-3); }
+.primary {
+  width: 100%; margin-top: 14px; padding: 13px 0; border-radius: var(--radius-s);
+  background: var(--accent); color: var(--on-accent); font-size: 15px; font-weight: 800;
+}
+
+/* 扫码抽屉 */
+.manual-row { display: flex; gap: 9px; }
+.code-in {
+  flex: 1; min-width: 0; padding: 11px 13px; border: none; border-radius: var(--radius-s);
+  background: var(--surface-2); font-size: 14px; color: var(--text-1); font-family: inherit;
+}
+.code-in::placeholder { color: var(--text-3); }
+.go-btn {
+  flex: none; padding: 0 16px; border-radius: var(--radius-s);
+  background: var(--accent); color: var(--on-accent); font-size: 14px; font-weight: 700;
+}
+.code-in { width: 100%; resize: none; font-family: inherit; line-height: 1.5; }
+.fitem {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 12px; border-radius: var(--radius-m); background: var(--surface-2);
+  font-size: 13px; margin-bottom: 6px;
+}
+.fitem b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.food-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.food-name { font-size: 17px; font-weight: 800; letter-spacing: -0.3px; }
+.food-ref { flex: none; font-size: 12px; color: var(--text-3); }
+.hint.big { font-size: 15px; color: var(--text-1); font-weight: 700; }
+.panel .note { font-size: 11px; color: var(--text-3); margin-top: 9px; line-height: 1.5; }
+
+/* 抽屉 · 复盘 */
+.cmp-row { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 8px; align-items: center; padding: 7px 0; font-size: 12px; }
+.cmp-row .l { color: var(--text-3); }
+.cmp-row .bar { height: 6px; border-radius: var(--radius-full); background: var(--surface-2); overflow: hidden; }
+.cmp-row .bar i { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-full); }
+.cmp-row .v { font-variant-numeric: tabular-nums; color: var(--text-2); }
+.adv { display: flex; gap: 10px; padding: 12px 0; border-top: 0.5px solid var(--line); align-items: flex-start; }
+.adv .sw { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line-strong); margin-top: 2px; }
+.adv.on .sw { background: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--surface); }
+.adv .t { font-size: 14px; font-weight: 600; }
+.adv .d { font-size: 12px; color: var(--text-3); }
+
+/* 抽屉 · 科学依据 */
+.tabbar { display: flex; gap: 4px; background: var(--surface-2); border-radius: var(--radius-s); padding: 3px; margin-bottom: 12px; }
+.tabbar button { flex: 1; padding: 7px 0; border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.tabbar button.on { background: var(--surface); color: var(--text-1); box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+.chart-ph {
+  height: 120px; border-radius: var(--radius-m); background: var(--surface-2);
+  display: grid; place-items: center; color: var(--text-3); font-size: 12px; margin-bottom: 10px;
+}
+.panel .body-text { font-size: 13px; color: var(--text-2); line-height: 1.65; }
+.panel .body-text b { color: var(--text-1); }
+
+/* Toast */
+.toast {
+  position: absolute; left: 50%; bottom: 92px; transform: translateX(-50%) translateY(8px);
+  background: var(--surface); color: var(--text-1); font-size: 13px; font-weight: 600;
+  padding: 9px 16px; border-radius: var(--radius-full); z-index: 30;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-standard);
+  white-space: nowrap;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============================================================
+   右栏 · 决策标注
+   ============================================================ */
+.doc-col article { margin-bottom: 44px; }
+.doc-col h2 {
+  font-size: 20px; font-weight: 800; letter-spacing: -0.4px;
+  display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+}
+.doc-col h2 .no {
+  flex: none; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 13px; font-weight: 800;
+  display: grid; place-items: center;
+}
+.doc-col .why { color: var(--text-2); font-size: 13px; margin-bottom: 14px; max-width: 620px; }
+.doc-col .why b { color: var(--text-1); }
+
+table.ia { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.ia th {
+  text-align: left; font-size: 11px; font-weight: 700; color: var(--text-3);
+  letter-spacing: 0.06em; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line-strong);
+}
+table.ia td { padding: 9px 10px 9px 0; border-bottom: 0.5px solid var(--line); vertical-align: top; }
+table.ia td:first-child { font-weight: 600; white-space: nowrap; }
+table.ia .tag {
+  display: inline-block; padding: 1px 8px; border-radius: var(--radius-full);
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.tag.in { background: var(--ok-soft); color: var(--ok-strong); }
+.tag.out { background: var(--surface-2); color: var(--text-3); }
+.tag.panel { background: var(--accent-soft); color: var(--accent); }
+.tag.page { background: rgba(94, 92, 230, 0.14); color: #5e5ce6; }
+.tag.menu { background: rgba(255, 149, 0, 0.15); color: var(--warn); }
+.tag.inline { background: var(--c-exercise-soft); color: var(--c-exercise-deep); }
+table.ia .rs { color: var(--text-3); font-size: 12px; line-height: 1.55; }
+table.ia .rs b { color: var(--text-2); }
+
+.rule-list { display: grid; gap: 10px; max-width: 660px; }
+.rule {
+  display: grid; grid-template-columns: 108px 1fr; gap: 14px;
+  padding: 14px 16px; border-radius: var(--radius-m); background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.rule .name { font-weight: 800; font-size: 14px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.rule .desc { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.rule .desc b { color: var(--text-1); }
+.rule .desc .eg { display: block; margin-top: 4px; font-size: 12px; color: var(--text-3); }
+
+.foot-note { max-width: 660px; font-size: 12px; color: var(--text-3); line-height: 1.7; padding-top: 8px; border-top: 0.5px solid var(--line); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+
+<button class="theme-btn" id="themeBtn">主题：跟随系统</button>
+
+<header class="doc-head">
+  <p class="kicker">Rein · 健康方案 IA 交互稿</p>
+  <h1>首屏放什么，其余从哪进</h1>
+  <p class="lede">
+    生效态页面的 visitor 目标是 <b>Operate</b>：用户每天打开这页只为回答一个问题——<b>「今天我该做什么，还差什么」</b>。
+    所以首屏只放「今天的行动 + 打卡确认」，一切「调整、设置、说明」都降级为入口；
+    每个入口按 <b>使用频率 × 是否需要输入 × 是否不可逆</b> 三个维度，落进内联 / 抽屉 / 菜单 / 二级页四种容器。
+    左侧 mock 可交互：打卡、展开状态条、打开更多菜单与各抽屉均可点。
+  </p>
+</header>
+
+<main class="layout">
+
+  <!-- ================= 左：手机 mock ================= -->
+  <section class="mock-col">
+    <div class="phone" id="phone">
+      <div class="screen" id="screen">
+
+        <div class="pg-head">
+          <span class="back">‹</span>
+          <div>
+            <h2>健康方案</h2>
+            <p class="sub">程序算基线 · 日程级安排 · AI 只复盘调参</p>
+          </div>
+          <div style="flex:1"></div>
+          <button class="more-btn" id="btnMore" title="更多操作">⋯</button>
+        </div>
+
+        <div class="p-pad">
+
+          <!-- ① 状态条：压缩后的方案概要（原 1/4 屏头卡 → 一行） -->
+          <div class="status-strip" id="strip">
+            <span class="grow">减脂 · 均衡 v2 · 第 2 周 / 4</span>
+            <span>10-04 结束</span>
+            <span class="chev">›</span>
+          </div>
+          <div class="strip-detail" id="stripDetail">
+            <div class="inner">
+              <div><em>每日热量</em><b>2360<i>大卡</i></b></div>
+              <div><em>蛋白</em><b>148<i>g</i></b></div>
+              <div><em>热量偏移</em><b>-400</b></div>
+              <div><em>BMR/TDEE</em><b>1783<i>/2764</i></b></div>
+            </div>
+          </div>
+
+          <!-- ② 驾驶舱：今天还差什么 -->
+          <div class="card" style="margin-top:12px; position:relative">
+            <div class="card-head">
+              <h3>9月10日 周四</h3>
+              <span class="meta">第 8 / 28 天</span>
+            </div>
+            <div class="cockpit">
+              <div class="rings">
+                <svg width="86" height="86" viewBox="0 0 86 86">
+                  <circle cx="43" cy="43" r="36" fill="none" stroke="var(--surface-2)" stroke-width="9"/>
+                  <circle cx="43" cy="43" r="27" fill="none" stroke="var(--surface-2)" stroke-width="9"/>
+                  <circle cx="43" cy="43" r="18" fill="none" stroke="var(--surface-2)" stroke-width="9"/>
+                  <circle cx="43" cy="43" r="36" fill="none" stroke="var(--c-intake)" stroke-width="9" stroke-linecap="round" stroke-dasharray="158 226" transform="rotate(-90 43 43)"/>
+                  <circle cx="43" cy="43" r="27" fill="none" stroke="var(--c-exercise)" stroke-width="9" stroke-linecap="round" stroke-dasharray="42 170" transform="rotate(-90 43 43)"/>
+                  <circle cx="43" cy="43" r="18" fill="none" stroke="var(--c-balance)" stroke-width="9" stroke-linecap="round" stroke-dasharray="88 113" transform="rotate(-90 43 43)"/>
+                </svg>
+                <div class="center"><div><b>0.62</b><span>今日均衡</span></div></div>
+              </div>
+              <div class="bars">
+                <div><div class="bar-top"><span>今日训练</span><span class="num" id="trainBarTxt">未完成</span></div><div class="bar-track"><i class="bar-fill" id="trainBar" style="background:var(--c-exercise); transform:scaleX(0)"></i></div></div>
+                <div><div class="bar-top"><span>餐次记录</span><span class="num">2 / 4</span></div><div class="bar-track"><i class="bar-fill" style="background:var(--c-intake); transform:scaleX(0.5)"></i></div></div>
+                <div><div class="bar-top"><span>蛋白质</span><span class="num">76 / 148g</span></div><div class="bar-track"><i class="bar-fill" style="background:var(--c-balance); transform:scaleX(0.51)"></i></div></div>
+              </div>
+            </div>
+
+            <div class="split"></div>
+
+            <!-- ③ 今日训练：首屏的主确认按钮 -->
+            <div class="action">
+              <div>
+                <p class="t" id="trainName">上肢日 · 推拉分化</p>
+                <p class="s">约 55 分钟</p>
+              </div>
+              <button class="go" id="btnTrain">▶ 开始</button>
+            </div>
+
+            <div class="split"></div>
+
+            <!-- ④ 下一餐：首屏的次确认记一笔=智能添加（预选本餐次）；明细只在「今日菜单」卡，此处不再重复 -->
+            <div class="next-meal">
+              <div>
+                <p class="nm-slot">下一餐 · 午餐</p>
+                <p class="nm-name">黑豆饭番茄蛋饭</p>
+              </div>
+              <div class="nm-acts">
+                <button class="mini" id="btnLog">记一笔</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 今日菜单卡（节选 + 渐隐，完整列表在下方滚动区内） -->
+          <div class="card">
+            <div class="card-head">
+              <h3>今日菜单</h3>
+              <span class="pill">训练日</span>
+            </div>
+            <div class="stack-head"><span>供能结构</span><span>2329 大卡</span></div>
+            <div class="stack">
+              <i style="flex:28; background:var(--c-protein)"></i>
+              <i style="flex:45; background:var(--c-carb)"></i>
+              <i style="flex:27; background:var(--c-fat)"></i>
+            </div>
+            <div class="macros">
+              <span class="macro"><i class="dot" style="background:var(--c-protein)"></i>蛋白质 <b>161g</b> · 28%</span>
+              <span class="macro"><i class="dot" style="background:var(--c-carb)"></i>碳水 <b>262g</b> · 45%</span>
+              <span class="macro"><i class="dot" style="background:var(--c-fat)"></i>脂肪 <b>70g</b> · 27%</span>
+            </div>
+            <p class="verdict">蛋白供能 28%，处于训练日的推荐区间；碳水集中在练前练后两餐，与训练时间匹配。</p>
+            <div class="split" style="margin:12px 0 2px"></div>
+            <div class="menu-fade">
+              <div class="menu-row"><em>早餐</em><div><p class="t">全麦面包鸡蛋早餐<b>约590大卡 · 蛋白34g</b></p><p class="d">全麦面包 2.5片、鸡蛋 2.5个、牛奶(全脂) 1杯</p></div></div>
+              <div class="menu-row"><em>午餐</em><div><p class="t">黑豆饭番茄蛋饭<b>约779大卡 · 蛋白53g</b></p><p class="d">米饭(熟) 330g、猪里脊 160g、黄瓜 130g</p></div></div>
+            </div>
+            <div class="card-acts" style="grid-template-columns:1fr; margin-top:10px">
+              <button class="act" style="flex-direction:row; padding:9px 0; background:none; color:var(--accent); font-size:13px">✦ AI 生成这一天的菜单 / 换一批</button>
+            </div>
+          </div>
+
+          <!-- 调整与说明入口（⑤）+ 更多操作的降级归宿 -->
+          <div class="card">
+            <div class="card-acts">
+              <button class="act" data-sheet="sheetWhy">为什么是这样<span>3 条研究曲线</span></button>
+              <button class="act" data-sheet="sheetReview">AI 本周复盘<span>看数据调下一周</span></button>
+              <button class="act">本周采购清单<span>未来 7 天食材汇总</span></button>
+              <button class="act" data-sheet="sheetAdjust">手动调参<span>缺口 / 蛋白 / 频率</span></button>
+            </div>
+            <div class="acts-minor">
+              <button class="cap">⌸ 归档方案</button>
+              <button class="cap danger" id="btnDel">⌫ 删除方案</button>
+            </div>
+          </div>
+
+          <p class="fold-hint">↓ 继续下滑：周期地图 · 体重航道（回顾区，见决策①）<span class="arr">︾</span></p>
+        </div>
+      </div>
+
+      <!-- 热点标注 -->
+      <span class="hot" style="top:150px; right:24px">1</span>
+      <span class="hot" style="top:250px; left:22px">2</span>
+      <span class="hot" style="top:432px; right:22px">3</span>
+      <span class="hot" style="top:560px; left:22px">4</span>
+      <span class="hot" style="bottom:190px; right:22px">5</span>
+      <span class="hot" style="bottom:130px; left:22px">6</span>
+
+      <!-- 遮罩与弹层（限定在手机内） -->
+      <div class="scrim" id="scrim"></div>
+
+      <!-- 更多 · ActionSheet -->
+      <div class="panel" id="sheetMore" style="background:transparent; padding:0; overflow:visible">
+        <div style="padding:0 0 8px">
+          <div class="as-group" style="background:var(--surface)">
+            <button class="as-item">生成本期成绩单<small>方案结束或提前归档后的对照报告</small></button>
+            <button class="as-item">归档方案<small>保留记录 · 回收未完成日程</small></button>
+            <button class="as-item danger" id="asDel">删除方案<small>清除未来日程 · 已完成记录保留</small></button>
+          </div>
+          <button class="as-cancel" data-close>取消</button>
+        </div>
+      </div>
+
+      <!-- 手动调参 · 抽屉 -->
+      <div class="panel" id="sheetAdjust">
+        <div class="grab"></div>
+        <div class="sheet-head"><h4>手动调参</h4><button class="close" data-close>完成</button></div>
+        <div class="stepper">
+          <div class="lbl">每日热量偏移<small>当前 -400 大卡 · 建议 -300 ~ -500</small></div>
+          <div class="step-ctl"><button>−</button><span class="val">-400</span><button>＋</button></div>
+        </div>
+        <div class="stepper">
+          <div class="lbl">蛋白质<small>g / kg 体重 · 钳制 1.0 ~ 2.4</small></div>
+          <div class="step-ctl"><button>−</button><span class="val">1.8</span><button>＋</button></div>
+        </div>
+        <div class="stepper">
+          <div class="lbl">每周训练天数<small>0 ~ 7</small></div>
+          <div class="step-ctl"><button>−</button><span class="val">4</span><button>＋</button></div>
+        </div>
+        <input class="sumin" placeholder="一句话原因（可选）">
+        <button class="primary">应用并重排今日起的日程</button>
+        <p class="note">所有参数经引擎钳制（clamp）后生效；历史天保留，只重排未来。</p>
+      </div>
+
+      <!-- AI 复盘 · 抽屉 -->
+      <div class="panel" id="sheetReview">
+        <div class="grab"></div>
+        <div class="sheet-head"><h4>AI 本周复盘</h4><button class="close" data-close>关闭</button></div>
+        <p class="body-text" style="margin-bottom:10px"><b>本周 vs 上周</b>（数据先行，AI 建议在其后逐条出现）</p>
+        <div class="cmp-row"><span class="l">日均摄入</span><span class="v">2180 大卡</span><span class="v">2320 大卡</span></div>
+        <div class="cmp-row" style="margin-top:-4px"><span class="l"></span><div class="bar"><i style="width:70%"></i></div><div class="bar"><i style="width:82%; opacity:0.45"></i></div></div>
+        <div class="cmp-row"><span class="l">训练完成</span><span class="v">3 次</span><span class="v">4 次</span></div>
+        <div class="cmp-row" style="margin-top:-4px"><span class="l"></span><div class="bar"><i style="width:60%"></i></div><div class="bar"><i style="width:80%; opacity:0.45"></i></div></div>
+        <div style="margin-top:12px">
+          <div class="adv on"><span class="sw"></span><div><p class="t">热量偏移 -400 → -500</p><p class="d">本周均摄入已低于目标 180 大卡，进度符合预期，可维持缺口（已勾选）</p></div></div>
+          <div class="adv"><span class="sw"></span><div><p class="t">蛋白 1.8 → 1.6 g/kg</p><p class="d">当前摄入稳定，可回落减轻肾脏负担（可选）</p></div></div>
+        </div>
+        <button class="primary">应用勾选的 1 项建议</button>
+        <p class="note">只提交勾选子集；引擎钳制越界值并标注「已钳制」。</p>
+      </div>
+
+      <!-- 科学依据 · 抽屉 -->
+      <div class="panel" id="sheetWhy">
+        <div class="grab"></div>
+        <div class="sheet-head"><h4>为什么是这样</h4><button class="close" data-close>明白了</button></div>
+        <div class="tabbar"><button class="on">训练频次</button><button>睡眠时长</button><button>社交时差</button></div>
+        <div class="chart-ph">研究曲线区（n=315 试验 · 引用）</div>
+        <p class="body-text"><b>每个肌群一周练 2~3 次最划算。</b>文献中的「最佳频次」指同一肌群被刺激的次数，而不是去健身房的次数——全身日 ×3 与推拉腿 ×6 都可以达成。方案按你的可用天数选择能达标的分化。</p>
+      </div>
+
+      <!-- 智能添加 · 抽屉 demo（与全应用同一组件：文字/图片 → 食物卡 → 确认写入） -->
+      <div class="panel" id="sheetScan">
+        <div class="grab"></div>
+        <div class="sheet-head"><h4>智能添加 · 饮食</h4><button class="close" data-close>关闭</button></div>
+        <div id="scanManual">
+          <p class="hint">用一句话或一张图描述吃了什么（如「早上一杯牛奶一个鸡蛋」），AI 解析成食物卡并匹配食物库，确认后写入。</p>
+          <textarea class="code-in" id="smartText" rows="2" placeholder="一杯牛奶(250ml)，一个水煮蛋，两片全麦面包"></textarea>
+          <button class="primary" id="smartGen">✦ 生成食物卡</button>
+          <p class="note">餐次已按「下一餐」预选，可改。配模型后走真实解析；demo 直接给出示例卡。</p>
+        </div>
+        <div id="scanResult" style="display:none">
+          <div class="food-head"><b class="food-name">识别结果 · 3 项</b><span class="food-ref num">共约 315 大卡 · 蛋白 17g</span></div>
+          <div class="fitem"><span>牛奶(全脂)</span><b class="num">250g · 135大卡</b></div>
+          <div class="fitem"><span>鸡蛋</span><b class="num">50g · 72大卡</b></div>
+          <div class="fitem"><span>全麦面包</span><b class="num">70g · 108大卡</b></div>
+          <p class="hint" style="margin-top:8px">写入今日早餐（预选自「下一餐」）</p>
+          <div class="tabbar"><button class="on">早餐</button><button>午餐</button><button>晚餐</button><button>加餐</button></div>
+          <button class="primary" id="scanLog">写入今日早餐</button>
+        </div>
+      </div>
+
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <p style="text-align:center; font-size:12px; color:var(--text-3); margin-top:14px">
+      可交互：①展开状态条 · ③打卡 · ④记一笔=智能添加 · ⋯更多菜单 · 调参/复盘/依据抽屉
+    </p>
+  </section>
+
+  <!-- ================= 右：决策标注 ================= -->
+  <section class="doc-col">
+
+    <article>
+      <h2><span class="no">1</span>首屏只放「今天的行动 + 确认」</h2>
+      <p class="why">
+        判定标准：<b>用户不做就要亏的（行动）、做完成就立刻有反馈的（确认）进首屏</b>；
+        静态参数、回顾图表、低频操作一律让位。方案概要从原来 1/4 屏的头卡压缩成一行状态条，
+        参数详情（BMR/TDEE 等）收进展开区——想看的人多一次点击，不想看的人永远不用滚过它。
+      </p>
+      <table class="ia">
+        <tr><th>内容</th><th>去留</th><th>理由</th></tr>
+        <tr><td>方案状态条（目标·档位·第N周）</td><td><span class="tag in">首屏 · 一行</span></td><td class="rs"><b>上下文锚点</b>。回答「我在哪」，一行讲完；点开才见参数详情</td></tr>
+        <tr><td>三环 + 三条进度</td><td><span class="tag in">首屏</span></td><td class="rs"><b>还差什么</b>的答案，与主页三环同源，不新造隐喻</td></tr>
+        <tr><td>今日训练 +「开始」</td><td><span class="tag in">首屏 · 主确认</span></td><td class="rs">今天的头号行动；完成后原位变「已完成」（mock 可点）</td></tr>
+        <tr><td>下一餐 +「记一笔」</td><td><span class="tag in">首屏 · 次确认</span></td><td class="rs">打开智能添加并预选本餐次，一天重复 N 次的微打卡必须零跳转；明细只在菜单卡一处</td></tr>
+        <tr><td>BMR / TDEE / 缺口等参数</td><td><span class="tag out">状态条展开区</span></td><td class="rs">静态数字，生成后极少变；不配占首屏</td></tr>
+        <tr><td>周期地图 · 体重航道 · 演进图</td><td><span class="tag out">下滑即达</span></td><td class="rs">回顾/趋势区，服务「坚持感」而非「行动」，不值得挤占首屏</td></tr>
+        <tr><td>科学依据 / 复盘 / 采购 / 调参</td><td><span class="tag out">卡底入口 → 弹层</span></td><td class="rs">中低频，见决策 2/3</td></tr>
+      </table>
+    </article>
+
+    <article>
+      <h2><span class="no">2</span>入口地图：调整 / 设置 / 说明各从哪进</h2>
+      <p class="why">
+        按对象的<b>变化频率</b>分流：天天变的留在页面内联，每周变的走卡底抽屉，一期一变的走二级页，
+        极少按的收进「⋯」菜单。
+      </p>
+      <table class="ia">
+        <tr><th>功能</th><th>入口位置</th><th>容器</th><th>分流理由</th></tr>
+        <tr><td>记录 · 智能添加</td><td>下一餐「记一笔」/ 菜单卡「＋ 记一笔」</td><td><span class="tag sheet">抽屉</span></td><td class="rs">与全应用同一入口：一句话/一张图 → 食物卡确认写入，餐次自动预选</td></tr>
+        <tr><td>调整 · 当日菜单</td><td>菜单卡内联按钮</td><td><span class="tag inline">内联</span></td><td class="rs">AI 生成 / 换一批，属当天高频微调</td></tr>
+        <tr><td>调整 · 参数（缺口/蛋白/频次）</td><td>卡底「手动调参」</td><td><span class="tag sheet">抽屉</span></td><td class="rs">需要输入+试算，但不能丢页面上下文</td></tr>
+        <tr><td>调整 · AI 周复盘</td><td>卡底「AI 本周复盘」</td><td><span class="tag sheet">抽屉</span></td><td class="rs">数据对比+逐条采纳，读完即走</td></tr>
+        <tr><td>设置 · 个人约束（频率/器械/忌口/开始日）</td><td>我 › 个人约束；setup 向导</td><td><span class="tag page">二级页</span></td><td class="rs">一期一变、影响下一期重算；生效中不提供直改入口，防止误触重排</td></tr>
+        <tr><td>设置 · 档位更换</td><td>「⋯」更多菜单</td><td><span class="tag menu">菜单</span></td><td class="rs">低频且等价于重建方案，与归档同级收纳</td></tr>
+        <tr><td>说明 · 为什么是这样（研究曲线）</td><td>卡底「为什么是这样」+ 选档页文字链</td><td><span class="tag sheet">抽屉</span></td><td class="rs">查证型阅读，读完关闭，不构成页面</td></tr>
+        <tr><td>说明 · 参数怎么算（BMR/TDEE）</td><td>点状态条展开</td><td><span class="tag inline">展开区</span></td><td class="rs">一层折叠足够，不值得弹层</td></tr>
+        <tr><td>说明 · 菜单来源与校准</td><td>菜单卡内标注（AI 菜单/模板菜单）</td><td><span class="tag inline">内联标注</span></td><td class="rs">一行灰字讲清数据出处，可点按钮直达校准动作</td></tr>
+        <tr><td>结营成绩单</td><td>「⋯」菜单 / 方案结束后升全宽主按钮</td><td><span class="tag page">二级页</span></td><td class="rs">长内容+独立返回栈；结束后从「看报告」升级为「主出口」</td></tr>
+        <tr><td>归档 / 删除</td><td>页面下部胶囊快捷钮 +「⋯」更多菜单</td><td><span class="tag menu">菜单</span></td><td class="rs">不可逆操作：胶囊钮提供可发现性，armed 二次确认红底强化；删除等价去向也收在「⋯」</td></tr>
+      </table>
+    </article>
+
+    <article>
+      <h2><span class="no">3</span>组件选型准则</h2>
+      <p class="why">四种容器各管一件事，判定问题只有三个：<b>多常用？要输入吗？可逆吗？</b></p>
+      <div class="rule-list">
+        <div class="rule">
+          <div class="name"><span class="tag inline">内联</span></div>
+          <div class="desc">
+            <b>天天发生的微动作。</b>零跳转成本，按钮就是界面本身。
+            <span class="eg">训练打卡 · 记一笔 · 换一批 · 点格子切聚焦日</span>
+          </div>
+        </div>
+        <div class="rule">
+          <div class="name"><span class="tag sheet">抽屉 SheetModal</span></div>
+          <div class="desc">
+            <b>要输入或要专注读，但需要保留上下文的中低频操作。</b>从底部升起、完事即关，Apple sheet 曲线；
+            一次性大确认（启用方案 / 应用调整）也走抽屉——打断感与操作重量成正比。
+            <span class="eg">手动调参 · AI 复盘 · 科学依据 · 启用确认 · 采购清单</span>
+          </div>
+        </div>
+        <div class="rule">
+          <div class="name"><span class="tag menu">ActionSheet 菜单</span></div>
+          <div class="desc">
+            <b>低频 + 不可逆 / 一组平级的去向选择。</b>收纳在「⋯」里不占版面；危险项红字 + 二次确认。
+            <span class="eg">归档 · 删除 · 换档重建 · 成绩单入口</span>
+          </div>
+        </div>
+        <div class="rule">
+          <div class="name"><span class="tag page">二级页</span></div>
+          <div class="desc">
+            <b>长内容、沉浸式、或需要自己的返回栈。</b>进去会停留一段时间的才配一个页面，否则都是对页面的稀释。
+            <span class="eg">课程详情（开始训练）· 结营成绩单 · 食谱库 · 个人约束向导</span>
+          </div>
+        </div>
+      </div>
+      <p class="foot-note" style="margin-top:16px">
+        对照现状的差异：本轮已把「下一餐」并入驾驶舱、罗盘与全天菜单合并、地图聚焦摘要删除、操作区 2×2 网格化；
+        这份交互稿在其上再推进一步——头卡压成状态条、归档/删除收进「⋯」菜单（页面下部文字链保留为快捷路径）、
+        参数详情降为展开区。逐项落地时可独立提交，互不依赖。
+      </p>
+    </article>
+
+  </section>
+</main>
+
+<script>
+/* ---------- 主题切换 ---------- */
+const themes = ['auto', 'light', 'dark']
+let themeIdx = 0
+const themeBtn = document.getElementById('themeBtn')
+themeBtn.addEventListener('click', () => {
+  themeIdx = (themeIdx + 1) % themes.length
+  const t = themes[themeIdx]
+  document.documentElement.setAttribute('data-theme', t === 'auto' ? '' : t)
+  themeBtn.textContent = '主题：' + (t === 'auto' ? '跟随系统' : t === 'light' ? '亮色' : '暗色')
+})
+
+/* ---------- 手机内弹层 ---------- */
+const scrim = document.getElementById('scrim')
+const sheets = [...document.querySelectorAll('.panel')]
+function openSheet(id) {
+  sheets.forEach(s => s.classList.toggle('show', s.id === id))
+  scrim.classList.add('show')
+}
+function closeSheets() {
+  sheets.forEach(s => s.classList.remove('show'))
+  scrim.classList.remove('show')
+}
+scrim.addEventListener('click', closeSheets)
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeSheets))
+document.querySelectorAll('[data-sheet]').forEach(b =>
+  b.addEventListener('click', () => openSheet(b.dataset.sheet)))
+document.getElementById('btnMore').addEventListener('click', () => openSheet('sheetMore'))
+
+/* ---------- Toast ---------- */
+const toast = document.getElementById('toast')
+let toastTimer
+function showToast(msg) {
+  toast.textContent = msg
+  toast.classList.add('show')
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 1600)
+}
+
+/* ---------- ① 状态条展开 ---------- */
+const strip = document.getElementById('strip')
+const stripDetail = document.getElementById('stripDetail')
+strip.addEventListener('click', () => {
+  strip.classList.toggle('open')
+  stripDetail.classList.toggle('open')
+})
+
+/* ---------- ③ 训练打卡：主确认的完成态 ---------- */
+const btnTrain = document.getElementById('btnTrain')
+const trainBar = document.getElementById('trainBar')
+const trainBarTxt = document.getElementById('trainBarTxt')
+const trainName = document.getElementById('trainName')
+let trained = false
+btnTrain.addEventListener('click', () => {
+  trained = !trained
+  btnTrain.classList.toggle('done', trained)
+  btnTrain.textContent = trained ? '✓ 已完成' : '▶ 开始'
+  trainBar.style.transform = trained ? 'scaleX(1)' : 'scaleX(0)'
+  trainBarTxt.textContent = trained ? '已完成' : '未完成'
+  showToast(trained ? '今日训练已打卡 ✓（进课程详情则为完整训练流）' : '已撤销打卡')
+})
+
+/* ---------- ④ 记一笔 ---------- */
+document.getElementById('btnLog').addEventListener('click', () => showToast('记一笔 → 进饮食库快捷记录（次确认零跳转）'))
+
+/* ---------- 智能添加（demo） ---------- */
+const scanViews = ['scanManual', 'scanResult', 'scanMiss']
+function showScanView(id) {
+  scanViews.forEach(v => { document.getElementById(v).style.display = v === id ? '' : 'none' })
+}
+document.getElementById('btnLog').addEventListener('click', () => {
+  document.getElementById('smartText').value = ''
+  showScanView('scanManual')
+  openSheet('sheetScan')
+})
+document.getElementById('smartGen').addEventListener('click', () => {
+  if (!document.getElementById('smartText').value.trim()) {
+    showToast('描述得更具体一些（吃了什么、大概多少）')
+    return
+  }
+  showScanView('scanResult')
+})
+document.getElementById('scanLog').addEventListener('click', () => {
+  closeSheets()
+  showToast('已写入 3 项到今日早餐（能量环与三环同源刷新）')
+})
+
+/* ---------- 更多菜单里的危险项 ---------- */
+const btnDel = document.getElementById('btnDel')
+const asDel = document.getElementById('asDel')
+let armed = false
+function armDelete(originBtn) {
+  if (!armed) {
+    armed = true
+    originBtn.textContent = '再点一次确认删除（清除未来日程）'
+    showToast('危险操作：需二次确认')
+    setTimeout(() => { armed = false; originBtn.textContent = '删除方案' }, 3000)
+  } else {
+    armed = false
+    originBtn.textContent = '删除方案'
+    showToast('已删除（demo 不落库）')
+  }
+}
+btnDel.addEventListener('click', () => armDelete(btnDel))
+asDel.addEventListener('click', () => { closeSheets(); setTimeout(() => armDelete(btnDel), 350) })
+</script>
+</body>
+</html>
