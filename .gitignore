@@ -34,4 +34,10 @@ Thumbs.db
 
 # 一次性调试探针/截屏脚本（定位单个问题时临时写的，不入库）
 scripts/probe-*.mjs
+scripts/shots-active.mjs
+scripts/shots-immerse-morph.mjs
 scripts/shots-program.mjs
+scripts/shots/
+
+# 工作台会话本地状态
+.workbuddy/
