@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Camera, Check, ChartPie, History, Plus, SendHorizontal, Trash2, Wrench, X } from 'lucide-vue-next'
+import { Camera, Check, ChartPie, Copy, History, Plus, Quote, RotateCcw, SendHorizontal, Trash2, Wrench, X } from 'lucide-vue-next'
 
-import ActionSheet from '@/components/common/ActionSheet.vue'
+import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
 import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
@@ -77,6 +77,8 @@ const mealByMsg = reactive<Record<string, MealType>>({})
 /** 历史抽屉 / 长按菜单 / 引用 */
 const drawerOpen = ref(false)
 const menuTarget = ref<AiMessage | null>(null)
+/** 长按菜单锚定元素：被长按的那条消息气泡 */
+const menuAnchor = ref<HTMLElement | null>(null)
 const quote = ref<AiMessage | null>(null)
 
 onMounted(() => {
@@ -159,6 +161,7 @@ function onPressStart(e: PointerEvent, m: AiMessage): void {
   pressStart = { x: e.clientX, y: e.clientY }
   pressTimer = window.setTimeout(() => {
     pressTimer = undefined
+    menuAnchor.value = (e.currentTarget as HTMLElement) ?? null
     menuTarget.value = m
   }, 450)
 }
@@ -181,16 +184,17 @@ function onPressEnd(): void {
 
 function onCtxMenu(e: MouseEvent, m: AiMessage): void {
   e.preventDefault()
+  menuAnchor.value = (e.currentTarget as HTMLElement) ?? null
   menuTarget.value = m
 }
 
-const menuActions = computed<{ label: string; value: string; danger?: boolean }[]>(() => {
+const menuActions = computed<MenuItem[]>(() => {
   const m = menuTarget.value
   if (!m) return []
-  const acts: { label: string; value: string; danger?: boolean }[] = []
-  if (m.text) acts.push({ label: '复制', value: 'copy' })
-  acts.push({ label: '引用', value: 'quote' })
-  if (m.role === 'user') acts.push({ label: '撤回（连同其后对话）', value: 'retract', danger: true })
+  const acts: MenuItem[] = []
+  if (m.text) acts.push({ label: '复制', value: 'copy', icon: Copy })
+  acts.push({ label: '引用', value: 'quote', icon: Quote })
+  if (m.role === 'user') acts.push({ label: '撤回（连同其后对话）', value: 'retract', icon: RotateCcw, danger: true })
   return acts
 })
 
@@ -398,9 +402,10 @@ async function onMenuSelect(value: string): Promise<void> {
     </SheetModal>
 
     <!-- 长按/右键菜单 -->
-    <ActionSheet
+    <AppMenu
       :open="menuTarget !== null"
       :actions="menuActions"
+      :anchor="menuAnchor"
       @close="menuTarget = null"
       @select="onMenuSelect"
     />
