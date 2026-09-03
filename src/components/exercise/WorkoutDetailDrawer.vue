@@ -284,17 +284,22 @@ const courseRows = computed<CourseExRow[]>(() => {
   return rows
 })
 
+/**
+ * 做组芯片：次数优先取该组完成瞬间登记的 reps（课程可能事后被编辑/删除，
+ * 回读定义会失真）；课程定义也没有时只显示重量，绝不拼出「× ?」。
+ */
 function setChip(ex: CourseExRow, d: DoneSet): string {
   if (ex.kind === 'strength') {
     if (d.weight == null) return '完成'
-    return `${Number(d.weight)}kg × ${ex.reps ?? '?'}`
+    const reps = d.reps ?? ex.reps
+    return reps != null ? `${fmtWeight(d.weight)} × ${reps}` : fmtWeight(d.weight)
   }
   return d.sec != null ? fmtClock(d.sec) : '完成'
 }
 
-/** 热身组芯片：重量 × 热身次数（次数取课程定义；课程已删时只显示重量） */
+/** 热身组芯片：重量 × 热身次数（次数取逐组登记，旧数据回落课程定义；都没有只显示重量） */
 function warmupChip(row: CourseExRow, d: DoneSet, i: number): string {
-  const reps = row.warmupDefs?.[i]?.reps
+  const reps = d.reps ?? row.warmupDefs?.[i]?.reps
   if (d.weight == null) return '热身'
   return `热身 ${fmtWeight(d.weight)}${reps != null ? ` × ${reps}` : ''}`
 }
@@ -312,8 +317,11 @@ const courseTotals = computed(() => {
     totalCount += row.plannedSets
     doneCount += Math.min(row.done.length, row.plannedSets)
     for (const d of row.done) {
-      if (d.weight != null && row.reps != null) volume += d.weight * row.reps
-      else if (row.reps == null && d.weight != null) volume += d.weight
+      if (d.weight != null) {
+        // 逐组登记次数优先，课程定义兜底；都没有则按 1 次计容量（避免凭空夸大）
+        const reps = d.reps ?? row.reps
+        volume += d.weight * (reps ?? 1)
+      }
       if (d.sec != null) timedSec += d.sec
     }
   }

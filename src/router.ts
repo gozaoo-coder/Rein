@@ -123,18 +123,13 @@ export const routes = [
     meta: { title: '全部运动记录' },
   },
   {
-    path: '/session',
-    name: 'session',
-    component: () => import('@/pages/SessionPage.vue'),
-    // 二级沉浸页：覆盖底部导航栏，不在 TabBar 中展示
-    meta: { fullscreen: true },
-  },
-  {
     path: '/session/run',
     name: 'session-run',
     component: () => import('@/pages/RunPage.vue'),
     meta: { fullscreen: true },
   },
+  // 训练课沉浸层不再走路由：SessionOverlay 由 App.vue 常驻挂载，
+  // 显隐与形变动画由 system/sessionImmersive 驱动（原 /session 路由已移除）
 ] as const
 
 export const router = createRouter({

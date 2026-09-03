@@ -46,6 +46,11 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   const exIndex = ref(0)
   const setIndex = ref(1) // 展示用，1-based
   const weight = ref(0)
+  /**
+   * 当前组的现场次数：力量动作可临时改写（实际做了 7 次就记 7），完成即登记到该组。
+   * 进入新动作时回落到课程定义；null = 该动作未配次数（此时页面显示占位，用户可自行键入）。
+   */
+  const reps = ref<number | null>(null)
   const doneSets = ref<Record<string, DoneSet[]>>({})
 
   const restLeft = ref(0)
@@ -79,6 +84,10 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   const foreignRoute = ref<string | null>(null)
 
   let timer: ReturnType<typeof setInterval> | null = null
+  /** 休息倒数的截止墙钟：剩余秒一律由它推导。interval 触发只做「感知」，
+   *  不做「累计」——被系统节流 / WebView 挂起后恢复的第一拍立即校正到
+   *  真实剩余，不会出现递减式计时那种异常过长的休息。 */
+  let restDeadlineMs = 0
 
   function stopTimer(): void {
     if (timer) {
@@ -102,6 +111,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       restIsTemp: restIsTemp.value,
       resumePhase: resumePhase.value,
       restWarmup: restWarmup.value,
+      reps: reps.value,
       extraSets: extraSets.value,
       skippedSets: skippedSets.value,
     }
@@ -171,10 +181,10 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     let v = 0
     for (const ex of plan.value?.exercises ?? []) {
       if (ex.kind !== 'strength') continue
-      const reps = ex.reps ?? 0
+      const planReps = ex.reps ?? 0 // 无逐组登记时回落到课程定义
       for (const d of doneSets.value[ex.id] ?? []) {
         if (d.warmup) continue // 激活热身不计入训练容量
-        v += (d.weight ?? 0) * reps
+        v += (d.weight ?? 0) * (d.reps ?? planReps)
       }
     }
     return Math.round(v)
@@ -235,9 +245,58 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
           kind: ex.kind,
           setNo,
           state,
-          done: rec ? { weight: rec.weight, sec: rec.sec } : null,
+          done: rec ? { weight: rec.weight, sec: rec.sec, reps: rec.reps } : null,
         })
       }
+    })
+    return out
+  })
+
+  /**
+   * 单个动作的激活热身组格子。
+   * 状态判定：已完成的按登记值，当前动作的「下一个待做热身」为 current，
+   * 已经越过该动作（或热身已跳过 / 已结束）仍未做的热身组记为 skipped——不再补做。
+   */
+  function warmupSlotsFor(ex: PlanExercise, exIdx: number): SessionSetSlot[] {
+    if (ex.kind !== 'strength' || !ex.warmups?.length) return []
+    const wd = warmupDone(ex)
+    const recs = (doneSets.value[ex.id] ?? []).filter((d) => d.warmup)
+    const isCur = exIdx === exIndex.value
+    const inWarmup = isCur && (phase.value === 'warmup' || (phase.value === 'rest' && restWarmup.value))
+    return ex.warmups.map((def, i): SessionSetSlot => {
+      let state: SessionSetSlot['state'] = 'pending'
+      if (i < wd) state = 'done'
+      else if (inWarmup) state = i === wd ? 'current' : 'pending'
+      else if (isCur) state = 'skipped' // 热身已跳过或已结束
+      else if (exIdx < exIndex.value) state = 'skipped'
+      const rec = state === 'done' ? (recs[i] ?? null) : null
+      return {
+        exIdx,
+        exId: ex.id,
+        exName: ex.name,
+        kind: ex.kind,
+        setNo: i + 1,
+        warmup: true,
+        state,
+        done: rec ? { weight: rec.weight, sec: rec.sec, reps: rec.reps ?? def.reps } : null,
+      }
+    })
+  }
+
+  /**
+   * 全课组清单 + 激活热身组：全课程进度抽屉的唯一数据源。
+   * 游标（cursorIndex）只按正式组推进，因此热身格在这里单独拼装，
+   * 不进 setSlots —— 否则会污染进度格条与「跳至该组」的下标语义。
+   */
+  const courseSlots = computed<SessionSetSlot[]>(() => {
+    const p = plan.value
+    if (!p) return []
+    const formal = setSlots.value
+    const out: SessionSetSlot[] = []
+    let k = 0
+    p.exercises.forEach((ex, exIdx) => {
+      out.push(...warmupSlotsFor(ex, exIdx))
+      while (k < formal.length && formal[k]!.exIdx === exIdx) out.push(formal[k++]!)
     })
     return out
   })
@@ -279,6 +338,21 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   /** 重量预填：上次实际做组重量优先（渐进超负荷对照），无历史退回计划建议值 */
   function weightFor(e: PlanExercise): number {
     return lastWeights.value[e.name]?.weightKg ?? e.weightKg ?? 0
+  }
+
+  /**
+   * 进入某动作时的重量预填：还在做激活热身 → 取当前热身组的定义重量，
+   * 否则用正式组重量（上次实际 / 计划建议）。热身态与正式态共用同一个 weight 状态，
+   * 两个阶段都支持现场调整，切换阶段时必须重新预填，否则热身的小重量会带进正式组。
+   */
+  function weightForPhase(e: PlanExercise): number {
+    if (warmupPending(e)) return e.warmups![warmupDone(e)]?.weightKg ?? weightFor(e)
+    return e.kind === 'strength' ? weightFor(e) : 0
+  }
+
+  /** 现场次数回落：新动作取课程定义，非力量动作无次数 */
+  function syncReps(e: PlanExercise): void {
+    reps.value = e.kind === 'strength' ? e.reps : null
   }
 
   /**
@@ -336,6 +410,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     if (!ex || !plan.value) return endLocal()
     restWarmup.value = false
     phase.value = warmupPending(ex) ? 'warmup' : ex.kind === 'strength' ? 'exercise' : 'timed-ready'
+    weight.value = weightForPhase(ex)
+    syncReps(ex)
     touch()
   }
 
@@ -343,18 +419,27 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     const ex = currentEx.value
     if (!ex || phase.value !== 'exercise') return
     unmarkSkipped(ex.id, setIndex.value) // 跳过后又重做并完成的组，不再是「已跳过」
-    ;(doneSets.value[ex.id] ??= []).push({ weight: weight.value, sec: null })
+    ;(doneSets.value[ex.id] ??= []).push({
+      weight: weight.value,
+      sec: null,
+      reps: reps.value ?? ex.reps,
+    })
     startRest(setIndex.value >= effSets(ex))
   }
 
-  /** 完成一组激活热身：按热身定义重量登记，随后 45 秒短休息 */
+  /** 完成一组激活热身：按现场（可调整过的）重量登记，随后 45 秒短休息 */
   function completeWarmup(): void {
     const ex = currentEx.value
     if (!ex || phase.value !== 'warmup') return
     const idx = warmupDone(ex)
     const def = ex.warmups?.[idx]
     if (!def) return
-    ;(doneSets.value[ex.id] ??= []).push({ weight: def.weightKg, sec: null, warmup: true })
+    ;(doneSets.value[ex.id] ??= []).push({
+      weight: weight.value,
+      sec: null,
+      reps: def.reps,
+      warmup: true,
+    })
     // 热身组间固定短休息；结束回热身（还有剩余组）或进入第一个正式组
     restWarmup.value = true
     phase.value = 'rest'
@@ -364,13 +449,14 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     touch()
   }
 
-  /** 跳过剩余热身，直接开始正式组 */
+  /** 跳过剩余热身，直接开始正式组（重量必须从小重量切回正式重量） */
   function skipWarmup(): void {
     const ex = currentEx.value
     if (!ex || phase.value !== 'warmup') return
     restWarmup.value = false
     phase.value = 'exercise'
-    flashOverlay(`开始第 1 组`, ex.reps != null ? `${ex.reps} 次` : '')
+    weight.value = weightFor(ex)
+    flashOverlay(`开始第 1 组`, reps.value != null ? `${reps.value} 次` : '')
     touch()
   }
 
@@ -387,15 +473,22 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   function startRestTimer(): void {
     stopTimer()
-    timer = setInterval(() => {
-      restLeft.value--
-      if (restLeft.value <= 0) restOver()
-    }, 1000)
+    restDeadlineMs = Date.now() + restLeft.value * 1000
+    // 高频轮询只为及时感知归零；秒数本身从 deadline 推导，节流不丢时
+    timer = setInterval(tickRest, 250)
+  }
+
+  function tickRest(): void {
+    const left = Math.ceil((restDeadlineMs - Date.now()) / 1000)
+    if (left === restLeft.value) return
+    restLeft.value = left
+    if (left <= 0) restOver()
   }
 
   function addRest(sec = 15): void {
     if (phase.value !== 'rest') return
     restLeft.value += sec
+    restDeadlineMs += sec * 1000
     touch()
   }
 
@@ -437,7 +530,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       phase.value = resumePhase.value
       if (resumePhase.value === 'timed-run') startTimedTicker()
       else if (resumePhase.value === 'exercise') {
-        flashOverlay(`继续第 ${setIndex.value} 组`, ex.reps != null ? `${ex.reps} 次` : '')
+        flashOverlay(`继续第 ${setIndex.value} 组`, reps.value != null ? `${reps.value} 次` : '')
       }
       touch()
       return
@@ -448,13 +541,14 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       restWarmup.value = false
       if (warmupPending(ex)) {
         phase.value = 'warmup'
+        weight.value = weightForPhase(ex) // 预填下一个热身组的重量
         touch()
         return
       }
       // 恢复正式组预填重量（热身定义重量不应带进正式组）
       weight.value = weightFor(ex)
       phase.value = 'exercise'
-      flashOverlay(`开始第 1 组`, ex.reps != null ? `${ex.reps} 次` : '')
+      flashOverlay(`开始第 1 组`, reps.value != null ? `${reps.value} 次` : '')
       touch()
       return
     }
@@ -462,7 +556,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     if (restTargetIsNextSet.value) {
       setIndex.value++
       phase.value = 'exercise'
-      flashOverlay(`开始第 ${setIndex.value} 组`, ex.reps != null ? `${ex.reps} 次` : '')
+      // 同一动作内保留用户的次数改写（改做 6 次就连着 6 次），重量同理保留
+      flashOverlay(`开始第 ${setIndex.value} 组`, reps.value != null ? `${reps.value} 次` : '')
       touch()
       return
     }
@@ -475,7 +570,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     exIndex.value++
     setIndex.value = 1
     const next = currentEx.value!
-    weight.value = weightFor(next)
+    weight.value = weightForPhase(next)
+    syncReps(next)
     phase.value = warmupPending(next)
       ? 'warmup'
       : next.kind === 'strength'
@@ -512,8 +608,11 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   function startTimedTicker(): void {
     stopTimer()
+    // 秒表锚定墙钟：elapsed 由 (now - anchor) 推导；临时休息冻结期间
+    // ticker 停转，恢复时以旧 elapsed 重设锚点续走，节流挂起均不丢时
+    const anchorMs = Date.now() - timedElapsed.value * 1000
     timer = setInterval(() => {
-      timedElapsed.value = Math.round((timedElapsed.value + 0.1) * 10) / 10
+      timedElapsed.value = (Date.now() - anchorMs) / 1000
     }, 100)
   }
 
@@ -542,18 +641,22 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     touch()
   }
 
-  function bumpWeight(delta: number): void {
-    weight.value = Math.max(0, Math.round((weight.value + delta) * 10) / 10)
-    touch()
-  }
-
   /**
-   * 直接设定当前重量（页面上的「上次 62.5kg」等快捷 chip 走这里）。
+   * 直接设定当前重量（页面大数字键入与「上次 / 计划」快捷 chip 都走这里）。
    * 必须由 store 写入并 touch()，否则快照不落盘、进程被杀后恢复回预填值。
    */
   function setWeight(kg: number): void {
     if (!Number.isFinite(kg) || kg < 0) return
     weight.value = Math.round(kg * 10) / 10
+    touch()
+  }
+
+  /**
+   * 直接设定当前组的次数（页面大数字键入走这里）。
+   * 传 null = 清空（该动作本就没配次数时用）；负数按 0 处理。
+   */
+  function setReps(n: number | null): void {
+    reps.value = n == null || !Number.isFinite(n) ? null : Math.max(0, Math.round(n))
     touch()
   }
 
@@ -600,7 +703,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     exIndex.value = idx
     setIndex.value = Math.min(effSets(ex), arr.filter((d) => !d.warmup).length + 1)
     clearSkippedFrom(idx, setIndex.value) // 回退后该区间重新变成待做
-    weight.value = ex.kind === 'strength' ? weightFor(ex) : 0
+    weight.value = weightForPhase(ex)
+    syncReps(ex)
     phase.value = ex.kind === 'strength' ? 'exercise' : 'timed-ready'
     flashOverlay(`${ex.name} · 重做`, `第 ${setIndex.value} 组`)
     touch()
@@ -690,11 +794,13 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     restWarmup.value = false
     exIndex.value = exIdx
     setIndex.value = setNo
+    // 跳至某组 = 直接开打正式组：热身一并跳过，重量回到正式组预填值
     weight.value = target.kind === 'strength' ? weightFor(target) : 0
+    syncReps(target)
     phase.value = target.kind === 'strength' ? 'exercise' : 'timed-ready'
     flashOverlay(
       `跳至 ${target.name}`,
-      `第 ${setNo} 组${target.reps != null ? ` · ${target.reps} 次` : ''}`,
+      `第 ${setNo} 组${reps.value != null ? ` · ${reps.value} 次` : ''}`,
     )
     touch()
     return true
@@ -725,7 +831,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       muscles: src.muscles,
     }
     if (exIdx === exIndex.value) {
-      weight.value = cur.kind === 'strength' ? weightFor(p.exercises[exIdx]!) : 0
+      weight.value = weightForPhase(p.exercises[exIdx]!)
+      syncReps(p.exercises[exIdx]!)
     }
     touch()
     return true
@@ -750,7 +857,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
           kind: ex.kind,
           setNo: d.warmup ? warmNo : setNo,
           weightKg: d.weight,
-          reps: d.warmup ? (ex.warmups?.[warmNo - 1]?.reps ?? null) : ex.reps,
+          // 逐组登记值优先：课程可能事后被编辑或删除，回读定义会让已保存的记录失真
+          reps: d.reps ?? (d.warmup ? (ex.warmups?.[warmNo - 1]?.reps ?? null) : ex.reps),
           sec: d.sec,
           warmup: !!d.warmup,
         })
@@ -782,10 +890,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       sets: buildSetRows(),
     })
     const result = { durationMin: duration, kcal, volume, done }
+    const exStore = useExerciseStore()
     await Promise.all([
-      useExerciseStore().loadWeek(todayStr()),
+      exStore.loadWeek(todayStr()),
       useNutritionStore().loadSummary(todayStr()),
     ])
+    exStore.bumpStrength() // 力量曲线卡失效缓存重拉（页面常驻后不再靠重挂载刷新）
     endLocal()
     return result
   }
@@ -813,6 +923,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     plan.value = null
     restIsTemp.value = false
     restWarmup.value = false
+    reps.value = null
     extraSets.value = {}
     skippedSets.value = {}
   }
@@ -874,6 +985,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     exIndex.value = Math.min(rec.exIndex, p.exercises.length - 1)
     setIndex.value = Math.max(1, rec.setIndex)
     weight.value = rec.weightKg
+    reps.value = rec.state.reps ?? p.exercises[exIndex.value]?.reps ?? null
     doneSets.value = rec.state.doneSets ?? {}
     extraSets.value = rec.state.extraSets ?? {}
     skippedSets.value = rec.state.skippedSets ?? {}
@@ -931,6 +1043,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     if (p === 'idle') stopTimer()
   })
 
+  // 后台 / 最小化期间 interval 会被节流：回到可见瞬间立即校正剩余休息，
+  // 该归零的当场归零（会话恢复路径 applyRecord 已按真实流逝补偿过一次）
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && phase.value === 'rest') tickRest()
+  })
+
   return {
     sessionId,
     plan,
@@ -938,6 +1056,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     exIndex,
     setIndex,
     weight,
+    reps,
     doneSets,
     restLeft,
     restTotal,
@@ -958,6 +1077,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     totalVolume,
     cursorIndex,
     setSlots,
+    courseSlots,
     skippedSets,
     durationMin,
     estimateKcalValue,
@@ -983,8 +1103,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     prepareTimed,
     finishTimed,
     abortTimed,
-    bumpWeight,
     setWeight,
+    setReps,
     finishAndSave,
     discard,
     discardById,

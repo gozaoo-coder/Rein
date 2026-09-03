@@ -8,6 +8,7 @@ import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useRunStore, fmtClock, fmtPace } from '@/stores/run'
 import { workoutRuntime } from '@/system/workoutRuntime'
+import { openImmersive } from '@/system/sessionImmersive'
 import { useToast } from '@/composables/useToast'
 import { projectTrack } from '@/utils/geo'
 
@@ -300,7 +301,7 @@ function bumpKm(delta: number): void {
       :open="conflictOpen"
       title="已有进行中的训练课，请先接续"
       :actions="[{ label: '前往继续', value: 'go' }]"
-      @select="conflictOpen = false; void router.push('/session')"
+      @select="conflictOpen = false; openImmersive()"
       @close="conflictOpen = false; void router.replace('/sports')"
     />
   </div>

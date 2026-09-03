@@ -6,6 +6,7 @@ import { ChevronRight, Play, Plus } from 'lucide-vue-next'
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import { usePlanStore } from '@/stores/plan'
 import { useSessionStore } from '@/stores/session'
+import { openImmersive } from '@/system/sessionImmersive'
 import { estimatePlanMinutes } from '@/utils/plan'
 import type { WorkoutPlanRecord } from '@/types'
 
@@ -24,16 +25,26 @@ onMounted(() => {
   void planStore.ensureLoaded()
 })
 
-/** 快速开始（卡片播放键）：已有进行中会话时提示前往接续 */
-async function quickStart(p: WorkoutPlanRecord): Promise<void> {
+/** 快速开始（卡片播放键）：已有进行中会话时提示前往接续。
+ *  形变锚点 = 被点的播放键本身（从哪点从哪长出，且不依赖此刻
+ *  可能尚未落位的悬浮条）。 */
+async function quickStart(e: MouseEvent, p: WorkoutPlanRecord): Promise<void> {
   startingId.value = p.id
+  const origin = e.currentTarget as HTMLElement | null // await 后 currentTarget 已置 null，同步先抓
   try {
     const r = await session.start(p)
     if (r === 'conflict') conflictOpen.value = true
-    else void router.push('/session')
+    else openImmersive(origin)
   } finally {
     startingId.value = ''
   }
+}
+
+/** 接续进行中的会话：训练课开沉浸层，跑步转跑步路由 */
+function goConflict(): void {
+  conflictOpen.value = false
+  if (session.foreignRoute) void router.push(session.foreignRoute)
+  else openImmersive()
 }
 </script>
 
@@ -61,7 +72,7 @@ async function quickStart(p: WorkoutPlanRecord): Promise<void> {
           type="button"
           :aria-label="`开始「${p.name}」`"
           :disabled="startingId === p.id"
-          @click="void quickStart(p)"
+          @click="quickStart($event, p)"
         >
           <Play :size="16" :stroke-width="2.6" />
         </button>
@@ -80,7 +91,7 @@ async function quickStart(p: WorkoutPlanRecord): Promise<void> {
       :open="conflictOpen"
       title="已有进行中的训练，请先接续"
       :actions="[{ label: '前往继续', value: 'go' }]"
-      @select="conflictOpen = false; void router.push(session.foreignRoute ?? '/session')"
+      @select="goConflict"
       @close="conflictOpen = false"
     />
   </section>

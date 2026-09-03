@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { RouterView } from 'vue-router'
 
@@ -6,19 +7,26 @@ import TabBar from '@/components/layout/TabBar.vue'
 import DesktopRail from '@/components/layout/DesktopRail.vue'
 import DesktopInspector from '@/components/layout/DesktopInspector.vue'
 import ActiveWorkoutBar from '@/components/exercise/ActiveWorkoutBar.vue'
+import SessionOverlay from '@/components/exercise/SessionOverlay.vue'
 import ToastHost from '@/components/common/ToastHost.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { DESKTOP_MIN } from '@/config/domain'
+import { immersiveClosing, immersiveOpen } from '@/system/sessionImmersive'
 
 const route = useRoute()
 /** 桌面工作台：视口 ≥ DESKTOP_MIN 时以三窗格壳（导航轨 + 主人区 + 右侧信息栏）替代底部 TabBar */
 const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
+
+/** 全屏形态：fullscreen 路由（跑步）或训练课沉浸层打开——隐藏壳导航与悬浮条 */
+const fullscreenUI = computed(() => route.meta.fullscreen === true || immersiveOpen.value)
+/** 沉浸层收起动画期间悬浮条提前回归，与形变块同位接续（v-show 保实例，动画不打断弹簧状态） */
+const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value)
 </script>
 
 <template>
   <!-- 桌面三窗格壳：沉浸页（运动模式）同样隐藏导航轨 -->
   <div v-if="isDesktop" class="desk-frame">
-    <DesktopRail v-if="!route.meta.fullscreen" />
+    <DesktopRail v-if="!fullscreenUI" />
     <main class="desk-main" :class="{ wide: route.name === 'home' || route.name === 'todos' }">
       <RouterView v-slot="{ Component }">
         <Transition name="page" mode="out-in">
@@ -27,7 +35,7 @@ const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
       </RouterView>
     </main>
     <!-- 第三窗格 · 今日信息栏：全页面常驻（沉浸页除外），保证桌面构图平衡 -->
-    <DesktopInspector v-if="!route.meta.fullscreen" />
+    <DesktopInspector v-if="!fullscreenUI" />
   </div>
 
   <!-- 移动端（原结构）：内容居中窄栏 + 底部标签导航 -->
@@ -37,10 +45,12 @@ const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
         <component :is="Component" />
       </Transition>
     </RouterView>
-    <TabBar v-if="!route.meta.fullscreen" />
+    <TabBar v-if="!fullscreenUI" />
   </div>
-  <!-- 悬浮运动条：异常中断恢复提示，桌面/移动共用（沉浸页隐藏） -->
-  <ActiveWorkoutBar v-if="!route.meta.fullscreen" />
+  <!-- 悬浮运动条：异常中断恢复提示，桌面/移动共用（沉浸形态下隐藏；收起动画期间提前回归接续） -->
+  <ActiveWorkoutBar v-show="wbarVisible" />
+  <!-- 训练课沉浸层：常驻挂载不走路由（system/sessionImmersive 驱动显隐与形变） -->
+  <SessionOverlay />
   <ToastHost />
 </template>
 

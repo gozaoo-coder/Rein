@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronDown, ChevronRight, Ellipsis } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
 import RingProgress from '@/components/common/RingProgress.vue'
 import ExerciseDetailDrawer from '@/components/exercise/ExerciseDetailDrawer.vue'
@@ -20,8 +21,10 @@ import {
   immersiveClosing,
   immersiveOpen,
   immersiveOpenSeq,
-  immersiveOrigin,
+  immersiveOriginSnapshot,
+  measureOriginNow,
   settleClosed,
+  type ImmersiveOriginSnapshot,
 } from '@/system/sessionImmersive'
 
 /**
@@ -45,9 +48,22 @@ const { toast } = useToast()
 const endOpen = ref(false)
 const restSheetOpen = ref(false)
 const moreOpen = ref(false)
-const tempRestSheetOpen = ref(false)
 const detailOpen = ref(false)
 const courseOpen = ref(false)
+
+/** bind 菜单锚定元素：坞内触发各菜单的图标钮；临时休息从更多菜单二级唤起，沿用更多钮位置 */
+const moreAnchor = ref<HTMLElement | null>(null)
+const restAnchor = ref<HTMLElement | null>(null)
+
+function openMore(e: MouseEvent): void {
+  moreAnchor.value = (e.currentTarget as HTMLElement) ?? null
+  moreOpen.value = true
+}
+
+function openRestAdd(e: MouseEvent): void {
+  restAnchor.value = (e.currentTarget as HTMLElement) ?? null
+  restSheetOpen.value = true
+}
 
 /** 重量显示：整数不带小数，62.5 保留一位 */
 function fmtKg(v: number): string {
@@ -158,11 +174,11 @@ const restMetaText = computed(() => {
 
 const restSheetTitle = computed(() => `还要休息多久？剩余 ${s.restLeft} 秒`)
 
-const REST_ADD_ACTIONS = [
-  { label: '+ 15 秒', value: '15' },
-  { label: '+ 30 秒', value: '30' },
-  { label: '+ 60 秒', value: '60' },
-  { label: '+ 2 分钟', value: '120' },
+const REST_ADD_ACTIONS: MenuItem[] = [
+  { label: '+ 15 秒', value: '15', icon: ClockPlus },
+  { label: '+ 30 秒', value: '30', icon: ClockPlus },
+  { label: '+ 60 秒', value: '60', icon: ClockPlus },
+  { label: '+ 2 分钟', value: '120', icon: ClockPlus },
 ]
 
 /* ---------- 更多菜单：临时休息 / 再加一组 / 上一组 / 当前动作详解 ---------- */
@@ -172,26 +188,28 @@ const MORE_TITLE = computed(() => `更多 · ${s.currentEx?.name ?? '训练中'}
 /** 跳过当前组只在真正「手上有一组」的阶段出现：热身态有专门的跳过热身，休息态当前组已经做完了 */
 const CAN_SKIP_PHASES = ['exercise', 'timed-ready', 'timed-run'] as const
 
-const MORE_ACTIONS = computed(() => {
-  const list: { label: string; value: string; danger?: boolean }[] = []
+const MORE_ACTIONS = computed<MenuItem[]>(() => {
+  const list: MenuItem[] = []
   if (CAN_SKIP_PHASES.includes(s.phase as (typeof CAN_SKIP_PHASES)[number])) {
-    list.push({ label: '跳过当前组', value: 'skip-set' })
+    list.push({ label: '跳过当前组', value: 'skip-set', icon: SkipForward })
   }
   list.push(
-    { label: '临时休息', value: 'temp-rest' },
-    { label: '再加一组', value: 'extra-set' },
-    { label: '上一组（重做）', value: 'redo-last' },
-    { label: '当前动作详解', value: 'detail' },
+    // 临时休息：层叠二级菜单直接选时长；仅做组/计时阶段可用（热身、休息中置灰）
+    { label: '临时休息', value: 'temp-rest', icon: Coffee, disabled: !CAN_SKIP_PHASES.includes(s.phase as (typeof CAN_SKIP_PHASES)[number]), children: TEMP_REST_ACTIONS },
+    { label: '再加一组', value: 'extra-set', icon: PlusCircle },
+    { label: '上一组（重做）', value: 'redo-last', icon: RotateCcw },
+    { label: '当前动作详解', value: 'detail', icon: Info },
   )
   return list
 })
 
-const TEMP_REST_ACTIONS = [
-  { label: '1 分钟', value: '1' },
-  { label: '2 分钟', value: '2' },
-  { label: '3 分钟', value: '3' },
-  { label: '5 分钟', value: '5' },
-  { label: '10 分钟', value: '10' },
+/** 临时休息时长：作为更多菜单「临时休息」的层叠子菜单 */
+const TEMP_REST_ACTIONS: MenuItem[] = [
+  { label: '1 分钟', value: '1', icon: Timer },
+  { label: '2 分钟', value: '2', icon: Timer },
+  { label: '3 分钟', value: '3', icon: Timer },
+  { label: '5 分钟', value: '5', icon: Timer },
+  { label: '10 分钟', value: '10', icon: Timer },
 ]
 
 /** 详解抽屉用的动作：组数展示为「计划 + 加练」后的实际值 */
@@ -205,9 +223,6 @@ function onMorePick(value: string): void {
     // 跳过 = 未做 = 不统计：只推进流程，不写 doneSets
     if (s.skipCurrentSet()) toast('已跳过当前组 · 不计入统计')
     else toast('当前没有可跳过的组')
-  } else if (value === 'temp-rest') {
-    if (s.phase === 'rest') toast('已在休息中，可用休息页加时')
-    else tempRestSheetOpen.value = true
   } else if (value === 'extra-set') {
     const ex = s.currentEx
     if (!ex) return
@@ -217,13 +232,11 @@ function onMorePick(value: string): void {
     if (!s.redoLastSet()) toast('还没有已完成的组')
   } else if (value === 'detail') {
     detailOpen.value = true
+  } else {
+    // 临时休息子菜单：直接给分钟数
+    const min = Number(value)
+    if (Number.isFinite(min) && min > 0 && s.startTempRest(min)) toast(`临时休息 ${min} 分钟`)
   }
-}
-
-function onTempRestPick(value: string): void {
-  const min = Number(value)
-  if (!Number.isFinite(min) || min <= 0) return
-  if (s.startTempRest(min)) toast(`临时休息 ${min} 分钟`)
 }
 
 const restProgress = computed(() =>
@@ -280,35 +293,16 @@ async function saveNow(): Promise<void> {
 const layerEl = ref<HTMLElement | null>(null)
 const fadeEl = ref<HTMLElement | null>(null)
 
-let layerAnim: Animation | null = null
-let fadeAnim: Animation | null = null
-
 const EXPAND_MS = 480
 const COLLAPSE_MS = 400
-/** M3 emphasized 近似：起始快、收尾缓，形变块有「被拉出来」的分量感 */
-const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)'
 
 function reducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-function stopAnims(): void {
-  layerAnim?.cancel()
-  fadeAnim?.cancel()
-  layerAnim = null
-  fadeAnim = null
-}
-
-/** 有效形变锚点：悬浮条 hidden / 尺寸异常时兜底为屏幕中央卡片（课程页直接开课等场景） */
-function originAnchor(): { rect: DOMRect; radius: number } {
-  const el = immersiveOrigin()
-  if (el) {
-    const r = el.getBoundingClientRect()
-    if (r.width > 4 && r.height > 4) {
-      const radius = parseFloat(getComputedStyle(el).borderTopLeftRadius)
-      return { rect: r, radius: Number.isFinite(radius) ? radius : 16 }
-    }
-  }
+/** 形变锚点：无浮窗几何（课程页直接开课等）时兜底为屏幕中央卡片 */
+function anchorFrom(s: ImmersiveOriginSnapshot | null): { rect: DOMRect; radius: number } {
+  if (s) return s
   const vw = window.innerWidth
   const vh = window.innerHeight
   const w = Math.min(300, vw * 0.6)
@@ -318,86 +312,233 @@ function originAnchor(): { rect: DOMRect; radius: number } {
   }
 }
 
-/** 全屏层 → 目标 rect：origin 左上 + scale 后左上不动，再平移落位（层恒为全屏尺寸） */
-function squashTransform(rect: DOMRect): string {
-  const sx = rect.width / window.innerWidth
-  const sy = rect.height / window.innerHeight
-  return `translate(${rect.left}px, ${rect.top}px) scale(${sx}, ${sy})`
+/* 形变走自管 rAF 逐帧插值（与 useDragDock 弹簧同模式），不用 WAAPI：
+   平移与缩放必须各自线性插值，锚点才会匀速滑向悬浮条；WAAPI 对
+   matrix/函数列表的插值策略不可控（矩阵分解会让块中途原地收缩）。
+   cur 是当前形变态的唯一真源，打断即从现值继续，天然可反转。 */
+interface MorphState {
+  sx: number
+  sy: number
+  tx: number
+  ty: number
+  r: number
+  fade: number
 }
 
-/** 非均匀缩放下把圆角按轴补偿成椭圆，起始帧恰为浮窗圆角的视觉半径 */
-function squashRadius(rect: DOMRect, radius: number): string {
-  const sx = rect.width / window.innerWidth
-  const sy = rect.height / window.innerHeight
-  return `${radius / sx}px / ${radius / sy}px`
+const IDENTITY = (): MorphState => ({ sx: 1, sy: 1, tx: 0, ty: 0, r: 0, fade: 1 })
+
+let cur: MorphState = IDENTITY()
+let morphRaf = 0
+let morphFrom: MorphState | null = null
+let morphTo: MorphState | null = null
+let morphT0 = 0
+let morphDur = 0
+let morphDone: (() => void) | null = null
+
+/** M3 emphasized 近似：起始快、收尾缓。二分求解 cubic-bezier 的进度映射 */
+const easeAt = ((): ((x: number) => number) => {
+  const X1 = 0.32
+  const Y1 = 0.72
+  const X2 = 0
+  const Y2 = 1
+  const bx = (t: number) => 3 * (1 - t) ** 2 * t * X1 + 3 * (1 - t) * t * t * X2 + t ** 3
+  const by = (t: number) => 3 * (1 - t) ** 2 * t * Y1 + 3 * (1 - t) * t * t * Y2 + t ** 3
+  return (x: number) => {
+    if (x <= 0) return 0
+    if (x >= 1) return 1
+    let lo = 0
+    let hi = 1
+    for (let i = 0; i < 12; i++) {
+      const t = (lo + hi) / 2
+      if (bx(t) < x) lo = t
+      else hi = t
+    }
+    return by((lo + hi) / 2)
+  }
+})()
+
+function writeMorph(m: MorphState): void {
+  const el = layerEl.value
+  const fade = fadeEl.value
+  if (!el || !fade) return
+  cur = m
+  if (m.sx === 1 && m.sy === 1 && m.tx === 0 && m.ty === 0 && m.r === 0) {
+    el.style.transform = ''
+    el.style.borderRadius = ''
+  } else {
+    el.style.transform = `translate(${m.tx}px, ${m.ty}px) scale(${m.sx}, ${m.sy})`
+    // 非均匀缩放下圆角按轴补偿成椭圆：起点视觉半径 = 悬浮条圆角
+    el.style.borderRadius = `${m.r / m.sx}px / ${m.r / m.sy}px`
+  }
+  fade.style.opacity = String(m.fade)
 }
 
-/** 打断接续：读当前实时帧值作为起点，形变途中反转不跳变 */
-function currentLayerState(): { transform: string; borderRadius: string } {
-  const cs = getComputedStyle(layerEl.value!)
-  return { transform: cs.transform, borderRadius: cs.borderRadius }
+function stopMorph(): void {
+  if (morphRaf) cancelAnimationFrame(morphRaf)
+  morphRaf = 0
+  morphFrom = null
+  morphTo = null
+  morphDone = null
+  // 无论正常收尾还是中途打断，都恢复毛玻璃材质
+  layerEl.value?.classList.remove('is-morphing')
 }
 
-function currentFade(): number {
-  return parseFloat(getComputedStyle(fadeEl.value!).opacity)
+/* ---- 形变调试日志（默认静默）：控制台执行
+   localStorage.setItem('reinMorphDebug','1') 后刷新/下一次开合生效，
+   输出锚点取值、优先级决策与形变首末帧的屏幕坐标，真机远程调试可读；
+   关闭：localStorage.removeItem('reinMorphDebug') ---- */
+let morphDebugOn = false
+let morphFrameLogged = false
+function debugMorph(label: string, data: Record<string, unknown>): void {
+  if (!morphDebugOn) return
+  const rect = (el: Element | null | undefined) => {
+    if (!el) return null
+    const b = el.getBoundingClientRect()
+    return { x: +b.left.toFixed(1), y: +b.top.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1) }
+  }
+  console.warn(`[morph] ${label}`, JSON.stringify({ ...data, layer: rect(layerEl.value), dockPos: rect(document.querySelector('.dock-pos')) }))
+}
+
+function stepMorph(now: number): void {
+  if (!morphFrom || !morphTo) return
+  const p = easeAt(Math.min(1, (now - morphT0) / morphDur))
+  const lp = (a: number, b: number) => a + (b - a) * p
+  // 收起方向的内容淡出走前段加速的独立进度：壳还在收缩早期就把内容
+  // 淡干净，避免「微缩快照」残影；展开方向保持全程淡入（壳先长内容后现）
+  const pf = morphTo.fade < morphFrom.fade ? Math.min(1, p * 2.5) : p
+  const lpf = (a: number, b: number) => a + (b - a) * pf
+  writeMorph({
+    sx: lp(morphFrom.sx, morphTo.sx),
+    sy: lp(morphFrom.sy, morphTo.sy),
+    tx: lp(morphFrom.tx, morphTo.tx),
+    ty: lp(morphFrom.ty, morphTo.ty),
+    r: lp(morphFrom.r, morphTo.r),
+    fade: lpf(morphFrom.fade, morphTo.fade),
+  })
+  if (!morphFrameLogged) {
+    morphFrameLogged = true
+    debugMorph('firstFrame', { p: +p.toFixed(3), cur: { ...cur, sx: +cur.sx.toFixed(4), sy: +cur.sy.toFixed(4), tx: +cur.tx.toFixed(1), ty: +cur.ty.toFixed(1), r: +cur.r.toFixed(1), fade: +cur.fade.toFixed(3) } })
+  }
+  if (p >= 1) {
+    debugMorph('lastFrame', { cur: { ...cur, sx: +cur.sx.toFixed(4), sy: +cur.sy.toFixed(4), tx: +cur.tx.toFixed(1), ty: +cur.ty.toFixed(1), r: +cur.r.toFixed(1) } })
+    const done = morphDone
+    stopMorph()
+    done?.()
+    return
+  }
+  morphRaf = requestAnimationFrame(stepMorph)
+}
+
+/** 从 from 向 to 逐帧插值；reducedMotion 时直接落到 to */
+function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => void): void {
+  stopMorph()
+  const brief = (m: MorphState) => ({ sx: +m.sx.toFixed(4), sy: +m.sy.toFixed(4), tx: +m.tx.toFixed(1), ty: +m.ty.toFixed(1), r: +m.r.toFixed(1), fade: +m.fade.toFixed(3) })
+  debugMorph('run', { from: brief(from), to: brief(to), dur })
+  if (reducedMotion()) {
+    writeMorph(to)
+    done?.()
+    return
+  }
+  morphFrameLogged = false
+  // 动画期摘 blur、壳换实色（Android WebView 合成稳定性，见样式注释）
+  layerEl.value?.classList.add('is-morphing')
+  morphFrom = { ...from }
+  morphTo = { ...to }
+  morphT0 = performance.now()
+  morphDur = dur
+  morphDone = done ?? null
+  morphRaf = requestAnimationFrame(stepMorph)
 }
 
 function playExpand(): void {
-  if (!layerEl.value || !fadeEl.value || reducedMotion()) return
-  stopAnims()
-  const { rect, radius } = originAnchor()
-  layerAnim = layerEl.value.animate(
-    [
-      { transform: squashTransform(rect), borderRadius: squashRadius(rect, radius) },
-      { transform: 'translate(0px, 0px) scale(1, 1)', borderRadius: '0px' },
-    ],
-    { duration: EXPAND_MS, easing: EASE },
-  )
-  layerAnim.onfinish = () => stopAnims()
-  // 内容与不透明底一起淡入：形变初期只见材质壳长大，内容随后浮现
-  fadeAnim = fadeEl.value.animate([{ opacity: currentFade() }, { opacity: 1 }], {
-    duration: 260,
-    delay: 70,
-    easing: 'ease-out',
-    fill: 'both',
+  if (!layerEl.value || !fadeEl.value) return
+  morphDebugOn = !!localStorage.getItem('reinMorphDebug')
+  const presetSnap = immersiveOriginSnapshot()
+  debugMorph('expand:req', {
+    explicit: presetSnap?.explicit ?? false,
+    snapshot: presetSnap ? { x: +presetSnap.rect.left.toFixed(1), y: +presetSnap.rect.top.toFixed(1), w: +presetSnap.rect.width.toFixed(1), h: +presetSnap.rect.height.toFixed(1), r: presetSnap.radius } : null,
   })
+  if (presetSnap) {
+    const preset = morphStateOf(presetSnap.rect, presetSnap.radius)
+    preset.fade = 0
+    writeMorph(preset)
+  }
+  requestAnimationFrame(() => {
+    if (!immersiveOpen.value || !layerEl.value || !fadeEl.value) return
+    // 锚点优先级：显式锚（开课按钮等）恒用打开时快照——浮窗在会话开始后
+    // 立即出现，若被「现量浮窗」覆盖，块会从底部而非用户点击处长出；
+    // 无显式锚（从浮窗打开 / 收起途中反打）才现量优先，量不到落回快照
+    const snap = immersiveOriginSnapshot()
+    const anchor = snap?.explicit ? snap : measureOriginNow() ?? snap
+    debugMorph('expand:anchor', {
+      source: anchor?.explicit ? 'snapshot(显式锚)' : anchor ? 'measured(现量)' : 'fallback(中央兜底)',
+      rect: anchor ? { x: +anchor.rect.left.toFixed(1), y: +anchor.rect.top.toFixed(1), w: +anchor.rect.width.toFixed(1), h: +anchor.rect.height.toFixed(1) } : null,
+      radius: anchor?.radius ?? null,
+    })
+    const { rect, radius } = anchorFrom(anchor)
+    // 内容与不透明底随形变淡入：形变初期只见材质壳长大，内容随后浮现
+    // （形变中断后的反向展开从当前透明度接续，不闪跳）
+    const from = morphStateOf(rect, radius)
+    from.fade = cur.fade < 1 ? cur.fade : 0
+    morphRun(from, IDENTITY(), EXPAND_MS)
+  })
+}
+
+/** rect + 圆角 → 形变态。scale 分母用层自身布局尺寸（inset:0 的实际
+ *  渲染宽高）而非 innerWidth/innerHeight——桌面端常驻滚动条会让后者
+ *  偏大，起点块随之偏窄且中心错位 */
+function morphStateOf(rect: DOMRect, radius: number): MorphState {
+  const el = layerEl.value!
+  // 层未完成布局时（offsetWidth 为 0）回退视口尺寸，避免 scale 出 NaN
+  // 导致 transform 写入被浏览器拒绝——动画整段失效、层无过渡直接出现
+  const w = el.offsetWidth || window.innerWidth
+  const h = el.offsetHeight || window.innerHeight
+  return {
+    sx: rect.width / w,
+    sy: rect.height / h,
+    tx: rect.left,
+    ty: rect.top,
+    r: radius,
+    fade: cur.fade,
+  }
 }
 
 function playCollapse(): void {
   if (!layerEl.value || !fadeEl.value) return
-  if (reducedMotion()) {
-    settleClosed()
-    return
-  }
-  stopAnims()
-  const { rect, radius } = originAnchor()
-  const cur = currentLayerState()
-  layerAnim = layerEl.value.animate(
-    [
-      { transform: cur.transform, borderRadius: cur.borderRadius },
-      { transform: squashTransform(rect), borderRadius: squashRadius(rect, radius) },
-    ],
-    { duration: COLLAPSE_MS, easing: EASE },
-  )
-  fadeAnim = fadeEl.value.animate([{ opacity: currentFade() }, { opacity: 0 }], {
-    duration: Math.round(COLLAPSE_MS * 0.45),
-    easing: 'ease-out',
-    fill: 'both',
+  // closing 驱动的浮窗 v-show 可能晚一拍才 patch 生效：先等一帧再量锚点，
+  // 否则量到 display:none 的零矩形会掉进中央卡片兜底（轨迹跳向屏幕中部）。
+  // 层在等待帧内保持全屏静止，视觉无感；若期间状态被打断则静默放弃。
+  requestAnimationFrame(() => {
+    if (!immersiveClosing.value || !layerEl.value || !fadeEl.value) return
+    const anchor = measureOriginNow()
+    debugMorph('collapse:anchor', {
+      rect: anchor ? { x: +anchor.rect.left.toFixed(1), y: +anchor.rect.top.toFixed(1), w: +anchor.rect.width.toFixed(1), h: +anchor.rect.height.toFixed(1) } : 'fallback(中央兜底)',
+      radius: anchor?.radius ?? null,
+    })
+    const { rect, radius } = anchorFrom(anchor)
+    // 收缩到悬浮条 rect：内容快速淡出，材质壳滑回原位与浮窗同位接续
+    morphRun(
+      { ...cur },
+      { ...morphStateOf(rect, radius), fade: 0 },
+      COLLAPSE_MS,
+      () => {
+        // 恒等基态写入与置 closed 隐藏在同一任务帧，无中间渲染
+        writeMorph(IDENTITY())
+        settleClosed()
+      },
+    )
   })
-  layerAnim.onfinish = () => {
-    // cancel 回恒等基态与置 closed 隐藏在同一任务帧，无中间渲染
-    stopAnims()
-    settleClosed()
-  }
 }
 
-// flush:'post' 保证展开时层已随 v-show 显示、收起时悬浮条已恢复可量
+// flush:'post' 是锚点正确性的关键：展开时层已随 v-show 显示、收起时悬浮条
+// 已先恢复显示（closing 驱动），此刻量 rect 才是真实位置——pre 时机量到
+// display:none 的零矩形，会掉进「屏幕中央卡片」兜底、形变锚点跳到屏幕中央
 watch(immersiveOpenSeq, () => playExpand(), { flush: 'post' })
 watch(immersiveClosing, (closing) => {
   if (closing) playCollapse()
-})
+}, { flush: 'post' })
 watch(immersiveOpen, (open) => {
-  if (!open) stopAnims()
+  if (!open) stopMorph()
 })
 </script>
 
@@ -600,7 +741,7 @@ watch(immersiveOpen, (open) => {
             </button>
           </div>
           <div class="drow row">
-            <button class="iconbtn" aria-label="更多功能" @click="moreOpen = true">
+            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="ghost flex-1" @click="s.skipWarmup()">跳过热身</button>
@@ -624,7 +765,7 @@ watch(immersiveOpen, (open) => {
             </button>
           </div>
           <div class="drow row">
-            <button class="iconbtn" aria-label="更多功能" @click="moreOpen = true">
+            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="primary flex-1" @click="s.completeSet()">完成第 {{ s.setIndex }} 组</button>
@@ -633,7 +774,7 @@ watch(immersiveOpen, (open) => {
 
         <template v-else-if="dockMode === 'rest'">
           <div class="drow row">
-            <button class="iconbtn" aria-label="调整休息时长" @click="restSheetOpen = true">
+            <button class="iconbtn" aria-label="调整休息时长" @click="openRestAdd($event)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="11" cy="13.5" r="7.5" />
                 <path d="M11 13.5V9.5" />
@@ -642,7 +783,7 @@ watch(immersiveOpen, (open) => {
                 <path d="M20.5 2.5v4" />
               </svg>
             </button>
-            <button class="iconbtn" aria-label="更多功能" @click="moreOpen = true">
+            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="primary flex-1" @click="s.skipRest()">
@@ -653,7 +794,7 @@ watch(immersiveOpen, (open) => {
 
         <template v-else-if="dockMode === 'timed'">
           <div class="drow row">
-            <button class="iconbtn" aria-label="更多功能" @click="moreOpen = true">
+            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="ghost danger" @click="s.abortTimed()">放弃</button>
@@ -683,31 +824,24 @@ watch(immersiveOpen, (open) => {
         @close="endOpen = false"
       />
 
-      <!-- 休息时长抽屉：图标钮唤起 -->
-      <ActionSheet
+      <!-- 休息时长加时菜单：图标钮唤起 -->
+      <AppMenu
         :open="restSheetOpen"
         :title="restSheetTitle"
         :actions="REST_ADD_ACTIONS"
+        :anchor="restAnchor"
         @select="onRestAdd"
         @close="restSheetOpen = false"
       />
 
       <!-- 更多菜单：临时休息 / 再加一组 / 上一组 / 当前动作详解 -->
-      <ActionSheet
+      <AppMenu
         :open="moreOpen"
         :title="MORE_TITLE"
         :actions="MORE_ACTIONS"
+        :anchor="moreAnchor"
         @select="onMorePick"
         @close="moreOpen = false"
-      />
-
-      <!-- 临时休息：指定分钟计时 -->
-      <ActionSheet
-        :open="tempRestSheetOpen"
-        title="临时休息多久？"
-        :actions="TEMP_REST_ACTIONS"
-        @select="onTempRestPick"
-        @close="tempRestSheetOpen = false"
       />
 
       <!-- 当前动作详解 -->
@@ -721,17 +855,37 @@ watch(immersiveOpen, (open) => {
 
 <style scoped>
 /* 沉浸层根（形变壳）：transform/border-radius 由 container transform 动画驱动，
-   静止时恒为全屏恒等。背景与毛玻璃与悬浮条同材质，形变首尾帧视觉连续。 */
+   静止时恒为全屏恒等。背景与毛玻璃与悬浮条同材质，形变首尾帧视觉连续；
+   投影也取浮窗同款——全屏稳态时出屏不可见，形变中让块有悬浮体的分量。
+   刻意不写 will-change：常驻合成层提升 + backdrop-filter 在 Android
+   WebView 上会把层冻在动画中途（真机实测：半透明残影叠在真实 UI 上，
+   浮窗/TabBar 状态已切换而层画面不再提交），手写 rAF 每帧写 transform
+   自带提升，无需常驻提示。 */
 .session-layer {
   position: fixed;
   inset: 0;
   z-index: 80; /* 覆盖 TabBar(60) 与全部页面内容 */
   overflow: hidden;
   transform-origin: 0 0;
-  will-change: transform;
+  box-shadow: var(--shadow-float);
   background: var(--surface-translucent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* 形变进行中：摘掉 backdrop-filter、壳换不透明表面色——blur 采样 +
+   transform 逐帧更新是 Android WebView 合成器最易冻结的组合；层内
+   毛玻璃条（顶栏/底坞）随层缩放时同样在重采样，一并禁用。动画期以
+   近似材质换稳定性，结束帧恢复毛玻璃与浮窗接续 */
+.session-layer.is-morphing {
+  background: var(--surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.session-layer.is-morphing :deep(*) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 @media (prefers-reduced-transparency: reduce) {

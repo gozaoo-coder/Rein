@@ -134,10 +134,9 @@
 | `/sports/plans/:id` | sports-plan-detail | 课程详情（二级内容页：动作明细 + 开始训练 + 删除） |
 | `/sports/plans/:id/edit` | sports-plan-edit | 课程编辑（二级内容页；`:id='new'` 表示新建） |
 | `/sports/records` | sports-records | 全部运动记录（二级内容页：日/周/年三视图，概览卡=周期导航+分钟柱状图+统计行，列表按日/月分组；入口为本周运动卡「详情」角标） |
-| `/session` | session | 运动模式·训练课（沉浸二级页，`meta.fullscreen=true` 隐藏 TabBar） |
 | `/session/run` | session-run | 运动模式·跑步（沉浸二级页：目标设置 → GPS/计时 → 暂停/继续 → 总结保存） |
 
-页面分级约定：一级页 `meta.tab`（TabBar 四个页签）；二级内容页 `meta.title`（保留 TabBar，`PageHeader back` 提供返回键）；沉浸页 `meta.fullscreen`。每日目标的编辑入口收敛在「饮食调整」二级页，「我」页只展示摘要。训练课程的全部管理动作收敛在「全部课程」及其详情/编辑二级页，运动主页只放跑步/手动记快速入口与最近使用的三个课程。
+页面分级约定：一级页 `meta.tab`（TabBar 四个页签）；二级内容页 `meta.title`（保留 TabBar，`PageHeader back` 提供返回键）；沉浸页 `meta.fullscreen`。**训练课沉浸层不再走路由**（2026-09-03）：`components/exercise/SessionOverlay.vue` 由 `App.vue` 常驻挂载，显隐与 container transform 形变动画由 `system/sessionImmersive.ts` 驱动——收起/恢复零重建，原 `/session` 路由已移除。每日目标的编辑入口收敛在「饮食调整」二级页，「我」页只展示摘要。训练课程的全部管理动作收敛在「全部课程」及其详情/编辑二级页，运动主页只放跑步/手动记快速入口与最近使用的三个课程。
 
 **桌面工作台（2026-08-24）**：视口 ≥ `config/domain.ts::DESKTOP_MIN`（1100px）时 `App.vue` 切换到三窗格壳——左侧导航轨 `layout/DesktopRail.vue`（替代底部 TabBar）、主人区 `RouterView`、右侧信息栏 `layout/DesktopInspector.vue`（**全部页面常驻**，保证构图平衡：三环小结 + 今日待办快切 + AI 问句）。主页本身提供两个可切换视图（页头分段控件，选择持久化 `localStorage:'rein.homeView.v1'`）：`workbench/BentoOverview.vue`（便当总览：能量磁贴 + 待办 + 番茄/AI + 快捷入口 + 记账/运动概览）与 `workbench/DaySpine.vue`（一日脊柱：体重/饮食/运动/番茄/收支/待办按分钟聚合的纵向时间线，未来安排虚线 + 「现在」呼吸点）。移动端（< DESKTOP_MIN）保持底部导航四页结构，主页为「状态条 + 主页画布 + 常用工具栏」（2026-08-26 起：无壳能量状态条 → 2026-08-29 升级为 `home/HomeCanvas.vue` **主页画布**：未安排池 chips（点卡片进编辑抽屉快排）+ 紧凑版 `todo/CanvasTimeline.vue`（现在线/打勾/拖拽改位，与 /todos 画布同组件同数据，216px 视窗锚定「现在」）+ 餐次摘要 chips → 查阅文字链 → 移动便当风格 2 列工具格：图标章+标题+副标，覆盖记饮食/记运动/专注/AI/记账/健康方案六动作），桌面端其他页面内容以 560px 窄栏居中（`App.vue` `.desk-main:not(.wide)` 约束）。断点检测用 `composables/useMediaQuery.ts`（matchMedia 响应式），不依赖窗口 resize 监听。沉浸页（`meta.fullscreen`）在两形态下都隐藏导航。
 
@@ -145,7 +144,7 @@
 
 - 纯前端状态机 + 后端会话持久化：状态事件 → `session_snapshot`（fire-and-forget，失败显示页顶警示不阻塞训练）。两台状态机都是 Pinia 应用级单例，**组件卸载不影响计时/GPS/落盘**。
 - 中断恢复：`hydrateFromServer()` 读 `session_active`，恢复 doneSets/重量/阶段；**休息倒计时按快照间隔的真实流逝补时**，计时动作被打断则整组重做。
-- **运动系统运行时**（`system/workoutRuntime.ts`，main.ts 装载）：应用启动即接管 active 会话（原各页「检测到未完成的训练」恢复卡逻辑收敛于此）；沉浸页挂载先 `whenReady()` 防竞态。导航栏上方的悬浮运动条（`components/exercise/ActiveWorkoutBar.vue`，fullscreen 路由隐藏）与沉浸页共用运行时的数据与动作：跑步 = 配速/里程/暂停（**必须暂停再结束**），课程 = 动作名/当前组数/完成本组；两者都提供「恢复沉浸」。开始前发现 active 会话 → 提示「前往继续」（`run.courseConflict` / `session.foreignRoute` 区分训练课 `/session` 与跑步 `/session/run`）防止覆盖。
+- **运动系统运行时**（`system/workoutRuntime.ts`，main.ts 装载）：应用启动即接管 active 会话（原各页「检测到未完成的训练」恢复卡逻辑收敛于此）；沉浸页挂载先 `whenReady()` 防竞态。导航栏上方的悬浮运动条（`components/exercise/ActiveWorkoutBar.vue`，沉浸形态隐藏）与沉浸层共用运行时的数据与动作：跑步 = 配速/里程/暂停（**必须暂停再结束**），课程 = 动作名/当前组数/完成本组；两者都提供「恢复沉浸」（训练课经 `system/sessionImmersive` 从浮窗位置形变展开，不走路由；跑步推 `/session/run`）。开始前发现 active 会话 → 提示「前往继续」（`run.courseConflict` / `session.foreignRoute` 区分训练课沉浸层与跑步 `/session/run`）防止覆盖。
 - **课程数据不再来自静态配置**：`stores/plan.ts` 从 `workout_plans` 表加载；会话恢复按 `planId` 查库，查不到（已删除）则作废该会话。开始训练时调用 `touch_workout_plan` 维护「最近使用」。
 - **跑步**（`stores/run.ts`）：`plan_id='__run__'` 复用会话落盘；GPS 用 `navigator.geolocation.watchPosition` 累加距离（精度过滤），不可用时总结页手动填距离（跑步机场景）；卡路里按配速分档取 run 的 MET；恢复时强制暂停态。
 - **跑步保活**（2026-08-24）：安卓锁屏后 WebView 的 GPS/计时随进程冻结停摆（用户感知「定位丢失后崩溃」）。开跑（`begin`）/续跑前经 `trackingService.setKeepalive(true)` 拉起 Android `RunTrackingService`（location 类型前台服务 + WakeLock），首次未授权先弹系统授权框（轮询 `tracking_status` 收敛，拒绝或超时则降级为无 GPS）；总结/重置时停服务。命令：`tracking_keepalive` / `tracking_status`（JNI 经 `Webview::jni_handle().exec` 发后不管，状态走 Kotlin snapshot 静态缓存）。桌面端空操作。

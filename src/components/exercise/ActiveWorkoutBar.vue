@@ -5,12 +5,14 @@ import { Expand } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import { workoutRuntime } from '@/system/workoutRuntime'
+import { openImmersive, setImmersiveOriginProvider } from '@/system/sessionImmersive'
 import { useDragDock } from '@/composables/useDragDock'
 import { useToast } from '@/composables/useToast'
 
 /**
  * 悬浮运动条：导航栏上方常驻的「当前运动」视图（App.vue 挂载，
- * 沉浸页自身已承载全部信息，fullscreen 路由下隐藏）。
+ * 沉浸形态下隐藏：fullscreen 路由（跑步）或训练课沉浸层打开；
+ * 收起动画期间提前回归与形变块接续）。
  * 数据与动作全部来自运动系统运行时（system/workoutRuntime）：
  * 跑步 = 配速 · 里程 · 暂停（必须暂停再结束）；课程 = 动作名 ·
  * 当前组数 · 完成本组。原有各页「检测到未完成的训练」恢复提示
@@ -34,6 +36,19 @@ const endOpen = ref(false)
 /* ---------- 拖拽停靠 ---------- */
 const posEl = ref<HTMLElement | null>(null)
 const { slot, form, pressing, dragging, onPointerDown, expandFromBlob } = useDragDock(posEl)
+
+// 注册形变锚点供给：沉浸层展开快照 / 收起实时量取都从 body 取
+// （getter 形式——收起时浮窗已恢复显示且可能刚被重新停靠，须现取现量）。
+// 量 body 而非 posEl：border-radius（bar/blob 两态不同）长在 body 上。
+// posEl 尚未落位（placeInstant 未写 transform，如开课瞬间浮窗刚随
+// view 渲染）时返回 null——量到的 (0,0) 会让形变从屏幕左上角长出。
+onMounted(() => {
+  setImmersiveOriginProvider(() => {
+    const pos = posEl.value
+    if (!pos || getComputedStyle(pos).transform === 'none') return null
+    return (pos.firstElementChild as HTMLElement | null) ?? pos
+  })
+})
 
 /** 冷启动静默恢复的首个出现不播入场动画；之后的挂载（如退出沉浸页）正常播 */
 const enterMuted = ref(true)
@@ -97,7 +112,10 @@ const endActions = computed(() =>
 )
 
 function goImmersive(): void {
-  void router.push(rt.immersiveRoute.value)
+  // 训练课：从浮窗当前位置形变展开为沉浸层（不走路由，任意吸附位同理）；
+  // 跑步仍是路由沉浸页。锚点走 provider（量 body，圆角正确）
+  if (rt.kind.value === 'course') openImmersive()
+  else void router.push(rt.immersiveRoute.value)
 }
 
 async function onEndPick(value: string): Promise<void> {

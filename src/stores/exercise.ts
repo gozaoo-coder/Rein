@@ -48,6 +48,17 @@ export const useExerciseStore = defineStore('exercise', () => {
     const jobs: Promise<void>[] = [loadWeek(), useNutritionStore().loadSummary(todayStr())]
     if (allLoaded) jobs.push(loadAll())
     await Promise.all(jobs)
+    bumpStrength() // 删除训练会级联删逐组记录，曲线同步失效
+  }
+
+  /**
+   * 逐组做组记录版本号：strength_history 落库变化（结束保存 / 删除训练）后 +1。
+   * 力量进步卡据此失效本地历史缓存重拉——页面常驻（训练课沉浸层不再走路由）
+   * 之后，曲线卡不再因导航离开而重挂载刷新，必须显式感知。
+   */
+  const strengthRev = ref(0)
+  function bumpStrength(): void {
+    strengthRev.value++
   }
 
   const todayKcal = computed(() =>
@@ -73,5 +84,5 @@ export const useExerciseStore = defineStore('exercise', () => {
 
   const recent = computed(() => [...weekWorkouts.value].sort((a, b) => b.id - a.id).slice(0, 8))
 
-  return { weekWorkouts, allWorkouts, loading, loadWeek, loadAll, add, remove, todayKcal, weekKcal, weekMinutes, minutesByDay, recent }
+  return { weekWorkouts, allWorkouts, loading, loadWeek, loadAll, add, remove, todayKcal, weekKcal, weekMinutes, minutesByDay, recent, strengthRev, bumpStrength }
 })

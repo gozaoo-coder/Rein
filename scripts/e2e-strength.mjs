@@ -175,7 +175,12 @@ async function main() {
       const li = [...document.querySelectorAll('.card li')].find(l => l.querySelector('.name')?.textContent.includes('推日'))
       li?.querySelector('.play')?.click()
     })()`)
-    await waitFor(`location.hash.includes('/session') && !location.hash.includes('/run')`, 8000, '进入沉浸页')
+    // 训练课沉浸层不再走路由：以「.session-layer 可见」为进入判据（fixed 层 offsetParent 恒 null，勿用）
+    await waitFor(
+      `(() => { const el = document.querySelector('.session-layer'); return !!el && el.getClientRects().length > 0 })()`,
+      8000,
+      '进入沉浸页',
+    )
     await sleep(1000)
     ok('S3a 首动作进入激活热身阶段', await evalJS(
       `[...document.querySelectorAll('.eyebrow')].some(e => e.textContent.includes('激活热身 · 第 1 / 2 组'))`,
@@ -257,7 +262,7 @@ async function main() {
     await clickButton('完成第 1 组', '.dock')
     await sleep(600)
     ok('S7a 顶栏组数 +1（不含热身）', await evalJS(
-      `/^1\\//.test(document.querySelector('.shead .ptitle')?.textContent.trim() ?? '')`,
+      `/^1\\//.test(document.querySelector('.shead .pcapsule .num')?.textContent.trim() ?? '')`,
     ))
     ok('S7b 休息页显示下一组重量', await evalJS(
       `(() => {

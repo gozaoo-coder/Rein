@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Ellipsis } from 'lucide-vue-next'
+import { Ellipsis, FastForward } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
-import ActionSheet from '@/components/common/ActionSheet.vue'
+import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import SessionExerciseSwapSheet from './SessionExerciseSwapSheet.vue'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
@@ -12,9 +12,10 @@ import type { PlanExercise, SessionSetSlot } from '@/types'
 
 /**
  * 沉浸模式 · 全课程浏览抽屉（顶部胶囊唤起）。
- * 内容颗粒度到「每一组」：按动作分段，段内逐组列出状态（已完成 / 已跳过 / 进行中 / 未开始）。
+ * 内容颗粒度到「每一组」：按动作分段，段内先列激活热身组（小重量，不计入组数），
+ * 再列正式组，逐组标出状态（已完成 / 已跳过 / 进行中 / 未开始）。
  * 抽屉内可做的两件事：
- *  - 某个待做组右侧的 ··· → 跳至该组（只能向前跳，中间的组登记为跳过）；
+ *  - 某个待做正式组右侧的 ··· → 跳至该组（只能向前跳，中间的组登记为跳过）；
  *  - 一组都还没做的动作 → 更换动作（只换动作本体，编排沿用本课程）。
  * 打开时内容区自动滚到当前组。
  */
@@ -32,6 +33,9 @@ interface ExGroup {
   exIdx: number
   ex: PlanExercise
   sub: string
+  /** 激活热身组（不计入完成组数） */
+  warmups: SessionSetSlot[]
+  /** 正式组 */
   slots: SessionSetSlot[]
   done: number
   total: number
@@ -40,7 +44,7 @@ interface ExGroup {
 
 const groups = computed<ExGroup[]>(() => {
   const out: ExGroup[] = []
-  for (const slot of s.setSlots) {
+  for (const slot of s.courseSlots) {
     let g = out[out.length - 1]
     if (!g || g.exIdx !== slot.exIdx) {
       const ex = s.plan?.exercises[slot.exIdx]
@@ -49,12 +53,17 @@ const groups = computed<ExGroup[]>(() => {
         exIdx: slot.exIdx,
         ex,
         sub: exerciseSub(ex),
+        warmups: [],
         slots: [],
         done: 0,
         total: 0,
         canSwap: s.canSwapExercise(slot.exIdx),
       }
       out.push(g)
+    }
+    if (slot.warmup) {
+      g.warmups.push(slot)
+      continue
     }
     g.slots.push(slot)
     g.total++
@@ -92,10 +101,13 @@ watch(
 
 const menuOpen = ref(false)
 const menuTarget = ref<SessionSetSlot | null>(null)
+/** 菜单锚定元素：被点的那个 ··· 按钮 */
+const menuAnchor = ref<HTMLElement | null>(null)
 
-const MENU_ACTIONS = [{ label: '跳至该组', value: 'jump' }]
+const MENU_ACTIONS: MenuItem[] = [{ label: '跳至该组', value: 'jump', icon: FastForward }]
 
-function openMenu(slot: SessionSetSlot): void {
+function openMenu(e: MouseEvent, slot: SessionSetSlot): void {
+  menuAnchor.value = (e.currentTarget as HTMLElement) ?? null
   menuTarget.value = slot
   menuOpen.value = true
 }
@@ -136,15 +148,15 @@ function fmtKg(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1)
 }
 
-/** 每组的右侧状态文本：完成态展示真实登记值，其余展示状态词 */
+/** 每组的右侧状态文本：完成态展示真实登记值，其余展示状态词；热身组加前缀 */
 function setMeta(slot: SessionSetSlot): string {
-  if (slot.state === 'skipped') return '已跳过'
+  if (slot.state === 'skipped') return slot.warmup ? '热身已跳过' : '已跳过'
   if (slot.state === 'current') return '进行中'
   if (slot.state === 'pending') return '未开始'
+  const prefix = slot.warmup ? '热身 ' : ''
   if (slot.done?.sec != null) return `${slot.done.sec} 秒`
   if (slot.done?.weight != null) {
-    const ex = s.plan?.exercises[slot.exIdx]
-    return `${fmtKg(slot.done.weight)}kg${ex?.reps != null ? ` × ${ex.reps}` : ''}`
+    return `${prefix}${fmtKg(slot.done.weight)}kg${slot.done.reps != null ? ` × ${slot.done.reps}` : ''}`
   }
   return '已完成'
 }
@@ -185,6 +197,18 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
       </header>
 
       <ul class="sets">
+        <!-- 激活热身组：不计入组数，先行展示；未做的热身不提供跳转 -->
+        <li
+          v-for="w in g.warmups"
+          :key="'warm' + w.setNo"
+          class="setrow row is-warm"
+          :class="STATE_CLASS[w.state]"
+          :data-current="w.state === 'current' ? 'true' : undefined"
+        >
+          <span class="wtag">热身</span>
+          <span class="setno num">第 {{ w.setNo }} 组</span>
+          <span class="setmeta num">{{ setMeta(w) }}</span>
+        </li>
         <li
           v-for="slot in g.slots"
           :key="slot.setNo"
@@ -199,7 +223,7 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
             type="button"
             class="morebtn"
             :aria-label="`第 ${slot.setNo} 组的操作`"
-            @click="openMenu(slot)"
+            @click="openMenu($event, slot)"
           >
             <Ellipsis :size="18" />
           </button>
@@ -210,10 +234,11 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
     <p class="foot">跳过的组视为未做，不计入完成组数与总容量统计。</p>
 
     <!-- 单组操作菜单（只向前跳到未做的组） -->
-    <ActionSheet
+    <AppMenu
       :open="menuOpen"
       :title="menuTarget ? `${menuTarget.exName} · 第 ${menuTarget.setNo} 组` : ''"
       :actions="MENU_ACTIONS"
+      :anchor="menuAnchor"
       @select="onMenuPick"
       @close="menuOpen = false"
     />
@@ -303,6 +328,27 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
 .setno {
   font-size: var(--fs-callout);
   font-weight: 600;
+}
+
+/* 热身组行：与正式组区分，轻量展示（不计入完成组数） */
+.wtag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-strong, var(--line));
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+.setrow.is-warm .setno {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.setrow.is-warm .setmeta {
+  color: var(--text-3);
 }
 
 .setmeta {

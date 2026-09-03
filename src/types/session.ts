@@ -59,6 +59,12 @@ export interface WorkoutPlan {
 export interface DoneSet {
   weight: number | null
   sec: number | null
+  /**
+   * 该组实际完成次数（完成瞬间登记：正式组取现场次数，热身组取热身定义次数）。
+   * 逐组登记而非回读课程定义——课程可能事后被编辑/删除，回读会让历史记录失真。
+   * 旧快照没有此字段，读取时按 undefined 处理并回落到课程定义。
+   */
+  reps?: number | null
   /** true = 激活热身组 */
   warmup?: boolean
 }
@@ -87,6 +93,8 @@ export interface SessionSnapshotState {
   resumePhase?: 'exercise' | 'timed-ready' | 'timed-run'
   /** 激活热身组间休息：不推进正式组数 */
   restWarmup?: boolean
+  /** 当前组现场次数（力量动作可临时改写；null = 该动作未配次数） */
+  reps?: number | null
   /** 「再加一组」：动作 id → 追加的组数 */
   extraSets?: Record<string, number>
   /** 已跳过的正式组：动作 id → 被跳过的组号（1-based）。跳过 = 未做，不计入完成统计 */
@@ -107,11 +115,13 @@ export interface SessionSetSlot {
   exId: string
   exName: string
   kind: PlanExerciseKind
-  /** 1-based 组号（含「再加一组」追加出来的组） */
+  /** 1-based 组号；热身组单独从 1 计，不占正式组号 */
   setNo: number
+  /** true = 激活热身组（只出现在 courseSlots，不进进度格条与游标计算） */
+  warmup?: boolean
   state: SessionSetState
-  /** 已完成组登记的实际重量 / 秒数；其余状态为 null */
-  done: { weight: number | null; sec: number | null } | null
+  /** 已完成组登记的实际次数 / 重量 / 秒数；其余状态为 null */
+  done: { weight: number | null; sec: number | null; reps?: number | null } | null
 }
 
 /** 逐组重量落库行（session_finish 事务内写入 workout_sets 表；重量曲线的数据源） */

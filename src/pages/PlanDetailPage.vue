@@ -9,6 +9,7 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import ExerciseDetailDrawer from '@/components/exercise/ExerciseDetailDrawer.vue'
 import { usePlanStore } from '@/stores/plan'
 import { useSessionStore } from '@/stores/session'
+import { openImmersive } from '@/system/sessionImmersive'
 import { useToast } from '@/composables/useToast'
 import { estimatePlanMinutes, exerciseBadge, exerciseSub, planTypeLabel } from '@/utils/plan'
 import type { PlanExercise } from '@/types'
@@ -32,12 +33,21 @@ onMounted(async () => {
 
 const plan = computed(() => planStore.byId(String(route.params.id)))
 
-/** 开始训练；已有进行中会话（训练课/跑步）时提示前往接续 */
-async function onStart(): Promise<void> {
+/** 开始训练；已有进行中会话（训练课/跑步）时提示前往接续。
+ *  形变锚点 = 开始按钮（从哪点从哪长出）。 */
+async function onStart(e: MouseEvent): Promise<void> {
   if (!plan.value) return
+  const origin = e.currentTarget as HTMLElement | null // await 后 currentTarget 已置 null，同步先抓
   const r = await session.start(plan.value)
   if (r === 'conflict') conflictOpen.value = true
-  else void router.push('/session')
+  else openImmersive(origin)
+}
+
+/** 接续进行中的会话：训练课开沉浸层，跑步转跑步路由 */
+function goConflict(): void {
+  conflictOpen.value = false
+  if (session.foreignRoute) void router.push(session.foreignRoute)
+  else openImmersive()
 }
 
 async function doDelete(): Promise<void> {
@@ -99,7 +109,7 @@ async function doDelete(): Promise<void> {
       :open="conflictOpen"
       title="已有进行中的训练，请先接续"
       :actions="[{ label: '前往继续', value: 'go' }]"
-      @select="conflictOpen = false; void router.push(session.foreignRoute ?? '/session')"
+      @select="goConflict"
       @close="conflictOpen = false"
     />
 

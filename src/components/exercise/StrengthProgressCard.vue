@@ -3,13 +3,16 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import WeightCurve from '@/components/exercise/WeightCurve.vue'
 import { sessionService } from '@/services/sessionService'
+import { useExerciseStore } from '@/stores/exercise'
 import { fmtDateCn } from '@/utils/date'
 import { aggregateStrengthDays, fmtKg, type StrengthDay } from '@/utils/strength'
 
 /**
  * 力量进步卡（运动页）：按动作查看重量变化曲线。
  * 动作 chips 来自逐组记录的最近训练排序；无力量记录时整卡隐藏。
+ * 页面常驻后不再因导航离开重挂载，落库变化靠 exerciseStore.strengthRev 失效缓存。
  */
+const exStore = useExerciseStore()
 const refs = ref<{ name: string; lastDate: string; sessions: number }[]>([])
 const loaded = ref(false)
 const selected = ref('')
@@ -19,7 +22,8 @@ const loadingCurve = ref(false)
 /** 已加载过的动作历史缓存（切回不重复请求） */
 const cache = new Map<string, StrengthDay[]>()
 
-onMounted(async () => {
+async function loadRefs(keep = false): Promise<void> {
+  const prev = selected.value
   try {
     refs.value = await sessionService.strengthExercises()
   } catch {
@@ -27,12 +31,29 @@ onMounted(async () => {
   } finally {
     loaded.value = true
   }
-  if (refs.value.length) void select(refs.value[0]!.name)
-})
+  if (!refs.value.length) {
+    selected.value = ''
+    curveDays.value = []
+    return
+  }
+  const name = keep && refs.value.some((r) => r.name === prev) ? prev : refs.value[0]!.name
+  void select(name)
+}
+
+onMounted(() => void loadRefs())
 
 watch(selected, (name) => {
   if (name) void select(name)
 })
+
+/** 逐组记录落库（结束保存 / 删除训练）后刷新：缓存全部失效，尽量留在当前动作 */
+watch(
+  () => exStore.strengthRev,
+  () => {
+    cache.clear()
+    void loadRefs(true)
+  },
+)
 
 async function select(name: string): Promise<void> {
   selected.value = name
