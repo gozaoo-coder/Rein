@@ -31,6 +31,20 @@ export const routes = [
     meta: { title: '管理模型' },
   },
   {
+    path: '/ai/knowledge',
+    name: 'ai-knowledge',
+    component: () => import('@/pages/KnowledgePage.vue'),
+    // 二级内容页：保留底部导航，页头提供返回键
+    meta: { title: '知识库' },
+  },
+  {
+    path: '/ai/knowledge/files',
+    name: 'ai-knowledge-files',
+    component: () => import('@/pages/FileLibraryPage.vue'),
+    // 文件库：知识库虚拟文件树的浏览界面（目录下钻 + 完整阅读 + 可编辑文件）
+    meta: { title: '文件库' },
+  },
+  {
     path: '/me',
     name: 'me',
     component: () => import('@/pages/ProfilePage.vue'),
@@ -121,6 +135,13 @@ export const routes = [
     component: () => import('@/pages/WorkoutRecordsPage.vue'),
     // 二级内容页：保留底部导航，页头提供返回键
     meta: { title: '全部运动记录' },
+  },
+  {
+    path: '/record',
+    name: 'record',
+    component: () => import('@/pages/RecordPage.vue'),
+    // 二级内容页：录音台 + 未归档 take 管理（附加到待办 / 回放 / 删除）
+    meta: { title: '录音' },
   },
   {
     path: '/session/run',

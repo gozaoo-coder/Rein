@@ -3,6 +3,7 @@
 
 pub mod ai;
 pub mod diet;
+pub mod kb;
 pub mod ledger;
 pub mod exercise;
 pub mod nutrition;
@@ -11,6 +12,8 @@ pub mod pomodoro;
 pub mod program;
 pub mod seed;
 pub mod session;
+pub mod share;
 pub mod todo;
 pub mod tracking;
+pub mod voice;
 pub mod web;

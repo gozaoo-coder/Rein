@@ -18,6 +18,18 @@ pub fn run() {
         .setup(|app| {
             let conn = db::init(app.handle())?;
             app.manage(AppState::new(conn));
+            app.manage(crate::state::VoiceHub::new());
+
+            // 知识库：状态 + 后台索引线程。
+            // 索引线程要读写与应用同一份数据库，所以先完成 db::init（其中的迁移已建好 kb_* 表）
+            // 并把状态 manage 进去，再启动线程。
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("无法定位应用数据目录：{e}"))?;
+            let hub = std::sync::Arc::new(modules::kb::worker::KbHub::new(data_dir));
+            hub.start(app.handle().clone());
+            app.manage(hub);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -47,6 +59,8 @@ pub fn run() {
             // todo
             modules::todo::commands::list_todos,
             modules::todo::commands::list_all_todos,
+            modules::todo::commands::query_todos,
+            modules::todo::commands::todo_distribution,
             modules::todo::commands::create_todo,
             modules::todo::commands::update_todo,
             modules::todo::commands::delete_todo,
@@ -124,6 +138,46 @@ pub fn run() {
             // web（AI 联网：搜索/抓页，默认必应）
             modules::web::commands::web_fetch,
             modules::web::commands::web_search,
+            // share（分享收件箱：Android 系统分享/打开的文件）
+            modules::share::commands::share_poll,
+            modules::share::commands::share_read,
+            // voice（语音对话：豆包 ASR/TTS + 纪要）
+            modules::voice::commands::voice_config_get,
+            modules::voice::commands::voice_config_save,
+            modules::voice::commands::voice_config_status,
+            modules::voice::commands::voice_asr_start,
+            modules::voice::commands::voice_asr_audio,
+            modules::voice::commands::voice_asr_finish,
+            modules::voice::commands::voice_asr_cancel,
+            modules::voice::commands::voice_tts_speak,
+            modules::voice::commands::voice_memo_create,
+            modules::voice::commands::voice_memo_get,
+            modules::voice::commands::voice_memo_list,
+            modules::voice::commands::voice_memo_set_summary,
+            modules::voice::commands::voice_memo_rename,
+            modules::voice::commands::voice_memo_delete,
+            modules::voice::commands::voice_draft_save,
+            modules::voice::commands::voice_draft_get,
+            modules::voice::commands::voice_draft_clear,
+            // kb（知识库与认知层：混合检索 + 长期记忆）
+            modules::kb::commands::kb_status,
+            modules::kb::commands::kb_search,
+            modules::kb::commands::kb_read,
+            modules::kb::commands::kb_reindex,
+            modules::kb::commands::kb_settings_get,
+            modules::kb::commands::kb_settings_set,
+            modules::kb::commands::kb_probe_embedder,
+            modules::kb::commands::kb_rebuild_vectors,
+            modules::kb::commands::kb_memories,
+            modules::kb::commands::kb_memory_apply,
+            modules::kb::commands::kb_memory_delete,
+            modules::kb::commands::kb_cognition,
+            modules::kb::commands::kb_memory_bump,
+            modules::kb::commands::kb_glob,
+            modules::kb::commands::kb_file_write,
+            modules::kb::commands::kb_file_rename,
+            modules::kb::commands::kb_file_delete,
+            modules::kb::commands::kb_file_get,
         ])
         .run(tauri::generate_context!())
         .expect("Rein 启动失败");

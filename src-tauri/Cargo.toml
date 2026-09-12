@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -23,6 +23,22 @@ chrono = "0.4"
 ureq = "2"
 url = "2"
 html2text = "0.17"
+# 分享收件箱（share_read 返回文件内容给前端）
+base64 = "0.22"
+# 语音对话（modules/voice）：豆包 ASR/TTS WS 客户端 + gzip 二进制协议 + 音频落盘
+tokio = { version = "1", features = ["sync", "macros", "rt"] }
+tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+flate2 = "1"
+uuid = { version = "1", features = ["v4"] }
+# 端侧 embedding（modules/kb，见 docs/kb-embed-benchmark.md）：
+# 必须 default-features = false —— ort 的默认 feature 含 download-binaries，与 load-dynamic 冲突；
+# 只开 load-dynamic（运行时由我们显式 init_from），三端交叉编译就不需要任何原生链接配置。
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic", "ndarray", "api-27"] }
+ndarray = "0.17"
+# 显式选 fancy-regex（纯 Rust）而非默认的 onig：后者要编 oniguruma 的 C 代码，是 Android 交叉编译的常见坑。
+# 注意 default-features = false 时 tokenizers 会直接 compile_error!，必须二选一。
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 
 [profile.release]
 codegen-units = 1

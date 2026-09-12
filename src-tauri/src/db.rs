@@ -377,6 +377,347 @@ CREATE TABLE app_meta (
 );
 "#;
 
+/// 0014 · 待办附件/标记：文字正文内联，文件/图片/音频存 data URL（JSON 数组）。
+/// 重复实例物化时不继承附件（按次记录）。
+const MIGRATION_0014: &str = r#"
+ALTER TABLE todos ADD COLUMN attachments TEXT;
+"#;
+
+/// 0015 · ai_models 增加图片发送分辨率上限（最长边像素）：NULL 时前端用默认值。
+/// 发图/放大镜输出都按它压缩，尽量贴近各视觉模型的输入分辨率上限。
+const MIGRATION_0015: &str = r#"
+ALTER TABLE ai_models ADD COLUMN image_max_edge INTEGER;
+"#;
+
+/// 0016 · 语音会话纪要（modules/voice）：一段转写一条，
+/// 句子与总结存 JSON 文本列（结构由前端约定，Rust 不解释）；
+/// 音频为追加落盘的 wav 文件，audio_path 存应用数据目录内相对路径。
+const MIGRATION_0016: &str = r#"
+CREATE TABLE voice_memos (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  message_id TEXT,
+  title TEXT NOT NULL DEFAULT '',
+  audio_path TEXT,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  words INTEGER NOT NULL DEFAULT 0,
+  sentences TEXT NOT NULL DEFAULT '[]',
+  summary TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_voice_memos_chat ON voice_memos(chat_id);
+CREATE INDEX idx_voice_memos_created ON voice_memos(created_at);
+"#;
+
+/// 0017 · 个人知识库主体（modules/kb）。
+///
+/// 一张库装下多种来源：日程/附件、运动、饮食体测、方案/语音/聊天，AI 生成的长记忆也是其中一类
+/// （source_type='memory'，见 0018）。三个设计取舍：
+///
+/// 1. `kb_docs.body` 存规范化的可检索正文快照。源表仍是唯一真源——每次脏标记重放都从源表重新
+///    派生 body，所以它是缓存不是副本；换来的是检索不必 join 十一张源表、read 能直接取 L2 正文。
+/// 2. `kb_fts` 用 external content 指回 kb_chunks，索引里不重复存正文（正文已在 kb_chunks.text），
+///    代价是增删改必须走配套的三个维护触发器，不能手工双写。
+/// 3. `tokenize='trigram'` 是为中文选的：FTS5 的 unicode61 会把整段中文当成一个 token，做不了子串
+///    匹配；trigram 按三字滑动窗口切，不需要分词器即可子串检索。代价是**查询词少于 3 个字符命中
+///    为空**，所以检索层对短词必须回落到 LIKE。
+///
+/// `kb_dirty` 是源表触发器（0019）与索引线程之间的队列，主键即去重——同一实体反复变更只会留一行。
+/// `vec_model` 记录当前向量是哪个模型算的，换模型后据此只重算该模型的向量。
+const MIGRATION_0017: &str = r#"
+CREATE TABLE kb_docs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  parent_id TEXT,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  occurred_on TEXT,
+  tags TEXT NOT NULL DEFAULT '[]',
+  meta_json TEXT NOT NULL DEFAULT '{}',
+  content_hash TEXT NOT NULL,
+  byte_len INTEGER NOT NULL DEFAULT 0,
+  vec_model TEXT,
+  updated_at TEXT NOT NULL,
+  UNIQUE(source_type, source_id)
+);
+CREATE INDEX idx_kb_docs_src ON kb_docs(source_type, occurred_on);
+CREATE INDEX idx_kb_docs_date ON kb_docs(occurred_on);
+
+CREATE TABLE kb_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id INTEGER NOT NULL REFERENCES kb_docs(id) ON DELETE CASCADE,
+  ord INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  UNIQUE(doc_id, ord)
+);
+CREATE INDEX idx_kb_chunks_doc ON kb_chunks(doc_id);
+
+CREATE VIRTUAL TABLE kb_fts USING fts5(
+  text,
+  content='kb_chunks',
+  content_rowid='id',
+  tokenize='trigram'
+);
+
+CREATE TRIGGER kb_chunks_ai AFTER INSERT ON kb_chunks BEGIN
+  INSERT INTO kb_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER kb_chunks_ad AFTER DELETE ON kb_chunks BEGIN
+  INSERT INTO kb_fts(kb_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+CREATE TRIGGER kb_chunks_au AFTER UPDATE ON kb_chunks BEGIN
+  INSERT INTO kb_fts(kb_fts, rowid, text) VALUES ('delete', old.id, old.text);
+  INSERT INTO kb_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
+CREATE TABLE kb_vectors (
+  chunk_id INTEGER PRIMARY KEY REFERENCES kb_chunks(id) ON DELETE CASCADE,
+  model_id TEXT NOT NULL,
+  dim INTEGER NOT NULL,
+  vec BLOB NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_kb_vectors_model ON kb_vectors(model_id);
+
+CREATE TABLE kb_dirty (
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  op TEXT NOT NULL,
+  at TEXT NOT NULL,
+  PRIMARY KEY (source_type, source_id)
+);
+
+CREATE TABLE kb_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  embedding_mode TEXT NOT NULL DEFAULT 'keyword',
+  cloud_base_url TEXT,
+  cloud_api_key TEXT,
+  cloud_model TEXT,
+  cloud_dim INTEGER,
+  sources_enabled TEXT NOT NULL DEFAULT '{}',
+  auto_memory INTEGER NOT NULL DEFAULT 1,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO kb_settings (id, updated_at) VALUES (1, datetime('now'));
+"#;
+
+/// 0018 · 知识库里的「认知」层：AI 从对话中提炼并持续合并的长期记忆。
+///
+/// 记忆不是独立系统，而是 kb_docs 的一类来源（source_type='memory'），这样它天然进入同一套检索与
+/// 召回。这里额外保留一张变更审计表，对齐 OpenViking 的 memory_diff 思路：每次会话结束抽取出的
+/// 增/改/删都留一份快照，记忆改错了可以回溯是被哪轮对话改的。
+/// `UNIQUE(mem_type, topic, content)` 让重复抽取天然幂等。
+const MIGRATION_0018: &str = r#"
+CREATE TABLE kb_memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mem_type TEXT NOT NULL,
+  topic TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0.7,
+  active_count INTEGER NOT NULL DEFAULT 0,
+  source_chat_id TEXT,
+  source_message_ids TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(mem_type, topic, content)
+);
+CREATE INDEX idx_kb_memories_type ON kb_memories(mem_type);
+
+CREATE TABLE kb_memory_diffs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT,
+  at TEXT NOT NULL,
+  ops_json TEXT NOT NULL
+);
+CREATE INDEX idx_kb_memory_diffs_at ON kb_memory_diffs(at);
+"#;
+
+/// 0019 · 源表变更捕获：让知识库「自动跟上」所有写入路径，包括未来新增的写法。
+///
+/// 用触发器而不是在各 command 里手写通知，是因为写入路径不止一处——program_schedule_replace 这类
+/// 批量直写 todos、seed_foods 的 INSERT OR IGNORE、级联删除，走 command 层挂点必然会漏。
+/// 触发器只写一行 kb_dirty（主键去重），开销极小；真正的分块与嵌入由索引线程异步消费。
+///
+/// foods 只在 is_custom=1 时登记：内置 2722 条种子每次启动都会 INSERT OR IGNORE，
+/// 无条件登记会让首启入队整个食物库，而种子数据本就有 LCS 精确检索覆盖。
+/// workout_sets 不单独成档，而是把父 workout 标脏——逐组明细是训练记录的组成部分。
+const MIGRATION_0019: &str = r#"
+CREATE TRIGGER kb_t_todos_ai AFTER INSERT ON todos BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('todo',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_todos_au AFTER UPDATE ON todos BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('todo',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_todos_ad AFTER DELETE ON todos BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('todo',CAST(OLD.id AS TEXT),'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_workouts_ai AFTER INSERT ON workouts BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('workout',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_workouts_au AFTER UPDATE ON workouts BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('workout',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_workouts_ad AFTER DELETE ON workouts BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('workout',CAST(OLD.id AS TEXT),'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_wsets_ai AFTER INSERT ON workout_sets BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('workout',CAST(NEW.workout_id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_wsets_au AFTER UPDATE ON workout_sets BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('workout',CAST(NEW.workout_id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_wsets_ad AFTER DELETE ON workout_sets BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('workout',CAST(OLD.workout_id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_plans_ai AFTER INSERT ON workout_plans BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('plan',NEW.id,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_plans_au AFTER UPDATE ON workout_plans BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('plan',NEW.id,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_plans_ad AFTER DELETE ON workout_plans BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('plan',OLD.id,'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_meals_ai AFTER INSERT ON meal_logs BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('meal',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_meals_au AFTER UPDATE ON meal_logs BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('meal',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_meals_ad AFTER DELETE ON meal_logs BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('meal',CAST(OLD.id AS TEXT),'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_metrics_ai AFTER INSERT ON body_metrics BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('body_metric',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_metrics_au AFTER UPDATE ON body_metrics BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('body_metric',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_metrics_ad AFTER DELETE ON body_metrics BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('body_metric',CAST(OLD.id AS TEXT),'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_foods_ai AFTER INSERT ON foods WHEN NEW.is_custom = 1 BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('food',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_foods_au AFTER UPDATE ON foods WHEN NEW.is_custom = 1 BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('food',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_foods_ad AFTER DELETE ON foods WHEN OLD.is_custom = 1 BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('food',CAST(OLD.id AS TEXT),'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_programs_ai AFTER INSERT ON programs BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('program',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_programs_au AFTER UPDATE ON programs BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('program',CAST(NEW.id AS TEXT),'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_programs_ad AFTER DELETE ON programs BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('program',CAST(OLD.id AS TEXT),'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_pmeals_ai AFTER INSERT ON program_meals BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('program_meal',CAST(NEW.program_id AS TEXT)||':'||NEW.date,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_pmeals_au AFTER UPDATE ON program_meals BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('program_meal',CAST(NEW.program_id AS TEXT)||':'||NEW.date,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_pmeals_ad AFTER DELETE ON program_meals BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('program_meal',CAST(OLD.program_id AS TEXT)||':'||OLD.date,'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_memos_ai AFTER INSERT ON voice_memos BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('voice_memo',NEW.id,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_memos_au AFTER UPDATE ON voice_memos BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('voice_memo',NEW.id,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_memos_ad AFTER DELETE ON voice_memos BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('voice_memo',OLD.id,'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+
+CREATE TRIGGER kb_t_msgs_ai AFTER INSERT ON ai_chat_messages BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('chat_message',NEW.id,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_msgs_au AFTER UPDATE ON ai_chat_messages BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('chat_message',NEW.id,'upsert',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='upsert', at=excluded.at;
+END;
+CREATE TRIGGER kb_t_msgs_ad AFTER DELETE ON ai_chat_messages BEGIN
+  INSERT INTO kb_dirty(source_type,source_id,op,at) VALUES('chat_message',OLD.id,'delete',datetime('now'))
+  ON CONFLICT(source_type,source_id) DO UPDATE SET op='delete', at=excluded.at;
+END;
+"#;
+
+/// 0020 · 虚拟文件系统（docs/kb-vfs.md）：给每篇文档一个稳定路径，并区分「可写/只读」。
+///
+/// 两条新增能力各需要一个存储位：
+/// 1. `kb_docs.path` 把 11 类派生文档挂进同一棵路径树（`日程/…`、`对话/{chatId}/…`），
+///    glob 检索与「按目录浏览」都建立在它上面。路径是**派生的**：源数据变了路径可能变，
+///    文档身份始终是 (source_type, source_id)，所以改名/改标题不会丢编目。
+/// 2. `kb_files` 是知识库里唯一的「真实文件」表——用户笔记与系统规范文件的正文真源。
+///    它经 source_type='note' 派生进 kb_docs（body 是缓存），编辑走 kb_files 再标脏，
+///    这样「kb_docs 一律是派生缓存」这条不变量对全库成立，重放永远能重建一切。
+///
+/// `editable` / `system` / `kind` 做成列而不是查询时推导：UI 与 AI 工具单次读取就能拿到，
+/// 不必在每个调用点重复「哪些来源可写」的规则。
+const MIGRATION_0020: &str = r#"
+ALTER TABLE kb_docs ADD COLUMN path TEXT;
+ALTER TABLE kb_docs ADD COLUMN editable INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE kb_docs ADD COLUMN system INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE kb_docs ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';
+CREATE INDEX idx_kb_docs_path ON kb_docs(path);
+
+CREATE TABLE kb_files (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL UNIQUE,
+  content TEXT NOT NULL DEFAULT '',
+  system INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -391,7 +732,172 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0011,
     MIGRATION_0012,
     MIGRATION_0013,
+    MIGRATION_0014,
+    MIGRATION_0015,
+    MIGRATION_0016,
+    MIGRATION_0017,
+    MIGRATION_0018,
+    MIGRATION_0019,
+    MIGRATION_0020,
 ];
+
+/// 测试用：对给定连接跑完整迁移（含知识库的 FTS 表与全部触发器）。
+/// 生产路径是 `init()`，它会额外做种子导入；测试不需要种子。
+#[cfg(test)]
+pub fn migrate_for_test(conn: &Connection) -> Result<()> {
+    migrate(conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 只应用到 0016，模拟知识库上线之前的老库。
+    fn legacy_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_migrations(
+               version INTEGER PRIMARY KEY,
+               applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+             );",
+        )
+        .unwrap();
+        for (i, sql) in MIGRATIONS.iter().enumerate() {
+            let v = (i + 1) as i64;
+            if v > 16 {
+                break;
+            }
+            conn.execute_batch(&format!(
+                "BEGIN; {sql}; INSERT INTO schema_migrations(version) VALUES ({v}); COMMIT;"
+            ))
+            .unwrap();
+        }
+        conn
+    }
+
+    fn table_exists(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+            [name],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap()
+            > 0
+    }
+
+    #[test]
+    fn upgrade_from_0016_adds_knowledge_base() {
+        let conn = legacy_db();
+        assert!(!table_exists(&conn, "kb_docs"), "前置条件：老库还没有知识库表");
+
+        migrate_for_test(&conn).unwrap();
+
+        for t in [
+            "kb_docs",
+            "kb_chunks",
+            "kb_fts",
+            "kb_vectors",
+            "kb_dirty",
+            "kb_settings",
+            "kb_memories",
+            "kb_memory_diffs",
+        ] {
+            assert!(table_exists(&conn, t), "升级后应存在 {t}");
+        }
+        let ver: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ver, MIGRATIONS.len() as i64);
+    }
+
+    /// 触发器是升级后新建的，只对**之后**的写入生效。这条验证它们确实生效了——
+    /// 老数据的补齐靠 scan_all 对账，但新写入必须立刻被登记。
+    #[test]
+    fn triggers_are_live_after_upgrade() {
+        let conn = legacy_db();
+        // 升级前就存在的待办：不该有脏标记（触发器还不存在）
+        conn.execute(
+            "INSERT INTO todos(title, category, priority, status, created_at)
+             VALUES('老数据','general',0,'todo','x')",
+            [],
+        )
+        .unwrap();
+
+        migrate_for_test(&conn).unwrap();
+        let dirty: i64 = conn
+            .query_row("SELECT COUNT(*) FROM kb_dirty", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(dirty, 0, "升级前的老数据不会被触发器追溯登记");
+
+        // 升级后的新写入必须被登记
+        conn.execute(
+            "INSERT INTO todos(title, category, priority, status, created_at)
+             VALUES('新数据','general',0,'todo','x')",
+            [],
+        )
+        .unwrap();
+        let dirty: i64 = conn
+            .query_row("SELECT COUNT(*) FROM kb_dirty", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(dirty, 1, "升级后的写入必须被登记");
+    }
+
+    #[test]
+    fn migrate_is_idempotent() {
+        let conn = legacy_db();
+        migrate_for_test(&conn).unwrap();
+        let before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
+            .unwrap();
+        // 再跑一次不该重复应用，也不该因表/触发器已存在而报错
+        migrate_for_test(&conn).unwrap();
+        let after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after);
+        assert_eq!(after, MIGRATIONS.len() as i64);
+    }
+
+    /// 触发器不能破坏既有写入路径：插一条待办仍然成功，且只多出一行脏标记。
+    #[test]
+    fn triggers_do_not_break_existing_writes() {
+        let conn = legacy_db();
+        migrate_for_test(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO todos(title, notes, category, priority, status, created_at, date, subtasks, attachments)
+             VALUES('测试','备注','general',1,'todo','x','2026-09-10','[]','[]')",
+            [],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        assert!(id > 0);
+        conn.execute("UPDATE todos SET notes = '改过' WHERE id = ?1", [id])
+            .unwrap();
+        conn.execute("DELETE FROM todos WHERE id = ?1", [id]).unwrap();
+        // 插入+更新+删除都作用于同一主键，脏队列里只应留最后一条 delete
+        let (op, n): (String, i64) = conn
+            .query_row(
+                "SELECT op, (SELECT COUNT(*) FROM kb_dirty) FROM kb_dirty LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((op.as_str(), n), ("delete", 1));
+    }
+
+    /// kb_settings 是单行表，迁移里已经种了 id=1，否则后续 SQL 全部落空。
+    #[test]
+    fn kb_settings_has_the_singleton_row() {
+        let conn = legacy_db();
+        migrate_for_test(&conn).unwrap();
+        let mode: String = conn
+            .query_row("SELECT embedding_mode FROM kb_settings WHERE id = 1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(mode, "keyword", "默认应为零依赖的关键词模式");
+    }
+}
 
 fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch(

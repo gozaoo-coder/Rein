@@ -7,12 +7,17 @@
  * 3. 需要在系统提示词的分组清单里补一句说明（src/ai/chat.ts）。
  */
 
-import type { AgentTool } from '@earendil-works/pi-agent-core'
+import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core'
 
 import { contextTools } from './misc'
 import { dietTools } from './diet'
 import { exerciseTools } from './exercise'
+import { imageTools } from './image'
+import { knowledgeTools } from './knowledge'
 import { ledgerTools } from './ledger'
+import { memoryTools } from './memory'
+import { modelTools } from './models'
+import { noteTools } from './notes'
 import { nutritionTools } from './nutrition'
 import { planTools } from './plan'
 import { pomodoroTools } from './pomodoro'
@@ -34,7 +39,12 @@ export const APP_TOOLS: AppTool[] = [
   ...pomodoroTools,
   ...sessionTools,
   ...contextTools,
+  ...knowledgeTools,
+  ...memoryTools,
+  ...noteTools,
+  ...modelTools,
   ...webTools,
+  ...imageTools,
 ]
 
 const BY_NAME = new Map(APP_TOOLS.map((t) => [t.name, t]))
@@ -44,7 +54,7 @@ export function findAppTool(name: string): AppTool | undefined {
   return BY_NAME.get(name)
 }
 
-/** AppTool → AgentTool：结果统一包成 {ok:true,data} 文本；失败 throw 由框架回灌错误 */
+/** AppTool → AgentTool：默认结果包成 {ok:true,data} 文本；rawContent 工具原样透传内容块（可含图片）；失败 throw 由框架回灌错误 */
 function toAgentTool(t: AppTool): AgentTool {
   return {
     name: t.name,
@@ -53,6 +63,7 @@ function toAgentTool(t: AppTool): AgentTool {
     parameters: t.parameters,
     execute: async (_toolCallId, params) => {
       const data = await t.execute(params as never)
+      if (t.rawContent) return data as AgentToolResult<unknown>
       return {
         content: [{ type: 'text', text: JSON.stringify({ ok: true, data }) }],
         details: data,
