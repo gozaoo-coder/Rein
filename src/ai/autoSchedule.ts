@@ -12,6 +12,7 @@ import type { AiModel, Todo } from '@/types'
 import { minToHHmm } from '@/utils/date'
 import { busyIntervals, freeGaps, overlaps, SCHEDULE_BUFFER, type Interval } from '@/utils/schedule'
 import { extractJsonObject, lastAssistantText } from './json'
+import { jsonArrayItems } from './streamExtract'
 import { buildRuntime } from './runtime'
 
 export interface Placement {
@@ -80,13 +81,15 @@ interface RawPlacement {
   startMin: number
 }
 
-/** AI 排程：模型必须已配置。校验失败的项会进 unplaced / 回落启发式。 */
+/** AI 排程：模型必须已配置。校验失败的项会进 unplaced / 回落启发式。
+ * onProgress 可选：流式回传已排条数（输出逐条完整即计一次）。 */
 export async function aiSchedule(
   config: AiModel,
   pool: Todo[],
   busyTodos: Todo[],
   date: string,
   fromMin: number,
+  onProgress?: (placed: number, total: number) => void,
 ): Promise<ScheduleResult> {
   if (!pool.length) {
     return { placements: [], unplaced: [], reason: '池子里没有待安排的事项', source: 'ai' }
@@ -115,6 +118,18 @@ export async function aiSchedule(
     },
     streamFn: models.streamSimple.bind(models),
   })
+
+  if (onProgress) {
+    let acc = ''
+    agent.subscribe((e) => {
+      if (e.type !== 'message_update') return
+      const ev = e.assistantMessageEvent
+      if (ev.type !== 'text_delta') return
+      acc += ev.delta
+      onProgress(jsonArrayItems(acc, 'placements').length, pool.length)
+    })
+  }
+
   await agent.prompt('请给出今天的排程建议。')
   if (agent.state.errorMessage) throw new Error(agent.state.errorMessage)
 
@@ -163,10 +178,11 @@ export async function autoSchedule(
   date: string,
   fromMin: number,
   config: AiModel | null,
+  onProgress?: (placed: number, total: number) => void,
 ): Promise<ScheduleResult> {
   if (!config) return heuristicSchedule(pool, busyTodos, date, fromMin)
   try {
-    return await aiSchedule(config, pool, busyTodos, date, fromMin)
+    return await aiSchedule(config, pool, busyTodos, date, fromMin, onProgress)
   } catch (e) {
     const r = heuristicSchedule(pool, busyTodos, date, fromMin)
     return { ...r, reason: `模型不可用（${(e as Error).message}），已按规则排程` }

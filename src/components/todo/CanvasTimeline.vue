@@ -9,9 +9,13 @@ import type { Todo } from '@/types'
 
 /**
  * 单日画布时间轴：0-24 时连续刻度，块按 date+startMin+durationMin 定位。
+ * - 左侧 48px 刻度栏，块区从 56px 起，不遮挡时间轴；时间跨度块上方标起点、下方标终点；
  * - 重叠块贪心分列：≤2 列并排；≥3 列收成「叠层卡」（全宽卡面 + 底层错位条 + 计数徽标，
  *   点开底部清单逐条勾选/定位），避免窄列把标题挤成省略号；
- * - 点按选中、拖拽改位（阈值 6px，防误触）；
+ * - 块内标题顶对齐、按块宽折行、按块高截行（行数上限 --blk-lines 由块高折算），
+ *   放不下才在行末省略，不单行居中也不出现半行裁切；
+ * - 点按选中、长按 320ms 武装后才可拖拽改位（防误触，武装后每 5 分钟吸附）；
+ * - 拿起/放下走弹性过渡（右移让位/放大/浮影），跟手的 top 位移不过渡、不延迟；
  * - 外部拖入（未安排池）经 dropMin 显示落点线，落库由父级完成；
  * - Ctrl+滚轮缩放；过去未完成块降透明；现在线只锚定今天。
  */
@@ -39,7 +43,11 @@ const emit = defineEmits<{
 const DEFAULT_PX = 56
 const MIN_PX = 18
 const MAX_PX = 104
-const DRAG_THRESHOLD = 6
+
+/** .tt 行高与卡片纵向内边距（px）：按块高折算可完整显示的行数，须与样式保持一致 */
+const TT_LINE_H = 17
+const TT_LINE_H_COMPACT = 16
+const CARD_PAD_Y = 8
 
 const px = ref(props.compact ? 30 : DEFAULT_PX)
 const scroller = ref<HTMLElement | null>(null)
@@ -180,16 +188,22 @@ const ghostLaid = computed(() =>
   })),
 )
 
-/** 块定位：拖拽中实时跟手（按列分摊宽度） */
+/** 块高 → 可完整显示的标题行数（至少 1 行；再放不下由 line-clamp 在行末省略） */
+function linesFor(h: number): number {
+  return Math.max(1, Math.floor((h - CARD_PAD_Y) / (props.compact ? TT_LINE_H_COMPACT : TT_LINE_H)))
+}
+
+/** 块定位（外层只管坐标与手势，卡片视觉在 .blk-card）：fit-content 收窄，列宽作上限；拖拽中实时跟手 */
 function blkStyle(b: Laid): Record<string, string> {
-  const dragging = drag.value?.moved && drag.value.todo.id === b.t.id
+  const dragging = drag.value?.armed && drag.value.todo.id === b.t.id
   const top = dragging ? drag.value!.curMin * pxPerMin.value : b.top
   return {
     top: `${top}px`,
     height: `${b.h}px`,
-    left: `${(b.col / b.cols) * 88}%`,
-    width: `calc(${88 / b.cols}% - 4px)`,
-    background: `color-mix(in srgb, var(${CATEGORY_META[b.t.category].colorVar}) 15%, var(--surface))`,
+    left: `${(b.col / b.cols) * 100}%`,
+    maxWidth: `calc(${100 / b.cols}% - 4px)`,
+    '--blk-cat': `var(${CATEGORY_META[b.t.category].colorVar})`,
+    '--blk-lines': `${linesFor(b.h)}`,
   }
 }
 
@@ -221,17 +235,55 @@ function scrollToAnchor(): void {
 
 defineExpose({ scrollToAnchor, getPxPerMin: () => pxPerMin.value })
 
-/* ---------- 块拖拽改位 ---------- */
+/* ---------- 块拖拽改位：长按武装后才可拖（防点按/滚动误触） ---------- */
 
+/*
+ * 块上手势优先级（高 → 低）：
+ * 1. 控件：勾选钮 / 叠层展开钮，pointerdown 即 stop，绝不进入拖拽管线；
+ * 2. 原生滚动：未武装阶段的位移归滚动，pointercancel（浏览器接管）只清理、绝不当点按；
+ * 3. 拖拽：长按 320ms 武装后才可拖，期间 preventDefault 屏蔽滚动；
+ * 4. 点按：仅 pointerup 正常结束、未武装、未超抖动距离（aborted）时选中。
+ */
 interface DragState {
   todo: Todo
   grabMin: number
   curMin: number
+  /** 长按已武装：之后指针移动才改位 */
+  armed: boolean
+  /** 武装后指针实际移动过（松手判定 move） */
   moved: boolean
+  /** 未武装时已超抖动距离（滚动/滑走）：作废，松手不再选中 */
+  aborted: boolean
 }
 
+const LONGPRESS_MS = 320
+const ARM_CANCEL_PX = 10
+
 const drag = ref<DragState | null>(null)
-let startY = 0
+let pressTimer: number | null = null
+let downX = 0
+let downY = 0
+
+function clearPress(): void {
+  if (pressTimer != null) {
+    window.clearTimeout(pressTimer)
+    pressTimer = null
+  }
+}
+
+/** 收尾：清定时器与触摸拦截，返回本次手势状态（无则 null） */
+function releaseDrag(): DragState | null {
+  const d = drag.value
+  clearPress()
+  drag.value = null
+  window.removeEventListener('touchmove', onTouchMove)
+  return d
+}
+
+/** 武装后阻止浏览器把触摸手势判成滚动（否则 pointercancel 会掐断拖拽） */
+function onTouchMove(e: TouchEvent): void {
+  if (drag.value?.armed) e.preventDefault()
+}
 
 function onBlockDown(e: PointerEvent, t: Todo): void {
   if (t.status === 'done' || e.button !== 0) return
@@ -239,16 +291,37 @@ function onBlockDown(e: PointerEvent, t: Todo): void {
   if (!el) return
   const rect = el.getBoundingClientRect()
   const pointerMin = (e.clientY - rect.top + el.scrollTop) / pxPerMin.value
-  drag.value = { todo: t, grabMin: pointerMin - t.startMin!, curMin: t.startMin!, moved: false }
-  startY = e.clientY
-  ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  drag.value = { todo: t, grabMin: pointerMin - t.startMin!, curMin: t.startMin!, armed: false, moved: false, aborted: false }
+  downX = e.clientX
+  downY = e.clientY
+  // 合成指针 / 指针已失效等边缘会抛 NotFoundError：吞掉即可，只影响出界跟踪
+  try {
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  } catch {
+    /* 无有效指针：拖拽沿元素事件继续 */
+  }
+  clearPress()
+  pressTimer = window.setTimeout(() => {
+    pressTimer = null
+    if (!drag.value) return
+    drag.value.armed = true
+    try { navigator.vibrate?.(8) } catch { /* 设备不支持则无感 */ }
+  }, LONGPRESS_MS)
+  window.addEventListener('touchmove', onTouchMove, { passive: false })
 }
 
 function onBlockMove(e: PointerEvent): void {
   const d = drag.value
   const el = scroller.value
   if (!d || !el) return
-  if (!d.moved && Math.abs(e.clientY - startY) < DRAG_THRESHOLD) return
+  if (!d.armed) {
+    // 未武装的移动是普通手势（滚动/滑走）：超抖动距离即放弃长按并作废点按
+    if (Math.hypot(e.clientX - downX, e.clientY - downY) > ARM_CANCEL_PX) {
+      clearPress()
+      d.aborted = true
+    }
+    return
+  }
   d.moved = true
   const rect = el.getBoundingClientRect()
   const pointerMin = (e.clientY - rect.top + el.scrollTop) / pxPerMin.value
@@ -257,24 +330,32 @@ function onBlockMove(e: PointerEvent): void {
 }
 
 function onBlockUp(): void {
-  const d = drag.value
-  drag.value = null
-  if (d?.moved) emit('move', d.todo, d.curMin)
-  else if (d) emit('select', d.todo)
+  const d = releaseDrag()
+  if (!d) return
+  if (d.moved) emit('move', d.todo, d.curMin)
+  else if (!d.armed && !d.aborted) emit('select', d.todo)
+  // 武装后原地松手 / 已作废手势：无动作，避免误开详情
 }
 
-const dragTime = (t: Todo, fallback: number) =>
-  drag.value?.moved && drag.value.todo.id === t.id ? drag.value.curMin : fallback
+/** pointercancel（浏览器接管滚动、多指等）：只清理，绝不当点按 */
+function onBlockCancel(): void {
+  releaseDrag()
+}
+
+/** 拖拽中的实时起点（其余情况返回落库值） */
+const liveStart = (t: Todo, fallback: number) =>
+  drag.value?.armed && drag.value.todo.id === t.id ? drag.value.curMin : fallback
 
 /* ---------- 叠层簇：卡面拖拽/勾选复用块逻辑，点按开底部清单 ---------- */
 
 /** 叠层卡定位：拖拽中跟手（卡面项的当前分钟） */
 function stkStyle(s: Stack): Record<string, string> {
-  const dragging = drag.value?.moved && drag.value.todo.id === s.front.id
+  const dragging = drag.value?.armed && drag.value.todo.id === s.front.id
   return {
     top: `${dragging ? drag.value!.curMin * pxPerMin.value : s.top}px`,
     height: `${s.h}px`,
-    background: `color-mix(in srgb, var(${CATEGORY_META[s.front.category].colorVar}) 15%, var(--surface))`,
+    '--blk-cat': `var(${CATEGORY_META[s.front.category].colorVar})`,
+    '--blk-lines': `${linesFor(s.h)}`,
   }
 }
 
@@ -295,10 +376,9 @@ function pickStackItem(t: Todo): void {
 }
 
 function onStackUp(s: Stack): void {
-  const d = drag.value
-  drag.value = null
+  const d = releaseDrag()
   if (d?.moved) emit('move', d.todo, d.curMin)
-  else if (d) openStack(s)
+  else if (d && !d.armed && !d.aborted) openStack(s)
 }
 
 onMounted(() => {
@@ -310,7 +390,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   if (nowTimer != null) window.clearInterval(nowTimer)
+  clearPress()
   drag.value = null
+  window.removeEventListener('touchmove', onTouchMove)
 })
 </script>
 
@@ -328,89 +410,97 @@ onBeforeUnmount(() => {
           <span class="nowtag num">现在</span>
         </div>
 
-        <!-- 外部拖入落点指示 -->
-        <div v-if="dropMin != null" class="dropline" :style="{ top: `${dropMin * pxPerMin}px` }" />
+        <!-- 外部拖入落点指示：位移走 transform（top 恒 0），短过渡平滑 5min 吸附台阶 -->
+        <div v-if="dropMin != null" class="dropline" :style="{ transform: `translateY(${dropMin * pxPerMin}px)` }" />
 
-        <!-- 待办块 -->
-        <div
-          v-for="b in laid"
-          :key="b.t.id"
-          class="blk"
-          :class="{
-            done: b.t.status === 'done',
-            sel: selectedId === b.t.id,
-            past: isToday && b.t.startMin! + durOf(b.t) < nowMin_ && b.t.status !== 'done',
-            dragging: drag?.moved && drag.todo.id === b.t.id,
-          }"
-          :style="blkStyle(b)"
-          :data-title="b.t.title"
-          @pointerdown="onBlockDown($event, b.t)"
-          @pointermove="onBlockMove"
-          @pointerup="onBlockUp"
-          @pointercancel="onBlockUp"
-        >
-          <button
-            class="ck"
-            :aria-label="b.t.status === 'done' ? '标记未完成' : '标记完成'"
-            @pointerdown.stop
-            @click.stop="emit('toggle', b.t)"
-          />
-          <div class="body">
-            <b v-if="b.h >= 26" class="num">{{ minToHHmm(dragTime(b.t, b.t.startMin!)) }}</b>
-            <span class="tt">{{ b.t.title }}</span>
-          </div>
-        </div>
-
-        <!-- 叠层簇：≥3 条同时段，卡面展示 front，点开清单处理其余 -->
-        <div
-          v-for="s in stacks"
-          :key="`s-${s.key}`"
-          class="stk"
-          :class="{ dragging: drag?.moved && drag.todo.id === s.front.id }"
-          :style="stkStyle(s)"
-          :data-title="`${s.items.length} 项同时段日程`"
-          @pointerdown="onBlockDown($event, s.front)"
-          @pointermove="onBlockMove"
-          @pointerup="onStackUp(s)"
-          @pointercancel="onStackUp(s)"
-        >
-          <i
-            v-for="(cv, i) in s.under"
-            :key="i"
-            class="stk-under"
-            :style="{ background: `color-mix(in srgb, var(${cv}) 14%, var(--surface))`, transform: `translateY(${(i + 1) * (compact ? 3 : 4)}px)` }"
-          />
+        <!-- 待办块区：整体右移让出左侧刻度栏，块上标起点、下标终点 -->
+        <div class="blocks">
           <div
-            class="stk-card"
-            :class="{ done: s.front.status === 'done', sel: selectedId === s.front.id }"
+            v-for="b in laid"
+            :key="b.t.id"
+            class="blk"
+            :class="{
+              done: b.t.status === 'done',
+              sel: selectedId === b.t.id,
+              past: isToday && b.t.startMin! + durOf(b.t) < nowMin_ && b.t.status !== 'done',
+              dragging: drag?.armed && drag.todo.id === b.t.id,
+            }"
+            :style="blkStyle(b)"
+            :data-title="b.t.title"
+            @pointerdown="onBlockDown($event, b.t)"
+            @pointermove="onBlockMove"
+            @pointerup="onBlockUp"
+            @pointercancel="onBlockCancel"
+            @contextmenu.prevent
           >
-            <button
-              class="ck"
-              :aria-label="s.front.status === 'done' ? '标记未完成' : '标记完成'"
-              @pointerdown.stop
-              @click.stop="emit('toggle', s.front)"
-            />
-            <div class="body">
-              <b v-if="s.h >= 26" class="num">{{ minToHHmm(dragTime(s.front, s.front.startMin!)) }}</b>
-              <span class="tt">{{ s.front.title }}</span>
+            <span class="bmin bmin-start num" :class="{ live: drag?.armed && drag.todo.id === b.t.id }">{{ minToHHmm(liveStart(b.t, b.t.startMin!)) }}</span>
+            <div class="blk-card">
+              <button
+                class="ck"
+                :aria-label="b.t.status === 'done' ? '标记未完成' : '标记完成'"
+                @pointerdown.stop
+                @click.stop="emit('toggle', b.t)"
+              />
+              <div class="body">
+                <span class="tt">{{ b.t.title }}</span>
+              </div>
             </div>
-            <button class="stk-more" :aria-label="`展开同时段 ${s.items.length} 项日程`" @pointerdown.stop @click.stop="openStack(s)">
-              <Layers :size="11" :stroke-width="2.4" />
-              +{{ s.extra }}
-            </button>
+            <span class="bmin bmin-end num" :class="{ live: drag?.armed && drag.todo.id === b.t.id }">{{ minToHHmm(liveStart(b.t, b.t.startMin!) + durOf(b.t)) }}</span>
           </div>
-        </div>
 
-        <!-- AI 排程预览（幽灵块） -->
-        <div
-          v-for="g in ghostLaid"
-          :key="`g-${g.todo.id}`"
-          class="blk ghost"
-          :style="{ top: `${g.top}px`, height: `${g.h}px`, left: '0%', width: '88%' }"
-        >
-          <div class="body">
-            <b class="num">{{ minToHHmm(g.startMin) }}</b>
-            <span class="tt">{{ g.todo.title }}</span>
+          <!-- 叠层簇：≥3 条同时段，卡面展示 front，点开清单处理其余 -->
+          <div
+            v-for="s in stacks"
+            :key="`s-${s.key}`"
+            class="stk"
+            :class="{ dragging: drag?.armed && drag.todo.id === s.front.id }"
+            :style="stkStyle(s)"
+            :data-title="`${s.items.length} 项同时段日程`"
+            @pointerdown="onBlockDown($event, s.front)"
+            @pointermove="onBlockMove"
+            @pointerup="onStackUp(s)"
+            @pointercancel="onBlockCancel"
+            @contextmenu.prevent
+          >
+            <span class="bmin bmin-start num" :class="{ live: drag?.armed && drag.todo.id === s.front.id }">{{ minToHHmm(liveStart(s.front, s.front.startMin!)) }}</span>
+            <i
+              v-for="(cv, i) in s.under"
+              :key="i"
+              class="stk-under"
+              :style="{ background: `color-mix(in srgb, var(${cv}) 14%, var(--surface))`, transform: `translateY(${(i + 1) * (compact ? 3 : 4)}px)` }"
+            />
+            <div
+              class="stk-card"
+              :class="{ done: s.front.status === 'done', sel: selectedId === s.front.id }"
+            >
+              <button
+                class="ck"
+                :aria-label="s.front.status === 'done' ? '标记未完成' : '标记完成'"
+                @pointerdown.stop
+                @click.stop="emit('toggle', s.front)"
+              />
+              <div class="body">
+                <span class="tt">{{ s.front.title }}</span>
+              </div>
+              <button class="stk-more" :aria-label="`展开同时段 ${s.items.length} 项日程`" @pointerdown.stop @click.stop="openStack(s)">
+                <Layers :size="11" :stroke-width="2.4" />
+                +{{ s.extra }}
+              </button>
+            </div>
+            <span class="bmin bmin-end num" :class="{ live: drag?.armed && drag.todo.id === s.front.id }">{{ minToHHmm(liveStart(s.front, s.front.startMin!) + durOf(s.front)) }}</span>
+          </div>
+
+          <!-- AI 排程预览（幽灵块） -->
+          <div
+            v-for="g in ghostLaid"
+            :key="`g-${g.todo.id}`"
+            class="blk ghost"
+            :style="{ top: `${g.top}px`, height: `${g.h}px`, left: '0%', maxWidth: '100%', '--blk-lines': `${linesFor(g.h)}` }"
+          >
+            <div class="body">
+              <b class="num">{{ minToHHmm(g.startMin) }}</b>
+              <span class="tt">{{ g.todo.title }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -515,37 +605,113 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 48px;
   right: 6px;
+  top: 0;
   height: 0;
   border-top: 2px dashed var(--accent);
   z-index: 3;
+  /* 位置由 transform 提供：过渡平滑吸附台阶，进场淡入 */
+  transition: transform var(--dur-fast) var(--ease-standard);
+  animation: dropline-in var(--dur-fast) var(--ease-standard);
+}
+
+@keyframes dropline-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* 块区：右移让出左侧 48px 刻度栏 + 8px 间隙，永不遮挡时间标签 */
+.blocks {
+  position: absolute;
+  left: 56px;
+  right: 6px;
+  top: 0;
+  bottom: 0;
 }
 
 .blk {
   position: absolute;
+  /* 收窄包裹内容（列宽为上限，超长标题省略） */
+  width: fit-content;
+  max-width: 100%;
+  cursor: grab;
+  z-index: 1;
+  /* 长按拖拽与原生文本选择/长按菜单互斥，手势归拖拽管线 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* 拿起/放下：右移让位走弹性过渡；跟手的 top 不在列表里（直接操纵不延迟） */
+  transition:
+    transform var(--dur-base) var(--ease-spring),
+    opacity var(--dur-fast) var(--ease-standard);
+}
+
+.blk-card {
+  /* 流内撑满父级高度（父 .blk fit-content 靠它量宽；absolute 子元素不参与 shrink-to-fit） */
+  height: 100%;
   display: flex;
-  align-items: center;
+  /* 顶对齐：标题从块顶向下折行铺开，不悬浮居中 */
+  align-items: flex-start;
   gap: 7px;
   padding: 4px 8px;
   border-radius: var(--radius-s);
   overflow: hidden;
-  cursor: grab;
-  transition: box-shadow var(--dur-fast) var(--ease-standard);
-  z-index: 1;
+  background: color-mix(in srgb, var(--blk-cat) 15%, var(--surface));
+  /* 边缘区分：分类色描边 + 轻投影（与卡片系组件同一配方） */
+  border: 0.5px solid color-mix(in srgb, var(--blk-cat) 38%, var(--line));
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--text-1) 9%, transparent);
+  transition:
+    box-shadow var(--dur-fast) var(--ease-standard),
+    transform var(--dur-base) var(--ease-spring),
+    opacity var(--dur-fast) var(--ease-standard);
 }
 
-.blk:hover {
+.blk:hover .blk-card {
   box-shadow: var(--shadow-card);
 }
 
-.blk.sel {
+.blk.sel .blk-card {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
+/* 起止时间标记：上方起点、下方终点；拖拽中高亮为实时时间 */
+.bmin {
+  position: absolute;
+  left: 2px;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--text-3);
+  pointer-events: none;
+  white-space: nowrap;
+  /* 起止标记拖拽中高亮为实时时间：颜色跟上抬起节奏 */
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+.bmin-start {
+  top: -13px;
+}
+
+.bmin-end {
+  top: calc(100% + 2px);
+}
+
+.bmin.live {
+  color: var(--accent);
+  font-weight: 750;
+}
+
 .blk.dragging {
-  opacity: 0.85;
-  box-shadow: var(--shadow-float);
-  cursor: grabbing;
   z-index: 4;
+  /* 拖起时整体右移让出原位：不遮挡左侧时间轴与底层块，读得清起点 */
+  transform: translateX(12px);
+}
+
+.blk.dragging .blk-card {
+  opacity: 0.88;
+  box-shadow: var(--shadow-float);
+  transform: scale(1.02);
+  cursor: grabbing;
 }
 
 .blk.done {
@@ -578,32 +744,61 @@ onBeforeUnmount(() => {
 
 .body {
   display: flex;
-  align-items: center;
+  /* 幽灵块里时间与标题同行：基线对齐首行；块内单标题时无感 */
+  align-items: baseline;
   gap: 6px;
   min-width: 0;
-}
-
-.body b {
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  color: var(--text-2);
-  flex: none;
 }
 
 .tt {
   font-size: var(--fs-footnote);
   font-weight: 550;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-/* 幽灵块：AI 预览，虚线描边 */
+/* 画布块内标题：顶对齐、按块宽折行、按块高截行（--blk-lines 由块高折算），放不下才省略 */
+.blk-card .tt,
+.stk-card .tt,
+.blk.ghost .tt {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--blk-lines, 1);
+  overflow: hidden;
+  line-height: var(--blk-lh, 17px);
+  overflow-wrap: break-word;
+}
+
+/* 勾选框与首行光学对齐（首行行高 17px，勾选框 14px） */
+.blk-card .ck,
+.stk-card .ck {
+  margin-top: 2px;
+}
+
+/* 幽灵块：AI 预览，虚线描边；出现淡入（预览生成是瞬时状态切换，不该闪现） */
 .blk.ghost {
   border: 1.5px dashed var(--accent);
-  background: var(--accent-soft) !important;
+  background: var(--accent-soft);
+  border-radius: var(--radius-s);
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 4px 8px;
+  overflow: hidden;
   cursor: default;
   z-index: 2;
+  animation: ghost-in var(--dur-base) var(--ease-standard);
+}
+
+@keyframes ghost-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+.blk.ghost .body b {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--text-2);
 }
 
 /* ---------- 叠层簇（≥3 条同时段） ---------- */
@@ -611,12 +806,18 @@ onBeforeUnmount(() => {
 .stk {
   position: absolute;
   left: 0;
-  width: 88%;
+  width: 100%;
   z-index: 2;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* 与 .blk 同配方：拿起右移/放下归位走弹性过渡 */
+  transition: transform var(--dur-base) var(--ease-spring);
 }
 
 .stk.dragging {
   z-index: 4;
+  transform: translateX(12px);
 }
 
 /* 底层错位条：按后续条目的分类色淡染，向下错位露出「还有几张」 */
@@ -633,7 +834,8 @@ onBeforeUnmount(() => {
 .stk-card {
   position: relative;
   display: flex;
-  align-items: center;
+  /* 与 .blk-card 同配方：顶对齐铺开 */
+  align-items: flex-start;
   gap: 7px;
   height: 100%;
   padding: 4px 8px;
@@ -642,7 +844,10 @@ onBeforeUnmount(() => {
   overflow: hidden;
   cursor: grab;
   box-shadow: 0 1px 4px color-mix(in srgb, var(--text-1) 8%, transparent);
-  transition: box-shadow var(--dur-fast) var(--ease-standard);
+  transition:
+    box-shadow var(--dur-fast) var(--ease-standard),
+    transform var(--dur-base) var(--ease-spring),
+    opacity var(--dur-fast) var(--ease-standard);
 }
 
 .stk-card:hover {
@@ -747,12 +952,21 @@ onBeforeUnmount(() => {
   font-size: var(--fs-micro);
 }
 
+.compact {
+  /* 紧凑画布标题行高 16px（linesFor 同步折算行数上限） */
+  --blk-lh: 16px;
+}
+
 .compact .stk-more {
   padding: 2px 6px;
 }
 
 .compact .tt {
   font-size: var(--fs-caption);
+}
+
+.compact .bmin {
+  font-size: 9px;
 }
 
 .compact .ck {

@@ -6,9 +6,9 @@ use crate::error::Result;
 use crate::state::AppState;
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 
-use super::models::{RecRule, Todo, TodoSubtask};
+use super::models::{RecRule, Todo, TodoAttachment, TodoDayCount, TodoDistribution, TodoPage, TodoSubtask};
 
-const COLS: &str = "id, title, notes, date, start_min, duration_min, category, priority, status, completed_at, created_at, program_id, rec_rule, rec_key, subtasks";
+const COLS: &str = "id, title, notes, date, start_min, duration_min, category, priority, status, completed_at, created_at, program_id, rec_rule, rec_key, subtasks, attachments";
 
 fn parse_date(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
@@ -82,6 +82,9 @@ fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Todo> {
     let subtasks: Option<Vec<TodoSubtask>> = row
         .get::<_, Option<String>>(14)?
         .and_then(|s| serde_json::from_str(&s).ok());
+    let attachments: Option<Vec<TodoAttachment>> = row
+        .get::<_, Option<String>>(15)?
+        .and_then(|s| serde_json::from_str(&s).ok());
     Ok(Todo {
         id: row.get(0)?,
         title: row.get(1)?,
@@ -98,6 +101,7 @@ fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Todo> {
         rec_rule,
         rec_key,
         subtasks,
+        attachments,
     })
 }
 
@@ -133,6 +137,86 @@ pub fn list_all_todos(state: State<AppState>) -> Result<Vec<Todo>> {
 }
 
 #[tauri::command]
+/// AI 渐进式分页查询（对应工具 list_todos），避免全量倾倒：
+/// scope="focus" 默认聚焦视图 = 逾期未完成 + [今天, 今天+7] + 收件箱（排最后）；
+/// scope="range" 按 [start, end] 日期区间过滤（不含收件箱）。
+/// 排序与 list_all_todos 一致：done 沉底 → 日期 → 时间 → 优先级。
+pub fn query_todos(
+    state: State<AppState>,
+    today: String,
+    scope: Option<String>,
+    start: Option<String>,
+    end: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<TodoPage> {
+    let conn = state.db.lock().unwrap();
+    let limit = limit.unwrap_or(20).clamp(1, 50);
+    let offset = offset.unwrap_or(0).max(0);
+
+    // 两个分支的参数形状固定，分别构造 WHERE 与绑定值
+    let (where_sql, vals): (String, Vec<String>) = if scope.as_deref() == Some("range") {
+        let (Some(s), Some(e)) = (start, end) else {
+            return Err(crate::error::ReinError::Message(
+                "scope=range 需要 start/end（YYYY-MM-DD）".into(),
+            ));
+        };
+        ("date BETWEEN ?1 AND ?2".to_string(), vec![s, e])
+    } else {
+        let Some(today_d) = parse_date(&today) else {
+            return Err(crate::error::ReinError::Message("日期格式应为 YYYY-MM-DD".into()));
+        };
+        let win_end = (today_d + Duration::days(7)).format("%Y-%m-%d").to_string();
+        (
+            "(date IS NULL OR (status != 'done' AND (date < ?1 OR date BETWEEN ?1 AND ?2)))"
+                .to_string(),
+            vec![today.clone(), win_end],
+        )
+    };
+    let order =
+        "(status = 'done'), (date IS NULL), date, (start_min IS NULL), start_min, priority DESC, id";
+    let sql = format!(
+        "SELECT {COLS} FROM todos WHERE {where_sql} ORDER BY {order} LIMIT {limit} OFFSET {offset}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let items = stmt
+        .query_map(rusqlite::params_from_iter(vals.iter()), from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM todos WHERE {where_sql}"),
+        rusqlite::params_from_iter(vals.iter()),
+        |r| r.get(0),
+    )?;
+    Ok(TodoPage { items, total, limit, offset })
+}
+
+#[tauri::command]
+/// 全部日程按日分布总览（对应工具 todo_distribution）：按日计数 + 收件箱/逾期摘要。
+/// AI 先看分布再分页下钻，避免拉全量明细。
+pub fn todo_distribution(state: State<AppState>, today: String) -> Result<TodoDistribution> {
+    let conn = state.db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT date, COUNT(*) FROM todos WHERE date IS NOT NULL GROUP BY date ORDER BY date",
+    )?;
+    let days = stmt
+        .query_map([], |r| {
+            Ok(TodoDayCount { date: r.get(0)?, count: r.get(1)? })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let inbox: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM todos WHERE date IS NULL",
+        [],
+        |r| r.get(0),
+    )?;
+    let overdue: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM todos WHERE date IS NOT NULL AND status != 'done' AND date < ?1",
+        [&today],
+        |r| r.get(0),
+    )?;
+    Ok(TodoDistribution { days, inbox, overdue })
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn create_todo(
     state: State<AppState>,
@@ -145,13 +229,14 @@ pub fn create_todo(
     priority: Option<i64>,
     rec_rule: Option<RecRule>,
     subtasks: Option<Vec<TodoSubtask>>,
+    attachments: Option<Vec<TodoAttachment>>,
 ) -> Result<Todo> {
     let conn = state.db.lock().unwrap();
     let now = Utc::now().to_rfc3339();
     let category = category.unwrap_or_else(|| "general".into());
     conn.execute(
-        "INSERT INTO todos (title, notes, date, start_min, duration_min, category, priority, created_at, rec_rule, subtasks) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO todos (title, notes, date, start_min, duration_min, category, priority, created_at, rec_rule, subtasks, attachments) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             title,
             notes,
@@ -163,6 +248,7 @@ pub fn create_todo(
             now,
             json_str(&rec_rule),
             json_str(&subtasks),
+            json_str(&attachments),
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -191,8 +277,8 @@ pub fn update_todo(state: State<AppState>, todo: Todo) -> Result<Todo> {
     };
     conn.execute(
         "UPDATE todos SET title = ?1, notes = ?2, date = ?3, start_min = ?4, duration_min = ?5, \
-         category = ?6, priority = ?7, status = ?8, completed_at = ?9, rec_rule = ?10, rec_key = ?11, subtasks = ?12 \
-         WHERE id = ?13",
+         category = ?6, priority = ?7, status = ?8, completed_at = ?9, rec_rule = ?10, rec_key = ?11, subtasks = ?12, attachments = ?13 \
+         WHERE id = ?14",
         rusqlite::params![
             todo.title,
             todo.notes,
@@ -206,6 +292,7 @@ pub fn update_todo(state: State<AppState>, todo: Todo) -> Result<Todo> {
             json_str(&todo.rec_rule),
             rec_key,
             json_str(&todo.subtasks),
+            json_str(&todo.attachments),
             todo.id
         ],
     )?;

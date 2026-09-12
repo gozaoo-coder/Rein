@@ -29,6 +29,23 @@ pub struct TodoSubtask {
     pub done: bool,
 }
 
+/// 附件/标记（存 todos.attachments，JSON 数组）。文字正文内联；文件/图片/音频存 data URL。
+/// 重复实例物化时不继承（按次记录）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoAttachment {
+    /// text | file | image | audio
+    pub kind: String,
+    pub name: String,
+    /// text = 正文；其余 = data URL
+    #[serde(default)]
+    pub content: Option<String>,
+    /// 字节数（file/image/audio）
+    #[serde(default)]
+    pub size: Option<i64>,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Todo {
@@ -58,4 +75,38 @@ pub struct Todo {
     /// 子任务清单；NULL/空 = 无
     #[serde(default)]
     pub subtasks: Option<Vec<TodoSubtask>>,
+    /// 附件/标记；NULL/空 = 无。重复实例不继承
+    #[serde(default)]
+    pub attachments: Option<Vec<TodoAttachment>>,
+}
+
+/// AI 分页查询结果（`query_todos` 返回）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoPage {
+    pub items: Vec<Todo>,
+    /// 当前过滤条件下的总条数（供前端算 hasMore）
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+/// 单日待办数（`todo_distribution` 的 days 项）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoDayCount {
+    pub date: String,
+    pub count: i64,
+}
+
+/// 全部日程按日分布总览（`todo_distribution` 返回）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoDistribution {
+    /// 有排期待办的按日计数（date 升序）
+    pub days: Vec<TodoDayCount>,
+    /// 无日期收件箱条数
+    pub inbox: i64,
+    /// 逾期未完成条数（date < 今天且未完成，不含收件箱）
+    pub overdue: i64,
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check, Pencil, Repeat2, Sparkles, Trash2 } from 'lucide-vue-next'
+import { Check, Paperclip, Pencil, Repeat2, Sparkles, Trash2 } from 'lucide-vue-next'
 
 import { CATEGORY_META, priorityMeta } from '@/config/domain'
 import { minToHHmm } from '@/utils/date'
@@ -54,6 +54,11 @@ function flipSub(i: number): void {
 
       <p v-if="todo.recRule" class="chip-row">
         <span class="chip"><Repeat2 :size="13" /> {{ describeRule(todo.recRule) }}</span>
+      </p>
+      <p v-if="todo.attachments?.length" class="chip-row">
+        <button class="chip atch" aria-label="在编辑器中查看附件" @click="emit('edit')">
+          <Paperclip :size="13" /> {{ todo.attachments.length }} 个附件与标记
+        </button>
       </p>
       <p v-if="todo.programId" class="chip-row">
         <span class="chip src">来自健康方案</span>
@@ -155,6 +160,10 @@ function flipSub(i: number): void {
 .chip.src {
   background: color-mix(in srgb, var(--ok) 14%, transparent);
   color: var(--ok);
+}
+
+.chip.atch {
+  cursor: pointer;
 }
 
 .notes {

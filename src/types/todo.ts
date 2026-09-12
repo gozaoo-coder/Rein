@@ -22,6 +22,23 @@ export interface TodoSubtask {
   done: boolean
 }
 
+/** 附件种类：文字标记 / 文件 / 图片 / 音频 */
+export type TodoAttachmentKind = 'text' | 'file' | 'image' | 'audio'
+
+/**
+ * 待办附件与标记：文字正文内联；文件/图片/音频存 data URL（本地个人应用，量级可控）。
+ * 重复实例不继承模板附件（按次记录）。
+ */
+export interface TodoAttachment {
+  kind: TodoAttachmentKind
+  name: string
+  /** text = 正文；其余 = data URL */
+  content?: string
+  /** 字节数（file/image/audio），用于展示与超限校验 */
+  size?: number
+  createdAt: string
+}
+
 export interface Todo {
   id: number
   title: string
@@ -44,6 +61,8 @@ export interface Todo {
   recKey: string | null
   /** 子任务清单；null/空 = 无 */
   subtasks: TodoSubtask[] | null
+  /** 附件/标记；null/空 = 无。重复实例不继承 */
+  attachments?: TodoAttachment[] | null
 }
 
 export interface TodoInput {
@@ -56,6 +75,7 @@ export interface TodoInput {
   priority?: number
   recRule?: RecRule | null
   subtasks?: TodoSubtask[] | null
+  attachments?: TodoAttachment[] | null
 }
 
 /**

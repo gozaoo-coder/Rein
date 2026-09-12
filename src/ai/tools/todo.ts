@@ -1,9 +1,10 @@
-/** 待办域工具：日视图 / 全量列表 / 增删改 · 对应 todoService */
+/** 待办域工具：分页列表 / 日程分布 / 增删改 · 对应 todoService */
 
 import { Type } from '@earendil-works/pi-ai'
 
 import { todoService } from '@/services/todoService'
 import type { Todo, TodoCategory, TodoStatus } from '@/types'
+import { todayStr } from '@/utils/date'
 import { describeRule } from '@/utils/recurrence'
 import { defineTool, hhmmToMin, optDate, resolveDate, type AppTool } from './types'
 
@@ -48,27 +49,61 @@ export const todoTools: AppTool[] = [
   defineTool({
     name: 'list_todos',
     group: 'todo',
-    label: '查看待办（按日期）',
-    description: '查看某日期区间内的排期待办。start/end 不传默认今天；查收件箱用 list_all_todos。',
+    label: '查看待办（分页）',
+    description:
+      '分页查看待办。不传日期 = 聚焦视图：逾期未完成 + 未来7天 + 收件箱（收件箱排最后）；传 start/end（YYYY-MM-DD）查指定日期区间。返回 {items, page, total, hasMore}，hasMore 为 true 时用 page 翻页；limit 默认/最大 20。改某条待办前先在这里找 id。',
     parameters: Type.Object({
-      start: Type.Optional(Type.String({ description: '起始 YYYY-MM-DD，缺省为今天' })),
-      end: Type.Optional(Type.String({ description: '结束 YYYY-MM-DD，缺省为同 start' })),
+      limit: Type.Optional(Type.Number({ description: '每页条数，默认 20，最大 20' })),
+      page: Type.Optional(Type.Number({ description: '页码，从 1 起，默认 1' })),
+      start: Type.Optional(
+        Type.String({ description: '区间起 YYYY-MM-DD（与 end 任一传入即按区间查询）' }),
+      ),
+      end: Type.Optional(Type.String({ description: '区间止 YYYY-MM-DD，缺省同 start' })),
     }),
     async execute(args) {
-      const start = resolveDate(args.start, 'start')
-      return todoService.listTodos(start, args.end ? resolveDate(args.end, 'end') : start)
+      const limit = Math.min(Math.max(Math.trunc(args.limit ?? 20), 1), 20)
+      const page = Math.max(Math.trunc(args.page ?? 1), 1)
+      const offset = (page - 1) * limit
+      const today = todayStr()
+      const startRaw = args.start ?? args.end
+      const res = startRaw
+        ? await todoService.queryTodoPage({
+            today,
+            scope: 'range',
+            start: resolveDate(startRaw, 'start'),
+            end: resolveDate(args.end ?? startRaw, 'end'),
+            limit,
+            offset,
+          })
+        : await todoService.queryTodoPage({ today, scope: 'focus', limit, offset })
+      return {
+        items: res.items.map(brief),
+        page,
+        total: res.total,
+        hasMore: offset + res.items.length < res.total,
+      }
     },
   }),
 
   defineTool({
-    name: 'list_all_todos',
+    name: 'todo_distribution',
     group: 'todo',
-    label: '查看全部待办',
-    description: '查看全部待办（含无日期的收件箱），按日期→时间→优先级排序。改某条待办前先在这里找 id。',
+    label: '日程分布总览',
+    description:
+      '查看全部日程的按日分布计数（年→月→日 层级，只给数量不给明细），附收件箱与逾期条数。想知道哪几天安排得多、该从哪天下钻时先调它，再用 list_todos 传 start/end 查明细，不要试图一次拉全量。',
     parameters: Type.Object({}),
     async execute() {
-      const rows = await todoService.listAllTodos()
-      return rows.map(brief)
+      const { days, inbox, overdue } = await todoService.todoDistribution(todayStr())
+      /** 年 → 月 → 日 计数；键归一为非补零数字串，模型与 JSON 键序都按数值升序 */
+      const years: Record<string, Record<string, Record<string, number>>> = {}
+      for (const { date, count } of days) {
+        const [y, m, d] = date.split('-')
+        const monthKey = String(Number(m))
+        const dayKey = String(Number(d))
+        ;(years[y] ??= {})[monthKey] ??= {}
+        years[y][monthKey][dayKey] = count
+      }
+      return { years, inbox, overdue }
     },
   }),
 
@@ -77,7 +112,7 @@ export const todoTools: AppTool[] = [
     group: 'todo',
     label: '新建待办',
     description:
-      '创建一条待办。date 不传进收件箱；要排在某天就传 YYYY-MM-DD，可另给 startTime（HH:mm）与 durationMin。',
+      '创建一条待办。date 不传进收件箱；要排在某天就传 YYYY-MM-DD，可另给 startTime（HH:mm）与 durationMin。每个单元事件独立一条待办、各有自己的 date/startTime/durationMin——多段任务拆成多条分别创建，不要塞进同一条的备注或子任务里。',
     parameters: Type.Object({
       title: Type.String({ description: '标题' }),
       notes: Type.Optional(Type.String({ description: '备注' })),
@@ -125,7 +160,8 @@ export const todoTools: AppTool[] = [
     name: 'update_todo',
     group: 'todo',
     label: '修改待办',
-    description: '修改一条待办，只传需要改的字段；id 来自 list_all_todos / list_todos。标记完成传 status:"done"。',
+    description:
+      '修改一条待办，只传需要改的字段；id 来自 list_todos。标记完成传 status:"done"。每次调用只动一条事件，批量调整多个事件时逐条调用。',
     parameters: Type.Object({
       id: Type.Number({ description: '待办 id' }),
       title: Type.Optional(Type.String({ description: '新标题' })),
@@ -140,7 +176,7 @@ export const todoTools: AppTool[] = [
     async execute(args) {
       const all = await todoService.listAllTodos()
       const cur = all.find((t) => t.id === args.id)
-      if (!cur) throw new Error(`待办不存在：id=${args.id}（先用 list_all_todos 查 id）`)
+      if (!cur) throw new Error(`待办不存在：id=${args.id}（先用 list_todos 查 id）`)
       const next: Todo = {
         ...cur,
         title: args.title?.trim() || cur.title,

@@ -16,7 +16,7 @@ function systemPrompt(today: string): string {
   return `你是 Rein 的待办解析助手。用户会粘贴一段文本（便签、聊天记录、随手记的想法）或发来一张图片（课程表、待办截图、白板照片等），请抽取其中值得记录的待办事项。
 今天是 ${today}。
 只能输出一个 JSON 数组（不要 markdown 代码块、不要任何解释文字），数组元素结构：
-{"title": "简洁的待办标题（动词短语）", "date": "YYYY-MM-DD（以今天 ${today} 为基准合理推断）", "startMin": 一日内开始时间对应的分钟数（如 14:30 填 870；没提到时间则省略）", "durationMin": 预计分钟数（没提到则省略）", "category": "general|workout|health|study|work（运动相关选 workout，健康作息饮食选 health，学习选 study，工作选 work，其余 general）", "priority": 0|1|2（0 普通、1 重要、2 紧急）", "notes": "来源或其他说明（可省略）"}
+{"title": "简洁的待办标题（动词短语）", "date": "YYYY-MM-DD（以今天 ${today} 为基准合理推断）", "startMin": 一日内开始时间对应的分钟数（如 14:30 填 870；没提到时间则省略）", "durationMin": 预计分钟数（没提到则省略）", "category": "general|workout|health|study|work（运动相关选 workout，健康作息饮食选 health，学习选 study，工作选 work，其余 general）", "priority": 0|1|2|3（四象限：0 不重要不紧急、1 重要不紧急、2 紧急不重要、3 重要且紧急）", "notes": "来源或其他说明（可省略）"}
 规则：只输出实际出现或直接合理推断的待办，每条一条，不要编造；完全没有待办时输出 []；文本/图片里的其他内容一律不要。`
 }
 
@@ -58,7 +58,7 @@ export function toDrafts(rows: RawTodoRow[], today: string): TodoDraft[] {
       startMin: clampMin(r.startMin, 1439),
       durationMin: clampMin(r.durationMin, 1440),
       category,
-      priority: p === 2 ? 2 : p === 1 ? 1 : 0,
+      priority: Math.min(3, Math.max(0, p)),
       checked: true,
       added: false,
     })
