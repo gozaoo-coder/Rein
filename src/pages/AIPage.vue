@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Camera, Check, ChartPie, Copy, History, Plus, Quote, RotateCcw, SendHorizontal, Trash2, Wrench, X } from 'lucide-vue-next'
+import { Camera, Check, ChartPie, Copy, FileText, FolderUp, History, Images, Mic, Plus, Quote, RotateCcw, SendHorizontal, Trash2, Wrench, X } from 'lucide-vue-next'
 
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
 import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
+import MdText from '@/components/common/MdText.vue'
+import MemoPickerSheet from '@/components/voice/MemoPickerSheet.vue'
+import { openMemoById } from '@/system/voiceRuntime'
 import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -15,11 +18,16 @@ import { MEAL_LABELS, MEAL_ORDER, suggestMeal } from '@/config/domain'
 import { useToast } from '@/composables/useToast'
 import { findAppTool } from '@/ai/tools/registry'
 import { useAiStore } from '@/stores/ai'
+import { useModelsStore } from '@/stores/models'
 import { copyText } from '@/utils/clipboard'
 import { listFoodDrafts, removeFoodDraft, type FoodDraft } from '@/utils/foodDrafts'
-import { resizeImageAsJpeg } from '@/utils/image'
+import { bitmapToJpeg, decodeBitmap, DEFAULT_IMAGE_EDGE } from '@/utils/image'
+import { officeKindOf, parseOffice, parseTextFile, type ParsedDoc } from '@/utils/documentParse'
+import { shareInbox } from '@/system/shareInbox'
+import type { SendImage } from '@/stores/ai'
+import type { VoiceMemo } from '@/types'
 import { fmtDateCn, toDateStr } from '@/utils/date'
-import type { AiMessage, MealType } from '@/types'
+import type { AiMessage, AiDocMeta, MealType } from '@/types'
 
 /** AI 页：拍照直识别（可编辑卡片 + 草稿箱）/ 文字记饮食 / 数据工具对话。 */
 const ai = useAiStore()
@@ -67,9 +75,75 @@ function fmtDraftTime(iso: string): string {
 
 const draft = ref('')
 const fileEl = ref<HTMLInputElement | null>(null)
+const galleryEl = ref<HTMLInputElement | null>(null)
+const cameraEl = ref<HTMLInputElement | null>(null)
 const listEl = ref<HTMLElement | null>(null)
-/** 待发送附图：选图后先挂输入框上方（可移除/配文字），随下一条消息一起发出 */
-const attachment = ref<{ full: string; small: string | null } | null>(null)
+
+/* ---------- 「+」添加菜单（bind 式：锚定按钮弹出，带图标） ---------- */
+
+const camMenuOpen = ref(false)
+/** 锚定元素：输入栏左侧的 + 按钮 */
+const camBtn = ref<HTMLElement | null>(null)
+
+/** 附图上限：超过后提示，防止消息体撑爆模型上下文 */
+const MAX_ATTACHMENTS = 9
+
+/** 发送视图最长边：按视觉模型的配置（imageMaxEdge），未配置用默认值。
+ * 视图同时是放大镜的坐标空间与跨重启的精度上限，尽量贴近模型输入分辨率。 */
+function imageEdgeCap(): number {
+  return useModelsStore().bestVisionModel()?.imageMaxEdge ?? DEFAULT_IMAGE_EDGE
+}
+
+/** 添加菜单选项：拍照走系统相机（capture 属性），图库可多选，文件支持图片/Office/文本 */
+const camActions: MenuItem[] = [
+  { label: '拍照（系统相机）', value: 'camera', icon: Camera },
+  { label: '从图库选择', value: 'gallery', icon: Images },
+  { label: '上传文件', value: 'file', icon: FolderUp },
+]
+
+function openCamMenu(): void {
+  camMenuOpen.value = true
+}
+
+function onCamSelect(value: string): void {
+  if (value === 'camera') cameraEl.value?.click()
+  else if (value === 'gallery') galleryEl.value?.click()
+  else fileEl.value?.click()
+}
+
+/** 待发送附图：选图后先挂输入框上方（可移除/配文字），随下一条消息一起发出。
+    数组化以支持「连拍几张 + 图库多选」一起发（相机每次拍一张，可累积）。 */
+interface AttImage {
+  full: string
+  small: string | null
+  w: number
+  h: number
+  source: File
+}
+const attachments = ref<AttImage[]>([])
+/** 待发送 Office 文档：解析结果 + 勾选要发给 AI 的内嵌图（可多选，随消息一起发出） */
+const docAtt = ref<{
+  file: File
+  doc: ParsedDoc
+  /** 各图片的发送视图（≤模型图片上限的 JPEG） */
+  views: Map<string, { base64: string; w: number; h: number }>
+  selected: Set<string>
+} | null>(null)
+
+function toggleDocImage(id: string): void {
+  const d = docAtt.value
+  if (!d) return
+  const next = new Set(d.selected)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  docAtt.value = { ...d, selected: next }
+}
+
+/** 消息图片列表（photo 单图/多图、doc 多图统一） */
+function msgImages(m: AiMessage): { base64: string; mime: string }[] {
+  if (m.images?.length) return m.images.map((im) => ({ base64: im.base64, mime: im.mime }))
+  return m.imageBase64 ? [{ base64: m.imageBase64, mime: m.mime ?? 'image/jpeg' }] : []
+}
 
 /** 每张解析卡选择的目标餐次，默认按当前时间推荐 */
 const mealByMsg = reactive<Record<string, MealType>>({})
@@ -81,12 +155,45 @@ const menuTarget = ref<AiMessage | null>(null)
 const menuAnchor = ref<HTMLElement | null>(null)
 const quote = ref<AiMessage | null>(null)
 
+/* ---------- @纪要引用（输入 @ 弹出选择器，发送时注入纪要总结与逐句转写） ---------- */
+const memoPickerOpen = ref(false)
+const memoRefs = ref<VoiceMemo[]>([])
+
+watch(
+  () => draft.value,
+  (v) => {
+    if (v.endsWith('@')) memoPickerOpen.value = true
+  },
+)
+
+function onPickMemo(m: VoiceMemo): void {
+  memoPickerOpen.value = false
+  if (memoRefs.value.some((x) => x.id === m.id)) return
+  memoRefs.value = [...memoRefs.value, m]
+  draft.value = draft.value.slice(0, -1) // 去掉触发的 @
+}
+
+function removeMemoRef(id: string): void {
+  memoRefs.value = memoRefs.value.filter((m) => m.id !== id)
+}
+
 onMounted(() => {
   void ai.init()
+  // 选图压图时要用视觉模型的 imageMaxEdge，提前加载模型配置
+  void useModelsStore().load().catch(() => undefined)
   refreshDrafts()
   void scrollToBottom()
-  if (route.query.intent === 'photo') fileEl.value?.click()
+  if (route.query.intent === 'photo') openCamMenu()
 })
+
+// 分享收件箱：路由带 ?intent=share 时消费预填（冷启动 / 运行中被分享唤起都会走到这里）
+watch(
+  () => route.query.intent,
+  (v) => {
+    if (v === 'share') void consumeShare()
+  },
+  { immediate: true },
+)
 
 /* 其他页（桌面信息栏「问点什么」）带来的问题：预填进输入框并清掉 URL 参数 */
 watch(
@@ -116,16 +223,61 @@ async function scrollToBottom(): Promise<void> {
   listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
 }
 
+function fmtVoiceDur(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  return `${Math.floor(s / 60)}'${String(s % 60).padStart(2, '0')}"`
+}
+
 function send(): void {
   if (ai.busy) return
   const t = draft.value.trim()
-  if (!t && !attachment.value) return
-  const att = attachment.value
+  const doc = docAtt.value
+  if (!t && attachments.value.length === 0 && !doc) return
   draft.value = ''
-  attachment.value = null
+  const atts = attachments.value
+  attachments.value = []
+  docAtt.value = null
   const q = quote.value
   quote.value = null
-  void ai.sendText(t, q?.text, att ? { base64: att.full, mime: 'image/jpeg' } : undefined)
+  // 组装待发送图片：附图（原图高分辨率保留给放大镜）+ 文档勾选的内嵌图
+  const images: SendImage[] = atts.map((a, i) => ({
+    base64: a.full,
+    mime: 'image/jpeg',
+    w: a.w,
+    h: a.h,
+    label: atts.length > 1 ? `附图 ${i + 1}` : '附图',
+    source: a.source,
+  }))
+  let docMeta: AiDocMeta | undefined
+  if (doc) {
+    for (const im of doc.doc.images) {
+      if (!doc.selected.has(im.id)) continue
+      const v = doc.views.get(im.id)
+      if (v) {
+        images.push({
+          base64: v.base64,
+          mime: 'image/jpeg',
+          w: v.w,
+          h: v.h,
+          label: `文档《${doc.file.name}》${im.where}`,
+          source: new Blob([im.bytes as BlobPart], { type: im.mime }),
+        })
+      }
+    }
+    docMeta = {
+      name: doc.file.name,
+      kind: doc.doc.kind,
+      text: doc.doc.text,
+      fullText: doc.doc.fullText,
+      chars: doc.doc.chars,
+      truncated: doc.doc.truncated,
+      imagesTotal: doc.doc.images.length,
+      skippedImages: doc.doc.skippedImages,
+    }
+  }
+  const refs = memoRefs.value
+  memoRefs.value = []
+  void ai.sendText(t, { quoteText: q?.text, images: images.length > 0 ? images : undefined, doc: docMeta, memoRefs: refs })
 }
 
 async function onFile(event: Event): Promise<void> {
@@ -133,22 +285,92 @@ async function onFile(event: Event): Promise<void> {
   const file = input.files?.[0]
   if (!file) return
   input.value = ''
-  const dataUrl = await readFileAsDataUrl(file)
-  // 压出全图（随消息发给模型）与缩略图（附件芯片预览）；不立即发送
-  const [full, small] = await Promise.all([
-    resizeImageAsJpeg(dataUrl, 1600, 0.85),
-    resizeImageAsJpeg(dataUrl, 240, 0.6).catch(() => null),
-  ])
-  attachment.value = { full, small }
+  await prepareFile(file)
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () => reject(reader.error ?? new Error('读取图片失败'))
-    reader.readAsDataURL(file)
-  })
+/** 图库多选：逐张压入附图列表 */
+async function onGallery(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  for (const f of files) await prepareFile(f, f.type || 'image/*')
+}
+
+/** 系统相机拍摄：每次拍一张并累积，可连续点菜单多拍几张 */
+async function onCamera(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  input.value = ''
+  const before = attachments.value.length
+  await prepareFile(file, file.type || 'image/*')
+  if (attachments.value.length > before) {
+    toast.toast(attachments.value.length > 1 ? `已添加第 ${attachments.value.length} 张，可继续拍摄` : '已添加，可继续拍摄或直接发送')
+  }
+}
+
+/** 统一文件预填：Office/文本 → 文档芯片（解析+图片勾选）；图片 → 附图芯片（可多张累积） */
+async function prepareFile(file: File, mimeHint?: string): Promise<void> {
+  const mime = mimeHint || file.type || ''
+  const kind = officeKindOf(file.name)
+  try {
+    if (kind === 'text' || (!kind && (mime.startsWith('text/') || /\.(md|txt|markdown|csv)$/i.test(file.name)))) {
+      const doc = await parseTextFile(file)
+      attachDoc(file, doc)
+      return
+    }
+    if (kind) {
+      const doc = await parseOffice(file, file.name)
+      attachDoc(file, doc)
+      return
+    }
+    if (mime.startsWith('image/')) {
+      if (attachments.value.length >= MAX_ATTACHMENTS) {
+        toast.toast(`附图最多 ${MAX_ATTACHMENTS} 张`)
+        return
+      }
+      // 压出发送视图（≤模型上限，坐标空间）与缩略图；原始文件保留给放大镜
+      const bm = await decodeBitmap(file)
+      const [view, small] = await Promise.all([
+        bitmapToJpeg(bm, imageEdgeCap(), 0.85),
+        bitmapToJpeg(bm, 240, 0.6).catch(() => null),
+      ])
+      attachments.value = [...attachments.value, { full: view.base64, small: small?.base64 ?? null, w: view.width, h: view.height, source: file }]
+      bm.close()
+      return
+    }
+    toast.toast('不支持的文件类型，仅支持图片 / 文本 / Markdown / Office 文档')
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : String(e))
+  }
+}
+
+/** 解析完成 → 挂文档芯片（默认勾选前 3 张内嵌图） */
+async function attachDoc(file: File, doc: ParsedDoc): Promise<void> {
+  const cap = imageEdgeCap()
+  const views = new Map<string, { base64: string; w: number; h: number }>()
+  for (const im of doc.images) {
+    const blob = new Blob([im.bytes as BlobPart], { type: im.mime })
+    const bm = await decodeBitmap(blob)
+    const r = await bitmapToJpeg(bm, cap)
+    views.set(im.id, { base64: r.base64, w: r.width, h: r.height })
+    bm.close()
+  }
+  docAtt.value = {
+    file,
+    doc,
+    views,
+    selected: new Set(doc.images.slice(0, 3).map((im) => im.id)),
+  }
+}
+
+/** 消费分享收件箱预填（系统分享/打开的文件，见 system/shareInbox） */
+async function consumeShare(): Promise<void> {
+  const p = shareInbox.takePending()
+  if (!p) return
+  const bytes = Uint8Array.from(atob(p.base64), (c) => c.charCodeAt(0))
+  const file = new File([bytes], p.name, { type: p.mime })
+  await prepareFile(file, p.mime)
 }
 
 /* ---------- 长按菜单（复制 / 引用 / 撤回；桌面右键同款） ---------- */
@@ -253,16 +475,56 @@ async function onMenuSelect(value: string): Promise<void> {
             <p class="think-body">{{ m.thinking }}</p>
           </details>
 
-          <!-- 照片（可带随图文字，图与文分气泡，同属一条消息） -->
-          <template v-if="m.kind === 'photo' && m.imageBase64">
-            <div class="photo-bubble">
-              <img :src="`data:${m.mime ?? 'image/jpeg'};base64,${m.imageBase64}`" alt="用户上传的照片">
+          <!-- 照片（可多图；可带随图文字，图与文分气泡，同属一条消息） -->
+          <template v-if="m.kind === 'photo' && (m.imageBase64 || m.images?.length)">
+            <div class="photo-bubble" :class="{ multi: (m.images?.length ?? 0) > 1 }">
+              <img
+                v-for="(im, i) in msgImages(m)"
+                :key="i"
+                :src="`data:${im.mime};base64,${im.base64}`"
+                alt="用户上传的照片"
+              >
             </div>
             <p v-if="m.text" class="bubble">{{ m.text }}</p>
           </template>
 
-          <!-- 纯文本 -->
-          <p v-else-if="m.kind === 'text'" class="bubble">{{ m.text }}</p>
+          <!-- 文档消息（解析文本随消息发给模型，气泡展示卡片与勾选的内嵌图） -->
+          <template v-else-if="m.kind === 'doc' && m.doc">
+            <div class="doc-card">
+              <FileText :size="16" />
+              <div class="dc-info">
+                <p class="dc-name">{{ m.doc.name }}</p>
+                <p class="dc-meta">
+                  {{ m.doc.chars }} 字{{ m.doc.truncated ? '（已截断）' : '' }} · 图片 {{ m.doc.imagesTotal }} 张{{
+                    m.doc.skippedImages > 0 ? `（跳过 ${m.doc.skippedImages} 张不支持/装饰图）` : ''
+                  }}
+                </p>
+              </div>
+            </div>
+            <div v-if="m.images?.length" class="photo-bubble multi">
+              <img
+                v-for="(im, i) in m.images"
+                :key="i"
+                :src="`data:image/jpeg;base64,${im.base64}`"
+                alt="文档内嵌图片"
+              >
+            </div>
+            <p v-if="m.text" class="bubble">{{ m.text }}</p>
+          </template>
+
+          <!-- 纯文本（Markdown 渲染，流式按块增量；还没有正文时显示打字点） -->
+          <div v-else-if="m.kind === 'text'" class="bubble">
+            <MdText v-if="m.text" :text="m.text" :streaming="m.streaming" />
+            <span v-if="m.text && m.streaming" class="caret" aria-hidden="true" />
+            <span v-if="!m.text && m.streaming" class="tdots" aria-hidden="true"><i /><i /><i /></span>
+          </div>
+
+          <!-- 语音轮（转写 + 关联纪要，点开语音会话回看/重放） -->
+          <button v-else-if="m.kind === 'voice'" class="voice-bub" @click="m.voiceMeta && openMemoById(m.voiceMeta.memoId)">
+            <span class="vb-head"><Mic :size="13" /> 语音{{ m.voiceMeta ? ` ${fmtVoiceDur(m.voiceMeta.durationMs)}` : '' }} · 会议纪要</span>
+            <span class="vb-txt">{{ (m.text ?? '').slice(0, 72) }}{{ (m.text ?? '').length > 72 ? '…' : '' }}</span>
+            <span class="vb-go">查看纪要 ›</span>
+          </button>
 
           <!-- 食物解析卡（行内改重量 / 删行，未匹配项不会写入） -->
           <div v-else-if="m.kind === 'food-parse' && m.items" class="parse">
@@ -310,6 +572,15 @@ async function onMenuSelect(value: string): Promise<void> {
                     }}</span>
                   </div>
                   <p v-if="c.resultBrief && c.status === 'error'" class="t-result error">{{ c.resultBrief }}</p>
+                  <template v-else>
+                    <img
+                      v-if="c.resultImage"
+                      class="t-img"
+                      :src="`data:${c.resultImage.mime};base64,${c.resultImage.base64}`"
+                      alt="放大结果"
+                    >
+                    <p v-if="c.resultBrief" class="t-result">{{ c.resultBrief }}</p>
+                  </template>
                 </li>
               </ul>
             </details>
@@ -334,44 +605,97 @@ async function onMenuSelect(value: string): Promise<void> {
       </button>
     </div>
 
-    <!-- 待发送附图芯片（选图后挂在这里，可移除，随下一条消息发出） -->
-    <div v-if="attachment" class="attach-row">
-      <div class="attach-chip">
+    <!-- @纪要 chips（发送时注入纪要内容） -->
+    <div v-if="memoRefs.length > 0" class="memo-refs">
+      <span v-for="m in memoRefs" :key="m.id" class="memo-chip">
+        @ {{ m.title }}<button class="mx" aria-label="移除纪要引用" @click="removeMemoRef(m.id)"><X :size="10" :stroke-width="3" /></button>
+      </span>
+    </div>
+
+    <!-- 待发送附图芯片（可多张累积：相机连拍 + 图库多选，随下一条消息发出） -->
+    <div v-if="attachments.length > 0" class="attach-row">
+      <div v-for="(a, i) in attachments" :key="i" class="attach-chip">
         <img
-          :src="`data:image/jpeg;base64,${attachment.small ?? attachment.full}`"
+          :src="`data:image/jpeg;base64,${a.small ?? a.full}`"
           alt="待发送图片"
         >
-        <button class="attach-x" aria-label="移除图片" @click="attachment = null">
+        <button class="attach-x" aria-label="移除图片" @click="attachments = attachments.filter((_, j) => j !== i)">
           <X :size="11" :stroke-width="3" />
         </button>
       </div>
     </div>
 
+    <!-- 待发送文档芯片（解析结果 + 内嵌图勾选，随下一条消息发出） -->
+    <div v-if="docAtt" class="attach-row doc-attach">
+      <div class="doc-chip">
+        <FileText :size="18" />
+        <div class="dc-info">
+          <p class="dc-name">{{ docAtt.file.name }}</p>
+          <p class="dc-meta">
+            {{ docAtt.doc.chars }} 字{{ docAtt.doc.truncated ? '（已截断）' : '' }} · 图片
+            {{ docAtt.doc.images.length }} 张{{ docAtt.doc.skippedImages > 0 ? `（跳过 ${docAtt.doc.skippedImages}）` : '' }}
+          </p>
+        </div>
+        <button class="attach-x" aria-label="移除文档" @click="docAtt = null">
+          <X :size="11" :stroke-width="3" />
+        </button>
+      </div>
+      <div v-if="docAtt.doc.images.length > 0" class="doc-imgs">
+        <button
+          v-for="im in docAtt.doc.images"
+          :key="im.id"
+          class="doc-img"
+          :class="{ on: docAtt.selected.has(im.id) }"
+          :aria-label="`${docAtt.selected.has(im.id) ? '取消发送' : '发送'}${im.where}的图片`"
+          @click="toggleDocImage(im.id)"
+        >
+          <img :src="`data:image/jpeg;base64,${docAtt.views.get(im.id)?.base64 ?? ''}`" alt="文档内嵌图片">
+          <small>{{ im.where }}</small>
+          <span v-if="docAtt.selected.has(im.id)" class="doc-check"><Check :size="11" :stroke-width="3" /></span>
+        </button>
+      </div>
+      <p class="doc-hint">点选要发给 AI 的图片（已默认选前 3 张）；发出后可让 AI 放大查看细节。</p>
+    </div>
+
     <!-- 输入栏 -->
     <div class="inbar row">
-      <button class="cam" aria-label="拍照记录" @click="fileEl?.click()">
-        <Camera :size="19" />
+      <button ref="camBtn" class="cam" aria-label="添加附件" @click="openCamMenu">
+        <Plus :size="21" :stroke-width="2.4" />
       </button>
       <input
         v-model="draft"
         type="text"
-        :placeholder="attachment ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
+        :placeholder="docAtt ? '问问这份文档，或让 AI 放大看图' : attachments.length > 1 ? `问问这 ${attachments.length} 张图，或直接记录饮食` : attachments.length === 1 ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
         @keydown.enter="send"
       >
       <button
         class="send"
-        :class="{ ready: !!draft.trim() || !!attachment }"
+        :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
         aria-label="发送"
-        :disabled="ai.busy || (!draft.trim() && !attachment)"
+        :disabled="ai.busy || (!draft.trim() && attachments.length === 0 && !docAtt && memoRefs.length === 0)"
         @click="send"
       >
         <SendHorizontal :size="18" />
       </button>
     </div>
 
-    <input ref="fileEl" type="file" accept="image/*" hidden @change="onFile">
+    <!-- 三个隐藏入口：系统相机 / 图库多选 / 文件（图片+Office+文本） -->
+    <input ref="fileEl" type="file" accept="image/*,.docx,.pptx,.xlsx" hidden @change="onFile">
+    <input ref="galleryEl" type="file" accept="image/*" multiple hidden @change="onGallery">
+    <input ref="cameraEl" type="file" accept="image/*" capture="environment" hidden @change="onCamera">
+
+    <!-- 「+」添加菜单（bind 式锚定弹出：拍照 / 图库 / 上传文件） -->
+    <AppMenu
+      :open="camMenuOpen"
+      :actions="camActions"
+      :anchor="camBtn"
+      title="添加内容"
+      @close="camMenuOpen = false"
+      @select="onCamSelect"
+    />
 
     <HistoryDrawer :open="drawerOpen" @close="drawerOpen = false" />
+    <MemoPickerSheet :open="memoPickerOpen" @close="memoPickerOpen = false" @pick="onPickMemo" />
 
     <!-- 拍照直识别弹层（识别 → 编辑 → 写入 / 存草稿） -->
     <FoodParseSheet ref="foodSheet" @committed="refreshDrafts" @saved-draft="refreshDrafts" />
@@ -497,6 +821,47 @@ async function onMenuSelect(value: string): Promise<void> {
   object-fit: cover;
 }
 
+/* 多图：两列网格 */
+.photo-bubble.multi {
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.photo-bubble.multi img {
+  width: calc(50% - 1px);
+  max-height: 150px;
+}
+
+/* 文档消息卡（用户发过的文档） */
+.doc-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 86%;
+  padding: 9px 12px;
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--text-1);
+}
+
+.dc-info {
+  min-width: 0;
+}
+
+.dc-name {
+  font-weight: 500;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-meta {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
 .msgs {
   flex: 1;
   overflow-y: auto;
@@ -586,6 +951,50 @@ async function onMenuSelect(value: string): Promise<void> {
   background: var(--surface);
   box-shadow: var(--shadow-card);
   border-bottom-left-radius: 6px;
+}
+
+/* 流式打字光标与打字点（仅流式占位气泡） */
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: var(--text-2);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  50% { opacity: 0; }
+}
+
+.tdots {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.tdots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+  animation: tdots-pulse 1.2s ease-in-out infinite;
+}
+
+.tdots i:nth-child(2) { animation-delay: 0.15s; }
+.tdots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes tdots-pulse {
+  0%, 100% { opacity: 0.3; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret,
+  .tdots i {
+    animation: none;
+  }
 }
 
 /* 解析卡 */
@@ -814,6 +1223,16 @@ async function onMenuSelect(value: string): Promise<void> {
   word-break: break-all;
 }
 
+/* 放大镜结果图（工具过程卡内） */
+.t-img {
+  display: block;
+  margin-top: 6px;
+  max-width: 200px;
+  max-height: 160px;
+  border-radius: var(--radius-s);
+  border: 0.5px solid var(--line);
+}
+
 /* 快捷与输入 */
 .chips {
   display: flex;
@@ -835,9 +1254,11 @@ async function onMenuSelect(value: string): Promise<void> {
   opacity: 0.5;
 }
 
-/* 待发送附图芯片（Kimi 式：缩略图 + 右上角移除钮） */
+/* 待发送附图芯片（Kimi 式：缩略图 + 右上角移除钮，多张自动换行） */
 .attach-row {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 0 2px 8px;
 }
 
@@ -869,6 +1290,159 @@ async function onMenuSelect(value: string): Promise<void> {
   background: var(--surface);
   box-shadow: var(--shadow-card);
   color: var(--text-2);
+}
+
+/* 待发送文档芯片（文档卡 + 内嵌图勾选网格） */
+.doc-attach {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.doc-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--text-1);
+  width: 100%;
+}
+
+.doc-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.doc-img {
+  position: relative;
+  width: 72px;
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  background: var(--surface-2);
+  padding: 0;
+}
+
+.doc-img img {
+  display: block;
+  width: 100%;
+  height: 56px;
+  object-fit: cover;
+  opacity: 0.45;
+}
+
+.doc-img small {
+  display: block;
+  font-size: 10px;
+  color: var(--text-2);
+  text-align: center;
+  padding: 2px 0 3px;
+}
+
+.doc-img.on img {
+  opacity: 1;
+}
+
+.doc-img.on small {
+  color: var(--text-1);
+}
+
+.doc-check {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--text-1);
+  box-shadow: var(--shadow-card);
+}
+
+.doc-hint {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* 语音轮气泡（用户侧，点开语音会话回看纪要/重放） */
+.voice-bub {
+  max-width: 82%;
+  padding: 9px 13px;
+  border-radius: 16px;
+  border-bottom-right-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.voice-bub .vb-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 800;
+  opacity: 0.92;
+}
+
+.voice-bub .vb-txt {
+  font-size: var(--fs-subhead);
+  line-height: 1.5;
+}
+
+.voice-bub .vb-go {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.8;
+}
+
+/* @纪要引用 chips */
+.memo-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 8px;
+}
+
+.memo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  max-width: 70%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.memo-chip .mx {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(0, 122, 255, 0.18);
+}
+
+/* 气泡内 Markdown（MdText 渲染的内容不带 pre-line，由块级元素控制行距） */
+.bubble :deep(.md) {
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .inbar {
