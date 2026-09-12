@@ -4,6 +4,7 @@ import { CalendarDays, ListTodo, Plus, Sparkles } from 'lucide-vue-next'
 
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useToast } from '@/composables/useToast'
+import { useScheduleUndo } from '@/composables/useScheduleUndo'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { DESKTOP_MIN } from '@/config/domain'
@@ -30,6 +31,7 @@ import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
 const store = useTodoStore()
 const models = useModelsStore()
 const { toast } = useToast()
+const { applyMove, applyMoves } = useScheduleUndo()
 const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 
 type Segment = 'canvas' | 'week' | 'list'
@@ -90,7 +92,7 @@ function onToggle(t: Todo): void {
 
 function onMove(t: Todo, startMin: number): void {
   clearGhosts()
-  void store.update({ ...t, date: canvasDate.value, startMin })
+  void applyMove(t, { date: canvasDate.value, startMin })
 }
 
 async function onSubtasks(next: TodoSubtask[]): Promise<void> {
@@ -129,8 +131,8 @@ async function placeInNextGap(t: Todo): Promise<void> {
     toast('今天 22 点前没有装得下的空档了')
     return
   }
-  await store.update({ ...t, date: canvasDate.value, startMin: gap.start })
-  toast(`已排到 ${String(Math.floor(gap.start / 60)).padStart(2, '0')}:${String(gap.start % 60).padStart(2, '0')}`)
+  const at = `${String(Math.floor(gap.start / 60)).padStart(2, '0')}:${String(gap.start % 60).padStart(2, '0')}`
+  await applyMove(t, { date: canvasDate.value, startMin: gap.start }, `已排到 ${at}`)
 }
 
 function onChipDown(e: PointerEvent, t: Todo): void {
@@ -168,13 +170,15 @@ async function onChipUp(): Promise<void> {
   chipDrag.value = null
   dropMin.value = null
   if (t && chipMoved && min != null) {
-    await store.update({ ...t, date: canvasDate.value, startMin: min })
+    await applyMove(t, { date: canvasDate.value, startMin: min })
   }
 }
 
 /* ---------- 智能排程（AI 建议 → 确认 → 落库） ---------- */
 
 const aiRunning = ref(false)
+/** AI 排程流式进度（已安排 N/M 项），运行中显示在排程按钮上 */
+const aiProgress = ref('')
 const ghosts = ref<{ todo: Todo; startMin: number }[]>([])
 const aiReason = ref('')
 const aiSource = ref<'ai' | 'heuristic'>('heuristic')
@@ -187,10 +191,18 @@ async function runSchedule(): Promise<void> {
   if (aiRunning.value || !pool.value.length) return
   clearGhosts()
   aiRunning.value = true
+  aiProgress.value = ''
   try {
     if (!models.loaded) await models.load()
     const from = canvasDate.value === today ? Math.max(nowMin(), 6 * 60) : 6 * 60
-    const res = await autoSchedule(pool.value, scheduled.value, canvasDate.value, from, models.defaultModel())
+    const res = await autoSchedule(
+      pool.value,
+      scheduled.value,
+      canvasDate.value,
+      from,
+      models.defaultModel(),
+      (n, total) => (aiProgress.value = `已排 ${n}/${total} 项`),
+    )
     const byId = new Map(pool.value.map((t) => [t.id, t]))
     ghosts.value = res.placements
       .filter((p: Placement) => byId.has(p.id))
@@ -206,11 +218,12 @@ async function runSchedule(): Promise<void> {
 async function applyGhosts(): Promise<void> {
   const list = ghosts.value
   ghosts.value = []
+  const items: { todo: Todo; date: string | null; startMin: number | null }[] = []
   for (const g of list) {
     const cur = store.allTodos.find((t) => t.id === g.todo.id)
-    if (cur) await store.update({ ...cur, date: canvasDate.value, startMin: g.startMin })
+    if (cur) items.push({ todo: cur, date: canvasDate.value, startMin: g.startMin })
   }
-  toast(`已排入 ${list.length} 项，可拖动微调`)
+  await applyMoves(items, `已排入 ${items.length} 项，可拖动微调`)
 }
 
 /* ---------- 每日规划仪式 ---------- */
@@ -281,7 +294,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
         data-testid="ai-schedule"
         @click="runSchedule"
       >
-        <Sparkles :size="14" /> {{ aiRunning ? '排程中…' : '智能排程' }}
+        <Sparkles :size="14" /> {{ aiRunning ? aiProgress || '排程中…' : '智能排程' }}
       </button>
     </div>
 

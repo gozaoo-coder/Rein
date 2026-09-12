@@ -3,7 +3,7 @@ import { chromium } from 'playwright-core'
 import { writeFileSync } from 'node:fs'
 
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
-const BASE = 'http://127.0.0.1:1420'
+const BASE = process.env.REIN_E2E_URL ?? 'http://127.0.0.1:1420'
 let passed = 0
 let failed = 0
 function ok(name, cond, extra = '') {
@@ -90,7 +90,7 @@ await page.waitForTimeout(400)
 ok('存草稿后 chip 计数 +1', (await draftChip.innerText()).includes('· 3'), await draftChip.innerText())
 
 console.log('== 场景二：选图挂附件 → 配文字发送 → 图文进聊天 ==')
-const fileInput = page.locator('input[type=file]')
+const fileInput = page.locator('input[type=file]').first()
 await fileInput.setInputFiles({ name: 'meal.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(JPEG_B64, 'base64') })
 await page.waitForTimeout(800)
 ok('选图后出现附件芯片（不立即发送）', await page.locator('.attach-chip img').isVisible())
