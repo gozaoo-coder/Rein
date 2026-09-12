@@ -13,6 +13,7 @@ import { todoService } from '@/services/todoService'
 import { addDays, todayStr } from '@/utils/date'
 import { parseBlob } from '@/utils/programEngine'
 import { extractJsonObject, lastAssistantText } from './json'
+import { jsonStringField } from './streamExtract'
 import { buildRuntime } from './runtime'
 
 export interface ProgramReviewPayload {
@@ -118,8 +119,13 @@ function systemPrompt(): string {
 {"diagnosis":"两三句话的诊断，指出数据里的关键证据","changes":{"kcalDelta":数值,"proteinPerKg":数值,"trainingDays":数值}（只给需要改的）,"advice":["给用户的执行建议，1~3 条"]}`
 }
 
-/** 单轮复盘：无工具、纯数据分析；模型未配置时由调用方先行保证 */
-export async function reviewProgram(config: AiModel, payload: ProgramReviewPayload): Promise<ReviewSuggestion> {
+/** 单轮复盘：无工具、纯数据分析；模型未配置时由调用方先行保证。
+ * onDiagnosis 可选：流式输出过程中增量回传已流出的诊断文本（定稿以返回值为准）。 */
+export async function reviewProgram(
+  config: AiModel,
+  payload: ProgramReviewPayload,
+  onDiagnosis?: (partial: string) => void,
+): Promise<ReviewSuggestion> {
   const { models, byId } = buildRuntime([config])
   const entry = byId.get(config.id)
   if (!entry) throw new Error('模型运行时构建失败')
@@ -135,6 +141,18 @@ export async function reviewProgram(config: AiModel, payload: ProgramReviewPaylo
     },
     streamFn: models.streamSimple.bind(models),
   })
+
+  if (onDiagnosis) {
+    let acc = ''
+    agent.subscribe((e) => {
+      if (e.type !== 'message_update') return
+      const ev = e.assistantMessageEvent
+      if (ev.type !== 'text_delta') return
+      acc += ev.delta
+      const d = jsonStringField(acc, 'diagnosis')
+      if (d) onDiagnosis(d)
+    })
+  }
 
   await agent.prompt(`方案与最近一周执行数据如下（JSON）：\n${JSON.stringify(payload)}`)
   if (agent.state.errorMessage) throw new Error(agent.state.errorMessage)

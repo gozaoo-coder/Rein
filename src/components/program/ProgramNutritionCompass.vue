@@ -24,6 +24,8 @@ const props = defineProps<{
   /** 菜单是否由 AI 生成（决定来源标注与按钮文案） */
   aiGenerated: boolean
   aiLoading: boolean
+  /** 生成中的流式活动摘要（匹配食材…）；空串不显示 */
+  aiStatus?: string
   aiError: string
   /** 是否展示「记一笔」入口（仅聚焦今天时展示，写入恒落今天） */
   loggable: boolean
@@ -167,6 +169,7 @@ const verdict = computed(() => {
           {{ aiGenerated ? '换一批' : 'AI 生成这一天的菜单' }}
         </template>
       </button>
+      <span v-if="aiLoading && aiStatus" class="ai-status num">{{ aiStatus }}</span>
       <span v-if="aiError" class="ai-err">{{ aiError }}</span>
     </div>
   </section>
@@ -408,4 +411,11 @@ const verdict = computed(() => {
   font-size: var(--fs-caption);
   color: var(--danger);
 }
+
+/* 生成中的流式活动摘要（匹配食材…） */
+.ai-status {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
 </style>

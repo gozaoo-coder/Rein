@@ -10,14 +10,25 @@
 import type { AiModel, ParsedFoodItem, TodoDraft } from '@/types'
 import { todayStr } from '@/utils/date'
 import { extractJsonObject, lastAssistantText } from './json'
+import { jsonArrayItems } from './streamExtract'
 import { toParsedItems, type ModelFoodRow } from './foodMatch'
 import { buildRuntime } from './runtime'
-import { buildAppAgentTools } from './tools/registry'
+import { buildAppAgentTools, findAppTool } from './tools/registry'
 import { toDrafts, type RawTodoRow } from './todoGen'
 
 export interface SmartResult {
   todos: TodoDraft[]
   foods: ParsedFoodItem[]
+}
+
+/** 生成过程的流式回调：行完整才产出（草稿可直接上屏，定稿以返回值为准） */
+export interface SmartStreamHandlers {
+  /** 已流出的待办草稿（全量快照，按输出顺序） */
+  onTodos?: (drafts: TodoDraft[]) => void
+  /** 已流出的食物行（原始预览，尚未做库匹配/补录） */
+  onFoodRows?: (rows: { foodName: string; grams: number | null }[]) => void
+  /** 工具调用开始（食物库匹配过程），brief 为单行摘要 */
+  onTool?: (brief: string) => void
 }
 
 function systemPrompt(today: string): string {
@@ -38,6 +49,7 @@ async function runGenerate(
   config: AiModel,
   text: string,
   image?: { data: string; mimeType: string },
+  stream?: SmartStreamHandlers,
 ): Promise<SmartResult> {
   const today = todayStr()
   const { models, byId } = buildRuntime([config])
@@ -55,6 +67,54 @@ async function runGenerate(
     },
     streamFn: models.streamSimple.bind(models),
   })
+
+  if (stream) {
+    let acc = ''
+    let todoCount = 0
+    const drafts: TodoDraft[] = []
+    let foodRows: { foodName: string; grams: number | null }[] = []
+    agent.subscribe((e) => {
+      if (e.type === 'message_update') {
+        const ev = e.assistantMessageEvent
+        if (ev.type !== 'text_delta') return
+        acc += ev.delta
+        // todos 数组：行完整才转换（toDrafts 纯前端），新增行保持 key 稳定
+        const todoRows = jsonArrayItems(acc, 'todos')
+        for (; todoCount < todoRows.length; todoCount++) {
+          drafts.push(...toDrafts([todoRows[todoCount] as RawTodoRow], today))
+        }
+        if (drafts.length > 0) stream.onTodos?.(drafts)
+        // foods 数组：只做展示预览，不触发建库（toParsedItems 会自动补录）
+        const rawFoods = jsonArrayItems(acc, 'foods')
+        if (rawFoods.length !== foodRows.length) {
+          foodRows = rawFoods
+            .map((r) => {
+              const o = r as Record<string, unknown>
+              return {
+                foodName: typeof o.foodName === 'string' ? o.foodName.trim() : '',
+                grams: typeof o.grams === 'number' && Number.isFinite(o.grams) ? o.grams : null,
+              }
+            })
+            .filter((r) => r.foodName)
+          stream.onFoodRows?.(foodRows)
+        }
+      } else if (e.type === 'tool_execution_start') {
+        // 工具后模型重新输出最终答复：累积从头计，避免工具前零星文本混进协议流
+        acc = ''
+        todoCount = 0
+        drafts.length = 0
+        foodRows = []
+        let brief = findAppTool(e.toolName)?.label ?? e.toolName
+        try {
+          const s = JSON.stringify(e.args) ?? ''
+          if (s && s !== '{}') brief += ` ${s.length > 40 ? `${s.slice(0, 37)}…` : s}`
+        } catch {
+          /* 入参不可序列化时只显示工具名 */
+        }
+        stream.onTool?.(brief)
+      }
+    })
+  }
 
   const prompt = text || '请解析这张图片中的待办事项和食物。'
   if (image) {
@@ -78,8 +138,9 @@ export async function generateSmart(
   config: AiModel,
   text: string,
   image?: { data: string; mimeType: string },
+  stream?: SmartStreamHandlers,
 ): Promise<SmartResult> {
   const clean = text.trim()
   if (!clean && !image) throw new Error('请先粘贴内容或选择图片')
-  return runGenerate(config, clean, image)
+  return runGenerate(config, clean, image, stream)
 }

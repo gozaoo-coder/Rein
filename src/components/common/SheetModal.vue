@@ -7,15 +7,22 @@ import { X } from 'lucide-vue-next'
  * 术语约定：
  *  - 定位高度：抽屉吸附的档位高度（占屏幕高度的 20% / 40% / 90%）；
  *  - 组件高度：面板当前实际高度（拖动中瞬时变化，松手吸附回定位档位）；
- *  - 滚动高度：内容区可滚动的高度（scrollHeight - clientHeight）。
+ *  - 滚动高度：内容区可滚动的高度（scrollHeight - clientHeight）；
+ *  - 下扔关闭：快速向下扔出（速度达标）或在最小档继续下拉越过关闭线，直接关闭抽屉。
  */
 type SnapLevel = 'small' | 'medium' | 'large'
 
 /** 定位高度档位（占屏幕高度的比例） */
 const SNAP_RATIOS: Record<SnapLevel, number> = { small: 0.2, medium: 0.4, large: 0.9 }
 const SNAP_ORDER: SnapLevel[] = ['small', 'medium', 'large']
-/** 轻拂判定速度（px/ms）：超过则无论松手位置，朝拂动方向跳一档 */
+/** 轻拂判定速度（px/ms）：超过则朝拂动方向跳一档；在最小档向下拂视为下扔关闭 */
 const FLICK_V = 0.35
+/** 快速下扔关闭速度（px/ms）：达到即视为把抽屉「扔出去」，任意档位直接关闭 */
+const DISMISS_V = 0.5
+/** 越过最小档后的橡皮筋阻尼系数：跟随手指的位移比例（越小越紧） */
+const RUBBER = 0.4
+/** 越过最小档继续下拉、阻尼后面板高度低于最小档此距离（px）时松手即关闭 */
+const DISMISS_PULL = 36
 
 /** 打开中的抽屉栈：Esc 只关最上层，嵌套弹层（智能添加 → 编辑器）逐层退出 */
 const sheetStack: ((e: KeyboardEvent) => void)[] = []
@@ -38,6 +45,8 @@ const snap = ref<SnapLevel>('medium')
 /** 拖动中的组件高度；null = 静止，吸附在定位档位上 */
 const dragHeight = ref<number | null>(null)
 const dragging = ref(false)
+/** 下扔关闭进行中：面板保持松手高度播离场动画，结束后才清 dragHeight */
+let dismissing = false
 /** 拖动末段垂直速度（px/ms，正=向下拖）：松手时用于轻拂跳档 */
 let velY = 0
 let lastY = 0
@@ -56,8 +65,10 @@ const snapHeight = computed(() => Math.round(SNAP_RATIOS[snap.value] * viewportH
 const panelHeight = computed(() => dragHeight.value ?? snapHeight.value)
 const snapPct = computed(() => Math.round(SNAP_RATIOS[snap.value] * 100))
 
-function clampH(h: number): number {
-  return Math.min(maxH.value, Math.max(minH.value, h))
+/** 拖动中的组件高度：越过最小档后施加橡皮筋阻尼，可继续下拉进入关闭区 */
+function dampedH(h: number): number {
+  if (h >= minH.value) return Math.min(maxH.value, h)
+  return Math.max(minH.value * 0.4, minH.value - (minH.value - h) * RUBBER)
 }
 
 /** 离目标组件高度最近的定位档位 */
@@ -74,15 +85,37 @@ function nearestLevel(h: number): SnapLevel {
   return best
 }
 
-/** 松手吸附：距离取最近档；轻拂（速度超阈值）时朝拂动方向强制跳一档 */
+/** 松手瞬间速度：距上次 move 超 100ms 视为已停手，陈旧速度归零防误关 */
+function releaseVelocity(): number {
+  return performance.now() - lastT <= 100 ? velY : 0
+}
+
+/** 下扔关闭：面板保持松手高度直接播离场下滑，dragHeight 延后到离场动画结束再清 */
+function dismiss(): void {
+  dismissing = true
+  dragging.value = false
+  velY = 0
+  emit('close')
+}
+
+/** 松手吸附：快速下扔/拉过关闭线 → 直接关闭；轻拂朝拂动方向跳档；否则吸最近档 */
 function settle(h: number): void {
-  let best = nearestLevel(h)
-  if (Math.abs(velY) > FLICK_V) {
-    const dir = velY < 0 ? 1 : -1 // 上拂（velY<0）= 扩张
-    const idx = Math.min(SNAP_ORDER.length - 1, Math.max(0, SNAP_ORDER.indexOf(best) + dir))
-    best = SNAP_ORDER[idx]!
+  const v = releaseVelocity()
+  const best = nearestLevel(h)
+  const thrownOut =
+    v > DISMISS_V || // 任意档位快速下扔
+    (v > FLICK_V && best === 'small') || // 已在最小档还向下拂
+    (h < minH.value - DISMISS_PULL && Math.abs(v) <= FLICK_V) // 拉过橡皮筋关闭线后松手
+  if (thrownOut) {
+    dismiss()
+    return
   }
-  snap.value = best
+  if (Math.abs(v) > FLICK_V) {
+    const dir = v < 0 ? 1 : -1 // 上拂（velY<0）= 扩张
+    snap.value = SNAP_ORDER[Math.min(SNAP_ORDER.length - 1, Math.max(0, SNAP_ORDER.indexOf(best) + dir))]!
+  } else {
+    snap.value = best
+  }
   velY = 0
 }
 
@@ -107,6 +140,7 @@ watch(
       sheetStack.push(onEsc)
       snap.value = props.initialSnap // 每次打开回到初始定位档位
       dragHeight.value = null
+      dismissing = false
     } else {
       const i = sheetStack.indexOf(onEsc)
       if (i >= 0) sheetStack.splice(i, 1)
@@ -139,14 +173,16 @@ function onHandleDown(e: PointerEvent): void {
 function onHandleMove(e: PointerEvent): void {
   if (!dragging.value || dragHeight.value === null) return
   trackVelocity(e.clientY)
-  dragHeight.value = clampH(handleStartH + (handleStartY - e.clientY))
+  dragHeight.value = dampedH(handleStartH + (handleStartY - e.clientY))
 }
 
 function onHandleUp(): void {
   if (!dragging.value) return
-  dragging.value = false
   settle(dragHeight.value ?? snapHeight.value)
-  dragHeight.value = null
+  if (!dismissing) {
+    dragging.value = false
+    dragHeight.value = null
+  }
 }
 
 function onHandleKey(e: KeyboardEvent): void {
@@ -199,7 +235,8 @@ function decideMode(dx: number, dy: number): GestureMode {
   } else if (dy < 0) {
     mode = startH < maxH.value && contentOverflow() ? 'resize' : 'native'
   } else {
-    mode = startScrollTop <= 0 && startH > minH.value ? 'resize' : 'native'
+    // 已在最小档也接管：继续下拉进入橡皮筋关闭区（松手判定见 settle）
+    mode = startScrollTop <= 0 ? 'resize' : 'native'
   }
   if (mode === 'resize') dragging.value = true
   return mode
@@ -218,7 +255,7 @@ function applyResize(dy: number): void {
     const maxScroll = el.scrollHeight - el.clientHeight
     el.scrollTop = Math.min(maxScroll, Math.max(startScrollTop + overscroll, 0))
   } else {
-    dragHeight.value = clampH(rawH)
+    dragHeight.value = dampedH(rawH)
   }
 }
 
@@ -226,8 +263,10 @@ function endGesture(): void {
   if (!gestureActive) return
   gestureActive = false
   if (mode === 'resize') settle(dragHeight.value ?? snapHeight.value)
-  dragging.value = false
-  dragHeight.value = null
+  if (!dismissing) {
+    dragging.value = false
+    dragHeight.value = null
+  }
   mode = 'undecided'
   handoff = false
 }
@@ -290,9 +329,15 @@ function teardownGesture(): void {
   window.removeEventListener('touchcancel', onTouchEnd)
   gestureActive = false
   dragging.value = false
-  dragHeight.value = null
+  // 不清 dragHeight：下扔关闭时要保持松手高度播离场动画，统一由 onAfterLeave 复位
   mode = 'undecided'
   handoff = false
+}
+
+/** 离场动画结束：此刻清拖动高度已不可见，一并复位下扔关闭标记 */
+function onAfterLeave(): void {
+  dismissing = false
+  dragHeight.value = null
 }
 
 /** 内容滚动容器：外部（如全课抽屉）需要它做「滚到当前项」定位 */
@@ -312,7 +357,7 @@ onBeforeUnmount(() => {
     <Transition name="backdrop">
       <div v-if="open" class="backdrop" aria-hidden="true" @click="emit('close')" />
     </Transition>
-    <Transition name="sheet">
+    <Transition name="sheet" @after-leave="onAfterLeave">
       <section
         v-if="open"
         class="panel"
@@ -489,7 +534,11 @@ onBeforeUnmount(() => {
 .sheet-enter-active {
   transition: transform var(--dur-sheet) var(--ease-sheet);
 }
-.sheet-leave-active {
+
+/* 双类压过 .panel.is-dragging 的 transition:none：下扔关闭发生在拖拽中，
+   元素带着 is-dragging 进入离场（v-if 切走后 class 不再 diff），若被清零
+   Vue 会判定 0 时长并跳过滑出动画 */
+.panel.sheet-leave-active {
   transition: transform 280ms var(--ease-sheet);
 }
 .sheet-enter-from,

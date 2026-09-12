@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import CanvasTimeline from '@/components/todo/CanvasTimeline.vue'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
 import { MEAL_LABELS, MEAL_META, mealKcal } from '@/config/domain'
+import { useScheduleUndo } from '@/composables/useScheduleUndo'
 import { useDietStore } from '@/stores/diet'
 import { useTodoStore } from '@/stores/todo'
 import { minToHHmm } from '@/utils/date'
@@ -20,6 +21,7 @@ const props = defineProps<{ date: string }>()
 const router = useRouter()
 const diet = useDietStore()
 const todo = useTodoStore()
+const { applyMove } = useScheduleUndo()
 
 onMounted(() => {
   void diet.load(props.date)
@@ -56,7 +58,7 @@ function onToggle(t: Todo): void {
 }
 
 function onMove(t: Todo, startMin: number): void {
-  void todo.update({ ...t, date: props.date, startMin })
+  void applyMove(t, { date: props.date, startMin })
 }
 </script>
 

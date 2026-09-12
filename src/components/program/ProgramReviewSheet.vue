@@ -171,6 +171,14 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
     <div class="review">
       <template v-if="phase === 'running'">
         <p class="t-2 center wait">正在汇总最近 7 天的执行数据并交给模型分析…</p>
+        <!-- 流式：诊断文本边生成边上屏，定稿后切入下方完整卡片流 -->
+        <section v-if="diagnosis" class="card">
+          <header class="card-head">
+            <b>诊断</b>
+            <span class="tag">AI</span>
+          </header>
+          <p class="diag">{{ diagnosis }}<span class="caret" aria-hidden="true" /></p>
+        </section>
       </template>
 
       <template v-else-if="phase === 'error'">
@@ -373,6 +381,23 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   line-height: 1.55;
 }
 
+/* 流式诊断的打字光标 */
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: var(--text-2);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 /* 建议卡片 */
 .sug {
   display: flex;
@@ -496,6 +521,10 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   .check,
   .sug-title {
     transition: none;
+  }
+
+  .caret {
+    animation: none;
   }
 }
 </style>

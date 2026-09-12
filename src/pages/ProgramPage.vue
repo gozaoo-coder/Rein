@@ -369,6 +369,8 @@ function openSmartAdd(mealType: MealType | null): void {
 const dayMenu = ref<AiMenuMeal[] | null>(null)
 const dayMenuLoading = ref(false)
 const dayMenuError = ref('')
+/** 逐日菜单生成中的流式活动摘要（匹配食材…） */
+const dayMenuStatus = ref('')
 
 watch(
   () => focusDay.value?.date,
@@ -396,12 +398,17 @@ async function genDayMenu(): Promise<void> {
   if (!store.active || !focusDay.value) return
   dayMenuLoading.value = true
   dayMenuError.value = ''
+  dayMenuStatus.value = ''
   try {
-    dayMenu.value = await store.generateDayMeals(store.active, focusDay.value.date)
+    dayMenu.value = await store.generateDayMeals(store.active, focusDay.value.date, (s) => {
+      // 流式：匹配食材等活动摘要实时上屏
+      dayMenuStatus.value = s
+    })
   } catch (e) {
     dayMenuError.value = e instanceof Error ? e.message : String(e)
   } finally {
     dayMenuLoading.value = false
+    dayMenuStatus.value = ''
   }
 }
 
@@ -468,7 +475,10 @@ async function startReview(): Promise<void> {
     const cfg = models.defaultModel()
     if (!cfg) throw new Error('未配置 AI 模型，请先在「AI › 管理模型」添加')
     const payload = await buildReviewPayload(store.active)
-    const sug = await reviewProgram(cfg, payload)
+    const sug = await reviewProgram(cfg, payload, (partial) => {
+      // 流式：诊断文本边生成边上屏（phase 保持 running）
+      review.value = { ...review.value, diagnosis: partial }
+    })
     review.value = {
       phase: 'done',
       diagnosis: sug.diagnosis,
@@ -740,6 +750,7 @@ function adjustmentsOf(r: ProgramRecord): number {
         :subtitle="!focusIsToday && focusDay.date > todayStr() ? '该日尚未到来 · 提前查看当日安排' : ''"
         :ai-generated="!!dayMenu"
         :ai-loading="dayMenuLoading"
+        :ai-status="dayMenuStatus"
         :ai-error="dayMenuError"
         :loggable="focusIsToday"
         @regenerate="genDayMenu"

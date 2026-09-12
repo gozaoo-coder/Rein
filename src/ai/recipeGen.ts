@@ -12,8 +12,9 @@ import type { AiModel, DailyTargets } from '@/types'
 import { dietService } from '@/services/dietService'
 import { mealLayoutFor } from '@/utils/programEngine'
 import { extractJsonObject, lastAssistantText } from './json'
+import { jsonArrayItems } from './streamExtract'
 import { buildRuntime } from './runtime'
-import { buildAppAgentTools } from './tools/registry'
+import { buildAppAgentTools, findAppTool } from './tools/registry'
 
 export interface AiMenuItem {
   label: string
@@ -97,8 +98,20 @@ ${ctx.trainingDay ? '今天是训练日：碳水集中在训练前后两餐，�
 
 const round5 = (x: number): number => Math.max(5, Math.round(x / 5) * 5)
 
+/** 生成过程的流式回调：餐次行完整才产出（名称预览可上屏，营养定稿以返回值为准） */
+export interface MenuStreamHandlers {
+  /** 工具调用开始（search_food 匹配食材），brief 为单行摘要 */
+  onTool?: (brief: string) => void
+  /** 已流出的餐次预览（全量快照，按输出顺序） */
+  onMeals?: (meals: { name: string; slotHint: string }[]) => void
+}
+
 /** 核心：按上下文生成一天菜单（模型出结构，食物库实算营养并缩放到目标热量） */
-export async function generateDayMenu(config: AiModel, ctx: DayMenuContext): Promise<AiMenuResult> {
+export async function generateDayMenu(
+  config: AiModel,
+  ctx: DayMenuContext,
+  stream?: MenuStreamHandlers,
+): Promise<AiMenuResult> {
   const { models, byId } = buildRuntime([config])
   const entry = byId.get(config.id)
   if (!entry) throw new Error('模型运行时构建失败')
@@ -114,6 +127,43 @@ export async function generateDayMenu(config: AiModel, ctx: DayMenuContext): Pro
     },
     streamFn: models.streamSimple.bind(models),
   })
+
+  if (stream) {
+    let acc = ''
+    let mealCount = 0
+    agent.subscribe((e) => {
+      if (e.type === 'message_update') {
+        const ev = e.assistantMessageEvent
+        if (ev.type !== 'text_delta') return
+        acc += ev.delta
+        const rawMeals = jsonArrayItems(acc, 'meals')
+        if (rawMeals.length !== mealCount) {
+          mealCount = rawMeals.length
+          stream.onMeals?.(
+            rawMeals.map((r) => {
+              const o = r as Record<string, unknown>
+              return {
+                name: typeof o.name === 'string' ? o.name : '未命名',
+                slotHint: typeof o.slotHint === 'string' ? o.slotHint : '',
+              }
+            }),
+          )
+        }
+      } else if (e.type === 'tool_execution_start') {
+        // 工具后模型重新输出最终答复：累积从头计，避免工具前零星文本混进协议流
+        acc = ''
+        mealCount = 0
+        let brief = findAppTool(e.toolName)?.label ?? e.toolName
+        try {
+          const s = JSON.stringify(e.args) ?? ''
+          if (s && s !== '{}') brief += ` ${s.length > 40 ? `${s.slice(0, 37)}…` : s}`
+        } catch {
+          /* 入参不可序列化时只显示工具名 */
+        }
+        stream.onTool?.(brief)
+      }
+    })
+  }
 
   await agent.prompt('请按上面的目标与偏好设计菜单。')
   if (agent.state.errorMessage) throw new Error(agent.state.errorMessage)
@@ -226,15 +276,23 @@ export interface AiMenuInput {
   dislikes: string[]
 }
 
-export async function generateAiMenu(config: AiModel, input: AiMenuInput): Promise<AiMenuResult> {
-  return generateDayMenu(config, {
-    slots: mealLayoutFor(input.mealsCount).map((s) => ({ slot: s.slot, share: s.share })),
-    targets: input.targets,
-    restrictions: input.restrictions,
-    likes: input.likes,
-    dislikes: input.dislikes,
-    avoidNames: [],
-    trainingDay: true,
-    dateNote: '',
-  })
+export async function generateAiMenu(
+  config: AiModel,
+  input: AiMenuInput,
+  stream?: MenuStreamHandlers,
+): Promise<AiMenuResult> {
+  return generateDayMenu(
+    config,
+    {
+      slots: mealLayoutFor(input.mealsCount).map((s) => ({ slot: s.slot, share: s.share })),
+      targets: input.targets,
+      restrictions: input.restrictions,
+      likes: input.likes,
+      dislikes: input.dislikes,
+      avoidNames: [],
+      trainingDay: true,
+      dateNote: '',
+    },
+    stream,
+  )
 }

@@ -13,7 +13,7 @@ import { useAiStore } from '@/stores/ai'
 import { useModelsStore } from '@/stores/models'
 import { useTodoStore } from '@/stores/todo'
 import { minToHHmm, parseDate } from '@/utils/date'
-import { resizeImageAsJpeg } from '@/utils/image'
+import { resizeImageAsJpeg, DEFAULT_IMAGE_EDGE } from '@/utils/image'
 import { useToast } from '@/composables/useToast'
 import type { MealType, ParsedFoodItem, Todo, TodoCategory, TodoDraft } from '@/types'
 
@@ -56,6 +56,9 @@ const todos = ref<TodoDraft[]>([])
 const foods = ref<ParsedFoodItem[]>([])
 const foodStats = ref({ totalKcal: 0, total: 0, matched: 0 })
 const meal = ref<MealType>(suggestMeal())
+/** 流式过程：工具活动摘要 + 食物行预览（定稿前不做库匹配） */
+const streamTool = ref('')
+const foodPreview = ref<{ foodName: string; grams: number | null }[]>([])
 
 // 每次打开重置餐次：调用方给了预选（如「下一餐」）就跟随，否则按当前时间推测
 watch(
@@ -88,6 +91,12 @@ async function runGenerate(): Promise<void> {
   }
   busy.value = true
   error.value = ''
+  todos.value = []
+  foods.value = []
+  foodPreview.value = []
+  streamTool.value = ''
+  foodCommitted.value = false
+  let streamedTodos = false
   try {
     const { generateSmart } = await import('@/ai/smartGen')
     const att = attachment.value
@@ -95,8 +104,17 @@ async function runGenerate(): Promise<void> {
       cfg,
       text.value,
       att ? { data: att.full, mimeType: 'image/jpeg' } : undefined,
+      {
+        onTodos: (drafts) => {
+          todos.value = drafts
+          streamedTodos = true
+        },
+        onFoodRows: (rows) => (foodPreview.value = rows),
+        onTool: (brief) => (streamTool.value = brief),
+      },
     )
-    todos.value = r.todos
+    // 流式已上屏的草稿内容与终稿一致，不重设避免列表动画重放
+    if (!streamedTodos) todos.value = r.todos
     foods.value = r.foods
     foodCommitted.value = false
     meal.value = suggestMeal()
@@ -107,6 +125,8 @@ async function runGenerate(): Promise<void> {
     error.value = `识别失败：${failMsg(e)}`
   } finally {
     busy.value = false
+    streamTool.value = ''
+    foodPreview.value = []
   }
 }
 
@@ -119,14 +139,16 @@ function readAsDataURL(file: File): Promise<string> {
   })
 }
 
-/** 选图 → 先进草稿区（不立即解析），可继续粘贴文字 */
+/** 选图 → 先进草稿区（不立即解析），可继续粘贴文字；发送视图按视觉模型上限压缩 */
 async function onPickImage(e: Event): Promise<void> {
   const file = (e.target as HTMLInputElement).files?.[0]
   ;(e.target as HTMLInputElement).value = ''
   if (!file) return
+  await ensureModels()
+  const cap = models.bestVisionModel()?.imageMaxEdge ?? DEFAULT_IMAGE_EDGE
   const dataUrl = await readAsDataURL(file)
   const [full, small] = await Promise.all([
-    resizeImageAsJpeg(dataUrl, 1600, 0.85),
+    resizeImageAsJpeg(dataUrl, cap, 0.85),
     resizeImageAsJpeg(dataUrl, 240, 0.6).catch(() => null),
   ])
   attachment.value = { full, small }
@@ -282,10 +304,18 @@ function clearAll(): void {
         <input ref="fileRef" type="file" accept="image/*" hidden @change="onPickImage">
       </div>
 
-      <!-- 忙碌 / 错误 -->
-      <p class="state t-3 num">
-        <span v-if="busy">AI 正在后台解析…</span>
-        <span v-else-if="error" class="err">{{ error }}</span>
+      <!-- 忙碌（流式：工具活动 + 食物行预览）/ 错误 -->
+      <div v-if="busy" class="state">
+        <p class="row" style="gap: 6px; font-size: var(--fs-caption); color: var(--text-3)">
+          <LoaderCircle :size="13" class="spin" />
+          <span>{{ streamTool || 'AI 正在后台解析…' }}</span>
+        </p>
+        <p v-if="foodPreview.length" class="fprev t-3 num">
+          {{ foodPreview.map((f) => `${f.foodName}${f.grams ? ` ${f.grams}g` : ''}`).join('、') }}
+        </p>
+      </div>
+      <p v-else-if="error" class="state t-3 num">
+        <span class="err">{{ error }}</span>
       </p>
 
       <!-- 食物卡（识别结果 → 确认餐次 → 写入今日） -->
@@ -327,14 +357,14 @@ function clearAll(): void {
               class="pick"
               :class="{ on: d.checked }"
               :aria-label="d.checked ? '取消勾选' : '勾选'"
-              :disabled="d.added"
+              :disabled="d.added || busy"
               @click="d.checked = !d.checked"
             >
               <Transition name="ckin">
                 <Check v-if="d.checked || d.added" :size="13" :stroke-width="3.2" />
               </Transition>
             </button>
-            <button class="info col grow" @click="openEditor(d)">
+            <button class="info col grow" :disabled="busy" @click="openEditor(d)">
               <span class="trow">
                 <i class="catdot" :style="{ background: `var(${CATEGORY_META[d.category].colorVar})` }" />
                 <b class="dt">{{ d.title }}</b>
@@ -353,16 +383,16 @@ function clearAll(): void {
               <span v-if="d.notes" class="notes t-3">{{ d.notes }}</span>
             </button>
             <span class="acts">
-              <button class="act" aria-label="编辑细节" @click="openEditor(d)">
+              <button class="act" aria-label="编辑细节" :disabled="busy" @click="openEditor(d)">
                 <Pencil :size="14" />
               </button>
-              <button v-if="!d.added" class="act danger" aria-label="移除该条" @click="removeDraft(d.key)">
+              <button v-if="!d.added" class="act danger" aria-label="移除该条" :disabled="busy" @click="removeDraft(d.key)">
                 <X :size="14" />
               </button>
             </span>
           </li>
         </TransitionGroup>
-        <button class="commit" :disabled="pendingCount === 0 || adding" @click="addChecked">
+        <button class="commit" :disabled="pendingCount === 0 || adding || busy" @click="addChecked">
           <LoaderCircle v-if="adding" :size="15" class="spin" />
           <template v-else><Plus :size="15" /> 添加{{ pendingCount ? ` ${pendingCount} 条` : '' }}</template>
         </button>
@@ -525,6 +555,12 @@ function clearAll(): void {
 
 .state .err {
   color: var(--danger);
+}
+
+/* 流式食物行预览：逐条流出时的单行摘要 */
+.fprev {
+  margin-top: 4px;
+  line-height: 1.5;
 }
 
 .count {

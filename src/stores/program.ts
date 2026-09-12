@@ -226,8 +226,13 @@ export const useProgramStore = defineStore('program', () => {
     return out
   }
 
-  /** AI 生成某天的菜单并落缓存；同步更新当天饮食锚点待办的备注 */
-  async function generateDayMeals(record: ProgramRecord, date: string): Promise<AiMenuMeal[]> {
+  /** AI 生成某天的菜单并落缓存；同步更新当天饮食锚点待办的备注。
+   * onStatus 可选：流式回传生成过程摘要（匹配食材等活动），供调用方上屏。 */
+  async function generateDayMeals(
+    record: ProgramRecord,
+    date: string,
+    onStatus?: (status: string) => void,
+  ): Promise<AiMenuMeal[]> {
     const n = useNutritionStore()
     if (!n.profile) await n.loadProfile()
     const profile = n.profile!
@@ -249,16 +254,20 @@ export const useProgramStore = defineStore('program', () => {
 
     const { generateDayMenu } = await import('@/ai/recipeGen')
     const { mealLayoutFor } = await import('@/utils/programEngine')
-    const res = await generateDayMenu(cfg, {
-      slots: mealLayoutFor(blob.params.mealsCount).map((s) => ({ slot: s.slot, share: s.share })),
-      targets: blob.params.targets,
-      restrictions: (profile.dietRestrictions ?? []).map((r) => r.trim()).filter(Boolean),
-      likes: prefs.filter((p) => p.rating === 1).map((p) => recipeName(p.recipeId)),
-      dislikes: prefs.filter((p) => p.rating === -1).map((p) => recipeName(p.recipeId)),
-      avoidNames,
-      trainingDay: !day.rest,
-      dateNote: date,
-    })
+    const res = await generateDayMenu(
+      cfg,
+      {
+        slots: mealLayoutFor(blob.params.mealsCount).map((s) => ({ slot: s.slot, share: s.share })),
+        targets: blob.params.targets,
+        restrictions: (profile.dietRestrictions ?? []).map((r) => r.trim()).filter(Boolean),
+        likes: prefs.filter((p) => p.rating === 1).map((p) => recipeName(p.recipeId)),
+        dislikes: prefs.filter((p) => p.rating === -1).map((p) => recipeName(p.recipeId)),
+        avoidNames,
+        trainingDay: !day.rest,
+        dateNote: date,
+      },
+      onStatus ? { onTool: onStatus } : undefined,
+    )
 
     await programService.setProgramMeals(record.id, date, JSON.stringify(res.meals))
 

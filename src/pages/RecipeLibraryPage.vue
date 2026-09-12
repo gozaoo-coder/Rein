@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
+import { LoaderCircle, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -76,6 +76,9 @@ const aiGenerating = ref(false)
 const aiMeals = ref<AiMenuMeal[]>([])
 const aiWarnings = ref<string[]>([])
 const aiError = ref('')
+/** 流式过程：工具活动摘要 + 已流出餐次的名称预览 */
+const aiStreamTool = ref('')
+const aiStreamMeals = ref<{ name: string; slotHint: string }[]>([])
 
 async function startAiMenu(): Promise<void> {
   aiOpen.value = true
@@ -90,6 +93,8 @@ async function generateAi(): Promise<void> {
   aiError.value = ''
   aiMeals.value = []
   aiWarnings.value = []
+  aiStreamTool.value = ''
+  aiStreamMeals.value = []
   try {
     await models.load()
     const cfg = models.defaultModel()
@@ -100,13 +105,20 @@ async function generateAi(): Promise<void> {
     const dislikes = Object.entries(prefs.value)
       .filter(([, v]) => v === -1)
       .map(([id]) => RECIPES.find((r) => r.id === id)?.name ?? id)
-    const res = await generateAiMenu(cfg, {
-      targets: profile.targets,
-      mealsCount: Number(aiMealsCount.value) as 3 | 4 | 5,
-      restrictions: restrictions.value,
-      likes,
-      dislikes,
-    })
+    const res = await generateAiMenu(
+      cfg,
+      {
+        targets: profile.targets,
+        mealsCount: Number(aiMealsCount.value) as 3 | 4 | 5,
+        restrictions: restrictions.value,
+        likes,
+        dislikes,
+      },
+      {
+        onTool: (brief) => (aiStreamTool.value = brief),
+        onMeals: (meals) => (aiStreamMeals.value = meals),
+      },
+    )
     aiMeals.value = res.meals
     aiWarnings.value = res.warnings
   } catch (e) {
@@ -208,6 +220,17 @@ const aiTotal = computed(() =>
 
         <template v-else-if="aiGenerating">
           <p class="t-2 center ai-wait">正在按你的目标设计菜单并实算营养…</p>
+          <!-- 流式：匹配食材活动 + 已流出餐次逐个上屏 -->
+          <p v-if="aiStreamTool" class="t-3 center num ai-tool">
+            <LoaderCircle :size="13" class="spin" /> {{ aiStreamTool }}
+          </p>
+          <ul v-if="aiStreamMeals.length" class="ai-meals">
+            <li v-for="(m, i) in aiStreamMeals" :key="i">
+              <p class="ai-mhead">
+                <em>{{ m.slotHint || '餐次' }}</em>{{ m.name }}<span class="caret" aria-hidden="true" />
+              </p>
+            </li>
+          </ul>
         </template>
 
         <template v-else-if="aiMeals.length">
@@ -395,6 +418,47 @@ const aiTotal = computed(() =>
 
 .ai-wait {
   padding: 30px 0;
+}
+
+/* 流式过程：工具活动行 + 打字光标 */
+.ai-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.spin {
+  animation: spin 1.1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  background: var(--text-2);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .caret {
+    animation: none;
+  }
 }
 
 .ai-err {

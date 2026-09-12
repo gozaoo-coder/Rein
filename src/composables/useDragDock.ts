@@ -29,7 +29,8 @@ export const BLOB_SIZE = 64 // 方块边长：44px 无障碍下限之上刻意�
 const EDGE_GAP = 12 // 顶 / 底停靠距安全区的呼吸边距
 /** settle 弹簧（半隐式欧拉）：ζ≈0.87、ωn≈12.6rad/s ≈ Apple 式 0.48s/bounce0.16 */
 const SPRING = { stiffness: 160, damping: 22 }
-const STORAGE_KEY = 'rein.wbar.dock.v1'
+/** 默认持久化 key；多浮窗实例（运动条 / 录音条）各传各的，互不挤占停靠位 */
+export const DOCK_STORAGE_KEY = 'rein.wbar.dock.v1'
 
 interface Persist {
   slot: DockSlot
@@ -53,10 +54,10 @@ type Sample = { t: number; x: number; y: number }
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
-function loadPersist(): Persist {
+function loadPersist(key: string): Persist {
   const fallback: Persist = { slot: 'bottom', barSlot: 'bottom', sideY: 0.7 }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(key)
     if (!raw) return fallback
     const p = JSON.parse(raw) as Partial<Persist>
     if (p.slot !== 'bottom' && p.slot !== 'top' && p.slot !== 'left' && p.slot !== 'right')
@@ -115,8 +116,9 @@ function probeMetrics(): Metrics {
   }
 }
 
-export function useDragDock(posEl: Ref<HTMLElement | null>) {
-  const saved = loadPersist()
+export function useDragDock(posEl: Ref<HTMLElement | null>, options?: { storageKey?: string }) {
+  const storageKey = options?.storageKey ?? DOCK_STORAGE_KEY
+  const saved = loadPersist(storageKey)
 
   const slot = ref<DockSlot>(saved.slot)
   const barSlot = ref<'bottom' | 'top'>(saved.barSlot)
@@ -291,7 +293,7 @@ export function useDragDock(posEl: Ref<HTMLElement | null>) {
   function persist(): void {
     try {
       localStorage.setItem(
-        STORAGE_KEY,
+        storageKey,
         JSON.stringify({
           slot: slot.value,
           barSlot: barSlot.value,

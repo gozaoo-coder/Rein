@@ -220,6 +220,15 @@ const setOpen = ref(false)
         <p class="hint t-3">短休 {{ pomo.settings.breakMin }} 分 · 长休 {{ pomo.settings.longBreakMin }} 分 · 每 {{ pomo.settings.roundsBeforeLongBreak }} 轮长休</p>
       </section>
 
+      <!-- 知识库：AI 的检索模式与长期记忆 -->
+      <button class="cell span2" @click="router.push('/ai/knowledge')">
+        <header class="chead row between">
+          <h2>知识库</h2>
+          <span class="go row">管理<ChevronRight :size="13" /></span>
+        </header>
+        <p class="hint t-3">AI 从这里检索你的日程、运动、饮食与历史对话，并长期记住你的偏好与约束</p>
+      </button>
+
       <!-- 个人约束：方案生成依据 -->
       <button class="cell span2" @click="openEdit">
         <header class="chead row between">

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { useRouter } from 'vue-router'
-import { Camera, Dumbbell, Sparkles, Target, Timer, Wallet } from 'lucide-vue-next'
+import { Camera, Dumbbell, Mic, Sparkles, Target, Timer, Wallet } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import HomeCanvas from '@/components/home/HomeCanvas.vue'
@@ -15,6 +15,8 @@ import BentoOverview from '@/components/workbench/BentoOverview.vue'
 import DaySpine from '@/components/workbench/DaySpine.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { DESKTOP_MIN } from '@/config/domain'
+import { useToast } from '@/composables/useToast'
+import { openView as openVoiceView } from '@/system/voiceRuntime'
 import { fmtCents } from '@/config/ledger'
 import { useLedgerStore } from '@/stores/ledger'
 import { useNutritionStore } from '@/stores/nutrition'
@@ -53,6 +55,7 @@ watch(view, (v) => {
 const nutrition = useNutritionStore()
 const ledger = useLedgerStore()
 const program = useProgramStore()
+const toast = useToast()
 
 onMounted(() => {
   void nutrition.loadSummary(today)
@@ -78,19 +81,21 @@ const historyOpen = ref(false)
 const toolCards = computed(() => [
   { id: 1, label: '记饮食' },
   { id: 2, label: '记运动' },
-  { id: 3, label: '专注' },
+  { id: 3, label: '语音对话' },
   { id: 4, label: 'AI 助手' },
-  { id: 5, label: `记账 · 本月支出 ¥${fmtCents(ledger.monthExpenseCents)}` },
-  { id: 6, label: `健康方案${program.active ? ` · 执行中 v${program.active.version}` : ''}` },
+  { id: 5, label: '专注' },
+  { id: 6, label: `记账 · 本月支出 ¥${fmtCents(ledger.monthExpenseCents)}` },
+  { id: 7, label: `健康方案${program.active ? ` · 执行中 v${program.active.version}` : ''}` },
 ])
 
 const TOOL_META = computed<Record<number, { icon: Component; style: Record<string, string>; title: string; sub: string }>>(() => ({
   1: { icon: Camera, style: { background: 'var(--accent-soft)', color: 'var(--accent)' }, title: '记饮食', sub: '拍照 / 文字 · AI 帮你记' },
   2: { icon: Dumbbell, style: { background: 'var(--c-exercise-soft)', color: 'var(--c-exercise-deep)' }, title: '记运动', sub: '力量 / 有氧 · MET 估算' },
-  3: { icon: Timer, style: { background: 'var(--intake-soft)', color: 'var(--c-intake)' }, title: '专注', sub: '番茄钟 · 待办 · 日程' },
+  3: { icon: Mic, style: { background: 'linear-gradient(135deg, #0a84ff, #1eeaef)', color: '#fff' }, title: '语音对话', sub: '实时转写 · AI 纪要' },
   4: { icon: Sparkles, style: { background: 'rgba(88, 86, 214, 0.14)', color: 'var(--cat-study)' }, title: 'AI 助手', sub: '提问 · 拍照识别' },
-  5: { icon: Wallet, style: { background: 'var(--surface-2)', color: 'var(--text-2)' }, title: '记账', sub: `本月支出 ¥${fmtCents(ledger.monthExpenseCents)}` },
-  6: {
+  5: { icon: Timer, style: { background: 'var(--intake-soft)', color: 'var(--c-intake)' }, title: '专注', sub: '番茄钟 · 待办 · 日程' },
+  6: { icon: Wallet, style: { background: 'var(--surface-2)', color: 'var(--text-2)' }, title: '记账', sub: `本月支出 ¥${fmtCents(ledger.monthExpenseCents)}` },
+  7: {
     icon: Target,
     style: { background: 'var(--accent-soft)', color: 'var(--accent)' },
     title: '健康方案',
@@ -107,15 +112,24 @@ function onToolActivate(id: number): void {
       workoutOpen.value = true
       break
     case 3:
-      void router.push('/focus')
+      // 语音对话：未配置豆包语音服务时引导去模型页
+      void openVoiceView().then((ok) => {
+        if (!ok) {
+          toast.toast('先在「管理模型」里配置豆包语音服务')
+          void router.push('/ai/models')
+        }
+      })
       break
     case 4:
       void router.push('/ai')
       break
     case 5:
-      void router.push('/ledger')
+      void router.push('/focus')
       break
     case 6:
+      void router.push('/ledger')
+      break
+    case 7:
       void router.push('/program')
       break
   }

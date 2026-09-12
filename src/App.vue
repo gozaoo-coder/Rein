@@ -7,6 +7,9 @@ import TabBar from '@/components/layout/TabBar.vue'
 import DesktopRail from '@/components/layout/DesktopRail.vue'
 import DesktopInspector from '@/components/layout/DesktopInspector.vue'
 import ActiveWorkoutBar from '@/components/exercise/ActiveWorkoutBar.vue'
+import RecordFloatBar from '@/components/record/RecordFloatBar.vue'
+import VoiceSessionView from '@/components/voice/VoiceSessionView.vue'
+import VoiceFloatBar from '@/components/voice/VoiceFloatBar.vue'
 import SessionOverlay from '@/components/exercise/SessionOverlay.vue'
 import ToastHost from '@/components/common/ToastHost.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
@@ -29,7 +32,7 @@ const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value
     <DesktopRail v-if="!fullscreenUI" />
     <main class="desk-main" :class="{ wide: route.name === 'home' || route.name === 'todos' }">
       <RouterView v-slot="{ Component }">
-        <Transition name="page" mode="out-in">
+        <Transition name="page">
           <component :is="Component" />
         </Transition>
       </RouterView>
@@ -41,7 +44,7 @@ const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value
   <!-- 移动端（原结构）：内容居中窄栏 + 底部标签导航 -->
   <div v-else class="app-frame">
     <RouterView v-slot="{ Component }">
-      <Transition name="page" mode="out-in">
+      <Transition name="page">
         <component :is="Component" />
       </Transition>
     </RouterView>
@@ -49,6 +52,12 @@ const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value
   </div>
   <!-- 悬浮运动条：异常中断恢复提示，桌面/移动共用（沉浸形态下隐藏；收起动画期间提前回归接续） -->
   <ActiveWorkoutBar v-show="wbarVisible" />
+  <!-- 录音悬浮条：录音进行中常驻（可拖拽停靠，轻点进录音页） -->
+  <RecordFloatBar v-show="wbarVisible" />
+  <!-- 语音转写悬浮条：语音会话收起后台转写继续（与录音浮条同套停靠、独立 key） -->
+  <VoiceFloatBar v-show="wbarVisible" />
+  <!-- 语音会话视图：单例 runtime 驱动，任何入口可唤起（voiceRuntime.openView） -->
+  <VoiceSessionView />
   <!-- 训练课沉浸层：常驻挂载不走路由（system/sessionImmersive 驱动显隐与形变） -->
   <SessionOverlay />
   <ToastHost />
@@ -84,14 +93,17 @@ const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value
   margin: 0 auto;
 }
 
-/* 标签页切换：轻微淡入即可，不做位移（iOS 标签切换习惯） */
-.page-enter-active,
-.page-leave-active {
-  transition: opacity var(--dur-base) var(--ease-standard);
+/* 页面切换：新页淡入衔接，旧页同步让位——不做 out-in 空屏，也不做旧页淡出 */
+.page-enter-active {
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
-.page-enter-from,
-.page-leave-to {
+.page-enter-from {
   opacity: 0;
+}
+
+/* 离场瞬时移除：淡出会与入场抢同一段视觉，读起来像两次变化 */
+.page-leave-active {
+  transition: none;
 }
 </style>
