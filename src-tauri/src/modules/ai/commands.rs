@@ -361,7 +361,7 @@ use super::models::{
 };
 
 const AI_MODEL_COLS: &str =
-    "id, name, provider, base_url, api_key, model_id, is_default, vision, thinking, effort, last_error, created_at, updated_at";
+    "id, name, provider, base_url, api_key, model_id, is_default, vision, thinking, effort, image_max_edge, last_error, created_at, updated_at";
 
 fn ai_model_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModel> {
     Ok(AiModel {
@@ -375,9 +375,10 @@ fn ai_model_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModel> {
         vision: row.get(7)?,
         thinking: row.get(8)?,
         effort: row.get(9)?,
-        last_error: row.get(10)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
+        image_max_edge: row.get(10)?,
+        last_error: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
@@ -420,8 +421,8 @@ pub fn ai_model_add(state: State<AppState>, input: AiModelInput) -> Result<AiMod
         tx.execute("UPDATE ai_models SET is_default = 0", [])?;
     }
     tx.execute(
-        "INSERT INTO ai_models (name, provider, base_url, api_key, model_id, is_default, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        "INSERT INTO ai_models (name, provider, base_url, api_key, model_id, is_default, image_max_edge, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
         rusqlite::params![
             input.name,
             input.provider,
@@ -429,6 +430,7 @@ pub fn ai_model_add(state: State<AppState>, input: AiModelInput) -> Result<AiMod
             input.api_key,
             input.model_id,
             make_default as i64,
+            input.image_max_edge,
             now
         ],
     )?;
@@ -460,7 +462,7 @@ pub fn ai_model_update(state: State<AppState>, id: i64, input: AiModelInput) -> 
     tx.execute(
         "UPDATE ai_models SET name = ?1, provider = ?2, base_url = ?3, api_key = ?4, \
          model_id = ?5, is_default = ?6, vision = NULL, thinking = NULL, effort = NULL, \
-         last_error = NULL, updated_at = ?7 WHERE id = ?8",
+         image_max_edge = ?7, last_error = NULL, updated_at = ?8 WHERE id = ?9",
         rusqlite::params![
             input.name,
             input.provider,
@@ -468,6 +470,7 @@ pub fn ai_model_update(state: State<AppState>, id: i64, input: AiModelInput) -> 
             input.api_key,
             input.model_id,
             input.is_default as i64,
+            input.image_max_edge,
             now,
             id
         ],

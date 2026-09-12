@@ -55,6 +55,8 @@ pub struct AiModel {
     pub vision: Option<bool>,
     pub thinking: Option<bool>,
     pub effort: Option<bool>,
+    /// 发给模型的图片最长边（像素）；NULL 用前端默认
+    pub image_max_edge: Option<i64>,
     pub last_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -70,6 +72,7 @@ pub struct AiModelInput {
     pub api_key: String,
     pub model_id: String,
     pub is_default: bool,
+    pub image_max_edge: Option<i64>,
 }
 
 /// max_tokens=1 探测包结果：三项能力均需两次探测全过才算支持；error 记录整轮失败原因

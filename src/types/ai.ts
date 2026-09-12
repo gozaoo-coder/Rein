@@ -34,11 +34,13 @@ export interface TargetAdjustProposal {
 export type AiRole = 'user' | 'assistant'
 
 export type AiMessageKind =
-  | 'text' // 纯文本气泡
+  | 'text' // 纯文本气泡（Markdown 渲染）
   | 'photo' // 用户上传的照片气泡（imageBase64 为压缩缩略图）
+  | 'doc' // 用户上传的 Office 文档气泡（含解析文本与选中图片）
   | 'food-parse' // 附带可确认的食物解析卡片
   | 'analysis' // 今日饮食分析卡片
   | 'tools' // AI 工具调用过程卡（可折叠）
+  | 'voice' // 用户语音轮：转写文本 + 关联纪要（点开语音会话视图回看/重放）
 
 /** 单次工具调用的过程记录（持久化在 payload.calls） */
 export interface ToolCallRecord {
@@ -50,6 +52,28 @@ export interface ToolCallRecord {
   /** 结果摘要；执行中为 null */
   resultBrief: string | null
   status: 'running' | 'ok' | 'error'
+  /** 工具返回的图片（放大镜结果），随过程卡展示 */
+  resultImage?: { base64: string; mime: string }
+  /** 放大镜结果图的注册 id 与视图尺寸（历史重建时恢复可继续放大） */
+  zoomId?: string
+  zoomW?: number
+  zoomH?: number
+  /** 放大区域在根位图坐标中的区域（历史重建时恢复「裁原图」语义） */
+  zoomRect?: { x: number; y: number; w: number; h: number }
+}
+
+/** kind=doc 消息携带的文档信息（持久化在 payload.doc） */
+export interface AiDocMeta {
+  name: string
+  kind: 'docx' | 'pptx' | 'xlsx' | 'text'
+  /** 抽取文本（已截断，随用户轮发给模型） */
+  text: string
+  /** 全文（未截断，仅本轮内存）：发送时自动归档进知识库 文档/ 命名空间，AI 经分页读全文 */
+  fullText?: string
+  chars: number
+  truncated: boolean
+  imagesTotal: number
+  skippedImages: number
 }
 
 export interface AiMessage {
@@ -67,12 +91,22 @@ export interface AiMessage {
   /** kind=photo 时的压缩缩略图（base64，无 data: 前缀） */
   imageBase64?: string
   mime?: string
+  /** kind=doc 时的文档信息 */
+  doc?: AiDocMeta
+  /** 多图消息（kind=doc / photo）：随消息发给模型的图片；w/h 为发给模型的视图尺寸，label 为图片清单说明 */
+  images?: { base64: string; mime: string; w: number; h: number; label: string }[]
+  /** 图片清单文本（含 img-xx 编号与视图尺寸），随用户轮发给模型供放大镜引用 */
+  imgNote?: string
   /** LLM 回复的思考内容（气泡上方可折叠展示） */
   thinking?: string
   /** 被引用的消息文本（发送时引用了某条消息） */
   quoteText?: string
   /** kind=tools 时本轮流次的工具调用记录 */
   toolCalls?: ToolCallRecord[]
+  /** kind=voice 时关联的纪要信息（payload 持久化；点气泡打开语音会话回看/重放） */
+  voiceMeta?: { memoId: string; durationMs: number; words: number }
+  /** 流式生成中（仅内存占位气泡；定稿/出错即清除，不持久化） */
+  streaming?: boolean
 }
 
 /* ---------- 模型配置（Rust modules/ai · ai_models） ---------- */
@@ -90,6 +124,8 @@ export interface AiModel {
   vision: boolean | null
   thinking: boolean | null
   effort: boolean | null
+  /** 发给模型的图片最长边（像素）；null = 用前端默认（DEFAULT_IMAGE_EDGE） */
+  imageMaxEdge: number | null
   lastError: string | null
   createdAt: string
   updatedAt: string
@@ -103,6 +139,8 @@ export interface AiModelInput {
   apiKey: string
   modelId: string
   isDefault: boolean
+  /** 图片发送分辨率上限；缺省/null 用前端默认 */
+  imageMaxEdge?: number | null
 }
 
 /** max_tokens=1 探测包结果 */

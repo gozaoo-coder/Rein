@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   BrainCircuit,
   Eye,
+  Mic,
   Pencil,
   Plus,
   RefreshCw,
@@ -16,9 +17,11 @@ import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import ModelFormSheet from '@/components/ai/ModelFormSheet.vue'
+import VoiceConfigSheet from '@/components/voice/VoiceConfigSheet.vue'
+import { voiceService } from '@/services/voiceService'
 import { useToast } from '@/composables/useToast'
 import { useModelsStore } from '@/stores/models'
-import type { AiModel } from '@/types'
+import type { AiModel, VoiceConfig } from '@/types'
 
 /** 模型管理：添加 / 编辑 / 删除 / 设默认，max_tokens=1 探测视觉·思考·努力。 */
 const store = useModelsStore()
@@ -26,6 +29,7 @@ const toast = useToast()
 
 onMounted(() => {
   void store.load().catch(() => toast.toast('模型列表加载失败'))
+  void loadVoiceConfig()
 })
 
 const formOpen = ref(false)
@@ -69,6 +73,23 @@ function onDeleteAction(value: string): void {
     .remove(m.id)
     .then(() => toast.toast(`已删除 ${m.name}`))
     .catch(() => toast.toast('删除失败'))
+}
+
+/* ---- 豆包语音服务：一张卡管一对模型（ASR/TTS），独立于 LLM 列表 ---- */
+const voiceConfig = ref<VoiceConfig | null>(null)
+const voiceOpen = ref(false)
+
+async function loadVoiceConfig(): Promise<void> {
+  voiceConfig.value = await voiceService.configGet().catch(() => null)
+}
+
+function voiceConfigured(c: VoiceConfig | null): boolean {
+  if (!c) return false
+  return c.mode === 'new' ? !!c.appKey.trim() : !!c.appKey.trim() && !!c.accessKey.trim()
+}
+
+function onVoiceSaved(c: VoiceConfig): void {
+  voiceConfig.value = c
 }
 
 const capMeta = {
@@ -150,12 +171,26 @@ const capMeta = {
       />
     </section>
 
+    <!-- 豆包语音服务（语音对话功能的凭据与音色） -->
+    <button class="card vcfg" @click="voiceOpen = true">
+      <span class="v-ic"><Mic :size="15" /></span>
+      <span class="vt">
+        <b>豆包语音服务
+          <i v-if="voiceConfigured(voiceConfig)" class="v-ok">已连接</i>
+          <i v-else class="v-no">未配置</i>
+        </b>
+        <em>语音对话 · 实时转写与纪要朗读</em>
+      </span>
+      <span class="v-go">›</span>
+    </button>
+
     <button class="fab row center" aria-label="添加模型" @click="onAdd">
       <Plus :size="17" />
       添加模型
     </button>
 
     <ModelFormSheet :open="formOpen" :model="editing" @close="formOpen = false" @saved="onSaved" />
+    <VoiceConfigSheet :open="voiceOpen" :config="voiceConfig" @close="voiceOpen = false" @saved="onVoiceSaved" />
     <ActionSheet
       :open="deleting !== null"
       :title="`删除后照片识别将无法使用该模型`"
@@ -234,6 +269,74 @@ const capMeta = {
 
 .act .danger {
   color: var(--danger, #ff5257);
+}
+
+/* 豆包语音服务卡 */
+.vcfg {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 13px 14px;
+  margin-top: 12px;
+  text-align: left;
+}
+
+.v-ic {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  flex: none;
+  background: linear-gradient(135deg, #0a84ff, #1eeaef);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vt {
+  flex: 1;
+  min-width: 0;
+}
+
+.vt b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+}
+
+.vt b i {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  border-radius: var(--radius-full);
+  padding: 2px 7px;
+}
+
+.vt b .v-ok {
+  background: var(--ok-soft);
+  color: var(--ok-strong);
+}
+
+.vt b .v-no {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.vt em {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  display: block;
+  margin-top: 2px;
+}
+
+.v-go {
+  flex: none;
+  color: var(--text-3);
+  font-size: 16px;
 }
 
 .caps {

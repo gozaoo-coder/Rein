@@ -5,6 +5,7 @@ import SheetModal from '@/components/common/SheetModal.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useToast } from '@/composables/useToast'
 import { useModelsStore } from '@/stores/models'
+import { DEFAULT_IMAGE_EDGE } from '@/utils/image'
 import type { AiModel } from '@/types'
 
 /** 添加/编辑 AI 模型：名称、接入方式（预设 baseUrl）、API Key、模型 ID。 */
@@ -42,6 +43,15 @@ const baseUrl = ref('')
 const apiKey = ref('')
 const modelId = ref('')
 const isDefault = ref(false)
+/** 发给该模型的图片最长边（像素）：越大看得越清，也越耗流量与上下文 */
+const imageMaxEdge = ref<number>(DEFAULT_IMAGE_EDGE)
+/** 发送分辨率档位：覆盖常见视觉模型的输入上限 */
+const IMAGE_EDGE_OPTIONS = [
+  { value: '1024', label: '1024' },
+  { value: '2048', label: '2048' },
+  { value: '3072', label: '3072' },
+  { value: '4096', label: '4096' },
+]
 const urlTouched = ref(false)
 
 const editing = computed(() => props.model)
@@ -58,6 +68,7 @@ watch(
       apiKey.value = props.model.apiKey
       modelId.value = props.model.modelId
       isDefault.value = props.model.isDefault
+      imageMaxEdge.value = props.model.imageMaxEdge ?? DEFAULT_IMAGE_EDGE
       urlTouched.value = true
     } else {
       const p = PROVIDER_PRESETS.deepseek
@@ -102,6 +113,7 @@ async function save(): Promise<void> {
       apiKey: apiKey.value.trim(),
       modelId: modelId.value.trim(),
       isDefault: isDefault.value,
+      imageMaxEdge: imageMaxEdge.value,
     }
     if (editing.value) {
       await store.update(editing.value.id, input)
@@ -161,6 +173,17 @@ async function save(): Promise<void> {
           <option v-for="m in PROVIDER_PRESETS[provider]?.models ?? []" :key="m" :value="m" />
         </datalist>
       </label>
+
+      <div class="field">
+        <p class="l">图片发送分辨率</p>
+        <SegmentedControl
+          class="provider"
+          :model-value="String(imageMaxEdge)"
+          :options="IMAGE_EDGE_OPTIONS"
+          @update:model-value="imageMaxEdge = Number($event)"
+        />
+        <p class="edge-hint t-3">发给该模型的图片最长边（像素）。默认 2048 覆盖多数视觉模型；调大看得更清，也更耗流量与上下文。</p>
+      </div>
 
       <div class="row between center">
         <p class="l">设为默认</p>
@@ -228,6 +251,11 @@ async function save(): Promise<void> {
 .provider :deep(button) {
   flex: 1;
   justify-content: center;
+}
+
+.edge-hint {
+  font-size: var(--fs-caption);
+  line-height: 1.5;
 }
 
 /* 默认开关（iOS 风格） */
