@@ -9,6 +9,7 @@
  */
 
 import type { Static, TSchema } from '@earendil-works/pi-ai'
+import type { ImageContent, TextContent } from '@earendil-works/pi-ai'
 
 import { todayStr } from '@/utils/date'
 
@@ -24,7 +25,17 @@ export type ToolGroup =
   | 'pomodoro' // 番茄钟
   | 'session' // 进行中的训练课会话（只读）
   | 'context' // 历史聊天检索
+  | 'knowledge' // 知识库混合检索（跨来源）
+  | 'memory' // 长期记忆（用户认知）
+  | 'models' // AI 模型配置（AI 自管理）
   | 'web' // 联网搜索 / 抓取网页
+  | 'image' // 图片查看（放大镜）
+
+/** rawContent 工具的返回：直接作为工具结果内容块（可含图片），details 附带元数据 */
+export interface RawToolResult {
+  content: (TextContent | ImageContent)[]
+  details?: unknown
+}
 
 export interface AppTool<TParameters extends TSchema = TSchema> {
   /** 全局唯一工具名（snake_case，供模型调用） */
@@ -37,6 +48,8 @@ export interface AppTool<TParameters extends TSchema = TSchema> {
   parameters: TParameters
   /** 删除等高危操作：UI 红色标注，仅限用户明确要求时调用 */
   dangerous?: boolean
+  /** 结果含图片等原始内容块：execute 返回 RawToolResult，注册表原样透传 */
+  rawContent?: boolean
   execute: (args: Static<TParameters>) => Promise<unknown>
 }
 
