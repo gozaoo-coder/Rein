@@ -1,5 +1,6 @@
 package com.gozaoo.rein
 
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -27,6 +28,20 @@ class MainActivity : TauriActivity() {
   private var leftInset = 0
   private var rightInset = 0
 
+  companion object {
+    /** 递归查找 WebView（ShareReceiver 派发 rein-share 事件也要用） */
+    fun findWebView(view: View?): WebView? {
+      if (view == null) return null
+      if (view is WebView) return view
+      if (view is ViewGroup) {
+        for (i in 0 until view.childCount) {
+          findWebView(view.getChildAt(i))?.let { return it }
+        }
+      }
+      return null
+    }
+  }
+
   private val inject = object : Runnable {
     override fun run() {
       if (topInset + bottomInset + leftInset + rightInset > 0) {
@@ -48,6 +63,8 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     // 注册跑步保活桥的权限弹窗回调（ActivityResultLauncher 必须在 Activity 创建后注册）
     TrackingBridge.register(this)
+    // 系统分享/打开的文件（冷启动 intent 可能自带）：落收件箱 + 通知前端
+    ShareReceiver.handle(this, intent)
     ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { _, insets ->
       // WindowInsets 是物理像素；CSS 像素 = 物理像素 / density，直接塞会放大 2~3 倍
       val density = resources.displayMetrics.density
@@ -68,14 +85,14 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  /** 运行中被分享唤起（singleTask，不重建）：把新 intent 交给分享接收 */
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    ShareReceiver.handle(this, intent)
+  }
+
   private fun findWebView(view: View?): WebView? {
-    if (view == null) return null
-    if (view is WebView) return view
-    if (view is ViewGroup) {
-      for (i in 0 until view.childCount) {
-        findWebView(view.getChildAt(i))?.let { return it }
-      }
-    }
-    return null
+    return Companion.findWebView(view)
   }
 }

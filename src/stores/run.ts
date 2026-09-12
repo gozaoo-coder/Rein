@@ -13,7 +13,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
-import { EXERCISE_KCAL_GOAL, estimateKcal } from '@/config/domain'
+import { EXERCISE_KCAL_GOAL, estimateRunKcal } from '@/config/domain'
 import { sessionService } from '@/services/sessionService'
 import { trackingService } from '@/services/trackingService'
 import { useExerciseStore } from '@/stores/exercise'
@@ -89,9 +89,8 @@ export const useRunStore = defineStore('run', () => {
     return 'low'
   })
 
-  const kcal = computed(() =>
-    Math.round(estimateKcal('run', intensity.value, Math.max(1, elapsedSec.value / 60), weightKg.value)),
-  )
+  /** ACSM 速度连续模型：有 GPS 距离按平均配速精确计算，无距离退回 MET 中档 */
+  const kcal = computed(() => estimateRunKcal(km.value, elapsedSec.value, weightKg.value))
 
   const goalProgress = computed(() => {
     if (goalKind.value === 'time')
@@ -334,9 +333,7 @@ export const useRunStore = defineStore('run', () => {
       finalKm != null && finalKm > 0.05 ? Math.round(elapsedSec.value / finalKm) : null
     const tier: Intensity =
       paceSec == null ? 'moderate' : paceSec <= 330 ? 'high' : paceSec <= 450 ? 'moderate' : 'low'
-    const kcalFinal = Math.round(
-      estimateKcal('run', tier, durationMin, weightKg.value),
-    )
+    const kcalFinal = estimateRunKcal(finalKm, elapsedSec.value, weightKg.value)
     const noteParts: string[] = []
     if (finalKm != null) noteParts.push(`${finalKm.toFixed(2)} km`)
     if (paceSec != null) noteParts.push(`配速 ${fmtPace(paceSec)}`)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronDown, Play } from 'lucide-vue-next'
+import { ChevronDown, LocateFixed, Play } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
@@ -10,7 +10,6 @@ import { useRunStore, fmtClock, fmtPace } from '@/stores/run'
 import { workoutRuntime } from '@/system/workoutRuntime'
 import { openImmersive } from '@/system/sessionImmersive'
 import { useToast } from '@/composables/useToast'
-import { projectTrack } from '@/utils/geo'
 
 /**
  * 运动模式 · 跑步（R5 深色轨迹头部）：覆盖整个窗口的沉浸二级页。
@@ -81,13 +80,309 @@ const heroWaitText = computed(() => {
   return '等待轨迹…'
 })
 
-/* ---------- 轨迹投影：经纬度 → 暗区 SVG 视口（共享实现见 utils/geo.ts） ---------- */
+/* ---------- 轨迹相机：世界坐标 = 相对首点的局部米坐标，屏幕 = R(rot)·p·scale + t ---------- */
 
 const VIEW_W = 480
 const VIEW_H = 320
 const VIEW_PAD = 30
+/** 固定缩放档基准：1 视口 px = 1 m（宽约 480 m 视野），捏合可在此上下调整 */
+const BASE_SCALE = 1
+const SCALE_MIN = 0.15
+const SCALE_MAX = 12
+/** 每纬度米数（等距圆柱近似） */
+const M_LAT = 111_320
 
-const routeView = computed(() => projectTrack(r.trackPoints, VIEW_W, VIEW_H, VIEW_PAD))
+interface Cam {
+  scale: number
+  rot: number
+  tx: number
+  ty: number
+}
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
+
+/** 相机模式：follow = 跟随「我」+ 运动方向朝上（默认）；manual = 手势接管；fit = 全览整条轨迹 */
+type CamMode = 'follow' | 'manual' | 'fit'
+const camMode = ref<CamMode>('follow')
+/** 固定档捏合比例（回到 follow 时保留用户缩放） */
+const userScale = ref(1)
+/** 手势接管的冻结相机（世界坐标稳定：锚定首点） */
+const manualCam = ref<Cam | null>(null)
+/** 运动方向朝上的旋转角（度，EMA 平滑） */
+const headingDeg = ref(0)
+
+/** 局部米坐标（相对轨迹首点；首点不增不改 → 手动相机在世界系下稳定） */
+const trackMeters = computed(() => {
+  const pts = r.trackPoints
+  if (pts.length === 0) return null
+  const o = pts[0]!
+  const kx = Math.cos((o.lat * Math.PI) / 180)
+  return pts.map((p) => ({ x: (p.lon - o.lon) * kx * M_LAT, y: -(p.lat - o.lat) * M_LAT }))
+})
+
+watch(trackMeters, (m) => {
+  if (!m || m.length < 2 || r.phase !== 'running') return
+  const a = m[m.length - 2]!
+  const b = m[m.length - 1]!
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  if (Math.hypot(dx, dy) < 3) return // 位移太小不更新朝向（GPS 抖动）
+  // 把运动方向向量旋到屏幕上方 (0, -1)
+  const target = -90 - (Math.atan2(dy, dx) * 180) / Math.PI
+  let diff = target - headingDeg.value
+  diff = ((diff + 540) % 360) - 180 // 最短角差
+  headingDeg.value = (headingDeg.value + diff * 0.25 + 360) % 360
+})
+
+const view = computed(() => {
+  const m = trackMeters.value
+  if (!m || m.length === 0) return { cam: null, d: null, start: null, last: null }
+
+  let cam: Cam
+  if (camMode.value === 'fit') {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const p of m) {
+      if (p.x < minX) minX = p.x
+      if (p.x > maxX) maxX = p.x
+      if (p.y < minY) minY = p.y
+      if (p.y > maxY) maxY = p.y
+    }
+    const spanX = Math.max(1, maxX - minX)
+    const spanY = Math.max(1, maxY - minY)
+    const scale = clamp(
+      Math.min((VIEW_W - VIEW_PAD * 2) / spanX, (VIEW_H - VIEW_PAD * 2) / spanY),
+      SCALE_MIN,
+      SCALE_MAX,
+    )
+    cam = {
+      scale,
+      rot: 0,
+      tx: VIEW_W / 2 - ((minX + maxX) / 2) * scale,
+      ty: VIEW_H / 2 - ((minY + maxY) / 2) * scale,
+    }
+  } else if (camMode.value === 'manual' && manualCam.value) {
+    cam = manualCam.value
+  } else {
+    const scale = clamp(BASE_SCALE * userScale.value, SCALE_MIN, SCALE_MAX)
+    const rot = ((headingDeg.value % 360) + 360) % 360
+    const rad = (rot * Math.PI) / 180
+    const c = Math.cos(rad)
+    const s = Math.sin(rad)
+    const last = m[m.length - 1]!
+    cam = {
+      scale,
+      rot,
+      tx: VIEW_W / 2 - (c * last.x - s * last.y) * scale,
+      ty: VIEW_H / 2 - (s * last.x + c * last.y) * scale,
+    }
+  }
+
+  const rad = (cam.rot * Math.PI) / 180
+  const c = Math.cos(rad)
+  const s = Math.sin(rad)
+  const to = (p: { x: number; y: number }): { x: number; y: number } => ({
+    x: (c * p.x - s * p.y) * cam.scale + cam.tx,
+    y: (s * p.x + c * p.y) * cam.scale + cam.ty,
+  })
+
+  // 抽稀描线（≤400 点），末点必含
+  let d: string | null = null
+  if (m.length >= 2) {
+    const step = Math.max(1, Math.ceil(m.length / 400))
+    const idxs: number[] = []
+    for (let i = 0; i < m.length; i += step) idxs.push(i)
+    if (idxs[idxs.length - 1] !== m.length - 1) idxs.push(m.length - 1)
+    const p0 = to(m[idxs[0]!]!)
+    d = `M ${p0.x.toFixed(1)} ${p0.y.toFixed(1)}`
+    for (let k = 1; k < idxs.length; k++) {
+      const q = to(m[idxs[k]!]!)
+      d += ` L ${q.x.toFixed(1)} ${q.y.toFixed(1)}`
+    }
+  }
+  return { cam, d, start: to(m[0]!), last: to(m[m.length - 1]!) }
+})
+
+/* ---------- 地图手势：单指平移 / 双指捏合缩放平移 ---------- */
+
+const heroEl = ref<HTMLElement | null>(null)
+const pointers = new Map<number, { x: number; y: number }>()
+type Gesture =
+  | { kind: 'pan'; startCam: Cam; startPt: { x: number; y: number } }
+  | { kind: 'pinch'; startCam: Cam; startDist: number; startMid: { x: number; y: number } }
+let gesture: Gesture | null = null
+
+/** client 坐标 → SVG 视口坐标（slice 裁剪补偿） */
+function toView(clientX: number, clientY: number): { x: number; y: number } {
+  const el = heroEl.value
+  if (!el) return { x: clientX, y: clientY }
+  const rect = el.getBoundingClientRect()
+  const k = Math.max(rect.width / VIEW_W, rect.height / VIEW_H)
+  return {
+    x: (clientX - rect.left - (rect.width - VIEW_W * k) / 2) / k,
+    y: (clientY - rect.top - (rect.height - VIEW_H * k) / 2) / k,
+  }
+}
+
+function camNow(): Cam {
+  // 手动态用冻结相机；跟随/全览态用 view computed 解析出的当前相机（含用户缩放与朝向）
+  return manualCam.value ?? view.value.cam ?? { scale: BASE_SCALE, rot: 0, tx: VIEW_W / 2, ty: VIEW_H / 2 }
+}
+
+function onMapDown(e: PointerEvent): void {
+  if ((e.target as HTMLElement).closest('button, .chip, input, a')) return
+  try {
+    heroEl.value?.setPointerCapture?.(e.pointerId)
+  } catch {
+    /* 合成指针事件（自动化/测试）无真实活动指针，忽略 */
+  }
+  const pt = toView(e.clientX, e.clientY)
+  pointers.set(e.pointerId, pt)
+  if (pointers.size === 1) {
+    gesture = { kind: 'pan', startCam: camNow(), startPt: pt }
+  } else if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()]
+    gesture = {
+      kind: 'pinch',
+      startCam: camNow(),
+      startDist: Math.max(1, Math.hypot(a!.x - b!.x, a!.y - b!.y)),
+      startMid: { x: (a!.x + b!.x) / 2, y: (a!.y + b!.y) / 2 },
+    }
+  }
+}
+
+function onMapMove(e: PointerEvent): void {
+  if (!pointers.has(e.pointerId) || !gesture) return
+  const pt = toView(e.clientX, e.clientY)
+  pointers.set(e.pointerId, pt)
+  const g = gesture
+  if (g.kind === 'pan' && pointers.size === 1) {
+    const dx = pt.x - g.startPt.x
+    const dy = pt.y - g.startPt.y
+    if (camMode.value !== 'manual' && Math.hypot(dx, dy) < 4) return // 抑制点按抖动
+    manualCam.value = { ...g.startCam, tx: g.startCam.tx + dx, ty: g.startCam.ty + dy }
+  } else if (g.kind === 'pinch' && pointers.size === 2) {
+    const [a, b] = [...pointers.values()]
+    const dist = Math.max(1, Math.hypot(a!.x - b!.x, a!.y - b!.y))
+    const mid = { x: (a!.x + b!.x) / 2, y: (a!.y + b!.y) / 2 }
+    const scale = clamp(g.startCam.scale * (dist / g.startDist), SCALE_MIN, SCALE_MAX)
+    // 起始中点下的世界点钉在当前中点下（锚点不漂移）
+    const rad = (g.startCam.rot * Math.PI) / 180
+    const c = Math.cos(rad)
+    const s = Math.sin(rad)
+    const wx = (g.startMid.x - g.startCam.tx) / g.startCam.scale
+    const wy = (g.startMid.y - g.startCam.ty) / g.startCam.scale
+    const ux = c * wx + s * wy // R(-rot) 逆变换回世界系
+    const uy = -s * wx + c * wy
+    manualCam.value = {
+      scale,
+      rot: g.startCam.rot,
+      tx: mid.x - (c * ux - s * uy) * scale,
+      ty: mid.y - (s * ux + c * uy) * scale,
+    }
+  } else {
+    return
+  }
+  camMode.value = 'manual'
+  userScale.value = clamp((manualCam.value?.scale ?? BASE_SCALE) / BASE_SCALE, SCALE_MIN / BASE_SCALE, SCALE_MAX / BASE_SCALE)
+}
+
+function onMapUp(e: PointerEvent): void {
+  pointers.delete(e.pointerId)
+  if (pointers.size === 1 && gesture?.kind === 'pinch') {
+    // 双指抬成一指 → 无缝转为平移
+    const [pt] = [...pointers.values()]
+    gesture = { kind: 'pan', startCam: manualCam.value ?? camNow(), startPt: pt! }
+  } else if (pointers.size === 0) {
+    gesture = null
+  }
+}
+
+function recenter(): void {
+  camMode.value = 'follow'
+  manualCam.value = null
+}
+
+function fitAll(): void {
+  camMode.value = 'fit'
+  manualCam.value = null
+}
+
+// 阶段切换时重置相机：开跑回跟随默认档，总结页自动全览
+watch(
+  () => r.phase,
+  (p) => {
+    if (p === 'summary') {
+      fitAll()
+      drawerCollapsed.value = false
+      return
+    }
+    if (p === 'ready') {
+      camMode.value = 'follow'
+      manualCam.value = null
+      userScale.value = 1
+      headingDeg.value = 0
+      drawerCollapsed.value = false
+    }
+  },
+)
+
+/* ---------- 底部抽屉拖拽：展开 ↔ 收起（露出 peek）两档吸附 ---------- */
+
+const drawerEl = ref<HTMLElement | null>(null)
+const drawerCollapsed = ref(false)
+const drawerDragging = ref(false)
+const dragY = ref<number | null>(null)
+/** 收起态露出的 peek 高度：把手 + 时长/千卡行 */
+const PEEK_PX = 176
+let dragBase = 0
+let dragStartY = 0
+let dragMoved = false
+
+const dragStyle = computed(() =>
+  dragY.value != null ? { transform: `translateY(${dragY.value}px)` } : undefined,
+)
+
+function onHandleDown(e: PointerEvent): void {
+  if (r.phase !== 'running' && r.phase !== 'paused') return
+  if ((e.target as HTMLElement).closest('button')) return
+  const el = e.currentTarget as HTMLElement | null
+  if (!el) return
+  try {
+    // 捕获到把手自身：捕获后事件只流向 handle（含其监听），不会经过父容器
+    el.setPointerCapture(e.pointerId)
+  } catch {
+    /* 合成指针事件，忽略 */
+  }
+  const drawer = drawerEl.value
+  dragBase = drawerCollapsed.value && drawer ? drawer.offsetHeight - PEEK_PX : 0
+  dragStartY = e.clientY
+  dragMoved = false
+  drawerDragging.value = true
+}
+
+function onHandleMove(e: PointerEvent): void {
+  if (!drawerDragging.value) return
+  const el = drawerEl.value
+  if (!el) return
+  const max = el.offsetHeight - PEEK_PX
+  if (Math.abs(e.clientY - dragStartY) > 6) dragMoved = true
+  dragY.value = clamp(dragBase + e.clientY - dragStartY, 0, max)
+}
+
+function onHandleUp(): void {
+  if (!drawerDragging.value) return
+  drawerDragging.value = false
+  const el = drawerEl.value
+  if (dragMoved && el && dragY.value != null) {
+    drawerCollapsed.value = dragY.value > (el.offsetHeight - PEEK_PX) / 2
+  } else if (!dragMoved) {
+    drawerCollapsed.value = !drawerCollapsed.value // 轻点把手 = 切换档位
+  }
+  dragY.value = null
+}
 
 function syncManualKm(): void {
   manualKmText.value = r.km > 0.005 ? r.km.toFixed(2) : ''
@@ -141,17 +436,24 @@ function bumpKm(delta: number): void {
 
 <template>
   <div class="run-page" :class="r.phase">
-    <!-- ========== 暗区 · 轨迹剧场 ========== -->
-    <section class="hero">
+    <!-- ========== 暗区 · 轨迹剧场（满屏，抽屉覆盖其下沿） ========== -->
+    <section
+      ref="heroEl"
+      class="hero"
+      @pointerdown="onMapDown"
+      @pointermove="onMapMove"
+      @pointerup="onMapUp"
+      @pointercancel="onMapUp"
+    >
       <svg class="map" viewBox="0 0 480 320" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-        <path v-if="routeView.d" class="route" :d="routeView.d" />
-        <circle v-if="routeView.start" class="mk-start" :cx="routeView.start.x" :cy="routeView.start.y" r="5.5" />
-        <g v-if="routeView.last">
-          <circle class="mk-pulse" :cx="routeView.last.x" :cy="routeView.last.y" r="7" />
-          <circle class="mk-dot" :cx="routeView.last.x" :cy="routeView.last.y" r="7" />
+        <path v-if="view.d" class="route" :d="view.d" />
+        <circle v-if="view.start" class="mk-start" :cx="view.start.x" :cy="view.start.y" r="5.5" />
+        <g v-if="view.last">
+          <circle class="mk-pulse" :cx="view.last.x" :cy="view.last.y" r="7" />
+          <circle class="mk-dot" :cx="view.last.x" :cy="view.last.y" r="7" />
         </g>
       </svg>
-      <p v-if="!routeView.d && heroWaitText" class="hero-wait">{{ heroWaitText }}</p>
+      <p v-if="!view.d && heroWaitText" class="hero-wait">{{ heroWaitText }}</p>
 
       <header class="shead row between">
         <button class="min" aria-label="收起运动模式" @click="minimize">
@@ -178,8 +480,33 @@ function bumpKm(delta: number): void {
 
     <p v-if="r.persistError" class="warn">⚠ 进度同步失败：{{ r.persistError }}</p>
 
-    <!-- ========== 亮区 ========== -->
-    <main class="bright col">
+    <!-- ========== 亮区 · 可拖拽抽屉 ========== -->
+    <main
+      ref="drawerEl"
+      class="drawer"
+      :class="{ collapsed: drawerCollapsed, dragging: drawerDragging }"
+      :style="dragStyle"
+    >
+      <!-- 把手行：回中 / 拖拽档位 / 缩放模式（仅进行中与暂停） -->
+      <div
+        v-if="r.phase === 'running' || r.phase === 'paused'"
+        class="handle"
+        @pointerdown="onHandleDown"
+        @pointermove="onHandleMove"
+        @pointerup="onHandleUp"
+        @pointercancel="onHandleUp"
+      >
+        <button v-if="camMode === 'manual'" class="hbtn" aria-label="回到跟随锁定" @click="recenter">
+          <LocateFixed :size="16" />
+        </button>
+        <span v-else class="hph" />
+        <i class="grab" />
+        <div class="mseg">
+          <button :class="{ on: camMode !== 'fit' }" @click="recenter">固定</button>
+          <button :class="{ on: camMode === 'fit' }" @click="fitAll">全览</button>
+        </div>
+      </div>
+
       <!-- 准备页：目标选择 -->
       <div v-if="r.phase === 'ready'" class="pane col center">
         <p class="eyebrow">设定目标</p>
@@ -320,25 +647,14 @@ function bumpKm(delta: number): void {
   padding-top: var(--safe-top);
 }
 
-/* ---------- 暗区 · 轨迹剧场 ---------- */
+/* ---------- 暗区 · 轨迹剧场（满屏底图，抽屉覆盖下沿） ---------- */
 .hero {
-  position: relative;
-  flex: 0 0 42%;
-  min-height: 264px;
+  position: absolute;
+  inset: 0;
   background: var(--hero-bg);
   overflow: hidden;
-  transition:
-    flex-basis var(--dur-sheet) var(--ease-standard),
-    filter var(--dur-sheet) var(--ease-standard);
-}
-
-.run-page.ready .hero {
-  flex-basis: 20%;
-  min-height: 132px;
-}
-
-.run-page.summary .hero {
-  flex-basis: 30%;
+  touch-action: none; /* 手势：单指平移 / 双指捏合，不触发页面滚动 */
+  transition: filter var(--dur-sheet) var(--ease-standard);
 }
 
 .run-page.paused .hero {
@@ -424,7 +740,7 @@ function bumpKm(delta: number): void {
 /* 顶栏（暗区上） */
 .shead {
   position: absolute;
-  top: 0;
+  top: var(--safe-top);
   left: 0;
   right: 0;
   z-index: 5;
@@ -473,7 +789,7 @@ function bumpKm(delta: number): void {
 }
 
 .gps {
-  bottom: 14px;
+  top: calc(var(--safe-top) + 62px);
   left: 14px;
   display: flex;
   align-items: center;
@@ -500,7 +816,7 @@ function bumpKm(delta: number): void {
 }
 
 .dist {
-  bottom: 14px;
+  top: calc(var(--safe-top) + 62px);
   right: 14px;
   display: flex;
   flex-direction: column;
@@ -533,7 +849,7 @@ function bumpKm(delta: number): void {
   position: absolute;
   z-index: 6;
   left: 50%;
-  top: 50%;
+  top: 26%;
   transform: translate(-50%, -50%);
   padding: 10px 22px;
   border-radius: var(--radius-full);
@@ -560,7 +876,11 @@ function bumpKm(delta: number): void {
 }
 
 .warn {
-  flex: none;
+  position: absolute;
+  top: calc(var(--safe-top) + 56px);
+  left: 0;
+  right: 0;
+  z-index: 30;
   text-align: center;
   padding: 4px;
   font-size: var(--fs-micro);
@@ -568,16 +888,105 @@ function bumpKm(delta: number): void {
   background: rgba(255, 149, 0, 0.14);
 }
 
-/* ---------- 亮区 ---------- */
-.bright {
+/* ---------- 亮区 · 可拖拽抽屉 ---------- */
+.drawer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 46%;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  transform: translateY(0);
+  transition: transform var(--dur-sheet) var(--ease-standard);
+}
+
+/* 收起档：只露出 peek（把手 + 时长/千卡行） */
+.drawer.collapsed {
+  transform: translateY(calc(100% - 176px));
+}
+
+.drawer.dragging {
+  transition: none;
+}
+
+.run-page.ready .drawer {
+  top: 26%;
+}
+
+.run-page.summary .drawer {
+  top: 32%;
+}
+
+/* 把手行：回中按钮 ｜ 拖拽条 ｜ 缩放模式切换 */
+.handle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px 5px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.hbtn {
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--c-exercise);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hph {
+  width: 30px;
+}
+
+.grab {
   flex: 1;
-  min-height: 0;
+  max-width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.mseg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.mseg button {
+  padding: 4px 11px;
+  border-radius: 10px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.mseg button.on {
+  background: var(--surface);
+  color: var(--text-1);
+  box-shadow: var(--shadow-card);
 }
 
 .pane {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   gap: 14px;
-  padding: 24px 28px calc(30px + var(--safe-bottom));
+  padding: 18px 28px calc(30px + var(--safe-bottom));
   overflow-y: auto;
 }
 
@@ -678,9 +1087,9 @@ function bumpKm(delta: number): void {
   }
 }
 
-/* 进行中 */
+/* 进行中：内容贴顶（收起档 peek 正好露出时长/千卡行），控制按钮沉底 */
 .live {
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .time-row {
