@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | `src/styles/tokens.css` | 全部设计令牌（颜色/圆角/阴影/动效/字号） | 业务选择器 |
 | `src/components/common` | 与领域无关的通用组件 | 领域 store 依赖 |
-| `src/system/*` | 应用级运行时单例（当前仅运动系统 `workoutRuntime`：启动接管 + 沉浸页/悬浮运动条统一数据源） | 组件渲染逻辑、IPC 直连 |
+| `src/system/*` | 应用级运行时单例（`workoutRuntime` 运动接管、`recorderRuntime` 录音、`voiceRuntime` 语音会话、`micBus` 麦克风互斥仲裁、`sessionImmersive` 沉浸层显隐） | 组件渲染逻辑、IPC 直连 |
 | `src/services/*` | 命令名 → 类型化函数 | 业务逻辑 |
 | `src/mock/server.ts` | 与 Rust 相同的命令契约 | 生产分支逻辑 |
 | `src/ai/*` | AI 推理层（pi-ai / pi-agent-core）：`runtime.ts` 模型装配、`probe.ts` max_tokens=1 能力探测、`vision.ts` 照片食物识别。模型请求由 WebView 直连 provider，不经 Rust | 直接 import '@tauri-apps/api'；同步 import 进主包（store 侧动态 import） |
@@ -59,6 +59,7 @@
 - **食物匹配与自动补录（2026-08-25）**：foodId 一律由模型自己调 `search_food`（Rust `search_foods_fuzzy` 按字包含/顺序相似度打分排序）选定；`ai/foodMatch.ts::toParsedItems` 对幻觉/缺省 foodId **直接自动补录**（create_food 同名幂等，营养取模型输出的 `nutrition` 字段，缺省回退 kcalEstimate）——解析卡不再出现"未匹配不可写入"。无模型时的本地关键词解析兜底保持只读不写入。
 - **智能添加统一抽屉 `SmartAddSheet`（2026-08-25）**：替代原 `TodoAddSheet` 与 `QuickLogSheet`（均已删除）。`mode: 'todo'|'food'` 决定标题与手动入口（待办表单 / 食物库选择器），智能添加与 AI 聊天同款交互——选图先进草稿区（附件芯片可移除），可同时粘贴文字，点「生成」由 `ai/smartGen.ts` 单轮 Agent（挂 search_food/create_food/get_food 最小工具集）后台解析，任务类内容→待办草稿、吃吃喝喝→食物卡（估算重量），分区出卡供确认编辑后添加。
 - **AI 联网工具（2026-08-25）**：Rust `modules/web`（ureq + html2text）提供 `web_search`（默认必应）/ `web_fetch`（任意 URL→纯文本，SSRF 私网防护、15s 超时、6000 字符截断）；前端 `ai/tools/web.ts` 注册进统一工具层，聊天提示词已纳入。WebView 内 JS fetch 会被 CORS 拦，抓取必须走 Rust。
+- **语音对话（2026-09-10）**：会议纪要式语音会话——持续说话，豆包流式 ASR（`bigmodel_async` + enable_nonstream 二遍识别，utterances/definite 驱动逐句落库）实时转写；停止后 `ai/memoGen.ts` 整理为纪要（AI 自动起标题 + 总结条目带引用角标 refs + 待办/饮食提取可写入），纪要可重放（音频增量落盘 app_data/voice_sessions/*.wav，asset 协议回放）与 TTS 朗读（seed-tts-2.0 HTTP）。**ASR 适配器层（2026-09-10）**：`modules/voice/asr.rs` 定义 `AsrAdapter` trait（connect/next_frame/send_audio/finish_input/on_frame → NormEvent）+ 枚举分发，豆包与 Qwen/DashScope（run-task/continue-task/finish-task JSON 控制消息 + Bearer 头，`sentence.end_time` 判句终，官方 SDK 1.27.4 核对）各一实现，两家协议互不通用；配置 `asr_adapter = auto|doubao|qwen`（+ `asr_adapter_user_picked` 区分程序替选/用户手选），auto 由 baseURL/模型名关键词识别（词表 Rust `AsrAdapterKind::detect` 与前端 `VoiceConfigSheet.detectAdapter` 一致）。前端双层选择：未手选 → 程序自动替选并跟随关键词换向/撤回；已手选 → 仅弹推荐气泡不强改。豆包 WS 需 `X-Api-*` 自定义鉴权头 → 连接在 Rust `modules/voice`（tokio-tungstenite + gzip 二进制协议，协议结论见 memory rein-voice-memo-asr）；前端 `system/voiceRuntime`（状态机 + AudioWorklet 16k PCM 200ms 包 + 3 分钟自动结算窗口）经 `voice_asr_*` 命令与 `voice://asr` 事件对接。纪要存 `voice_memos`（0016），语音轮是 kind='voice' 的普通聊天消息（与文字同会话）；AI 页输入 `@` 可引用纪要（memoRefs 注入消息文本）。麦克风经 `micBus` 与录音系统互斥；会话视图/浮条挂 App 根部不走路由。聊天与纪要总结的 AI 输出统一 Markdown 渲染（`utils/markdown.ts` 白名单 + `MdText` 流式按块增量）。
 - **待办智能解析 `todoGen.ts`**：与聊天同款前端 pi-ai 单轮 Agent（粘贴文本 / 图片 → 提示词约束 JSON 数组 → `TodoDraft[]`），草稿必须先经用户确认/编辑（现由 `SmartAddSheet` 承载）才落库；头像/文本共用 `src/ai/json.ts` 的 JSON 提取工具。`SmartAddSheet` 右上角提供「管理模型 ›」入口（`components/ai/ManageModelsButton.vue`，经 SheetModal `#action` 插槽放入）。`list_all_todos` 返回全部待办（含收件箱 date IS NULL），供主页紧急列表、待办页与虚拟时间线（`VirtualTimeline`，虚拟化渲染 + 双指/Ctrl+滚轮缩放）使用，排序：未完成 → 日期 → 时间 → 优先级。
 - **今日画布（2026-08-28）**：`/todos` = 未安排池（date=今天且 start_min 为空）+ 单日时间轴（`CanvasTimeline`：重叠贪心分列、指针拖拽改位、现在线、过去块降透明）+ 桌面右栏详情（`DayDetailPanel`，子任务可勾选）；移动端点块直接进编辑抽屉。智能排程 `autoSchedule.ts`：AI（单轮 pi-agent）产出建议槽位 → 幽灵块预览 → 用户确认才落库（L2 契约），无模型回落启发式（优先级×时长装填最早空档）。每日规划仪式 `DailyRitual`（当天首次打开，localStorage 打标）。周段 = `WeekView` + `WeekSummary`（完成率环 + 按天分布 + 本地洞察）。清单段 = `AllTodoList`（原分组列表）。前端每次 `loadAll` 先调 `sync_recurrences` 物化重复实例（幂等，失败静默跳过）。
 - **聊天历史**：多会话（`ai_chats`，前端 `chatId` 指向当前会话，启动打开最近会话，历史抽屉 `HistoryDrawer` 切换/新建）；消息按 id 幂等 upsert（commit 状态变更不产生新行、不改变原 seq）；food-parse 的 items/source/committedAt 与 text 的 thinking/quote 序列化在 `payload`；图片存 1600px 压缩图（识别与追问复用同一张）。**照片静默入会话**（不自动识别、不输出内容，识别由用户提问触发，模型经历史图片块看图）。撤回 = `ai_chat_cut`（按消息 id 删该条及其后全部，级联）；清空上下文 = `ai_chat_clear` + 重写欢迎语；会话首条用户消息后自动把标题"AI 对话"改为前 16 字（`ai_chat_rename`）。
@@ -83,7 +84,7 @@
 
 迁移规则：`db.rs::MIGRATIONS` 数组下标即版本号，**只追加不改历史**。新迁移 = 末尾加一条 SQL。
 
-表：`foods` / `food_units` / `meal_logs` / `profile` / `todos` / `workouts` / `pomodoro_sessions`（MIGRATION_0001）、`workout_sessions`（0002）、`workout_plans`（0003）、`ledger_entries` / `ledger_settings`（0004）、`calc_params` / `body_metrics`（0005）、`ai_models` / `ai_chats` / `ai_chat_messages`（0006）、`workouts.session_id`（0007）、profile 个性化约束五列 + `workout_plans.equipment/est_duration_min` + `programs` + `todos.program_id`（0008）、`recipe_prefs`（0009）、`program_meals`（0010，方案每日 AI 菜单缓存，PK(program_id,date)，随方案级联删除）、`todos.rec_rule/rec_key/subtasks`（0011，重复规则/实例键/子任务 JSON 列，rec_key 部分唯一索引保证物化幂等）、`shopping_checks`（0012，采购清单勾选）、`workout_sets` + `app_meta`（0013，逐组做组记录与通用键值元数据）。营养值单位约定：宏量与纤维/糖为 g，钠钾钙等为 mg，维生素 A/D/B12/叶酸为 μg，C/E 为 mg。记账金额一律整数分（`amount_cents`）、恒为正，正负由 `kind`（expense/income）表达；`ledger_settings` 单行（id=1）存月度总预算。`calc_params` 单行快照方案计算器的身体参数（含手输年龄；改动静默自动落库）；`body_metrics` 体重身高按天一条、同日补录 COALESCE 合并，非空值同步写回 `profile` 保持计算器与「我」页同源。AI：`ai_models` 含能力探测三态（vision/thinking/effort 可空）、部分唯一索引保证至多一个默认；`ai_chat_messages` 的 `(chat_id, seq)` 唯一，`ai_chat_append` 按消息 id 幂等 upsert。健康方案：`programs.params_json` 存前端引擎的完整内容快照 `{params, days}`；`profile` 新列中 `preferred_time_slots`/`diet_restrictions` 为 JSON 数组文本列（NULL=未设置）；`workout_plans.equipment/est_duration_min` 是内置课程 meta（用户编辑不感知，upsert COALESCE 保留原值）。逐组记录：`workout_sets` 在 `session_finish` 事务内由前端提交的做组明细展开落行（workout_id 外键随 workouts 级联删除；exercise_name 跨课程/编辑稳定，是重量曲线的聚合键；warmup=1 的行不计入正式组）；查询命令 `strength_history`（单动作全部做组行）/ `strength_exercises`（有记录的动作清单）/ `strength_last_weights`（批量取各动作最近一次做组重量，沉浸页预填「上次重量」）。
+表：`foods` / `food_units` / `meal_logs` / `profile` / `todos` / `workouts` / `pomodoro_sessions`（MIGRATION_0001）、`workout_sessions`（0002）、`workout_plans`（0003）、`ledger_entries` / `ledger_settings`（0004）、`calc_params` / `body_metrics`（0005）、`ai_models` / `ai_chats` / `ai_chat_messages`（0006）、`workouts.session_id`（0007）、profile 个性化约束五列 + `workout_plans.equipment/est_duration_min` + `programs` + `todos.program_id`（0008）、`recipe_prefs`（0009）、`program_meals`（0010，方案每日 AI 菜单缓存，PK(program_id,date)，随方案级联删除）、`todos.rec_rule/rec_key/subtasks`（0011，重复规则/实例键/子任务 JSON 列，rec_key 部分唯一索引保证物化幂等）、`shopping_checks`（0012，采购清单勾选）、`workout_sets` + `app_meta`（0013，逐组做组记录与通用键值元数据）、`todos.attachments`（0014）、`ai_models.image_max_edge`（0015）、`voice_memos`（0016，语音纪要：句子/总结存 JSON 文本列，音频为磁盘文件路径）。营养值单位约定：宏量与纤维/糖为 g，钠钾钙等为 mg，维生素 A/D/B12/叶酸为 μg，C/E 为 mg。记账金额一律整数分（`amount_cents`）、恒为正，正负由 `kind`（expense/income）表达；`ledger_settings` 单行（id=1）存月度总预算。`calc_params` 单行快照方案计算器的身体参数（含手输年龄；改动静默自动落库）；`body_metrics` 体重身高按天一条、同日补录 COALESCE 合并，非空值同步写回 `profile` 保持计算器与「我」页同源。AI：`ai_models` 含能力探测三态（vision/thinking/effort 可空）、部分唯一索引保证至多一个默认；`ai_chat_messages` 的 `(chat_id, seq)` 唯一，`ai_chat_append` 按消息 id 幂等 upsert。健康方案：`programs.params_json` 存前端引擎的完整内容快照 `{params, days}`；`profile` 新列中 `preferred_time_slots`/`diet_restrictions` 为 JSON 数组文本列（NULL=未设置）；`workout_plans.equipment/est_duration_min` 是内置课程 meta（用户编辑不感知，upsert COALESCE 保留原值）。逐组记录：`workout_sets` 在 `session_finish` 事务内由前端提交的做组明细展开落行（workout_id 外键随 workouts 级联删除；exercise_name 跨课程/编辑稳定，是重量曲线的聚合键；warmup=1 的行不计入正式组）；查询命令 `strength_history`（单动作全部做组行）/ `strength_exercises`（有记录的动作清单）/ `strength_last_weights`（批量取各动作最近一次做组重量，沉浸页预填「上次重量」）。
 
 ## 5. 设计系统
 
@@ -120,6 +121,8 @@
 | `/sports` | sports | 运动（训练主页：周概览 + 跑步/手动记快速入口 + 最近三个课程 + 运动待办 + 最近运动） |
 | `/ai` | ai | AI（拍照 / 文字记饮食 · 会话消息流 SQLite 持久化；右上角「管理模型」入口） |
 | `/ai/models` | ai-models | 管理模型（二级内容页：模型增删改 / 设默认 / max_tokens=1 能力探测徽章：视觉·思考·努力） |
+| `/ai/knowledge` | ai-knowledge | 知识库（二级内容页：检索模式三档切换 / 索引概况与重建 / 索引范围逐类开关 / 检索试跑 / 长期记忆审阅删除；入口在「我 › 知识库」） |
+| `/ai/knowledge/files` | ai-knowledge-files | 文件库（三级页：知识库虚拟文件树浏览界面——最近内容 + 命名空间网格 + 目录下钻面包屑 + 文件名搜索；阅读器 note 源直读 kb_files 真源、派生文档 L2 分块渐进加载，保证完整阅读；可编辑文件支持改/删；入口在「知识库 › 文件」卡） |
 | `/me` | me | 我 |
 | `/focus` | focus | 专注（二级内容页：番茄钟 + 待办 + 日程时间线预览；完整时间线、超量待办收抽屉） |
 | `/todos` | todos | 待办 · 今日画布（二级内容页：未安排池 + 单日时间轴 + 详情联动 + 智能排程；周视图含周回顾；清单保留原分组列表；桌面端宽栏三窗格） |
@@ -135,6 +138,7 @@
 | `/sports/plans/:id/edit` | sports-plan-edit | 课程编辑（二级内容页；`:id='new'` 表示新建） |
 | `/sports/records` | sports-records | 全部运动记录（二级内容页：日/周/年三视图，概览卡=周期导航+分钟柱状图+统计行，列表按日/月分组；入口为本周运动卡「详情」角标） |
 | `/session/run` | session-run | 运动模式·跑步（沉浸二级页：目标设置 → GPS/计时 → 暂停/继续 → 总结保存） |
+| `/record` | record | 录音（二级内容页：录音台 + 未归档 take 管理（回放 / 删除 / 附加到待办）；录音中由录音悬浮条跨页接管） |
 
 页面分级约定：一级页 `meta.tab`（TabBar 四个页签）；二级内容页 `meta.title`（保留 TabBar，`PageHeader back` 提供返回键）；沉浸页 `meta.fullscreen`。**训练课沉浸层不再走路由**（2026-09-03）：`components/exercise/SessionOverlay.vue` 由 `App.vue` 常驻挂载，显隐与 container transform 形变动画由 `system/sessionImmersive.ts` 驱动——收起/恢复零重建，原 `/session` 路由已移除。每日目标的编辑入口收敛在「饮食调整」二级页，「我」页只展示摘要。训练课程的全部管理动作收敛在「全部课程」及其详情/编辑二级页，运动主页只放跑步/手动记快速入口与最近使用的三个课程。
 
@@ -144,12 +148,30 @@
 
 - 纯前端状态机 + 后端会话持久化：状态事件 → `session_snapshot`（fire-and-forget，失败显示页顶警示不阻塞训练）。两台状态机都是 Pinia 应用级单例，**组件卸载不影响计时/GPS/落盘**。
 - 中断恢复：`hydrateFromServer()` 读 `session_active`，恢复 doneSets/重量/阶段；**休息倒计时按快照间隔的真实流逝补时**，计时动作被打断则整组重做。
+- **录音系统运行时**（`system/recorderRuntime.ts`，模块级单例）：MediaRecorder 与计时在模块状态上，编辑抽屉「录音」、录音页、录音悬浮条（`components/record/RecordFloatBar.vue`，useDragDock 独立持久化 key `rein.rbar.dock.v1`）发起的是同一次录音，录音中可跨页；录完的 take 统一进内存 takes 列表，「附加到待办」写 `todos.attachments` 持久化，未附加的关应用即失。Android 需 Manifest 声明 `RECORD_AUDIO`（RustWebChromeClient 已把 web 的 AUDIO_CAPTURE 映射为运行时权限请求）。
 - **运动系统运行时**（`system/workoutRuntime.ts`，main.ts 装载）：应用启动即接管 active 会话（原各页「检测到未完成的训练」恢复卡逻辑收敛于此）；沉浸页挂载先 `whenReady()` 防竞态。导航栏上方的悬浮运动条（`components/exercise/ActiveWorkoutBar.vue`，沉浸形态隐藏）与沉浸层共用运行时的数据与动作：跑步 = 配速/里程/暂停（**必须暂停再结束**），课程 = 动作名/当前组数/完成本组；两者都提供「恢复沉浸」（训练课经 `system/sessionImmersive` 从浮窗位置形变展开，不走路由；跑步推 `/session/run`）。开始前发现 active 会话 → 提示「前往继续」（`run.courseConflict` / `session.foreignRoute` 区分训练课沉浸层与跑步 `/session/run`）防止覆盖。
 - **课程数据不再来自静态配置**：`stores/plan.ts` 从 `workout_plans` 表加载；会话恢复按 `planId` 查库，查不到（已删除）则作废该会话。开始训练时调用 `touch_workout_plan` 维护「最近使用」。
 - **跑步**（`stores/run.ts`）：`plan_id='__run__'` 复用会话落盘；GPS 用 `navigator.geolocation.watchPosition` 累加距离（精度过滤），不可用时总结页手动填距离（跑步机场景）；卡路里按配速分档取 run 的 MET；恢复时强制暂停态。
 - **跑步保活**（2026-08-24）：安卓锁屏后 WebView 的 GPS/计时随进程冻结停摆（用户感知「定位丢失后崩溃」）。开跑（`begin`）/续跑前经 `trackingService.setKeepalive(true)` 拉起 Android `RunTrackingService`（location 类型前台服务 + WakeLock），首次未授权先弹系统授权框（轮询 `tracking_status` 收敛，拒绝或超时则降级为无 GPS）；总结/重置时停服务。命令：`tracking_keepalive` / `tracking_status`（JNI 经 `Webview::jni_handle().exec` 发后不管，状态走 Kotlin snapshot 静态缓存）。桌面端空操作。
 
-## 10. 已知边界（框架阶段的有意取舍）
+## 10. 知识库与认知层（src-tauri/src/modules/kb · stores/ai.ts · ai/tools/knowledge.ts）
+
+一个库装下多种来源：日程与附件、运动记录与逐组明细、训练课程、饮食与体测、健康方案、语音纪要、历史聊天，以及 AI 从对话中提炼的长期记忆。**长期记忆不是独立系统**，它是 `kb_docs` 的一类来源（`source_type='memory'`），因此天然进入同一套检索；反过来，全部来源又都是 LLM 的检索目标。
+
+- **检索三档**（`kb_settings.embedding_mode`，默认 `keyword`）：`keyword` 纯 FTS5 trigram + 结构化过滤，零依赖全平台可用；`local` 进程内 ONNX Runtime + 内置 int8 模型（bge-small-zh-v1.5），数据不出设备；`cloud` 走 OpenAI 兼容 `/v1/embeddings`（Rust 侧 ureq，不受 WebView CSP 约束）。三档共用同一个 `Embedder` trait 与同一套检索流程，`keyword` 即「无 embedder」。性能实测见 `docs/kb-embed-benchmark.md`。
+- **召回阶梯**（`kb/search.rs`）：FTS5 bm25 → 整串 LIKE（trigram 不支持少于 3 字符的查询，中文两字词如「膝盖」必须走这层）→ 二字窗口模糊（中文无分词器时唯一能兜住「膝盖内扣」→「膝盖不要内扣」的手段）。各层结果用 RRF(k=60) 融合，再与向量召回并轨。向量是**暴力扫描**：万级块 × 512 维约 20 MB、单次 5–15 ms，因此不引入任何向量索引库。
+- **分层读取**（对应 OpenViking 的 L0/L1/L2）：检索只回摘要级命中（L0），`kb_read` 默认给概览（L1），确需全文才用 `level:'l2'`。工具返回值的分层纪律直接修掉了 `list_all_workouts` 无分页、`get_plan` 全量返回这类上下文失控问题。
+- **同步靠触发器而非命令层挂点**（迁移 0019）：`todos`/`workouts`/`workout_sets`/`workout_plans`/`meal_logs`/`body_metrics`/`foods`(仅 `is_custom=1`)/`programs`/`program_meals`/`voice_memos`/`ai_chat_messages` 的增改删都会写一行 `kb_dirty`。这样连 `program_schedule_replace` 这种批量直写 `todos` 的旁路也被覆盖，未来新增写入路径同样自动生效。`foods` 只在自建时登记——内置 2722 条种子每次启动都 `INSERT OR IGNORE`，无条件登记会拖垮首启。
+- **索引线程**（`kb/worker.rs`，`std::thread` + `recv_timeout`）：三段落法——持锁取文本 → **放锁嵌入** → 持锁写回。全应用共用同一个 `Mutex<Connection>`，嵌入若在持锁期间执行会直接卡住界面。空闲约 60 秒后释放 embedder（重建仅 50–130 ms），因为进程峰值工作集实测 157 MB，安卓上会被低内存杀手盯上。
+- **记忆抽取**（`ai/memoryExtract.ts` + `kb_memory_apply`）：会话结束（切会话/新建/清空）时后台跑一次，**不 await**。把「现有记忆清单」一并放进上下文，让模型一次调用同时完成抽取与去重合并，比原有的「抽取 + 向量预筛 + LLM 去重」两轮省一半成本。落库留 `kb_memory_diffs` 审计。编排在前端是因为模型请求由 WebView 里的 pi-ai 直连 provider。
+- **认知注入**：`kb_cognition` 产出一段紧凑文本，由 `stores/ai.ts` 在每轮请求前取（60 秒 TTL 缓存）并经 `chatWithModel(cfg, …, { cognition })` 传进系统提示词的【用户认知】段。做成预注入而非又一个工具，是因为模型每轮都该直接知道自己面对的是谁。
+- **两个必须守住的约束**：① 附件里 image/file/audio 的 `content` 是 base64 data URL，**绝不能进索引正文**，只索引文件名与体积（`source.rs::attachments_digest`，有单测硬断言）；② `kb_fts` 用 external content 指回 `kb_chunks`，一致性靠 `kb_chunks` 上的三触发器，而 SQLite 的外键级联删除**不触发**子表触发器，所以删除文档一律先显式删块（`fts_stays_consistent…` 单测用 FTS5 integrity-check 守着）。
+- 命令：`kb_status` / `kb_search` / `kb_read` / `kb_reindex` / `kb_settings_get` / `kb_settings_set` / `kb_probe_embedder` / `kb_rebuild_vectors` / `kb_memories` / `kb_memory_apply` / `kb_memory_delete` / `kb_cognition` / `kb_memory_bump` / `kb_glob` / `kb_file_write` / `kb_file_rename` / `kb_file_delete` / `kb_file_get`。
+- **虚拟文件系统**（规范见 `docs/kb-vfs.md`，同文档会播种为只读系统文件 `规范/知识库规范.md` 供 AI 自查）：迁移 0020 给每篇文档加 `path`，统一规则在 `source.rs::build_path`（日程/运动/课程/饮食/体测/食物/方案/菜单/纪要/对话/附件/记忆/笔记/文档/规范）。`editable`/`system`/`kind` 做成列；派生文档只读，可写的只有 `笔记/`、`文档/`（kb_files，内容即真源）与记忆（经记忆 API）。`kb_files` 的编辑/改名/删除走 files.rs，id 可传文档 id 或文件 id（`resolve_file_id`）。`read_knowledge` 按 L1/L2 分块分页（`offset`/`limit`/`hasMore`/`nextOffset`），`glob_knowledge` 用 git 语义 glob（`*` 不跨目录、`**` 跨、`a/**/b` 匹配零层目录）。**上传文档时前端把抽取全文自动归档进 `文档/`**（prompt 只带 6000 字截断版并注明归档路径，AI 靠分页读全文）——真机验证：docx 训练安排表 → AI 逐条 `create_todo` 67 条，60 秒完成。**阅读以真源为准（2026-09-12）**：`kb_read` 对 note 源直读 `kb_files.content` 即时切块——`kb_docs.body` 是带 8000 字上限的检索缓存，此前全文超限的 Word 归档会被截断，AI 分页到头也读不到剩余内容；用户侧完整浏览走「知识库 › 文件库」（`FileLibraryPage.vue`，目录下钻 + 直读原文/分块渐进加载）。
+- **启动对账**（`worker.rs::reconcile`）：每次启动先播种规范文件，再把既有源记录全部入队并清孤儿（触发器只对之后的写入生效，老库升级必须靠它），内容未变的条目按 `content_hash` 跳过。
+- **构建前置**：端侧模型与 ORT 运行库不入库，克隆后先跑 `node scripts/fetch-embed-model.mjs` 与 `node scripts/fetch-ort-runtime.mjs --target all`；`src-tauri/build.rs` 会校验并在缺失时给出提示。三端交叉编译不需要任何原生链接配置（`ort` 用 `load-dynamic`、`tokenizers` 用纯 Rust 的 `fancy-regex`，整棵依赖树零 C 代码）。
+
+## 11. 已知边界（框架阶段的有意取舍）
 
 - 单窗口单连接（Mutex<Connection>）：桌面场景足够，出现并发瓶颈再引入连接池/rusqlite pool。
 - 目标按天覆盖（daily_targets）未启用：`get_targets/set_targets` 的 date 参数已预留。

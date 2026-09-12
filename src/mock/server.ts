@@ -1155,6 +1155,554 @@ async function mockWebFetch(url: string, maxChars: number) {
   }
 }
 
+/* ---------------- 语音对话（modules/voice 同契约） ---------------- */
+
+/** 浏览器 mock 的事件出口：voiceService 在非 Tauri 环境把 onAsr 挂到这里 */
+export const mockVoice: { onAsr: ((e: unknown) => void) | null } = { onAsr: null }
+
+interface MockVoiceConfig {
+  mode: 'legacy' | 'new'
+  appKey: string
+  accessKey: string
+  asrAdapter: string
+  asrAdapterUserPicked: boolean
+  asrBaseUrl: string
+  asrResourceId: string
+  ttsResourceId: string
+  voiceName: string
+  speed: number
+}
+
+let voiceConfig: MockVoiceConfig = {
+  mode: 'legacy',
+  appKey: '',
+  accessKey: '',
+  asrAdapter: 'auto',
+  asrAdapterUserPicked: false,
+  asrBaseUrl: '',
+  asrResourceId: 'volc.seedasr.sauc.duration',
+  ttsResourceId: 'seed-tts-2.0',
+  voiceName: '',
+  speed: 1,
+}
+
+interface MockMemo {
+  id: string
+  chatId: string
+  messageId: string | null
+  title: string
+  audioPath: string | null
+  durationMs: number
+  words: number
+  sentences: unknown
+  summary: unknown
+  createdAt: string
+}
+
+const voiceMemos: MockMemo[] = []
+let voiceDraft: unknown = null
+
+/** 伪造识别会话：按脚本节奏发 partial/final 事件（e2e 与 UI 迭代用） */
+// 时间压缩到 ~3.4s（mock 仅供 dev/e2e；真实节奏由服务端决定）
+const MOCK_SENTENCES = [
+  { startMs: 300, endMs: 700, text: '今天中午在公司楼下吃的，一个鸡胸肉汉堡，没喝可乐，加了杯无糖的。' },
+  { startMs: 900, endMs: 1400, text: '对了，下午三点提醒我去拿快递，别忘记了。' },
+  { startMs: 1600, endMs: 2500, text: '昨天练完腿，今天大腿前侧有点酸，晚上就不安排力量了，改成拉伸十五分钟。' },
+  { startMs: 2700, endMs: 3200, text: '还有，帮我看看这个月外卖花了多少。' },
+]
+
+const voiceTimers = new Map<string, number[]>()
+/** 已 final 的句子下标（finish 补发时去重） */
+const voiceFinaled = new Map<string, Set<number>>()
+
+function clearVoiceTimers(sessionId: string): void {
+  const ids = voiceTimers.get(sessionId)
+  if (ids) {
+    for (const id of ids) clearTimeout(id)
+    voiceTimers.delete(sessionId)
+  }
+}
+
+function mockWavDataUrl(): string {
+  const sampleRate = 16000
+  const dataLen = sampleRate * 2 // 1s 静音
+  const buf = new ArrayBuffer(44 + dataLen)
+  const v = new DataView(buf)
+  const w = (off: number, str: string): void => {
+    for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i))
+  }
+  w(0, 'RIFF')
+  v.setUint32(4, 36 + dataLen, true)
+  w(8, 'WAVE')
+  w(12, 'fmt ')
+  v.setUint32(16, 16, true)
+  v.setUint16(20, 1, true)
+  v.setUint16(22, 1, true)
+  v.setUint32(24, sampleRate, true)
+  v.setUint32(28, sampleRate * 2, true)
+  v.setUint16(32, 2, true)
+  v.setUint16(34, 16, true)
+  w(36, 'data')
+  v.setUint32(40, dataLen, true)
+  let bin = ''
+  const bytes = new Uint8Array(buf)
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)))
+  }
+  return 'data:audio/wav;base64,' + btoa(bin)
+}
+
+/* ---------- 知识库与长期记忆（对应 Rust modules/kb）----------
+ * 浏览器里没有 SQLite，所以这里用一份内存文档表模拟索引结果：
+ * 首次访问时把各 mock 数据源扫一遍建成 kbDocs，之后 kb_memory_apply 等写入会顺带更新它。
+ * 检索是 includes() 关键词匹配（真实实现是 FTS5 trigram + 向量 + RRF），
+ * 形状与召回阶梯刻意保持一致（fts/like/fuzzy），这样 e2e 断言能复用。 */
+
+interface MockKbDoc {
+  id: number
+  sourceType: string
+  sourceId: string
+  path: string | null
+  editable: boolean
+  system: boolean
+  kind: 'text' | 'image' | 'file' | 'audio'
+  parentId: string | null
+  title: string
+  summary: string
+  body: string
+  occurredOn: string | null
+  tags: string[]
+  updatedAt: string
+}
+
+interface MockKbFile {
+  id: number
+  path: string
+  content: string
+  system: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** 路径净化：与 Rust source::sanitize 同一条规则（docs/kb-vfs.md §2） */
+function kbSanitize(raw: string, max: number): string {
+  const bad = /[\/\\:*?"<>|\n\r\t]/
+  let out = ''
+  for (const ch of raw.trim()) {
+    if (out.length >= max) break
+    out += bad.test(ch) ? '-' : ch
+  }
+  const t = out.trim().replace(/^-+|-+$/g, '')
+  return t || '未命名'
+}
+
+/** 把用户给的路径归位成 笔记/ 下的合法路径（与 Rust files::normalize_path 同构） */
+function kbNormalizePath(raw: string): string {
+  let p = raw.trim().replace(/^\/+/, '')
+  if (!p) throw new Error('文件路径不能为空')
+  if (p.split('/').some((seg) => seg === '..')) throw new Error(`路径不允许包含 ..：${p}`)
+  if (p.startsWith('规范/')) throw new Error('规范/ 是系统命名空间，只能由应用更新，不能由用户写入')
+  if (!p.startsWith('笔记/') && !p.startsWith('文档/')) p = `笔记/${p}`
+  p = p
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => kbSanitize(seg, 60))
+    .join('/')
+  return p.endsWith('.md') ? p : `${p}.md`
+}
+
+/** 与 Rust chunk_text 同参数的简化分块（300 字 / 50 重叠），供 L2 分页与 totalChunks */
+function kbChunkText(text: string): string[] {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) return []
+  if (normalized.length <= 300) return [normalized]
+  const out: string[] = []
+  let start = 0
+  while (start < normalized.length) {
+    const end = Math.min(start + 300, normalized.length)
+    const piece = normalized.slice(start, end).trim()
+    if (piece) out.push(piece)
+    if (end >= normalized.length) break
+    const next = Math.max(end - 50, start + 1)
+    start = next
+  }
+  return out
+}
+
+/** note 源正文进检索缓存的上限（对应 Rust source.rs MAX_BODY = 8000）。
+ *  缓存截断只影响召回；阅读（kb_read）必须直读 kb_files 真源给全文，见 kb_read 的 note 特判。 */
+const KB_BODY_CAP = 8000
+const kbCacheBody = (content: string) =>
+  content.length <= KB_BODY_CAP ? content : `${content.slice(0, KB_BODY_CAP)}…`
+
+interface MockKbMemory {
+  id: number
+  memType: string
+  topic: string
+  content: string
+  confidence: number
+  activeCount: number
+  sourceChatId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+// 规范文件内容与 src-tauri 的 include_str! 同源（docs/kb-vfs.md），浏览器 mock 也读同一份
+import specMarkdown from '../../docs/kb-vfs.md?raw'
+
+const KB_SETTINGS_KEY = 'rein.mock.kb_settings.v1'
+const KB_MEMORY_KEY = 'rein.mock.kb_memories.v1'
+const KB_FILE_KEY = 'rein.mock.kb_files.v1'
+const KB_SPEC_PATH = '规范/知识库规范.md'
+
+const kbDocs: MockKbDoc[] = []
+let kbDocId = 0
+const kbMemories: MockKbMemory[] = []
+let kbMemoryId = 0
+const kbFiles: MockKbFile[] = []
+let kbFileId = 0
+let kbIndexed = false
+
+let kbSettings: {
+  embeddingMode: 'keyword' | 'local' | 'cloud'
+  cloudBaseUrl: string | null
+  cloudApiKey: string | null
+  cloudModel: string | null
+  cloudDim: number | null
+  sourcesEnabled: Record<string, boolean>
+  autoMemory: boolean
+  lastError: string | null
+  updatedAt: string
+} = {
+  embeddingMode: 'keyword',
+  cloudBaseUrl: null,
+  cloudApiKey: null,
+  cloudModel: null,
+  cloudDim: null,
+  sourcesEnabled: {},
+  autoMemory: true,
+  lastError: null,
+  updatedAt: new Date().toISOString(),
+}
+
+let kbLoaded = false
+
+function loadKbStore(): void {
+  if (kbLoaded) return
+  kbLoaded = true
+  try {
+    const raw = localStorage.getItem(KB_SETTINGS_KEY)
+    if (raw) kbSettings = { ...kbSettings, ...(JSON.parse(raw) as typeof kbSettings) }
+    const mem = localStorage.getItem(KB_MEMORY_KEY)
+    if (mem) {
+      const list = JSON.parse(mem) as MockKbMemory[]
+      kbMemories.push(...list)
+      kbMemoryId = Math.max(kbMemoryId, ...list.map((m) => m.id), 0)
+    }
+    const f = localStorage.getItem(KB_FILE_KEY)
+    if (f) {
+      const list = JSON.parse(f) as MockKbFile[]
+      kbFiles.push(...list)
+      kbFileId = Math.max(kbFileId, ...list.map((x) => x.id), 0)
+    }
+  } catch {
+    /* 损坏数据按空处理 */
+  }
+}
+
+function saveKbSettings(): void {
+  try {
+    localStorage.setItem(KB_SETTINGS_KEY, JSON.stringify(kbSettings))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function saveKbMemories(): void {
+  try {
+    localStorage.setItem(KB_MEMORY_KEY, JSON.stringify(kbMemories))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function saveKbFiles(): void {
+  try {
+    localStorage.setItem(KB_FILE_KEY, JSON.stringify(kbFiles))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+loadKbStore()
+
+function kbUpsertDoc(
+  sourceType: string,
+  sourceId: string,
+  title: string,
+  body: string,
+  occurredOn: string | null,
+  tags: string[] = [],
+  vfs: { path?: string | null; editable?: boolean; system?: boolean; kind?: MockKbDoc['kind']; parentId?: string | null } = {},
+): void {
+  const summary = body.trim().split(/[。！？\n]/)[0]?.slice(0, 120) ?? ''
+  const existing = kbDocs.find((d) => d.sourceType === sourceType && d.sourceId === sourceId)
+  if (existing) {
+    Object.assign(existing, {
+      title, summary, body, occurredOn, tags,
+      path: vfs.path ?? existing.path,
+      editable: vfs.editable ?? existing.editable,
+      system: vfs.system ?? existing.system,
+      kind: vfs.kind ?? existing.kind,
+      parentId: vfs.parentId ?? existing.parentId,
+      updatedAt: new Date().toISOString(),
+    })
+    return
+  }
+  kbDocs.push({
+    id: ++kbDocId,
+    sourceType,
+    sourceId,
+    path: vfs.path ?? null,
+    editable: vfs.editable ?? false,
+    system: vfs.system ?? false,
+    kind: vfs.kind ?? 'text',
+    parentId: vfs.parentId ?? null,
+    title,
+    summary,
+    body,
+    occurredOn,
+    tags,
+    updatedAt: new Date().toISOString(),
+  })
+}
+
+/** 播种规范文件（幂等，内容与 docs/kb-vfs.md 同源） */
+function kbEnsureSpec(): void {
+  const have = kbFiles.find((f) => f.path === KB_SPEC_PATH)
+  if (have) return
+  const now = new Date().toISOString()
+  kbFiles.push({ id: ++kbFileId, path: KB_SPEC_PATH, content: specMarkdown, system: true, createdAt: now, updatedAt: now })
+  saveKbFiles()
+}
+
+/** 把各 mock 数据源扫一遍建索引。真实实现由 SQLite 触发器登记 + 后台线程消费。 */
+function kbEnsureIndex(): void {
+  if (kbIndexed) return
+  kbIndexed = true
+
+  // 规范文件（system=1，只读）与用户笔记
+  kbEnsureSpec()
+  for (const f of kbFiles) {
+    const base = f.path.split('/').pop() ?? f.path
+    kbUpsertDoc(
+      'note',
+      String(f.id),
+      base.replace(/\.md$/, ''),
+      kbCacheBody(f.content),
+      f.createdAt.slice(0, 10),
+      [f.system ? '规范' : '笔记'],
+      { path: f.path, editable: !f.system, system: f.system },
+    )
+  }
+
+  for (const t of todos) {
+    const sub = (t.subtasks ?? []).map((s) => `${s.done ? '✓' : '○'} ${s.title}`).join('、')
+    // 附件只取 text 正文，绝不把 data URL 带进索引（与 Rust 侧同一条约束）
+    const atts = (t.attachments ?? [])
+      .map((a) =>
+        a.kind === 'text'
+          ? (a.content ?? '')
+          : `${a.kind === 'image' ? '图片' : a.kind === 'audio' ? '录音' : '文件'}「${a.name}」`,
+      )
+      .join(' ')
+    kbUpsertDoc(
+      'todo',
+      String(t.id),
+      t.title,
+      [t.title, t.notes ?? '', sub, atts].filter(Boolean).join(' '),
+      t.date,
+      [t.category],
+      { path: `日程/${t.date ?? '收件箱'}/${kbSanitize(t.title, 60)}-${t.id}.md` },
+    )
+    // 附件编目：二进制内容绝不进正文（与 Rust 同一条铁律）
+    ;(t.attachments ?? []).forEach((a, idx) => {
+      const isText = a.kind === 'text'
+      const body = isText
+        ? (a.content ?? '')
+        : `${a.kind === 'image' ? '图片' : a.kind === 'audio' ? '录音' : '文件'}「${a.name}」（${Math.round((a.size ?? 0) / 1024)} KB），随待办《${t.title}》保存`
+      if (!body.trim()) return
+      kbUpsertDoc(
+        'todo_attachment',
+        `${t.id}:${idx}`,
+        a.name,
+        body,
+        t.date,
+        ['附件', a.kind],
+        {
+          path: `附件/日程/${t.id}/${idx}-${kbSanitize(a.name, 40)}`,
+          kind: a.kind === 'text' ? 'text' : a.kind === 'image' ? 'image' : a.kind === 'audio' ? 'audio' : 'file',
+          parentId: String(t.id),
+        },
+      )
+    })
+  }
+  for (const w of workouts) {
+    const sets = strengthSets.filter((s) => s.workoutId === w.id)
+    const detail = sets.map((s) => `${s.exerciseName} ${s.weightKg ?? 0}kg × ${s.reps ?? 0}`).join('；')
+    kbUpsertDoc('workout', String(w.id), w.name, [w.name, w.note ?? '', detail].filter(Boolean).join(' '), w.date, [w.type])
+  }
+  for (const p of plans) {
+    kbUpsertDoc('plan', p.id, p.name, [p.name, p.subtitle ?? '', p.equipment ?? ''].filter(Boolean).join(' '), null, [p.workoutType])
+  }
+  for (const m of meals) {
+    const f = foods.find((x) => x.id === m.foodId)
+    kbUpsertDoc('meal', String(m.id), `${m.date} ${f?.name ?? '食物'}`, `${f?.name ?? ''} ${m.grams}g`, m.date, [m.mealType])
+  }
+  for (const b of bodyStore.metrics) {
+    kbUpsertDoc('body_metric', String(b.id), `${b.date} 体测`, `体重 ${b.weightKg ?? '—'} kg`, b.date, ['body_metric'])
+  }
+  for (const memo of voiceMemos) {
+    const sents = Array.isArray(memo.sentences) ? (memo.sentences as { text?: string }[]) : []
+    kbUpsertDoc(
+      'voice_memo',
+      memo.id,
+      memo.title || '语音纪要',
+      sents.map((s) => s.text ?? '').join(''),
+      memo.createdAt?.slice(0, 10) ?? null,
+      ['voice_memo'],
+    )
+  }
+  // 长期记忆也编目（kb_docs 的一类来源，可被 glob/检索）
+  for (const m of kbMemories) {
+    kbUpsertDoc(
+      'memory',
+      String(m.id),
+      m.topic ? `记忆 · ${m.topic}` : `记忆 · ${m.memType}`,
+      m.content,
+      m.createdAt.slice(0, 10),
+      [m.memType],
+      { path: `记忆/${m.memType}/${m.topic || '未命名'}-${m.id}.md`, editable: true },
+    )
+  }
+
+  // 会话文档（全文转录，跳过工具卡与协议 JSON）+ 单条消息 + 对话附件
+  const aiRole = (r: string) => (r === 'user' ? '用户' : 'AI')
+  for (const chat of aiChats.values()) {
+    const lines: string[] = []
+    for (const m of chat.messages) {
+      if (m.kind === 'tools') continue
+      const text = (m.text ?? '').trim()
+      if (!text || text.startsWith('{')) continue
+      lines.push(`[${m.seq}] ${aiRole(m.role)}：${text}`)
+      kbUpsertDoc(
+        'chat_message',
+        m.id,
+        text.slice(0, 40),
+        text,
+        m.createdAt?.slice(0, 10) ?? null,
+        ['chat', m.role],
+        { path: `对话/${chat.id}/${m.seq}-${aiRole(m.role)}.md` },
+      )
+      // 对话附件：照片消息
+      if (m.imageBase64) {
+        const size = Math.round((m.imageBase64.length * 3) / 4)
+        kbUpsertDoc(
+          'chat_attachment',
+          `${m.id}:img`,
+          `图片-${(m.createdAt ?? '').slice(0, 10)}.jpg`,
+          `随对话消息保存的图片（${size} B）；图片本体在消息的 imageBase64 里`,
+          m.createdAt?.slice(0, 10) ?? null,
+          ['附件', 'image'],
+          { path: `附件/对话/${m.id}/图片-${(m.createdAt ?? '').slice(0, 10)}.jpg`, kind: 'image', parentId: m.id },
+        )
+      }
+    }
+    if (lines.length === 0) continue
+    kbUpsertDoc(
+      'chat',
+      chat.id,
+      `对话 · ${kbSanitize(chat.title, 40)}`,
+      `与用户共 ${lines.length} 条消息的完整转录：\n${lines.join('\n')}`,
+      chat.createdAt?.slice(0, 10) ?? null,
+      ['chat'],
+      { path: `对话/${kbSanitize(chat.title, 40)}-${chat.id}.md` },
+    )
+  }
+}
+
+/** glob 匹配（与 Rust glob_match 同语义：星号不跨 /、双星跨、问号单字符、双星斜杠可匹配零层目录） */
+function kbGlobMatch(pattern: string, path: string): boolean {
+  const toRe = (pat: string) =>
+    new RegExp(
+      '^' +
+        pat
+          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+          .replace(/\*\*/g, '\u0000')
+          .replace(/\*/g, '[^/]*')
+          .replace(/\?/g, '[^/]')
+          .replace(/\u0000/g, '.*') +
+        '$',
+    )
+  if (toRe(pattern).test(path)) return true
+  if (pattern.includes('/**/')) return toRe(pattern.replace('/**/', '/')).test(path)
+  return false
+}
+
+function kbDocToMemory(m: MockKbMemory) {
+  return { ...m }
+}
+
+function kbSearchMock(query: string, opts: {
+  sources?: string[]
+  from?: string
+  to?: string
+  tags?: string[]
+  limit?: number
+}) {
+  kbEnsureIndex()
+  const q = query.trim()
+  const limit = Math.min(Math.max(opts.limit ?? 8, 1), 20)
+
+  let pool = kbDocs.slice()
+  if (opts.sources?.length) pool = pool.filter((d) => opts.sources!.includes(d.sourceType))
+  if (opts.from) pool = pool.filter((d) => d.occurredOn && d.occurredOn >= opts.from!)
+  if (opts.to) pool = pool.filter((d) => d.occurredOn && d.occurredOn <= opts.to!)
+  if (opts.tags?.length) pool = pool.filter((d) => opts.tags!.some((t) => d.tags.includes(t)))
+
+  if (!q) {
+    return pool
+      .sort((a, b) => (b.occurredOn ?? '').localeCompare(a.occurredOn ?? ''))
+      .slice(0, limit)
+      .map((d) => ({ ...d, snippet: d.summary, score: 0, matched: 'browse' as const }))
+  }
+
+  // 与真实实现同构的召回阶梯：整串命中 → 二字窗口模糊
+  const exact = pool.filter((d) => `${d.title} ${d.body}`.includes(q))
+  const tier = exact.length ? 'like' : 'fuzzy'
+  const hits = exact.length
+    ? exact
+    : (() => {
+        const chars = [...q.replace(/\s/g, '')]
+        if (chars.length < 4) return []
+        const grams = chars.slice(0, -1).map((c, i) => c + chars[i + 1]!)
+        const need = Math.max(2, Math.ceil(grams.length * 0.6))
+        return pool.filter((d) => {
+          const hay = `${d.title} ${d.body}`
+          return grams.filter((g) => hay.includes(g)).length >= need
+        })
+      })()
+
+  return hits.slice(0, limit).map((d, i) => {
+    const idx = d.body.indexOf(q)
+    const snippet =
+      idx >= 0
+        ? `${idx > 20 ? '…' : ''}${d.body.slice(Math.max(0, idx - 20), idx + q.length + 20)}${idx + q.length + 20 < d.body.length ? '…' : ''}`
+        : d.summary
+    return { ...d, snippet, score: 1 / (i + 1), matched: tier }
+  })
+}
+
 export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
   switch (cmd) {
     case 'list_foods': {
@@ -1196,6 +1744,13 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         )
       }
     }
+
+    case 'share_poll':
+      // 浏览器开发环境没有系统分享收件箱
+      return delay([] as T)
+
+    case 'share_read':
+      throw new Error('浏览器开发环境没有分享收件箱')
 
     case 'get_food': {
       const f = foods.find((x) => x.id === Number(args.id)) ?? null
@@ -1395,6 +1950,57 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return delay(structuredClone(list) as T)
     }
 
+    case 'query_todos': {
+      // 与 Rust query_todos 同语义：focus 聚焦视图 / range 区间，LIMIT/OFFSET 分页
+      const todayS = String(args.today)
+      const winEnd = addDays(todayS, 7)
+      const limit = Math.min(Math.max(Number(args.limit ?? 20), 1), 50)
+      const offset = Math.max(Number(args.offset ?? 0), 0)
+      const match =
+        args.scope === 'range'
+          ? (t: Todo) => t.date !== null && t.date >= String(args.start) && t.date <= String(args.end)
+          : (t: Todo) =>
+              t.date === null ||
+              (t.status !== 'done' && (t.date < todayS || (t.date >= todayS && t.date <= winEnd)))
+      const filtered = todos.filter(match).sort(
+        (a, b) =>
+          (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) ||
+          (a.date === null ? 1 : 0) - (b.date === null ? 1 : 0) ||
+          (a.date ?? '9999').localeCompare(b.date ?? '9999') ||
+          (a.startMin ?? 9999) - (b.startMin ?? 9999) ||
+          b.priority - a.priority ||
+          a.id - b.id,
+      )
+      return delay({
+        items: structuredClone(filtered.slice(offset, offset + limit)),
+        total: filtered.length,
+        limit,
+        offset,
+      } as T)
+    }
+
+    case 'todo_distribution': {
+      const todayS = String(args.today)
+      const days = new Map<string, number>()
+      let inbox = 0
+      let overdue = 0
+      for (const t of todos) {
+        if (t.date === null) {
+          inbox += 1
+          continue
+        }
+        days.set(t.date, (days.get(t.date) ?? 0) + 1)
+        if (t.status !== 'done' && t.date < todayS) overdue += 1
+      }
+      return delay({
+        days: [...days.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, count]) => ({ date, count })),
+        inbox,
+        overdue,
+      } as T)
+    }
+
     case 'create_todo': {
       const t: Todo = {
         id: ++todoId,
@@ -1412,6 +2018,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         recRule: (args.recRule as Todo['recRule']) ?? null,
         recKey: null,
         subtasks: (args.subtasks as Todo['subtasks']) ?? null,
+        attachments: (args.attachments as Todo['attachments']) ?? null,
       }
       // 重复模板：自身即首日实例
       if (t.recRule && t.date) t.recKey = `${t.id}:${t.date}`
@@ -1871,6 +2478,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         vision: null,
         thinking: null,
         effort: null,
+        imageMaxEdge: input.imageMaxEdge ?? null,
         lastError: null,
         createdAt: now,
         updatedAt: now,
@@ -2284,11 +2892,493 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return delay(list.length as T)
     }
 
+    // voice（语音对话：配置 / 伪造 ASR 事件流 / 纪要 CRUD / 草稿）
+    case 'voice_config_get':
+      return delay(JSON.parse(JSON.stringify(voiceConfig)) as T)
+    case 'voice_config_save':
+      voiceConfig = JSON.parse(JSON.stringify(args.config)) as MockVoiceConfig
+      return delay(undefined as T)
+    case 'voice_config_status':
+      return delay((voiceConfig.asrAdapter === 'qwen'
+        ? !!voiceConfig.appKey
+        : voiceConfig.mode === 'new'
+          ? !!voiceConfig.appKey
+          : !!voiceConfig.appKey && !!voiceConfig.accessKey) as T)
+    case 'voice_asr_start': {
+      const sessionId = String(args.sessionId)
+      clearVoiceTimers(sessionId)
+      voiceFinaled.set(sessionId, new Set())
+      const ids: number[] = []
+      MOCK_SENTENCES.forEach((sen, i) => {
+        ids.push(
+          window.setTimeout(() => {
+            mockVoice.onAsr?.({ sessionId, kind: 'partial', text: sen.text, startMs: sen.startMs, endMs: sen.endMs })
+          }, sen.startMs),
+        )
+        ids.push(
+          window.setTimeout(() => {
+            voiceFinaled.get(sessionId)?.add(i)
+            mockVoice.onAsr?.({ sessionId, kind: 'final', text: sen.text, startMs: sen.startMs, endMs: sen.endMs })
+          }, sen.endMs),
+        )
+      })
+      voiceTimers.set(sessionId, ids)
+      return delay(undefined as T)
+    }
+    case 'voice_asr_audio':
+      return delay(undefined as T)
+    case 'voice_asr_finish': {
+      const sessionId = String(args.sessionId)
+      clearVoiceTimers(sessionId)
+      // 立即补发尚未 final 的句子 + ended（e2e 不必等真实时长）
+      const done = voiceFinaled.get(sessionId) ?? new Set<number>()
+      MOCK_SENTENCES.forEach((sen, i) => {
+        if (!done.has(i)) {
+          mockVoice.onAsr?.({ sessionId, kind: 'final', text: sen.text, startMs: sen.startMs, endMs: sen.endMs })
+        }
+      })
+      voiceFinaled.delete(sessionId)
+      mockVoice.onAsr?.({ sessionId, kind: 'ended', durationMs: 3400 })
+      return delay(undefined as T)
+    }
+    case 'voice_asr_cancel':
+      clearVoiceTimers(String(args.sessionId))
+      voiceFinaled.delete(String(args.sessionId))
+      return delay(undefined as T)
+    case 'voice_tts_speak':
+      return delay({ audioPath: mockWavDataUrl() } as T)
+    case 'voice_memo_create': {
+      const input = args.input as {
+        id: string
+        chatId: string
+        messageId: string | null
+        title?: string
+        audioPath?: string | null
+        durationMs?: number
+        words?: number
+        sentencesJson?: string
+        summaryJson?: string
+      }
+      const memo: MockMemo = {
+        id: input.id,
+        chatId: input.chatId,
+        messageId: input.messageId,
+        title: input.title ?? '',
+        audioPath: input.audioPath ?? null,
+        durationMs: input.durationMs ?? 0,
+        words: input.words ?? 0,
+        sentences: input.sentencesJson ? JSON.parse(input.sentencesJson) : [],
+        summary: input.summaryJson ? JSON.parse(input.summaryJson) : [],
+        createdAt: new Date().toISOString(),
+      }
+      voiceMemos.unshift(memo)
+      return delay(JSON.parse(JSON.stringify(memo)) as T)
+    }
+    case 'voice_memo_get': {
+      const m = voiceMemos.find((x) => x.id === String(args.id))
+      if (!m) throw new Error('纪要不存在')
+      return delay(JSON.parse(JSON.stringify(m)) as T)
+    }
+    case 'voice_memo_list':
+      return delay(JSON.parse(JSON.stringify(voiceMemos.slice(0, Number(args.limit ?? 200)))) as T)
+    case 'voice_memo_set_summary': {
+      const m = voiceMemos.find((x) => x.id === String(args.id))
+      if (m) m.summary = JSON.parse(String(args.summaryJson))
+      return delay(undefined as T)
+    }
+    case 'voice_memo_rename': {
+      const m = voiceMemos.find((x) => x.id === String(args.id))
+      if (m) m.title = String(args.title)
+      return delay(undefined as T)
+    }
+    case 'voice_memo_delete': {
+      const idx = voiceMemos.findIndex((x) => x.id === String(args.id))
+      if (idx >= 0) voiceMemos.splice(idx, 1)
+      return delay(undefined as T)
+    }
+    case 'voice_draft_save':
+      voiceDraft = JSON.parse(String(args.draftJson))
+      return delay(undefined as T)
+    case 'voice_draft_get':
+      return delay((voiceDraft ? JSON.parse(JSON.stringify(voiceDraft)) : null) as T)
+    case 'voice_draft_clear':
+      voiceDraft = null
+      return delay(undefined as T)
+
     // tracking（跑步前台保活）：纯浏览器开发无需保活，空实现保持契约可见
     case 'tracking_keepalive':
       return delay(undefined as T)
     case 'tracking_status':
       return delay({ granted: true, busy: false } as T)
+
+    /* ---------- 知识库与长期记忆 ---------- */
+    case 'kb_status': {
+      kbEnsureIndex()
+      // 与 Rust enabled_sources 同语义：全量集合减去显式关闭的
+      const allSources = [
+        'todo', 'todo_attachment', 'workout', 'plan', 'meal', 'body_metric', 'food',
+        'program', 'program_meal', 'voice_memo', 'chat', 'chat_message',
+        'chat_attachment', 'memory', 'note',
+      ]
+      const enabled = allSources.filter((k) => kbSettings.sourcesEnabled[k] !== false)
+      return delay({
+        mode: kbSettings.embeddingMode,
+        docs: kbDocs.length + kbMemories.length,
+        chunks: kbDocs.length + kbMemories.length,
+        // keyword 模式下永远不会产生向量，如实回 0 而不是假装有
+        vectors: kbSettings.embeddingMode === 'keyword' ? 0 : kbDocs.length,
+        pending: 0,
+        indexing: false,
+        progress: { phase: 'idle', done: 0, total: 0 },
+        lastError: kbSettings.lastError,
+        embedderReady: kbSettings.embeddingMode === 'cloud' ? !!kbSettings.cloudBaseUrl : true,
+        vecModel: kbSettings.embeddingMode === 'keyword' ? null : kbSettings.cloudModel ?? 'bge-small-zh-v1.5-int8',
+        enabledSources: enabled.length ? enabled : allSources,
+      } as T)
+    }
+
+    case 'kb_search': {
+      const q = plain(args.query as {
+        query?: string
+        sources?: string[]
+        from?: string
+        to?: string
+        tags?: string[]
+        limit?: number
+      })
+      const hits = kbSearchMock(String(q?.query ?? ''), q ?? {})
+      // 记忆已编目进 kbDocs（见 kbEnsureIndex），与其它来源同池检索
+      const merged = hits.filter((h) => !q?.sources?.length || q.sources.includes(h.sourceType))
+      return delay(plain(merged) as T)
+    }
+
+    case 'kb_read': {
+      kbEnsureIndex()
+      const id = Number(args.docId)
+      const level = String(args.level ?? 'l1')
+      const offset = Math.max(Number(args.offset ?? 0), 0)
+      const limit = level === 'l1' ? 1 : Math.min(Math.max(Number(args.limit ?? 8), 1), 64)
+
+      const packDoc = (doc: MockKbDoc) => {
+        // 与 Rust 一致：note 源直读 kb_files 真源——缓存 body 有 8000 字上限，
+        // 全文归档的文档超限后若按缓存切块，AI 分页到头也读不到剩余内容
+        const file = doc.sourceType === 'note' ? kbFiles.find((f) => f.id === Number(doc.sourceId)) : undefined
+        const chunks = kbChunkText(file ? file.content : doc.body).map((text, ord) => ({ id: doc.id * 1000 + ord, ord, text }))
+        const picked = level === 'l1' ? chunks.slice(0, 1) : chunks.slice(offset, offset + limit)
+        return {
+          id: doc.id,
+          sourceType: doc.sourceType,
+          sourceId: doc.sourceId,
+          path: doc.path,
+          editable: doc.editable,
+          system: doc.system,
+          kind: doc.kind,
+          title: doc.title,
+          summary: doc.summary,
+          occurredOn: doc.occurredOn,
+          tags: doc.tags,
+          meta: {} as Record<string, unknown>,
+          updatedAt: doc.updatedAt,
+          level,
+          totalChunks: chunks.length,
+          offset,
+          hasMore: offset + picked.length < chunks.length,
+          chunks: picked,
+        }
+      }
+
+      const mem = kbMemories.find((m) => m.id === id)
+      if (mem) {
+        return delay({
+          id,
+          sourceType: 'memory',
+          sourceId: String(id),
+          path: `记忆/${mem.memType}/${mem.topic || '未命名'}-${id}.md`,
+          editable: true,
+          system: false,
+          kind: 'text',
+          title: mem.topic ? `记忆 · ${mem.topic}` : `记忆 · ${mem.memType}`,
+          summary: mem.content.slice(0, 120),
+          occurredOn: mem.createdAt.slice(0, 10),
+          tags: [mem.memType],
+          meta: { confidence: mem.confidence, memType: mem.memType },
+          updatedAt: mem.updatedAt,
+          level,
+          totalChunks: 1,
+          offset: 0,
+          hasMore: false,
+          chunks: [{ id, ord: 0, text: mem.content }],
+        } as T)
+      }
+      const doc = kbDocs.find((d) => d.id === id)
+      if (!doc) throw new Error(`知识库条目不存在：id=${id}（先用 search_knowledge 查 id）`)
+      return delay(packDoc(doc) as T)
+    }
+
+    case 'kb_glob': {
+      kbEnsureIndex()
+      const pattern = String(args.pattern ?? '')
+      const limit = Math.min(Math.max(Number(args.limit ?? 100), 1), 200)
+      const hits = kbDocs
+        .filter((d) => d.path && kbGlobMatch(pattern, d.path))
+        .sort((a, b) => (a.path ?? '').localeCompare(b.path ?? ''))
+        .slice(0, limit)
+        .map((d) => ({
+          id: d.id,
+          path: d.path,
+          sourceType: d.sourceType,
+          title: d.title,
+          kind: d.kind,
+          editable: d.editable,
+          system: d.system,
+          occurredOn: d.occurredOn,
+        }))
+      return delay(plain(hits) as T)
+    }
+
+    case 'kb_file_write': {
+      loadKbStore()
+      const input = plain(args.input as { path: string; content: string }) ?? { path: '', content: '' }
+      const path = kbNormalizePath(String(input.path ?? ''))
+      const content = String(input.content ?? '')
+      if (!content.trim()) throw new Error('文件内容不能为空')
+      const now = new Date().toISOString()
+      let f = kbFiles.find((x) => x.path === path)
+      if (f) {
+        f.content = content
+        f.updatedAt = now
+      } else {
+        f = { id: ++kbFileId, path, content, system: false, createdAt: now, updatedAt: now }
+        kbFiles.push(f)
+      }
+      saveKbFiles()
+      kbIndexed = false
+      kbEnsureIndex()
+      const doc = kbDocs.find((d) => d.sourceType === 'note' && d.sourceId === String(f!.id))!
+      return delay({ ...f, docId: doc.id } as T)
+    }
+
+    case 'kb_file_rename': {
+      loadKbStore()
+      // 与 Rust resolve_file_id 同语义：收文档 id（glob/检索给的）或文件 id
+      const raw = Number(args.id)
+      const docHit = kbDocs.find((d) => d.id === raw && d.sourceType === 'note')
+      const id = docHit ? Number(docHit.sourceId) : raw
+      const f = kbFiles.find((x) => x.id === id)
+      if (!f) throw new Error(`文件不存在：id=${id}`)
+      if (f.system) throw new Error('该文件是系统文件（规范/），不能改名；它的内容随应用版本更新')
+      const path = kbNormalizePath(String(args.path ?? ''))
+      if (kbFiles.some((x) => x.path === path && x.id !== id)) throw new Error(`目标路径已存在：${path}`)
+      f.path = path
+      f.updatedAt = new Date().toISOString()
+      saveKbFiles()
+      kbIndexed = false
+      kbEnsureIndex()
+      return delay({ ...f } as T)
+    }
+
+    case 'kb_file_delete': {
+      loadKbStore()
+      const raw = Number(args.id)
+      const docHit = kbDocs.find((d) => d.id === raw && d.sourceType === 'note')
+      const id = docHit ? Number(docHit.sourceId) : raw
+      const f = kbFiles.find((x) => x.id === id)
+      if (!f) throw new Error(`文件不存在：id=${id}`)
+      if (f.system) throw new Error('该文件是系统文件（规范/），不能删除；它的内容随应用版本更新')
+      kbFiles.splice(kbFiles.indexOf(f), 1)
+      saveKbFiles()
+      const di = kbDocs.findIndex((d) => d.sourceType === 'note' && d.sourceId === String(id))
+      if (di >= 0) kbDocs.splice(di, 1)
+      return delay(undefined as T)
+    }
+
+    case 'kb_file_get': {
+      loadKbStore()
+      const raw = Number(args.id)
+      const docHit = kbDocs.find((d) => d.id === raw && d.sourceType === 'note')
+      const id = docHit ? Number(docHit.sourceId) : raw
+      const f = kbFiles.find((x) => x.id === id)
+      if (!f) throw new Error(`文件不存在：id=${id}`)
+      return delay({ ...f } as T)
+    }
+
+    case 'kb_reindex': {
+      kbIndexed = false
+      kbEnsureIndex()
+      return delay(kbDocs.length as T)
+    }
+
+    case 'kb_settings_get':
+      return delay({
+        embeddingMode: kbSettings.embeddingMode,
+        cloudBaseUrl: kbSettings.cloudBaseUrl,
+        cloudApiKeyTail: kbSettings.cloudApiKey ? `…${kbSettings.cloudApiKey.slice(-4)}` : null,
+        cloudModel: kbSettings.cloudModel,
+        cloudDim: kbSettings.cloudDim,
+        sourcesEnabled: kbSettings.sourcesEnabled,
+        autoMemory: kbSettings.autoMemory,
+        lastError: kbSettings.lastError,
+        updatedAt: kbSettings.updatedAt,
+      } as T)
+
+    case 'kb_settings_set': {
+      const input = plain(args.input as Record<string, unknown>) ?? {}
+      if (input.embeddingMode !== undefined) {
+        const mode = String(input.embeddingMode)
+        if (!['keyword', 'local', 'cloud'].includes(mode)) {
+          throw new Error(`未知的检索模式：${mode}（可选 keyword / local / cloud）`)
+        }
+        kbSettings.embeddingMode = mode as typeof kbSettings.embeddingMode
+      }
+      if (input.cloudBaseUrl !== undefined) kbSettings.cloudBaseUrl = String(input.cloudBaseUrl) || null
+      if (input.cloudApiKey !== undefined) {
+        const v = String(input.cloudApiKey)
+        // 传空串=清除；不传=保留（前端拿不到明文）
+        kbSettings.cloudApiKey = v.trim() ? v : null
+      }
+      if (input.cloudModel !== undefined) kbSettings.cloudModel = String(input.cloudModel) || null
+      if (input.cloudDim !== undefined) kbSettings.cloudDim = Number(input.cloudDim) || null
+      if (input.sourcesEnabled !== undefined) kbSettings.sourcesEnabled = input.sourcesEnabled as Record<string, boolean>
+      if (input.autoMemory !== undefined) kbSettings.autoMemory = Boolean(input.autoMemory)
+      kbSettings.updatedAt = new Date().toISOString()
+      saveKbSettings()
+      return mockInvoke<T>('kb_settings_get', {})
+    }
+
+    case 'kb_probe_embedder': {
+      if (kbSettings.embeddingMode === 'keyword') {
+        throw new Error('当前是纯关键词模式，没有可测试的嵌入后端')
+      }
+      // 浏览器里没有真的推理后端，如实报错而不是假装成功
+      throw new Error('浏览器 mock 环境没有本地嵌入后端（真实应用走 ONNX Runtime）')
+    }
+
+    case 'kb_rebuild_vectors':
+      return delay(0 as T)
+
+    case 'kb_memories': {
+      loadKbStore()
+      const t = args.memType as string | undefined
+      const list = (t ? kbMemories.filter((m) => m.memType === t) : kbMemories)
+        .slice()
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      return delay(plain(list.map(kbDocToMemory)) as T)
+    }
+
+    case 'kb_memory_apply': {
+      loadKbStore()
+      const candidates = plain(args.candidates as Record<string, unknown>[]) ?? []
+      const chatId = (args.chatId as string | undefined) ?? null
+      let added = 0
+      let updated = 0
+      let deleted = 0
+      let skipped = 0
+      const validTypes = ['preference', 'constraint', 'event', 'entity', 'profile', 'pattern']
+      for (const c of candidates) {
+        const op = String(c.op ?? '')
+        if (op === 'delete') {
+          const id = Number(c.id)
+          const i = kbMemories.findIndex((m) => m.id === id)
+          if (i >= 0) {
+            kbMemories.splice(i, 1)
+            deleted++
+          } else skipped++
+          continue
+        }
+        const content = String(c.content ?? '').trim()
+        if (!content) {
+          skipped++
+          continue
+        }
+        const memType = validTypes.includes(String(c.memType)) ? String(c.memType) : 'preference'
+        const topic = String(c.topic ?? '').trim()
+        if (op === 'add') {
+          const dup = kbMemories.find((m) => m.memType === memType && m.topic === topic && m.content === content)
+          if (dup) {
+            skipped++
+            continue
+          }
+          const now = new Date().toISOString()
+          kbMemories.push({
+            id: ++kbMemoryId,
+            memType,
+            topic,
+            content,
+            confidence: Number(c.confidence ?? 0.7),
+            activeCount: 0,
+            sourceChatId: chatId,
+            createdAt: now,
+            updatedAt: now,
+          })
+          added++
+        } else if (op === 'update') {
+          const id = Number(c.id)
+          const m = kbMemories.find((x) => x.id === id)
+          if (!m) {
+            skipped++
+            continue
+          }
+          Object.assign(m, { memType, topic, content, confidence: Number(c.confidence ?? m.confidence), updatedAt: new Date().toISOString() })
+          updated++
+        } else {
+          throw new Error(`记忆操作只支持 add / update / delete，收到：${op}`)
+        }
+      }
+      if (added || updated || deleted) saveKbMemories()
+      // 编目同步：新增/更新走重建，删除直接摘除对应文档
+      if (deleted > 0) {
+        for (const c of candidates) {
+          if (String(c.op ?? '') !== 'delete') continue
+          const di = kbDocs.findIndex((d) => d.sourceType === 'memory' && d.sourceId === String(c.id))
+          if (di >= 0) kbDocs.splice(di, 1)
+        }
+      }
+      if (added > 0 || updated > 0) {
+        kbIndexed = false
+        kbEnsureIndex()
+      }
+      return delay({ added, updated, deleted, skipped } as T)
+    }
+
+    case 'kb_memory_delete': {
+      loadKbStore()
+      const id = Number(args.id)
+      const i = kbMemories.findIndex((m) => m.id === id)
+      if (i < 0) return delay(false as T)
+      kbMemories.splice(i, 1)
+      saveKbMemories()
+      return delay(true as T)
+    }
+
+    case 'kb_cognition': {
+      loadKbStore()
+      const sorted = kbMemories
+        .slice()
+        .sort((a, b) => b.activeCount - a.activeCount || b.confidence - a.confidence)
+        .slice(0, 24)
+      const labels: Record<string, string> = {
+        preference: '偏好', constraint: '约束', event: '事件',
+        entity: '实体', profile: '画像', pattern: '规律',
+      }
+      let text = ''
+      for (const m of sorted) {
+        const line = `- [${labels[m.memType] ?? m.memType}] ${m.content}`
+        if (text.length + line.length + 1 > 1200) break
+        text = text ? `${text}\n${line}` : line
+      }
+      return delay({ memories: plain(sorted.map(kbDocToMemory)), text } as T)
+    }
+
+    case 'kb_memory_bump': {
+      loadKbStore()
+      const ids = (args.ids as number[]) ?? []
+      for (const id of ids) {
+        const m = kbMemories.find((x) => x.id === id)
+        if (m) m.activeCount++
+      }
+      saveKbMemories()
+      return delay(undefined as T)
+    }
 
     default:
       throw new Error(`mock 未实现的命令: ${cmd}`)
