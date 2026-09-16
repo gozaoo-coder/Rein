@@ -222,10 +222,11 @@ function onAsrEvent(e: AsrEventPayload): void {
 
 /* ---------- 视图与恢复 ---------- */
 
-/** 打开语音会话视图；未配置语音服务时引导去模型页 */
+/** 打开语音会话视图；识别（ASR）未配置时引导去模型页 */
 export async function openView(): Promise<boolean> {
   if (!voice.configured) {
-    voice.configured = await voiceService.configStatus().catch(() => false)
+    const st = await voiceService.configStatus().catch(() => null)
+    voice.configured = st?.asrReady === true
   }
   if (!voice.configured) return false
   if (voice.view === 'closed') {

@@ -7,7 +7,17 @@
 
 import { convertFileSrc } from '@tauri-apps/api/core'
 
-import type { AsrEventPayload, MemoSummaryItem, VoiceConfig, VoiceDraft, VoiceMemo, VoiceMemoInput, VoiceSentence } from '@/types'
+import type {
+  AsrEventPayload,
+  MemoSummaryItem,
+  TtsCredential,
+  VoiceConfig,
+  VoiceDraft,
+  VoiceMemo,
+  VoiceMemoInput,
+  VoiceSentence,
+  VoiceStatus,
+} from '@/types'
 import { invoke, isTauri } from './transport'
 
 type AsrListener = (e: AsrEventPayload) => void
@@ -82,6 +92,7 @@ export const voiceService = {
       asrAdapter: c.asrAdapter ?? 'auto',
       asrAdapterUserPicked: c.asrAdapterUserPicked ?? false,
       asrBaseUrl: c.asrBaseUrl ?? '',
+      ttsCredential: c.ttsCredential ?? null,
       asrResourceId: c.asrResourceId ?? 'volc.seedasr.sauc.duration',
       ttsResourceId: c.ttsResourceId ?? 'seed-tts-2.0',
       voiceName: c.voiceName ?? '',
@@ -89,7 +100,20 @@ export const voiceService = {
     }
   },
   configSave: (config: VoiceConfig) => invoke<void>('voice_config_save', { config }),
-  configStatus: () => invoke<boolean>('voice_config_status', {}),
+  configStatus: () => invoke<VoiceStatus>('voice_config_status', {}),
+
+  /* ---- 连通性探测（AI 辅助配置与手动调试共用） ---- */
+
+  /** TTS 试听/探测：不传音色用当前配置音色，返回可播放 URL */
+  ttsProbe: async (voiceName?: string): Promise<{ audioUrl: string | null }> => {
+    const r = await invoke<{ audioPath: string }>('voice_tts_probe', { voiceName: voiceName ?? null })
+    return { audioUrl: resolveAudioUrl(r.audioPath) }
+  },
+  /** ASR 探测：用当前配置建一次识别连接并立即结束，验证凭据/端点/资源 ID */
+  asrProbe: () => invoke<void>('voice_asr_probe', {}),
+  /** 保存朗读独立凭据（null = 恢复继承识别凭据；不动识别配置） */
+  ttsCredentialSave: (ttsCredential: TtsCredential | null) =>
+    invoke<void>('voice_tts_credential_save', { ttsCredential }),
 
   /* ---- 识别会话 ---- */
 

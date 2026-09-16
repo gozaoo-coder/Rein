@@ -1167,6 +1167,7 @@ interface MockVoiceConfig {
   asrAdapter: string
   asrAdapterUserPicked: boolean
   asrBaseUrl: string
+  ttsCredential: { mode: 'legacy' | 'new'; appKey: string; accessKey: string } | null
   asrResourceId: string
   ttsResourceId: string
   voiceName: string
@@ -1180,6 +1181,7 @@ let voiceConfig: MockVoiceConfig = {
   asrAdapter: 'auto',
   asrAdapterUserPicked: false,
   asrBaseUrl: '',
+  ttsCredential: null,
   asrResourceId: 'volc.seedasr.sauc.duration',
   ttsResourceId: 'seed-tts-2.0',
   voiceName: '',
@@ -2898,12 +2900,31 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'voice_config_save':
       voiceConfig = JSON.parse(JSON.stringify(args.config)) as MockVoiceConfig
       return delay(undefined as T)
-    case 'voice_config_status':
-      return delay((voiceConfig.asrAdapter === 'qwen'
+    case 'voice_config_status': {
+      const s = `${voiceConfig.asrBaseUrl} ${voiceConfig.asrResourceId}`.toLowerCase()
+      const adapter = voiceConfig.asrAdapter === 'auto'
+        ? (/(qwen|dashscope|aliyun)/.test(s) ? 'qwen' : 'doubao')
+        : voiceConfig.asrAdapter
+      const asrReady = adapter === 'qwen'
         ? !!voiceConfig.appKey
         : voiceConfig.mode === 'new'
           ? !!voiceConfig.appKey
-          : !!voiceConfig.appKey && !!voiceConfig.accessKey) as T)
+          : !!voiceConfig.appKey && !!voiceConfig.accessKey
+      // mock 里 TTS 恒可合成；ttsReady 跟随音色是否有值，与真实端语义对齐
+      return delay({
+        asrReady,
+        asrAdapter: adapter,
+        ttsReady: !!voiceConfig.voiceName,
+        ttsStandalone: !!voiceConfig.ttsCredential?.appKey,
+      } as T)
+    }
+    case 'voice_tts_probe':
+      return delay({ audioPath: mockWavDataUrl() } as T)
+    case 'voice_asr_probe':
+      return delay(undefined as T)
+    case 'voice_tts_credential_save':
+      voiceConfig.ttsCredential = (args.ttsCredential as MockVoiceConfig['ttsCredential']) ?? null
+      return delay(undefined as T)
     case 'voice_asr_start': {
       const sessionId = String(args.sessionId)
       clearVoiceTimers(sessionId)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   BrainCircuit,
   Eye,
@@ -26,6 +27,15 @@ import type { AiModel, VoiceConfig } from '@/types'
 /** 模型管理：添加 / 编辑 / 删除 / 设默认，max_tokens=1 探测视觉·思考·努力。 */
 const store = useModelsStore()
 const toast = useToast()
+const router = useRouter()
+
+/** 让 AI 帮我配置语音服务：跳 AI 页并预填请求（AI 有 voice 工具组，可诊断/填凭据/试听） */
+function askAiSetupVoice(): void {
+  void router.push({
+    path: '/ai',
+    query: { ask: '帮我检查语音对话服务的配置，有问题的话直接帮我修好并测试验证' },
+  })
+}
 
 onMounted(() => {
   void store.load().catch(() => toast.toast('模型列表加载失败'))
@@ -171,15 +181,23 @@ const capMeta = {
       />
     </section>
 
-    <!-- 豆包语音服务（语音对话功能的凭据与音色） -->
+    <!-- 语音服务（语音对话功能的凭据与音色，豆包/Qwen 识别 + 豆包朗读） -->
     <button class="card vcfg" @click="voiceOpen = true">
       <span class="v-ic"><Mic :size="15" /></span>
       <span class="vt">
-        <b>豆包语音服务
+        <b>语音服务
           <i v-if="voiceConfigured(voiceConfig)" class="v-ok">已连接</i>
           <i v-else class="v-no">未配置</i>
         </b>
         <em>语音对话 · 实时转写与纪要朗读</em>
+      </span>
+      <span class="v-go">›</span>
+    </button>
+    <button class="card ai-setup" @click="askAiSetupVoice">
+      <span class="v-ic ic-spark"><Sparkles :size="15" /></span>
+      <span class="vt">
+        <b>让 AI 帮我配置语音</b>
+        <em>聊天里直接诊断问题、填凭据、试听音色</em>
       </span>
       <span class="v-go">›</span>
     </button>
@@ -271,7 +289,7 @@ const capMeta = {
   color: var(--danger, #ff5257);
 }
 
-/* 豆包语音服务卡 */
+/* 语音服务卡 */
 .vcfg {
   display: flex;
   align-items: center;
@@ -331,6 +349,21 @@ const capMeta = {
   color: var(--text-3);
   display: block;
   margin-top: 2px;
+}
+
+/* 「让 AI 帮我配置语音」卡：复用 vcfg 布局，图标换主题色 */
+.ai-setup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 13px 14px;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.ic-spark {
+  background: linear-gradient(135deg, #7c5cff, #b48bff);
 }
 
 .v-go {

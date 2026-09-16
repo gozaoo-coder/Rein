@@ -26,7 +26,7 @@ html2text = "0.17"
 # 分享收件箱（share_read 返回文件内容给前端）
 base64 = "0.22"
 # 语音对话（modules/voice）：豆包 ASR/TTS WS 客户端 + gzip 二进制协议 + 音频落盘
-tokio = { version = "1", features = ["sync", "macros", "rt"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
 tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 flate2 = "1"

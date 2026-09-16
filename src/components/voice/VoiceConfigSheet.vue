@@ -5,7 +5,7 @@ import { Volume2 } from 'lucide-vue-next'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { voiceService } from '@/services/voiceService'
 import { useToast } from '@/composables/useToast'
-import type { AsrAdapter, VoiceConfig } from '@/types'
+import type { AsrAdapter, TtsCredential, VoiceConfig } from '@/types'
 
 /** 语音服务配置表单（模型页语音服务卡 → 编辑）。
  *
@@ -13,7 +13,13 @@ import type { AsrAdapter, VoiceConfig } from '@/types'
  * - 第一层（用户未手选 = 「自动」）：检测 baseURL/模型名关键词 → 程序自动替选适配器并提示；
  *   关键词变化自动换向（qwen 删了填 doubao → 自动改选豆包），清空后回到「自动」。
  * - 第二层（用户已手选豆包/Qwen）：只弹推荐气泡（一键切换/忽略），绝不覆盖用户选择。
- * 凭据：豆包 = 旧版 App ID+Token / 新版 API Key；Qwen = DASHSCOPE_API_KEY（Bearer）。 */
+ * 凭据：豆包 = 旧版 App ID+Token / 新版 API Key；Qwen = DASHSCOPE_API_KEY（Bearer）。
+ *
+ * 朗读（豆包 TTS）凭据独立分区：
+ * - 默认「跟随识别凭据」（豆包适配器下零配置可用）；
+ * - 识别配 Qwen 时豆包 TTS 无法继承凭据 → 提示并要求独立凭据才能朗读；
+ * - 「独立凭据」开启后填写豆包凭据，保存进 ttsCredential（识别配置不受影响）。
+ * 连通性测试：识别（WS 建连即结束）与朗读（试听任意音色）分开验证。 */
 const props = defineProps<{ open: boolean; config: VoiceConfig | null }>()
 const emit = defineEmits<{ close: []; saved: [config: VoiceConfig] }>()
 
@@ -46,6 +52,13 @@ const accessKey = ref('')
 const adapter = ref<AsrAdapter>('auto')
 const asrBaseUrl = ref('')
 const asrResourceId = ref('volc.seedasr.sauc.duration')
+
+/** 朗读独立凭据分区 */
+const ttsStandaloneOn = ref(false)
+const ttsMode = ref<'legacy' | 'new'>('legacy')
+const ttsAppKey = ref('')
+const ttsAccessKey = ref('')
+
 const ttsResourceId = ref('seed-tts-2.0')
 const voiceName = ref('')
 const speed = ref(1)
@@ -61,10 +74,14 @@ const suggestionDismissed = ref<'doubao' | 'qwen' | null>(null)
 /** 表单生效中的适配器（自动层下 = 关键词识别结果，识别不出回落豆包） */
 const effectiveAdapter = ref<'doubao' | 'qwen'>('doubao')
 
+/** 朗读凭据是否不可用（识别配 Qwen 且未开独立凭据 → 豆包 TTS 无法继承） */
+const ttsBlocked = ref(false)
+
 /** 双层选择求值：baseURL/模型名变化与手动切换适配器时都要跑一遍 */
 function evaluateAdapter(): void {
   const detected = detectAdapter(asrBaseUrl.value, asrResourceId.value)
   effectiveAdapter.value = adapter.value === 'qwen' ? 'qwen' : detected ?? 'doubao'
+  ttsBlocked.value = effectiveAdapter.value === 'qwen' && !ttsStandaloneOn.value
   if (!detected) {
     // 关键词消失：自动替选的撤回到「自动」
     if (autoApplied.value && !adapterTouched.value) {
@@ -88,6 +105,11 @@ function evaluateAdapter(): void {
     suggestion.value = null
     suggestionDismissed.value = null
   }
+}
+
+function toggleTtsStandalone(v: boolean): void {
+  ttsStandaloneOn.value = v
+  evaluateAdapter()
 }
 
 watch([asrBaseUrl, asrResourceId], () => evaluateAdapter())
@@ -118,6 +140,11 @@ watch(
     adapter.value = c?.asrAdapter ?? 'auto'
     adapterTouched.value = c?.asrAdapterUserPicked === true
     asrBaseUrl.value = c?.asrBaseUrl ?? ''
+    const tc = c?.ttsCredential
+    ttsStandaloneOn.value = !!tc?.appKey
+    ttsMode.value = tc?.mode ?? 'legacy'
+    ttsAppKey.value = tc?.appKey ?? ''
+    ttsAccessKey.value = tc?.accessKey ?? ''
     asrResourceId.value = c?.asrResourceId || 'volc.seedasr.sauc.duration'
     ttsResourceId.value = c?.ttsResourceId || 'seed-tts-2.0'
     voiceName.value = c?.voiceName ?? ''
@@ -131,9 +158,24 @@ watch(
 
 const saving = ref(false)
 
+/** 组装朗读独立凭据：未开启或 Key 空 = null（继承识别凭据） */
+function buildTtsCredential(): TtsCredential | null {
+  if (!ttsStandaloneOn.value || !ttsAppKey.value.trim()) return null
+  return {
+    mode: ttsMode.value,
+    appKey: ttsAppKey.value.trim(),
+    accessKey: ttsAccessKey.value.trim(),
+  }
+}
+
 async function onSave(): Promise<void> {
   if (!appKey.value.trim() || (effectiveAdapter.value === 'doubao' && mode.value === 'legacy' && !accessKey.value.trim())) {
-    toast.toast('请填写完整的凭据')
+    toast.toast('请填写完整的识别凭据')
+    return
+  }
+  const ttsCred = buildTtsCredential()
+  if (ttsCred && ttsCred.mode === 'legacy' && !ttsCred.accessKey) {
+    toast.toast('请填写朗读独立凭据的 Access Token')
     return
   }
   saving.value = true
@@ -144,6 +186,7 @@ async function onSave(): Promise<void> {
     asrAdapter: adapter.value,
     asrAdapterUserPicked: adapterTouched.value,
     asrBaseUrl: asrBaseUrl.value.trim(),
+    ttsCredential: ttsCred,
     asrResourceId: asrResourceId.value.trim() || ADAPTER_META[effectiveAdapter.value].defaultModel,
     ttsResourceId: ttsResourceId.value.trim() || 'seed-tts-2.0',
     voiceName: voiceName.value.trim(),
@@ -161,6 +204,24 @@ async function onSave(): Promise<void> {
   }
 }
 
+/** 识别连通性测试：先保存当前表单，再用配置建一次识别连接立即结束 */
+const probing = ref(false)
+
+async function onAsrProbe(): Promise<void> {
+  if (probing.value) return
+  probing.value = true
+  try {
+    await onSave()
+    await voiceService.asrProbe()
+    toast.toast('识别服务连通正常 ✓')
+  } catch (e) {
+    toast.toast(`识别连通失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    probing.value = false
+  }
+}
+
+/** 试听音色：先保存当前表单（探测读取已存配置），再用表单里的音色合成短句播放 */
 const trying = ref(false)
 
 async function onTry(): Promise<void> {
@@ -168,7 +229,7 @@ async function onTry(): Promise<void> {
   trying.value = true
   try {
     await onSave()
-    const { audioUrl } = await voiceService.ttsSpeak(`try${Date.now()}`, '你好，我是 Rein 的语音助手，很高兴为你服务。')
+    const { audioUrl } = await voiceService.ttsProbe(voiceName.value.trim() || undefined)
     if (!audioUrl) throw new Error('未获得音频')
     const a = new Audio(audioUrl)
     await a.play()
@@ -182,7 +243,7 @@ async function onTry(): Promise<void> {
 </script>
 
 <template>
-  <SheetModal :open="open" title="语音服务（ASR 适配器）" initial-snap="large" @close="emit('close')">
+  <SheetModal :open="open" title="语音服务（识别与朗读）" initial-snap="large" @close="emit('close')">
     <div class="form">
       <label class="f-label">识别适配器</label>
       <div class="mode-seg">
@@ -235,18 +296,48 @@ async function onTry(): Promise<void> {
         <input v-model="asrResourceId" type="text" class="mono" placeholder="qwen-audio-3.0-asr-flash-streaming">
       </template>
 
-      <template v-if="effectiveAdapter === 'doubao'">
-        <label class="f-label">合成 TTS · Resource-Id（纪要朗读）</label>
-        <input v-model="ttsResourceId" type="text" class="mono" placeholder="seed-tts-2.0">
-        <label class="f-label">朗读音色（voice_type · 2.0 音色 ID）</label>
-        <input v-model="voiceName" type="text" class="mono" placeholder="如 zh_female_cancan_uranus_bigtts">
-        <label class="f-label">语速（0.2 ~ 3.0）</label>
-        <input v-model.number="speed" type="number" step="0.1" min="0.2" max="3">
+      <div class="acts">
+        <button class="try" :disabled="probing || saving" @click="onAsrProbe">
+          {{ probing ? '测试中…' : '测试识别连通' }}
+        </button>
+      </div>
+
+      <div class="divider" />
+
+      <label class="f-label">朗读合成（豆包 TTS）· 凭据</label>
+      <div class="mode-seg">
+        <button :class="{ on: !ttsStandaloneOn }" @click="toggleTtsStandalone(false)">跟随识别凭据</button>
+        <button :class="{ on: ttsStandaloneOn }" @click="toggleTtsStandalone(true)">独立凭据</button>
+      </div>
+      <p v-if="ttsBlocked" class="warn-notice">
+        识别适配器是 Qwen，朗读凭据无法继承（豆包 TTS 只认豆包凭据）——请切换到「独立凭据」填入豆包 Key，否则纪要朗读不可用。
+      </p>
+
+      <template v-if="ttsStandaloneOn">
+        <label class="f-label">朗读凭据模式</label>
+        <div class="mode-seg">
+          <button :class="{ on: ttsMode === 'legacy' }" @click="ttsMode = 'legacy'">旧版 · App ID + Token</button>
+          <button :class="{ on: ttsMode === 'new' }" @click="ttsMode = 'new'">新版 · API Key</button>
+        </div>
+
+        <label class="f-label">{{ ttsMode === 'new' ? 'API Key（X-Api-Key）' : 'App ID（X-Api-App-Key）' }}</label>
+        <input v-model="ttsAppKey" type="text" autocomplete="off" placeholder="控制台获取">
+
+        <template v-if="ttsMode === 'legacy'">
+          <label class="f-label">Access Token（X-Api-Access-Key）</label>
+          <input v-model="ttsAccessKey" type="password" autocomplete="new-password" placeholder="控制台获取">
+        </template>
       </template>
-      <p v-else class="hint t-3">Qwen 适配器目前仅接入识别；纪要朗读由豆包 TTS 提供，需在豆包适配器下配置音色后使用。</p>
+
+      <label class="f-label">合成 TTS · Resource-Id（纪要朗读）</label>
+      <input v-model="ttsResourceId" type="text" class="mono" placeholder="seed-tts-2.0">
+      <label class="f-label">朗读音色（voice_type · 2.0 音色 ID）</label>
+      <input v-model="voiceName" type="text" class="mono" placeholder="如 zh_female_cancan_uranus_bigtts">
+      <label class="f-label">语速（0.2 ~ 3.0）</label>
+      <input v-model.number="speed" type="number" step="0.1" min="0.2" max="3">
 
       <div class="acts">
-        <button v-if="effectiveAdapter === 'doubao'" class="try" :disabled="trying" @click="onTry">
+        <button class="try" :disabled="trying || saving" @click="onTry">
           <Volume2 :size="14" /> {{ trying ? '合成中…' : '试听音色' }}
         </button>
         <button class="save" :disabled="saving" @click="onSave">{{ saving ? '保存中…' : '保存' }}</button>
@@ -275,6 +366,22 @@ async function onTry(): Promise<void> {
   border-radius: 8px;
   padding: 6px 10px;
   margin-top: 6px;
+}
+
+.warn-notice {
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  color: var(--c-warn, #b45309);
+  background: rgba(245, 158, 11, 0.12);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-top: 6px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--surface-3, var(--surface-2));
+  margin: 14px 0 4px;
 }
 
 /* 第二层推荐气泡：只提示不强改 */

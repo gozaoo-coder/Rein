@@ -28,6 +28,7 @@ export type ToolGroup =
   | 'knowledge' // 知识库混合检索（跨来源）
   | 'memory' // 长期记忆（用户认知）
   | 'models' // AI 模型配置（AI 自管理）
+  | 'voice' // 语音对话服务配置（ASR/TTS 凭据、音色与连通性，AI 自管理）
   | 'web' // 联网搜索 / 抓取网页
   | 'image' // 图片查看（放大镜）
 

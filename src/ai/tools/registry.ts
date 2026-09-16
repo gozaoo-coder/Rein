@@ -25,6 +25,7 @@ import { programTools } from './program'
 import { sessionTools } from './session'
 import type { AppTool } from './types'
 import { todoTools } from './todo'
+import { voiceTools } from './voice'
 import { webTools } from './web'
 
 /** 全部应用数据工具（不含聊天自身的 JSON 输出协议） */
@@ -43,6 +44,7 @@ export const APP_TOOLS: AppTool[] = [
   ...memoryTools,
   ...noteTools,
   ...modelTools,
+  ...voiceTools,
   ...webTools,
   ...imageTools,
 ]
