@@ -470,8 +470,20 @@ async function main() {
     ok('J1 周回顾卡渲染（环 + 洞察）', await evalJS(
       `!!document.querySelector('.ws .ring svg') && !!document.querySelector('.ws .insight')`,
     ))
-    ok('J2 周选择条 7 格', await evalJS(`document.querySelectorAll('.week .wcell').length === 7`))
-    await evalJS(`document.querySelectorAll('.week .wcell')[5].click()`)
+    ok('J2 周时间线 7 列（表头 + 底部池 + 块区）', await evalJS(
+      `document.querySelectorAll('[data-testid="week-timeline"] .dh').length === 7 &&
+       document.querySelectorAll('[data-testid="week-timeline"] .pcol').length === 7`,
+    ))
+    // 今天的块渲染在时间线里（力量训练在今天的列上）
+    ok('J2b 今天列有块', await evalJS(
+      `[...document.querySelectorAll('[data-testid="week-timeline"] .blk')].some(b => (b.dataset.title ?? '').includes('力量训练'))`,
+    ))
+    ok('J2c 表头 7 格横向分布', await evalJS(`(() => {
+      const hs = [...document.querySelectorAll('[data-testid="week-timeline"] .dh')].map(b => b.getBoundingClientRect())
+      if (hs.length !== 7) return false
+      return hs[6].left - hs[0].left > 300 && hs.every(r => r.width > 40)
+    })()`))
+    await evalJS(`document.querySelectorAll('[data-testid="week-timeline"] .dh')[5].click()`)
     await sleep(500)
     ok('J3 点周六回画布且日期切换', await evalJS(
       `!!document.querySelector('.dateline') && !document.querySelector('.dateline').textContent.includes('今天')`,

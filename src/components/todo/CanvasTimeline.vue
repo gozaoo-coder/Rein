@@ -5,6 +5,7 @@ import { ChevronRight, Layers } from 'lucide-vue-next'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { CATEGORY_META } from '@/config/domain'
 import { minToHHmm, nowMin, todayStr } from '@/utils/date'
+import { durationOf as durOfShared, layoutDayBlocks } from '@/utils/timelineLayout'
 import type { Todo } from '@/types'
 
 /**
@@ -75,7 +76,7 @@ function labelMasked(min: number): boolean {
 
 /* ---------- 布局：重叠贪心分列；≥3 列收成叠层卡 ---------- */
 
-const durOf = (t: Todo) => t.durationMin ?? 30
+const durOf = durOfShared
 
 interface Laid {
   t: Todo
@@ -105,71 +106,35 @@ const frontByStack = ref(new Map<string, number>())
 
 const stackKey = (items: Todo[]): string => `${items[0]!.id}-${items.length}`
 
-const layout = computed(() => {
-  const items = [...props.todos].sort((a, b) => (a.startMin ?? 0) - (b.startMin ?? 0) || a.id - b.id)
-  const columns: Laid[] = []
-  const stacks: Stack[] = []
-  let cluster: { t: Todo; end: number }[] = []
-  let clusterEnd = -1
+const layout = computed(() => layoutDayBlocks(props.todos))
 
-  const flush = () => {
-    if (!cluster.length) return
-    const colEnds: number[] = []
-    const assigned: { t: Todo; end: number; col: number }[] = []
-    for (const c of cluster) {
-      let col = colEnds.findIndex((e) => e <= c.t.startMin!)
-      if (col === -1) {
-        colEnds.push(c.end)
-        col = colEnds.length - 1
-      } else {
-        colEnds[col] = c.end
-      }
-      assigned.push({ ...c, col })
+const laid = computed(() =>
+  layout.value.blocks.map((b) => ({
+    t: b.todo,
+    top: b.startMin * pxPerMin.value,
+    h: Math.max(minBlkH.value, b.durationMin * pxPerMin.value),
+    col: b.col,
+    cols: b.cols,
+  })),
+)
+
+const stacks = computed(() =>
+  layout.value.stacks.map((s) => {
+    const sorted = [...s.items].sort((a, b) => (a.startMin ?? 0) - (b.startMin ?? 0) || a.id - b.id)
+    return {
+      key: `${sorted[0]!.id}-${sorted.length}`,
+      items: sorted,
+      top: sorted[0]!.startMin! * pxPerMin.value,
+      front: frontOf(sorted),
+      extra: sorted.length - 1,
+      under: sorted
+        .filter((t) => t.id !== sorted[0]!.id)
+        .slice(0, 2)
+        .map((t) => CATEGORY_META[t.category].colorVar),
+      h: Math.max(minBlkH.value, durOf(sorted[0]!) * pxPerMin.value),
     }
-    if (colEnds.length <= 2) {
-      for (const a of assigned) {
-        columns.push({
-          t: a.t,
-          top: a.t.startMin! * pxPerMin.value,
-          h: Math.max(minBlkH.value, durOf(a.t) * pxPerMin.value),
-          col: a.col,
-          cols: colEnds.length,
-        })
-      }
-    } else {
-      const sorted = assigned
-        .sort((x, y) => (x.t.startMin ?? 0) - (y.t.startMin ?? 0) || x.t.id - y.t.id)
-        .map((a) => a.t)
-      const front = frontOf(sorted)
-      stacks.push({
-        key: stackKey(sorted),
-        items: sorted,
-        top: sorted[0]!.startMin! * pxPerMin.value,
-        front,
-        extra: sorted.length - 1,
-        under: sorted
-          .filter((t) => t.id !== front.id)
-          .slice(0, 2)
-          .map((t) => CATEGORY_META[t.category].colorVar),
-        h: Math.max(minBlkH.value, durOf(front) * pxPerMin.value),
-      })
-    }
-    cluster = []
-    clusterEnd = -1
-  }
-
-  for (const t of items) {
-    const end = t.startMin! + durOf(t)
-    if (cluster.length && t.startMin! >= clusterEnd) flush()
-    cluster.push({ t, end })
-    clusterEnd = Math.max(clusterEnd, end)
-  }
-  flush()
-  return { columns, stacks }
-})
-
-const laid = computed(() => layout.value.columns)
-const stacks = computed(() => layout.value.stacks)
+  }),
+)
 
 /** 叠层簇的卡面项：用户点选置顶的优先（未完成），否则最早未完成，兜底最早 */
 function frontOf(items: Todo[]): Todo {

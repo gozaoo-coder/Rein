@@ -16,8 +16,8 @@ import DailyRitual from '@/components/todo/DailyRitual.vue'
 import DayDetailPanel from '@/components/todo/DayDetailPanel.vue'
 import AllTodoList from '@/components/todo/AllTodoList.vue'
 import WeekSummary from '@/components/todo/WeekSummary.vue'
-import WeekView from '@/components/todo/WeekView.vue'
-import { addDays, fmtDateCn, nowMin, todayStr } from '@/utils/date'
+import WeekTimeline from '@/components/todo/WeekTimeline.vue'
+import { addDays, fmtDateCn, nowMin, todayStr, weekDates } from '@/utils/date'
 import { busyIntervals, freeGaps } from '@/utils/schedule'
 import type { Todo, TodoSubtask } from '@/types'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
@@ -51,12 +51,22 @@ const scheduled = computed(() => dayTodos.value.filter((t) => t.startMin != null
 const pool = computed(() => dayTodos.value.filter((t) => t.startMin == null && t.status !== 'done'))
 const doneCount = computed(() => dayTodos.value.filter((t) => t.status === 'done').length)
 
+/* ---------- 周时间线数据 ---------- */
+
+const weekSet = new Set(weekDates(today))
+const weekScheduled = computed(() =>
+  store.allTodos.filter((t) => t.date != null && weekSet.has(t.date) && t.startMin != null),
+)
+const weekUnscheduled = computed(() =>
+  store.allTodos.filter((t) => t.date != null && weekSet.has(t.date) && t.startMin == null && t.status !== 'done'),
+)
+
 const headTitle = computed(() =>
   segment.value === 'canvas' ? fmtDateCn(canvasDate.value) : segment.value === 'week' ? '本周' : '全部待办',
 )
 const headSub = computed(() => {
   if (segment.value === 'list') return '按日期分组'
-  if (segment.value === 'week') return '完成度与回顾'
+  if (segment.value === 'week') return '本周时间线 · 长按块可跨天改时'
   return `${doneCount.value}/${dayTodos.value.length} 已完成 · 未安排 ${pool.value.length}`
 })
 
@@ -93,6 +103,28 @@ function onToggle(t: Todo): void {
 function onMove(t: Todo, startMin: number): void {
   clearGhosts()
   void applyMove(t, { date: canvasDate.value, startMin })
+}
+
+/** 周时间线：选中直接开编辑抽屉（周段无详情右栏）；拖拽跨天+改时统一走撤销 */
+function onWeekSelect(t: Todo): void {
+  selectedId.value = t.id
+  editorId.value = t.id
+  editorOpen.value = true
+}
+
+function onWeekMove(t: Todo, date: string, startMin: number): void {
+  clearGhosts()
+  void applyMove(t, { date, startMin })
+}
+
+function onWeekDaySelect(d: string): void {
+  canvasDate.value = d
+  segment.value = 'canvas'
+}
+
+function onWeekAdd(d: string): void {
+  canvasDate.value = d
+  addOpen.value = true
 }
 
 async function onSubtasks(next: TodoSubtask[]): Promise<void> {
@@ -376,7 +408,16 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
     <!-- ═══ 周 ═══ -->
     <template v-else-if="segment === 'week'">
       <section class="card">
-        <WeekView :selected="canvasDate" @select="(d) => { canvasDate = d; segment = 'canvas' }" />
+        <WeekTimeline
+          :todos="weekScheduled"
+          :unscheduled="weekUnscheduled"
+          :selected-id="selectedId"
+          @select="onWeekSelect"
+          @toggle="onToggle"
+          @move="onWeekMove"
+          @day-select="onWeekDaySelect"
+          @add="onWeekAdd"
+        />
       </section>
       <WeekSummary />
     </template>
