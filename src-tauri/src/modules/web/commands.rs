@@ -51,7 +51,9 @@ fn validate_url(raw: &str) -> Result<String> {
     let u = url::Url::parse(raw).map_err(|_| ReinError::Message(format!("URL 无效：{raw}")))?;
     let scheme = u.scheme();
     if scheme != "http" && scheme != "https" {
-        return Err(ReinError::Message(format!("仅支持 http/https 地址，收到：{scheme}")));
+        return Err(ReinError::Message(format!(
+            "仅支持 http/https 地址，收到：{scheme}"
+        )));
     }
     let host = u
         .host_str()
@@ -80,16 +82,17 @@ fn fetch_and_convert(url: &str, max_chars: usize) -> Result<WebFetchResult> {
         .build();
     let req = agent
         .get(&url)
-        .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .set(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
         .set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
     let resp = req
         .call()
         .map_err(|e| ReinError::Message(format!("网络请求失败：{e}")))?;
     let content_type = resp.header("content-type").unwrap_or("").to_string();
     let mut bytes = Vec::new();
-    resp.into_reader()
-        .take(MAX_BYTES)
-        .read_to_end(&mut bytes)?;
+    resp.into_reader().take(MAX_BYTES).read_to_end(&mut bytes)?;
     let html = String::from_utf8_lossy(&bytes).to_string();
 
     let plain = html2text::from_read(Cursor::new(html.as_bytes()), 100)

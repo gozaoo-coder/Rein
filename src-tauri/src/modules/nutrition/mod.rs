@@ -15,12 +15,28 @@ const PROFILE_COLS: &str = "nickname, sex, birthday, height_cm, weight_kg, targe
 
 pub(crate) fn profile_targets(conn: &Connection) -> Result<DailyTargets> {
     Ok(DailyTargets {
-        kcal: conn.query_row("SELECT target_kcal FROM profile WHERE id = 1", [], |r| r.get(0))?,
-        protein: conn.query_row("SELECT target_protein FROM profile WHERE id = 1", [], |r| r.get(0))?,
-        carb: conn.query_row("SELECT target_carb FROM profile WHERE id = 1", [], |r| r.get(0))?,
-        fat: conn.query_row("SELECT target_fat FROM profile WHERE id = 1", [], |r| r.get(0))?,
-        sodium_mg: conn.query_row("SELECT target_sodium_mg FROM profile WHERE id = 1", [], |r| r.get(0))?,
-        water_ml: conn.query_row("SELECT target_water_ml FROM profile WHERE id = 1", [], |r| r.get(0))?,
+        kcal: conn.query_row("SELECT target_kcal FROM profile WHERE id = 1", [], |r| {
+            r.get(0)
+        })?,
+        protein: conn.query_row("SELECT target_protein FROM profile WHERE id = 1", [], |r| {
+            r.get(0)
+        })?,
+        carb: conn.query_row("SELECT target_carb FROM profile WHERE id = 1", [], |r| {
+            r.get(0)
+        })?,
+        fat: conn.query_row("SELECT target_fat FROM profile WHERE id = 1", [], |r| {
+            r.get(0)
+        })?,
+        sodium_mg: conn.query_row(
+            "SELECT target_sodium_mg FROM profile WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?,
+        water_ml: conn.query_row(
+            "SELECT target_water_ml FROM profile WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )?,
     })
 }
 

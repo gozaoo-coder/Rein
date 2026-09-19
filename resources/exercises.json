@@ -1,0 +1,1404 @@
+{
+  "version": 1,
+  "exercises": [
+    {
+      "id": "barbell-bench-press",
+      "name": "杠铃卧推",
+      "aliases": [
+        "卧推",
+        "平板卧推"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "barbell",
+      "muscles": {
+        "chest-low": 3,
+        "chest-up": 2,
+        "triceps": 2,
+        "delt-ant": 2,
+        "abs": 1
+      },
+      "tips": "主攻胸大肌整体，前束与三头辅助；肩胛后收下沉，杆触胸不弹震，离心 2 秒。",
+      "defaultSets": 4,
+      "defaultReps": 8,
+      "defaultWeightKg": 60,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 2.5
+    },
+    {
+      "id": "incline-dumbbell-press",
+      "name": "上斜哑铃卧推",
+      "aliases": [
+        "上斜卧推"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "dumbbell",
+      "muscles": {
+        "chest-up": 3,
+        "chest-low": 1,
+        "delt-ant": 3,
+        "triceps": 2
+      },
+      "tips": "主攻胸大肌上束与三角肌前束；上斜约 30°，哑铃落至上胸沿再推起。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": 22,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "seated-dumbbell-shoulder-press",
+      "name": "坐姿哑铃肩推",
+      "aliases": [
+        "哑铃肩推",
+        "坐姿推举"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "dumbbell",
+      "muscles": {
+        "delt-ant": 3,
+        "delt-lat": 2,
+        "triceps": 2,
+        "traps-up": 1,
+        "abs": 1
+      },
+      "tips": "主攻三角肌前中束、三头辅助；核心收紧不挺腰，下放至耳侧高度。",
+      "defaultSets": 4,
+      "defaultReps": 10,
+      "defaultWeightKg": 14,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "dumbbell-lateral-raise",
+      "name": "哑铃侧平举",
+      "aliases": [
+        "侧平举"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "dumbbell",
+      "muscles": {
+        "delt-lat": 3,
+        "traps-up": 1
+      },
+      "tips": "孤立三角肌中束，撑起肩宽；肘微屈锁住角度，举至与肩平、不耸肩。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": 8,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2
+    },
+    {
+      "id": "peck-deck-fly",
+      "name": "蝴蝶机夹胸",
+      "aliases": [
+        "器械夹胸",
+        "龙门架夹胸"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "machine",
+      "muscles": {
+        "chest-low": 3,
+        "chest-up": 2,
+        "triceps": 2,
+        "delt-ant": 2,
+        "abs": 1
+      },
+      "tips": "孤立胸大肌、刻画中缝；肘微屈固定，顶峰并拢停 1 秒（可用龙门架十字夹胸替代）。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 25,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "cable-pushdown",
+      "name": "绳索下压",
+      "aliases": [
+        "三头下压"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "cable",
+      "muscles": {
+        "triceps": 3,
+        "chest-low": 2,
+        "delt-ant": 2
+      },
+      "tips": "主攻肱三头外侧头；大臂夹紧躯干，下压到底挤压 1 秒再缓慢回放。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 20,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "overhead-cable-extension",
+      "name": "颈后绳索臂屈伸",
+      "aliases": [
+        "过顶臂屈伸"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "cable",
+      "muscles": {
+        "triceps": 3,
+        "chest-low": 2,
+        "delt-ant": 2
+      },
+      "tips": "主攻肱三头长头（拉伸位）；肘朝上固定，下放至三头充分拉长。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 15,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "push-up",
+      "name": "俯卧撑",
+      "aliases": [],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "bodyweight",
+      "muscles": {
+        "chest-low": 3,
+        "chest-up": 2,
+        "triceps": 2,
+        "delt-ant": 2,
+        "abs": 1
+      },
+      "tips": "身体成一条直线，胸部贴近地面再推起；做不动就跪姿完成。",
+      "defaultSets": 4,
+      "defaultReps": 12,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "decline-push-up",
+      "name": "下斜俯卧撑（脚垫高）",
+      "aliases": [
+        "下斜俯卧撑"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "bodyweight",
+      "muscles": {
+        "chest-low": 3,
+        "chest-up": 2,
+        "triceps": 2,
+        "delt-ant": 2,
+        "abs": 1
+      },
+      "tips": "脚垫高增加上胸与肩前束负荷，核心收紧防塌腰。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "bench-dip",
+      "name": "椅式臂屈伸",
+      "aliases": [
+        "凳上臂屈伸"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "bodyweight",
+      "muscles": {
+        "triceps": 3,
+        "chest-low": 2,
+        "delt-ant": 2
+      },
+      "tips": "手撑稳固椅沿，肘向后弯曲到底再撑起。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "pull-up",
+      "name": "引体向上",
+      "aliases": [
+        "引体"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "bodyweight",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "主攻背阔肌与大圆肌，撑起背部宽度；做不满 8 次时用高位下拉补足组数。",
+      "defaultSets": 4,
+      "defaultReps": 8,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 120,
+      "weightStep": 0
+    },
+    {
+      "id": "barbell-row",
+      "name": "杠铃划船",
+      "aliases": [],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "barbell",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "厚度的来源：背阔肌、斜方肌中下束、大圆肌协同；俯身约 45°，杆沿大腿拉向小腹。",
+      "defaultSets": 4,
+      "defaultReps": 10,
+      "defaultWeightKg": 40,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 2.5
+    },
+    {
+      "id": "seated-cable-row",
+      "name": "坐姿绳索划船",
+      "aliases": [
+        "绳索划船"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "cable",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "背阔肌与菱形肌、斜方肌中束；躯干不前后晃，肩胛先收再屈肘。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 35,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 2.5
+    },
+    {
+      "id": "straight-arm-pulldown",
+      "name": "直臂下拉",
+      "aliases": [],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "cable",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "背阔肌孤立动作，几乎不借二头；肘微屈锁死角度，用背把杆压到大腿。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 15,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "lat-pulldown",
+      "name": "高位下拉",
+      "aliases": [
+        "下拉"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "cable",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "肘朝下拉向口袋方向，用背发力而不是手臂硬拽。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 35,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 75,
+      "weightStep": 2.5
+    },
+    {
+      "id": "barbell-shrug",
+      "name": "杠铃耸肩",
+      "aliases": [
+        "耸肩"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "barbell",
+      "muscles": {
+        "traps-up": 3,
+        "forearm": 2
+      },
+      "tips": "主攻斜方肌上束；垂直上提下放，顶峰停 1 秒，不做绕环。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": 50,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "face-pull",
+      "name": "面拉",
+      "aliases": [],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "cable",
+      "muscles": {
+        "delt-post": 3,
+        "traps-mid": 2
+      },
+      "tips": "主攻三角肌后束与肩袖外旋肌（冈下肌/小圆肌），护肩必练；绳索拉向额头，肘高于腕并向外旋开。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": 15,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "reverse-fly",
+      "name": "俯身反向飞鸟",
+      "aliases": [
+        "反向飞鸟"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "dumbbell",
+      "muscles": {
+        "delt-post": 3,
+        "traps-mid": 2
+      },
+      "tips": "主攻三角肌后束与上背；俯身 45° 固定躯干，轻重量找后束发力感即可。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": 6,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2
+    },
+    {
+      "id": "barbell-curl",
+      "name": "杠铃弯举",
+      "aliases": [
+        "二头弯举"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "barbell",
+      "muscles": {
+        "biceps": 3,
+        "forearm": 2
+      },
+      "tips": "主攻肱二头整体；大臂贴身固定，离心 2 秒不甩腰借力。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": 20,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "hammer-curl",
+      "name": "锤式弯举",
+      "aliases": [],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "dumbbell",
+      "muscles": {
+        "biceps": 3,
+        "forearm": 2
+      },
+      "tips": "中立握主攻肱桡肌与肱肌，加粗手臂外侧；腕保持中立不屈伸。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 12,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2
+    },
+    {
+      "id": "wrist-curl",
+      "name": "腕弯举",
+      "aliases": [],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "dumbbell",
+      "muscles": {
+        "forearm": 3
+      },
+      "tips": "主攻前臂屈肌群（腕屈肌与指屈肌），抓握力的来源；前臂贴凳固定，只动腕、幅度做完整。",
+      "defaultSets": 3,
+      "defaultReps": 20,
+      "defaultWeightKg": 10,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 2
+    },
+    {
+      "id": "reverse-wrist-curl",
+      "name": "反握腕弯举",
+      "aliases": [],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "dumbbell",
+      "muscles": {
+        "forearm": 3
+      },
+      "tips": "主攻前臂伸肌群（桡侧腕伸肌与指伸肌），与屈腕平衡防肘痛；轻重量、慢速全程控制。",
+      "defaultSets": 3,
+      "defaultReps": 20,
+      "defaultWeightKg": 6,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 2
+    },
+    {
+      "id": "table-inverted-row",
+      "name": "桌沿反向划船",
+      "aliases": [
+        "反向划船"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "bodyweight",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "仰卧抓稳固桌沿，身体拉向桌面，肩胛先收。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "barbell-squat",
+      "name": "杠铃深蹲",
+      "aliases": [
+        "深蹲",
+        "背蹲"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "glute-max": 3,
+        "hamstrings": 2,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "全腿基石：股四头与臀大肌主攻，腘绳肌、核心稳定；髋膝同时启动，蹲到大腿平行以下。",
+      "defaultSets": 4,
+      "defaultReps": 8,
+      "defaultWeightKg": 70,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 150,
+      "weightStep": 2.5
+    },
+    {
+      "id": "romanian-deadlift",
+      "name": "罗马尼亚硬拉",
+      "aliases": [
+        "RDL"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "hamstrings": 3,
+        "glute-max": 3,
+        "lower-back": 3,
+        "lats": 2,
+        "traps-up": 2,
+        "forearm": 1
+      },
+      "tips": "主攻腘绳肌与臀大肌，竖脊肌等长受力；膝微屈固定，髋往后坐、杠贴腿下滑。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": 60,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "bulgarian-split-squat",
+      "name": "保加利亚分腿蹲",
+      "aliases": [
+        "保加利亚蹲"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "dumbbell",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "glute-max": 3,
+        "hamstrings": 2,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "单侧动作修正左右差，股四头与臀都吃重；步距足够、重心压前脚跟，每边各 10 次。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": 16,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "seated-leg-curl",
+      "name": "坐姿腿弯举",
+      "aliases": [
+        "腿弯举"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "machine",
+      "muscles": {
+        "hamstrings": 3,
+        "calves": 1
+      },
+      "tips": "腘绳肌屈膝功能的孤立补充；回放要慢，不让配重砸落。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": 30,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "leg-extension",
+      "name": "腿屈伸",
+      "aliases": [
+        "坐姿腿屈伸"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "machine",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-med": 2,
+        "quads-lat": 2
+      },
+      "tips": "股四头孤立，尤其刺激股直肌；顶峰挤压 1 秒，缓慢回落。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": 35,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "standing-calf-raise",
+      "name": "站姿提踵",
+      "aliases": [
+        "站姿提踵"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "machine",
+      "muscles": {
+        "calves": 3,
+        "soleus": 2
+      },
+      "tips": "主攻腓肠肌（直膝才吃得到）；底部充分拉伸 1 秒、顶部踮到最高停 1 秒。",
+      "defaultSets": 4,
+      "defaultReps": 15,
+      "defaultWeightKg": 40,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 2.5
+    },
+    {
+      "id": "seated-calf-raise",
+      "name": "坐姿提踵",
+      "aliases": [],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "machine",
+      "muscles": {
+        "calves": 3,
+        "soleus": 2
+      },
+      "tips": "主攻比目鱼肌（屈膝 90° 时主导）；节奏放慢，次数做满。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": 25,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 2.5
+    },
+    {
+      "id": "reverse-lunge",
+      "name": "反向弓步",
+      "aliases": [
+        "弓步蹲"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "glute-max": 3,
+        "hamstrings": 2,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "每边各 10 次；后腿膝盖轻落地，重心压前脚跟。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "glute-bridge",
+      "name": "臀桥",
+      "aliases": [],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "hamstrings": 3,
+        "glute-max": 3,
+        "lower-back": 3,
+        "lats": 2,
+        "traps-up": 2,
+        "forearm": 1
+      },
+      "tips": "顶峰收紧臀部停 1 秒，不要用腰顶起来。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 0
+    },
+    {
+      "id": "bodyweight-squat",
+      "name": "徒手深蹲",
+      "aliases": [
+        "自重深蹲"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "glute-max": 3,
+        "hamstrings": 2,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "脚与肩同宽，蹲到大腿平行，膝盖对准脚尖方向。",
+      "defaultSets": 4,
+      "defaultReps": 15,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "bodyweight-bulgarian-split-squat",
+      "name": "保加利亚分腿蹲（自重）",
+      "aliases": [],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "glute-max": 3,
+        "hamstrings": 2,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "后脚搭在凳上，每边各 10 次，重心压前脚跟。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 75,
+      "weightStep": 0
+    },
+    {
+      "id": "single-leg-glute-bridge",
+      "name": "单腿臀桥",
+      "aliases": [],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "hamstrings": 3,
+        "glute-max": 3,
+        "lower-back": 3,
+        "lats": 2,
+        "traps-up": 2,
+        "forearm": 1
+      },
+      "tips": "每边各 12 次；骨盆保持水平不歪斜。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "calf-raise",
+      "name": "提踵",
+      "aliases": [],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "calves": 3,
+        "soleus": 2
+      },
+      "tips": "扶墙稳定，底部拉伸顶部踮满，节奏均匀。",
+      "defaultSets": 4,
+      "defaultReps": 20,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 0
+    },
+    {
+      "id": "wall-sit",
+      "name": "靠墙静蹲",
+      "aliases": [],
+      "kind": "timed",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "glute-max": 3,
+        "hamstrings": 2,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "大腿平行地面，膝盖不超过脚尖太多。",
+      "defaultSets": 3,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 45,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 0
+    },
+    {
+      "id": "squat-jump",
+      "name": "深蹲跳",
+      "aliases": [],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "glute-max": 3,
+        "hamstrings": 2,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "蹲到平行再轻跳起，落地屈膝缓冲。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 30,
+      "weightStep": 0
+    },
+    {
+      "id": "plank",
+      "name": "平板支撑",
+      "aliases": [
+        "平板"
+      ],
+      "kind": "timed",
+      "category": "core",
+      "equipment": "bodyweight",
+      "muscles": {
+        "abs": 3,
+        "obliques": 2
+      },
+      "tips": "推日收尾补核心：骨盆微后倾，腹臀绷紧成一条直线。",
+      "defaultSets": 3,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 45,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 0
+    },
+    {
+      "id": "dead-bug",
+      "name": "死虫式",
+      "aliases": [
+        "死虫"
+      ],
+      "kind": "timed",
+      "category": "core",
+      "equipment": "bodyweight",
+      "muscles": {
+        "abs": 3,
+        "obliques": 2
+      },
+      "tips": "对侧手脚缓慢伸展，腰部始终贴地。",
+      "defaultSets": 3,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 45,
+      "defaultDurationMin": null,
+      "defaultRestSec": 40,
+      "weightStep": 0
+    },
+    {
+      "id": "hanging-leg-raise",
+      "name": "悬垂举腿",
+      "aliases": [
+        "举腿"
+      ],
+      "kind": "strength",
+      "category": "core",
+      "equipment": "bodyweight",
+      "muscles": {
+        "abs": 3,
+        "forearm": 2
+      },
+      "tips": "下腹与髂腰肌，兼练握力；骨盆微微上卷带动腿部，不靠惯性甩腿。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "easy-run",
+      "name": "放松跑",
+      "aliases": [
+        "慢跑",
+        "有氧跑"
+      ],
+      "kind": "cardio",
+      "category": "cardio",
+      "equipment": "cardio",
+      "muscles": {
+        "quads-rec": 2,
+        "quads-lat": 2,
+        "hamstrings": 2,
+        "calves": 3,
+        "soleus": 2,
+        "glute-max": 2,
+        "abs": 1
+      },
+      "tips": "轻松对话强度，心率约 130 bpm，结束后拉伸 5 分钟。",
+      "defaultSets": 1,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": 20,
+      "defaultRestSec": 0,
+      "weightStep": 0
+    },
+    {
+      "id": "jumping-jack",
+      "name": "开合跳",
+      "aliases": [],
+      "kind": "timed",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "muscles": {
+        "calves": 3,
+        "soleus": 2,
+        "quads-rec": 2,
+        "glute-max": 1,
+        "abs": 1
+      },
+      "tips": "热身兼燃脂，落地轻盈护膝踝。",
+      "defaultSets": 4,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 40,
+      "defaultDurationMin": null,
+      "defaultRestSec": 20,
+      "weightStep": 0
+    },
+    {
+      "id": "burpee",
+      "name": "波比跳",
+      "aliases": [],
+      "kind": "strength",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "glute-max": 2,
+        "chest-low": 2,
+        "abs": 2,
+        "calves": 1
+      },
+      "tips": "动作质量优先：撑地—蹬跳—起身连贯但不含胸。",
+      "defaultSets": 4,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 30,
+      "weightStep": 0
+    },
+    {
+      "id": "high-knees",
+      "name": "高抬腿",
+      "aliases": [],
+      "kind": "timed",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "abs": 2,
+        "calves": 2
+      },
+      "tips": "膝盖抬至髋高，核心收紧节奏快。",
+      "defaultSets": 4,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 30,
+      "defaultDurationMin": null,
+      "defaultRestSec": 30,
+      "weightStep": 0
+    },
+    {
+      "id": "mountain-climber",
+      "name": "登山跑",
+      "aliases": [],
+      "kind": "timed",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "glute-max": 2,
+        "calves": 2,
+        "abs": 2
+      },
+      "tips": "肩在腕正上方，膝盖快速交替拉向胸口。",
+      "defaultSets": 3,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 30,
+      "defaultDurationMin": null,
+      "defaultRestSec": 30,
+      "weightStep": 0
+    },
+    {
+      "id": "deadlift",
+      "name": "硬拉",
+      "aliases": [
+        "传统硬拉"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "hamstrings": 3,
+        "glute-max": 3,
+        "lower-back": 3,
+        "lats": 2,
+        "traps-up": 2,
+        "forearm": 1
+      },
+      "tips": "全身力量基石：杠贴腿起、髋膝同时伸展，腰背中立不弓不塌，起不来就减重。",
+      "defaultSets": 3,
+      "defaultReps": 5,
+      "defaultWeightKg": 80,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 180,
+      "weightStep": 2.5
+    },
+    {
+      "id": "incline-barbell-press",
+      "name": "上斜杠铃卧推",
+      "aliases": [],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "barbell",
+      "muscles": {
+        "chest-up": 3,
+        "chest-low": 1,
+        "delt-ant": 3,
+        "triceps": 2
+      },
+      "tips": "主攻上胸；上斜约 30°，肩胛后收，杆触上胸沿再推起。",
+      "defaultSets": 3,
+      "defaultReps": 8,
+      "defaultWeightKg": 45,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 2.5
+    },
+    {
+      "id": "dips",
+      "name": "双杠臂屈伸",
+      "aliases": [],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "bodyweight",
+      "muscles": {
+        "triceps": 3,
+        "chest-low": 2,
+        "delt-ant": 2
+      },
+      "tips": "躯干微前倾练胸，直立练三头；沉肩不塌肩，下放到大臂与地面平行。",
+      "defaultSets": 3,
+      "defaultReps": 8,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 0
+    },
+    {
+      "id": "one-arm-dumbbell-row",
+      "name": "单臂哑铃划船",
+      "aliases": [],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "dumbbell",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "单侧背部厚度：躯干固定不旋转，肘沿髋方向拉，肩胛先收再屈肘。",
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": 20,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 75,
+      "weightStep": 2
+    },
+    {
+      "id": "overhead-press",
+      "name": "站姿杠铃推举",
+      "aliases": [
+        "站姿推举",
+        "推举"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "barbell",
+      "muscles": {
+        "delt-ant": 3,
+        "delt-lat": 2,
+        "triceps": 2,
+        "traps-up": 1,
+        "abs": 1
+      },
+      "tips": "肩部力量基石：核心与臀绷紧不后仰，杠过头顶后落在耳后，轨迹贴身。",
+      "defaultSets": 4,
+      "defaultReps": 6,
+      "defaultWeightKg": 30,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "crunch",
+      "name": "卷腹",
+      "aliases": [
+        "仰卧卷腹"
+      ],
+      "kind": "strength",
+      "category": "core",
+      "equipment": "bodyweight",
+      "muscles": {
+        "abs": 3,
+        "obliques": 2
+      },
+      "tips": "胸骨向骨盆卷起而非抬头，下背贴地，顶端呼气收缩 1 秒。",
+      "defaultSets": 3,
+      "defaultReps": 15,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 45,
+      "weightStep": 0
+    },
+    {
+      "id": "side-plank",
+      "name": "侧平板支撑",
+      "aliases": [],
+      "kind": "timed",
+      "category": "core",
+      "equipment": "bodyweight",
+      "muscles": {
+        "abs": 3,
+        "obliques": 2
+      },
+      "tips": "侧链稳定：肘在肩正下方，髋部顶高成一条直线，两侧各做同样组数。",
+      "defaultSets": 3,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 30,
+      "defaultDurationMin": null,
+      "defaultRestSec": 40,
+      "weightStep": 0
+    },
+    {
+      "id": "back-extension",
+      "name": "罗马椅挺身",
+      "aliases": [
+        "山羊挺身"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "hamstrings": 3,
+        "glute-max": 3,
+        "lower-back": 3,
+        "lats": 2,
+        "traps-up": 2,
+        "forearm": 1
+      },
+      "tips": "后链与竖脊肌：髋铰链起落，脊柱保持中立，顶端不要过度后仰。",
+      "defaultSets": 3,
+      "defaultReps": 12,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "elliptical",
+      "name": "椭圆机",
+      "aliases": [],
+      "kind": "cardio",
+      "category": "cardio",
+      "equipment": "cardio",
+      "muscles": {
+        "quads-rec": 2,
+        "glute-max": 2,
+        "calves": 1,
+        "abs": 1
+      },
+      "tips": "低冲击有氧：阻力调到能对话但微喘，脚跟压实踏板。",
+      "defaultSets": 1,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": 20,
+      "defaultRestSec": 0,
+      "weightStep": 0
+    },
+    {
+      "id": "rowing-machine",
+      "name": "划船机",
+      "aliases": [],
+      "kind": "cardio",
+      "category": "cardio",
+      "equipment": "cardio",
+      "muscles": {
+        "lats": 3,
+        "biceps": 2,
+        "traps-mid": 2,
+        "lower-back": 2,
+        "forearm": 1
+      },
+      "tips": "腿—髋—手臂的顺序发力，回程反向；每 500m 配速稳定优于猛冲。",
+      "defaultSets": 1,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": 15,
+      "defaultRestSec": 0,
+      "weightStep": 0
+    },
+    {
+      "id": "spin-bike",
+      "name": "动感单车",
+      "aliases": [],
+      "kind": "cardio",
+      "category": "cardio",
+      "equipment": "cardio",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "glute-max": 2,
+        "calves": 2,
+        "hamstrings": 1
+      },
+      "tips": "坐垫调到髋高，踏频 80-100 rpm，膝盖始终对准脚尖方向。",
+      "defaultSets": 1,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": 25,
+      "defaultRestSec": 0,
+      "weightStep": 0
+    },
+    {
+      "id": "jump-rope",
+      "name": "跳绳",
+      "aliases": [],
+      "kind": "cardio",
+      "category": "cardio",
+      "equipment": "other",
+      "muscles": {
+        "quads-rec": 2,
+        "calves": 3,
+        "soleus": 2,
+        "abs": 1
+      },
+      "tips": "前脚掌落地、手腕摇绳，落地轻盈；膝踝不适换成原地小跳。",
+      "defaultSets": 5,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": 3,
+      "defaultRestSec": 45,
+      "weightStep": 1
+    },
+    {
+      "id": "foam-roll",
+      "name": "泡沫轴放松",
+      "aliases": [],
+      "kind": "timed",
+      "category": "mobility",
+      "equipment": "other",
+      "muscles": {},
+      "tips": "每个酸痛点半分钟慢速滚动，不滚腰椎与关节，呼吸放松不憋气。",
+      "defaultSets": 1,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": 300,
+      "defaultDurationMin": null,
+      "defaultRestSec": 0,
+      "weightStep": 1
+    },
+    {
+      "id": "static-stretch",
+      "name": "静态拉伸",
+      "aliases": [],
+      "kind": "timed",
+      "category": "mobility",
+      "equipment": "other",
+      "muscles": {},
+      "tips": "训练后拉伸：每个部位 30 秒，拉到轻微紧绷即可，不弹震不疼痛。",
+      "defaultSets": 3,
+      "defaultReps": null,
+      "defaultWeightKg": null,
+      "defaultTargetSec": null,
+      "defaultDurationMin": null,
+      "defaultRestSec": 90,
+      "weightStep": 1
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
@@ -11,7 +11,7 @@ import ExerciseDetailDrawer from '@/components/exercise/ExerciseDetailDrawer.vue
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
 import SessionBigNumberInput from '@/components/exercise/SessionBigNumberInput.vue'
 import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
-import { resolveActivation } from '@/config/muscles'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import { workoutRuntime } from '@/system/workoutRuntime'
 import { useToast } from '@/composables/useToast'
@@ -42,6 +42,7 @@ import {
  * （重量曲线数据源）。只有「结束 → 二级确认」才结束会话。
  */
 const s = useSessionStore()
+const lib = useExerciseLibStore()
 const router = useRouter()
 const { toast } = useToast()
 
@@ -70,8 +71,20 @@ function fmtKg(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1)
 }
 
-/** 上次做组参照（渐进超负荷对照） */
-const lastRef = computed(() => s.lastWeights[s.currentEx?.name ?? ''])
+/** 上次做组参照（渐进超负荷对照，按动作库 id 取） */
+const lastRef = computed(() => s.lastWeights[s.currentEx?.exerciseId ?? ''])
+
+/** 今日建议：平均状态（近 3 次 e1RM 加权）× 今日状态（恢复/容量/趋势/自评） */
+const curAdvice = computed(() => (s.currentEx ? s.adviceFor(s.currentEx) : null))
+
+/** 建议依据默认收起，点一下展开（训练中不打扰，但随时可查） */
+const whyOpen = ref(false)
+
+/** 展示名：库内名优先（动作库改名全端跟随），回落课程条目快照 */
+const displayName = computed(() => (s.currentEx ? lib.resolveName(s.currentEx) : ''))
+
+/** 动作要点：课程条目优先，缺失回落库内要点 */
+const exTips = computed(() => (s.currentEx ? lib.tipsOf(s.currentEx) : ''))
 
 const WEIGHT_STEP = 2.5
 
@@ -149,8 +162,8 @@ const workingDone = computed(() => s.exDoneSets.filter((d) => !d.warmup).length)
 
 const nextEx = computed(() => s.plan?.exercises[s.exIndex + 1] ?? null)
 
-/** 当前动作的肌群激活表（显式 muscles 优先，否则按动作名关键词匹配；均无 → 隐藏卡片） */
-const activation = computed(() => s.currentEx?.muscles ?? resolveActivation(s.currentEx?.name))
+/** 当前动作的肌群激活表（库内显式数据优先 → 课程条目 → 按动作名关键词；均无 → 隐藏卡片） */
+const activation = computed(() => (s.currentEx ? lib.musclesOf(s.currentEx) : null))
 
 const nextExDesc = computed(() => {
   const n = nextEx.value
@@ -159,6 +172,8 @@ const nextExDesc = computed(() => {
     n.reps != null ? `${n.reps} 次` : n.targetSec != null ? `${n.targetSec} 秒` : n.durationMin != null ? `${n.durationMin} 分钟` : ''
   return `${s.effSets(n)} 组${per ? ` · ${per}` : ''}`
 })
+
+const nextExName = computed(() => (nextEx.value ? lib.resolveName(nextEx.value) : ''))
 
 const restMetaText = computed(() => {
   if (s.restWarmup) return '激活热身组间 · 准备下一次小重量激活'
@@ -169,7 +184,7 @@ const restMetaText = computed(() => {
       if (s.weight > 0) parts.push(`${fmtKg(s.weight)} kg`)
       return parts.join(' · ')
     }
-  return `下一个 · ${nextEx.value?.name ?? ''}`
+  return `下一个 · ${nextExName.value}`
 })
 
 const restSheetTitle = computed(() => `还要休息多久？剩余 ${s.restLeft} 秒`)
@@ -183,7 +198,7 @@ const REST_ADD_ACTIONS: MenuItem[] = [
 
 /* ---------- 更多菜单：临时休息 / 再加一组 / 上一组 / 当前动作详解 ---------- */
 
-const MORE_TITLE = computed(() => `更多 · ${s.currentEx?.name ?? '训练中'}`)
+const MORE_TITLE = computed(() => `更多 · ${displayName.value || '训练中'}`)
 
 /** 跳过当前组只在真正「手上有一组」的阶段出现：热身态有专门的跳过热身，休息态当前组已经做完了 */
 const CAN_SKIP_PHASES = ['exercise', 'timed-ready', 'timed-run'] as const
@@ -198,10 +213,31 @@ const MORE_ACTIONS = computed<MenuItem[]>(() => {
     { label: '临时休息', value: 'temp-rest', icon: Coffee, disabled: !CAN_SKIP_PHASES.includes(s.phase as (typeof CAN_SKIP_PHASES)[number]), children: TEMP_REST_ACTIONS },
     { label: '再加一组', value: 'extra-set', icon: PlusCircle },
     { label: '上一组（重做）', value: 'redo-last', icon: RotateCcw },
+    { label: '今日状态', value: 'readiness', icon: Gauge, children: READINESS_ACTIONS },
     { label: '当前动作详解', value: 'detail', icon: Info },
   )
   return list
 })
+
+/** 今日状态自评档位（写进快照，建议引擎据此修正今日处方） */
+const READINESS_ACTIONS: MenuItem[] = [
+  { label: '很好 · 精力充沛', value: '5', icon: Gauge },
+  { label: '不错 · 状态在线', value: '4', icon: Gauge },
+  { label: '一般 · 正常', value: '3', icon: Gauge },
+  { label: '疲惫 · 有点顶', value: '2', icon: Gauge },
+  { label: '很差 · 硬撑', value: '1', icon: Gauge },
+  { label: '清除自评（纯自动推断）', value: 'clear', icon: Gauge },
+]
+
+/** 首次进入力量训练时的一次性自评入口（跳过即纯自动推断） */
+const showReadinessPrompt = computed(
+  () =>
+    s.readiness === null &&
+    !!s.currentEx &&
+    s.currentEx.kind === 'strength' &&
+    (s.phase === 'exercise' || s.phase === 'warmup') &&
+    s.doneCount === 0,
+)
 
 /** 临时休息时长：作为更多菜单「临时休息」的层叠子菜单 */
 const TEMP_REST_ACTIONS: MenuItem[] = [
@@ -230,6 +266,12 @@ function onMorePick(value: string): void {
     toast(`已加练 1 组 · 「${ex.name}」共 ${s.effSets(ex)} 组`)
   } else if (value === 'redo-last') {
     if (!s.redoLastSet()) toast('还没有已完成的组')
+  } else if (value === 'clear') {
+    s.setReadiness(null)
+    toast('已清除自评 · 建议按训练历史自动推断')
+  } else if (value === '5' || value === '4' || value === '3' || value === '2' || value === '1') {
+    s.setReadiness(Number(value))
+    toast('已记录今日状态 · 建议重量已同步调整')
   } else if (value === 'detail') {
     detailOpen.value = true
   } else {
@@ -577,7 +619,7 @@ watch(immersiveOpen, (open) => {
         <!-- 激活热身：小重量找发力感 / 复合动作渐进 ramp-up -->
         <div v-if="s.phase === 'warmup' && s.currentEx" class="pane col center">
           <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ s.currentEx.warmups!.length }} 组</p>
-          <h1 class="actname">{{ s.currentEx.name }}</h1>
+          <h1 class="actname">{{ displayName }}</h1>
           <p class="meta">先用小重量激活目标肌群与动作模式，找发力感后再上正式重量</p>
           <div class="wlist">
             <span
@@ -609,21 +651,33 @@ watch(immersiveOpen, (open) => {
             <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
           </div>
 
+          <!-- 今日状态自评：首次进入力量训练时出现一次，跳过即纯自动推断 -->
+          <div v-if="showReadinessPrompt" class="readiness">
+            <p class="rtitle">今日状态？<span>影响今天的建议重量（可跳过）</span></p>
+            <div class="rchips row">
+              <button class="rchip" @click="s.setReadiness(5)">很好</button>
+              <button class="rchip" @click="s.setReadiness(4)">不错</button>
+              <button class="rchip" @click="s.setReadiness(3)">一般</button>
+              <button class="rchip" @click="s.setReadiness(2)">疲惫</button>
+              <button class="rchip" @click="s.setReadiness(1)">很差</button>
+            </div>
+          </div>
+
           <div v-if="activation" class="blockcard">
             <h3>肌群激活</h3>
             <MuscleMap :activation="activation" interactive />
           </div>
 
-          <div v-if="s.currentEx.tips" class="blockcard">
+          <div v-if="exTips" class="blockcard">
             <h3>动作要点</h3>
-            <p>{{ s.currentEx.tips }}</p>
+            <p>{{ exTips }}</p>
           </div>
         </div>
 
         <!-- 动作中：名称 hero ＋ 重量输入 ＋ 次数输入 ＋ 要点 ＋ 接下来 -->
         <div v-else-if="s.phase === 'exercise' && s.currentEx" class="pane col center">
           <p class="eyebrow">当前动作 · 第 {{ s.setIndex }} / {{ s.effSets(s.currentEx) }} 组</p>
-          <h1 class="actname">{{ s.currentEx.name }}</h1>
+          <h1 class="actname">{{ displayName }}</h1>
 
           <!-- 重量登记：数字可点键入，±2.5kg 微调；完成本组即记录当前重量 -->
           <div class="weightcard">
@@ -636,13 +690,44 @@ watch(immersiveOpen, (open) => {
               :max="999"
               @update:model-value="onWeight"
             />
-            <div v-if="lastRef || s.currentEx.weightKg != null" class="wchips row center">
+            <div v-if="curAdvice?.suggestedWeight != null || lastRef || s.currentEx.weightKg != null" class="wchips row center">
+              <button
+                v-if="curAdvice?.suggestedWeight != null"
+                class="wchip num primary"
+                :aria-label="`设为今日建议重量 ${fmtKg(curAdvice.suggestedWeight)} 公斤`"
+                @click="onWeight(curAdvice.suggestedWeight)"
+              >
+                建议 {{ fmtKg(curAdvice.suggestedWeight) }}kg
+              </button>
               <button v-if="lastRef" class="wchip num" :aria-label="`设为上次重量 ${fmtKg(lastRef.weightKg)} 公斤`" @click="onWeight(lastRef.weightKg)">
                 上次 {{ fmtKg(lastRef.weightKg) }}kg{{ lastRef.reps != null ? ` × ${lastRef.reps}` : '' }}
               </button>
               <button v-if="s.currentEx.weightKg != null" class="wchip num" :aria-label="`设为计划重量 ${fmtKg(s.currentEx.weightKg)} 公斤`" @click="onWeight(s.currentEx.weightKg)">
                 计划 {{ fmtKg(s.currentEx.weightKg) }}kg
               </button>
+            </div>
+
+            <!-- 建议依据：一行摘要，点开看完整推导（平均状态 × 今日状态） -->
+            <template v-if="curAdvice?.hasHistory || curAdvice?.rationale.length">
+              <button class="whyline row" :aria-expanded="whyOpen" @click="whyOpen = !whyOpen">
+                <span class="whytxt">{{ curAdvice?.rationale[0] }}</span>
+                <ChevronDown :size="13" :class="{ flip: whyOpen }" />
+              </button>
+              <ul v-if="whyOpen" class="whylist">
+                <li v-for="(r, i) in curAdvice?.rationale ?? []" :key="i">{{ r }}</li>
+              </ul>
+            </template>
+          </div>
+
+          <!-- 今日状态自评：首次进入力量训练时出现一次，跳过即纯自动推断 -->
+          <div v-if="showReadinessPrompt" class="readiness">
+            <p class="rtitle">今日状态？<span>影响今天的建议重量（可跳过）</span></p>
+            <div class="rchips row">
+              <button class="rchip" @click="s.setReadiness(5)">很好</button>
+              <button class="rchip" @click="s.setReadiness(4)">不错</button>
+              <button class="rchip" @click="s.setReadiness(3)">一般</button>
+              <button class="rchip" @click="s.setReadiness(2)">疲惫</button>
+              <button class="rchip" @click="s.setReadiness(1)">很差</button>
             </div>
           </div>
 
@@ -662,14 +747,14 @@ watch(immersiveOpen, (open) => {
             <MuscleMap :activation="activation" interactive />
           </div>
 
-          <div v-if="s.currentEx.tips" class="blockcard">
+          <div v-if="exTips" class="blockcard">
             <h3>动作要点</h3>
-            <p>{{ s.currentEx.tips }}</p>
+            <p>{{ exTips }}</p>
           </div>
 
           <div v-if="nextEx" class="blockcard">
             <h3>接下来</h3>
-            <p class="nextrow">▸ 下一动作 · <b>{{ nextEx.name }}</b> · {{ nextExDesc }}</p>
+            <p class="nextrow">▸ 下一动作 · <b>{{ nextExName }}</b> · {{ nextExDesc }}</p>
           </div>
         </div>
 
@@ -686,7 +771,7 @@ watch(immersiveOpen, (open) => {
         <!-- 计时动作准备 -->
         <div v-else-if="s.phase === 'timed-ready' && s.currentEx" class="pane col center">
           <p class="eyebrow">{{ s.currentEx.kind === 'cardio' ? '有氧计时' : '计时动作' }}</p>
-          <h1 class="actname">{{ s.currentEx.name }}</h1>
+          <h1 class="actname">{{ displayName }}</h1>
           <p class="meta">
             目标
             {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.currentEx.sets} 组` : `${s.currentEx.durationMin} 分钟` }}
@@ -1104,6 +1189,95 @@ watch(immersiveOpen, (open) => {
 }
 
 .wchip:active {
+  transform: scale(0.94);
+}
+
+/* 今日建议 chip：主推的预填来源（上次重量 / 计划重量 作为备选参考） */
+.wchip.primary {
+  background: var(--c-exercise);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* 建议依据：一行摘要 + 展开后的逐条推导 */
+.whyline {
+  width: 100%;
+  gap: 6px;
+  margin-top: 10px;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.whytxt {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.whyline svg {
+  flex: none;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.whyline svg.flip {
+  transform: rotate(180deg);
+}
+
+.whylist {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  text-align: left;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+.whylist li + li {
+  margin-top: 3px;
+}
+
+/* 今日状态自评：首次进入力量训练时出现一次 */
+.readiness {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.rtitle {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.rtitle span {
+  margin-left: 6px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.rchips {
+  margin-top: 9px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rchip {
+  padding: 7px 14px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.rchip:active {
   transform: scale(0.94);
 }
 

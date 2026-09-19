@@ -7,6 +7,8 @@ import type {
   AiModel,
   AiModelInput,
   AiProbeResult,
+  AiUsageInput,
+  AiUsageSummary,
   ChatSearchHit,
   DailyTargets,
   ParsedFoodItem,
@@ -46,4 +48,10 @@ export const aiService = {
   aiChatRename: (id: string, title: string) => invoke<void>('ai_chat_rename', { id, title }),
   aiChatSearch: (keyword: string, limit?: number) =>
     invoke<ChatSearchHit[]>('ai_chat_search', { keyword, limit: limit ?? null }),
+
+  /* ---- 本机成本账本（服务端另有权威账本，可对账） ---- */
+
+  aiUsageRecord: (input: AiUsageInput) => invoke<void>('ai_usage_record', { input }),
+  aiUsageSummary: (days?: number) => invoke<AiUsageSummary>('ai_usage_summary', { days: days ?? null }),
+  aiUsageClear: () => invoke<void>('ai_usage_clear', {}),
 }

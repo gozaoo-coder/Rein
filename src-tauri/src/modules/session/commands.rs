@@ -1,16 +1,31 @@
 //! 训练课会话命令 · 命令名与前端 `sessionService.ts` 对应。
 
-use tauri::State;
+use rusqlite::OptionalExtension;
 use serde_json::Value;
+use tauri::State;
 
 use crate::error::Result;
-use crate::state::AppState;
 use crate::modules::exercise::workout_by_id;
+use crate::state::AppState;
 
-use super::models::{FinishInput, SessionRecord, StrengthExerciseRef, StrengthLastWeight, StrengthSetRecord};
+use super::models::{
+    FinishInput, SessionRecord, StrengthExerciseRef, StrengthLastWeight, StrengthSetRecord,
+};
 
 /// 一行原始数据（state_json 先取字符串，再解析）
-type RawRow = (i64, String, String, String, String, String, i64, i64, f64, f64, String);
+type RawRow = (
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    f64,
+    f64,
+    String,
+);
 
 fn to_record(raw: RawRow) -> Result<SessionRecord> {
     let state = serde_json::from_str(&raw.10).unwrap_or(Value::Null);
@@ -155,16 +170,37 @@ pub fn session_finish(
     )?;
     let workout_id = tx.last_insert_rowid();
     {
+        // 动作库 id 缺失时按名称兜底解析（旧客户端 / AI 提交）：逐组记录必须挂上库 id，
+        // 否则这条记录不会进入该动作的重量曲线。
+        let mut index = crate::modules::exercise_lib::resolve::NameIndex::load(&tx)?;
         let mut stmt = tx.prepare(
-            "INSERT INTO workout_sets (workout_id, plan_id, exercise_key, exercise_name, set_no, kind, weight_kg, reps, sec, warmup, created_at) \
-             VALUES (?1, (SELECT plan_id FROM workout_sessions WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
+            "INSERT INTO workout_sets (workout_id, plan_id, exercise_key, exercise_name, exercise_id, set_no, kind, weight_kg, reps, sec, warmup, created_at) \
+             VALUES (?1, (SELECT plan_id FROM workout_sessions WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now'))",
         )?;
         for s in &input.sets {
+            let exercise_id = match s.exercise_id.as_deref().filter(|v| !v.is_empty()) {
+                Some(id) => id.to_string(),
+                None => {
+                    let hint = crate::modules::exercise_lib::resolve::ExerciseHint {
+                        kind: Some(s.kind.clone()),
+                        reps: s.reps,
+                        weight_kg: s.weight_kg,
+                        ..Default::default()
+                    };
+                    crate::modules::exercise_lib::resolve::ensure_for_name(
+                        &tx,
+                        &mut index,
+                        &s.exercise_name,
+                        &hint,
+                    )?
+                }
+            };
             stmt.execute(rusqlite::params![
                 workout_id,
                 input.id,
                 s.exercise_key,
                 s.exercise_name,
+                exercise_id,
                 s.set_no,
                 s.kind,
                 s.weight_kg,
@@ -196,7 +232,10 @@ pub fn session_abort(state: State<AppState>, id: i64) -> Result<()> {
 /// 按训练记录反查其来源会话（含最后一帧快照：轨迹 / 做组明细）。
 /// 手动添加的记录没有来源会话，返回 None。
 #[tauri::command]
-pub fn session_for_workout(state: State<AppState>, workout_id: i64) -> Result<Option<SessionRecord>> {
+pub fn session_for_workout(
+    state: State<AppState>,
+    workout_id: i64,
+) -> Result<Option<SessionRecord>> {
     let conn = state.db.lock().unwrap();
     let res = conn.query_row(
         "SELECT s.id, s.plan_id, s.plan_name, s.status, s.started_at, s.updated_at, \
@@ -226,55 +265,89 @@ pub fn session_for_workout(state: State<AppState>, workout_id: i64) -> Result<Op
     }
 }
 
-/* ---------- 重量曲线（逐组记录查询） ---------- */
+/* ---------- 重量曲线（逐组记录查询，聚合键 = 动作库 id） ---------- */
 
-/// 某动作的全部做组记录（按日期升序；含热身组，前端按需过滤/聚合）
+/// 把「动作库 id 或动作名」解析成库 id。前端新调用一律传 id；
+/// 动作名（AI 工具、旧调用）也能命中；库里都没有时原样返回（老库未回填的兜底）。
+fn resolve_exercise_id(conn: &rusqlite::Connection, key: &str) -> Result<String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(crate::error::ReinError::Message("动作标识不能为空".into()));
+    }
+    let hit: Option<String> = conn
+        .query_row("SELECT id FROM exercises WHERE id = ?1", [key], |r| r.get(0))
+        .optional()?;
+    if let Some(id) = hit {
+        return Ok(id);
+    }
+    let index = crate::modules::exercise_lib::resolve::NameIndex::load(conn)?;
+    Ok(index
+        .get(key)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| key.to_string()))
+}
+
+/// 某动作的全部做组记录（按日期升序；含热身组，前端按需过滤/聚合）。
+/// 入参可以传动作库 id 或动作名（旧调用兼容）。
 #[tauri::command]
 pub fn strength_history(
     state: State<AppState>,
-    exercise_name: String,
+    exercise_id: String,
 ) -> Result<Vec<StrengthSetRecord>> {
     let conn = state.db.lock().unwrap();
+    let id = resolve_exercise_id(&conn, &exercise_id)?;
+    let raw = exercise_id.trim().to_string();
     let mut stmt = conn.prepare(
-        "SELECT s.workout_id, w.date, s.exercise_name, s.set_no, s.weight_kg, s.reps, s.sec, s.warmup \
+        "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
+                s.set_no, s.weight_kg, s.reps, s.sec, s.warmup \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
-         WHERE s.exercise_name = ?1 \
+         WHERE s.exercise_id = ?1 OR (s.exercise_id IS NULL AND s.exercise_name = ?2) \
          ORDER BY w.date ASC, s.workout_id ASC, s.id ASC",
     )?;
     let list = stmt
-        .query_map([&exercise_name], |r| {
-            Ok(StrengthSetRecord {
-                workout_id: r.get(0)?,
-                date: r.get(1)?,
-                exercise_name: r.get(2)?,
-                set_no: r.get(3)?,
-                weight_kg: r.get(4)?,
-                reps: r.get(5)?,
-                sec: r.get(6)?,
-                warmup: r.get::<_, i64>(7)? != 0,
-            })
-        })?
+        .query_map(rusqlite::params![id, raw], strength_set_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(list)
 }
 
-/// 有力量记录的动作清单（按最近一次训练的日期倒序）
+fn strength_set_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StrengthSetRecord> {
+    Ok(StrengthSetRecord {
+        workout_id: r.get(0)?,
+        date: r.get(1)?,
+        exercise_key: r.get(2)?,
+        exercise_id: r.get(3)?,
+        exercise_name: r.get(4)?,
+        kind: r.get(5)?,
+        set_no: r.get(6)?,
+        weight_kg: r.get(7)?,
+        reps: r.get(8)?,
+        sec: r.get(9)?,
+        warmup: r.get::<_, i64>(10)? != 0,
+    })
+}
+
+/// 有力量记录的动作清单（按最近一次训练的日期倒序）。
+/// 聚合键是动作库 id；展示名优先取库内名（改名/跨课程合并都跟随）。
 #[tauri::command]
 pub fn strength_exercises(state: State<AppState>) -> Result<Vec<StrengthExerciseRef>> {
     let conn = state.db.lock().unwrap();
     let mut stmt = conn.prepare(
-        "SELECT s.exercise_name, MAX(w.date) AS last_date, COUNT(DISTINCT s.workout_id) AS sessions \
+        "SELECT COALESCE(NULLIF(s.exercise_id, ''), ''), \
+                COALESCE(e.name, MAX(s.exercise_name)) AS display_name, \
+                MAX(w.date) AS last_date, COUNT(DISTINCT s.workout_id) AS sessions \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
+         LEFT JOIN exercises e ON e.id = s.exercise_id \
          WHERE s.warmup = 0 AND s.weight_kg IS NOT NULL \
-         GROUP BY s.exercise_name \
+         GROUP BY COALESCE(NULLIF(s.exercise_id, ''), s.exercise_name) \
          ORDER BY last_date DESC",
     )?;
     let list = stmt
         .query_map([], |r| {
             Ok(StrengthExerciseRef {
-                name: r.get(0)?,
-                last_date: r.get(1)?,
-                sessions: r.get(2)?,
+                exercise_id: r.get(0)?,
+                name: r.get(1)?,
+                last_date: r.get(2)?,
+                sessions: r.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -283,23 +356,29 @@ pub fn strength_exercises(state: State<AppState>) -> Result<Vec<StrengthExercise
 
 /// 一批动作各自的「最近一次做组重量」（取该动作最近一次训练里最后一组正式组）。
 /// 沉浸页开始课程时批量预填「上次重量」；查不到的动作不出现在返回里。
+/// 入参可以传动作库 id 或动作名。
 #[tauri::command]
 pub fn strength_last_weights(
     state: State<AppState>,
-    names: Vec<String>,
+    exercise_ids: Vec<String>,
 ) -> Result<Vec<StrengthLastWeight>> {
     let conn = state.db.lock().unwrap();
     let mut out = Vec::new();
     let mut stmt = conn.prepare(
-        "SELECT s.weight_kg, s.reps, w.date \
+        "SELECT s.weight_kg, s.reps, w.date, COALESCE(e.name, s.exercise_name) \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
-         WHERE s.exercise_name = ?1 AND s.warmup = 0 AND s.weight_kg IS NOT NULL \
+         LEFT JOIN exercises e ON e.id = s.exercise_id \
+         WHERE s.warmup = 0 AND s.weight_kg IS NOT NULL \
+           AND (s.exercise_id = ?1 OR (s.exercise_id IS NULL AND s.exercise_name = ?2)) \
          ORDER BY w.date DESC, s.workout_id DESC, s.id DESC LIMIT 1",
     )?;
-    for name in &names {
-        let res = stmt.query_row([name], |r| {
+    for key in &exercise_ids {
+        let id = resolve_exercise_id(&conn, key)?;
+        let raw = key.trim().to_string();
+        let res = stmt.query_row(rusqlite::params![id, raw], |r| {
             Ok(StrengthLastWeight {
-                name: name.clone(),
+                exercise_id: id.clone(),
+                name: r.get(3)?,
                 weight_kg: r.get(0)?,
                 reps: r.get(1)?,
                 date: r.get(2)?,
@@ -310,4 +389,26 @@ pub fn strength_last_weights(
         }
     }
     Ok(out)
+}
+
+/// 近 N 天的全部做组记录（含热身标记）——训练建议引擎的一次性原料。
+/// 逐动作查询会让一堂课发出 N 条命令，这里一次取回由前端纯函数引擎计算。
+#[tauri::command]
+pub fn strength_recent_sets(
+    state: State<AppState>,
+    days: Option<i64>,
+) -> Result<Vec<StrengthSetRecord>> {
+    let conn = state.db.lock().unwrap();
+    let days = days.unwrap_or(42).clamp(1, 365);
+    let mut stmt = conn.prepare(
+        "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
+                s.set_no, s.weight_kg, s.reps, s.sec, s.warmup \
+         FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
+         WHERE w.date >= date('now', 'localtime', '-' || ?1 || ' days') \
+         ORDER BY w.date ASC, s.workout_id ASC, s.id ASC",
+    )?;
+    let list = stmt
+        .query_map([days], strength_set_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(list)
 }

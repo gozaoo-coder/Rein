@@ -164,8 +164,7 @@ fn insert_chunks(
     if chunks.is_empty() {
         return Ok(0);
     }
-    let mut stmt =
-        conn.prepare("INSERT INTO kb_chunks(doc_id, ord, text) VALUES (?1, ?2, ?3)")?;
+    let mut stmt = conn.prepare("INSERT INTO kb_chunks(doc_id, ord, text) VALUES (?1, ?2, ?3)")?;
     for (i, text) in chunks.iter().enumerate() {
         stmt.execute(rusqlite::params![doc_id, i as i64, text])?;
     }
@@ -214,9 +213,8 @@ pub fn apply_one(conn: &Connection, source_type: &str, source_id: &str) -> Resul
 /// 取一批脏标记并从队列移除。返回 (source_type, source_id, op)。
 /// 先取后删的顺序保证：即使处理中途崩溃，最坏是把已处理的再做一遍（幂等），不会丢。
 pub fn take_dirty(conn: &Connection, limit: i64) -> Result<Vec<(String, String, String)>> {
-    let mut stmt = conn.prepare(
-        "SELECT source_type, source_id, op FROM kb_dirty ORDER BY at LIMIT ?1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT source_type, source_id, op FROM kb_dirty ORDER BY at LIMIT ?1")?;
     let rows: Vec<(String, String, String)> = stmt
         .query_map([limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -262,11 +260,15 @@ fn id_query(source_type: &str) -> Option<&'static str> {
         "chat_message" => "SELECT id FROM ai_chat_messages",
         "chat" => "SELECT id FROM ai_chats",
         // 附件的身份是复合键（父 id:序号），用 json_each 把数组展开成行（JSON1 已随 bundled 启用）
-        "todo_attachment" => "SELECT CAST(t.id AS TEXT) || ':' || j.key \
-              FROM todos t, json_each(t.attachments) j WHERE t.attachments IS NOT NULL",
-        "chat_attachment" => "SELECT id || ':img' FROM ai_chat_messages WHERE image_base64 IS NOT NULL \
+        "todo_attachment" => {
+            "SELECT CAST(t.id AS TEXT) || ':' || j.key \
+              FROM todos t, json_each(t.attachments) j WHERE t.attachments IS NOT NULL"
+        }
+        "chat_attachment" => {
+            "SELECT id || ':img' FROM ai_chat_messages WHERE image_base64 IS NOT NULL \
               UNION ALL SELECT id || ':doc' FROM ai_chat_messages \
-              WHERE kind = 'doc' AND text LIKE '%附带文档《%'",
+              WHERE kind = 'doc' AND text LIKE '%附带文档《%'"
+        }
         "memory" => "SELECT CAST(id AS TEXT) FROM kb_memories",
         "note" => "SELECT CAST(id AS TEXT) FROM kb_files",
         _ => return None,
@@ -497,8 +499,24 @@ mod tests {
     #[test]
     fn upsert_is_idempotent_and_skips_unchanged() {
         let conn = db();
-        let a = debug_seed_doc(&conn, "todo", "1", "深蹲", "五组八次，注意膝盖", Some("2026-09-10")).unwrap();
-        let b = debug_seed_doc(&conn, "todo", "1", "深蹲", "五组八次，注意膝盖", Some("2026-09-10")).unwrap();
+        let a = debug_seed_doc(
+            &conn,
+            "todo",
+            "1",
+            "深蹲",
+            "五组八次，注意膝盖",
+            Some("2026-09-10"),
+        )
+        .unwrap();
+        let b = debug_seed_doc(
+            &conn,
+            "todo",
+            "1",
+            "深蹲",
+            "五组八次，注意膝盖",
+            Some("2026-09-10"),
+        )
+        .unwrap();
         assert_eq!(a, b, "同 source_id 应更新同一行而不是新增");
         let (docs, _, _) = stats(&conn).unwrap();
         assert_eq!(docs, 1);
@@ -527,11 +545,25 @@ mod tests {
     #[test]
     fn fts_stays_consistent_across_insert_update_delete() {
         let conn = db();
-        let _ = debug_seed_doc(&conn, "note", "n1", "第一条", "腿部力量训练安排，深蹲五组", None);
+        let _ = debug_seed_doc(
+            &conn,
+            "note",
+            "n1",
+            "第一条",
+            "腿部力量训练安排，深蹲五组",
+            None,
+        );
         fts_integrity_check(&conn).expect("插入后 FTS 应一致");
 
         // 更新（走派生路径覆盖：内容变化）
-        let _ = debug_seed_doc(&conn, "note", "n1", "第一条改了", "改成练胸，卧推五组", None);
+        let _ = debug_seed_doc(
+            &conn,
+            "note",
+            "n1",
+            "第一条改了",
+            "改成练胸，卧推五组",
+            None,
+        );
         fts_integrity_check(&conn).expect("更新后 FTS 应一致");
 
         // 删除文档 → 必须显式删块才能维护 FTS
@@ -547,10 +579,23 @@ mod tests {
         let conn = db();
         let doc = debug_seed_doc(&conn, "note", "n2", "标题", "正文内容", None).unwrap();
         let chunk_ids: Vec<i64> = {
-            let mut s = conn.prepare("SELECT id FROM kb_chunks WHERE doc_id = ?1").unwrap();
-            s.query_map([doc], |r| r.get(0)).unwrap().collect::<std::result::Result<_, _>>().unwrap()
+            let mut s = conn
+                .prepare("SELECT id FROM kb_chunks WHERE doc_id = ?1")
+                .unwrap();
+            s.query_map([doc], |r| r.get(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
         };
-        store_vectors(&conn, "m1", &chunk_ids.iter().map(|c| (*c, vec![1.0f32, 0.0])).collect::<Vec<_>>()).unwrap();
+        store_vectors(
+            &conn,
+            "m1",
+            &chunk_ids
+                .iter()
+                .map(|c| (*c, vec![1.0f32, 0.0]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
         let (_, _, v) = stats(&conn).unwrap();
         assert_eq!(v, 1);
 
@@ -564,16 +609,38 @@ mod tests {
         let conn = db();
         let doc = debug_seed_doc(&conn, "note", "n3", "标题", "正文内容", None).unwrap();
         let chunk_ids: Vec<i64> = {
-            let mut s = conn.prepare("SELECT id FROM kb_chunks WHERE doc_id = ?1").unwrap();
-            s.query_map([doc], |r| r.get(0)).unwrap().collect::<std::result::Result<_, _>>().unwrap()
+            let mut s = conn
+                .prepare("SELECT id FROM kb_chunks WHERE doc_id = ?1")
+                .unwrap();
+            s.query_map([doc], |r| r.get(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
         };
-        assert_eq!(chunks_needing_vectors(&conn, "m1", 10).unwrap().len(), chunk_ids.len());
+        assert_eq!(
+            chunks_needing_vectors(&conn, "m1", 10).unwrap().len(),
+            chunk_ids.len()
+        );
 
-        store_vectors(&conn, "m1", &chunk_ids.iter().map(|c| (*c, vec![1.0f32])).collect::<Vec<_>>()).unwrap();
+        store_vectors(
+            &conn,
+            "m1",
+            &chunk_ids
+                .iter()
+                .map(|c| (*c, vec![1.0f32]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
         assert_eq!(chunks_needing_vectors(&conn, "m1", 10).unwrap().len(), 0);
         // 换模型后同一批块应重新入列
-        assert_eq!(chunks_needing_vectors(&conn, "m2", 10).unwrap().len(), chunk_ids.len());
-        assert_eq!(vector_coverage(&conn, "m2").unwrap(), (0, chunk_ids.len() as i64));
+        assert_eq!(
+            chunks_needing_vectors(&conn, "m2", 10).unwrap().len(),
+            chunk_ids.len()
+        );
+        assert_eq!(
+            vector_coverage(&conn, "m2").unwrap(),
+            (0, chunk_ids.len() as i64)
+        );
     }
 
     #[test]
@@ -581,8 +648,13 @@ mod tests {
         let conn = db();
         let doc = debug_seed_doc(&conn, "note", "n4", "标题", "正文内容", None).unwrap();
         let chunk_ids: Vec<i64> = {
-            let mut s = conn.prepare("SELECT id FROM kb_chunks WHERE doc_id = ?1").unwrap();
-            s.query_map([doc], |r| r.get(0)).unwrap().collect::<std::result::Result<_, _>>().unwrap()
+            let mut s = conn
+                .prepare("SELECT id FROM kb_chunks WHERE doc_id = ?1")
+                .unwrap();
+            s.query_map([doc], |r| r.get(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
         };
         let items: Vec<(i64, Vec<f32>)> = chunk_ids.iter().map(|c| (*c, vec![1.0f32])).collect();
         store_vectors(&conn, "m1", &items).unwrap();
@@ -602,9 +674,14 @@ mod tests {
         .unwrap();
         let id = conn.last_insert_rowid();
         for _ in 0..3 {
-            conn.execute("UPDATE todos SET title = title || '!' WHERE id = ?1", [id]).unwrap();
+            conn.execute("UPDATE todos SET title = title || '!' WHERE id = ?1", [id])
+                .unwrap();
         }
-        assert_eq!(pending_count(&conn).unwrap(), 1, "主键去重应把同一份记录的多次变更合成一条");
+        assert_eq!(
+            pending_count(&conn).unwrap(),
+            1,
+            "主键去重应把同一份记录的多次变更合成一条"
+        );
 
         let taken = take_dirty(&conn, 100).unwrap();
         assert_eq!(taken.len(), 1);
@@ -623,7 +700,8 @@ mod tests {
         .unwrap();
         let id = conn.last_insert_rowid();
         take_dirty(&conn, 100).unwrap();
-        conn.execute("DELETE FROM todos WHERE id = ?1", [id]).unwrap();
+        conn.execute("DELETE FROM todos WHERE id = ?1", [id])
+            .unwrap();
         let taken = take_dirty(&conn, 100).unwrap();
         assert_eq!(taken.len(), 1);
         assert_eq!(taken[0].2, "delete");
@@ -689,7 +767,10 @@ mod tests {
         // 先把三条都建进知识库
         let ids: Vec<String> = {
             let mut s = conn.prepare("SELECT CAST(id AS TEXT) FROM todos").unwrap();
-            s.query_map([], |r| r.get(0)).unwrap().collect::<std::result::Result<_, _>>().unwrap()
+            s.query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
         };
         for id in &ids {
             apply_one(&conn, "todo", id).unwrap();
@@ -699,7 +780,8 @@ mod tests {
 
         // 删掉一条源记录，但不通知知识库（模拟触发器之前就存在的数据 / 外部改动）
         conn.execute("DELETE FROM kb_dirty", []).unwrap();
-        conn.execute("DELETE FROM todos WHERE title = 'b'", []).unwrap();
+        conn.execute("DELETE FROM todos WHERE title = 'b'", [])
+            .unwrap();
         let queued = scan_all(&conn, &all()).unwrap();
         assert_eq!(queued, 2, "只剩两条源记录");
         assert_eq!(stats(&conn).unwrap().0, 2, "孤儿文档应被对账清掉");
@@ -744,7 +826,11 @@ mod tests {
         assert_eq!(hits.len(), 1, "应命中那条待办");
         assert_eq!(hits[0].source_type, "todo");
         assert_eq!(hits[0].title, "腿部力量训练");
-        assert!(hits[0].snippet.contains("膝盖"), "片段应含查询词: {}", hits[0].snippet);
+        assert!(
+            hits[0].snippet.contains("膝盖"),
+            "片段应含查询词: {}",
+            hits[0].snippet
+        );
 
         // 两字查询必须走 LIKE 兜底
         let q2 = KbQuery {
@@ -820,7 +906,10 @@ mod tests {
         assert_eq!(kind, "image");
         assert!(path.starts_with("附件/日程/"), "路径 {path}");
         assert!(!body.contains("QUJD"), "base64 泄漏进附件编目正文");
-        assert!(body.contains("膝盖.jpg") && body.contains("40 KB"), "{body}");
+        assert!(
+            body.contains("膝盖.jpg") && body.contains("40 KB"),
+            "{body}"
+        );
 
         // 文本附件：正文进索引，可按内容检索
         let text_doc: String = conn
@@ -833,14 +922,21 @@ mod tests {
         assert!(text_doc.contains("避免深蹲"));
 
         // 附件从 JSON 数组里删掉后，越界的编目文档要自愈删除
-        conn.execute("UPDATE todos SET attachments = '[]' WHERE id = ?1", [tid.parse::<i64>().unwrap()])
-            .unwrap();
+        conn.execute(
+            "UPDATE todos SET attachments = '[]' WHERE id = ?1",
+            [tid.parse::<i64>().unwrap()],
+        )
+        .unwrap();
         take_dirty(&conn, 100).unwrap();
         for idx in 0..2 {
             apply_one(&conn, "todo_attachment", &format!("{tid}:{idx}")).unwrap();
         }
         let left: i64 = conn
-            .query_row("SELECT COUNT(*) FROM kb_docs WHERE source_type='todo_attachment'", [], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM kb_docs WHERE source_type='todo_attachment'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(left, 0, "附件清空后编目应自愈清空");
     }
@@ -857,7 +953,11 @@ mod tests {
         for (i, (role, kind, text)) in [
             ("user", "text", "深蹲时膝盖疼"),
             ("assistant", "tools", r#"{"kind":"tools","calls":[]}"#),
-            ("assistant", "text", r#"{"kind":"chat","text":"建议先降低重量"}"#),
+            (
+                "assistant",
+                "text",
+                r#"{"kind":"chat","text":"建议先降低重量"}"#,
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -873,9 +973,11 @@ mod tests {
         let out = apply_one(&conn, "chat", "c9").unwrap();
         let doc_id = out.doc_id.unwrap();
         let (path, body): (String, String) = conn
-            .query_row("SELECT path, body FROM kb_docs WHERE id = ?1", [doc_id], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
+            .query_row(
+                "SELECT path, body FROM kb_docs WHERE id = ?1",
+                [doc_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
             .unwrap();
         assert!(path.starts_with("对话/"), "路径 {path}");
         assert!(body.contains("用户：深蹲时膝盖疼"), "用户轮应入转录");
@@ -909,14 +1011,20 @@ mod tests {
         let doc_id = out.doc_id.unwrap();
 
         let total: i64 = conn
-            .query_row("SELECT COUNT(*) FROM kb_chunks WHERE doc_id = ?1", [doc_id], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM kb_chunks WHERE doc_id = ?1",
+                [doc_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert!(total >= 3, "长笔记应切成多块，实际 {total}");
 
         // 分页取第 2 页（offset=1, limit=1）
         let page: Vec<i64> = {
             let mut stmt = conn
-                .prepare("SELECT ord FROM kb_chunks WHERE doc_id = ?1 ORDER BY ord LIMIT 1 OFFSET 1")
+                .prepare(
+                    "SELECT ord FROM kb_chunks WHERE doc_id = ?1 ORDER BY ord LIMIT 1 OFFSET 1",
+                )
                 .unwrap();
             stmt.query_map([doc_id], |r| r.get(0))
                 .unwrap()

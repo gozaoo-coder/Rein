@@ -1,0 +1,508 @@
+/**
+ * 校园教务域类型 · 与 Rust `modules/campus` 对应。
+ *
+ * 一条主线：**学校系统 → 账号 → 学期 → 课程 → 上课时段 → 时间线派生日程**。
+ * 这里只放后端真实返回的形状；「周次 → 公历日期」的展开在 Rust 完成
+ * （见 `modules/campus/commands.rs::expand_entries`），前端拿到的 `ScheduleEntry`
+ * 已经带具体日期，不需要再实现一遍周次换算。
+ */
+
+/** 学校系统选择器的一项（`campus_systems` 返回） */
+export interface SchoolSystemInfo {
+  /** 稳定键，落库在 `campus_accounts.system_kind` */
+  kind: string
+  name: string
+  /** 厂商/产品线，帮用户确认自己学校是不是这一套 */
+  vendor: string
+  defaultBaseUrl: string
+  /** 登录握手标识，如 "supwisdom-portal-rsa"；UI 据此决定表单文案 */
+  loginStrategy: string
+  bizTypeId: number
+  /** 登录过程中可能出现图形验证码，UI 预留验证码位 */
+  mayRequireCaptcha: boolean
+}
+
+/**
+ * 账号。后端**不会**把密码与 Cookie 发到前端，只给两个布尔；
+ * 明文凭据全程留在 Rust 侧。
+ */
+export interface CampusAccount {
+  id: number
+  systemKind: string
+  baseUrl: string
+  loginName: string
+  /** 是否已保存密码（决定会话过期后能否静默重登） */
+  hasPassword: boolean
+  /** Cookie jar 里有主票据 */
+  loggedIn: boolean
+  sessionAt: string | null
+  studentId: string | null
+  studentCode: string | null
+  studentName: string | null
+  department: string | null
+  major: string | null
+  adminclass: string | null
+  grade: string | null
+  totalCredits: number | null
+  savePassword: boolean
+  active: boolean
+  lastSyncAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CampusSemester {
+  id: number
+  accountId: number
+  remoteId: number
+  code: string | null
+  /** 展示名，如「2026-2027 第一学期」 */
+  name: string
+  schoolYear: string | null
+  season: string | null
+  /** `YYYY-MM-DD` —— 周次映射到日历的锚点 */
+  startDate: string
+  endDate: string
+  weekStartOnSunday: boolean
+  totalWeeks: number
+  currentWeek: number | null
+  isCurrent: boolean
+}
+
+export interface CampusCourse {
+  id: number
+  semesterId: number
+  remoteLessonId: number
+  courseCode: string | null
+  courseName: string
+  lessonCode: string | null
+  lessonName: string | null
+  teachers: string[]
+  credits: number | null
+  courseType: string | null
+  /** 教务自带配色（如 `#3B73B6`）；null 时用 `var(--cat-class)` */
+  color: string | null
+}
+
+/**
+ * 一个上课时段（一周里的固定安排）。
+ * `weeks` 是**教学周序号**数组，不是公历周；换算成日期由后端的 `ScheduleEntry` 负责。
+ */
+export interface CampusSession {
+  id: number
+  courseId: number
+  /** 1=周一 … 7=周日（教务口径） */
+  weekday: number
+  /** 第几节起 / 止 */
+  startUnit: number
+  endUnit: number
+  /** `08:00` —— 教务已算好的真实时刻 */
+  startTime: string
+  endTime: string
+  weeks: number[]
+  weeksStr: string | null
+  room: string | null
+  building: string | null
+  campus: string | null
+  courseName: string
+  courseCode: string | null
+  teachers: string[]
+  credits: number | null
+  courseType: string | null
+  color: string | null
+}
+
+/** 一节课在某个公历日期上的一次发生 */
+export interface ScheduleEntry {
+  /** `YYYY-MM-DD` */
+  date: string
+  /** 教学周序号 */
+  week: number
+  session: CampusSession
+}
+
+/**
+ * 左侧时间轴的一行 —— 由该学期实际排课的节次去重得到。
+ *
+ * 这是需求里「第几节课那一列要改成实际上课时间」的数据来源：
+ * 教务的 `startTime`/`endTime` 已是该节次的真实时刻，不需要前端再维护节次表。
+ *
+ * 命名避开 `TimeSlot`：nutrition 域已有一个同名类型（运动时段枚举），barrel 会撞。
+ */
+export interface PeriodSlot {
+  startUnit: number
+  endUnit: number
+  startTime: string
+  endTime: string
+  /** 距 00:00 的分钟数，与 `Todo.startMin` 同口径 */
+  startMin: number
+  durationMin: number
+}
+
+/** 课表视图（`campus_schedule` 返回）：一次请求带齐渲染所需的一切 */
+export interface ScheduleView {
+  account: CampusAccount | null
+  semester: CampusSemester | null
+  entries: ScheduleEntry[]
+  timeSlots: PeriodSlot[]
+  courses: CampusCourse[]
+}
+
+export interface LoginOutcome {
+  ok: boolean
+  /** 服务端原样返回的提示，失败时展示给用户 */
+  message: string | null
+  /** 需要图形验证码 */
+  needCaptcha: boolean
+  /** `change_password` / `reset_password` —— 必须去网页端处理，本地重试无意义 */
+  actionRequired: string | null
+  account: CampusAccount | null
+}
+
+export interface SyncOutcome {
+  courses: number
+  sessions: number
+  /** 写进时间线的派生日程条数 */
+  todosWritten: number
+  semesterId: number
+  semesterName: string
+  syncedAt: string
+  /** 远端有、但进不了日历的活动数（如纯考试安排） */
+  skippedActivities: number
+}
+
+export interface CampusLoginInput {
+  systemKind: string
+  baseUrl: string
+  loginName: string
+  password?: string
+  captcha?: string
+  savePassword?: boolean
+}
+
+/* ─────────────────── 培养方案（program-info-json 的子集） ───────────────────
+ * 那个响应实测 900KB+，我们只取页面真正要用的几段。字段名与教务一致（中文拼音式 camelCase），
+ * 不做重命名，方便对照教务页面排查。 */
+
+/** 某个课程模块下按「课程性质」汇总的学分 */
+export interface ProgramCreditStat {
+  courseProperty: { nameZh: string } | null
+  sumCredit: number
+  sumPeriod: number
+}
+
+/** `creditDistrTable` 是一棵树：一级模块 → 二级模块 →（三级） */
+export interface ProgramCreditNode {
+  type: { nameZh: string } | null
+  /** 本节点自己的学分汇总；一级模块常为空，学分挂在子节点上 */
+  courseStatistics: ProgramCreditStat[]
+  children?: ProgramCreditNode[] | null
+  sumCredit?: number | null
+  sumPeriod?: number | null
+}
+
+export interface ProgramCourseRef {
+  id: number
+  nameZh: string
+  nameEn?: string | null
+  code?: string | null
+}
+
+export interface ProgramInfo {
+  id: number
+  nameZh: string
+  grade?: string | null
+  department?: { nameZh: string } | null
+  major?: { nameZh: string } | null
+  education?: { nameZh: string } | null
+  cultivateType?: { nameZh: string } | null
+  /** 培养方案覆盖的全部课程（实测 100+ 门） */
+  courseList?: ProgramCourseRef[] | null
+  creditDistrTable?: ProgramCreditNode | null
+  printedTime?: string | null
+}
+
+export interface ProgramPayload {
+  programInfos?: ProgramInfo[] | null
+}
+
+/* ─────────────────── 选课（course-selection-api） ───────────────────
+ * 注意这一套与课表**不是同一个鉴权**：令牌是拿 EAMS 会话去门户页面换来的 SSO JWT，
+ * 详见 modules/campus/course_select.rs 顶部说明。 */
+
+/** 一个选课批次。字段全可选：不同轮次给的不一样，缺字段不该让整个列表挂掉。 */
+export interface CourseSelectTurn {
+  /** 不透明标识：教务那边可能是数字，路由参数里又是字符串，原样透传 */
+  id: unknown
+  name?: string | null
+  bulletin?: string | null
+  /** 当前是否允许进入选课 */
+  allowEnter?: boolean
+  disallowReasons?: string[]
+  openDateTimeText?: string | null
+  selectDateTimeText?: string | null
+  dropDateTimeText?: string | null
+  addRulesText?: string[]
+  dropRulesText?: string[]
+  /** 精确区间。**抢课的起跑线**：文本字段是给人看的，区间里的 startDateTime 才是机器可读值 */
+  openDateTimeRange?: DateTimeRange | null
+  selectDateTimeRange?: DateTimeRange | null
+  dropDateTimeRange?: DateTimeRange | null
+}
+
+/** 教务给的 `{startDateTime, endDateTime}`，形如 `2026-09-17 08:00:00` */
+export interface DateTimeRange {
+  startDateTime?: string | null
+  endDateTime?: string | null
+}
+
+export interface LessonCourse {
+  id?: unknown
+  code?: string | null
+  nameZh?: string | null
+  nameEn?: string | null
+  credits?: number | null
+}
+
+export interface LessonSelection {
+  status?: string | null
+  pinned?: boolean
+  needAttend?: boolean
+}
+
+export interface ScheduleGroup {
+  id?: unknown
+  no?: number | null
+  default?: boolean
+  limitCount?: number | null
+  dateTimePlace?: unknown
+}
+
+/** 一个教学班。真机上还没有非空样本（批次未开），所以字段一律可选。 */
+export interface CourseSelectLesson {
+  /** 教学班 id —— 提交选课时的 lessonAssoc */
+  id: unknown
+  course?: LessonCourse | null
+  selectedLesson?: LessonSelection | null
+  stdCount?: number | null
+  limitCount?: number | null
+  teachers?: unknown[]
+  scheduleGroups?: ScheduleGroup[]
+  canSelect?: boolean | null
+}
+
+export interface CourseSelectStatus {
+  ready: boolean
+  reason?: string | null
+  /** 教务服务器时间。抢课对时用它，别用本机时钟 */
+  serverTime?: string | null
+  studentId?: number | null
+  studentCode?: string | null
+  studentName?: string | null
+  /** 开放中的批次；**空数组 = 当前没有选课窗口**，属正常状态 */
+  turns: CourseSelectTurn[]
+  /** 官方选课页地址（含令牌），出问题时进去核对最省事 */
+  entryUrl?: string | null
+}
+
+/** 一次选课提交的受理回执 */
+export interface CourseSelectTicket {
+  requestId: string
+}
+
+/** 轮询结果：`pending` 时前端隔 2 秒再问，最多 10 次 */
+export interface CourseSelectPoll {
+  pending: boolean
+  success: boolean
+  message?: string | null
+  /** 与已选课时间冲突，需办理免听 */
+  needAttend: boolean
+}
+
+/**
+ * `query-lesson` 的查询条件对象。
+ *
+ * 字段来自教务处 SPA 渲染出的表单（由 `query-condition/{turnId}` 定义），
+ * **不是随手起的名字** —— 发错键名教务会当成「没有条件」静默返回全量。
+ */
+export interface LessonQuery {
+  courseCode?: string
+  courseName?: string
+  /**
+   * 按**课程名或课程代码**模糊匹配。
+   *
+   * 注意它与 [`lessonNameOrCode`] 是教务表单里**两个不同的字段** ——
+   * 课程（course）与教学班（lesson）在教务那边是两层概念。
+   * 界面只有一个搜索框，所以两个都发（外加 `teacherNameOrCode`）。
+   */
+  courseNameOrCode?: string
+  /** 按**教学班名或教学班代码**模糊匹配（与 courseNameOrCode 不是一回事） */
+  lessonNameOrCode?: string
+  teacherNameOrCode?: string
+  campusId?: number
+  /** 勾选后每个教学班带回已选人数；抢课要看「满没满」，所以默认带上 */
+  hasCount?: boolean
+  /** 指定教学班 id 集合时按 id 精确查 */
+  ids?: unknown[]
+  sortField?: string
+  sortType?: string
+}
+
+/* ─────────────────── 自动抢课（grab 引擎） ───────────────────
+ * 引擎跑在 Rust 后台线程里（见 modules/campus/grab.rs），前端只是**显示器**：
+ * 拉一次 `campus_grab_state`，之后靠 `campus://grab` 事件被动更新。
+ * 关掉页面不影响任何事 —— 这正是抢课该有的样子。 */
+
+/** 任务的终态集合：到这里引擎就不再碰它了 */
+export type GrabTerminalStatus = 'success' | 'failed' | 'conflict' | 'cancelled'
+export type GrabStatus = 'waiting' | 'running' | GrabTerminalStatus | 'paused'
+/** 过程状态：`status` 说结果如何，`phase` 说现在在干嘛 */
+export type GrabPhase = 'idle' | 'submit' | 'poll'
+/** 占位优先（推荐）/ 直接提交 */
+export type GrabMode = 'predicate' | 'direct'
+
+export interface GrabTask {
+  id: number
+  /** 列表 / 路径用的批次 id */
+  turnId: string
+  /**
+   * **提交体**用的批次 id（`courseSelectTurnAssoc`）。
+   * 来自「进批次」接口的 `options.turn.id`，与 `turnId` 未必相同；
+   * 为空时后端会退回 `turnId`（见 Rust `GrabTask::turn_assoc`）。
+   */
+  turnAssoc?: string | null
+  turnName?: string | null
+  /** 教学班 id（不透明值） */
+  lessonId: unknown
+  lessonName?: string | null
+  courseName?: string | null
+  courseCode?: string | null
+  teacher?: string | null
+  credits?: number | null
+  mode: GrabMode
+  virtualCost?: number | null
+  scheduleGroupId?: unknown
+  /** 教务墙钟时间文本。引擎按服务器偏差换算成本机时刻开火 */
+  windowWall?: string | null
+  windowEndWall?: string | null
+  /** 还不知道窗口什么时候开：引擎会定期去问，而**不会盲撞** */
+  awaitWindow: boolean
+  /** 占位是否已经交过（占位模式只交一次，之后都是正式请求） */
+  predicateDone: boolean
+  status: GrabStatus
+  phase: GrabPhase
+  attempts: number
+  polls: number
+  /** 连败次数（同类才累加） */
+  strikes: number
+  strikeKind?: string | null
+  requestId?: string | null
+  lastMessage?: string | null
+  /** 下一次该动它的本机 unix 毫秒 */
+  nextAt: number
+  /**
+   * **开火时刻**（本机 unix 毫秒，已按服务器偏差与提前量校正）。
+   * 只读派生值，不落库；倒计时直接用它，前端不要自己再算一遍墙上时间。
+   */
+  fireAt?: number | null
+  queuedAt?: number | null
+  finishedAt?: number | null
+  /**
+   * 志愿组 id。同组是**互斥备选**（时间冲突 / 一轮只能选一门），只会中一个：
+   * 任一中选，同组其余立刻取消。没给 / 空串 = 独立任务。
+   */
+  groupKey?: string | null
+  /** 组名（入队时抄一份，纯给人看） */
+  groupName?: string | null
+  /** 志愿序：1 = 第一志愿，**小的优先**。0 = 不在任何组里 */
+  priority?: number
+  /**
+   * **派生值，不落库**：把它压在待命状态的那个更高优先级任务 id。
+   * 界面据此显示「等第 N 志愿」，不要自己再算一遍组内关系。
+   */
+  heldBy?: number | null
+}
+
+/** 批次的轻量摘要 —— 窗口监听的结果 */
+export interface GrabTurnBrief {
+  id: string
+  name?: string | null
+  /** 当前是否允许进入 —— 「窗口真的开了」的判据 */
+  allowEnter: boolean
+  selectText?: string | null
+  windowStart?: string | null
+  windowEnd?: string | null
+}
+
+/** 引擎快照（`campus_grab_state` 的返回，也是 `campus://grab` 事件的负载） */
+export interface GrabState {
+  alive: boolean
+  /** 是否有任务处在非终态 */
+  active: boolean
+  /** 教务服务器时间（把最近一次采样按偏差推到现在） */
+  serverTime?: string | null
+  /** 服务器墙钟 − 本机墙钟（秒）。倒计时全靠它校正 */
+  skewSec?: number | null
+  /** 当前最早的下一次动作时刻（本机 unix 毫秒） */
+  nextAt?: number | null
+  /** 最近一次开火时刻（本机 unix 毫秒）。界面靠它做倒计时 */
+  nextFireAt?: number | null
+  /** 引擎级故障（如教务会话失效）：出现时所有任务都会停下等用户处理 */
+  lastError?: string | null
+  /** 窗口监听的最近结果：教务当前有哪些批次（空 = 窗口还没开） */
+  turns?: GrabTurnBrief[]
+  /** 最近一次窗口探测的时刻（本机 unix 毫秒） */
+  probedAt?: number | null
+  tasks: GrabTask[]
+}
+
+/** 加入抢课任务单时一门课要带的信息 */
+export interface GrabTargetInput {
+  lessonId: unknown
+  lessonName?: string | null
+  courseName?: string | null
+  courseCode?: string | null
+  teacher?: string | null
+  credits?: number | null
+  virtualCost?: number | null
+  scheduleGroupId?: unknown
+  /** 志愿组。三个一起给才成组；不给就是独立任务 */
+  groupKey?: string | null
+  groupName?: string | null
+  priority?: number
+}
+
+/**
+ * 引擎节奏参数。默认值按「一个学生抢 1–4 门课」标定：
+ * 够快（开窗瞬间就出手），又不至于把教务网关打成风控对象。
+ * 后端落库前会再收口一次，界面调不出危险值。
+ */
+export interface GrabSettings {
+  /** 两次提交之间的全局最小间隔（毫秒）—— 防封的主要旋钮 */
+  minIntervalMs: number
+  /** 轮询受理结果的间隔（毫秒） */
+  pollIntervalMs: number
+  /** 满员后的重试间隔（毫秒）：名额释放是稀疏事件，快没意义 */
+  fullRetryMs: number
+  /** 出错后的退避基数（毫秒），按连败次数指数增长 */
+  backoffMs: number
+  maxBackoffMs: number
+  /** 提前量（毫秒）：在开窗时刻之前多久出手，用来抵消网络往返 */
+  leadMs: number
+  /** 单个任务的最大提交次数；0 = 不限（抢课常态） */
+  maxAttempts: number
+  /** 轮询同一受理单的最大次数，超过就当作结果不明并核对后重投 */
+  maxPolls: number
+  /**
+   * **让贤期限**（毫秒）：当前志愿连续满员超过这么久，就把出手机会让给下一志愿。
+   *
+   * **0 = 死守（默认）** —— 只有当前志愿进终态或窗口关闭才轮到下一个。
+   * 填 `180000` 就是「满员 3 分钟后让贤」。
+   */
+  cedeAfterMs: number
+  /** **窗口监听**：App 开着就每分钟问一次「窗口公布了没有」，即使任务单是空的 */
+  watchWindow: boolean
+}
+
+/** `campus_grab_task_action` 支持的动作 */
+export type GrabAction = 'pause' | 'cancel' | 'retry' | 'remove'

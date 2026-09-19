@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
+use ort::session::Session;
 use ort::value::Tensor;
 use tokenizers::Tokenizer;
 use tokenizers::TruncationParams;
@@ -117,7 +117,9 @@ pub trait Embedder: Send + Sync {
     /// 连通性/可用性自检：嵌一句话并校验维度。
     fn probe(&self) -> Result<usize> {
         let v = self.embed(&["膝盖".to_string()])?;
-        let first = v.first().ok_or_else(|| ReinError::Message("嵌入返回空结果".into()))?;
+        let first = v
+            .first()
+            .ok_or_else(|| ReinError::Message("嵌入返回空结果".into()))?;
         if first.len() != self.dim() {
             return Err(ReinError::Message(format!(
                 "嵌入维度不符：期望 {}，实际 {}",
@@ -171,7 +173,11 @@ impl LocalEmbedder {
             .commit_from_memory(MODEL_BYTES)
             .map_err(|e| ReinError::Message(format!("加载嵌入模型失败：{e}")))?;
 
-        let input_names = session.inputs().iter().map(|i| i.name().to_string()).collect();
+        let input_names = session
+            .inputs()
+            .iter()
+            .map(|i| i.name().to_string())
+            .collect();
         Ok(Self {
             session: Mutex::new(session),
             tokenizer,
@@ -232,9 +238,7 @@ impl LocalEmbedder {
         let tensor = outputs
             .get("last_hidden_state")
             .or_else(|| outputs.get("sentence_embedding"))
-            .ok_or_else(|| {
-                ReinError::Message("嵌入模型输出里没有 last_hidden_state".into())
-            })?;
+            .ok_or_else(|| ReinError::Message("嵌入模型输出里没有 last_hidden_state".into()))?;
         let (shape, data) = tensor
             .try_extract_tensor::<f32>()
             .map_err(|e| ReinError::Message(format!("读取嵌入输出失败：{e}")))?;
@@ -306,7 +310,10 @@ impl CloudEmbedder {
         // 有些实现不保证顺序，按 index 归位
         let mut items: Vec<(usize, Vec<f32>)> = Vec::with_capacity(arr.len());
         for (i, item) in arr.iter().enumerate() {
-            let idx = item.get("index").and_then(|v| v.as_u64()).unwrap_or(i as u64) as usize;
+            let idx = item
+                .get("index")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(i as u64) as usize;
             let vec = item
                 .get("embedding")
                 .and_then(|v| v.as_array())
@@ -390,12 +397,9 @@ pub fn build(cfg: &EmbedConfig, data_dir: &Path) -> Result<Option<Box<dyn Embedd
     match cfg.mode.as_str() {
         crate::modules::kb::models::MODE_LOCAL => Ok(Some(Box::new(LocalEmbedder::new(data_dir)?))),
         crate::modules::kb::models::MODE_CLOUD => match &cfg.cloud {
-            Some((url, key, model, dim)) => Ok(Some(Box::new(CloudEmbedder::new(
-                url,
-                key,
-                model,
-                *dim,
-            )))),
+            Some((url, key, model, dim)) => {
+                Ok(Some(Box::new(CloudEmbedder::new(url, key, model, *dim))))
+            }
             None => Err(ReinError::Message(
                 "云端嵌入尚未配置完整（需要 base URL、API Key、模型名）".into(),
             )),
@@ -435,7 +439,9 @@ mod tests {
     /// 这里只验证运行库按平台选对了供给方式。
     #[test]
     fn ort_lib_supply_matches_platform() {
-        if cfg!(target_os = "windows") && (cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64")) {
+        if cfg!(target_os = "windows")
+            && (cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+        {
             assert!(!ORT_LIB_BYTES.is_empty(), "Windows 应内嵌运行库");
         } else {
             assert!(ORT_LIB_BYTES.is_empty(), "非 Windows 平台不应内嵌运行库");
@@ -445,7 +451,11 @@ mod tests {
     #[test]
     fn model_bytes_look_like_onnx() {
         // ONNX 是 protobuf，但模型的第一个字节不固定；校验体积足够大以免误配空文件
-        assert!(MODEL_BYTES.len() > 1_000_000, "模型体积异常：{}", MODEL_BYTES.len());
+        assert!(
+            MODEL_BYTES.len() > 1_000_000,
+            "模型体积异常：{}",
+            MODEL_BYTES.len()
+        );
         assert!(TOKENIZER_BYTES.len() > 1000, "分词器体积异常");
         let head = String::from_utf8_lossy(&TOKENIZER_BYTES[..64.min(TOKENIZER_BYTES.len())]);
         assert!(head.contains('{'), "分词器应是 JSON");

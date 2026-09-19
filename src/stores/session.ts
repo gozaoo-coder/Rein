@@ -14,10 +14,12 @@ import { defineStore } from 'pinia'
 
 import { sessionService } from '@/services/sessionService'
 import { estimateKcal } from '@/config/domain'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useExerciseStore } from '@/stores/exercise'
 import { useNutritionStore } from '@/stores/nutrition'
 import { usePlanStore } from '@/stores/plan'
 import { todayStr } from '@/utils/date'
+import { computeTrainingAdvice, type ExerciseAdvice, type TrainingAdvice } from '@/utils/trainingAdvice'
 import { RUN_PLAN_ID } from '@/types'
 import type {
   DoneSet,
@@ -28,6 +30,7 @@ import type {
   SessionSnapshotState,
   StrengthLastWeight,
   StrengthSetRow,
+  SwapCandidate,
   WorkoutPlan,
 } from '@/types'
 
@@ -69,8 +72,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
    * 跳过 = 未做 = 不统计：不写 doneSets，但仍占据全课组位（进度分母不变）。
    */
   const skippedSets = ref<Record<string, number[]>>({})
-  /** 各动作「最近一次做组重量」（开始课程时批量查询），预填用 */
+  /** 各动作「最近一次做组重量」（开始课程时批量查询，键 = 动作库 id），预填用 */
   const lastWeights = ref<Record<string, StrengthLastWeight>>({})
+  /** 今日训练建议（纯函数引擎算出的预填与依据）；null = 尚未计算 */
+  const advice = ref<TrainingAdvice | null>(null)
+  /** 今日状态自评 1..5；null = 未自评（建议引擎纯自动推断） */
+  const readiness = ref<number | null>(null)
   const timedTotal = ref(0)
   const timedElapsed = ref(0)
 
@@ -114,6 +121,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       reps: reps.value,
       extraSets: extraSets.value,
       skippedSets: skippedSets.value,
+      readiness: readiness.value,
     }
   }
 
@@ -321,13 +329,57 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   /* ---------- 流程 ---------- */
 
-  /** 批量拉取各动作「上次做组重量」；失败静默为空（预填退回计划重量） */
-  async function loadLastWeights(names: string[]): Promise<void> {
-    if (!names.length) return
+  /* ---------- 建议引擎（平均状态 × 今日状态 → 今日处方） ---------- */
+
+  /**
+   * 拉取近 42 天做组记录 + 动作库，算一份训练建议。
+   * 引擎是纯函数（utils/trainingAdvice），这里只负责取数与组装；失败静默降级为「无建议」，
+   * 预填退回上次重量 / 课程建议值 —— 建议永远不能阻塞训练。
+   */
+  async function loadAdvice(): Promise<void> {
+    if (!plan.value) {
+      advice.value = null
+      return
+    }
     try {
-      const rows = await sessionService.strengthLastWeights(names)
+      const lib = useExerciseLibStore()
+      await lib.ensureLoaded()
+      const sets = await sessionService.strengthRecentSets(42)
+      advice.value = computeTrainingAdvice({
+        sets,
+        library: lib.list,
+        planExercises: plan.value.exercises,
+        today: todayStr(),
+        selfRating: readiness.value,
+      })
+    } catch (e) {
+      console.warn('[session] 训练建议计算失败', e)
+      advice.value = null
+    }
+  }
+
+  /** 某动作的今日建议（键 = 动作库 id，回落课程条目 id / 动作名） */
+  function adviceFor(e: PlanExercise): ExerciseAdvice | null {
+    const a = advice.value
+    if (!a) return null
+    return a.perExercise[e.exerciseId] ?? a.perExercise[e.name] ?? null
+  }
+
+  /** 今日状态自评：写入后重算建议（引擎里自评是 readiness 的一个乘项） */
+  function setReadiness(v: number | null): void {
+    readiness.value = v
+    if (plan.value) void loadAdvice()
+    touch()
+  }
+
+  /** 批量拉取各动作「上次做组重量」（按动作库 id）；失败静默为空（预填退回建议值/计划重量） */
+  async function loadLastWeights(ids: string[]): Promise<void> {
+    const keys = ids.filter((k) => !!k)
+    if (!keys.length) return
+    try {
+      const rows = await sessionService.strengthLastWeights(keys)
       const map: Record<string, StrengthLastWeight> = {}
-      for (const r of rows) map[r.name] = r
+      for (const r of rows) map[r.exerciseId] = r
       lastWeights.value = map
     } catch (e) {
       console.warn('[session] 上次重量查询失败', e)
@@ -335,9 +387,15 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     }
   }
 
-  /** 重量预填：上次实际做组重量优先（渐进超负荷对照），无历史退回计划建议值 */
+  /**
+   * 重量预填优先级：今日建议（引擎）→ 上次实际做组重量 → 课程建议值。
+   * 建议已经包含「上次重量 + 双重渐进 / 今日状态降载」的判断，所以排在最前；
+   * 引擎不可用（无模型无历史等异常）时逐级回落，行为与改造前一致。
+   */
   function weightFor(e: PlanExercise): number {
-    return lastWeights.value[e.name]?.weightKg ?? e.weightKg ?? 0
+    const suggested = adviceFor(e)?.suggestedWeight
+    if (suggested != null && suggested > 0) return suggested
+    return lastWeights.value[e.exerciseId]?.weightKg ?? e.weightKg ?? 0
   }
 
   /**
@@ -380,7 +438,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     skippedSets.value = {}
     restIsTemp.value = false
     restWarmup.value = false
-    await loadLastWeights(p.exercises.map((e) => e.name))
+    readiness.value = null
+    advice.value = null
+    await Promise.all([
+      loadAdvice(), // 建议要在预填之前算好（weightFor 以它为先）
+      loadLastWeights(p.exercises.map((e) => e.exerciseId)),
+    ])
     weight.value = p.exercises[0] ? weightFor(p.exercises[0]) : 0
     const rec = await sessionService.start({
       planId: p.id,
@@ -819,13 +882,15 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
    * 组数、次数、休息、热身组等编排全部沿用本课程原动作——全课组数不变，
    * 因此不会打乱已有进度与全课组清单的下标。仅允许换成同类型动作。
    */
-  function swapExercise(exIdx: number, src: PlanExercise): boolean {
+  function swapExercise(exIdx: number, src: SwapCandidate): boolean {
     const p = plan.value
     if (!p) return false
     const cur = p.exercises[exIdx]
-    if (!cur || cur.kind !== src.kind || !canSwapExercise(exIdx)) return false
+    if (!cur || !canSwapExercise(exIdx)) return false
+    if (src.exerciseId && src.exerciseId === cur.exerciseId) return false
     p.exercises[exIdx] = {
       ...cur,
+      exerciseId: src.exerciseId,
       name: src.name,
       tips: src.tips || cur.tips,
       muscles: src.muscles,
@@ -853,6 +918,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
         else setNo++
         rows.push({
           exerciseKey: ex.id,
+          exerciseId: ex.exerciseId,
           exerciseName: ex.name,
           kind: ex.kind,
           setNo: d.warmup ? warmNo : setNo,
@@ -994,7 +1060,9 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     restTargetIsNextSet.value = rec.state.restTargetIsNextSet ?? true
     timedTotal.value = rec.state.timedTotal ?? 0
     timedElapsed.value = 0
-    void loadLastWeights(p.exercises.map((e) => e.name)) // 供后续动作的重量预填
+    readiness.value = rec.state.readiness ?? null
+    void loadAdvice() // 恢复后重算建议（自评随快照一起恢复）
+    void loadLastWeights(p.exercises.map((e) => e.exerciseId)) // 供后续动作的重量预填
 
     const st = rec.state
     switch (st.phase) {
@@ -1064,6 +1132,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     restIsTemp,
     restWarmup,
     lastWeights,
+    advice,
+    readiness,
     timedTotal,
     timedElapsed,
     overlay,
@@ -1105,6 +1175,9 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     abortTimed,
     setWeight,
     setReps,
+    setReadiness,
+    adviceFor,
+    loadAdvice,
     finishAndSave,
     discard,
     discardById,

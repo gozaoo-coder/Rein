@@ -83,7 +83,11 @@ pub enum NormEvent {
     /// 未完句（会被后续 partial/final 覆盖）
     Partial { text: String, start_ms: i64 },
     /// 定稿句（逐句落库依据）
-    Final { text: String, start_ms: i64, end_ms: i64 },
+    Final {
+        text: String,
+        start_ms: i64,
+        end_ms: i64,
+    },
 }
 
 /// ASR 适配器契约：一家厂商一个实现。
@@ -120,7 +124,13 @@ pub fn gunzip(data: &[u8]) -> Result<Vec<u8>> {
 
 /// 4B header（version|header-size / msg-type|flags / serialization|compression / 保留）
 /// + 4B 大端 payload size + payload
-fn frame_msg(msg_type: u8, flags: u8, serialization: u8, compression: u8, payload: &[u8]) -> Vec<u8> {
+fn frame_msg(
+    msg_type: u8,
+    flags: u8,
+    serialization: u8,
+    compression: u8,
+    payload: &[u8],
+) -> Vec<u8> {
     let mut out = Vec::with_capacity(payload.len() + 8);
     out.push(0x11);
     out.push((msg_type << 4) | flags);
@@ -141,7 +151,11 @@ pub struct DoubaoAdapter {
 
 impl DoubaoAdapter {
     pub fn new(params: AsrSessionParams) -> Self {
-        Self { ws: None, params, done: false }
+        Self {
+            ws: None,
+            params,
+            done: false,
+        }
     }
 
     fn ws_mut(&mut self) -> Option<&mut Ws> {
@@ -183,7 +197,10 @@ impl AsrAdapter for DoubaoAdapter {
                     .map_err(|e| ReinError::Message(format!("鉴权头值非法：{e}")))?;
                 headers.insert(name, value);
             }
-            headers.insert("X-Api-Resource-Id", HeaderValue::from_str(&self.params.model).unwrap());
+            headers.insert(
+                "X-Api-Resource-Id",
+                HeaderValue::from_str(&self.params.model).unwrap(),
+            );
             headers.insert(
                 "X-Api-Request-Id",
                 HeaderValue::from_str(&uuid::Uuid::new_v4().to_string()).unwrap(),
@@ -194,7 +211,11 @@ impl AsrAdapter for DoubaoAdapter {
             .await
             .map_err(|e| ReinError::Message(format!("豆包 ASR 连接失败：{e}")))?;
         // logid 排错线索（响应头 X-Tt-Logid）
-        let _logid = resp.headers().get("x-tt-logid").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let _logid = resp
+            .headers()
+            .get("x-tt-logid")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         self.ws = Some(ws);
         // full client request：16k/16bit/pcm + 二遍识别（definite 定句）+ 增量返回
         let json = serde_json::json!({
@@ -210,7 +231,8 @@ impl AsrAdapter for DoubaoAdapter {
             },
         });
         let body = serde_json::to_vec(&json)?;
-        self.send_frame(frame_msg(0b0001, 0b0000, 0b0001, 0b0001, &gzip(&body)?)).await
+        self.send_frame(frame_msg(0b0001, 0b0000, 0b0001, 0b0001, &gzip(&body)?))
+            .await
     }
 
     async fn next_frame(&mut self) -> Option<Result<WsFrame>> {
@@ -233,11 +255,13 @@ impl AsrAdapter for DoubaoAdapter {
 
     async fn send_audio(&mut self, pcm: &[u8]) -> Result<()> {
         // 音频包：无序列化 + gzip；最后一包 flags 0b0010（负包）由 finish_input 发
-        self.send_frame(frame_msg(0b0010, 0b0000, 0b0000, 0b0001, &gzip(pcm)?)).await
+        self.send_frame(frame_msg(0b0010, 0b0000, 0b0000, 0b0001, &gzip(pcm)?))
+            .await
     }
 
     async fn finish_input(&mut self) -> Result<()> {
-        self.send_frame(frame_msg(0b0010, 0b0010, 0b0000, 0b0001, &gzip(&[])?)).await
+        self.send_frame(frame_msg(0b0010, 0b0010, 0b0000, 0b0001, &gzip(&[])?))
+            .await
     }
 
     async fn on_frame(&mut self, frame: WsFrame) -> Result<Vec<NormEvent>> {
@@ -268,7 +292,11 @@ impl AsrAdapter for DoubaoAdapter {
         // mock 与旧实现按恒 gzip 解析会失败，故按压缩标志决定是否 gunzip。
         let compressed = (bytes[2] & 0x0f) == 0b0001;
         let decode = |payload: &[u8]| -> Option<serde_json::Value> {
-            let raw = if compressed { gunzip(payload).ok()? } else { payload.to_vec() };
+            let raw = if compressed {
+                gunzip(payload).ok()?
+            } else {
+                payload.to_vec()
+            };
             serde_json::from_slice(&raw).ok()
         };
         // 带 sequence：header(4)+seq(4)+size(4)+payload；不带：header(4)+size(4)+payload。
@@ -293,13 +321,25 @@ impl AsrAdapter for DoubaoAdapter {
             }
             decode(&bytes[8..8 + size])
         };
-        let v = if (flags & 0b0001) != 0 { try_a().or_else(try_b) } else { try_b().or_else(try_a) }
-            .ok_or_else(|| ReinError::Message("ASR 响应解析失败".into()))?;
+        let v = if (flags & 0b0001) != 0 {
+            try_a().or_else(try_b)
+        } else {
+            try_b().or_else(try_a)
+        }
+        .ok_or_else(|| ReinError::Message("ASR 响应解析失败".into()))?;
         let last = (flags & 0b0010) != 0;
         let mut out = Vec::new();
-        if let Some(uts) = v.get("result").and_then(|r| r.get("utterances")).and_then(|u| u.as_array()) {
+        if let Some(uts) = v
+            .get("result")
+            .and_then(|r| r.get("utterances"))
+            .and_then(|u| u.as_array())
+        {
             for u in uts {
-                let text = u.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                let text = u
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if text.is_empty() {
                     continue;
                 }
@@ -307,9 +347,16 @@ impl AsrAdapter for DoubaoAdapter {
                 let end = u.get("end_time").and_then(|t| t.as_i64()).unwrap_or(start);
                 let definite = u.get("definite").and_then(|d| d.as_bool()).unwrap_or(false);
                 out.push(if definite {
-                    NormEvent::Final { text, start_ms: start, end_ms: end }
+                    NormEvent::Final {
+                        text,
+                        start_ms: start,
+                        end_ms: end,
+                    }
                 } else {
-                    NormEvent::Partial { text, start_ms: start }
+                    NormEvent::Partial {
+                        text,
+                        start_ms: start,
+                    }
                 });
             }
         }
@@ -437,7 +484,9 @@ impl AsrAdapter for QwenAdapter {
                 Some(Ok(Message::Binary(b))) => return Some(Ok(WsFrame::Binary(b.to_vec()))),
                 Some(Ok(Message::Close(_))) | None => return None,
                 Some(Ok(_)) => {}
-                Some(Err(e)) => return Some(Err(ReinError::Message(format!("Qwen ASR 连接中断：{e}")))),
+                Some(Err(e)) => {
+                    return Some(Err(ReinError::Message(format!("Qwen ASR 连接中断：{e}"))))
+                }
             }
         }
     }
@@ -471,7 +520,11 @@ impl AsrAdapter for QwenAdapter {
         };
         let v: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| ReinError::Message(format!("Qwen ASR 消息解析失败：{e}")))?;
-        let event = v.get("header").and_then(|h| h.get("event")).and_then(|e| e.as_str()).unwrap_or("");
+        let event = v
+            .get("header")
+            .and_then(|h| h.get("event"))
+            .and_then(|e| e.as_str())
+            .unwrap_or("");
         match event {
             "task-started" => {
                 self.started = true;
@@ -492,12 +545,24 @@ impl AsrAdapter for QwenAdapter {
                 if text.is_empty() {
                     return Ok(vec![]);
                 }
-                let begin = sentence.and_then(|s| s.get("begin_time")).and_then(|t| t.as_i64()).unwrap_or(0);
-                let end = sentence.and_then(|s| s.get("end_time")).and_then(|t| t.as_i64());
+                let begin = sentence
+                    .and_then(|s| s.get("begin_time"))
+                    .and_then(|t| t.as_i64())
+                    .unwrap_or(0);
+                let end = sentence
+                    .and_then(|s| s.get("end_time"))
+                    .and_then(|t| t.as_i64());
                 // 官方 SDK 判定：end_time 非 null 即句终（RecognitionResult::is_sentence_end）
                 Ok(vec![match end {
-                    Some(e) if e >= 0 => NormEvent::Final { text, start_ms: begin, end_ms: e },
-                    _ => NormEvent::Partial { text, start_ms: begin },
+                    Some(e) if e >= 0 => NormEvent::Final {
+                        text,
+                        start_ms: begin,
+                        end_ms: e,
+                    },
+                    _ => NormEvent::Partial {
+                        text,
+                        start_ms: begin,
+                    },
                 }])
             }
             "task-finished" => {
@@ -515,7 +580,9 @@ impl AsrAdapter for QwenAdapter {
                     .and_then(|h| h.get("error_message"))
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown");
-                Err(ReinError::Message(format!("Qwen ASR 错误：{code} {message}")))
+                Err(ReinError::Message(format!(
+                    "Qwen ASR 错误：{code} {message}"
+                )))
             }
             _ => Ok(vec![]),
         }

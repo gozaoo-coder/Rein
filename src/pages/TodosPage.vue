@@ -16,11 +16,12 @@ import DailyRitual from '@/components/todo/DailyRitual.vue'
 import DayDetailPanel from '@/components/todo/DayDetailPanel.vue'
 import AllTodoList from '@/components/todo/AllTodoList.vue'
 import WeekSummary from '@/components/todo/WeekSummary.vue'
-import WeekView from '@/components/todo/WeekView.vue'
-import { addDays, fmtDateCn, nowMin, todayStr } from '@/utils/date'
+import WeekTimeline from '@/components/todo/WeekTimeline.vue'
+import { addDays, fmtDateCn, nowMin, todayStr, weekDates } from '@/utils/date'
 import { busyIntervals, freeGaps } from '@/utils/schedule'
 import type { Todo, TodoSubtask } from '@/types'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
+import CourseDetailSheet from '@/components/campus/CourseDetailSheet.vue'
 
 /**
  * 今日画布：待办与日程熔成一条时间轴。
@@ -51,12 +52,22 @@ const scheduled = computed(() => dayTodos.value.filter((t) => t.startMin != null
 const pool = computed(() => dayTodos.value.filter((t) => t.startMin == null && t.status !== 'done'))
 const doneCount = computed(() => dayTodos.value.filter((t) => t.status === 'done').length)
 
+/* ---------- 周时间线数据 ---------- */
+
+const weekSet = new Set(weekDates(today))
+const weekScheduled = computed(() =>
+  store.allTodos.filter((t) => t.date != null && weekSet.has(t.date) && t.startMin != null),
+)
+const weekUnscheduled = computed(() =>
+  store.allTodos.filter((t) => t.date != null && weekSet.has(t.date) && t.startMin == null && t.status !== 'done'),
+)
+
 const headTitle = computed(() =>
   segment.value === 'canvas' ? fmtDateCn(canvasDate.value) : segment.value === 'week' ? '本周' : '全部待办',
 )
 const headSub = computed(() => {
   if (segment.value === 'list') return '按日期分组'
-  if (segment.value === 'week') return '完成度与回顾'
+  if (segment.value === 'week') return '本周时间线 · 长按块可跨天改时'
   return `${doneCount.value}/${dayTodos.value.length} 已完成 · 未安排 ${pool.value.length}`
 })
 
@@ -77,7 +88,25 @@ const editorTarget = computed<Todo | null>(
 const editorId = ref<number | null>(null)
 const addOpen = ref(false)
 
+/** 课表派生行是只读投影：点开的是课程详情，不是待办编辑器（见 CourseDetailSheet）。
+ *  与 editorTarget 同理按 id 派生 —— 存对象快照的话，打卡后面板读到的还是旧对象。 */
+const courseId = ref<number | null>(null)
+const course = computed<Todo | null>(
+  () => store.allTodos.find((t) => t.id === (courseId.value ?? -1)) ?? null,
+)
+const courseOpen = ref(false)
+
+function openCourse(t: Todo): void {
+  selectedId.value = t.id
+  courseId.value = t.id
+  courseOpen.value = true
+}
+
 function onSelect(t: Todo): void {
+  if (t.courseSessionId != null) {
+    openCourse(t)
+    return
+  }
   selectedId.value = t.id
   if (!isDesktop.value) {
     editorId.value = t.id
@@ -93,6 +122,32 @@ function onToggle(t: Todo): void {
 function onMove(t: Todo, startMin: number): void {
   clearGhosts()
   void applyMove(t, { date: canvasDate.value, startMin })
+}
+
+/** 直开编辑抽屉（周段无详情右栏；画布卡片右下角编辑钮同入口）：课程派生行转只读详情 */
+function openEditor(t: Todo): void {
+  if (t.courseSessionId != null) {
+    openCourse(t)
+    return
+  }
+  selectedId.value = t.id
+  editorId.value = t.id
+  editorOpen.value = true
+}
+
+function onWeekMove(t: Todo, date: string, startMin: number): void {
+  clearGhosts()
+  void applyMove(t, { date, startMin })
+}
+
+function onWeekDaySelect(d: string): void {
+  canvasDate.value = d
+  segment.value = 'canvas'
+}
+
+function onWeekAdd(d: string): void {
+  canvasDate.value = d
+  addOpen.value = true
 }
 
 async function onSubtasks(next: TodoSubtask[]): Promise<void> {
@@ -357,6 +412,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
             :compact="!isDesktop"
             data-testid="canvas-timeline"
             @select="onSelect"
+            @edit="openEditor"
             @toggle="onToggle"
             @move="onMove"
           />
@@ -376,7 +432,16 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
     <!-- ═══ 周 ═══ -->
     <template v-else-if="segment === 'week'">
       <section class="card">
-        <WeekView :selected="canvasDate" @select="(d) => { canvasDate = d; segment = 'canvas' }" />
+        <WeekTimeline
+          :todos="weekScheduled"
+          :unscheduled="weekUnscheduled"
+          :selected-id="selectedId"
+          @select="openEditor"
+          @toggle="onToggle"
+          @move="onWeekMove"
+          @day-select="onWeekDaySelect"
+          @add="onWeekAdd"
+        />
       </section>
       <WeekSummary />
     </template>
@@ -388,6 +453,12 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
 
     <DailyRitual :open="ritualOpen" :candidates="ritualCandidates" @close="closeRitual" @confirm="onRitualConfirm" />
     <TodoEditorSheet :open="editorOpen" :todo="editorTarget" :date="canvasDate" @close="editorOpen = false" />
+    <CourseDetailSheet
+      :open="courseOpen"
+      :todo="course"
+      @close="courseOpen = false"
+      @toggle="onToggle"
+    />
     <SmartAddSheet :open="addOpen" :date="canvasDate" @close="addOpen = false" />
   </div>
 </template>

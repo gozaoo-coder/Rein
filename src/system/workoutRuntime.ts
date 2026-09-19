@@ -19,6 +19,7 @@
 import { computed } from 'vue'
 
 import { sessionService } from '@/services/sessionService'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { fmtClock, fmtPace, useRunStore } from '@/stores/run'
 import { useSessionStore } from '@/stores/session'
 import type { SessionFinishResult } from '@/stores/session'
@@ -107,17 +108,20 @@ const view = computed<WorkoutBarView | null>(() => {
   }
   if (kind.value === 'course') {
     const s = useSessionStore()
+    const lib = useExerciseLibStore()
     const ex = s.currentEx
+    // 动作名一律取库内名（改名跟随），库里查不到才回落课程条目快照
+    const exName = ex ? lib.resolveName(ex) : ''
     const summary = s.phase === 'summary'
     let stat = ''
     let blob = ''
     switch (s.phase) {
       case 'warmup':
-        stat = ex ? `${ex.name} · 激活热身 ${s.warmupDone(ex)}/${ex.warmups?.length ?? 0}` : ''
+        stat = ex ? `${exName} · 激活热身 ${s.warmupDone(ex)}/${ex.warmups?.length ?? 0}` : ''
         blob = '热身'
         break
       case 'exercise':
-        stat = ex ? `${ex.name} · 第 ${s.setIndex}/${s.effSets(ex)} 组 × ${ex.reps ?? '—'} 次` : ''
+        stat = ex ? `${exName} · 第 ${s.setIndex}/${s.effSets(ex)} 组 × ${ex.reps ?? '—'} 次` : ''
         blob = ex ? `${s.setIndex}/${s.effSets(ex)} 组` : ''
         break
       case 'rest':
@@ -127,15 +131,15 @@ const view = computed<WorkoutBarView | null>(() => {
             ? '热身中'
             : s.restTargetIsNextSet
               ? `第 ${s.setIndex + 1} 组`
-              : `下一个 ${s.plan?.exercises[s.exIndex + 1]?.name ?? ''}`)
+              : `下一个 ${s.plan?.exercises[s.exIndex + 1] ? lib.resolveName(s.plan.exercises[s.exIndex + 1]!) : ''}`)
         blob = `${s.restLeft}s`
         break
       case 'timed-ready':
-        stat = ex ? `${ex.name} · 准备中` : ''
+        stat = ex ? `${exName} · 准备中` : ''
         blob = '准备'
         break
       case 'timed-run':
-        stat = ex ? `${ex.name} · ${Math.floor(s.timedElapsed)} / ${s.timedTotal}s` : ''
+        stat = ex ? `${exName} · ${Math.floor(s.timedElapsed)} / ${s.timedTotal}s` : ''
         blob = `${Math.floor(s.timedElapsed)}s`
         break
       case 'summary':

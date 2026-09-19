@@ -125,7 +125,10 @@ pub fn get_ledger_budget(state: State<AppState>) -> Result<LedgerSettings> {
 }
 
 #[tauri::command]
-pub fn set_ledger_budget(state: State<AppState>, monthly_budget_cents: i64) -> Result<LedgerSettings> {
+pub fn set_ledger_budget(
+    state: State<AppState>,
+    monthly_budget_cents: i64,
+) -> Result<LedgerSettings> {
     let now = Utc::now().to_rfc3339();
     let conn = state.db.lock().unwrap();
     conn.execute(

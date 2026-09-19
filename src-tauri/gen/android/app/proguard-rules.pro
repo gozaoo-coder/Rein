@@ -27,3 +27,7 @@
 # ---------------------------------------------------------------------------
 -keep class com.gozaoo.rein.TrackingBridge { *; }
 -keep class com.gozaoo.rein.RunTrackingService { *; }
+# UpdateBridge 同理：Rust 经 JNI 反射调 install/snapshot（modules/update 的
+# call_static_method）。漏了这条的后果实测就是「点安装并更新 → 闪退」：
+# release 包把 install 方法裁掉，JNI 调用抛 NoSuchMethodError。
+-keep class com.gozaoo.rein.UpdateBridge { *; }

@@ -4,6 +4,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { planService } from '@/services/planService'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import type { PlanSeedStatus, WorkoutPlanInput, WorkoutPlanRecord } from '@/types'
 
 export const usePlanStore = defineStore('plan', () => {
@@ -19,6 +20,11 @@ export const usePlanStore = defineStore('plan', () => {
     try {
       plans.value = await planService.list()
       loaded.value = true
+      // 动作库要跟着课程一起就位：课程里的动作名一律经它解析（改名跟随），
+      // 没加载时只能回落课程条目里的名称快照。失败静默（回落路径本身可用）。
+      void useExerciseLibStore()
+        .ensureLoaded()
+        .catch(() => undefined)
       // 种子状态与列表同批取，避免多一次往返；失败静默（横幅缺失无害）
       try {
         seed.value = await planService.seedStatus()

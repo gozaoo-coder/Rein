@@ -6,14 +6,16 @@ import { sessionService } from '@/services/sessionService'
 import { useExerciseStore } from '@/stores/exercise'
 import { fmtDateCn } from '@/utils/date'
 import { aggregateStrengthDays, fmtKg, type StrengthDay } from '@/utils/strength'
+import type { StrengthExerciseRef } from '@/types'
 
 /**
  * 力量进步卡（运动页）：按动作查看重量变化曲线。
- * 动作 chips 来自逐组记录的最近训练排序；无力量记录时整卡隐藏。
- * 页面常驻后不再因导航离开重挂载，落库变化靠 exerciseStore.strengthRev 失效缓存。
+ * 动作 chips 来自逐组记录的最近训练排序（聚合键 = 动作库 id）；
+ * 无力量记录时整卡隐藏。页面常驻后不再因导航离开重挂载，
+ * 落库变化靠 exerciseStore.strengthRev 失效缓存。
  */
 const exStore = useExerciseStore()
-const refs = ref<{ name: string; lastDate: string; sessions: number }[]>([])
+const refs = ref<StrengthExerciseRef[]>([])
 const loaded = ref(false)
 const selected = ref('')
 const curveDays = ref<StrengthDay[]>([])
@@ -21,6 +23,11 @@ const loadingCurve = ref(false)
 
 /** 已加载过的动作历史缓存（切回不重复请求） */
 const cache = new Map<string, StrengthDay[]>()
+
+/** chips 的键：动作库 id 优先，老数据回落名称 */
+function refKey(r: StrengthExerciseRef): string {
+  return r.exerciseId || r.name
+}
 
 async function loadRefs(keep = false): Promise<void> {
   const prev = selected.value
@@ -36,7 +43,7 @@ async function loadRefs(keep = false): Promise<void> {
     curveDays.value = []
     return
   }
-  const name = keep && refs.value.some((r) => r.name === prev) ? prev : refs.value[0]!.name
+  const name = keep && refs.value.some((r) => refKey(r) === prev) ? prev : refKey(refs.value[0]!)
   void select(name)
 }
 
@@ -96,12 +103,12 @@ const lastSummary = computed(() => {
     <div v-if="refs.length > 1" class="chips row" role="tablist" aria-label="选择动作">
       <button
         v-for="r in refs.slice(0, 6)"
-        :key="r.name"
+        :key="refKey(r)"
         class="chip"
-        :class="{ on: r.name === selected }"
+        :class="{ on: refKey(r) === selected }"
         role="tab"
-        :aria-selected="r.name === selected"
-        @click="selected = r.name"
+        :aria-selected="refKey(r) === selected"
+        @click="selected = refKey(r)"
       >
         {{ r.name }}
       </button>

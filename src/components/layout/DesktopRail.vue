@@ -1,17 +1,21 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Dumbbell, House, ListTodo, PiggyBank, Sparkles, Timer, User, Utensils } from 'lucide-vue-next'
+import { House, User } from 'lucide-vue-next'
 
-/** 桌面三窗格壳 · 左侧导航轨：替代底部 TabBar，提供一级/常用页直达。 */
-const items = [
-  { name: 'home', label: '总览', icon: House },
-  { name: 'nutrition', label: '营养', icon: Utensils },
-  { name: 'sports', label: '运动', icon: Dumbbell },
-  { name: 'focus', label: '专注', icon: Timer },
-  { name: 'todos', label: '待办', icon: ListTodo },
-  { name: 'ledger', label: '记账', icon: PiggyBank },
-  { name: 'ai', label: 'AI', icon: Sparkles },
-] as const
+import { useFeaturesStore } from '@/stores/features'
+import type { NavContribution } from '@/plugins'
+
+/**
+ * 桌面三窗格壳 · 左侧导航轨：替代底部 TabBar，提供一级/常用页直达。
+ * 除「总览」与末位的「我」外，条目全部来自插件层（关掉课表模块，这一格就消失）。
+ */
+const CORE_ITEMS: NavContribution[] = [
+  { route: 'home', label: '总览', icon: House, surfaces: ['rail'], order: 0 },
+]
+
+const features = useFeaturesStore()
+const items = computed(() => [...CORE_ITEMS, ...features.nav('rail')].sort((a, b) => a.order - b.order))
 
 const route = useRoute()
 </script>
@@ -22,14 +26,14 @@ const route = useRoute()
     <div class="navs col">
       <RouterLink
         v-for="it in items"
-        :key="it.name"
-        :to="{ name: it.name }"
+        :key="it.route"
+        :to="{ name: it.route }"
         class="ric"
-        :class="{ on: route.name === it.name }"
+        :class="{ on: route.name === it.route }"
         :aria-label="it.label"
         :title="it.label"
       >
-        <component :is="it.icon" :size="21" :stroke-width="route.name === it.name ? 2.2 : 1.9" />
+        <component :is="it.icon" :size="21" :stroke-width="route.name === it.route ? 2.2 : 1.9" />
       </RouterLink>
     </div>
     <RouterLink

@@ -46,6 +46,9 @@ pub struct FinishInput {
 pub struct FinishSet {
     pub exercise_key: String,
     pub exercise_name: String,
+    /// 动作库 id（课程条目携带）；缺省时服务端按名称兜底解析
+    #[serde(default)]
+    pub exercise_id: Option<String>,
     pub kind: String,
     pub set_no: i64,
     pub weight_kg: Option<f64>,
@@ -55,13 +58,17 @@ pub struct FinishSet {
     pub warmup: bool,
 }
 
-/// 重量曲线查询行（JOIN workouts 取日期）· 与前端 `StrengthSetRow` 查询返回对应
+/// 逐组记录查询行（JOIN workouts 取日期）· 重量曲线与训练建议引擎的数据源。
+/// `exerciseId` 是聚合键；`exerciseName` 只是历史快照（动作库改名不追溯）。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StrengthSetRecord {
     pub workout_id: i64,
     pub date: String,
+    pub exercise_key: String,
+    pub exercise_id: Option<String>,
     pub exercise_name: String,
+    pub kind: String,
     pub set_no: i64,
     pub weight_kg: Option<f64>,
     pub reps: Option<i64>,
@@ -73,6 +80,9 @@ pub struct StrengthSetRecord {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StrengthExerciseRef {
+    /// 动作库 id；老库未回填时为空字符串（前端回落 name 作键）
+    pub exercise_id: String,
+    /// 展示名：库内名优先（动作库改名后曲线卡跟着变）
     pub name: String,
     pub last_date: String,
     pub sessions: i64,
@@ -82,6 +92,7 @@ pub struct StrengthExerciseRef {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StrengthLastWeight {
+    pub exercise_id: String,
     pub name: String,
     pub weight_kg: f64,
     pub reps: Option<i64>,

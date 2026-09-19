@@ -7,6 +7,7 @@ import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import ExerciseDetailDrawer from '@/components/exercise/ExerciseDetailDrawer.vue'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { usePlanStore } from '@/stores/plan'
 import { useSessionStore } from '@/stores/session'
 import { openImmersive } from '@/system/sessionImmersive'
@@ -18,6 +19,7 @@ import type { PlanExercise } from '@/types'
 const route = useRoute()
 const router = useRouter()
 const planStore = usePlanStore()
+const lib = useExerciseLibStore()
 const session = useSessionStore()
 const { toast } = useToast()
 
@@ -27,12 +29,11 @@ const conflictOpen = ref(false)
 const delOpen = ref(false)
 
 onMounted(async () => {
-  await planStore.ensureLoaded()
+  await Promise.all([planStore.ensureLoaded(), lib.ensureLoaded()])
   ready.value = true
 })
 
 const plan = computed(() => planStore.byId(String(route.params.id)))
-
 /** 开始训练；已有进行中会话（训练课/跑步）时提示前往接续。
  *  形变锚点 = 开始按钮（从哪点从哪长出）。 */
 async function onStart(e: MouseEvent): Promise<void> {
@@ -87,7 +88,7 @@ async function doDelete(): Promise<void> {
           <button type="button" class="row item-row" @click="detailEx = e">
             <span class="idx num">{{ e.group ?? i + 1 }}</span>
             <span class="mid flex-1">
-              <b class="nm">{{ e.name }}</b>
+              <b class="nm">{{ lib.resolveName(e) }}</b>
               <small class="sub">{{ exerciseSub(e) }}</small>
             </span>
             <span v-if="exerciseBadge(e)" class="badge">{{ exerciseBadge(e) }}</span>

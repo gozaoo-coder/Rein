@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check, Paperclip, Pencil, Repeat2, Sparkles, Trash2 } from 'lucide-vue-next'
+import { CalendarDays, Check, Paperclip, Pencil, Repeat2, Sparkles, Trash2 } from 'lucide-vue-next'
 
 import { CATEGORY_META, priorityMeta } from '@/config/domain'
 import { minToHHmm } from '@/utils/date'
@@ -77,9 +77,18 @@ function flipSub(i: number): void {
         <button class="primary" @click="emit('toggle')">
           <Check :size="15" /> {{ todo.status === 'done' ? '标为未完成' : '标记完成' }}
         </button>
-        <button class="ghost" aria-label="编辑" @click="emit('edit')"><Pencil :size="15" /></button>
-        <button class="ghost danger" aria-label="删除" @click="emit('remove')"><Trash2 :size="15" /></button>
+        <!-- 课表派生行是只读投影：标题/时间由同步生成，下一次同步会覆盖，所以不给编辑与删除 -->
+        <template v-if="todo.courseSessionId == null">
+          <button class="ghost" aria-label="编辑" @click="emit('edit')"><Pencil :size="15" /></button>
+          <button class="ghost danger" aria-label="删除" @click="emit('remove')"><Trash2 :size="15" /></button>
+        </template>
       </div>
+
+      <p v-if="todo.courseSessionId != null" class="tip">
+        <CalendarDays :size="13" /> 来自课表同步，可在
+        <RouterLink :to="{ name: 'campus-schedule' }" class="place">课表</RouterLink>
+        里查看
+      </p>
 
       <p v-if="todo.startMin == null" class="tip">
         <Sparkles :size="13" /> 把它拖进时间轴，或

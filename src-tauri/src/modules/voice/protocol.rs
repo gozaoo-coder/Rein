@@ -129,7 +129,10 @@ pub fn spawn_asr_session(
     let sid_err = session_id.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(e) = run_asr_session(app, session_id, kind, params, rx).await {
-            emit_asr(&app_err, AsrEvent::error(&sid_err, format!("语音识别中断：{e}")));
+            emit_asr(
+                &app_err,
+                AsrEvent::error(&sid_err, format!("语音识别中断：{e}")),
+            );
         }
     });
     Ok(tx)
@@ -228,9 +231,19 @@ async fn run_asr_session(
     match wrap_wav(&pcm_path, &wav_path) {
         Ok(()) => {
             let _ = std::fs::remove_file(&pcm_path);
-            emit_asr(&app, AsrEvent::ended(&session_id, wav_path.to_string_lossy().to_string(), (pcm_bytes / 32) as i64));
+            emit_asr(
+                &app,
+                AsrEvent::ended(
+                    &session_id,
+                    wav_path.to_string_lossy().to_string(),
+                    (pcm_bytes / 32) as i64,
+                ),
+            );
         }
-        Err(e) => emit_asr(&app, AsrEvent::error(&session_id, format!("音频包装失败：{e}"))),
+        Err(e) => emit_asr(
+            &app,
+            AsrEvent::error(&session_id, format!("音频包装失败：{e}")),
+        ),
     }
     Ok(())
 }
@@ -272,14 +285,28 @@ pub struct TtsResult {
 /// 响应为 ndjson 行流，每行 {code, message, data?}，data 为 base64 音频块需顺序解码拼接；
 /// 语速字段 speech_rate 为百分比制（0 正常 / 100 两倍 / -50 半速），speed_ratio 无效。
 /// 音色须为 2.0 音色 ID（如 zh_female_cancan_uranus_bigtts），1.0 音色报资源不匹配。
-pub async fn tts_http_synth(app: &tauri::AppHandle, cfg: &VoiceConfig, speak_id: &str, text: &str) -> Result<TtsResult> {
+pub async fn tts_http_synth(
+    app: &tauri::AppHandle,
+    cfg: &VoiceConfig,
+    speak_id: &str,
+    text: &str,
+) -> Result<TtsResult> {
     if !cfg.configured() {
         return Err(ReinError::Message("尚未配置豆包语音服务".into()));
     }
     if cfg.voice_name.trim().is_empty() {
         return Err(ReinError::Message("尚未设置朗读音色".into()));
     }
-    let speech_rate = ((cfg.speed.clamp(0.2, 3.0) - 1.0) * 100.0).round().clamp(-50.0, 100.0) as i32;
+    if !cfg.tts_configured() {
+        // 已配音色但凭据不可用：最常见是识别配了 Qwen、朗读凭据未单独配豆包
+        return Err(ReinError::Message(
+            "朗读凭据不可用：豆包 TTS 需要豆包凭据（识别配了 Qwen 时请在朗读独立凭据里填入）"
+                .into(),
+        ));
+    }
+    let speech_rate = ((cfg.speed.clamp(0.2, 3.0) - 1.0) * 100.0)
+        .round()
+        .clamp(-50.0, 100.0) as i32;
     let body = serde_json::json!({
         "user": { "uid": "rein" },
         "req_params": {
@@ -295,16 +322,19 @@ pub async fn tts_http_synth(app: &tauri::AppHandle, cfg: &VoiceConfig, speak_id:
 
     let dir = voice_dir(app)?;
     let out_path = dir.join(format!("tts_{speak_id}.mp3"));
-    let app_key = cfg.app_key.trim().to_string();
-    let access_key = cfg.access_key.trim().to_string();
-    let mode = cfg.mode.clone();
+    // TTS 用生效凭据：独立凭据优先，否则继承识别凭据（含凭据模式）
+    let (tts_mode, app_key, access_key) = cfg.tts_effective();
+    let mode = tts_mode;
     let resource = cfg.tts_resource_id.trim().to_string();
     let payload = serde_json::to_vec(&body)?;
     let out = out_path.clone();
 
     tauri::async_runtime::spawn_blocking(move || -> std::result::Result<(), ReinError> {
-        let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).build();
-        let mut req = agent.post("https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional")
+        let agent = ureq::AgentBuilder::new()
+            .timeout(Duration::from_secs(60))
+            .build();
+        let mut req = agent
+            .post("https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional")
             .set("Content-Type", "application/json")
             // ureq 不支持 brotli：显式声明可接受的压缩，避免服务端返回 br 致解析失败
             .set("Accept-Encoding", "identity");
@@ -317,7 +347,9 @@ pub async fn tts_http_synth(app: &tauri::AppHandle, cfg: &VoiceConfig, speak_id:
         }
         req = req.set("X-Api-Resource-Id", &resource);
         req = req.set("X-Api-Request-Id", &uuid::Uuid::new_v4().to_string());
-        let resp = req.send_bytes(&payload).map_err(|e| ReinError::Message(format!("TTS 请求失败：{e}")))?;
+        let resp = req
+            .send_bytes(&payload)
+            .map_err(|e| ReinError::Message(format!("TTS 请求失败：{e}")))?;
         let mut bytes = Vec::new();
         std::io::Read::read_to_end(&mut resp.into_reader(), &mut bytes)?;
 
@@ -336,8 +368,13 @@ pub async fn tts_http_synth(app: &tauri::AppHandle, cfg: &VoiceConfig, speak_id:
             let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
             // 20000000 = 流结束的成功终止行（message "OK"，无音频数据），不是错误
             if code != 0 && code != 20000000 {
-                let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("未知错误");
-                return Err(ReinError::Message(format!("TTS 合成失败（code {code}）：{msg}")));
+                let msg = v
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("未知错误");
+                return Err(ReinError::Message(format!(
+                    "TTS 合成失败（code {code}）：{msg}"
+                )));
             }
             if let Some(b64) = v.get("data").and_then(|d| d.as_str()) {
                 let chunk = base64::engine::general_purpose::STANDARD
@@ -361,7 +398,9 @@ pub async fn tts_http_synth(app: &tauri::AppHandle, cfg: &VoiceConfig, speak_id:
     .await
     .map_err(|e| ReinError::Message(format!("TTS 任务失败：{e}")))??;
 
-    Ok(TtsResult { audio_path: out_path.to_string_lossy().to_string() })
+    Ok(TtsResult {
+        audio_path: out_path.to_string_lossy().to_string(),
+    })
 }
 
 /// 粗判二进制音频：mp3(ID3/帧头) / wav(RIFF) / ogg
@@ -369,5 +408,8 @@ fn is_audio(b: &[u8]) -> bool {
     if b.len() < 4 {
         return false;
     }
-    b.starts_with(b"ID3") || b.starts_with(b"RIFF") || b.starts_with(b"OggS") || (b[0] == 0xff && (b[1] & 0xe0) == 0xe0)
+    b.starts_with(b"ID3")
+        || b.starts_with(b"RIFF")
+        || b.starts_with(b"OggS")
+        || (b[0] == 0xff && (b[1] & 0xe0) == 0xe0)
 }

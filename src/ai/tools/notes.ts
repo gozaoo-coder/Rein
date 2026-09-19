@@ -5,10 +5,12 @@ import { Type } from '@earendil-works/pi-ai'
 import { kbService } from '@/services/kbService'
 import { defineTool, type AppTool } from './types'
 
-/** 笔记统一落在「笔记/」命名空间，规范（规范/）是系统文件不可写 */
+/** 笔记默认落「笔记/」；知识区其余根（文档/未分类数据/语音/视频/用户记忆）也可直写，
+ *  系统区（规范/、系统提示词/）只读（docs/ai-workspace.md §3.2） */
 const PATH_DESC =
-  '文件路径，自动归到「笔记/」下（写「膝盖」会存为 笔记/膝盖.md，.md 可省略）。' +
-  '可用子目录分层，如「训练/膝盖注意」。'
+  '文件路径。不写根目录时自动归到「笔记/」下（写「膝盖」会存为 笔记/膝盖.md，.md 可省略）；' +
+  '可写根目录：笔记 / 文档 / 未分类数据 / 语音 / 视频 / 用户记忆，以及各领域目录里的用户子目录（如「运动/知识/跑步」）。' +
+  '可用子目录分层。带日期目录或 -编号 的派生路径会被自动让位。'
 
 export const noteTools: AppTool[] = [
   defineTool({

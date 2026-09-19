@@ -1,18 +1,27 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Mic } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import TimeSpine from './TimeSpine.vue'
 import { voiceService } from '@/services/voiceService'
 import type { VoiceMemo } from '@/types'
 
-/** @纪要 选择器：AI 页输入 @ 时弹出，选中后以 chip 附到消息（发送时注入纪要内容）。 */
+/** @纪要 选择器：AI 页输入 @ 时弹出，选中后以 chip 附到消息（发送时注入纪要内容）。
+ *  每行给一缕缩略脊 —— 挑引用时，「哪一段」比「标题叫什么」更好认。 */
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; pick: [memo: VoiceMemo] }>()
 
 const loading = ref(false)
 const memos = ref<VoiceMemo[]>([])
 const keyword = ref('')
+
+const spineOf = (m: VoiceMemo) =>
+  m.sentences.map((s) => ({
+    t: s.startMs,
+    durMs: s.endMs > s.startMs ? s.endMs - s.startMs : undefined,
+    who: '我',
+    text: s.text,
+  }))
 
 watch(
   () => props.open,
@@ -56,10 +65,16 @@ function fmtWhen(iso: string): string {
     <p v-if="!loading && filtered.length === 0" class="empty t-3">没有可引用的纪要。</p>
     <ul v-else class="list">
       <li v-for="m in filtered" :key="m.id" class="row" @click="emit('pick', m)">
-        <span class="ic"><Mic :size="14" /></span>
         <span class="mt">
           <b>{{ m.title || '未命名纪要' }}</b>
           <em>{{ fmtWhen(m.createdAt) }} · {{ m.sentences.length }} 句</em>
+          <TimeSpine
+            v-if="m.sentences.length"
+            class="rowspine"
+            size="mini"
+            :segments="spineOf(m)"
+            :total-ms="m.durationMs"
+          />
         </span>
       </li>
     </ul>
@@ -122,6 +137,12 @@ function fmtWhen(iso: string): string {
 .mt {
   flex: 1;
   min-width: 0;
+}
+
+/* 每行一缕缩略脊 */
+.rowspine {
+  display: block;
+  margin-top: 6px;
 }
 
 .mt b {

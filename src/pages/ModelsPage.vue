@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   BrainCircuit,
   Eye,
@@ -17,20 +18,46 @@ import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import ModelFormSheet from '@/components/ai/ModelFormSheet.vue'
+import OnlineServiceCard from '@/components/ai/OnlineServiceCard.vue'
 import VoiceConfigSheet from '@/components/voice/VoiceConfigSheet.vue'
+import { formatCnyNano, formatUnitPrice } from '@/ai/cost'
 import { voiceService } from '@/services/voiceService'
 import { useToast } from '@/composables/useToast'
 import { useModelsStore } from '@/stores/models'
 import type { AiModel, VoiceConfig } from '@/types'
 
-/** 模型管理：添加 / 编辑 / 删除 / 设默认，max_tokens=1 探测视觉·思考·努力。 */
+/** 模型管理：在线服务导入 / 添加 · 编辑 · 删除 · 设默认，max_tokens=1 探测视觉·思考·努力。 */
 const store = useModelsStore()
 const toast = useToast()
+const router = useRouter()
+
+/** 让 AI 帮我配置语音服务：跳 AI 页并预填请求（AI 有 voice 工具组，可诊断/填凭据/试听） */
+function askAiSetupVoice(): void {
+  void router.push({
+    path: '/ai',
+    query: { ask: '帮我检查语音对话服务的配置，有问题的话直接帮我修好并测试验证' },
+  })
+}
 
 onMounted(() => {
-  void store.load().catch(() => toast.toast('模型列表加载失败'))
+  void store
+    .load()
+    .then(() => store.loadUsage())
+    .catch(() => toast.toast('模型列表加载失败'))
   void loadVoiceConfig()
 })
+
+/** 在线服务导入完成：账本会多出几条记录，重新拉一次本机成本 */
+function onOnlineSynced(): void {
+  void store.loadUsage()
+}
+
+/** 单条模型的本机累计花费（含模型费与流量费拆分） */
+function costText(m: AiModel): string | null {
+  const u = store.usageOf(m)
+  if (!u || u.calls === 0) return null
+  return `${formatCnyNano(u.costTotalNano)} · ${u.calls} 次`
+}
 
 const formOpen = ref(false)
 const editing = ref<AiModel | null>(null)
@@ -113,15 +140,23 @@ const capMeta = {
       <p>每条模型保存后会自动发送 <b>max_tokens=1</b> 的测试包，探测「视觉（图片上传）、thinking 开关、effort 档位」三项能力，结果以徽章展示。</p>
     </div>
 
+    <!-- 在线服务：服务端下发模型 + 服务密钥 + 双端成本 -->
+    <OnlineServiceCard @synced="onOnlineSynced" />
+
     <ul v-if="store.models.length > 0" class="cards">
       <li v-for="m in store.models" :key="m.id" class="card m-card">
         <div class="row between top">
           <div class="flex-1 min0">
             <p class="m-name">
               {{ m.name }}
+              <span v-if="m.source === 'online'" class="chip-onl">在线</span>
               <span v-if="m.isDefault" class="chip-def">默认</span>
             </p>
             <p class="m-id t-2">{{ m.provider }} · {{ m.modelId }}</p>
+            <p v-if="formatUnitPrice(m) || costText(m)" class="m-cost t-3">
+              <span v-if="formatUnitPrice(m)">{{ formatUnitPrice(m) }}</span>
+              <span v-if="costText(m)" class="spent">{{ costText(m) }}</span>
+            </p>
           </div>
           <div class="acts">
             <button
@@ -171,15 +206,23 @@ const capMeta = {
       />
     </section>
 
-    <!-- 豆包语音服务（语音对话功能的凭据与音色） -->
+    <!-- 语音服务（语音对话功能的凭据与音色，豆包/Qwen 识别 + 豆包朗读） -->
     <button class="card vcfg" @click="voiceOpen = true">
       <span class="v-ic"><Mic :size="15" /></span>
       <span class="vt">
-        <b>豆包语音服务
+        <b>语音服务
           <i v-if="voiceConfigured(voiceConfig)" class="v-ok">已连接</i>
           <i v-else class="v-no">未配置</i>
         </b>
         <em>语音对话 · 实时转写与纪要朗读</em>
+      </span>
+      <span class="v-go">›</span>
+    </button>
+    <button class="card ai-setup" @click="askAiSetupVoice">
+      <span class="v-ic ic-spark"><Sparkles :size="15" /></span>
+      <span class="vt">
+        <b>让 AI 帮我配置语音</b>
+        <em>聊天里直接诊断问题、填凭据、试听音色</em>
       </span>
       <span class="v-go">›</span>
     </button>
@@ -244,6 +287,30 @@ const capMeta = {
   font-weight: 700;
 }
 
+/* 在线服务导入的模型：与「默认」同族配色，避免引入新颜色 */
+.chip-onl {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.m-cost {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.m-cost .spent {
+  color: var(--text-2);
+  font-weight: 700;
+}
+
 .m-id {
   margin-top: 3px;
   font-size: var(--fs-caption);
@@ -271,7 +338,7 @@ const capMeta = {
   color: var(--danger, #ff5257);
 }
 
-/* 豆包语音服务卡 */
+/* 语音服务卡 */
 .vcfg {
   display: flex;
   align-items: center;
@@ -331,6 +398,21 @@ const capMeta = {
   color: var(--text-3);
   display: block;
   margin-top: 2px;
+}
+
+/* 「让 AI 帮我配置语音」卡：复用 vcfg 布局，图标换主题色 */
+.ai-setup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 13px 14px;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.ic-spark {
+  background: linear-gradient(135deg, #7c5cff, #b48bff);
 }
 
 .v-go {

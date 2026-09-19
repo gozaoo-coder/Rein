@@ -1,14 +1,17 @@
 # 依赖与产物
 node_modules/
 dist/
-dist-android/
 *.apk
+# 发布时对安装包签出的签名（每次发布重新生成，不入库）
+*.apk.sig
+*.exe.sig
 
 # Tauri / Rust
 src-tauri/target/
 src-tauri/gen/schemas/
 
-# Android 工程（gen/android 只入库源码与 gradle 配置）
+# Android 工程（gen/android 只入库源码与 gradle 配置；
+# 同目录的 .gitignore / app/.gitignore 还有一份细则，这里只做兜底）
 src-tauri/gen/android/.gradle/
 src-tauri/gen/android/build/
 src-tauri/gen/android/local.properties
@@ -31,16 +34,23 @@ build-arm64.cmd
 *.local
 .DS_Store
 Thumbs.db
+# Windows 保留名：`curl -o NUL` 在 PowerShell 里会落出真实文件而不是设备
+/nul
 
-# 一次性调试探针/截屏脚本（定位单个问题时临时写的，不入库）
-scripts/probe-*.mjs
+# 一次性调试探针/截屏脚本与探针产物（定位单个问题时临时写的，不入库）
+scripts/probe-*
+scripts/*-probe.*
 scripts/shots-active.mjs
 scripts/shots-immerse-morph.mjs
 scripts/shots-program.mjs
 scripts/shots/
+.captcha.png
 
 # 工作台会话本地状态
 .workbuddy/
+
+# CommandCode 本地配置与 taste 学习（设备本地，不入库）
+.commandcode/
 
 # 端侧 embedding 的模型与 ONNX Runtime 运行库：体积大且可复现，
 # 用 scripts/fetch-embed-model.mjs 与 scripts/fetch-ort-runtime.mjs 拉取，不入库。
@@ -51,3 +61,16 @@ src-tauri/resources/ort/
 .impeccable/
 .tmp-critique/
 .playwright-cli/
+
+# 更新签名私钥与发布配置（绝不入库；丢了就再也发不出可用的更新）
+src-tauri/keys/
+scripts/release/release.config.json
+scripts/release/e2e-*.local.*
+
+# 发布产物（构建期中间物，可复现）
+dist-release/
+
+# 在线服务：数据目录、管理令牌配置、依赖
+server/data/
+server/config.json
+server/node_modules/

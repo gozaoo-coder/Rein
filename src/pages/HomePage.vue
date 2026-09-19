@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import type { Component } from 'vue'
 import { useRouter } from 'vue-router'
-import { Camera, Dumbbell, Mic, Sparkles, Target, Timer, Wallet } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import HomeCanvas from '@/components/home/HomeCanvas.vue'
@@ -17,10 +15,11 @@ import { useMediaQuery } from '@/composables/useMediaQuery'
 import { DESKTOP_MIN } from '@/config/domain'
 import { useToast } from '@/composables/useToast'
 import { openView as openVoiceView } from '@/system/voiceRuntime'
-import { fmtCents } from '@/config/ledger'
 import { useLedgerStore } from '@/stores/ledger'
+import { useFeaturesStore } from '@/stores/features'
 import { useNutritionStore } from '@/stores/nutrition'
 import { useProgramStore } from '@/stores/program'
+import type { ToolAction, ToolContribution } from '@/plugins'
 import { fmtDateCn, todayStr } from '@/utils/date'
 import { weightTrendAlert } from '@/utils/weightTrend'
 
@@ -55,6 +54,7 @@ watch(view, (v) => {
 const nutrition = useNutritionStore()
 const ledger = useLedgerStore()
 const program = useProgramStore()
+const features = useFeaturesStore()
 const toast = useToast()
 
 onMounted(() => {
@@ -63,76 +63,59 @@ onMounted(() => {
   void nutrition.loadMetrics(10)
   void ledger.loadMonth()
   void ledger.loadBudget()
-  void program.load()
+  // 健康方案被关掉时不必拉方案数据（插件层的收益之一：关掉的模块不产生请求）
+  if (features.isEnabled('program')) void program.load()
 })
 
-/* ---- 体重趋势异常：连续异常时自动提醒复盘（主页卡片，可忽略） ---- */
+/* ---- 体重趋势异常：连续异常时自动提醒复盘（主页卡片，可忽略）。
+       提醒的落点是方案页复盘，方案模块关掉时整卡不出现 ---- */
 const weightDismissed = ref(false)
 const weightAlert = computed(() =>
-  weightTrendAlert(nutrition.metrics, nutrition.profile?.goal ?? 'keep', nutrition.profile?.weightKg ?? null),
+  features.isEnabled('program')
+    ? weightTrendAlert(nutrition.metrics, nutrition.profile?.goal ?? 'keep', nutrition.profile?.weightKg ?? null)
+    : null,
 )
 
-/* ---- 移动端常用工具栏：高频动作（移动便当风格，图标章 + 标题 + 副标） ---- */
+/* ---- 移动端常用工具栏：插件层的工具卡贡献（关掉的功能模块不会出现在这里） ---- */
+const tools = computed(() => features.tools)
+
 const quickOpen = ref(false)
 const workoutOpen = ref(false)
 const historyOpen = ref(false)
 
-/** 工具栏顺序：使用频率从高到低排布在 2 列网格里 */
-const toolCards = computed(() => [
-  { id: 1, label: '记饮食' },
-  { id: 2, label: '记运动' },
-  { id: 3, label: '语音对话' },
-  { id: 4, label: 'AI 助手' },
-  { id: 5, label: '专注' },
-  { id: 6, label: `记账 · 本月支出 ¥${fmtCents(ledger.monthExpenseCents)}` },
-  { id: 7, label: `健康方案${program.active ? ` · 执行中 v${program.active.version}` : ''}` },
-])
-
-const TOOL_META = computed<Record<number, { icon: Component; style: Record<string, string>; title: string; sub: string }>>(() => ({
-  1: { icon: Camera, style: { background: 'var(--accent-soft)', color: 'var(--accent)' }, title: '记饮食', sub: '拍照 / 文字 · AI 帮你记' },
-  2: { icon: Dumbbell, style: { background: 'var(--c-exercise-soft)', color: 'var(--c-exercise-deep)' }, title: '记运动', sub: '力量 / 有氧 · MET 估算' },
-  3: { icon: Mic, style: { background: 'linear-gradient(135deg, #0a84ff, #1eeaef)', color: '#fff' }, title: '语音对话', sub: '实时转写 · AI 纪要' },
-  4: { icon: Sparkles, style: { background: 'rgba(88, 86, 214, 0.14)', color: 'var(--cat-study)' }, title: 'AI 助手', sub: '提问 · 拍照识别' },
-  5: { icon: Timer, style: { background: 'var(--intake-soft)', color: 'var(--c-intake)' }, title: '专注', sub: '番茄钟 · 待办 · 日程' },
-  6: { icon: Wallet, style: { background: 'var(--surface-2)', color: 'var(--text-2)' }, title: '记账', sub: `本月支出 ¥${fmtCents(ledger.monthExpenseCents)}` },
-  7: {
-    icon: Target,
-    style: { background: 'var(--accent-soft)', color: 'var(--accent)' },
-    title: '健康方案',
-    sub: program.active ? `执行中 · v${program.active.version}` : '三套方案，排进日程',
+/**
+ * 就地动作表：插件只声明「哪个动作」（ToolAction），组件状态与运行时留在页面实现。
+ * 卡片顺序与图标章配色由各插件自己声明（见 src/plugins/builtin）。
+ */
+const ACTIONS: Record<ToolAction, () => void> = {
+  'smart-add': () => {
+    quickOpen.value = true
   },
-}))
+  'add-workout': () => {
+    workoutOpen.value = true
+  },
+  'voice-session': () => {
+    // 未配置豆包语音服务时引导去模型页
+    void openVoiceView().then((ok) => {
+      if (!ok) {
+        toast.toast('先在「管理模型」里配置豆包语音服务')
+        void router.push('/ai/models')
+      }
+    })
+  },
+}
 
-function onToolActivate(id: number): void {
-  switch (id) {
-    case 1:
-      quickOpen.value = true
-      break
-    case 2:
-      workoutOpen.value = true
-      break
-    case 3:
-      // 语音对话：未配置豆包语音服务时引导去模型页
-      void openVoiceView().then((ok) => {
-        if (!ok) {
-          toast.toast('先在「管理模型」里配置豆包语音服务')
-          void router.push('/ai/models')
-        }
-      })
-      break
-    case 4:
-      void router.push('/ai')
-      break
-    case 5:
-      void router.push('/focus')
-      break
-    case 6:
-      void router.push('/ledger')
-      break
-    case 7:
-      void router.push('/program')
-      break
+/** 副标可为函数（读实时数据，如记账本月支出），模板统一在渲染时求值 */
+function toolSub(t: ToolContribution): string {
+  return typeof t.sub === 'function' ? t.sub() : t.sub
+}
+
+function runTool(t: ToolContribution): void {
+  if (t.action) {
+    ACTIONS[t.action]()
+    return
   }
+  if (t.to) void router.push(t.to)
 }
 </script>
 
@@ -187,21 +170,21 @@ function onToolActivate(id: number): void {
         <button class="pressable" @click="historyOpen = true">饮食历史</button>
       </div>
 
-      <!-- 常用工具栏：移动便当风格（图标章 + 标题 + 副标） -->
+      <!-- 常用工具栏：移动便当风格（图标章 + 标题 + 副标），条目来自插件层 -->
       <div class="tools" role="toolbar" aria-label="常用动作">
         <button
-          v-for="c in toolCards"
-          :key="c.id"
+          v-for="t in tools"
+          :key="t.id"
           class="tool pressable"
-          :aria-label="c.label"
-          @click="onToolActivate(c.id)"
+          :aria-label="`${t.title} · ${toolSub(t)}`"
+          @click="runTool(t)"
         >
-          <i class="tool-ic" :style="TOOL_META[c.id]?.style">
-            <component :is="TOOL_META[c.id]?.icon" :size="17" />
+          <i class="tool-ic" :style="t.ic">
+            <component :is="t.icon" :size="17" />
           </i>
           <span class="col tool-txt">
-            <b>{{ TOOL_META[c.id]?.title }}</b>
-            <em>{{ TOOL_META[c.id]?.sub }}</em>
+            <b>{{ t.title }}</b>
+            <em>{{ toolSub(t) }}</em>
           </span>
         </button>
       </div>
@@ -223,6 +206,9 @@ function onToolActivate(id: number): void {
 .page.desk-home {
   max-width: none;
   padding: 26px 34px 48px;
+  /* 页头遮罩按页面横向内边距向外铺满整帧（默认取 --page-pad-x=18px）；
+     这里内边距是 34px，不跟着改的话两侧会露出没被遮住的窄条 */
+  --ph-bleed: 34px;
 }
 
 /* 状态条：无壳贴页面，整条可点进营养全览 */

@@ -76,6 +76,35 @@ export interface AiDocMeta {
   skippedImages: number
 }
 
+/** 推理过程段里的单次工具调用（照搬 EffiBuddy ToolCallRecord 展示形态） */
+export interface ProcessToolCall {
+  callId: string
+  /** 展示名（注册表中文短名 label）；rawName 为匹配工具结果的原始名 */
+  toolName: string
+  rawName?: string
+  /** 原始 JSON 字符串参数 */
+  arguments: string
+  /** 执行结果（未到达时为 null） */
+  result: string | null
+  isError: boolean
+  /** 是否正在执行中 */
+  pending: boolean
+  /** 工具返回的图片（放大镜结果），随详情展示 */
+  resultImage?: { base64: string; mime: string }
+  /** 放大镜结果图的注册 id 与视图尺寸（历史重建时恢复可继续放大） */
+  zoomId?: string
+  zoomW?: number
+  zoomH?: number
+  /** 放大区域在根位图坐标中的区域（历史重建时恢复「裁原图」语义） */
+  zoomRect?: { x: number; y: number; w: number; h: number }
+}
+
+/** 推理过程段：按流式到达顺序穿插的「思考文字 / 工具调用」片段，
+ * 用于把工具执行结果插入到思考文字之间展示，而非与思考文字隔开单独成块。 */
+export type ProcessSegment =
+  | { kind: 'reasoning'; text: string }
+  | { kind: 'tool'; call: ProcessToolCall }
+
 export interface AiMessage {
   id: string
   role: AiRole
@@ -99,6 +128,10 @@ export interface AiMessage {
   imgNote?: string
   /** LLM 回复的思考内容（气泡上方可折叠展示） */
   thinking?: string
+  /** 推理过程段（思考文字与工具调用按到达顺序穿插；持久化在 payload.segments） */
+  segments?: ProcessSegment[]
+  /** 已完成思考段的累计秒数（跨段累加；持久化在 payload.thinkingSec） */
+  thinkingSec?: number
   /** 被引用的消息文本（发送时引用了某条消息） */
   quoteText?: string
   /** kind=tools 时本轮流次的工具调用记录 */
@@ -115,7 +148,7 @@ export interface AiMessage {
 export interface AiModel {
   id: number
   name: string
-  /** UI 预设标识（deepseek | openai-compatible），请求格式按 baseUrl 自动探测 */
+  /** UI 预设标识（deepseek | openai-compatible | rein-online），请求格式按 baseUrl 自动探测 */
   provider: string
   baseUrl: string
   apiKey: string
@@ -127,6 +160,16 @@ export interface AiModel {
   /** 发给模型的图片最长边（像素）；null = 用前端默认（DEFAULT_IMAGE_EDGE） */
   imageMaxEdge: number | null
   lastError: string | null
+  /** manual = 自己填的（BYOK）；online = 由 Rein 在线服务下发导入 */
+  source: string
+  /** online 模型的来源服务地址 */
+  serviceBase: string | null
+  /** 单价（元 / 百万 tokens）；null = 不计模型费（自填 key 的模型默认如此） */
+  priceIn: number | null
+  priceOut: number | null
+  priceCurrency: string | null
+  /** 该服务的出方向流量单价（元 / GB），服务端下发 */
+  trafficPerGb: number | null
   createdAt: string
   updatedAt: string
 }
@@ -141,6 +184,9 @@ export interface AiModelInput {
   isDefault: boolean
   /** 图片发送分辨率上限；缺省/null 用前端默认 */
   imageMaxEdge?: number | null
+  /** 单价（元/百万 tokens），可空；online 模型忽略（以服务端为准） */
+  priceIn?: number | null
+  priceOut?: number | null
 }
 
 /** max_tokens=1 探测包结果 */
@@ -149,6 +195,123 @@ export interface AiProbeResult {
   thinking: boolean | null
   effort: boolean | null
   error: string | null
+}
+
+/* ---------- Rein 在线服务（模型由服务端下发 · 密钥 · 成本） ---------- */
+
+export interface OnlineServiceSettings {
+  baseUrl: string
+  /** 服务端签发的客户端密钥（rein_sk_…） */
+  apiKey: string
+  savedAt: string | null
+}
+
+/** 服务端下发的单个模型 */
+export interface OnlineModel {
+  id: string
+  providerId: string
+  providerName: string
+  /** 元 / 百万 tokens（官方价） */
+  priceIn: number
+  priceOut: number
+  /** false = 服务端未登记价格，只计流量费 */
+  priced: boolean
+  currency: string
+  unit: string
+}
+
+/** 用密钥换来的模型目录 */
+export interface OnlineCatalog {
+  baseUrl: string
+  ok: boolean
+  /** ready | not_configured | unauthorized | forbidden | error | unreachable */
+  status: string
+  modelsEndpoint: string
+  chatEndpoint: string
+  currency: string
+  trafficPerGb: number
+  /** egress | ingress | both */
+  trafficScope: string
+  clientName: string | null
+  /** 密钥可见的模型白名单（空 = 全部） */
+  clientModels: string[]
+  models: OnlineModel[]
+  error: string | null
+  checkedAt: string
+  elapsedMs: number
+}
+
+/** 服务端记的账（与本机账本对账用） */
+export interface OnlineUsage {
+  ok: boolean
+  baseUrl: string
+  days: number
+  calls: number
+  promptTokens: number
+  completionTokens: number
+  bytesIn: number
+  bytesOut: number
+  costTokens: number
+  costTraffic: number
+  costTotal: number
+  currency: string
+  error: string | null
+}
+
+export interface OnlineSyncResult {
+  added: number
+  updated: number
+  removed: number
+  models: AiModel[]
+}
+
+/* ---------- 本机成本账本（金额一律纳元：1e-9 元） ---------- */
+
+export interface AiUsageInput {
+  chatId?: string | null
+  modelPk?: number | null
+  modelName: string
+  modelId: string
+  provider?: string
+  source?: string
+  promptTokens?: number
+  completionTokens?: number
+  requestBytes?: number
+  responseBytes?: number
+  costModelNano?: number
+  costTrafficNano?: number
+  note?: string | null
+}
+
+export interface AiUsageTotals {
+  calls: number
+  promptTokens: number
+  completionTokens: number
+  requestBytes: number
+  responseBytes: number
+  costModelNano: number
+  costTrafficNano: number
+  costTotalNano: number
+}
+
+export interface AiUsageDay extends AiUsageTotals {
+  date: string
+}
+
+export interface AiUsageByModel extends AiUsageTotals {
+  modelPk: number | null
+  modelName: string
+  modelId: string
+  source: string
+}
+
+export interface AiUsageSummary {
+  days: number
+  since: string
+  today: AiUsageTotals
+  total: AiUsageTotals
+  byDay: AiUsageDay[]
+  byModel: AiUsageByModel[]
 }
 
 /* ---------- 聊天历史（Rust modules/ai · ai_chats / ai_chat_messages） ---------- */

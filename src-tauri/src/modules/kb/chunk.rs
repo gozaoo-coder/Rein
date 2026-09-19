@@ -98,7 +98,11 @@ mod tests {
 
     #[test]
     fn short_text_is_single_chunk() {
-        let c = chunk_text("膝盖不舒服，把深蹲换成腿举", DEFAULT_MAX_CHARS, DEFAULT_OVERLAP);
+        let c = chunk_text(
+            "膝盖不舒服，把深蹲换成腿举",
+            DEFAULT_MAX_CHARS,
+            DEFAULT_OVERLAP,
+        );
         assert_eq!(c, vec!["膝盖不舒服，把深蹲换成腿举"]);
     }
 
@@ -140,7 +144,14 @@ mod tests {
         let c = chunk_text(&text, 100, 20);
         assert!(c.len() >= 4);
         let head: String = c[1].chars().take(20).collect();
-        let tail: String = c[0].chars().rev().take(20).collect::<String>().chars().rev().collect();
+        let tail: String = c[0]
+            .chars()
+            .rev()
+            .take(20)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         assert_eq!(head, tail, "相邻块应有 20 字符重叠");
     }
 

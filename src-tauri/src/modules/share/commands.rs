@@ -55,7 +55,9 @@ fn mime_of(name: &str) -> String {
         "csv" => "text/csv",
         "doc" | "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "xls" | "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "ppt" | "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "ppt" | "pptx" => {
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        }
         _ => "application/octet-stream",
     }
     .to_string()
@@ -143,7 +145,8 @@ pub async fn share_read(app: tauri::AppHandle, file: String) -> Result<SharedFil
         }
         let dir = inbox_dir(&app)?;
         let path = dir.join(&file);
-        let meta = fs::metadata(&path).map_err(|_| ReinError::Message("分享文件不存在或已被读取".into()))?;
+        let meta = fs::metadata(&path)
+            .map_err(|_| ReinError::Message("分享文件不存在或已被读取".into()))?;
         if meta.len() > MAX_FILE {
             let _ = fs::remove_file(&path);
             return Err(ReinError::Message(format!(
@@ -151,8 +154,8 @@ pub async fn share_read(app: tauri::AppHandle, file: String) -> Result<SharedFil
                 meta.len() / 1024 / 1024
             )));
         }
-        let bytes = fs::read(&path)
-            .map_err(|e| ReinError::Message(format!("分享文件读取失败：{e}")))?;
+        let bytes =
+            fs::read(&path).map_err(|e| ReinError::Message(format!("分享文件读取失败：{e}")))?;
         let _ = fs::remove_file(&path);
         let name = display_name(&file);
         let mime = mime_of(&name);

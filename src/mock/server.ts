@@ -5,6 +5,7 @@
  */
 import seedJson from '@resources/foods.json'
 import seedPlansJson from '@resources/workout_plans.json'
+import seedExercisesJson from '@resources/exercises.json'
 
 import type {
   AiChatMessage,
@@ -12,14 +13,26 @@ import type {
   AiModel,
   AiModelInput,
   AiProbeResult,
+  AiUsageByModel,
+  AiUsageInput,
+  AiUsageSummary,
+  AiUsageTotals,
   BodyMetric,
   BodyMetricInput,
   CalcState,
   ChatSearchHit,
   DailySummary,
   DailyTargets,
+  ExerciseCategory,
+  ExerciseEquipment,
+  ExerciseInput,
+  ExerciseKind,
+  ExerciseRecord,
   Food,
   FoodCreateInput,
+  GrabSettings,
+  GrabState,
+  GrabTurnBrief,
   LedgerEntry,
   LedgerEntryInput,
   LedgerSettings,
@@ -31,16 +44,24 @@ import type {
   PlanSeedStatus,
   ProgramRecord,
   Profile,
+  OnlineCatalog,
   ScheduleTodoInput,
   TargetAdjustProposal,
   TargetChange,
   Todo,
+  UpdateCheck,
+  UpdateSettings,
+  UpdateSettingsPatch,
+  UpdateSnapshot,
+  DownloadState,
+  SourceReport,
   Workout,
   WorkoutPlanInput,
   WorkoutPlanRecord,
 } from '@/types'
 import { addDays, startOfMonth, startOfWeek, todayStr } from '@/utils/date'
 import { ruleMatchesDate } from '@/utils/recurrence'
+import { COURSE_CATEGORY } from '@/types/todo'
 
 /* ---------------- 种子载入 ---------------- */
 
@@ -158,12 +179,14 @@ loadSessions()
 
 /* ---------------- 逐组做组记录（与 Rust workout_sets 表同契约） ---------------- */
 
-/** 重量曲线数据源：session_finish 时展开落行；exercise_name 跨课程/编辑稳定 */
+/** 重量曲线数据源：session_finish 时展开落行；exercise_id 是聚合键（动作库），
+ *  exercise_name 只是历史快照（与 Rust workout_sets 同契约） */
 interface MockStrengthSet {
   id: number
   workoutId: number
   planId: string | null
   exerciseKey: string
+  exerciseId: string
   exerciseName: string
   setNo: number
   kind: string
@@ -356,6 +379,7 @@ function migratePlans(): void {
   }
   settleSeed(PLAN_SEED_VERSION)
   savePlans()
+  backfillExerciseRefs() // 种子内容不含动作库 id：合并后立刻挂回（幂等）
 }
 
 /** 使用新版本：内置课内容整体替换为新种子 */
@@ -371,6 +395,7 @@ function overridePlans(): void {
   }
   settleSeed(PLAN_SEED_VERSION)
   savePlans()
+  backfillExerciseRefs() // 覆盖进来的种子内容不含动作库 id：立刻挂回（幂等）
 }
 
 /** 保留我的：本版本不再刷新内置课内容，只结清提示 */
@@ -397,6 +422,228 @@ function sortedPlans(): WorkoutPlanRecord[] {
 }
 
 loadPlans()
+
+/* ---------------- 动作库（与 Rust exercises 表同契约，0025） ---------------- */
+
+interface SeedExercise {
+  id: string
+  name: string
+  aliases?: string[]
+  kind: string
+  category: string
+  equipment?: string | null
+  muscles?: Record<string, number>
+  tips?: string
+  defaultSets: number
+  defaultReps?: number | null
+  defaultWeightKg?: number | null
+  defaultTargetSec?: number | null
+  defaultDurationMin?: number | null
+  defaultRestSec: number
+  weightStep: number
+}
+
+const exercises: ExerciseRecord[] = []
+/** 只持久化自建动作：内置动作每次启动按种子覆盖式刷新（与 Rust seed_exercises 同语义） */
+const EXERCISE_STORE_KEY = 'rein.mock.exercises.v1'
+/** 用户隐藏的内置动作 id */
+const EXERCISE_HIDDEN_KEY = 'rein.mock.exercises.hidden.v1'
+
+function loadExercises(): void {
+  let custom: ExerciseRecord[] = []
+  let hidden: string[] = []
+  try {
+    custom = JSON.parse(localStorage.getItem(EXERCISE_STORE_KEY) ?? '[]') as ExerciseRecord[]
+    hidden = JSON.parse(localStorage.getItem(EXERCISE_HIDDEN_KEY) ?? '[]') as string[]
+  } catch {
+    /* 损坏数据按空处理 */
+  }
+  const hiddenSet = new Set(hidden)
+  const seed = seedExercisesJson as unknown as { exercises: SeedExercise[] }
+  for (const e of seed.exercises) {
+    exercises.push({
+      id: e.id,
+      name: e.name,
+      aliases: e.aliases ?? [],
+      kind: e.kind as ExerciseKind,
+      category: e.category as ExerciseCategory,
+      equipment: (e.equipment ?? null) as ExerciseEquipment | null,
+      muscles: (e.muscles ?? {}) as ExerciseRecord['muscles'],
+      tips: e.tips ?? '',
+      defaultSets: e.defaultSets,
+      defaultReps: e.defaultReps ?? null,
+      defaultWeightKg: e.defaultWeightKg ?? null,
+      defaultTargetSec: e.defaultTargetSec ?? null,
+      defaultDurationMin: e.defaultDurationMin ?? null,
+      defaultRestSec: e.defaultRestSec,
+      weightStep: e.weightStep,
+      isCustom: false,
+      hidden: hiddenSet.has(e.id),
+      sessions: 0,
+      lastUsedAt: null,
+    })
+  }
+  for (const c of custom) exercises.push({ ...c, isCustom: true, hidden: false })
+}
+
+function saveExercises(): void {
+  try {
+    localStorage.setItem(
+      EXERCISE_STORE_KEY,
+      JSON.stringify(exercises.filter((e) => e.isCustom)),
+    )
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+function saveExerciseHidden(): void {
+  try {
+    localStorage.setItem(
+      EXERCISE_HIDDEN_KEY,
+      JSON.stringify(exercises.filter((e) => !e.isCustom && e.hidden).map((e) => e.id)),
+    )
+  } catch {
+    /* 同上 */
+  }
+}
+
+/** 名称（或别名）精确匹配；名字已被 trim/规范化 */
+function findExerciseByName(name: string): ExerciseRecord | undefined {
+  const key = name.trim()
+  return exercises.find((e) => e.name === key || e.aliases.includes(key))
+}
+
+interface ExerciseHint {
+  kind?: string
+  sets?: number | null
+  reps?: number | null
+  weightKg?: number | null
+  targetSec?: number | null
+  durationMin?: number | null
+  restSec?: number | null
+  tips?: string | null
+}
+
+/** 按名解析库 id；未命中则新建自建动作（与 Rust resolve::ensure_for_name 同语义） */
+function ensureExerciseForName(name: string, hint: ExerciseHint = {}): string {
+  const trimmed = name.trim() || '未命名动作'
+  const hit = findExerciseByName(trimmed)
+  if (hit) return hit.id
+  const id = `custom-${crypto.randomUUID()}`
+  const kind = (hint.kind ?? 'strength') as ExerciseKind
+  exercises.push({
+    id,
+    name: trimmed,
+    aliases: [],
+    kind,
+    category: 'other',
+    equipment: null,
+    muscles: {},
+    tips: hint.tips ?? '',
+    defaultSets: hint.sets ?? 3,
+    defaultReps: hint.reps ?? null,
+    defaultWeightKg: hint.weightKg ?? null,
+    defaultTargetSec: hint.targetSec ?? null,
+    defaultDurationMin: hint.durationMin ?? null,
+    defaultRestSec: hint.restSec ?? 90,
+    weightStep: kind === 'strength' ? 2.5 : 0,
+    isCustom: true,
+    hidden: false,
+    sessions: 0,
+    lastUsedAt: null,
+  })
+  saveExercises()
+  return id
+}
+
+/** 课程条目一律经动作库解析（缺 exerciseId 的按名挂库），与 Rust 写入路径同语义 */
+function resolvePlanExerciseIds(list: unknown[]): unknown[] {
+  return list.map((raw) => {
+    const item = raw as Record<string, unknown>
+    if (typeof item.exerciseId === 'string' && item.exerciseId) return item
+    const name = typeof item.name === 'string' ? item.name : ''
+    if (!name.trim()) return item
+    const id = ensureExerciseForName(name, {
+      kind: typeof item.kind === 'string' ? item.kind : undefined,
+      sets: typeof item.sets === 'number' ? item.sets : null,
+      reps: typeof item.reps === 'number' ? item.reps : null,
+      weightKg: typeof item.weightKg === 'number' ? item.weightKg : null,
+      targetSec: typeof item.targetSec === 'number' ? item.targetSec : null,
+      durationMin: typeof item.durationMin === 'number' ? item.durationMin : null,
+      restSec: typeof item.restSec === 'number' ? item.restSec : null,
+      tips: typeof item.tips === 'string' ? item.tips : null,
+    })
+    return { ...item, exerciseId: id }
+  })
+}
+
+/** 存量回填（幂等）：课程条目与做组记录都挂上库 id（与 Rust backfill_exercise_refs 同语义） */
+function backfillExerciseRefs(): void {
+  let setsChanged = false
+  for (const s of strengthSets) {
+    if (s.exerciseId) continue
+    s.exerciseId = ensureExerciseForName(s.exerciseName, {
+      kind: s.kind,
+      weightKg: s.weightKg,
+      reps: s.reps,
+    })
+    setsChanged = true
+  }
+  if (setsChanged) saveSets()
+
+  let plansChanged = false
+  for (const p of plans) {
+    const arr = Array.isArray(p.exercises) ? (p.exercises as unknown[]) : []
+    const next = resolvePlanExerciseIds(arr)
+    if (JSON.stringify(next) !== JSON.stringify(arr)) {
+      p.exercises = next as WorkoutPlanRecord['exercises']
+      plansChanged = true
+    }
+  }
+  if (plansChanged) savePlans()
+}
+
+/** 使用统计（sessions / lastUsedAt）：查询时按做组记录现算 */
+function exerciseUsage(id: string): { sessions: number; lastUsedAt: string | null } {
+  const ids = new Set<number>()
+  let last: string | null = null
+  for (const r of strengthSets) {
+    if (r.exerciseId !== id) continue
+    ids.add(r.workoutId)
+    const w = workouts.find((x) => x.id === r.workoutId)
+    const date = w?.date ?? r.createdAt.slice(0, 10)
+    if (!last || date > last) last = date
+  }
+  return { sessions: ids.size, lastUsedAt: last }
+}
+
+/** 「动作库 id 或动作名」→ 库 id（旧调用 / AI 工具兼容，与 Rust resolve_exercise_id 同语义） */
+function resolveExerciseId(key: string): string {
+  const raw = key.trim()
+  if (exercises.some((e) => e.id === raw)) return raw
+  return findExerciseByName(raw)?.id ?? raw
+}
+
+/** 逐组记录 → 查询行（含 JOIN workouts 的日期与库内展示名） */
+function strengthRecord(r: MockStrengthSet) {
+  const w = workouts.find((x) => x.id === r.workoutId)
+  return {
+    workoutId: r.workoutId,
+    date: w?.date ?? r.createdAt.slice(0, 10),
+    exerciseKey: r.exerciseKey,
+    exerciseId: r.exerciseId || null,
+    exerciseName: exercises.find((e) => e.id === r.exerciseId)?.name ?? r.exerciseName,
+    kind: r.kind,
+    setNo: r.setNo,
+    weightKg: r.weightKg,
+    reps: r.reps,
+    sec: r.sec,
+    warmup: r.warmup,
+  }
+}
+
+loadExercises()
 
 let pomodoroSeq = 0
 const pomodoroSessions: PomodoroSession[] = []
@@ -496,6 +743,131 @@ function saveAiModels(): void {
     /* localStorage 不可用时退化为内存态 */
   }
 }
+
+/* ---- Rein 在线服务（浏览器演示的假服务端） + 本机成本账本 ---- */
+
+const ONLINE_STORE_KEY = 'rein.mock.online_service.v1'
+const AI_USAGE_STORE_KEY = 'rein.mock.ai_usage.v1'
+
+let mockOnlineSettings = { baseUrl: 'http://47.100.36.179:8787', apiKey: '', savedAt: null as string | null }
+let aiUsage: (AiUsageInput & { at: string })[] = []
+
+/** 演示用目录：与真服务端 /v1/models 的 rein 扩展字段同构 */
+const MOCK_ONLINE_MODELS = [
+  { id: 'deepseek-flash', providerId: 'deepseek', providerName: 'DeepSeek', priceIn: 2, priceOut: 8 },
+  { id: 'deepseek-v4-pro', providerId: 'deepseek', providerName: 'DeepSeek', priceIn: 9, priceOut: 27 },
+  { id: 'qwen3-max', providerId: 'dashscope', providerName: '阿里云百炼', priceIn: 0, priceOut: 0 },
+]
+
+function buildMockCatalog(baseUrl: string, apiKey: string): OnlineCatalog {
+  const base = (baseUrl || mockOnlineSettings.baseUrl).replace(/\/+$/, '')
+  const key = (apiKey || mockOnlineSettings.apiKey).trim()
+  const offline = mockFlag('__REIN_MOCK_SERVICE_OFFLINE__')
+  const ok = Boolean(key) && !offline
+  return {
+    baseUrl: base,
+    ok,
+    status: ok ? 'ready' : offline ? 'unreachable' : 'unauthorized',
+    modelsEndpoint: `${base}/v1/models`,
+    chatEndpoint: `${base}/v1/chat/completions`,
+    currency: 'CNY',
+    trafficPerGb: 0.8,
+    trafficScope: 'egress',
+    clientName: ok ? '浏览器演示' : null,
+    clientModels: [],
+    models: ok
+      ? MOCK_ONLINE_MODELS.map((m) => ({
+          ...m,
+          priced: m.priceIn > 0 || m.priceOut > 0,
+          currency: 'CNY',
+          unit: 'per_1m_tokens',
+        }))
+      : [],
+    error: ok ? null : offline ? `无法连接 ${base}/v1/models` : '还没有填服务密钥（rein_sk_…）',
+    checkedAt: new Date().toISOString(),
+    elapsedMs: 12,
+  }
+}
+
+function saveMockOnline(): void {
+  try {
+    localStorage.setItem(ONLINE_STORE_KEY, JSON.stringify(mockOnlineSettings))
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+function saveMockUsage(): void {
+  try {
+    localStorage.setItem(AI_USAGE_STORE_KEY, JSON.stringify(aiUsage))
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+function loadMockOnlineAndUsage(): void {
+  try {
+    const rawOnline = localStorage.getItem(ONLINE_STORE_KEY)
+    if (rawOnline) mockOnlineSettings = { ...mockOnlineSettings, ...(JSON.parse(rawOnline) as typeof mockOnlineSettings) }
+    const rawUsage = localStorage.getItem(AI_USAGE_STORE_KEY)
+    if (rawUsage) aiUsage = JSON.parse(rawUsage) as typeof aiUsage
+  } catch {
+    /* 损坏数据按空处理 */
+  }
+}
+
+/** 本机账本汇总：与 Rust `ai_usage_summary` 同结构 */
+function summarizeMockUsage(rows: typeof aiUsage, days: number, since: string): AiUsageSummary {
+  const blank = (): AiUsageTotals => ({
+    calls: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    requestBytes: 0,
+    responseBytes: 0,
+    costModelNano: 0,
+    costTrafficNano: 0,
+    costTotalNano: 0,
+  })
+  const add = (b: AiUsageTotals, u: (typeof aiUsage)[number]): AiUsageTotals => ({
+    calls: b.calls + 1,
+    promptTokens: b.promptTokens + (u.promptTokens ?? 0),
+    completionTokens: b.completionTokens + (u.completionTokens ?? 0),
+    requestBytes: b.requestBytes + (u.requestBytes ?? 0),
+    responseBytes: b.responseBytes + (u.responseBytes ?? 0),
+    costModelNano: b.costModelNano + (u.costModelNano ?? 0),
+    costTrafficNano: b.costTrafficNano + (u.costTrafficNano ?? 0),
+    costTotalNano: b.costTotalNano + (u.costModelNano ?? 0) + (u.costTrafficNano ?? 0),
+  })
+
+  const total = rows.reduce(add, blank())
+  const todayKey = new Date().toISOString().slice(0, 10)
+  const today = rows.filter((u) => u.at.slice(0, 10) === todayKey).reduce(add, blank())
+
+  const dayMap = new Map<string, AiUsageTotals>()
+  for (const u of rows) {
+    const d = u.at.slice(0, 10)
+    dayMap.set(d, add(dayMap.get(d) ?? blank(), u))
+  }
+  const modelMap = new Map<string, AiUsageByModel>()
+  for (const u of rows) {
+    const key = `${u.modelName}|${u.modelId}|${u.source ?? 'manual'}`
+    const cur =
+      modelMap.get(key) ??
+      ({ modelPk: u.modelPk ?? null, modelName: u.modelName, modelId: u.modelId, source: u.source ?? 'manual', ...blank() } as AiUsageByModel)
+    modelMap.set(key, { ...cur, ...add(cur, u) })
+  }
+
+  return {
+    days,
+    since,
+    today,
+    total,
+    byDay: [...dayMap.entries()].map(([date, t]) => ({ date, ...t })).sort((a, b) => (a.date < b.date ? 1 : -1)),
+    byModel: [...modelMap.values()].sort((a, b) => b.costTotalNano - a.costTotalNano),
+  }
+}
+
+loadMockOnlineAndUsage()
 
 function saveAiChats(): void {
   try {
@@ -768,6 +1140,7 @@ function synthTrack(totalKm: number, totalSec: number, laps = 4): { lat: number;
           workoutId: workouts[1]!.id,
           planId: 'ppl-legs',
           exerciseKey: key,
+          exerciseId: '',
           exerciseName: name,
           setNo: it.warmup ? warmNo : setNo,
           kind: 'strength',
@@ -823,6 +1196,7 @@ function synthTrack(totalKm: number, totalSec: number, laps = 4): { lat: number;
         workoutId: w.id,
         planId: 'ppl-push',
         exerciseKey: 'ppl-push-bench',
+        exerciseId: '',
         exerciseName: '杠铃卧推',
         setNo: r.warmup ? warmNo : setNo,
         kind: 'strength',
@@ -837,6 +1211,9 @@ function synthTrack(totalKm: number, totalSec: number, laps = 4): { lat: number;
   if (!setsSeeded) saveSets()
   markSetsSeeded()
 }
+
+/** 演示数据与老 localStorage 数据统一挂上动作库 id（幂等，与 Rust 启动回填同语义） */
+backfillExerciseRefs()
 
 // 历史演示记录：过去约 5 个月每周 1–2 次，确定性模式生成（供日/周/年视图浏览）
 const DEMO_HISTORY = [
@@ -1167,6 +1544,7 @@ interface MockVoiceConfig {
   asrAdapter: string
   asrAdapterUserPicked: boolean
   asrBaseUrl: string
+  ttsCredential: { mode: 'legacy' | 'new'; appKey: string; accessKey: string } | null
   asrResourceId: string
   ttsResourceId: string
   voiceName: string
@@ -1180,6 +1558,7 @@ let voiceConfig: MockVoiceConfig = {
   asrAdapter: 'auto',
   asrAdapterUserPicked: false,
   asrBaseUrl: '',
+  ttsCredential: null,
   asrResourceId: 'volc.seedasr.sauc.duration',
   ttsResourceId: 'seed-tts-2.0',
   voiceName: '',
@@ -1265,7 +1644,7 @@ interface MockKbDoc {
   path: string | null
   editable: boolean
   system: boolean
-  kind: 'text' | 'image' | 'file' | 'audio'
+  kind: 'text' | 'image' | 'file' | 'audio' | 'video' | 'folder'
   parentId: string | null
   title: string
   summary: string
@@ -1275,13 +1654,44 @@ interface MockKbDoc {
   updatedAt: string
 }
 
+/** 文件节点（kb_files）：文本笔记 / 多模态节点 / 目录（ai-workspace §1） */
 interface MockKbFile {
   id: number
   path: string
   content: string
   system: boolean
+  kind: 'text' | 'multimodal' | 'folder'
+  pinned: boolean
+  classifyState: 'inbox' | 'filed' | 'manual'
   createdAt: string
   updatedAt: string
+}
+
+/** 模态表示（kb_assets）。浏览器 mock 无法落盘，本体一律以内联 data URL 存在 ref 里 */
+interface MockKbAsset {
+  id: number
+  fileId: number
+  modal: 'text' | 'image' | 'audio' | 'video' | 'binary'
+  mime: string
+  ref: string
+  bytes: number
+  durationMs: number | null
+  transcriptState: 'none' | 'pending' | 'done' | 'failed'
+  derivedFrom: string | null
+  createdAt: string
+}
+
+/** 整理审计（kb_fs_moves，ai-workspace §3.3） */
+interface MockKbFsMove {
+  id: number
+  batchId: string
+  source: string
+  op: string
+  pathFrom: string
+  pathTo: string
+  reason: string
+  at: string
+  undone: boolean
 }
 
 /** 路径净化：与 Rust source::sanitize 同一条规则（docs/kb-vfs.md §2） */
@@ -1296,19 +1706,105 @@ function kbSanitize(raw: string, max: number): string {
   return t || '未命名'
 }
 
-/** 把用户给的路径归位成 笔记/ 下的合法路径（与 Rust files::normalize_path 同构） */
+/** 系统命名空间（只读，ai-workspace §3.2） */
+const KB_SYSTEM_ROOTS = ['规范', '系统提示词']
+/** 知识区（可直接写的根） */
+const KB_WRITABLE_ROOTS = ['笔记', '文档', '用户记忆', '未分类数据', '语音', '视频']
+/** 投影区（派生文档所在的领域根；目录内保留区之外仍可写） */
+const KB_DOMAIN_ROOTS = [
+  '日程', '运动', '饮食', '体测', '课程', '食物', '方案', '菜单', '对话', '附件', '记忆', '纪要',
+]
+
+const kbKnownRoot = (seg: string): boolean =>
+  KB_WRITABLE_ROOTS.includes(seg) || KB_DOMAIN_ROOTS.includes(seg)
+
+/** 把用户给的路径归位成合法路径（与 Rust files::normalize_path 同构） */
 function kbNormalizePath(raw: string): string {
   let p = raw.trim().replace(/^\/+/, '')
   if (!p) throw new Error('文件路径不能为空')
   if (p.split('/').some((seg) => seg === '..')) throw new Error(`路径不允许包含 ..：${p}`)
-  if (p.startsWith('规范/')) throw new Error('规范/ 是系统命名空间，只能由应用更新，不能由用户写入')
-  if (!p.startsWith('笔记/') && !p.startsWith('文档/')) p = `笔记/${p}`
+  const first = p.split('/')[0] ?? ''
+  if (KB_SYSTEM_ROOTS.includes(first)) {
+    throw new Error(`${first}/ 是系统命名空间，只能由应用更新，不能由用户写入`)
+  }
+  if (!kbKnownRoot(first)) p = `笔记/${p}`
   p = p
     .split('/')
     .filter(Boolean)
     .map((seg) => kbSanitize(seg, 60))
     .join('/')
   return p.endsWith('.md') ? p : `${p}.md`
+}
+
+/** 媒体路径归位：保留扩展名，裸路径默认落收件箱（与 Rust files::normalize_media_path 同构） */
+function kbNormalizeMediaPath(raw: string, name: string): string {
+  const p = raw.trim().replace(/^\/+/, '')
+  if (p.split('/').some((seg) => seg === '..')) throw new Error(`路径不允许包含 ..：${p}`)
+  const safeName = kbSanitize(name, 60)
+  const last = p.split('/').pop() ?? ''
+  let dir = ''
+  let base = safeName
+  if (last.includes('.')) {
+    const cut = p.lastIndexOf('/')
+    dir = cut >= 0 ? p.slice(0, cut) : ''
+    base = kbSanitize(last, 60)
+  } else {
+    dir = p
+  }
+  if (dir) {
+    const first = dir.split('/')[0] ?? ''
+    if (KB_SYSTEM_ROOTS.includes(first)) {
+      throw new Error(`${first}/ 是系统命名空间，只能由应用更新，不能由用户写入`)
+    }
+    if (!kbKnownRoot(first)) dir = `未分类数据/${kbSanitize(dir, 60)}`
+  } else {
+    dir = '未分类数据'
+  }
+  dir = dir
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => kbSanitize(seg, 60))
+    .join('/')
+  return dir ? `${dir}/${base}` : base
+}
+
+/** 保留区判定（与 Rust governance::is_reserved_path 同构）：
+ *  `附件/` 全树、日期目录、以及**领域目录下**的 `-数字` 后缀；知识区的正常名字不受限。 */
+function kbIsReservedPath(path: string): boolean {
+  const segs = path.split('/').filter(Boolean)
+  if (!segs.length) return true
+  if (segs[0] === '附件') return true
+  if (segs.some((s) => /^\d{4}-\d{2}-\d{2}$/.test(s))) return true
+  if (!KB_DOMAIN_ROOTS.includes(segs[0])) return false
+  const file = segs[segs.length - 1] ?? ''
+  const stem = file.includes('.') ? file.slice(0, file.lastIndexOf('.')) : file
+  const tail = stem.includes('-') ? stem.slice(stem.lastIndexOf('-') + 1) : ''
+  return tail.length > 0 && /^\d+$/.test(tail)
+}
+
+/** 保留目录整体让位（与 Rust governance::safe_dir 同构）：
+ *  日期目录 → `{日期}-用户/`；`附件/` 整树是编目 → 改投收件箱。 */
+function kbSafeDir(dir: string): string {
+  const segs = dir.split('/').filter(Boolean)
+  if (segs[0] === '附件') return '未分类数据'
+  return segs.map((seg) => (/^\d{4}-\d{2}-\d{2}$/.test(seg) ? `${seg}-用户` : seg)).join('/')
+}
+
+/** 在 dir 下为 basename 找一个自由路径（保留区 / 已占用都加 -v2 后缀） */
+function kbFreePath(dir: string, basename: string): string {
+  const d = kbSafeDir(dir.trim().replace(/^\/+|\/+$/g, ''))
+  const cut = basename.lastIndexOf('.')
+  const stem = cut > 0 ? basename.slice(0, cut) : basename
+  const ext = cut > 0 ? basename.slice(cut) : ''
+  for (let i = 0; i < 64; i++) {
+    const name = i === 0 ? basename : `${stem}-v${i + 1}${ext}`
+    const path = d ? `${d}/${name}` : name
+    if (KB_SYSTEM_ROOTS.includes(path.split('/')[0] ?? '')) throw new Error(`${path} 在系统命名空间，只读`)
+    if (kbIsReservedPath(path)) continue
+    const taken = kbFiles.some((f) => f.path === path) || kbDocs.some((doc) => doc.path === path)
+    if (!taken) return path
+  }
+  throw new Error(`在 ${d}/ 下找不到可用文件名（${basename}）`)
 }
 
 /** 与 Rust chunk_text 同参数的简化分块（300 字 / 50 重叠），供 L2 分页与 totalChunks */
@@ -1339,12 +1835,65 @@ interface MockKbMemory {
   id: number
   memType: string
   topic: string
+  /** 分层分类路径（如 健康/训练），可为空 */
+  category: string
   content: string
   confidence: number
   activeCount: number
   sourceChatId: string | null
   createdAt: string
   updatedAt: string
+  /** 最近一次注入时间（衰减计时起点） */
+  lastUsedAt: string | null
+  /** 归档时间（软删除）；非空 = 不进注入与检索 */
+  archivedAt: string | null
+  archivedReason: string | null
+}
+
+/** 显著性半衰期（天），与 Rust memory.rs 的 SALIENCE_HALF_LIFE_DAYS 对齐 */
+const KB_SALIENCE_HALF_LIFE_DAYS = 14
+/** 低信号阈值，与 Rust memory.rs 的 STALE_SALIENCE 对齐 */
+const KB_STALE_SALIENCE = 0.15
+/** 自动归档判定，与 Rust memory.rs 对齐 */
+const KB_NEVER_USED_PRUNE_DAYS = 30
+const KB_STALE_PRUNE_DAYS = 45
+
+/** 显著性 = 置信度 × 时间衰减 × 使用强化（读时计算，不落库存） */
+function kbSalience(m: MockKbMemory): number {
+  const since = Date.parse(m.lastUsedAt ?? m.updatedAt ?? m.createdAt)
+  const idleDays = Number.isFinite(since) ? Math.max(0, (Date.now() - since) / 86_400_000) : 0
+  const decay = 0.5 ** (idleDays / KB_SALIENCE_HALF_LIFE_DAYS)
+  const reinforcement = 1 + Math.log(1 + m.activeCount) / 4
+  return m.confidence * decay * reinforcement
+}
+
+function kbIdleDays(m: MockKbMemory): number {
+  const since = Date.parse(m.lastUsedAt ?? m.updatedAt ?? m.createdAt)
+  return Number.isFinite(since) ? Math.max(0, (Date.now() - since) / 86_400_000) : 0
+}
+
+/** 记忆类型 → 中文标签（与 Rust source.rs::mem_type_label 对齐） */
+const KB_MEMORY_TYPE_LABELS: Record<string, string> = {
+  preference: '偏好',
+  constraint: '约束',
+  event: '事件',
+  entity: '实体',
+  profile: '画像',
+  pattern: '规律',
+}
+
+/** 认知块的一行：`- [类型·分类] 内容`（与 Rust cognition_line 同构） */
+function kbCognitionLine(m: MockKbMemory): string {
+  const label = m.category
+    ? `${KB_MEMORY_TYPE_LABELS[m.memType] ?? m.memType}·${m.category}`
+    : (KB_MEMORY_TYPE_LABELS[m.memType] ?? m.memType)
+  return `- [${label}] ${m.content.trim()}`
+}
+
+/** 从编目里摘掉某条记忆的文档（归档/删除共用） */
+function kbDropMemoryDoc(id: number): void {
+  const di = kbDocs.findIndex((d) => d.sourceType === 'memory' && d.sourceId === String(id))
+  if (di >= 0) kbDocs.splice(di, 1)
 }
 
 // 规范文件内容与 src-tauri 的 include_str! 同源（docs/kb-vfs.md），浏览器 mock 也读同一份
@@ -1353,7 +1902,11 @@ import specMarkdown from '../../docs/kb-vfs.md?raw'
 const KB_SETTINGS_KEY = 'rein.mock.kb_settings.v1'
 const KB_MEMORY_KEY = 'rein.mock.kb_memories.v1'
 const KB_FILE_KEY = 'rein.mock.kb_files.v1'
+const KB_ASSET_KEY = 'rein.mock.kb_assets.v1'
+const KB_MOVE_KEY = 'rein.mock.kb_fs_moves.v1'
 const KB_SPEC_PATH = '规范/知识库规范.md'
+/** 注入预算（与 Rust injection::BUDGET_CHARS 对齐） */
+const KB_INJECT_BUDGET = 12000
 
 const kbDocs: MockKbDoc[] = []
 let kbDocId = 0
@@ -1361,6 +1914,10 @@ const kbMemories: MockKbMemory[] = []
 let kbMemoryId = 0
 const kbFiles: MockKbFile[] = []
 let kbFileId = 0
+const kbAssets: MockKbAsset[] = []
+let kbAssetId = 0
+const kbMoves: MockKbFsMove[] = []
+let kbMoveId = 0
 let kbIndexed = false
 
 let kbSettings: {
@@ -1371,6 +1928,9 @@ let kbSettings: {
   cloudDim: number | null
   sourcesEnabled: Record<string, boolean>
   autoMemory: boolean
+  autoConsolidate: boolean
+  lastConsolidateAt: string | null
+  lastMaintainAt: string | null
   lastError: string | null
   updatedAt: string
 } = {
@@ -1381,6 +1941,9 @@ let kbSettings: {
   cloudDim: null,
   sourcesEnabled: {},
   autoMemory: true,
+  autoConsolidate: true,
+  lastConsolidateAt: null,
+  lastMaintainAt: null,
   lastError: null,
   updatedAt: new Date().toISOString(),
 }
@@ -1396,14 +1959,43 @@ function loadKbStore(): void {
     const mem = localStorage.getItem(KB_MEMORY_KEY)
     if (mem) {
       const list = JSON.parse(mem) as MockKbMemory[]
-      kbMemories.push(...list)
+      kbMemories.push(
+        ...list.map((m) => ({
+          ...m,
+          // 老版本没有生命周期字段：补默认值，避免 undefined 渗进界面
+          category: m.category ?? '',
+          lastUsedAt: m.lastUsedAt ?? null,
+          archivedAt: m.archivedAt ?? null,
+          archivedReason: m.archivedReason ?? null,
+        })),
+      )
       kbMemoryId = Math.max(kbMemoryId, ...list.map((m) => m.id), 0)
     }
     const f = localStorage.getItem(KB_FILE_KEY)
     if (f) {
       const list = JSON.parse(f) as MockKbFile[]
-      kbFiles.push(...list)
+      kbFiles.push(
+        ...list.map((x) => ({
+          ...x,
+          // 老版本只存了 path/content/system：补上 v2 字段
+          kind: x.kind ?? 'text',
+          pinned: x.pinned ?? false,
+          classifyState: x.classifyState ?? 'manual',
+        })),
+      )
       kbFileId = Math.max(kbFileId, ...list.map((x) => x.id), 0)
+    }
+    const a = localStorage.getItem(KB_ASSET_KEY)
+    if (a) {
+      const list = JSON.parse(a) as MockKbAsset[]
+      kbAssets.push(...list.map((x) => ({ ...x, derivedFrom: x.derivedFrom ?? null })))
+      kbAssetId = Math.max(kbAssetId, ...list.map((x) => x.id), 0)
+    }
+    const mv = localStorage.getItem(KB_MOVE_KEY)
+    if (mv) {
+      const list = JSON.parse(mv) as MockKbFsMove[]
+      kbMoves.push(...list)
+      kbMoveId = Math.max(kbMoveId, ...list.map((x) => x.id), 0)
     }
   } catch {
     /* 损坏数据按空处理 */
@@ -1429,6 +2021,22 @@ function saveKbMemories(): void {
 function saveKbFiles(): void {
   try {
     localStorage.setItem(KB_FILE_KEY, JSON.stringify(kbFiles))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function saveKbAssets(): void {
+  try {
+    localStorage.setItem(KB_ASSET_KEY, JSON.stringify(kbAssets))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function saveKbMoves(): void {
+  try {
+    localStorage.setItem(KB_MOVE_KEY, JSON.stringify(kbMoves))
   } catch {
     /* 忽略 */
   }
@@ -1477,13 +2085,249 @@ function kbUpsertDoc(
   })
 }
 
-/** 播种规范文件（幂等，内容与 docs/kb-vfs.md 同源） */
-function kbEnsureSpec(): void {
-  const have = kbFiles.find((f) => f.path === KB_SPEC_PATH)
-  if (have) return
+/** 系统提示词与用户记忆模板（与 Rust files.rs 的常量同源，改一处要改两处） */
+const KB_PROMPT_FILES: Record<string, string> = {
+  '系统提示词/角色与语气.md': [
+    '# 角色与语气',
+    '',
+    '- 你是 Rein AI：Rein 健康生活应用的内置助手，用户的数据与文件都在你的虚拟工作区里。',
+    '- 用简体中文，语气自然亲切；直接给结论，不复述用户已知的信息。',
+    '- 能用工具查到的事不要反问用户；需要决策时给两三个具体选项。',
+    '',
+  ].join('\n'),
+  '系统提示词/工作区约定.md': [
+    '# 工作区约定',
+    '',
+    '- 目录里的派生文档是应用数据的只读投影：要改内容就改源数据，直接改文件会被重放覆盖。',
+    '- 可写：笔记/、文档/、未分类数据/、语音/、视频/、用户记忆/ 与各领域目录的用户子目录；系统区只读。',
+    '- 新内容先落 未分类数据/，再用 classify_move 归类并写清 reason；被 pin 的文件不要动。',
+    '- 文件可以有多种模态：需要原件时用 read_modal，音频/视频可能返回降级文本。',
+    '',
+  ].join('\n'),
+}
+const KB_MEMORY_TPLS: Record<string, string> = {
+  '用户记忆/角色设定.md': '<!-- 角色设定：AI 该怎么称呼你、用什么语气、注意什么。有内容时每轮自动注入。 -->',
+  '用户记忆/全局规范.md': '<!-- 全局规范：你希望 AI 始终遵守的规则。有内容时每轮自动注入。 -->',
+}
+
+/** 播种系统文件与默认目录（幂等，对应 Rust files::ensure_system_files） */
+function kbEnsureSystemFiles(): void {
   const now = new Date().toISOString()
-  kbFiles.push({ id: ++kbFileId, path: KB_SPEC_PATH, content: specMarkdown, system: true, createdAt: now, updatedAt: now })
+  const seed = (path: string, content: string, system: boolean): void => {
+    const have = kbFiles.find((f) => f.path === path)
+    if (have) {
+      if (system && have.content !== content) {
+        have.content = content
+        have.updatedAt = now
+      }
+      return
+    }
+    kbFiles.push({
+      id: ++kbFileId,
+      path,
+      content,
+      system,
+      kind: 'text',
+      pinned: false,
+      classifyState: 'manual',
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
+
+  seed(KB_SPEC_PATH, specMarkdown, true)
+  for (const [path, content] of Object.entries(KB_PROMPT_FILES)) seed(path, content, true)
+  // 用户记忆模板只在缺失时建，绝不覆盖用户编辑
+  for (const [path, content] of Object.entries(KB_MEMORY_TPLS)) seed(path, content, false)
+  // 收件箱目录：让默认树完整可见
+  if (!kbFiles.some((f) => f.path === '未分类数据')) {
+    kbFiles.push({
+      id: ++kbFileId,
+      path: '未分类数据',
+      content: '【目录】未分类数据',
+      system: false,
+      kind: 'folder',
+      pinned: false,
+      classifyState: 'inbox',
+      createdAt: now,
+      updatedAt: now,
+    })
+  }
   saveKbFiles()
+}
+
+/* ---------- 模态层 / 目录治理 / 注入区的 mock 辅助（对应 Rust assets/governance/injection） ---------- */
+
+const KB_MODAL_LABEL: Record<string, string> = {
+  text: '文本',
+  image: '图片',
+  audio: '音频',
+  video: '视频',
+  binary: '文件',
+}
+
+function kbModalOfMime(mime: string): MockKbAsset['modal'] {
+  const m = mime.toLowerCase()
+  if (m.startsWith('image/')) return 'image'
+  if (m.startsWith('audio/')) return 'audio'
+  if (m.startsWith('video/')) return 'video'
+  if (m.startsWith('text/') || m.includes('json') || m.includes('markdown')) return 'text'
+  return 'binary'
+}
+
+function kbMimeOfName(name: string): string {
+  const ext = (name.split('.').pop() ?? '').toLowerCase()
+  const map: Record<string, string> = {
+    md: 'text/markdown', txt: 'text/plain', csv: 'text/csv', json: 'application/json',
+    png: 'image/png', webp: 'image/webp', gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg',
+    mp4: 'video/mp4', mov: 'video/quicktime', mkv: 'video/x-matroska', webm: 'video/webm',
+    pdf: 'application/pdf',
+  }
+  return map[ext] ?? 'application/octet-stream'
+}
+
+function primaryModalKind(fileId: number): MockKbDoc['kind'] {
+  const modals = kbAssets.filter((a) => a.fileId === fileId).map((a) => a.modal)
+  if (modals.includes('video')) return 'video'
+  if (modals.includes('audio')) return 'audio'
+  if (modals.includes('image')) return 'image'
+  return 'file'
+}
+
+function kbHumanSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1048576).toFixed(1)} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${bytes} B`
+}
+
+/** 节点模态清单（含文本模态判定），对应 Rust assets::modals_for_source */
+function kbModalsForSource(sourceType: string, sourceId: string, textChars: number): Array<{
+  modal: string
+  mime: string
+  bytes: number
+  durationMs: number | null
+  transcriptState: string
+  derivedFrom: string | null
+  source: string
+}> {
+  const out: ReturnType<typeof kbModalsForSource> = []
+  if (textChars > 0) {
+    out.push({ modal: 'text', mime: 'text/markdown', bytes: textChars, durationMs: null, transcriptState: 'done', derivedFrom: null, source: 'text' })
+  }
+  if (sourceType === 'note') {
+    for (const a of kbAssets.filter((x) => x.fileId === Number(sourceId))) {
+      out.push({
+        modal: a.modal, mime: a.mime, bytes: a.bytes, durationMs: a.durationMs,
+        transcriptState: a.transcriptState, derivedFrom: null, source: 'asset',
+      })
+    }
+  }
+  if (sourceType === 'voice_memo') {
+    const memo = voiceMemos.find((m) => m.id === sourceId)
+    if (memo) {
+      out.push({
+        modal: 'audio', mime: 'audio/wav', bytes: 0,
+        durationMs: memo.durationMs,
+        transcriptState: 'done', derivedFrom: null, source: 'voice',
+      })
+    }
+  }
+  if (sourceType === 'todo_attachment') {
+    const [todoId, idxRaw] = sourceId.split(':')
+    const todo = todos.find((t) => String(t.id) === todoId)
+    const att = todo?.attachments?.[Number(idxRaw)]
+    if (att) {
+      const attKind = String(att.kind)
+      out.push({
+        modal: attKind === 'text' ? 'text' : attKind,
+        mime: kbMimeOfName(att.name),
+        bytes: att.size ?? 0, durationMs: null,
+        transcriptState: attKind === 'audio' || attKind === 'video' ? 'none' : 'done',
+        derivedFrom: null, source: 'attachment',
+      })
+    }
+  }
+  return out
+}
+
+/** 整理审计写入（对应 Rust governance::audit） */
+function kbAudit(source: string, op: string, from: string, to: string, reason: string): string {
+  const batchId = `b${Date.now().toString(36)}-${++kbMoveId}`
+  kbMoves.push({
+    id: kbMoveId, batchId, source, op, pathFrom: from, pathTo: to,
+    reason, at: new Date().toISOString(), undone: false,
+  })
+  saveKbMoves()
+  return batchId
+}
+
+/** 注入块（对应 Rust injection::build）：注释行与空行不占预算，超限截断 */
+function kbInjection(): {
+  system: string
+  memory: string
+  files: Array<{ path: string; zone: string; chars: number; truncated: boolean }>
+  totalChars: number
+  budget: number
+  truncated: boolean
+} {
+  kbEnsureIndex()
+  const meaningful = (content: string): string | null => {
+    const kept = content
+      .split('\n')
+      .filter((l) => {
+        const t = l.trim()
+        return t.length > 0 && !(t.startsWith('<!--') && t.endsWith('-->'))
+      })
+    const t = kept.join('\n').trim()
+    return t ? t : null
+  }
+  const priority = (path: string): number => {
+    if (path.startsWith('系统提示词/')) return 0
+    if (path === '用户记忆/角色设定.md') return 1
+    if (path === '用户记忆/全局规范.md') return 2
+    return 3
+  }
+  const entries = kbFiles
+    .filter((f) => f.path.startsWith('系统提示词/') || f.path.startsWith('用户记忆/'))
+    .map((f) => ({ path: f.path, content: meaningful(f.content), zone: f.path.startsWith('系统提示词/') ? 'system' : 'memory' }))
+    .filter((e): e is { path: string; content: string; zone: string } => e.content !== null)
+    .sort((a, b) => priority(a.path) - priority(b.path) || a.path.localeCompare(b.path))
+
+  let used = 0
+  let truncated = false
+  let system = ''
+  let memory = ''
+  const files: Array<{ path: string; zone: string; chars: number; truncated: boolean }> = []
+  for (const e of entries) {
+    if (used >= KB_INJECT_BUDGET) {
+      truncated = true
+      break
+    }
+    const header = `【${e.path}】\n`
+    const left = KB_INJECT_BUDGET - used
+    let text: string
+    let cut = false
+    if (header.length + e.content.length <= left) {
+      text = `${header}${e.content}\n`
+    } else {
+      truncated = true
+      cut = true
+      text = `${header}${e.content.slice(0, Math.max(left - header.length - 1, 0))}…\n`
+    }
+    used += text.length
+    if (e.zone === 'system') system += text
+    else memory += text
+    files.push({ path: e.path, zone: e.zone, chars: e.content.length, truncated: cut })
+    if (cut) break
+  }
+  if (truncated) {
+    const note = '（注入预算已满：还有内容没有注入，需要时用 glob_knowledge / read_knowledge 自己读）\n'
+    if (memory) memory += note
+    else system += note
+    used += note.length
+  }
+  return { system, memory, files, totalChars: used, budget: KB_INJECT_BUDGET, truncated }
 }
 
 /** 把各 mock 数据源扫一遍建索引。真实实现由 SQLite 触发器登记 + 后台线程消费。 */
@@ -1491,18 +2335,24 @@ function kbEnsureIndex(): void {
   if (kbIndexed) return
   kbIndexed = true
 
-  // 规范文件（system=1，只读）与用户笔记
-  kbEnsureSpec()
+  // 系统文件（规范 / 系统提示词 / 用户记忆模板 / 收件箱）与用户文件
+  kbEnsureSystemFiles()
   for (const f of kbFiles) {
     const base = f.path.split('/').pop() ?? f.path
+    const docKind: MockKbDoc['kind'] =
+      f.kind === 'folder'
+        ? 'folder'
+        : f.kind === 'multimodal'
+          ? primaryModalKind(f.id)
+          : 'text'
     kbUpsertDoc(
       'note',
       String(f.id),
-      base.replace(/\.md$/, ''),
+      base.replace(/\.[a-z0-9]+$/i, ''),
       kbCacheBody(f.content),
       f.createdAt.slice(0, 10),
       [f.system ? '规范' : '笔记'],
-      { path: f.path, editable: !f.system, system: f.system },
+      { path: f.path, editable: !f.system, system: f.system, kind: docKind },
     )
   }
 
@@ -1571,18 +2421,21 @@ function kbEnsureIndex(): void {
       sents.map((s) => s.text ?? '').join(''),
       memo.createdAt?.slice(0, 10) ?? null,
       ['voice_memo'],
+      { path: `语音/${memo.createdAt?.slice(0, 10) ?? '收件箱'}/${kbSanitize(memo.title || '语音纪要', 60)}-${memo.id}.md` },
     )
   }
-  // 长期记忆也编目（kb_docs 的一类来源，可被 glob/检索）
+  // 长期记忆也编目（kb_docs 的一类来源，可被 glob/检索）；归档记忆退出检索
   for (const m of kbMemories) {
+    if (m.archivedAt) continue
+    const sub = m.category ? `${m.category}/` : ''
     kbUpsertDoc(
       'memory',
       String(m.id),
       m.topic ? `记忆 · ${m.topic}` : `记忆 · ${m.memType}`,
       m.content,
       m.createdAt.slice(0, 10),
-      [m.memType],
-      { path: `记忆/${m.memType}/${m.topic || '未命名'}-${m.id}.md`, editable: true },
+      m.category ? [m.memType, m.category] : [m.memType],
+      { path: `记忆/${m.memType}/${sub}${m.topic || '未命名'}-${m.id}.md`, editable: true },
     )
   }
 
@@ -1650,7 +2503,8 @@ function kbGlobMatch(pattern: string, path: string): boolean {
 }
 
 function kbDocToMemory(m: MockKbMemory) {
-  return { ...m }
+  // 显著性读时计算：与 Rust 一样不落库，避免时间一长就和真实排序漂移
+  return { ...m, salience: kbSalience(m) }
 }
 
 function kbSearchMock(query: string, opts: {
@@ -1701,6 +2555,821 @@ function kbSearchMock(query: string, opts: {
         : d.summary
     return { ...d, snippet, score: 1 / (i + 1), matched: tier }
   })
+}
+
+/* ---------- 校园教务（演示数据） ----------
+ * 演示学期刻意锚定在「本周」，这样任何一天打开浏览器预览都能看到当周的课。
+ * 「周次 → 公历日期」的展开在真实环境里由 Rust 完成，mock 必须自己算一遍，
+ * 公式与 modules/campus/commands.rs::occurrence_date 保持一致。 */
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function campusMonday(): Date {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+  return d
+}
+
+function campusRange(): [string, string] {
+  const start = campusMonday()
+  const from = new Date(start)
+  from.setDate(from.getDate() - 7)
+  const to = new Date(start)
+  to.setDate(to.getDate() + 41)
+  return [ymd(from), ymd(to)]
+}
+
+const CAMPUS_WEEKS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+
+interface CampusSessionDemo {
+  id: number
+  courseId: number
+  weekday: number
+  startUnit: number
+  endUnit: number
+  startTime: string
+  endTime: string
+  weeks: number[]
+  weeksStr: string | null
+  room: string | null
+  building: string | null
+  campus: string | null
+  courseName: string
+  courseCode: string | null
+  teachers: string[]
+  credits: number | null
+  courseType: string | null
+  color: string | null
+}
+
+const CAMPUS_SLOTS = [
+  { startUnit: 1, endUnit: 2, startTime: '08:00', endTime: '09:35', startMin: 480, durationMin: 95 },
+  { startUnit: 3, endUnit: 4, startTime: '09:55', endTime: '11:30', startMin: 595, durationMin: 95 },
+  { startUnit: 5, endUnit: 6, startTime: '14:00', endTime: '15:35', startMin: 840, durationMin: 95 },
+  { startUnit: 7, endUnit: 8, startTime: '16:30', endTime: '18:05', startMin: 990, durationMin: 95 },
+]
+
+function campusSession(
+  id: number,
+  weekday: number,
+  slot: (typeof CAMPUS_SLOTS)[number],
+  courseName: string,
+  code: string,
+  teacher: string,
+  room: string,
+  color: string,
+  weeks: number[] = CAMPUS_WEEKS,
+): CampusSessionDemo {
+  return {
+    id,
+    courseId: id,
+    weekday,
+    startUnit: slot.startUnit,
+    endUnit: slot.endUnit,
+    startTime: slot.startTime,
+    endTime: slot.endTime,
+    weeks,
+    weeksStr: weeks.length ? `${weeks[0]}~${weeks[weeks.length - 1]}` : null,
+    room,
+    building: '花江校区第六教学楼',
+    campus: '花江校区',
+    courseName,
+    courseCode: code,
+    teachers: [teacher],
+    credits: 3,
+    courseType: '专业必修',
+    color,
+  }
+}
+
+const CAMPUS_SESSIONS: CampusSessionDemo[] = [
+  campusSession(1, 1, CAMPUS_SLOTS[0]!, '高等数学（上）', '000001', '陈建国', '11A201', '#3B73B6'),
+  campusSession(2, 3, CAMPUS_SLOTS[0]!, '高等数学（上）', '000001', '陈建国', '11A201', '#3B73B6'),
+  campusSession(3, 2, CAMPUS_SLOTS[1]!, '大学英语（一）', '000002', 'Linda', '12B305', '#22A06B'),
+  campusSession(4, 4, CAMPUS_SLOTS[1]!, '大学英语（一）', '000002', 'Linda', '12B305', '#22A06B'),
+  campusSession(5, 1, CAMPUS_SLOTS[2]!, '数据结构与算法', '000101', '黄志远', '15C102', '#B5632E'),
+  campusSession(6, 2, CAMPUS_SLOTS[2]!, '大学物理', '000201', '刘敏', '13A408', '#8257C8'),
+  campusSession(7, 5, CAMPUS_SLOTS[1]!, '计算机组成原理', '000102', '周立', '15C210', '#C0392B'),
+  campusSession(8, 5, CAMPUS_SLOTS[3]!, '体育（一）', '000301', '吴强', '体育馆', '#2E86C1', CAMPUS_WEEKS.filter((w) => w % 2 === 1)),
+]
+
+function campusExpand(
+  sem: { startDate: string; weekStartOnSunday: boolean },
+  from: string,
+  to: string,
+): unknown[] {
+  const anchor = new Date(`${sem.startDate}T00:00:00`)
+  const out: unknown[] = []
+  for (const s of CAMPUS_SESSIONS) {
+    for (const w of s.weeks) {
+      const offset = s.weekday - 1
+      const d = new Date(anchor)
+      d.setDate(d.getDate() + (w - 1) * 7 + offset)
+      const date = ymd(d)
+      if (date < from || date > to) continue
+      out.push({ date, week: w, session: s })
+    }
+  }
+  out.sort((a, b) => {
+    const x = a as { date: string; session: { startTime: string } }
+    const y = b as { date: string; session: { startTime: string } }
+    return x.date.localeCompare(y.date) || x.session.startTime.localeCompare(y.session.startTime)
+  })
+  return out
+}
+
+const campusSemester = () => ({
+  id: 1,
+  accountId: 1,
+  remoteId: 321,
+  code: '2026-2027_1',
+  name: '2026-2027 第一学期',
+  schoolYear: '2026-2027',
+  season: 'AUTUMN',
+  startDate: ymd(campusMonday()),
+  endDate: ymd(new Date(campusMonday().getFullYear() + 1, 0, 24)),
+  weekStartOnSunday: false,
+  totalWeeks: 18,
+  currentWeek: 1,
+  isCurrent: true,
+})
+
+/** 物化窗口：过去一周 + 未来五周，与 Rust 的 MATERIALIZE_* 常量一致 */
+const CAMPUS_BACK_DAYS = 7
+const CAMPUS_FORWARD_DAYS = 35
+
+const campusHhmmToMin = (t: string | null): number | null => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t ?? '')
+  if (!m) return null
+  return Number(m[1]) * 60 + Number(m[2])
+}
+
+/** 派生行备注：第几节 · 教室 · 教师（与 Rust 的 class_notes 同构） */
+function campusClassNotes(s: CampusSessionDemo): string | null {
+  const bits: string[] = []
+  if (s.startUnit > 0 && s.endUnit >= s.startUnit) {
+    bits.push(s.startUnit === s.endUnit ? `第${s.startUnit}节` : `第${s.startUnit}-${s.endUnit}节`)
+  }
+  const place = [s.building, s.room].filter(Boolean).join(' ')
+  if (place) bits.push(place)
+  if (s.teachers.length) bits.push(s.teachers.join('、'))
+  return bits.length ? bits.join(' · ') : null
+}
+
+/** 按日期区间展开成「某天某节课」的发生列表 */
+function campusOccurrences(from: string, to: string): { date: string; session: CampusSessionDemo }[] {
+  return campusExpand(campusSemester(), from, to) as { date: string; session: CampusSessionDemo }[]
+}
+
+/**
+ * 重建课表在时间线上的派生行，返回写入条数。
+ *
+ * 与 Rust 的 `commands.rs::materialize_todos` 同一套语义：**先删后建**（幂等），
+ * 且 `status='done'` 的历史行永不删除、重建时跳过「已存在完成行」的发生 ——
+ * 否则用户打过卡的课会被重新创建成未完成态，同一天出现两行。
+ *
+ * mock 必须自己算这一遍，否则「课表进时间线」这个功能在浏览器里根本看不见。
+ */
+function campusMaterializeTodos(): number {
+  for (let i = todos.length - 1; i >= 0; i--) {
+    const t = todos[i]!
+    if (t.courseSessionId != null && t.status !== 'done') todos.splice(i, 1)
+  }
+
+  const done = new Set<string>()
+  for (const t of todos) {
+    if (t.courseSessionId != null && t.status === 'done') done.add(`${t.courseSessionId}:${t.date}`)
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const from = new Date(today)
+  from.setDate(from.getDate() - CAMPUS_BACK_DAYS)
+  const to = new Date(today)
+  to.setDate(to.getDate() + CAMPUS_FORWARD_DAYS)
+
+  const now = new Date().toISOString()
+  let written = 0
+  for (const { date, session } of campusOccurrences(ymd(from), ymd(to))) {
+    if (done.has(`${session.id}:${date}`)) continue
+    const startMin = campusHhmmToMin(session.startTime)
+    if (startMin == null) continue
+    const endMin = campusHhmmToMin(session.endTime)
+    todos.push({
+      id: ++todoId,
+      title: session.courseName,
+      notes: campusClassNotes(session),
+      date,
+      startMin,
+      durationMin: endMin != null && endMin > startMin ? endMin - startMin : 95,
+      category: COURSE_CATEGORY,
+      priority: 0,
+      status: 'todo',
+      completedAt: null,
+      createdAt: now,
+      courseSessionId: session.id,
+      programId: null,
+      recRule: null,
+      recKey: null,
+      subtasks: null,
+      attachments: null,
+    })
+    written++
+  }
+  return written
+}
+
+const campusDemoCourses = () => {
+  const seen = new Map<number, unknown>()
+  for (const s of CAMPUS_SESSIONS) {
+    if (seen.has(s.courseId)) continue
+    seen.set(s.courseId, {
+      id: s.courseId,
+      semesterId: 1,
+      remoteLessonId: s.courseId,
+      courseCode: s.courseCode,
+      courseName: s.courseName,
+      lessonCode: null,
+      lessonName: null,
+      teachers: s.teachers,
+      credits: s.credits,
+      courseType: s.courseType,
+      color: s.color,
+    })
+  }
+  return [...seen.values()] as {
+    id: number
+    remoteLessonId: number
+    courseName: string
+    courseCode: string | null
+    teachers: string[]
+    credits: number | null
+    color: string | null
+  }[]
+}
+
+let campusAccount: Record<string, unknown> | null = null
+let campusNeedCaptcha = false
+let campusCourses = [] as ReturnType<typeof campusDemoCourses>
+
+/* ---------- 选课（演示批次刻意设为「开放中」） ----------
+ * 真实环境里大一新生的选课窗口还没开，`open-turns` 会返回空数组；
+ * mock 这里给一个开放中的批次，好让「进入 → 查询 → 一键选 → 轮询结果」整套流程
+ * 能在浏览器里走通并被 e2e 覆盖。空批次那条分支由真机构造（见 Rust 的真机联调测试）。 */
+
+function campusServerTime(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function campusSelectTurns() {
+  // e2e 钩子：置空批次列表，用来验证「选课窗口还没开放」的等待态 ——
+  // 那才是大一新生的真实状态，而演示批次刻意是开放中的，两者都要能看。
+  if ((globalThis as { __REIN_MOCK_NO_SELECT_TURN__?: boolean }).__REIN_MOCK_NO_SELECT_TURN__) {
+    return []
+  }
+  const now = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const day = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`
+  // 窗口从当天 00:00 起：写死在 08:00 的话，早上 7 点跑 e2e 会看到任务在「等开抢」而不是开抢，
+  // 断言就随运行时刻飘了。演示批次要的是「窗口已经开着」这个状态。
+  const opensAt = `${day} 00:00:00`
+  const closesAt = `${day} 23:59:59`
+  return [
+    {
+      id: 77,
+      name: '2026-2027 第一学期 正选',
+      bulletin: '本轮为正选轮次，先到先得。选中后请到「我的课表」核对。',
+      allowEnter: true,
+      disallowReasons: [],
+      openDateTimeText: `${day} 00:00`,
+      selectDateTimeText: `${day} 00:00 ~ 23:59`,
+      dropDateTimeText: `${day} 00:00 ~ 23:59`,
+      addRulesText: ['选课人数达到上限后不可再选'],
+      dropRulesText: [],
+      openDateTimeRange: { startDateTime: opensAt, endDateTime: closesAt },
+      selectDateTimeRange: { startDateTime: opensAt, endDateTime: closesAt },
+      dropDateTimeRange: { startDateTime: opensAt, endDateTime: closesAt },
+    },
+  ]
+}
+
+let campusPickedLessons = new Set<number>()
+let campusSelectQueue: number[] = []
+let campusSelectRequestId = ''
+let campusSelectPolls = 0
+
+function campusDemoLessons() {
+  const mk = (
+    id: number,
+    code: string,
+    nameZh: string,
+    credits: number,
+    stdCount: number,
+    limitCount: number,
+    groups: number,
+  ) => ({
+    id,
+    course: { id: id * 10, code, nameZh, nameEn: null, credits },
+    selectedLesson: campusPickedLessons.has(id)
+      ? { status: '已选中', pinned: true, needAttend: false }
+      : null,
+    stdCount,
+    limitCount,
+    teachers: [],
+    scheduleGroups: Array.from({ length: groups }, (_, i) => ({
+      id: id * 100 + i,
+      no: i + 1,
+      default: i === 0,
+      limitCount: Math.floor(limitCount / groups),
+      dateTimePlace: { text: `第${i + 1}组` },
+    })),
+    canSelect: true,
+  })
+  return [
+    mk(9001, '000001', '高等数学（上）', 5, 118, 120, 2),
+    mk(9002, '000002', '大学英语（一）', 3, 56, 60, 3),
+    // 9003 固定返回「需要免听」，用来演示时间冲突分支
+    mk(9003, '000011', '大学物理（含实验）', 4, 60, 60, 1),
+    mk(9004, '000021', '计算机科学导论', 2, 42, 80, 1),
+    // 9005 固定「先满员两次再放名额」，用来演示守着一个满员班的完整过程
+    mk(9005, '000031', '体育（一）', 1, 30, 30, 4),
+  ]
+}
+
+/* ---------- 自动抢课（浏览器里的模拟引擎） ----------
+ * 真实引擎在 Rust 后台线程（`modules/campus/grab.rs`），这里必须**自己实现一遍**：
+ * 浏览器里没有那条线程，而「任务单会不会自己往前走」恰恰是这套 UI 的全部意义，
+ * 不模拟的话 e2e 只能验一个静止的列表。
+ *
+ * 刻意压缩了时间尺度（轮询 400ms 而不是 2 秒）：断言的是**状态迁移**，不是时长。
+ * 时间尺度上唯一不打折的是「开窗前不出手」那条闸门 —— 它是这套逻辑的核心不变量。 */
+
+const GRAB_POLL_MS = 400
+const GRAB_PROBE_MS = 1500
+
+export const mockCampus: { onGrab: ((s: GrabState) => void) | null } = { onGrab: null }
+
+interface MockGrabTask {
+  id: number
+  turnId: string
+  turnName: string | null
+  lessonId: unknown
+  lessonName: string | null
+  courseName: string | null
+  courseCode: string | null
+  teacher: string | null
+  credits: number | null
+  mode: 'predicate' | 'direct'
+  virtualCost: number | null
+  scheduleGroupId: unknown
+  windowWall: string | null
+  windowEndWall: string | null
+  awaitWindow: boolean
+  /** 占位是否已经交过。不能用 attempts===0 反推 —— 占位落定到正式提交之间它还是 0 */
+  predicateDone: boolean
+  status: string
+  phase: 'idle' | 'submit' | 'poll'
+  attempts: number
+  polls: number
+  strikes: number
+  strikeKind: string | null
+  requestId: string | null
+  lastMessage: string | null
+  nextAt: number
+  fireAt: number | null
+  queuedAt: number
+  finishedAt: number | null
+  /** 志愿组。同组互斥，只会中一个；空 = 独立任务 */
+  groupKey: string | null
+  groupName: string | null
+  /** 志愿序：1 = 第一志愿，小的优先；0 = 不在组里 */
+  priority: number
+  /** 连续满员的起点（「让贤期限」读它） */
+  stuckSince: number | null
+  /** 派生值：把它压住的更高优先级任务 id（不落库，与真引擎一致） */
+  heldBy: number | null
+  /** mock 内部：窗口探测的下一次时刻 */
+  probeAt?: number
+  /** mock 内部：该教学班已报了几次满员 */
+  fullTimes?: number
+}
+
+const grabTasks: MockGrabTask[] = []
+let grabSeq = 0
+let grabProbeSeq = 0
+let grabLastEmit = ''
+
+let grabSettings: GrabSettings = {
+  minIntervalMs: 700,
+  pollIntervalMs: 2000,
+  fullRetryMs: 5000,
+  backoffMs: 1500,
+  maxBackoffMs: 30000,
+  leadMs: 800,
+  maxAttempts: 0,
+  maxPolls: 15,
+  cedeAfterMs: 0,
+  watchWindow: true,
+}
+
+/* ---------------- 志愿组（与 Rust `grab.rs` 同一套规则） ----------------
+ * 浏览器里没有那条后台线程，所以规则得在这儿再实现一遍 —— 但**必须同序**：
+ * mock 与真引擎的行为只要分叉，e2e 就再也证明不了真引擎对不对。
+ */
+const GRAB_TERMINAL = new Set(['success', 'failed', 'conflict', 'cancelled'])
+
+const grabGroupOf = (t: MockGrabTask): string => (t.groupKey ?? '').trim()
+
+/** 是否已经让贤：连续满员超过期限（`cedeAfterMs === 0` 时恒为 false = 死守） */
+function grabCeded(t: MockGrabTask, now: number): boolean {
+  if (grabSettings.cedeAfterMs <= 0 || t.stuckSince == null) return false
+  return now - t.stuckSince >= grabSettings.cedeAfterMs
+}
+
+/** 组里的当前志愿：还没结束的成员里 (priority, id) 最小的那个 */
+function grabLead(group: string, now: number): MockGrabTask | null {
+  const alive = grabTasks.filter(
+    (t) => grabGroupOf(t) === group && !GRAB_TERMINAL.has(t.status) && t.status !== 'paused',
+  )
+  if (!alive.length) return null
+  const fresh = alive.filter((t) => !grabCeded(t, now))
+  // 整组都让贤了（罕见）就退回纯志愿序，否则整组会僵住
+  const pool = fresh.length ? fresh : alive
+  return pool.reduce((a, b) =>
+    b.priority < a.priority || (b.priority === a.priority && b.id < a.id) ? b : a,
+  )
+}
+
+/** 这个任务现在轮得到出手吗？不在组里的一律轮得到 */
+function grabArmed(t: MockGrabTask, now: number): boolean {
+  const g = grabGroupOf(t)
+  if (!g) return true
+  return grabLead(g, now)?.id === t.id
+}
+
+/** 同组有人中了：把其余还没结束的收摊（互斥志愿组的另一半保证） */
+function grabCloseGroup(winner: MockGrabTask, now: number): void {
+  const g = grabGroupOf(winner)
+  if (!g) return
+  const who = winner.courseName ?? winner.lessonName ?? '同组课程'
+  for (const t of grabTasks) {
+    if (grabGroupOf(t) !== g || t.id === winner.id || GRAB_TERMINAL.has(t.status)) continue
+    t.status = 'cancelled'
+    t.phase = 'idle'
+    t.finishedAt = now
+    t.lastMessage = `已被第 ${winner.priority} 志愿「${who}」抢先`
+  }
+}
+
+/** 窗口监听的结果。`__REIN_MOCK_GRAB_TURNS__` 可以直接把批次摆出来（给 e2e 用）。 */
+function grabTurns(): GrabTurnBrief[] {
+  const g = globalThis as {
+    __REIN_MOCK_GRAB_TURNS__?: GrabTurnBrief[]
+    __REIN_MOCK_GRAB_NO_WINDOW__?: boolean
+  }
+  if (g.__REIN_MOCK_GRAB_TURNS__) return g.__REIN_MOCK_GRAB_TURNS__
+  if (g.__REIN_MOCK_GRAB_NO_WINDOW__) return []
+  const seen = new Map<string, GrabTurnBrief>()
+  for (const t of grabTasks) {
+    if (!t.windowWall || seen.has(t.turnId)) continue
+    seen.set(t.turnId, {
+      id: t.turnId,
+      name: t.turnName,
+      allowEnter: true,
+      selectText: null,
+      windowStart: t.windowWall,
+      windowEnd: t.windowEndWall,
+    })
+  }
+  return [...seen.values()]
+}
+
+/** 教务墙钟文本 → 本机毫秒。mock 里偏差恒为 0，所以按本地时区解析即可。 */
+function grabWallToMs(text: string): number {
+  const d = new Date(text.replace(' ', 'T'))
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime()
+}
+
+function grabWallOf(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function grabSnapshot(): GrabState {
+  const now = Date.now()
+  const active = grabTasks.some((t) => t.status === 'waiting' || t.status === 'running')
+  // 派生值：谁被谁压着。与真引擎一样在快照这一层算，不落库
+  const leads = new Map<string, number>()
+  for (const t of grabTasks) {
+    const g = grabGroupOf(t)
+    if (!g || leads.has(g)) continue
+    const lead = grabLead(g, now)
+    if (lead) leads.set(g, lead.id)
+  }
+  return {
+    alive: true,
+    active,
+    serverTime: grabWallOf(now),
+    skewSec: 0,
+    nextAt: grabTasks
+      .filter((t) => t.status === 'waiting' || t.status === 'running')
+      .reduce<number | null>((min, t) => (min == null ? t.nextAt : Math.min(min, t.nextAt)), null),
+    nextFireAt: grabTasks
+      .filter((t) => t.status === 'waiting' || t.status === 'running')
+      .reduce<number | null>(
+        (min, t) => (t.fireAt == null ? min : min == null ? t.fireAt : Math.min(min, t.fireAt)),
+        null,
+      ),
+    lastError: null,
+    turns: grabTurns(),
+    probedAt: now,
+    tasks: grabTasks.map((t) => {
+      const g = grabGroupOf(t)
+      const lead = g ? leads.get(g) : undefined
+      // 只有还在场上的才谈得上被谁压着：终态/暂停的任务不在等任何人
+      const inPlay = !GRAB_TERMINAL.has(t.status) && t.status !== 'paused'
+      return { ...t, heldBy: inPlay && lead != null && lead !== t.id ? lead : null }
+    }) as unknown as GrabState['tasks'],
+  }
+}
+
+function grabEmit(): void {
+  const snap = grabSnapshot()
+  const json = JSON.stringify(snap)
+  if (json === grabLastEmit) return
+  grabLastEmit = json
+  mockCampus.onGrab?.(snap)
+}
+
+/** 一轮推进：与 Rust 引擎同序 —— 先过窗口闸门，再做一步提交或轮询。 */
+function grabTick(): void {
+  const now = Date.now()
+  let worked = false
+
+  for (const t of grabTasks) {
+    if (t.status !== 'waiting' && t.status !== 'running') continue
+
+    // ① 窗口还没公布：定期去「问」一次（3 秒后公布，用来演示等窗口这个真实状态）
+    if (t.awaitWindow && !t.windowWall) {
+      t.probeAt ??= now + GRAB_PROBE_MS
+      if (now >= t.probeAt) {
+        t.windowWall = grabWallOf(now)
+        t.windowEndWall = grabWallOf(now + 6 * 3600_000)
+        t.awaitWindow = false
+        t.lastMessage = `已获知选课窗口：${t.windowWall} 开放`
+        t.nextAt = now
+        worked = true
+      } else {
+        t.lastMessage = '等待教务公布选课窗口'
+        continue
+      }
+    }
+
+    // ② 志愿组：没轮到它就站着别动 —— 也不参与任何计时推进。
+    //    排在窗口探测之后：探测是引擎级的事，跟轮到谁出手无关。
+    if (!grabArmed(t, now)) continue
+
+    // ③ 开窗闸门：**没到点绝不出手**。闸门只管第一枪 ——
+    //    交过占位或正式提交过之后，任务就完全由重试节奏支配了。
+    t.fireAt =
+      t.attempts === 0 && !t.predicateDone && t.windowWall
+        ? grabWallToMs(t.windowWall) - grabSettings.leadMs
+        : null
+    if (t.fireAt != null && now < t.fireAt) continue
+    if (now < t.nextAt) continue
+
+    t.queuedAt ||= now
+    t.status = 'running'
+
+    if (t.phase === 'poll' && t.requestId) {
+      t.polls += 1
+      if (t.polls < 2) {
+        t.lastMessage = '教务处理中'
+        t.nextAt = now + GRAB_POLL_MS
+        worked = true
+        continue
+      }
+      // 占位落定 → 转正式确认（这一步不留间隔）
+      if (t.mode === 'predicate' && !t.predicateDone) {
+        t.phase = 'submit'
+        t.requestId = null
+        t.polls = 0
+        t.nextAt = now
+        t.lastMessage = '占位成功，正在正式确认'
+        worked = true
+        continue
+      }
+      // 正式提交的结果
+      const id = Number(t.lessonId)
+      if (id === 9003) {
+        t.status = 'conflict'
+        t.phase = 'idle'
+        t.finishedAt = now
+        t.lastMessage = '与已选课程时间冲突，需到教务网页端办理免听'
+        worked = true
+        continue
+      }
+      t.fullTimes = t.fullTimes ?? 0
+      if (id === 9005 && t.fullTimes < 2) {
+        t.fullTimes += 1
+        t.strikes += 1
+        t.strikeKind = 'full'
+        // 满员是持续状态：记下起点，「让贤期限」才有东西可读
+        t.stuckSince ??= now
+        t.status = 'waiting'
+        t.phase = 'idle'
+        t.lastMessage = '已选人数已达上限'
+        t.nextAt = now + GRAB_POLL_MS
+        worked = true
+        continue
+      }
+      campusPickedLessons.add(id)
+      t.status = 'success'
+      t.phase = 'idle'
+      t.requestId = null
+      t.finishedAt = now
+      t.lastMessage = '已抢到'
+      // 中选即收组：同组备选与它互斥，继续抢只会多抢到一门冲突课
+      grabCloseGroup(t, now)
+      worked = true
+      continue
+    }
+
+    // ③ 提交一步
+    if (t.mode === 'predicate' && !t.predicateDone) {
+      t.phase = 'poll'
+      t.predicateDone = true
+      t.requestId = `gp${++grabProbeSeq}`
+      t.polls = 0
+      t.lastMessage = '已占位，等待教务受理'
+      t.nextAt = now + GRAB_POLL_MS
+    } else {
+      t.attempts += 1
+      t.phase = 'poll'
+      t.requestId = `gr${++grabProbeSeq}`
+      t.polls = 0
+      t.lastMessage =
+        t.attempts === 1 ? '已提交，等待教务处理' : `第 ${t.attempts} 次提交，等待教务处理`
+      t.nextAt = now + GRAB_POLL_MS
+    }
+    worked = true
+  }
+
+  if (worked) grabEmit()
+}
+
+setInterval(grabTick, 250)
+
+function grabFind(id: number): MockGrabTask | undefined {
+  return grabTasks.find((t) => t.id === id)
+}
+
+
+/* ---------- 在线更新（mock：把「检查 → 下载 → 装」整条链路在浏览器里跑通） ----------
+ *
+ * 浏览器里没有 Rust 的 UpdateHub，也没有真实网络，所以这里自己维护一份同形的
+ * 状态机，连**控制开关**都对齐真机的复杂度来源：
+ *   window.__REIN_MOCK_UPDATE_NONE__    = true  → 检查结果「已是最新」
+ *   window.__REIN_MOCK_SERVICE_OFFLINE__ = true → 在线服务探测不可达
+ *   window.__REIN_MOCK_UPDATE_FAIL__     = true → 下载必定失败（用来验失败态与重试入口）
+ * 唯一压缩的是时间尺度：3 秒下完，而不是真下几十 MB。
+ */
+
+const MOCK_CURRENT_VERSION = '0.2.1'
+const MOCK_LATEST_VERSION = '0.2.2'
+
+function mockFlag(name: string): boolean {
+  return typeof window !== 'undefined' && (window as unknown as Record<string, unknown>)[name] === true
+}
+
+function defaultUpdateSettings(): UpdateSettings {
+  return {
+    enabled: true,
+    channel: 'stable',
+    autoCheck: true,
+    checkIntervalHours: 12,
+    lastCheckAt: null,
+    lastSeenVersion: null,
+    ignoredVersion: null,
+    allowHttp: true,
+    silentInstall: false,
+    sources: [
+      {
+        id: 'rein-service',
+        name: 'Rein 在线服务',
+        kind: 'rein',
+        url: 'http://47.100.36.179:8787/updates/latest.json',
+        enabled: true,
+        priority: 0,
+      },
+      {
+        id: 'github',
+        name: 'GitHub Release',
+        kind: 'tauri-static',
+        url: 'https://github.com/gozaoo-coder/Rein/releases/latest/download/latest.json',
+        enabled: true,
+        priority: 10,
+      },
+    ],
+  }
+}
+
+let updateSettings: UpdateSettings = defaultUpdateSettings()
+let updateCheck: UpdateCheck | null = null
+let updateDownload: DownloadState = idleDownload()
+let updateTimer: ReturnType<typeof setInterval> | null = null
+
+function idleDownload(): DownloadState {
+  return {
+    phase: 'idle',
+    version: null,
+    target: 'windows-x86_64',
+    url: null,
+    sourceName: null,
+    received: 0,
+    total: 0,
+    bytesPerSec: 0,
+    percent: 0,
+    file: null,
+    verified: false,
+    error: null,
+    startedAt: null,
+    updatedAt: null,
+  }
+}
+
+function stopUpdateTimer(): void {
+  if (updateTimer) {
+    clearInterval(updateTimer)
+    updateTimer = null
+  }
+}
+
+/** 演示用：下载进度按 200ms 一跳走满，然后进入「校验 → 就绪」。 */
+function startMockDownload(): void {
+  const total = 42 * 1024 * 1024
+  updateDownload = {
+    ...idleDownload(),
+    phase: 'downloading',
+    version: MOCK_LATEST_VERSION,
+    url: 'http://47.100.36.179:8787/dl/stable/0.2.1/Rein-0.2.1-arm64.apk',
+    sourceName: 'Rein 在线服务',
+    total,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  stopUpdateTimer()
+  updateTimer = setInterval(() => {
+    if (updateDownload.phase !== 'downloading') return
+    const next = Math.min(total, updateDownload.received + total / 15)
+    updateDownload = {
+      ...updateDownload,
+      received: next,
+      bytesPerSec: total / 15 / 0.2,
+      percent: (next / total) * 100,
+      updatedAt: new Date().toISOString(),
+    }
+    if (next >= total) {
+      updateDownload = { ...updateDownload, phase: 'verifying', updatedAt: new Date().toISOString() }
+      setTimeout(() => {
+        if (mockFlag('__REIN_MOCK_UPDATE_FAIL__')) {
+          updateDownload = {
+            ...updateDownload,
+            phase: 'failed',
+            verified: false,
+            error: '安装包签名校验失败：签名 keyId 与内置公钥不匹配',
+          }
+          return
+        }
+        updateDownload = {
+          ...updateDownload,
+          phase: 'ready',
+          verified: true,
+          file: 'updates/Rein-0.2.1-arm64.apk',
+          updatedAt: new Date().toISOString(),
+        }
+      }, 600)
+    }
+  }, 200)
+}
+
+function updateSnapshot(): UpdateSnapshot {
+  return {
+    currentVersion: MOCK_CURRENT_VERSION,
+    platform: 'windows-x86_64',
+    installSupported: true,
+    installHint: '下载完成后会静默运行安装器并重启应用',
+    settings: updateSettings,
+    check: updateCheck,
+    download: updateDownload,
+    readyToInstall: updateDownload.verified,
+  }
 }
 
 export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
@@ -2198,6 +3867,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         note: string | null
         sets?: {
           exerciseKey: string
+          exerciseId?: string
           exerciseName: string
           kind: string
           setNo: number
@@ -2234,6 +3904,8 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           workoutId: w.id,
           planId: s?.planId ?? null,
           exerciseKey: st.exerciseKey,
+          // 缺 exerciseId（旧客户端 / AI 提交）时按名称挂库，保证逐组记录进入对应曲线
+          exerciseId: st.exerciseId?.trim() || ensureExerciseForName(st.exerciseName, { kind: st.kind, reps: st.reps, weightKg: st.weightKg }),
           exerciseName: st.exerciseName,
           setNo: st.setNo,
           kind: st.kind,
@@ -2263,52 +3935,50 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return delay((s ? structuredClone(s) : null) as T)
     }
 
-    /* ---------- 重量曲线（逐组记录查询，与 Rust 同语义） ---------- */
+    /* ---------- 重量曲线（逐组记录查询，与 Rust 同语义；聚合键 = 动作库 id） ---------- */
 
     case 'strength_history': {
-      const name = String(args.exerciseName)
+      const id = resolveExerciseId(String(args.exerciseId))
+      const raw = String(args.exerciseId).trim()
       const rows = strengthSets
-        .filter((r) => r.exerciseName === name)
-        .map((r) => {
-          const w = workouts.find((x) => x.id === r.workoutId)
-          return {
-            workoutId: r.workoutId,
-            date: w?.date ?? r.createdAt.slice(0, 10),
-            exerciseName: r.exerciseName,
-            setNo: r.setNo,
-            weightKg: r.weightKg,
-            reps: r.reps,
-            sec: r.sec,
-            warmup: r.warmup,
-          }
-        })
+        .filter((r) => r.exerciseId === id || (!r.exerciseId && r.exerciseName === raw))
+        .map(strengthRecord)
         .sort((a, b) => a.date.localeCompare(b.date) || a.workoutId - b.workoutId)
       return delay(structuredClone(rows) as T)
     }
 
     case 'strength_exercises': {
-      const agg = new Map<string, { lastDate: string; sessions: Set<number> }>()
+      const agg = new Map<string, { id: string; display: string; lastDate: string; sessions: Set<number> }>()
       for (const r of strengthSets) {
         if (r.warmup || r.weightKg == null) continue
-        const w = workouts.find((x) => x.id === r.workoutId)
-        const date = w?.date ?? r.createdAt.slice(0, 10)
-        const cur = agg.get(r.exerciseName) ?? { lastDate: '', sessions: new Set<number>() }
+        const lib = exercises.find((e) => e.id === r.exerciseId)
+        const key = r.exerciseId || r.exerciseName
+        const date = workouts.find((x) => x.id === r.workoutId)?.date ?? r.createdAt.slice(0, 10)
+        const cur =
+          agg.get(key) ?? { id: r.exerciseId, display: lib?.name ?? r.exerciseName, lastDate: '', sessions: new Set<number>() }
         if (date > cur.lastDate) cur.lastDate = date
         cur.sessions.add(r.workoutId)
-        agg.set(r.exerciseName, cur)
+        agg.set(key, cur)
       }
-      const rows = [...agg.entries()]
-        .map(([name, v]) => ({ name, lastDate: v.lastDate, sessions: v.sessions.size }))
+      const rows = [...agg.values()]
+        .map((v) => ({ exerciseId: v.id, name: v.display, lastDate: v.lastDate, sessions: v.sessions.size }))
         .sort((a, b) => b.lastDate.localeCompare(a.lastDate))
       return delay(structuredClone(rows) as T)
     }
 
     case 'strength_last_weights': {
-      const names = (args.names as string[]) ?? []
-      const rows = names
-        .map((name) => {
+      const keys = (args.exerciseIds as string[]) ?? []
+      const rows = keys
+        .map((key) => {
+          const id = resolveExerciseId(key)
+          const raw = key.trim()
           const done = strengthSets
-            .filter((r) => r.exerciseName === name && !r.warmup && r.weightKg != null)
+            .filter(
+              (r) =>
+                (r.exerciseId === id || (!r.exerciseId && r.exerciseName === raw)) &&
+                !r.warmup &&
+                r.weightKg != null,
+            )
             .map((r) => {
               const w = workouts.find((x) => x.id === r.workoutId)
               return { ...r, date: w?.date ?? r.createdAt.slice(0, 10) }
@@ -2317,11 +3987,127 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
             .sort((a, b) => b.date.localeCompare(a.date) || b.workoutId - a.workoutId || b.id - a.id)
           const last = done[0]
           return last
-            ? { name, weightKg: last.weightKg!, reps: last.reps, date: last.date }
+            ? {
+                exerciseId: id,
+                name: exercises.find((e) => e.id === id)?.name ?? last.exerciseName,
+                weightKg: last.weightKg!,
+                reps: last.reps,
+                date: last.date,
+              }
             : null
         })
         .filter((x): x is NonNullable<typeof x> => x != null)
       return delay(structuredClone(rows) as T)
+    }
+
+    case 'strength_recent_sets': {
+      const days = Number(args.days ?? 42)
+      const from = addDays(todayStr(), -days)
+      const rows = strengthSets
+        .map(strengthRecord)
+        .filter((r) => r.date >= from)
+        .sort((a, b) => a.date.localeCompare(b.date) || a.workoutId - b.workoutId)
+      return delay(structuredClone(rows) as T)
+    }
+
+    /* ---------- 动作库（与 Rust modules/exercise_lib 同语义） ---------- */
+
+    case 'list_exercises': {
+      const kind = args.kind ? String(args.kind) : ''
+      const category = args.category ? String(args.category) : ''
+      const query = String(args.query ?? '').trim().toLowerCase()
+      const includeHidden = args.includeHidden === true
+      const rows = exercises
+        .filter((e) => (includeHidden ? true : !e.hidden))
+        .filter((e) => !kind || e.kind === kind)
+        .filter((e) => !category || e.category === category)
+        .filter(
+          (e) =>
+            !query ||
+            e.name.toLowerCase().includes(query) ||
+            e.aliases.some((a) => a.toLowerCase().includes(query)),
+        )
+        .map((e) => {
+          const u = exerciseUsage(e.id)
+          return { ...e, sessions: u.sessions, lastUsedAt: u.lastUsedAt }
+        })
+        .sort(
+          (a, b) =>
+            (a.lastUsedAt ? 0 : 1) - (b.lastUsedAt ? 0 : 1) ||
+            (b.lastUsedAt ?? '').localeCompare(a.lastUsedAt ?? '') ||
+            a.name.localeCompare(b.name),
+        )
+      return delay(structuredClone(rows) as T)
+    }
+
+    case 'get_exercise': {
+      const e = exercises.find((x) => x.id === args.id)
+      if (!e) throw new Error(`动作不存在：${String(args.id)}`)
+      const u = exerciseUsage(e.id)
+      return delay(structuredClone({ ...e, sessions: u.sessions, lastUsedAt: u.lastUsedAt }) as T)
+    }
+
+    case 'upsert_exercise': {
+      const input = args.input as ExerciseInput
+      const name = String(input.name ?? '').trim()
+      if (!name) throw new Error('动作名称不能为空')
+      const id = input.id?.trim() || `custom-${crypto.randomUUID()}`
+      const existing = exercises.find((x) => x.id === id)
+      if (existing && !existing.isCustom) {
+        throw new Error('内置动作不可编辑：可以隐藏它，或另建一个自建动作')
+      }
+      const dup = exercises.find(
+        (x) => x.id !== id && (x.name === name || x.aliases.includes(name)),
+      )
+      if (dup) throw new Error(`已有同名动作「${name}」（id=${dup.id}），请直接使用它`)
+      const rec: ExerciseRecord = {
+        id,
+        name,
+        aliases: input.aliases ?? [],
+        kind: input.kind,
+        category: input.category,
+        equipment: input.equipment ?? null,
+        muscles: input.muscles ?? {},
+        tips: input.tips ?? '',
+        defaultSets: input.defaultSets ?? 3,
+        defaultReps: input.defaultReps ?? null,
+        defaultWeightKg: input.defaultWeightKg ?? null,
+        defaultTargetSec: input.defaultTargetSec ?? null,
+        defaultDurationMin: input.defaultDurationMin ?? null,
+        defaultRestSec: input.defaultRestSec ?? 90,
+        weightStep: input.weightStep ?? 2.5,
+        isCustom: true,
+        hidden: false,
+        sessions: 0,
+        lastUsedAt: null,
+      }
+      if (existing) Object.assign(existing, rec)
+      else exercises.push(rec)
+      saveExercises()
+      const u = exerciseUsage(id)
+      return delay(structuredClone({ ...rec, sessions: u.sessions, lastUsedAt: u.lastUsedAt }) as T)
+    }
+
+    case 'delete_exercise': {
+      const e = exercises.find((x) => x.id === args.id)
+      if (!e) throw new Error(`动作不存在：${String(args.id)}`)
+      if (e.isCustom) {
+        exercises.splice(exercises.indexOf(e), 1)
+        saveExercises()
+      } else {
+        e.hidden = true
+        saveExerciseHidden()
+      }
+      return delay(undefined as T)
+    }
+
+    case 'restore_exercise': {
+      const e = exercises.find((x) => x.id === args.id)
+      if (e) {
+        e.hidden = false
+        saveExerciseHidden()
+      }
+      return delay(undefined as T)
     }
 
     case 'list_workout_plans':
@@ -2338,12 +4124,16 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       const name = String(input.name ?? '').trim()
       if (!name) throw new Error('课程名称不能为空')
       const now = new Date().toISOString()
+      // 动作条目一律经动作库解析（与 Rust upsert_workout_plan 同语义）
+      const resolved = resolvePlanExerciseIds(
+        Array.isArray(input.exercises) ? (input.exercises as unknown[]) : [],
+      ) as WorkoutPlanRecord['exercises']
       const existing = plans.find((x) => x.id === input.id)
       if (existing) {
         existing.name = name
         existing.subtitle = String(input.subtitle ?? '').trim()
         existing.workoutType = input.workoutType
-        existing.exercises = JSON.parse(JSON.stringify(input.exercises)) as WorkoutPlanRecord['exercises']
+        existing.exercises = JSON.parse(JSON.stringify(resolved)) as WorkoutPlanRecord['exercises']
         // meta 字段编辑器不提供：缺省保留原值（与 Rust upsert 的 COALESCE 语义一致）
         if (input.equipment != null) existing.equipment = input.equipment
         if (input.estDurationMin != null) existing.estDurationMin = input.estDurationMin
@@ -2356,7 +4146,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         name,
         subtitle: String(input.subtitle ?? '').trim(),
         workoutType: input.workoutType,
-        exercises: JSON.parse(JSON.stringify(input.exercises)) as WorkoutPlanRecord['exercises'],
+        exercises: JSON.parse(JSON.stringify(resolved)) as WorkoutPlanRecord['exercises'],
         lastUsedAt: null,
         createdAt: now,
         updatedAt: now,
@@ -2480,6 +4270,12 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         effort: null,
         imageMaxEdge: input.imageMaxEdge ?? null,
         lastError: null,
+        source: 'manual',
+        serviceBase: null,
+        priceIn: input.priceIn ?? null,
+        priceOut: input.priceOut ?? null,
+        priceCurrency: input.priceIn || input.priceOut ? 'CNY' : null,
+        trafficPerGb: null,
         createdAt: now,
         updatedAt: now,
       }
@@ -2540,6 +4336,147 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       saveAiModels()
       return delay(undefined as T)
     }
+
+    /* ---- Rein 在线服务（浏览器演示：假服务端，但字段与真服务端一致） ---- */
+
+    case 'online_service_settings_get':
+      return delay(structuredClone(mockOnlineSettings) as T)
+
+    case 'online_service_settings_save': {
+      const input = plain(args.settings as typeof mockOnlineSettings)
+      mockOnlineSettings = {
+        baseUrl: (input.baseUrl ?? '').replace(/\/+$/, ''),
+        apiKey: (input.apiKey ?? '').trim(),
+        savedAt: new Date().toISOString(),
+      }
+      saveMockOnline()
+      return delay(structuredClone(mockOnlineSettings) as T)
+    }
+
+    case 'online_service_catalog': {
+      const catalog = buildMockCatalog(String(args.baseUrl ?? mockOnlineSettings.baseUrl), String(args.apiKey ?? ''))
+      return delay(catalog as T)
+    }
+
+    case 'online_service_usage': {
+      const days = Number(args.days ?? 30)
+      const onlinePks = new Set(aiModels.filter((m) => m.source === 'online').map((m) => m.id))
+      const rows = aiUsage.filter((u) => u.modelPk != null && onlinePks.has(u.modelPk))
+      const costTokens = rows.reduce((s, u) => s + (u.costModelNano ?? 0), 0) / 1e9
+      const costTraffic = rows.reduce((s, u) => s + (u.costTrafficNano ?? 0), 0) / 1e9
+      return delay({
+        ok: true,
+        baseUrl: mockOnlineSettings.baseUrl,
+        days,
+        calls: rows.length,
+        promptTokens: rows.reduce((s, u) => s + (u.promptTokens ?? 0), 0),
+        completionTokens: rows.reduce((s, u) => s + (u.completionTokens ?? 0), 0),
+        bytesIn: rows.reduce((s, u) => s + (u.requestBytes ?? 0), 0),
+        bytesOut: rows.reduce((s, u) => s + (u.responseBytes ?? 0), 0),
+        costTokens,
+        costTraffic,
+        costTotal: costTokens + costTraffic,
+        currency: 'CNY',
+        error: null,
+      } as T)
+    }
+
+    case 'online_service_sync': {
+      const catalog = buildMockCatalog(String(args.baseUrl ?? mockOnlineSettings.baseUrl), String(args.apiKey ?? ''))
+      if (!catalog.ok) throw new Error(catalog.error ?? '在线服务不可用')
+      const wantedIds = ((args.modelIds as string[] | null) ?? []).filter(Boolean)
+      const wanted = catalog.models.filter((m) => wantedIds.length === 0 || wantedIds.includes(m.id))
+      const base = catalog.baseUrl
+      let added = 0
+      let updated = 0
+      for (const m of wanted) {
+        const name = `${m.providerName} · ${m.id}`
+        const existing = aiModels.find((x) => x.source === 'online' && x.serviceBase === base && x.modelId === m.id)
+        if (existing) {
+          Object.assign(existing, {
+            name,
+            baseUrl: `${base}/v1`,
+            apiKey: mockOnlineSettings.apiKey,
+            priceIn: m.priceIn,
+            priceOut: m.priceOut,
+            priceCurrency: m.currency,
+            trafficPerGb: catalog.trafficPerGb,
+            updatedAt: new Date().toISOString(),
+          })
+          updated += 1
+        } else {
+          aiModels.push({
+            id: ++aiModelId,
+            name,
+            provider: 'rein-online',
+            baseUrl: `${base}/v1`,
+            apiKey: mockOnlineSettings.apiKey,
+            modelId: m.id,
+            isDefault: false,
+            vision: null,
+            thinking: null,
+            effort: null,
+            imageMaxEdge: null,
+            lastError: null,
+            source: 'online',
+            serviceBase: base,
+            priceIn: m.priceIn,
+            priceOut: m.priceOut,
+            priceCurrency: m.currency,
+            trafficPerGb: catalog.trafficPerGb,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+          added += 1
+        }
+      }
+      // 服务端撤下的同源模型会被清掉（手动模型不动）
+      const keep = new Set(wanted.map((m) => m.id))
+      const before = aiModels.length
+      for (let i = aiModels.length - 1; i >= 0; i -= 1) {
+        const x = aiModels[i]!
+        if (x.source === 'online' && x.serviceBase === base && !keep.has(x.modelId)) aiModels.splice(i, 1)
+      }
+      const removed = before - aiModels.length
+      if (!aiModels.some((x) => x.isDefault) && aiModels.length > 0) aiModels[0]!.isDefault = true
+      saveAiModels()
+      return delay({
+        added,
+        updated,
+        removed,
+        models: structuredClone(aiModels.filter((x) => x.source === 'online' && x.serviceBase === base)),
+      } as T)
+    }
+
+    /* ---- 本机成本账本 ---- */
+
+    case 'ai_usage_record': {
+      const input = plain(args.input as AiUsageInput)
+      aiUsage.push({
+        ...input,
+        promptTokens: input.promptTokens ?? 0,
+        completionTokens: input.completionTokens ?? 0,
+        requestBytes: input.requestBytes ?? 0,
+        responseBytes: input.responseBytes ?? 0,
+        costModelNano: input.costModelNano ?? 0,
+        costTrafficNano: input.costTrafficNano ?? 0,
+        at: new Date().toISOString(),
+      })
+      saveMockUsage()
+      return delay(undefined as T)
+    }
+
+    case 'ai_usage_summary': {
+      const days = Number(args.days ?? 30)
+      const since = Date.now() - days * 86_400_000
+      const inRange = aiUsage.filter((u) => Date.parse(u.at) >= since)
+      return delay(summarizeMockUsage(inRange, days, new Date(since).toISOString()) as T)
+    }
+
+    case 'ai_usage_clear':
+      aiUsage = []
+      saveMockUsage()
+      return delay(undefined as T)
 
     case 'ai_chat_ensure': {
       const id = String(args.id)
@@ -2898,12 +4835,31 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'voice_config_save':
       voiceConfig = JSON.parse(JSON.stringify(args.config)) as MockVoiceConfig
       return delay(undefined as T)
-    case 'voice_config_status':
-      return delay((voiceConfig.asrAdapter === 'qwen'
+    case 'voice_config_status': {
+      const s = `${voiceConfig.asrBaseUrl} ${voiceConfig.asrResourceId}`.toLowerCase()
+      const adapter = voiceConfig.asrAdapter === 'auto'
+        ? (/(qwen|dashscope|aliyun)/.test(s) ? 'qwen' : 'doubao')
+        : voiceConfig.asrAdapter
+      const asrReady = adapter === 'qwen'
         ? !!voiceConfig.appKey
         : voiceConfig.mode === 'new'
           ? !!voiceConfig.appKey
-          : !!voiceConfig.appKey && !!voiceConfig.accessKey) as T)
+          : !!voiceConfig.appKey && !!voiceConfig.accessKey
+      // mock 里 TTS 恒可合成；ttsReady 跟随音色是否有值，与真实端语义对齐
+      return delay({
+        asrReady,
+        asrAdapter: adapter,
+        ttsReady: !!voiceConfig.voiceName,
+        ttsStandalone: !!voiceConfig.ttsCredential?.appKey,
+      } as T)
+    }
+    case 'voice_tts_probe':
+      return delay({ audioPath: mockWavDataUrl() } as T)
+    case 'voice_asr_probe':
+      return delay(undefined as T)
+    case 'voice_tts_credential_save':
+      voiceConfig.ttsCredential = (args.ttsCredential as MockVoiceConfig['ttsCredential']) ?? null
+      return delay(undefined as T)
     case 'voice_asr_start': {
       const sessionId = String(args.sessionId)
       clearVoiceTimers(sessionId)
@@ -3065,6 +5021,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         const file = doc.sourceType === 'note' ? kbFiles.find((f) => f.id === Number(doc.sourceId)) : undefined
         const chunks = kbChunkText(file ? file.content : doc.body).map((text, ord) => ({ id: doc.id * 1000 + ord, ord, text }))
         const picked = level === 'l1' ? chunks.slice(0, 1) : chunks.slice(offset, offset + limit)
+        const textChars = doc.sourceType === 'note' ? (file?.content.length ?? 0) : doc.body.length
         return {
           id: doc.id,
           sourceType: doc.sourceType,
@@ -3084,6 +5041,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           offset,
           hasMore: offset + picked.length < chunks.length,
           chunks: picked,
+          modalities: kbModalsForSource(doc.sourceType, doc.sourceId, textChars).map((m) => m.modal),
         }
       }
 
@@ -3108,6 +5066,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           offset: 0,
           hasMore: false,
           chunks: [{ id, ord: 0, text: mem.content }],
+          modalities: ['text'],
         } as T)
       }
       const doc = kbDocs.find((d) => d.id === id)
@@ -3139,23 +5098,39 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'kb_file_write': {
       loadKbStore()
       const input = plain(args.input as { path: string; content: string }) ?? { path: '', content: '' }
-      const path = kbNormalizePath(String(input.path ?? ''))
       const content = String(input.content ?? '')
       if (!content.trim()) throw new Error('文件内容不能为空')
+      let path = kbNormalizePath(String(input.path ?? ''))
+      // 落到保留区 / 撞上派生文档时自动让位（与 Rust files::settle_path 同构）
+      if (!kbFiles.some((x) => x.path === path)) {
+        const cut = path.lastIndexOf('/')
+        path = kbFreePath(cut > 0 ? path.slice(0, cut) : '', cut > 0 ? path.slice(cut + 1) : path)
+      }
       const now = new Date().toISOString()
       let f = kbFiles.find((x) => x.path === path)
       if (f) {
         f.content = content
+        f.kind = 'text'
         f.updatedAt = now
       } else {
-        f = { id: ++kbFileId, path, content, system: false, createdAt: now, updatedAt: now }
+        f = {
+          id: ++kbFileId,
+          path,
+          content,
+          system: false,
+          kind: 'text',
+          pinned: false,
+          classifyState: path.startsWith('未分类数据/') ? 'inbox' : 'manual',
+          createdAt: now,
+          updatedAt: now,
+        }
         kbFiles.push(f)
       }
       saveKbFiles()
       kbIndexed = false
       kbEnsureIndex()
       const doc = kbDocs.find((d) => d.sourceType === 'note' && d.sourceId === String(f!.id))!
-      return delay({ ...f, docId: doc.id } as T)
+      return delay({ ...f, docId: doc.id, modalities: [] } as T)
     }
 
     case 'kb_file_rename': {
@@ -3167,14 +5142,18 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       const f = kbFiles.find((x) => x.id === id)
       if (!f) throw new Error(`文件不存在：id=${id}`)
       if (f.system) throw new Error('该文件是系统文件（规范/），不能改名；它的内容随应用版本更新')
-      const path = kbNormalizePath(String(args.path ?? ''))
+      let path = kbNormalizePath(String(args.path ?? ''))
+      if (kbIsReservedPath(path)) {
+        const cut = path.lastIndexOf('/')
+        path = kbFreePath(cut > 0 ? path.slice(0, cut) : '', cut > 0 ? path.slice(cut + 1) : path)
+      }
       if (kbFiles.some((x) => x.path === path && x.id !== id)) throw new Error(`目标路径已存在：${path}`)
       f.path = path
       f.updatedAt = new Date().toISOString()
       saveKbFiles()
       kbIndexed = false
       kbEnsureIndex()
-      return delay({ ...f } as T)
+      return delay({ ...f, modalities: [] } as T)
     }
 
     case 'kb_file_delete': {
@@ -3186,6 +5165,11 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       if (!f) throw new Error(`文件不存在：id=${id}`)
       if (f.system) throw new Error('该文件是系统文件（规范/），不能删除；它的内容随应用版本更新')
       kbFiles.splice(kbFiles.indexOf(f), 1)
+      // 模态行级联清掉（对应 Rust 的外键级联）
+      for (let i = kbAssets.length - 1; i >= 0; i--) {
+        if (kbAssets[i].fileId === id) kbAssets.splice(i, 1)
+      }
+      saveKbAssets()
       saveKbFiles()
       const di = kbDocs.findIndex((d) => d.sourceType === 'note' && d.sourceId === String(id))
       if (di >= 0) kbDocs.splice(di, 1)
@@ -3199,8 +5183,270 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       const id = docHit ? Number(docHit.sourceId) : raw
       const f = kbFiles.find((x) => x.id === id)
       if (!f) throw new Error(`文件不存在：id=${id}`)
-      return delay({ ...f } as T)
+      const modals = kbAssets
+        .filter((a) => a.fileId === id)
+        .map((a) => ({
+          modal: a.modal, mime: a.mime, bytes: a.bytes, durationMs: a.durationMs,
+          transcriptState: a.transcriptState, derivedFrom: a.derivedFrom, source: 'asset',
+        }))
+      return delay({ ...f, modalities: modals } as T)
     }
+
+    /* ---------- 模态层（对应 Rust kb_media_write / kb_media_get） ---------- */
+
+    case 'kb_media_write': {
+      loadKbStore()
+      const input = plain(args.input as {
+        path: string
+        name?: string
+        mime: string
+        dataBase64: string
+        text?: string
+      }) ?? { path: '', mime: '', dataBase64: '' }
+      const dataUrl = String(input.dataBase64 ?? '')
+      if (!dataUrl.trim()) throw new Error('本体为空')
+      const name = String(input.name ?? '').trim() || String(input.path ?? '').split('/').pop() || '未命名'
+      const mime = String(input.mime ?? '').trim() || kbMimeOfName(name)
+      const modal = kbModalOfMime(mime)
+      const bytes = Math.round(((dataUrl.split(',').pop() ?? '').length * 3) / 4)
+      const path = kbNormalizeMediaPath(String(input.path ?? ''), name)
+      const text = String(input.text ?? '').trim() ||
+        `【${KB_MODAL_LABEL[modal] ?? '文件'}】${name}（${mime}，${kbHumanSize(bytes)}）`
+      const now = new Date().toISOString()
+      let f = kbFiles.find((x) => x.path === path)
+      if (f) {
+        f.content = text
+        f.kind = 'multimodal'
+        f.updatedAt = now
+      } else {
+        f = {
+          id: ++kbFileId,
+          path,
+          content: text,
+          system: false,
+          kind: 'multimodal',
+          pinned: false,
+          classifyState: path.startsWith('未分类数据/') ? 'inbox' : 'manual',
+          createdAt: now,
+          updatedAt: now,
+        }
+        kbFiles.push(f)
+      }
+      const existing = kbAssets.find((a) => a.fileId === f!.id && a.modal === modal)
+      if (existing) {
+        existing.ref = dataUrl
+        existing.mime = mime
+        existing.bytes = bytes
+      } else {
+        kbAssets.push({
+          id: ++kbAssetId,
+          fileId: f.id,
+          modal,
+          mime,
+          ref: dataUrl,
+          bytes,
+          durationMs: null,
+          transcriptState: modal === 'audio' || modal === 'video' ? 'none' : 'done',
+          derivedFrom: null,
+          createdAt: now,
+        })
+      }
+      saveKbFiles()
+      saveKbAssets()
+      kbIndexed = false
+      kbEnsureIndex()
+      const modals = kbAssets
+        .filter((a) => a.fileId === f!.id)
+        .map((a) => ({
+          modal: a.modal, mime: a.mime, bytes: a.bytes, durationMs: a.durationMs,
+          transcriptState: a.transcriptState, derivedFrom: a.derivedFrom, source: 'asset',
+        }))
+      return delay({ ...f, modalities: modals } as T)
+    }
+
+    case 'kb_media_get': {
+      loadKbStore()
+      kbEnsureIndex()
+      const docId = Number(args.docId)
+      const requested = args.modal ? String(args.modal) : null
+      const doc = kbDocs.find((d) => d.id === docId)
+      if (!doc) throw new Error(`知识库条目不存在：id=${docId}（先用 search_knowledge 查 id）`)
+      const file = doc.sourceType === 'note' ? kbFiles.find((f) => f.id === Number(doc.sourceId)) : undefined
+      const textBody = file ? file.content : doc.body
+      const infos = kbModalsForSource(doc.sourceType, doc.sourceId, textBody.length)
+      const base = {
+        docId,
+        path: doc.path,
+        title: doc.title,
+        kind: doc.kind,
+        modalities: infos,
+        requested,
+        degraded: false,
+        degradeReason: null as string | null,
+        mime: null as string | null,
+        dataUrl: null as string | null,
+        tooLarge: false,
+        text: null as string | null,
+        hint: null as string | null,
+      }
+      if (!requested) {
+        return delay({
+          ...base,
+          hint: `该节点可用模态：${infos.map((m) => m.modal).join('、')}；需要本体时用 modal 指定`,
+        } as T)
+      }
+      if (requested === 'text') {
+        if (!infos.some((m) => m.modal === 'text')) {
+          return delay({
+            ...base,
+            degraded: true,
+            degradeReason: '该节点没有文本模态',
+            text: `【${doc.kind}】${doc.title}（本体不在工作区，只有元信息）`,
+          } as T)
+        }
+        return delay({ ...base, text: textBody } as T)
+      }
+      const info = infos.find((m) => m.modal === requested)
+      if (!info) {
+        return delay({
+          ...base,
+          degraded: true,
+          degradeReason: `该节点没有 ${requested} 模态，已降级为文本`,
+          text: textBody,
+          hint: '已降级为文本模态；本体确实不存在时不要反复重试',
+        } as T)
+      }
+      // 本体：asset（内联 data URL）或语音纪要（mock 生成静音 wav）
+      let dataUrl: string | null = null
+      if (info.source === 'voice') dataUrl = mockWavDataUrl()
+      else if (info.source === 'asset') {
+        dataUrl = kbAssets.find((a) => a.fileId === Number(doc.sourceId) && a.modal === requested)?.ref ?? null
+      }
+      const hint =
+        info.transcriptState === 'none' && (requested === 'audio' || requested === 'video')
+          ? '该本体尚未转写，暂不提供派生文本'
+          : null
+      return delay({ ...base, mime: info.mime, dataUrl, hint } as T)
+    }
+
+    /* ---------- 目录治理（对应 Rust kb_fs_*） ---------- */
+
+    case 'kb_fs_move': {
+      loadKbStore()
+      const src = String(args.source ?? 'user')
+      const raw = Number(args.id)
+      const docHit = kbDocs.find((d) => d.id === raw && d.sourceType === 'note')
+      const id = docHit ? Number(docHit.sourceId) : raw
+      const f = kbFiles.find((x) => x.id === id)
+      if (!f) throw new Error(`文件不存在：id=${id}`)
+      if (KB_SYSTEM_ROOTS.includes(f.path.split('/')[0] ?? '')) {
+        throw new Error(`${f.path} 在系统命名空间，只读`)
+      }
+      if (src === 'ai' && f.pinned) throw new Error(`${f.path} 被用户钉住（pin），AI 不能移动它`)
+      const dir = String(args.toDir ?? '').trim().replace(/^\/+|\/+$/g, '')
+      if (src === 'ai') {
+        const recent = kbMoves.find(
+          (m) => m.pathTo === f!.path && m.source === 'ai' && m.op === 'move' && !m.undone &&
+            Date.now() - new Date(m.at).getTime() < 24 * 3600 * 1000,
+        )
+        if (recent) throw new Error(`${f.path} 一天内已被自动整理过，暂不再移动（防抖）`)
+      }
+      const base = f.path.split('/').pop() ?? f.path
+      const to = kbFreePath(dir, base)
+      let batchId = ''
+      const from = f.path
+      if (to !== f.path) {
+        f.path = to
+        f.classifyState = dir.startsWith('未分类数据') ? 'inbox' : 'filed'
+        f.updatedAt = new Date().toISOString()
+        batchId = kbAudit(src, 'move', from, to, String(args.reason ?? ''))
+        saveKbFiles()
+        kbIndexed = false
+        kbEnsureIndex()
+      }
+      return delay({ file: { ...f, modalities: [] }, from, to, batchId } as T)
+    }
+
+    case 'kb_fs_mkdir': {
+      loadKbStore()
+      const path = String(args.path ?? '').trim().replace(/^\/+|\/+$/g, '')
+      if (!path) throw new Error('目录路径不能为空')
+      if (KB_SYSTEM_ROOTS.includes(path.split('/')[0] ?? '')) {
+        throw new Error(`${path} 在系统命名空间，只读`)
+      }
+      if (kbIsReservedPath(path)) throw new Error(`${path} 落在派生文档的保留命名空间里，不能建目录`)
+      if (kbFiles.some((x) => x.path === path)) throw new Error(`路径已存在：${path}`)
+      const now = new Date().toISOString()
+      const f: MockKbFile = {
+        id: ++kbFileId,
+        path,
+        content: `【目录】${path}`,
+        system: false,
+        kind: 'folder',
+        pinned: false,
+        classifyState: 'manual',
+        createdAt: now,
+        updatedAt: now,
+      }
+      kbFiles.push(f)
+      kbAudit(String(args.source ?? 'user'), 'mkdir', '', path, String(args.reason ?? ''))
+      saveKbFiles()
+      kbIndexed = false
+      kbEnsureIndex()
+      return delay({ ...f, modalities: [] } as T)
+    }
+
+    case 'kb_fs_pin': {
+      loadKbStore()
+      const raw = Number(args.id)
+      const docHit = kbDocs.find((d) => d.id === raw && d.sourceType === 'note')
+      const id = docHit ? Number(docHit.sourceId) : raw
+      const f = kbFiles.find((x) => x.id === id)
+      if (!f) throw new Error(`文件不存在：id=${id}`)
+      if (KB_SYSTEM_ROOTS.includes(f.path.split('/')[0] ?? '')) {
+        throw new Error(`${f.path} 在系统命名空间，只读`)
+      }
+      const pinned = Boolean(args.pinned)
+      f.pinned = pinned
+      f.classifyState = pinned ? 'manual' : 'filed'
+      f.updatedAt = new Date().toISOString()
+      kbAudit(String(args.source ?? 'user'), pinned ? 'pin' : 'unpin', f.path, f.path, pinned ? '用户钉住' : '取消钉住')
+      saveKbFiles()
+      return delay({ ...f, modalities: [] } as T)
+    }
+
+    case 'kb_fs_moves': {
+      loadKbStore()
+      const limit = Math.min(Math.max(Number(args.limit ?? 50), 1), 200)
+      return delay(plain([...kbMoves].sort((a, b) => b.id - a.id).slice(0, limit)) as T)
+    }
+
+    case 'kb_fs_undo': {
+      loadKbStore()
+      const batchId = String(args.batchId ?? '')
+      let n = 0
+      for (const m of [...kbMoves].filter((x) => x.batchId === batchId && !x.undone).sort((a, b) => b.id - a.id)) {
+        if (m.op === 'move' && m.pathFrom && m.pathTo) {
+          const f = kbFiles.find((x) => x.path === m.pathTo)
+          if (f) {
+            const cut = m.pathFrom.lastIndexOf('/')
+            const back = kbFreePath(cut > 0 ? m.pathFrom.slice(0, cut) : '', cut > 0 ? m.pathFrom.slice(cut + 1) : m.pathFrom)
+            f.path = back
+            f.updatedAt = new Date().toISOString()
+          }
+        }
+        m.undone = true
+        n++
+      }
+      saveKbMoves()
+      saveKbFiles()
+      kbIndexed = false
+      kbEnsureIndex()
+      return delay(n as T)
+    }
+
+    case 'kb_injection_get':
+      return delay(plain(kbInjection()) as T)
 
     case 'kb_reindex': {
       kbIndexed = false
@@ -3217,6 +5463,8 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         cloudDim: kbSettings.cloudDim,
         sourcesEnabled: kbSettings.sourcesEnabled,
         autoMemory: kbSettings.autoMemory,
+        autoConsolidate: kbSettings.autoConsolidate,
+        lastConsolidateAt: kbSettings.lastConsolidateAt,
         lastError: kbSettings.lastError,
         updatedAt: kbSettings.updatedAt,
       } as T)
@@ -3240,6 +5488,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       if (input.cloudDim !== undefined) kbSettings.cloudDim = Number(input.cloudDim) || null
       if (input.sourcesEnabled !== undefined) kbSettings.sourcesEnabled = input.sourcesEnabled as Record<string, boolean>
       if (input.autoMemory !== undefined) kbSettings.autoMemory = Boolean(input.autoMemory)
+      if (input.autoConsolidate !== undefined) kbSettings.autoConsolidate = Boolean(input.autoConsolidate)
       kbSettings.updatedAt = new Date().toISOString()
       saveKbSettings()
       return mockInvoke<T>('kb_settings_get', {})
@@ -3259,9 +5508,16 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'kb_memories': {
       loadKbStore()
       const t = args.memType as string | undefined
-      const list = (t ? kbMemories.filter((m) => m.memType === t) : kbMemories)
-        .slice()
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      const scope = (args.scope as string | undefined) ?? 'active'
+      let list = t ? kbMemories.filter((m) => m.memType === t) : kbMemories.slice()
+      if (scope === 'active') list = list.filter((m) => !m.archivedAt)
+      else if (scope === 'archived') list = list.filter((m) => m.archivedAt)
+      // 活跃永远排在归档前面；组内按最近修改
+      list.sort(
+        (a, b) =>
+          Number(Boolean(a.archivedAt)) - Number(Boolean(b.archivedAt)) ||
+          b.updatedAt.localeCompare(a.updatedAt),
+      )
       return delay(plain(list.map(kbDocToMemory)) as T)
     }
 
@@ -3272,8 +5528,19 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       let added = 0
       let updated = 0
       let deleted = 0
+      let archived = 0
+      let restored = 0
       let skipped = 0
       const validTypes = ['preference', 'constraint', 'event', 'entity', 'profile', 'pattern']
+      // 分类规范化：按 / 分层、逐段净化、最多两层（与 Rust normalize_category 对齐）
+      const normalizeCategory = (raw: unknown): string =>
+        String(raw ?? '')
+          .split('/')
+          .map((s) => s.trim().replace(/[\\:*?"<>|\n\r\t]/g, '-').replace(/^-+|-+$/g, ''))
+          .filter(Boolean)
+          .slice(0, 2)
+          .join('/')
+          .slice(0, 40)
       for (const c of candidates) {
         const op = String(c.op ?? '')
         if (op === 'delete') {
@@ -3281,7 +5548,19 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           const i = kbMemories.findIndex((m) => m.id === id)
           if (i >= 0) {
             kbMemories.splice(i, 1)
+            kbDropMemoryDoc(id)
             deleted++
+          } else skipped++
+          continue
+        }
+        if (op === 'archive') {
+          const id = Number(c.id)
+          const m = kbMemories.find((x) => x.id === id)
+          if (m && !m.archivedAt) {
+            m.archivedAt = new Date().toISOString()
+            m.archivedReason = String(c.reason ?? '').trim() || 'manual'
+            kbDropMemoryDoc(id)
+            archived++
           } else skipped++
           continue
         }
@@ -3292,10 +5571,17 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         }
         const memType = validTypes.includes(String(c.memType)) ? String(c.memType) : 'preference'
         const topic = String(c.topic ?? '').trim()
+        const category = normalizeCategory(c.category)
         if (op === 'add') {
           const dup = kbMemories.find((m) => m.memType === memType && m.topic === topic && m.content === content)
           if (dup) {
-            skipped++
+            // 命中已归档条目 = 用户又提到了它 → 复活，而不是当重复跳过
+            if (dup.archivedAt) {
+              dup.archivedAt = null
+              dup.archivedReason = null
+              dup.updatedAt = new Date().toISOString()
+              restored++
+            } else skipped++
             continue
           }
           const now = new Date().toISOString()
@@ -3303,12 +5589,16 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
             id: ++kbMemoryId,
             memType,
             topic,
+            category,
             content,
             confidence: Number(c.confidence ?? 0.7),
             activeCount: 0,
             sourceChatId: chatId,
             createdAt: now,
             updatedAt: now,
+            lastUsedAt: null,
+            archivedAt: null,
+            archivedReason: null,
           })
           added++
         } else if (op === 'update') {
@@ -3318,26 +5608,33 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
             skipped++
             continue
           }
-          Object.assign(m, { memType, topic, content, confidence: Number(c.confidence ?? m.confidence), updatedAt: new Date().toISOString() })
-          updated++
+          // 更新 = 重新确认：归档中的条目借机复活
+          const wasArchived = Boolean(m.archivedAt)
+          Object.assign(m, {
+            memType,
+            topic,
+            category,
+            content,
+            confidence: Number(c.confidence ?? m.confidence),
+            updatedAt: new Date().toISOString(),
+            archivedAt: null,
+            archivedReason: null,
+          })
+          if (wasArchived) restored++
+          else updated++
         } else {
-          throw new Error(`记忆操作只支持 add / update / delete，收到：${op}`)
+          throw new Error(`记忆操作只支持 add / update / delete / archive，收到：${op}`)
         }
       }
-      if (added || updated || deleted) saveKbMemories()
-      // 编目同步：新增/更新走重建，删除直接摘除对应文档
-      if (deleted > 0) {
-        for (const c of candidates) {
-          if (String(c.op ?? '') !== 'delete') continue
-          const di = kbDocs.findIndex((d) => d.sourceType === 'memory' && d.sourceId === String(c.id))
-          if (di >= 0) kbDocs.splice(di, 1)
+      if (added || updated || deleted || archived || restored) {
+        saveKbMemories()
+        // 编目同步：新增/更新/复活走重建；删除与归档已直接摘除文档
+        if (added > 0 || updated > 0 || restored > 0) {
+          kbIndexed = false
+          kbEnsureIndex()
         }
       }
-      if (added > 0 || updated > 0) {
-        kbIndexed = false
-        kbEnsureIndex()
-      }
-      return delay({ added, updated, deleted, skipped } as T)
+      return delay({ added, updated, deleted, archived, restored, skipped } as T)
     }
 
     case 'kb_memory_delete': {
@@ -3346,23 +5643,117 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       const i = kbMemories.findIndex((m) => m.id === id)
       if (i < 0) return delay(false as T)
       kbMemories.splice(i, 1)
+      kbDropMemoryDoc(id)
       saveKbMemories()
       return delay(true as T)
     }
 
+    case 'kb_memory_archive': {
+      loadKbStore()
+      const id = Number(args.id)
+      const m = kbMemories.find((x) => x.id === id)
+      if (!m || m.archivedAt) return delay(false as T)
+      m.archivedAt = new Date().toISOString()
+      m.archivedReason = String(args.reason ?? '').trim() || 'manual'
+      kbDropMemoryDoc(id)
+      saveKbMemories()
+      return delay(true as T)
+    }
+
+    case 'kb_memory_restore': {
+      loadKbStore()
+      const id = Number(args.id)
+      const m = kbMemories.find((x) => x.id === id)
+      if (!m || !m.archivedAt) return delay(false as T)
+      m.archivedAt = null
+      m.archivedReason = null
+      m.updatedAt = new Date().toISOString()
+      saveKbMemories()
+      kbIndexed = false
+      kbEnsureIndex()
+      return delay(true as T)
+    }
+
+    case 'kb_memory_maintain': {
+      loadKbStore()
+      let checked = 0
+      let archived = 0
+      for (const m of kbMemories) {
+        if (m.archivedAt) continue
+        checked++
+        const idle = kbIdleDays(m)
+        const stale = kbSalience(m) < KB_STALE_SALIENCE
+        const due =
+          (m.activeCount === 0 && idle > KB_NEVER_USED_PRUNE_DAYS) ||
+          (stale && idle > KB_STALE_PRUNE_DAYS)
+        if (due) {
+          m.archivedAt = new Date().toISOString()
+          m.archivedReason = 'decay'
+          kbDropMemoryDoc(m.id)
+          archived++
+        }
+      }
+      kbSettings.lastMaintainAt = new Date().toISOString()
+      saveKbMemories()
+      saveKbSettings()
+      return delay({ checked, archived } as T)
+    }
+
+    case 'kb_memory_stats': {
+      loadKbStore()
+      const activeList = kbMemories.filter((m) => !m.archivedAt)
+      const sorted = activeList.slice().sort((a, b) => kbSalience(b) - kbSalience(a) || b.id - a.id)
+      // 与 Rust cognition_selection 相同的双上限：条数 + 字符
+      let injected = 0
+      let injectedChars = 0
+      for (const m of sorted) {
+        if (injected >= 24) break
+        const line = kbCognitionLine(m)
+        if (injectedChars + line.length + 1 > 1200) break
+        injectedChars += line.length + 1
+        injected++
+      }
+      const stale = activeList.filter((m) => kbSalience(m) < KB_STALE_SALIENCE).length
+      const avg = (f: (m: MockKbMemory) => number): number =>
+        activeList.length
+          ? Number((activeList.reduce((s, m) => s + f(m), 0) / activeList.length).toFixed(3))
+          : 0
+      return delay({
+        active: activeList.length,
+        archived: kbMemories.length - activeList.length,
+        total: kbMemories.length,
+        limit: 24,
+        maxChars: 1200,
+        injected,
+        injectedChars,
+        stale,
+        avgConfidence: avg((m) => m.confidence),
+        avgSalience: avg((m) => kbSalience(m)),
+        signalRatio: activeList.length ? Number((injected / activeList.length).toFixed(3)) : 1,
+        noiseRatio: activeList.length ? Number((stale / activeList.length).toFixed(3)) : 0,
+        autoConsolidate: kbSettings.autoConsolidate,
+        lastConsolidateAt: kbSettings.lastConsolidateAt,
+        lastMaintainAt: kbSettings.lastMaintainAt,
+      } as T)
+    }
+
+    case 'kb_memory_consolidated': {
+      loadKbStore()
+      kbSettings.lastConsolidateAt = new Date().toISOString()
+      saveKbSettings()
+      return delay(undefined as T)
+    }
+
     case 'kb_cognition': {
       loadKbStore()
+      // 归档不进注入；排序与 Rust 一致：显著性降序
       const sorted = kbMemories
-        .slice()
-        .sort((a, b) => b.activeCount - a.activeCount || b.confidence - a.confidence)
+        .filter((m) => !m.archivedAt)
+        .sort((a, b) => kbSalience(b) - kbSalience(a) || b.id - a.id)
         .slice(0, 24)
-      const labels: Record<string, string> = {
-        preference: '偏好', constraint: '约束', event: '事件',
-        entity: '实体', profile: '画像', pattern: '规律',
-      }
       let text = ''
       for (const m of sorted) {
-        const line = `- [${labels[m.memType] ?? m.memType}] ${m.content}`
+        const line = kbCognitionLine(m)
         if (text.length + line.length + 1 > 1200) break
         text = text ? `${text}\n${line}` : line
       }
@@ -3372,12 +5763,588 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'kb_memory_bump': {
       loadKbStore()
       const ids = (args.ids as number[]) ?? []
+      const now = new Date().toISOString()
       for (const id of ids) {
         const m = kbMemories.find((x) => x.id === id)
-        if (m) m.activeCount++
+        if (m) {
+          m.activeCount++
+          m.lastUsedAt = now
+        }
       }
       saveKbMemories()
       return delay(undefined as T)
+    }
+
+    /* ---------- 校园教务（演示数据，只在 mock 里存在） ---------- */
+
+    case 'campus_systems':
+      return delay([
+        {
+          kind: 'guet-supwisdom-eams5',
+          name: '桂林电子科技大学 · 本科生教学信息平台',
+          vendor: '树维 Supwisdom EAMS5 · 学生端',
+          defaultBaseUrl: 'https://bkjwtest.guet.edu.cn',
+          loginStrategy: 'supwisdom-portal-rsa',
+          bizTypeId: 2,
+          mayRequireCaptcha: true,
+        },
+      ] as T)
+
+    case 'campus_account_get':
+      return delay((campusAccount ? { ...campusAccount } : null) as T)
+
+    case 'campus_captcha': {
+      campusNeedCaptcha = true
+      // 1×1 的透明 JPEG，仅用于占位（真实环境由后端返回教务的图）
+      const px =
+        '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='
+      return delay(px as T)
+    }
+
+    case 'campus_login': {
+      const loginName = String(args.loginName ?? '').trim()
+      const password = String(args.password ?? '')
+      // 与真后端同一套回落：密码留空 = 用账号里存下的那份（会话过期后的静默重登）
+      const known = campusAccount?.loginName === loginName ? campusAccount : null
+      const canReuseSaved = password === '' && known?.hasPassword === true
+      if (!loginName || (password === '' && !canReuseSaved)) {
+        const message = known
+          ? '该账号没有保存密码，需要重新输入密码登录'
+          : '请输入学号与密码'
+        return delay({ ok: false, message, needCaptcha: false, actionRequired: null, account: null } as T)
+      }
+      // 演示约定：密码长度 < 3 视为「需要验证码」，方便在浏览器里走一遍验证码分支
+      if (password.length < 3 && !canReuseSaved && !campusNeedCaptcha) {
+        campusNeedCaptcha = true
+        return delay({ ok: false, message: '需要输入验证码', needCaptcha: true, actionRequired: null, account: null } as T)
+      }
+      campusAccount = {
+        id: 1,
+        systemKind: String(args.systemKind ?? 'guet-supwisdom-eams5'),
+        baseUrl: String(args.baseUrl ?? 'https://bkjwtest.guet.edu.cn'),
+        loginName,
+        hasPassword: args.savePassword !== false,
+        loggedIn: true,
+        sessionAt: new Date().toISOString(),
+        studentId: '241250',
+        studentCode: loginName,
+        studentName: '演示同学',
+        department: '计算机与信息安全学院',
+        major: '智能科学与技术',
+        adminclass: `${loginName.slice(0, 8)}01`,
+        grade: '2026',
+        totalCredits: 18.75,
+        savePassword: args.savePassword !== false,
+        active: true,
+        lastSyncAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      campusNeedCaptcha = false
+      return delay({ ok: true, message: null, needCaptcha: false, actionRequired: null, account: { ...campusAccount } } as T)
+    }
+
+    case 'campus_session_probe':
+      return delay((campusAccount?.loggedIn ?? false) as T)
+
+    case 'campus_logout':
+      if (campusAccount) {
+        campusAccount.loggedIn = false
+        campusAccount.sessionAt = null
+      }
+      return delay(undefined as T)
+
+    case 'campus_account_delete': {
+      campusAccount = null
+      campusCourses = []
+      campusPickedLessons = new Set<number>()
+      campusSelectQueue = []
+      campusSelectRequestId = ''
+      campusSelectPolls = 0
+      // 任务单随账号一起清：换账号后旧任务不该还在后台排队
+      grabTasks.length = 0
+      grabEmit()
+      // 删账号 = 连派生行一起清（与 Rust 一致：todos 未开外键级联，必须显式删）
+      for (let i = todos.length - 1; i >= 0; i--) {
+        if (todos[i]!.courseSessionId != null) todos.splice(i, 1)
+      }
+      return delay(undefined as T)
+    }
+
+    case 'campus_semesters':
+      return delay((campusAccount ? [campusSemester()] : []) as T)
+
+    case 'campus_set_current_semester':
+      return delay(undefined as T)
+
+    case 'campus_sync': {
+      if (!campusAccount) throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      campusCourses = campusDemoCourses()
+      campusAccount.lastSyncAt = new Date().toISOString()
+      const sem = campusSemester()
+      const todosWritten = campusMaterializeTodos()
+      return delay({
+        courses: campusCourses.length,
+        sessions: CAMPUS_SESSIONS.length,
+        todosWritten,
+        semesterId: sem.id,
+        semesterName: sem.name,
+        syncedAt: new Date().toISOString(),
+        skippedActivities: 0,
+      } as T)
+    }
+
+    case 'campus_schedule': {
+      if (!campusAccount) {
+        return delay({ account: null, semester: null, entries: [], timeSlots: [], courses: [] } as T)
+      }
+      const sem = campusSemester()
+      const fallback = campusRange()
+      const from = String(args.from ?? fallback[0])
+      const to = String(args.to ?? fallback[1])
+      return delay({
+        account: { ...campusAccount },
+        semester: sem,
+        entries: campusExpand(sem, from, to),
+        timeSlots: CAMPUS_SLOTS,
+        courses: campusCourses,
+      } as T)
+    }
+
+    /* ---- 选课（演示批次是「开放中」，好让整套流程能在浏览器里走通） ---- */
+
+    case 'campus_course_select_status': {
+      if (!campusAccount) {
+        throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      }
+      return delay({
+        ready: true,
+        reason: null,
+        serverTime: campusServerTime(),
+        studentId: 241250,
+        studentCode: campusAccount.loginName ?? '2600350118',
+        studentName: '演示同学',
+        turns: campusSelectTurns(),
+        entryUrl: 'https://bkjwtest.guet.edu.cn/course-selection/?token=demo',
+      } as T)
+    }
+
+    case 'campus_course_select_lessons': {
+      // 课程名 / 教学班名 / 教师是三个独立字段，界面那个搜索框三个都发
+      // （与 Rust 侧和 SPA 一致），所以这里任意一个命中即可
+      const q = (args.query ?? {}) as Record<string, unknown>
+      const kws = [q.courseNameOrCode, q.lessonNameOrCode, q.teacherNameOrCode]
+        .map((v) => String(v ?? '').trim().toLowerCase())
+        .filter(Boolean)
+      const all = campusDemoLessons()
+      const list = kws.length
+        ? all.filter((l) =>
+            kws.some(
+              (kw) =>
+                l.course.nameZh.toLowerCase().includes(kw) ||
+                l.course.code.toLowerCase().includes(kw),
+            ),
+          )
+        : all
+      return delay(list as T)
+    }
+
+    case 'campus_course_select_simplest_lessons':
+      return delay(campusDemoLessons() as T)
+
+    case 'campus_course_select_query_condition':
+      // 批次未定义筛选表单时返回 null —— 界面据此回落到内置的搜索框
+      return delay(null as T)
+
+    case 'campus_course_select_apply': {
+      const id = Number(args.lessonId)
+      const picked = campusPickedLessons
+      if (picked.has(id)) throw new Error('这门课已经选过了')
+      campusSelectQueue.push(id)
+      campusSelectRequestId = `req${Date.now()}`
+      campusSelectPolls = 0
+      return delay({ requestId: campusSelectRequestId } as T)
+    }
+
+    case 'campus_course_select_predicate': {
+      campusSelectQueue.push(Number(args.lessonId))
+      campusSelectRequestId = `pre${Date.now()}`
+      campusSelectPolls = 0
+      return delay({ requestId: campusSelectRequestId } as T)
+    }
+
+    case 'campus_course_select_result':
+    case 'campus_course_select_predicate_result': {
+      // 前两轮返回「处理中」，之后成功 —— 复刻真实教务的异步受理手感
+      campusSelectPolls++
+      if (campusSelectPolls < 2) {
+        return delay({ pending: true, success: false, message: null, needAttend: false } as T)
+      }
+      const id = campusSelectQueue.shift()
+      // 冲突演示：这门课固定返回「需要免听」，**不算选中** —— 真机上这条路
+      // 也只是告诉你去网页端办免听，列表里不该出现「已选」。
+      if (id === 9003) {
+        return delay({ pending: false, success: false, message: null, needAttend: true } as T)
+      }
+      if (id != null) campusPickedLessons.add(id)
+      return delay({ pending: false, success: true, message: null, needAttend: false } as T)
+    }
+
+    case 'campus_course_select_drop': {
+      const ids = (args.lessonIds as unknown[] | undefined) ?? []
+      for (const id of ids) campusPickedLessons.delete(Number(id))
+      // 退课同样要「意向 → 正式」走一遍，所以给一点受理延迟
+      return delay({
+        pending: false,
+        success: true,
+        message: '已退课',
+        needAttend: false,
+      } as T)
+    }
+
+    /* ---- 自动抢课（模拟引擎见文件上方 grabTick） ---- */
+
+    case 'campus_grab_state':
+      return delay(grabSnapshot() as T)
+
+    case 'campus_grab_enqueue': {
+      if (!campusAccount) throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      const targets = (args.targets as Record<string, unknown>[] | undefined) ?? []
+      if (!targets.length) throw new Error('没有要抢的课程')
+      const mode = ((args.mode as string | null) ?? 'predicate') as 'predicate' | 'direct'
+      // e2e 钩子：假装教务还没公布窗口，用来验「等窗口」这条真实状态
+      const noWindow = !!(globalThis as { __REIN_MOCK_GRAB_NO_WINDOW__?: boolean })
+        .__REIN_MOCK_GRAB_NO_WINDOW__
+      const windowWall = noWindow ? null : ((args.windowWall as string | null) ?? null)
+      const windowEndWall = noWindow ? null : ((args.windowEndWall as string | null) ?? null)
+
+      const ids: number[] = []
+      for (const t of targets) {
+        const id = ++grabSeq
+        ids.push(id)
+        grabTasks.unshift({
+          id,
+          turnId: String(args.turnId ?? ''),
+          turnName: (args.turnName as string | null) ?? null,
+          lessonId: t.lessonId,
+          lessonName: (t.lessonName as string | null) ?? null,
+          courseName: (t.courseName as string | null) ?? null,
+          courseCode: (t.courseCode as string | null) ?? null,
+          teacher: (t.teacher as string | null) ?? null,
+          credits: (t.credits as number | null) ?? null,
+          mode,
+          virtualCost: (t.virtualCost as number | null) ?? null,
+          scheduleGroupId: t.scheduleGroupId ?? null,
+          windowWall,
+          windowEndWall,
+          // 没有窗口就往「等窗口」走 —— 盲撞出来的「不在选课时间」会被判终态
+          awaitWindow: !windowWall,
+          predicateDone: false,
+          status: 'waiting',
+          phase: 'idle',
+          attempts: 0,
+          polls: 0,
+          strikes: 0,
+          strikeKind: null,
+          requestId: null,
+          lastMessage: windowWall ? `已排队，${windowWall} 开抢` : '等待教务公布选课窗口',
+          nextAt: Date.now(),
+          fireAt: null,
+          queuedAt: Date.now(),
+          finishedAt: null,
+          groupKey: (t.groupKey as string | null) ?? null,
+          groupName: (t.groupName as string | null) ?? null,
+          priority: (t.priority as number | null) ?? 0,
+          stuckSince: null,
+          heldBy: null,
+        })
+      }
+      grabEmit()
+      return delay(ids as T)
+    }
+
+    case 'campus_grab_task_action': {
+      const id = Number(args.taskId)
+      const t = grabFind(id)
+      if (!t) throw new Error('任务不存在（可能已被清理）')
+      switch (String(args.action)) {
+        case 'pause':
+          t.status = 'paused'
+          t.phase = 'idle'
+          break
+        case 'cancel':
+          t.status = 'cancelled'
+          t.phase = 'idle'
+          t.finishedAt = Date.now()
+          break
+        case 'retry':
+          t.status = 'waiting'
+          t.phase = 'idle'
+          t.attempts = 0
+          t.polls = 0
+          t.strikes = 0
+          t.strikeKind = null
+          t.requestId = null
+          t.predicateDone = false
+          t.finishedAt = null
+          t.lastMessage = '已重新排队'
+          t.nextAt = Date.now()
+          break
+        case 'remove': {
+          const i = grabTasks.findIndex((x) => x.id === id)
+          if (i >= 0) grabTasks.splice(i, 1)
+          break
+        }
+        default:
+          throw new Error(`未知的操作：${String(args.action)}`)
+      }
+      grabEmit()
+      return delay(undefined as T)
+    }
+
+    case 'campus_grab_clear_finished': {
+      const before = grabTasks.length
+      for (let i = grabTasks.length - 1; i >= 0; i--) {
+        const st = grabTasks[i]!.status
+        if (st === 'success' || st === 'failed' || st === 'conflict' || st === 'cancelled') {
+          grabTasks.splice(i, 1)
+        }
+      }
+      grabEmit()
+      return delay(before - grabTasks.length as T)
+    }
+
+    case 'campus_grab_pause_all': {
+      for (const t of grabTasks) {
+        if (t.status === 'waiting' || t.status === 'running') {
+          t.status = 'paused'
+          t.phase = 'idle'
+        }
+      }
+      grabEmit()
+      return delay(undefined as T)
+    }
+
+    case 'campus_grab_resume_all': {
+      for (const t of grabTasks) {
+        if (t.status === 'paused') {
+          t.status = 'waiting'
+          t.phase = 'idle'
+          t.nextAt = Date.now()
+        }
+      }
+      grabEmit()
+      return delay(undefined as T)
+    }
+
+    case 'campus_grab_settings_get':
+      return delay({ ...grabSettings } as T)
+
+    case 'campus_grab_settings_set': {
+      const incoming = plain(args.settings as GrabSettings)
+      grabSettings = {
+        minIntervalMs: Math.min(10000, Math.max(300, Number(incoming.minIntervalMs) || 700)),
+        pollIntervalMs: Math.min(30000, Math.max(500, Number(incoming.pollIntervalMs) || 2000)),
+        fullRetryMs: Math.min(120000, Math.max(1000, Number(incoming.fullRetryMs) || 5000)),
+        backoffMs: Math.min(60000, Math.max(300, Number(incoming.backoffMs) || 1500)),
+        maxBackoffMs: Math.min(300000, Math.max(1000, Number(incoming.maxBackoffMs) || 30000)),
+        leadMs: Math.min(5000, Math.max(0, Number(incoming.leadMs) ?? 800)),
+        maxAttempts: Math.min(100000, Math.max(0, Number(incoming.maxAttempts) || 0)),
+        maxPolls: Math.min(200, Math.max(3, Number(incoming.maxPolls) || 15)),
+        // 0 是有意义的值（死守），不能用 `|| 0` 兜底写法把它换掉
+        cedeAfterMs: Math.min(3600000, Math.max(0, Number(incoming.cedeAfterMs) || 0)),
+        watchWindow: incoming.watchWindow !== false,
+      }
+      return delay({ ...grabSettings } as T)
+    }
+
+    case 'campus_program':
+      return delay({
+        programInfos: [
+          {
+            id: 5881,
+            nameZh: '2026级智能科学与技术专业培养方案(主修)',
+            grade: '2026',
+            department: { nameZh: '计算机与信息安全学院' },
+            major: { nameZh: '智能科学与技术' },
+            education: { nameZh: '本科' },
+            cultivateType: { nameZh: '主修' },
+            printedTime: `打印日期：${ymd(new Date())}`,
+            creditDistrTable: {
+              type: null,
+              courseStatistics: [],
+              children: [
+                { type: { nameZh: '通识必修课程' }, courseStatistics: [], children: [
+                  { type: { nameZh: '思想政治理论课程' }, courseStatistics: [{ courseProperty: { nameZh: '必修' }, sumCredit: 20, sumPeriod: 352 }] },
+                  { type: { nameZh: '大学英语课程' }, courseStatistics: [{ courseProperty: { nameZh: '必修' }, sumCredit: 12, sumPeriod: 192 }] },
+                ] },
+                { type: { nameZh: '专业必修课程' }, courseStatistics: [], children: [
+                  { type: { nameZh: '专业核心课程' }, courseStatistics: [{ courseProperty: { nameZh: '必修' }, sumCredit: 46, sumPeriod: 736 }] },
+                ] },
+                { type: { nameZh: '通识选修课程' }, courseStatistics: [{ courseProperty: { nameZh: '选修' }, sumCredit: 10, sumPeriod: 160 }] },
+              ],
+              sumCredit: 162,
+              sumPeriod: 2600,
+            },
+            courseList: campusDemoCourses().map((c) => ({
+              id: c.remoteLessonId,
+              nameZh: c.courseName,
+              code: c.courseCode,
+            })),
+          },
+        ],
+      } as T)
+
+    /* ---------- 在线更新 ---------- */
+    case 'update_status':
+      return delay(updateSnapshot() as T)
+
+    case 'update_settings_set': {
+      const patch = plain(args.patch as UpdateSettingsPatch)
+      updateSettings = {
+        ...updateSettings,
+        ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
+        ...(patch.channel === undefined ? {} : { channel: patch.channel.trim().toLowerCase() || 'stable' }),
+        ...(patch.autoCheck === undefined ? {} : { autoCheck: patch.autoCheck }),
+        ...(patch.checkIntervalHours === undefined
+          ? {}
+          : { checkIntervalHours: Math.min(720, Math.max(1, Number(patch.checkIntervalHours) || 12)) }),
+        ...(patch.allowHttp === undefined ? {} : { allowHttp: patch.allowHttp }),
+        ...(patch.silentInstall === undefined ? {} : { silentInstall: patch.silentInstall }),
+        ...(patch.ignoredVersion === undefined
+          ? {}
+          : { ignoredVersion: patch.ignoredVersion.trim() ? patch.ignoredVersion : null }),
+        ...(patch.sources === undefined ? {} : { sources: patch.sources }),
+      }
+      // 与 Rust 侧同一条规则：跳过/防降级这些派生判断取决于**设置**，
+      // 所以设置一变就要拿新设置把上次的检查结果重算一遍（否则「点了跳过卡片还在」）
+      if (updateCheck) {
+        updateCheck = {
+          ...updateCheck,
+          ignored: updateSettings.ignoredVersion === updateCheck.latestVersion,
+        }
+      }
+      return delay(updateSnapshot() as T)
+    }
+
+    case 'update_check': {
+      const none = mockFlag('__REIN_MOCK_UPDATE_NONE__')
+      const version = none ? MOCK_CURRENT_VERSION : MOCK_LATEST_VERSION
+      const enabledSources = updateSettings.sources.filter((s) => s.enabled)
+      const reports: SourceReport[] = enabledSources.map((s, i) => ({
+        id: s.id,
+        name: s.name,
+        kind: s.kind,
+        url: s.url,
+        ok: true,
+        version,
+        // 内置的两个源都发清单签名（与真实发布链路一致）
+        manifestSigned: true,
+        error: null,
+        elapsedMs: 120 + i * 80,
+      }))
+      // 被关掉的源照样出现在报告里：界面要能解释「为什么这个源没结果」
+      for (const s of updateSettings.sources.filter((x) => !x.enabled)) {
+        reports.push({
+          id: s.id,
+          name: s.name,
+          kind: s.kind,
+          url: s.url,
+          ok: false,
+          version: null,
+          manifestSigned: false,
+          error: '已在设置里关闭',
+          elapsedMs: 0,
+        })
+      }
+      const checkedAt = new Date().toISOString()
+      updateSettings = { ...updateSettings, lastCheckAt: checkedAt }
+      updateCheck = {
+        checkedAt,
+        currentVersion: MOCK_CURRENT_VERSION,
+        platform: 'windows-x86_64',
+        available: !none,
+        latestVersion: version,
+        notes: none
+          ? null
+          : [
+              '· 更新链路支持多源（自建服务 + GitHub）与断点续传',
+              '· 安装包在下载与安装前各做一次 Ed25519 验签',
+              '· 新增 Rein 在线服务能力探测（模型网关为预留接口）',
+            ].join('\n'),
+        publishedAt: new Date(Date.now() - 3600_000).toISOString(),
+        sizeBytes: 42 * 1024 * 1024,
+        sourceId: enabledSources[0]?.id ?? null,
+        sourceName: enabledSources[0]?.name ?? null,
+        sources: reports,
+        mandatory: false,
+        installSupported: true,
+        installHint: '下载完成后会静默运行安装器并重启应用',
+        ignored: updateSettings.ignoredVersion === version,
+        downgradeBlocked: false,
+      }
+      return delay(updateCheck as T)
+    }
+
+    case 'update_download':
+      if (updateDownload.verified) return delay(updateDownload as T)
+      if (!updateCheck?.available) throw new Error('请先检查更新')
+      startMockDownload()
+      return delay(updateDownload as T)
+
+    case 'update_cancel':
+      stopUpdateTimer()
+      updateDownload = { ...updateDownload, phase: 'cancelled', error: '已取消下载' }
+      return delay(true as T)
+
+    case 'update_discard':
+      stopUpdateTimer()
+      updateDownload = idleDownload()
+      return delay(undefined as T)
+
+    case 'update_install':
+      updateDownload = { ...updateDownload, phase: 'installing' }
+      return delay({
+        ok: true,
+        message: '（浏览器演示）真机上这里会交给系统安装器并重启应用',
+        willExit: false,
+      } as T)
+
+    case 'update_progress':
+      return delay(updateDownload as T)
+
+    case 'update_prune_cache':
+      return delay(0 as T)
+
+    case 'online_service_status': {
+      const offline = mockFlag('__REIN_MOCK_SERVICE_OFFLINE__')
+      const base = (args.baseUrl as string | null) ?? updateSettings.sources[0]?.url.replace(/\/updates\/.*$/, '') ?? ''
+      return delay({
+        baseUrl: base,
+        reachable: !offline,
+        service: offline ? null : 'rein-online-service',
+        version: offline ? null : '1.0.0',
+        currentRelease: offline ? null : MOCK_LATEST_VERSION,
+        channels: offline ? [] : [{ channel: 'stable', current: MOCK_LATEST_VERSION }],
+        manifestUrl: offline ? null : `${base}/updates/latest.json`,
+        ai: offline
+          ? null
+          : {
+              status: 'not_configured',
+              enabled: true,
+              requireToken: true,
+              clientCount: 0,
+              providers: [
+                { id: 'ark', name: '火山方舟', enabled: false, models: ['doubao-seed-1-6-250615'] },
+                { id: 'deepseek', name: 'DeepSeek', enabled: false, models: ['deepseek-chat'] },
+              ],
+              modelsEndpoint: `${base}/v1/models`,
+              chatEndpoint: `${base}/v1/chat/completions`,
+            },
+        error: offline ? '无法连接 /health：连接被拒绝（mock）' : null,
+        checkedAt: new Date().toISOString(),
+        elapsedMs: offline ? 3000 : 84,
+      } as T)
     }
 
     default:

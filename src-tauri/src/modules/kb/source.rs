@@ -185,6 +185,7 @@ fn attachments_digest(raw: Option<&str>) -> (Vec<String>, Vec<String>) {
                 let label = match other {
                     "image" => "图片",
                     "audio" => "音频",
+                    "video" => "视频",
                     _ => "文件",
                 };
                 if size > 0 {
@@ -239,9 +240,21 @@ pub fn build_path(source_type: &str, source_id: &str, d: &Derived) -> Option<Str
         "todo" => format!("日程/{date}/{title}-{source_id}.md"),
         "workout" => format!("运动/{date}/{title}-{source_id}.md"),
         "meal" => {
-            let meal = d.meta.get("mealLabel").and_then(|v| v.as_str()).unwrap_or("餐");
-            let food = d.meta.get("food").and_then(|v| v.as_str()).unwrap_or("食物");
-            format!("饮食/{date}/{}-{}-{source_id}.md", sanitize(meal, 20), sanitize(food, 30))
+            let meal = d
+                .meta
+                .get("mealLabel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("餐");
+            let food = d
+                .meta
+                .get("food")
+                .and_then(|v| v.as_str())
+                .unwrap_or("食物");
+            format!(
+                "饮食/{date}/{}-{}-{source_id}.md",
+                sanitize(meal, 20),
+                sanitize(food, 30)
+            )
         }
         "body_metric" => format!("体测/{date}-{source_id}.md"),
         "plan" => format!("课程/{title}-{source_id}.md"),
@@ -251,7 +264,9 @@ pub fn build_path(source_type: &str, source_id: &str, d: &Derived) -> Option<Str
             let (pid, date) = source_id.split_once(':')?;
             format!("菜单/{date}-{pid}.md")
         }
-        "voice_memo" => format!("纪要/{title}-{source_id}.md"),
+        // 语音纪要：本体（wav）+ 转写文本是同一个多模态节点的两种模态（docs/ai-workspace.md §2），
+        // 文本模态落 `语音/{日期}/`，本体经 voice_memos.audio_path 由模态层按需取。
+        "voice_memo" => format!("语音/{date}/{title}-{source_id}.md"),
         "chat" => format!("对话/{title}-{source_id}.md"),
         "chat_message" => {
             let chat = sanitize(d.meta.get("chatId")?.as_str()?, 40);
@@ -269,8 +284,24 @@ pub fn build_path(source_type: &str, source_id: &str, d: &Derived) -> Option<Str
             format!("附件/对话/{parent}/{name}")
         }
         "memory" => {
-            let mt = d.tags.first().cloned().unwrap_or_else(|| "preference".into());
-            format!("记忆/{mt}/{title}-{source_id}.md")
+            let mt = d
+                .tags
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "preference".into());
+            // 有分类时插一层：`记忆/{类型}/{分类}/{主题}-{id}.md`（docs/kb-vfs.md §2）
+            let category = d
+                .meta
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let sub = if category.is_empty() {
+                String::new()
+            } else {
+                format!("{category}/")
+            };
+            format!("记忆/{mt}/{sub}{title}-{source_id}.md")
         }
         // 笔记/规范的 path 由 kb_files 直接给定，就是最终路径
         "note" => d.path.clone()?,
@@ -331,7 +362,20 @@ fn todo_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
             },
         )
         .optional()?;
-    let Some((title, notes, date, start_min, duration_min, category, priority, status, subtasks, attachments, rec_key)) = row else {
+    let Some((
+        title,
+        notes,
+        date,
+        start_min,
+        duration_min,
+        category,
+        priority,
+        status,
+        subtasks,
+        attachments,
+        rec_key,
+    )) = row
+    else {
         return Ok(None);
     };
 
@@ -478,17 +522,14 @@ fn workout_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
     }
 
     Ok(Some(
-        Derived::new(
-            name,
-            join_lines(parts),
-        )
-        .on(Some(date))
-        .tagged(vec![wtype, intensity])
-        .with(json!({
-            "durationMin": duration_min,
-            "kcal": kcal,
-            "exerciseCount": order.len(),
-        })),
+        Derived::new(name, join_lines(parts))
+            .on(Some(date))
+            .tagged(vec![wtype, intensity])
+            .with(json!({
+                "durationMin": duration_min,
+                "kcal": kcal,
+                "exerciseCount": order.len(),
+            })),
     ))
 }
 
@@ -527,7 +568,10 @@ fn plan_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
                 let en = it.get("name").and_then(|v| v.as_str())?;
                 let sets = it.get("sets").and_then(|v| v.as_i64()).unwrap_or(0);
                 let reps = it.get("reps").and_then(|v| v.as_i64());
-                let kind = it.get("kind").and_then(|v| v.as_str()).unwrap_or("strength");
+                let kind = it
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("strength");
                 let tips = it.get("tips").and_then(|v| v.as_str()).unwrap_or("");
                 if let Some(group) = it.get("group").and_then(|v| v.as_str()) {
                     if !group.is_empty() {
@@ -590,7 +634,21 @@ fn meal_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
             },
         )
         .optional()?;
-    let Some((date, meal_type, grams, units, unit_name, _qmode, note, source, food, kcal, protein, carb, fat)) = row
+    let Some((
+        date,
+        meal_type,
+        grams,
+        units,
+        unit_name,
+        _qmode,
+        note,
+        source,
+        food,
+        kcal,
+        protein,
+        carb,
+        fat,
+    )) = row
     else {
         return Ok(None);
     };
@@ -799,7 +857,8 @@ fn program_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
                         cs.iter()
                             .filter_map(|c| {
                                 let label = c.get("label").and_then(|v| v.as_str())?;
-                                let before = c.get("before").and_then(|v| v.as_str()).unwrap_or("?");
+                                let before =
+                                    c.get("before").and_then(|v| v.as_str()).unwrap_or("?");
                                 let after = c.get("after").and_then(|v| v.as_str()).unwrap_or("?");
                                 Some(format!("{label} {before}→{after}"))
                             })
@@ -826,10 +885,13 @@ fn program_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
     }
 
     Ok(Some(
-        Derived::new(format!("健康方案 · {goal_label}{tier_label}"), join_lines(parts))
-            .on(activated_at)
-            .tagged(vec![goal, tier, status])
-            .with(json!({ "weeks": weeks })),
+        Derived::new(
+            format!("健康方案 · {goal_label}{tier_label}"),
+            join_lines(parts),
+        )
+        .on(activated_at)
+        .tagged(vec![goal, tier, status])
+        .with(json!({ "weeks": weeks })),
     ))
 }
 
@@ -875,7 +937,8 @@ fn program_meal_doc(conn: &Connection, source_id: &str) -> Result<Option<Derived
             let line = format!(
                 "{} {name}：{items_txt}{}",
                 meal_label(mt),
-                kcal.map(|k| format!("（约 {k:.0} kcal）")).unwrap_or_default()
+                kcal.map(|k| format!("（约 {k:.0} kcal）"))
+                    .unwrap_or_default()
             );
             if !items_txt.is_empty() || !name.is_empty() {
                 parts.push(line);
@@ -887,13 +950,10 @@ fn program_meal_doc(conn: &Connection, source_id: &str) -> Result<Option<Derived
     }
 
     Ok(Some(
-        Derived::new(
-            format!("{date} 方案菜单"),
-            join_lines(parts),
-        )
-        .on(Some(date.to_string()))
-        .tagged(vec!["program_meal".into()])
-        .with(json!({ "programId": pid })),
+        Derived::new(format!("{date} 方案菜单"), join_lines(parts))
+            .on(Some(date.to_string()))
+            .tagged(vec!["program_meal".into()])
+            .with(json!({ "programId": pid })),
     ))
 }
 
@@ -945,7 +1005,11 @@ fn voice_memo_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
     let fallback = format!("语音纪要 {}", truncate(&created_at, 16));
     Ok(Some(
         Derived::new(
-            if title.trim().is_empty() { fallback } else { title },
+            if title.trim().is_empty() {
+                fallback
+            } else {
+                title
+            },
             join_lines(parts),
         )
         .on(Some(created_at.chars().take(10).collect()))
@@ -987,13 +1051,10 @@ fn chat_message_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
 
     let role_label = if role == "user" { "我说" } else { "AI 说" };
     Ok(Some(
-        Derived::new(
-            format!("{role_label}：{}", truncate(&body, 40)),
-            body,
-        )
-        .on(Some(created_at.chars().take(10).collect()))
-        .tagged(vec!["chat".into(), kind, role])
-        .with(json!({ "chatId": chat_id, "seq": seq })),
+        Derived::new(format!("{role_label}：{}", truncate(&body, 40)), body)
+            .on(Some(created_at.chars().take(10).collect()))
+            .tagged(vec!["chat".into(), kind, role])
+            .with(json!({ "chatId": chat_id, "seq": seq })),
     ))
 }
 
@@ -1126,10 +1187,17 @@ fn todo_attachment_doc(conn: &Connection, source_id: &str) -> Result<Option<Deri
         ),
         "audio" => (
             format!(
-                "录音「{name}」（{}），随待办《{todo_title}》保存",
+                "录音「{name}」（{}），随待办《{todo_title}》保存；音频本体可用 read_modal 取",
                 fmt_size(size)
             ),
             crate::modules::kb::models::KIND_AUDIO,
+        ),
+        "video" => (
+            format!(
+                "视频「{name}」（{}），随待办《{todo_title}》保存；视频本体可用 read_modal 取",
+                fmt_size(size)
+            ),
+            crate::modules::kb::models::KIND_VIDEO,
         ),
         other => (
             format!(
@@ -1245,12 +1313,12 @@ fn chat_attachment_doc(conn: &Connection, source_id: &str) -> Result<Option<Deri
     ))
 }
 
-/// 用户真实文件：`笔记/{名称}.md` 与系统规范 `规范/知识库规范.md`。
+/// 用户真实文件：`笔记/{名称}.md`、系统文件（`规范/`、`系统提示词/`）与多模态节点。
 /// 内容真源在 kb_files，这里只是把它派生进检索编目。
 fn note_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
     let row = conn
         .query_row(
-            "SELECT path, content, system, created_at FROM kb_files WHERE id = ?1",
+            "SELECT path, content, system, created_at, kind FROM kb_files WHERE id = ?1",
             [id],
             |r| {
                 Ok((
@@ -1258,11 +1326,12 @@ fn note_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
                     r.get::<_, String>(1)?,
                     r.get::<_, i64>(2)?,
                     r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
                 ))
             },
         )
         .optional()?;
-    let Some((path, content, system, created_at)) = row else {
+    let Some((path, content, system, created_at, node_kind)) = row else {
         return Ok(None);
     };
     if content.trim().is_empty() {
@@ -1271,8 +1340,19 @@ fn note_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
 
     // 标题 = 路径末段去扩展名
     let base = path.rsplit('/').next().unwrap_or(&path);
-    let title = base.strip_suffix(".md").unwrap_or(base).to_string();
+    let title = base
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(base)
+        .to_string();
     let is_system = system != 0;
+
+    // 编目 kind：目录 / 多模态节点（按主模态）/ 默认文本
+    let doc_kind = match node_kind.as_str() {
+        crate::modules::kb::models::FILE_KIND_FOLDER => crate::modules::kb::models::KIND_FOLDER,
+        crate::modules::kb::models::FILE_KIND_MULTIMODAL => primary_modal_kind(conn, id),
+        _ => crate::modules::kb::models::KIND_TEXT,
+    };
 
     let mut d = Derived::new(title, content)
         .at(path.clone())
@@ -1282,10 +1362,33 @@ fn note_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
         } else {
             "笔记".into()
         }])
+        .with_kind(doc_kind)
         .with(json!({ "fileId": id, "filePath": path }));
     d.system = is_system;
     d.editable = !is_system;
     Ok(Some(d))
+}
+
+/// 多模态节点的主模态：视频优先，其次音频、图片，否则按普通文件。
+fn primary_modal_kind(conn: &Connection, file_id: &str) -> &'static str {
+    use crate::modules::kb::models::*;
+    let modals: Vec<String> = conn
+        .prepare("SELECT modal FROM kb_assets WHERE file_id = ?1")
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([file_id], |r| r.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default();
+    for (modal, kind) in [
+        (MODAL_VIDEO, KIND_VIDEO),
+        (MODAL_AUDIO, KIND_AUDIO),
+        (MODAL_IMAGE, KIND_IMAGE),
+    ] {
+        if modals.iter().any(|m| m == modal) {
+            return kind;
+        }
+    }
+    KIND_FILE
 }
 
 /// 从 AI 输出协议里取出人类可读文本。不是该协议就原样返回。
@@ -1298,7 +1401,11 @@ fn unwrap_protocol_json(raw: &str) -> String {
     if let Ok(v) = serde_json::from_str::<Value>(t) {
         if let Some(kind) = v.get("kind").and_then(|k| k.as_str()) {
             if kind == "chat" {
-                return v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                return v
+                    .get("text")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
             }
             if kind == "food" {
                 let items = v
@@ -1325,35 +1432,50 @@ fn unwrap_protocol_json(raw: &str) -> String {
 fn memory_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
     let row = conn
         .query_row(
-            "SELECT mem_type, topic, content, confidence, created_at FROM kb_memories WHERE id = ?1",
+            "SELECT mem_type, topic, category, content, confidence, created_at, archived_at
+             FROM kb_memories WHERE id = ?1",
             [id],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, String>(1)?,
                     r.get::<_, String>(2)?,
-                    r.get::<_, f64>(3)?,
-                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, f64>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
                 ))
             },
         )
         .optional()?;
-    let Some((mem_type, topic, content, confidence, created_at)) = row else {
+    let Some((mem_type, topic, category, content, confidence, created_at, archived_at)) = row else {
         return Ok(None);
     };
+    // 归档记忆退出检索：派生返回 None，对账/重放会自动摘掉旧文档
+    if archived_at.is_some() {
+        return Ok(None);
+    }
 
     let title = if topic.trim().is_empty() {
         format!("记忆 · {}", mem_type_label(&mem_type))
     } else {
         format!("记忆 · {topic}")
     };
+    let mut tags = vec![mem_type.clone()];
+    if !category.trim().is_empty() {
+        tags.push(category.clone());
+    }
     Ok(Some(
         Derived::new(title, content)
             .on(Some(created_at.chars().take(10).collect()))
-            .tagged(vec![mem_type.clone()])
+            .tagged(tags)
             // 记忆是知识库里唯一「AI 与用户都能改」的派生文档（docs/kb-vfs.md §6）
             .writable()
-            .with(json!({ "confidence": confidence, "memType": mem_type })),
+            .with(json!({
+                "confidence": confidence,
+                "memType": mem_type,
+                "category": category,
+            })),
     ))
 }
 
@@ -1412,7 +1534,9 @@ mod tests {
             assert!(!t.contains("base64"), "base64 泄漏进正文");
             assert!(!t.contains("data:"), "data URL 泄漏进正文");
         }
-        assert!(lines.iter().any(|l| l.contains("图片「膝盖.jpg」") && l.contains("300 KB")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("图片「膝盖.jpg」") && l.contains("300 KB")));
         assert!(lines.iter().any(|l| l.contains("音频「语音.m4a」")));
         // 图片的 5000 个 A 一个都不能出现在任何输出里
         assert!(!lines.iter().any(|l| l.contains("AAAA")));
@@ -1433,6 +1557,38 @@ mod tests {
         assert_eq!(texts[0].chars().count(), MAX_ATTACHMENT_TEXT + 1); // + 省略号
     }
 
+    /// 记忆路径带分类层级；归档记忆不再派生（对账时会自动摘掉检索文档）。
+    #[test]
+    fn memory_path_uses_category_and_hides_archived() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO kb_memories(mem_type, topic, category, content, confidence, created_at, updated_at)
+             VALUES ('constraint', '膝盖', '健康/训练', '深蹲不宜超过 60kg', 0.9, datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let id: i64 = conn
+            .query_row("SELECT id FROM kb_memories", [], |r| r.get(0))
+            .unwrap();
+
+        let d = derive(&conn, "memory", &id.to_string()).unwrap().unwrap();
+        assert_eq!(
+            d.path.as_deref(),
+            Some(format!("记忆/constraint/健康/训练/记忆 · 膝盖-{id}.md").as_str())
+        );
+
+        conn.execute(
+            "UPDATE kb_memories SET archived_at = datetime('now') WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        assert!(
+            derive(&conn, "memory", &id.to_string()).unwrap().is_none(),
+            "归档记忆应不再派生"
+        );
+    }
+
     #[test]
     fn protocol_json_is_unwrapped() {
         assert_eq!(
@@ -1440,7 +1596,9 @@ mod tests {
             "好的，已记录。"
         );
         assert_eq!(
-            unwrap_protocol_json(r#"{"kind":"food","items":[{"foodName":"米饭"},{"foodName":"鸡蛋"}]}"#),
+            unwrap_protocol_json(
+                r#"{"kind":"food","items":[{"foodName":"米饭"},{"foodName":"鸡蛋"}]}"#
+            ),
             "记录饮食：米饭、鸡蛋"
         );
         // 工具过程卡无检索价值

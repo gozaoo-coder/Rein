@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Dumbbell, Footprints, PenLine } from 'lucide-vue-next'
+import { Dumbbell, Footprints, ListChecks, PenLine } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import QuickTile from '@/components/common/QuickTile.vue'
+import ExerciseVolumeCard from '@/components/exercise/ExerciseVolumeCard.vue'
 import ExerciseWeekCard from '@/components/exercise/ExerciseWeekCard.vue'
 import PlanRecentCard from '@/components/exercise/PlanRecentCard.vue'
 import StrengthProgressCard from '@/components/exercise/StrengthProgressCard.vue'
@@ -52,7 +53,7 @@ function openDetail(w: Workout): void {
 
     <!-- 异常中断恢复提示已由导航栏上方的悬浮运动条（ActiveWorkoutBar）接管 -->
 
-    <!-- 训练启动：跑步（沉浸 GPS）＋ 手动记（快速补录，类型/时长/强度） -->
+    <!-- 训练启动：跑步（沉浸 GPS）＋ 手动记（快速补录）＋ 动作库（动作唯一真源） -->
     <ul class="quick">
       <li>
         <QuickTile label="跑步" icon-bg="rgba(146, 232, 42, 0.18)" icon-color="#5ba800" @click="router.push('/session/run')">
@@ -64,10 +65,18 @@ function openDetail(w: Workout): void {
           <PenLine :size="20" />
         </QuickTile>
       </li>
+      <li>
+        <QuickTile label="动作库" icon-bg="rgba(255, 149, 0, 0.14)" icon-color="#c96a00" @click="router.push('/sports/exercises')">
+          <ListChecks :size="20" />
+        </QuickTile>
+      </li>
     </ul>
 
     <!-- 训练启动：最近使用的三个课程（全部课程在二级页） -->
     <PlanRecentCard />
+
+    <!-- 训练负荷：本周各肌群做组数 vs 科学建议区间（有力量记录才显示） -->
+    <ExerciseVolumeCard />
 
     <!-- 力量进步：按动作查看重量变化曲线（有逐组记录才显示） -->
     <StrengthProgressCard />

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Mic, Play, Trash2 } from 'lucide-vue-next'
+import { Play, Trash2 } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import TimeSpine from './TimeSpine.vue'
 import { voiceService } from '@/services/voiceService'
 import { useToast } from '@/composables/useToast'
 import type { VoiceMemo } from '@/types'
 
-/** 全部纪要抽屉：历史语音纪要列表（标题/日期/时长），按标题与内容搜索。 */
+/** 全部纪要抽屉：历史语音纪要列表。
+ *  每条不是一行文字，而是**一缕时间脊** —— 一眼看出这段有多长、说到哪、哪几句挂着纪要。 */
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; pick: [memo: VoiceMemo] }>()
 
@@ -15,6 +17,27 @@ const toast = useToast()
 const loading = ref(false)
 const memos = ref<VoiceMemo[]>([])
 const keyword = ref('')
+
+/** 纪要 → 缩略脊的段落 */
+const spineOf = (m: VoiceMemo) =>
+  m.sentences.map((s) => ({
+    t: s.startMs,
+    durMs: s.endMs > s.startMs ? s.endMs - s.startMs : undefined,
+    who: '我',
+    text: s.text,
+  }))
+
+/** 纪要点挂在句 idx 上，脊按数组位置索引，映射一次 */
+const pinsOf = (m: VoiceMemo) => {
+  const pos = new Map(m.sentences.map((s, i) => [s.idx, i]))
+  return m.summary.flatMap((it) => {
+    const ref = it.refs[0]
+    const p = ref == null ? undefined : pos.get(ref)
+    return p == null
+      ? []
+      : [{ idx: p, kind: it.kind === 'todo' ? ('todo' as const) : ('answer' as const), text: it.text }]
+  })
+}
 
 watch(
   () => props.open,
@@ -75,12 +98,19 @@ async function onDelete(m: VoiceMemo): Promise<void> {
     </p>
     <ul v-else class="list">
       <li v-for="m in filtered" :key="m.id" class="row" @click="emit('pick', m)">
-        <span class="ic"><Mic :size="15" /></span>
         <span class="mt">
           <b>{{ m.title || '未命名纪要' }}</b>
           <em>{{ fmtWhen(m.createdAt) }} · {{ fmtMs(m.durationMs) }} · {{ m.sentences.length }} 句</em>
+          <TimeSpine
+            v-if="m.sentences.length"
+            class="rowspine"
+            size="mini"
+            :segments="spineOf(m)"
+            :total-ms="m.durationMs"
+            :pins="pinsOf(m)"
+          />
         </span>
-        <span class="play"><Play :size="13" /></span>
+        <button class="play" aria-label="打开该纪要" @click.stop="emit('pick', m)"><Play :size="13" /></button>
         <button class="del" aria-label="删除纪要" @click.stop="onDelete(m)">
           <Trash2 :size="14" />
         </button>
@@ -118,7 +148,7 @@ async function onDelete(m: VoiceMemo): Promise<void> {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 2px;
+  padding: 13px 2px;
   cursor: pointer;
 }
 
@@ -126,21 +156,15 @@ async function onDelete(m: VoiceMemo): Promise<void> {
   border-top: 0.5px solid var(--line);
 }
 
-.ic {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  flex: none;
-  background: var(--accent-soft);
-  color: var(--accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .mt {
   flex: 1;
   min-width: 0;
+}
+
+/* 每行一缕缩略脊：这是列表的主体视觉，标题只是它的注脚 */
+.rowspine {
+  display: block;
+  margin-top: 7px;
 }
 
 .mt b {

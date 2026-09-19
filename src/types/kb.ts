@@ -57,6 +57,10 @@ export interface KbSettings {
   /** 逐类开关，缺省视为开启 */
   sourcesEnabled: Partial<Record<KbSourceType, boolean>>
   autoMemory: boolean
+  /** 是否允许周期性的 LLM 记忆整理（合并重叠、统一分类、归档噪声），每天最多一次 */
+  autoConsolidate: boolean
+  /** 最近一次 LLM 整理的时间（节流依据） */
+  lastConsolidateAt: string | null
   lastError: string | null
   updatedAt: string
 }
@@ -69,6 +73,7 @@ export interface KbSettingsInput {
   cloudDim?: number
   sourcesEnabled?: Partial<Record<KbSourceType, boolean>>
   autoMemory?: boolean
+  autoConsolidate?: boolean
 }
 
 export interface KbProgress {
@@ -91,6 +96,9 @@ export interface KbStatus {
   enabledSources: KbSourceType[]
 }
 
+/** 编目/渲染用的内容类型（docs/ai-workspace.md §2） */
+export type KbKind = 'text' | 'image' | 'file' | 'audio' | 'video' | 'folder'
+
 export interface KbHit {
   id: number
   sourceType: KbSourceType
@@ -101,8 +109,8 @@ export interface KbHit {
   editable: boolean
   /** 系统文件（规范）不可改不可删 */
   system: boolean
-  /** 内容类型：text / image / file / audio */
-  kind: 'text' | 'image' | 'file' | 'audio'
+  /** 内容类型：text / image / file / audio / video / folder */
+  kind: KbKind
   title: string
   /** 命中片段（围绕关键词截取，非全文） */
   snippet: string
@@ -126,7 +134,7 @@ export interface KbDocDetail {
   path: string | null
   editable: boolean
   system: boolean
-  kind: 'text' | 'image' | 'file' | 'audio'
+  kind: KbKind
   title: string
   summary: string
   occurredOn: string | null
@@ -140,17 +148,70 @@ export interface KbDocDetail {
   offset: number
   hasMore: boolean
   chunks: KbChunk[]
+  /** 该节点可用模态（如 ['text','audio']）；取本体走 kbService.mediaGet */
+  modalities: string[]
 }
 
-/* ---------- 真实文件（kb_files，可写） ---------- */
+/* ---------- 模态层（kb_assets，ai-workspace §2） ---------- */
+
+export type KbModal = 'text' | 'image' | 'audio' | 'video' | 'binary'
+
+export interface KbModalInfo {
+  modal: KbModal
+  mime: string
+  bytes: number
+  durationMs: number | null
+  /** none | pending | done | failed */
+  transcriptState: string
+  derivedFrom: string | null
+  /** asset（上传节点）| voice（语音纪要）| attachment（附件本体）| text（正文） */
+  source: string
+}
+
+/** 一次模态读取的结果。降级永远发生：请求的模态不可用时回退文本并给原因。 */
+export interface KbMedia {
+  docId: number
+  path: string | null
+  title: string
+  kind: KbKind
+  modalities: KbModalInfo[]
+  requested: string | null
+  degraded: boolean
+  degradeReason: string | null
+  mime: string | null
+  /** 本体 data URL（≤ 上限时给；超限只给元信息） */
+  dataUrl: string | null
+  tooLarge: boolean
+  text: string | null
+  hint: string | null
+}
+
+export interface KbMediaInput {
+  path: string
+  name?: string
+  mime: string
+  /** base64，可带 data URL 前缀 */
+  dataBase64: string
+  /** 文本模态（转录 / 描述）；缺省时后端自动生成描述行 */
+  text?: string
+}
+
+/* ---------- 文件节点（kb_files） ---------- */
 
 export interface KbFile {
   id: number
   path: string
   content: string
   system: boolean
+  /** text | multimodal | folder */
+  kind: string
+  /** 用户钉住后 AI 不再自动移动 */
+  pinned: boolean
+  /** inbox | filed | manual */
+  classifyState: string
   createdAt: string
   updatedAt: string
+  modalities: KbModalInfo[]
 }
 
 export interface KbFileInput {
@@ -164,10 +225,52 @@ export interface KbGlobHit {
   path: string
   sourceType: KbSourceType
   title: string
-  kind: 'text' | 'image' | 'file' | 'audio'
+  kind: KbKind
   editable: boolean
   system: boolean
   occurredOn: string | null
+}
+
+/* ---------- 目录治理（ai-workspace §3.3） ---------- */
+
+export interface KbFsMove {
+  id: number
+  batchId: string
+  source: string
+  op: string
+  pathFrom: string
+  pathTo: string
+  reason: string
+  at: string
+  undone: boolean
+}
+
+/** 一次归类移动的结果：新节点 + 从哪到哪 + 批次（可整批撤销） */
+export interface KbFsMoveResult {
+  file: KbFile
+  from: string
+  to: string
+  batchId: string
+}
+
+/* ---------- 全量注入区（ai-workspace §3.4） ---------- */
+
+export interface KbInjectionFile {
+  path: string
+  zone: string
+  chars: number
+  truncated: boolean
+}
+
+export interface KbInjection {
+  /** 系统提示词目录拼接结果 */
+  system: string
+  /** 用户记忆目录拼接结果 */
+  memory: string
+  files: KbInjectionFile[]
+  totalChars: number
+  budget: number
+  truncated: boolean
 }
 
 /** 检索入参。query 为空表示「浏览最近内容」。 */
@@ -197,29 +300,83 @@ export interface KbMemory {
   id: number
   memType: KbMemoryType
   topic: string
+  /** 分层分类路径（如「健康/训练」），由模型在抽取/整理时给出，可为空 */
+  category: string
   content: string
   confidence: number
   activeCount: number
   sourceChatId: string | null
   createdAt: string
   updatedAt: string
+  /** 最近一次被注入（用到）的时间；衰减从这一刻重新计时 */
+  lastUsedAt: string | null
+  /** 归档时间（软删除）。归档记忆不进注入与检索，可在本页恢复 */
+  archivedAt: string | null
+  /** 归档原因：decay（自动衰减）/ manual（手动）/ 整理任务给出的原因 */
+  archivedReason: string | null
+  /** 显著性（读时计算）：置信度 × 时间衰减 × 使用强化 */
+  salience: number
 }
 
-/** 落库一次记忆抽取的变更。op=update/delete 时必须带 id。 */
+/** 记忆列表视角：active 仅活跃 / archived 仅归档 / all 全部 */
+export type KbMemoryScope = 'active' | 'archived' | 'all'
+
+/** 落库一次记忆抽取/整理的变更。op=update/delete/archive 时必须带 id。 */
 export interface MemoryCandidate {
-  op: 'add' | 'update' | 'delete'
+  op: 'add' | 'update' | 'delete' | 'archive'
   id?: number
   memType?: KbMemoryType
   topic?: string
+  category?: string
   content?: string
   confidence?: number
+  /** archive 的原因（如 outdated / duplicate / noise） */
+  reason?: string
 }
 
 export interface MemoryApplyResult {
   added: number
   updated: number
   deleted: number
+  /** 被归档（软删除）的条数 */
+  archived: number
+  /** 从归档中被复活（重复提及 / 更新确认）的条数 */
+  restored: number
   skipped: number
+}
+
+/** 一次本地维护（衰减 + 自动归档）的结果 */
+export interface MemoryMaintainResult {
+  /** 本次检查的活跃记忆条数 */
+  checked: number
+  /** 本次归档的条数（软删除，可恢复） */
+  archived: number
+}
+
+/** 记忆库信噪比概况（UI 面板用） */
+export interface KbMemoryStats {
+  active: number
+  archived: number
+  total: number
+  /** 注入条数上限 */
+  limit: number
+  /** 注入字符上限 */
+  maxChars: number
+  /** 当前实际会被注入的条数 */
+  injected: number
+  /** 实际注入文本的字符数 */
+  injectedChars: number
+  /** 显著性低于阈值的活跃记忆条数 */
+  stale: number
+  avgConfidence: number
+  avgSalience: number
+  /** 注入覆盖率 = injected / active */
+  signalRatio: number
+  /** 噪声占比 = stale / active */
+  noiseRatio: number
+  autoConsolidate: boolean
+  lastConsolidateAt: string | null
+  lastMaintainAt: string | null
 }
 
 /** 喂给系统提示词的紧凑认知块 */

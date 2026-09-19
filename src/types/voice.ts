@@ -3,6 +3,25 @@
 /** ASR 适配器：auto = 按 baseURL/模型名关键词自动识别（程序替选）；显式选择后只推荐不强改 */
 export type AsrAdapter = 'auto' | 'doubao' | 'qwen'
 
+/** 朗读（豆包 TTS）独立凭据：appKey 为空 = 继承识别凭据 */
+export interface TtsCredential {
+  mode: 'legacy' | 'new'
+  appKey: string
+  accessKey: string
+}
+
+/** 配置状态摘要（voice_config_status 结构化返回） */
+export interface VoiceStatus {
+  /** 识别（ASR）凭据已配置 */
+  asrReady: boolean
+  /** 识别实际走的适配器（auto 解析后）：doubao | qwen */
+  asrAdapter: 'doubao' | 'qwen'
+  /** 朗读（TTS）凭据与音色已齐，可合成 */
+  ttsReady: boolean
+  /** 朗读是否使用独立凭据（false = 继承识别凭据） */
+  ttsStandalone: boolean
+}
+
 /** 豆包语音服务配置（app_meta JSON 单条）。
  * 凭据两种模式对应火山新旧控制台：legacy = App ID + Access Token；new = 仅 API Key。
  * Qwen/DashScope 适配器：appKey 即 DASHSCOPE_API_KEY，单凭据。 */
@@ -18,6 +37,8 @@ export interface VoiceConfig {
   asrAdapterUserPicked: boolean
   /** ASR WebSocket baseURL；空 = 用适配器默认端点（可指向代理/私有化网关） */
   asrBaseUrl: string
+  /** 朗读（豆包 TTS）独立凭据；不传 = 继承识别凭据 */
+  ttsCredential?: TtsCredential | null
   /** ASR 模型标识：豆包 = Resource-Id（默认 volc.seedasr.sauc.duration）；Qwen = 模型名 */
   asrResourceId: string
   /** TTS Resource-Id（默认 seed-tts-2.0） */

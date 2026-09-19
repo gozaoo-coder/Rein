@@ -40,13 +40,20 @@ function cdp(method, params = {}) {
 
 async function evalJS(expression) {
   const r = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
-  if (r.exceptionDetails) {
+  if (r?.exceptionDetails) {
     throw new Error('eval 异常: ' + JSON.stringify(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text))
   }
-  return r.result.value
+  // 页面正在跳转（hash 变更）时上下文会被销毁，取不到 result —— 返回 undefined 交给调用方
+  return r?.result?.value
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** 触发 hash 路由跳转：先让求值返回，跳转放到下一帧，避免上下文销毁打断 evalJS */
+async function gotoHash(hash) {
+  await evalJS(`(() => { setTimeout(() => { location.hash = ${JSON.stringify(hash)} }, 0); return true })()`)
+  await sleep(300)
+}
 
 async function waitFor(expr, timeoutMs = 8000, label = expr.slice(0, 60)) {
   const t0 = Date.now()
@@ -93,22 +100,32 @@ async function invoke(cmd, args = {}) {
   })()`)
 }
 
+/** 只读工具：重试安全。写类工具（remember/forget/write_note/classify_move…）不重试 */
+const TOOL_READ_ONLY = new Set(['search_knowledge', 'read_knowledge', 'glob_knowledge', 'list_memories', 'read_modal', 'list_models', 'get_voice_status', 'list_voice_presets', 'search_food'])
+
 /** 页内调某个 AI 工具的 execute（与模型调用同一条路径） */
 async function runTool(name, args) {
-  return evalJS(`(async () => {
+  const expr = `(async () => {
     const { findAppTool } = await import('/src/ai/tools/registry.ts')
     const t = findAppTool(${JSON.stringify(name)})
     if (!t) throw new Error('工具不存在: ${name}')
     return await t.execute(${JSON.stringify(args)})
-  })()`)
+  })()`
+  const v = await evalJS(expr)
+  return v === undefined && TOOL_READ_ONLY.has(name) ? evalJS(expr) : v
 }
 
-/** 页内调 kbService（UI 走的就是它） */
+/** 只读命令：上下文销毁时重试是安全的；写命令绝不能重试（会重复执行） */
+const KB_READ_ONLY = new Set(['status', 'search', 'read', 'memories', 'glob', 'cognition', 'injection', 'fsMoves', 'mediaGet', 'fileGet', 'settingsGet', 'probeEmbedder', 'reindex'])
+
+/** 页内调 kbService（UI 走的就是它）。只读调用带一次重试，抵御 dev 服务器 HMR 重载。 */
 async function kb(method, ...args) {
-  return evalJS(`(async () => {
+  const expr = `(async () => {
     const { kbService } = await import('/src/services/kbService.ts')
     return await kbService[${JSON.stringify(method)}](${args.map((a) => JSON.stringify(a)).join(', ')})
-  })()`)
+  })()`
+  const v = await evalJS(expr)
+  return v === undefined && KB_READ_ONLY.has(method) ? evalJS(expr) : v
 }
 
 /* 附件里塞一段足够长的伪 base64，任何一处泄漏到检索结果都能被抓出来 */
@@ -140,7 +157,7 @@ async function seed() {
     kcal: 320,
     note: '卧推与深蹲',
   })
-  await invoke('ai_chat_ensure', { chatId: 'kb-e2e-chat', title: '知识库测试' })
+  await invoke('ai_chat_ensure', { id: 'kb-e2e-chat', title: '知识库测试' })
   await invoke('ai_chat_append', {
     chatId: 'kb-e2e-chat',
     input: { id: 'kb-e2e-msg', role: 'user', kind: 'text', text: '我最近膝盖不太舒服', createdAt: new Date().toISOString() },
@@ -430,7 +447,7 @@ async function main() {
 
     /* ---------- D. 知识库页 UI ---------- */
 
-    await evalJS("location.hash = '#/ai/knowledge'")
+    await gotoHash('#/ai/knowledge')
     await waitFor("document.body.innerText.includes('索引概况')", 8000, '知识库页渲染')
     await waitFor("document.body.innerText.includes('条目')", 8000, '索引进度加载')
     const pageText = await evalJS('document.body.innerText')
@@ -468,11 +485,15 @@ async function main() {
 
     /* ---------- E. 文件库页 ---------- */
 
-    await evalJS("location.hash = '#/ai/knowledge/files'")
+    await gotoHash('#/ai/knowledge/files')
     await waitFor("document.body.innerText.includes('最近内容')", 8000, '文件库页渲染')
     let libText = await evalJS('document.body.innerText')
     ok('文件库：根目录渲染最近内容与目录网格', libText.includes('最近内容') && libText.includes('目录'), '')
-    ok('文件库：命名空间网格齐全', ['文档', '笔记', '日程', '对话', '纪要', '记忆', '规范'].every((n) => libText.includes(n)), '')
+    ok(
+      '文件库：命名空间网格齐全（v2：系统提示词/用户记忆/未分类数据/语音）',
+      ['系统提示词', '用户记忆', '未分类数据', '笔记', '文档', '语音', '日程', '对话', '记忆', '规范'].every((n) => libText.includes(n)),
+      '',
+    )
 
     // 下钻 文档/ 目录
     await evalJS(`(() => {
@@ -493,13 +514,17 @@ async function main() {
       return true
     })()`)
     await sleep(700)
+    // 阅读器渲染是异步的（read + fileGet 两次 IPC），等真源原文出现在页面上再断言
+    try {
+      await waitFor("document.body.innerText.includes('全文结尾标记段必须能到达这里')", 8000, '阅读器渲染全文')
+    } catch { /* 断言会给出更清晰的失败信息 */ }
     libText = await evalJS('document.body.innerText')
     ok('文件库：阅读器完整展示原文（结尾可见）', libText.includes(hugeTail), '')
     ok('文件库：阅读器显示路径与字数', libText.includes('文档/超长训练手册.md') && /[\d,]+ 字/.test(libText), '')
 
-    // 返回列表，按文件名搜索
+    // 返回列表，按文件名搜索（用阅读器自己的返回键，别误点页头的路由返回）
     await evalJS(`(() => {
-      ;[...document.querySelectorAll('button.back')][0]?.click()
+      ;[...document.querySelectorAll('button[aria-label="返回列表"]')][0]?.click()
       return true
     })()`)
     await sleep(300)

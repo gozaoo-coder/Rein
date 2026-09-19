@@ -1,7 +1,16 @@
 /** 待办域类型 · 与 Rust `modules/todo` 对应 */
 
+/** 用户可选分类。AI 解析待办时也拿它做白名单校验，所以**不要**往里加派生分类。 */
 export const TODO_CATEGORIES = ['general', 'workout', 'health', 'study', 'work'] as const
-export type TodoCategory = (typeof TODO_CATEGORIES)[number]
+
+/**
+ * 课表派生行专用分类：不对用户开放，只由 campus 同步写入。
+ * 单独拎出来是因为 `TODO_CATEGORIES` 同时是「AI 可解析的分类白名单」与编辑器选项来源，
+ * 把 'class' 混进去会让用户（或 AI）手建出一条看起来像课程的待办。
+ */
+export const COURSE_CATEGORY = 'class' as const
+
+export type TodoCategory = (typeof TODO_CATEGORIES)[number] | typeof COURSE_CATEGORY
 
 export type TodoStatus = 'todo' | 'doing' | 'done'
 
@@ -63,6 +72,13 @@ export interface Todo {
   subtasks: TodoSubtask[] | null
   /** 附件/标记；null/空 = 无。重复实例不继承 */
   attachments?: TodoAttachment[] | null
+  /**
+   * 来源校园课表时段 id（campus_sessions.id）；null = 非课表派生行。
+   *
+   * 非空即「派生只读投影」：标题/时间/地点都由课表同步生成，用户在时间线上不能改删，
+   * 只能回到课表配置页重新同步。派生的唯一入口是 `campus_sync` / `campus_schedule`。
+   */
+  courseSessionId?: number | null
 }
 
 export interface TodoInput {

@@ -25,6 +25,7 @@ use crate::state::AppState;
 use super::embed::{self, EmbedConfig, Embedder};
 use super::files;
 use super::index;
+use super::memory;
 use super::models::{KbProgress, MODE_KEYWORD};
 use super::settings;
 
@@ -37,6 +38,8 @@ const BATCH: i64 = 32;
 const IDLE_TICK: Duration = Duration::from_secs(3);
 /// 连续空闲多少轮后释放 embedder。约 60 秒。
 const IDLE_ROUNDS_BEFORE_RELEASE: u32 = 20;
+/// 记忆自动维护（衰减 + 归档）的间隔。纯本地判定、无模型调用，6 小时一次足够克制。
+const MAINTAIN_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// 运行时状态。挂在 Tauri state 上，命令层通过它唤醒索引 / 取 embedder。
 pub struct KbHub {
@@ -81,10 +84,7 @@ impl KbHub {
     }
 
     pub fn progress(&self) -> KbProgress {
-        self.progress
-            .lock()
-            .map(|p| p.clone())
-            .unwrap_or_default()
+        self.progress.lock().map(|p| p.clone()).unwrap_or_default()
     }
 
     pub fn is_indexing(&self) -> bool {
@@ -178,11 +178,20 @@ fn reconcile(app: &AppHandle, hub: &KbHub) {
     let state = app.state::<AppState>();
     let outcome = (|| -> Result<i64> {
         let conn = state.db.lock().unwrap();
-        // 规范文件随应用版本更新（幂等，内容没变就跳过），必须在对账前播种，
-        // 这样它也会被当成 note 一起编目进路径树
-        files::ensure_spec(&conn)?;
+        // 系统文件（规范 / 系统提示词 / 用户记忆模板 / 收件箱）随应用版本更新，幂等；
+        // 必须在对账前播种，这样它们也会被当成 note 一起编目进路径树
+        files::ensure_system_files(&conn)?;
         let enabled = settings::enabled_sources(&conn)?;
-        index::scan_all(&conn, &enabled)
+        let n = index::scan_all(&conn, &enabled)?;
+        // 启动顺手做一次记忆维护（衰减 + 自动归档）。失败不拖垮对账：这是机会性任务。
+        match memory::maintain(&conn) {
+            Ok(r) if r.archived > 0 => {
+                eprintln!("[kb] 启动维护归档了 {} 条低信号记忆", r.archived)
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("[kb] 启动记忆维护失败：{e}"),
+        }
+        Ok(n)
     })();
 
     match outcome {
@@ -200,6 +209,8 @@ fn worker_loop(app: AppHandle, hub: Arc<KbHub>, rx: mpsc::Receiver<()>) {
     let mut idle_rounds: u32 = 0;
 
     reconcile(&app, &hub);
+    // 启动对账里刚跑过一次维护，下一次从这里计时
+    let mut last_maintain = Instant::now();
 
     loop {
         // 有信号就立刻干；没信号也定期醒一次——触发器写脏队列不会通知我们，
@@ -240,6 +251,20 @@ fn worker_loop(app: AppHandle, hub: Arc<KbHub>, rx: mpsc::Receiver<()>) {
                 hub.release_embedder();
             }
         }
+
+        // 周期维护：记忆的衰减与自动归档。站在索引线程里搭车，不新增定时器。
+        if last_maintain.elapsed() >= MAINTAIN_INTERVAL {
+            last_maintain = Instant::now();
+            let state = app.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            match memory::maintain(&conn) {
+                Ok(r) if r.archived > 0 => {
+                    eprintln!("[kb] 周期维护归档了 {} 条低信号记忆", r.archived)
+                }
+                Ok(_) => {}
+                Err(e) => eprintln!("[kb] 周期记忆维护失败：{e}"),
+            }
+        }
     }
 }
 
@@ -255,7 +280,8 @@ fn cycle(app: &AppHandle, hub: &KbHub) -> Result<usize> {
 
         let dirty = index::take_dirty(&conn, BATCH)?;
         if dirty.is_empty() && model_id.is_none() {
-            hub.pending.store(index::pending_count(&conn)?, Ordering::Relaxed);
+            hub.pending
+                .store(index::pending_count(&conn)?, Ordering::Relaxed);
             return Ok(0);
         }
 
@@ -285,7 +311,8 @@ fn cycle(app: &AppHandle, hub: &KbHub) -> Result<usize> {
             Some(m) => index::chunks_needing_vectors(&conn, m, BATCH)?,
             None => Vec::new(),
         };
-        hub.pending.store(index::pending_count(&conn)?, Ordering::Relaxed);
+        hub.pending
+            .store(index::pending_count(&conn)?, Ordering::Relaxed);
 
         if dirty.is_empty() && chunks.is_empty() {
             hub.indexing.store(false, Ordering::Relaxed);

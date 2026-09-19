@@ -1,0 +1,76 @@
+name: CI
+
+# 门槛就是 docs/STANDARDS.md §7 那三条：TS 类型检查、前端构建、Rust clippy + 测试。
+# 这里只是把「合并前必须全绿」变成机器在跑。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端（类型检查 + 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  server:
+    name: 在线服务端（自测）
+    runs-on: ubuntu-latest
+    # secrets 不能用在 if 里，先经 env 中转，步骤里用 env 判断
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 服务端零依赖，自测会把「签名发布 → 拉清单 → 验签 → 下载 → 篡改必拒」整条跑一遍。
+      # 它需要更新私钥来签测试包，所以只在 Secrets 存在时跑；否则退化为语法检查。
+      - name: 端到端自测
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        run: node scripts/release/e2e.mjs
+      - name: 未配置签名密钥时的降级检查
+        if: env.TAURI_SIGNING_PRIVATE_KEY == ''
+        run: |
+          for f in server/src/*.mjs scripts/release/*.mjs; do node --check "$f"; done
+          echo "::notice::未配置 TAURI_SIGNING_PRIVATE_KEY，跳过了端到端自测"
+
+  rust:
+    name: Rust（clippy + 单测）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # 端侧 embedding 素材不入库（见 .gitignore），build.rs 会硬校验缺失
+      - name: 拉取端侧模型
+        run: node scripts/fetch-embed-model.mjs
+      - name: 系统依赖（Tauri 在 Linux 上要 webkit2gtk）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: clippy
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings
+      - name: 单元测试
+        working-directory: src-tauri
+        run: cargo test --lib

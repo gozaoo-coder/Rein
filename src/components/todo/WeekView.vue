@@ -102,14 +102,20 @@ function onKey(e: KeyboardEvent, date: string): void {
 </template>
 
 <style scoped>
-/* 横轴为日：窄屏横向滚动（列有下限宽），宽屏 7 列均分铺满 */
+/* 横轴为日：窄屏横向滚动（列有下限宽），宽屏 7 列均分铺满。
+   滚动条不占位也不显示（滚动可达性由被切半的下一列表达）：Windows/WebView2 的原生
+   滚动条会在列下方多出一条 10px 的槽，看着像卡片底部多了一段空白间距。 */
 .week {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   padding-bottom: 4px;
+}
+
+.week::-webkit-scrollbar {
+  height: 0;
 }
 
 .wcell {

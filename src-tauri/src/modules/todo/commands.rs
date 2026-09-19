@@ -6,9 +6,11 @@ use crate::error::Result;
 use crate::state::AppState;
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 
-use super::models::{RecRule, Todo, TodoAttachment, TodoDayCount, TodoDistribution, TodoPage, TodoSubtask};
+use super::models::{
+    RecRule, Todo, TodoAttachment, TodoDayCount, TodoDistribution, TodoPage, TodoSubtask,
+};
 
-const COLS: &str = "id, title, notes, date, start_min, duration_min, category, priority, status, completed_at, created_at, program_id, rec_rule, rec_key, subtasks, attachments";
+const COLS: &str = "id, title, notes, date, start_min, duration_min, category, priority, status, completed_at, created_at, program_id, rec_rule, rec_key, subtasks, attachments, course_session_id";
 
 fn parse_date(s: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
@@ -69,7 +71,10 @@ fn reset_subtasks(raw: &Option<String>) -> Option<String> {
     }
     let reset: Vec<TodoSubtask> = subs
         .into_iter()
-        .map(|s| TodoSubtask { title: s.title, done: false })
+        .map(|s| TodoSubtask {
+            title: s.title,
+            done: false,
+        })
         .collect();
     Some(serde_json::to_string(&reset).expect("序列化不可失败"))
 }
@@ -102,11 +107,16 @@ fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Todo> {
         rec_key,
         subtasks,
         attachments,
+        course_session_id: row.get(16)?,
     })
 }
 
 #[tauri::command]
-pub fn list_todos(state: State<AppState>, start_date: String, end_date: String) -> Result<Vec<Todo>> {
+pub fn list_todos(
+    state: State<AppState>,
+    start_date: String,
+    end_date: String,
+) -> Result<Vec<Todo>> {
     let conn = state.db.lock().unwrap();
     let sql = format!(
         "SELECT {COLS} FROM todos \
@@ -164,7 +174,9 @@ pub fn query_todos(
         ("date BETWEEN ?1 AND ?2".to_string(), vec![s, e])
     } else {
         let Some(today_d) = parse_date(&today) else {
-            return Err(crate::error::ReinError::Message("日期格式应为 YYYY-MM-DD".into()));
+            return Err(crate::error::ReinError::Message(
+                "日期格式应为 YYYY-MM-DD".into(),
+            ));
         };
         let win_end = (today_d + Duration::days(7)).format("%Y-%m-%d").to_string();
         (
@@ -187,7 +199,12 @@ pub fn query_todos(
         rusqlite::params_from_iter(vals.iter()),
         |r| r.get(0),
     )?;
-    Ok(TodoPage { items, total, limit, offset })
+    Ok(TodoPage {
+        items,
+        total,
+        limit,
+        offset,
+    })
 }
 
 #[tauri::command]
@@ -200,20 +217,25 @@ pub fn todo_distribution(state: State<AppState>, today: String) -> Result<TodoDi
     )?;
     let days = stmt
         .query_map([], |r| {
-            Ok(TodoDayCount { date: r.get(0)?, count: r.get(1)? })
+            Ok(TodoDayCount {
+                date: r.get(0)?,
+                count: r.get(1)?,
+            })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let inbox: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM todos WHERE date IS NULL",
-        [],
-        |r| r.get(0),
-    )?;
+    let inbox: i64 = conn.query_row("SELECT COUNT(*) FROM todos WHERE date IS NULL", [], |r| {
+        r.get(0)
+    })?;
     let overdue: i64 = conn.query_row(
         "SELECT COUNT(*) FROM todos WHERE date IS NOT NULL AND status != 'done' AND date < ?1",
         [&today],
         |r| r.get(0),
     )?;
-    Ok(TodoDistribution { days, inbox, overdue })
+    Ok(TodoDistribution {
+        days,
+        inbox,
+        overdue,
+    })
 }
 
 #[tauri::command]
@@ -315,7 +337,9 @@ pub fn delete_todo(state: State<AppState>, id: i64) -> Result<()> {
 pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> {
     let conn = state.db.lock().unwrap();
     let Some(today_d) = parse_date(&today) else {
-        return Err(crate::error::ReinError::Message("日期格式应为 YYYY-MM-DD".into()));
+        return Err(crate::error::ReinError::Message(
+            "日期格式应为 YYYY-MM-DD".into(),
+        ));
     };
     let win_start = (today_d - Duration::days(1)).format("%Y-%m-%d").to_string();
     let win_end = (today_d + Duration::days(7)).format("%Y-%m-%d").to_string();
@@ -333,8 +357,12 @@ pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> 
     };
     let mut deleted = 0usize;
     for (id, key) in stale {
-        let Some((tid_s, ds)) = key.rsplit_once(':') else { continue };
-        let Ok(tid) = tid_s.parse::<i64>() else { continue };
+        let Some((tid_s, ds)) = key.rsplit_once(':') else {
+            continue;
+        };
+        let Ok(tid) = tid_s.parse::<i64>() else {
+            continue;
+        };
         let keep = conn
             .query_row(
                 "SELECT rec_rule, date FROM todos WHERE id = ?1",
@@ -401,7 +429,9 @@ pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> 
             }
             let key = format!("{}:{}", t.id, ds);
             let exists: bool = conn
-                .query_row("SELECT 1 FROM todos WHERE rec_key = ?1", [&key], |_| Ok(true))
+                .query_row("SELECT 1 FROM todos WHERE rec_key = ?1", [&key], |_| {
+                    Ok(true)
+                })
                 .unwrap_or(false);
             if exists {
                 continue;

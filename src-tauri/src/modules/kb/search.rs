@@ -443,7 +443,18 @@ pub fn search(
                 ))
             },
         );
-        let Ok((source_type, source_id, title, occurred_on, tags, meta_raw, path, editable, system, kind)) = row
+        let Ok((
+            source_type,
+            source_id,
+            title,
+            occurred_on,
+            tags,
+            meta_raw,
+            path,
+            editable,
+            system,
+            kind,
+        )) = row
         else {
             continue;
         };
@@ -453,9 +464,7 @@ pub fn search(
             serde_json::from_str(&meta_raw).unwrap_or(serde_json::Value::Null);
         if let Some(rec_key) = meta.get("recKey").and_then(|v| v.as_str()) {
             let already = hits.iter().any(|h: &KbHit| {
-                h.source_type == source_type
-                    && h.snippet.contains(rec_key)
-                    && h.title == title
+                h.source_type == source_type && h.snippet.contains(rec_key) && h.title == title
             });
             if already {
                 continue;
@@ -518,7 +527,6 @@ pub fn browse(conn: &Connection, q: &KbQuery, enabled: &[String]) -> Result<Vec<
     })?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
-
 
 /* ---------- glob ---------- */
 
@@ -740,7 +748,11 @@ mod tests {
         let s = make_snippet(&text, "深蹲", 20);
         assert!(s.contains("深蹲"));
         assert!(s.starts_with('…') && s.ends_with('…'));
-        assert!(s.chars().count() < 40, "片段应被截短: {}", s.chars().count());
+        assert!(
+            s.chars().count() < 40,
+            "片段应被截短: {}",
+            s.chars().count()
+        );
     }
 
     #[test]

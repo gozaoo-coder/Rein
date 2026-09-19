@@ -1,0 +1,58 @@
+{
+  "port": 8787,
+  "host": "0.0.0.0",
+  "publicBaseUrl": "http://47.100.36.179:8787",
+  "adminToken": "部署脚本会生成随机令牌；此处留空仅作示例",
+  "update": {
+    "defaultChannel": "stable",
+    "channels": ["stable", "beta", "canary"],
+    "publicKey": null,
+    "requireSignature": true,
+    "keepVersions": 8,
+    "notes": "Rein 更新分发：清单与安装包均带 Ed25519 签名，客户端下载后验签通过才安装。"
+  },
+  "ai": {
+    "enabled": true,
+    "requireToken": true,
+    "providers": [
+      {
+        "id": "ark",
+        "name": "火山方舟",
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+        "apiKey": "",
+        "models": ["doubao-seed-1-6-250615"],
+        "enabled": false
+      },
+      {
+        "id": "dashscope",
+        "name": "阿里云百炼",
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "apiKey": "",
+        "models": ["qwen3-max"],
+        "enabled": false
+      },
+      {
+        "id": "deepseek",
+        "name": "DeepSeek",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKey": "",
+        "models": ["deepseek-flash", "deepseek-v4-pro"],
+        "enabled": false
+      }
+    ],
+    "clients": [],
+    "rate": { "rpm": 60, "burst": 10 },
+    "pricing": {
+      "currency": "CNY",
+      "unit": "per_1m_tokens",
+      "traffic": { "perGb": 0.8, "scope": "egress" },
+      "default": { "in": 0, "out": 0 },
+      "models": {
+        "deepseek-flash": { "in": 2, "out": 8 },
+        "deepseek-v4-pro": { "in": 9, "out": 27 },
+        "qwen3-max": { "in": 0, "out": 0 },
+        "doubao-seed-1-6-250615": { "in": 0, "out": 0 }
+      }
+    }
+  }
+}

@@ -200,13 +200,20 @@ async function main() {
     ok('D1 全览页：无模型兜底提示 + 无重放条（mock 无音频）', await evalJS(
       `!!document.querySelector('.body .vs-hint') && !document.querySelector('.player')`,
     ))
-    ok('D2 切「转文字」→ 逐句 item 渲染', await (async () => {
+    ok('D2 切「转文字」→ 逐句 item 渲染（时间脊·精读）', await (async () => {
       await clickButton('转文字')
       await sleep(400)
-      return evalJS(`document.querySelectorAll('.tr-sec .tl.seek').length >= 4`)
+      return evalJS(`document.querySelectorAll('.tr-sec .tl').length >= 4`)
     })())
     ok('D3 句子含音频偏移时间戳', await evalJS(
-      `[...document.querySelectorAll('.tr-sec .tl.seek time')].some(t => /^0?\\d:\\d\\d$/.test(t.textContent.trim()))`,
+      `[...document.querySelectorAll('.tr-sec .tl time')].some(t => /^0?\\d:\\d\\d$/.test(t.textContent.trim()))`,
+    ))
+    ok('D4 会话结构脊渲染（块 + 坐标轴 + 锚点）', await evalJS(
+      `!!document.querySelector('.spine-sec .lane-track .blk') && !!document.querySelector('.spine-sec .axis-track .tick')`,
+    ))
+    // 游标（.mhead）只在有音频且播放时才出现，mock 无音频 —— 所以只钉定位带本身
+    ok('D5 精读顶带保留真实比例定位', await evalJS(
+      `document.querySelectorAll('.tr-sec .strip .sblk').length >= 4`,
     ))
 
     /* ---------- E. 全部纪要 ---------- */

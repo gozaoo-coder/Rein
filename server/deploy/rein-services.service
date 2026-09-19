@@ -1,0 +1,60 @@
+[Unit]
+Description=Rein 在线服务（更新分发 + 模型网关预留）
+Documentation=https://github.com/gozaoo-coder/Rein/blob/main/server/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rein-services/server
+ExecStart=/usr/bin/node /opt/rein-services/server/src/index.mjs
+
+# 以专用非特权用户运行。
+# 初版这里是 root：一旦 Node 侧出现 RCE（HTTP 解析、JSON、将来任何依赖），
+# 攻击者立刻拿到 uid0 且无需提权 —— 安全审计里这是本机最该消除的一类风险。
+# 服务只需要读代码/配置、写数据目录，没有任何需要 root 的动作（8787 > 1024，不需要绑定特权端口）。
+User=rein
+Group=rein
+
+Environment=NODE_ENV=production
+Environment=REIN_DATA_DIR=/var/lib/rein-services
+Environment=REIN_CONFIG=/etc/rein-services/config.json
+Environment=REIN_PUBLIC_BASE_URL=http://47.100.36.179:8787
+Environment=REIN_HOST=0.0.0.0
+Environment=REIN_PORT=8787
+
+Restart=always
+RestartSec=3
+
+# 加固。注意 CapabilityBoundingSet 必须显式清空：只写 NoNewPrivileges 只是阻止
+# 「新增」capability，进程从 root 继承来的那一整套（CAP_SYS_ADMIN 等）仍在 ——
+# 审计时实测 CapEff=000001fff7fcffff，等于什么都没挡。
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+RemoveIPC=true
+
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/rein-services
+MemoryMax=320M
+TasksMax=64
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rein-services
+
+[Install]
+WantedBy=multi-user.target

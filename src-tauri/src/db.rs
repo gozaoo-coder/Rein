@@ -23,6 +23,9 @@ pub fn init(app: &tauri::AppHandle) -> Result<Connection> {
     migrate(&conn)?;
     crate::modules::seed::seed_foods(&conn)?;
     crate::modules::seed::seed_builtin_plans(&conn)?;
+    crate::modules::seed::seed_exercises(&conn)?;
+    // 动作库必须在课程种子之后：存量课程条目与做组记录在此挂上库 id（幂等）
+    crate::modules::exercise_lib::resolve::backfill_exercise_refs(&conn)?;
     Ok(conn)
 }
 
@@ -718,9 +721,333 @@ CREATE TABLE kb_files (
 );
 "#;
 
+/// 0021 · 校园教务域（modules/campus）：把「学校教务系统的课表」落成可查询的本地快照，
+/// 再把每个上课时段投影成 `todos` 行进入时间线。
+///
+/// 四张表是一条来源链：账号 → 学期 → 课程 → 上课时段。
+/// - `campus_accounts`：一个（学校系统 × 服务地址 × 学号）三元组 = 一个账号。多账号并存，
+///   靠 `active` 决定谁投影到时间线；`cookies` 是登录态真源（树维用 Cookie 会话而非 token）。
+/// - `campus_semesters`：**`start_date` 是整条链路的锚点**——教务系统只给「第 N 教学周 + 星期几」，
+///   必须靠学期起始日才能换算成公历日期，进而写进 `todos.date`。
+/// - `campus_courses` / `campus_sessions`：课程与上课时段。一门课一周可能有多个时段
+///   （不同星期/节次/教室），所以拆成两层。
+///
+/// `todos.course_session_id` 与既有的 `todos.program_id` 同构，都是「来源溯源列」：
+/// 非空即表示这行是**派生只读投影**，用户不能在时间线上直接改删，只能通过重新同步更新。
+/// 注意本库未对 `todos` 开外键级联，删账号时由命令显式清理派生行（见 campus/commands.rs）。
+///
+/// 刻意不给 campus_* 挂 kb_dirty 触发器：课表已通过 `todos` 间接进知识库，
+/// 再挂一层只会让「18 门课 × 19 周」的噪音翻倍。
+const MIGRATION_0021: &str = r#"
+CREATE TABLE campus_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  system_kind TEXT NOT NULL,
+  base_url    TEXT NOT NULL,
+  login_name  TEXT NOT NULL,
+  password    TEXT,
+  cookies     TEXT,
+  session_at  TEXT,
+  student_id  TEXT,
+  student_code TEXT,
+  student_name TEXT,
+  department  TEXT,
+  major       TEXT,
+  adminclass  TEXT,
+  grade       TEXT,
+  total_credits REAL,
+  save_password INTEGER NOT NULL DEFAULT 1,
+  active      INTEGER NOT NULL DEFAULT 1,
+  last_sync_at TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL,
+  UNIQUE(base_url, login_name)
+);
+
+CREATE TABLE campus_semesters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES campus_accounts(id) ON DELETE CASCADE,
+  remote_id   INTEGER NOT NULL,
+  code TEXT,
+  name TEXT,
+  school_year TEXT,
+  season TEXT,
+  start_date  TEXT NOT NULL,
+  end_date    TEXT NOT NULL,
+  week_start_on_sunday INTEGER NOT NULL DEFAULT 0,
+  total_weeks INTEGER NOT NULL DEFAULT 0,
+  current_week INTEGER,
+  is_current  INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(account_id, remote_id)
+);
+CREATE INDEX idx_campus_semesters_account ON campus_semesters(account_id);
+
+CREATE TABLE campus_courses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES campus_accounts(id) ON DELETE CASCADE,
+  semester_id INTEGER NOT NULL REFERENCES campus_semesters(id) ON DELETE CASCADE,
+  remote_lesson_id INTEGER NOT NULL,
+  course_code TEXT,
+  course_name TEXT NOT NULL,
+  lesson_code TEXT,
+  lesson_name TEXT,
+  teachers TEXT,
+  credits REAL,
+  course_type TEXT,
+  color TEXT,
+  UNIQUE(account_id, semester_id, remote_lesson_id)
+);
+CREATE INDEX idx_campus_courses_semester ON campus_courses(semester_id);
+
+CREATE TABLE campus_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES campus_accounts(id) ON DELETE CASCADE,
+  semester_id INTEGER NOT NULL REFERENCES campus_semesters(id) ON DELETE CASCADE,
+  course_id   INTEGER NOT NULL REFERENCES campus_courses(id) ON DELETE CASCADE,
+  weekday     INTEGER NOT NULL,
+  start_unit  INTEGER NOT NULL,
+  end_unit    INTEGER NOT NULL,
+  start_time  TEXT NOT NULL,
+  end_time    TEXT NOT NULL,
+  weeks       TEXT NOT NULL,
+  weeks_str   TEXT,
+  room TEXT,
+  building TEXT,
+  campus TEXT,
+  UNIQUE(account_id, semester_id, course_id, weekday, start_unit, start_time)
+);
+CREATE INDEX idx_campus_sessions_semester ON campus_sessions(account_id, semester_id);
+CREATE INDEX idx_campus_sessions_course ON campus_sessions(course_id);
+
+ALTER TABLE todos ADD COLUMN course_session_id INTEGER REFERENCES campus_sessions(id);
+CREATE INDEX idx_todos_course_session ON todos(course_session_id) WHERE course_session_id IS NOT NULL;
+"#;
+
+/// 0022 · 自动抢课的任务队列（`modules/campus/grab.rs`）。
+///
+/// 抢课是**跟时间赛跑**：窗口由教务处定时开放，开的瞬间几百人同时点。
+/// 这类活儿必须落在进程内跑（页面切走、手机锁屏、WebView 被节流都不该影响它），
+/// 所以任务队列要能扛住重启 —— 用户设好任务关掉 App，第二天开机它还得接着抢。
+///
+/// 这里**刻意冗余存了课名/课程号/教师/学分**（远端 `query-lesson` 也有）：
+/// 抢课期间用户可能已经退出批次、教务可能已把课撤下，而任务单上总得有个名字给人看，
+/// 不能因为源头查不到就变成一行 `lessonAssoc=317844`。
+///
+/// `window_wall` 存的是**教务墙钟时间文本**而不是换算后的本机时间戳：
+/// 时钟偏差是运行时才测得准的量，落库时固定下来会在长时间等待（比如提前一晚设好）里跑偏。
+const MIGRATION_0022: &str = r#"
+CREATE TABLE campus_grab_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES campus_accounts(id) ON DELETE CASCADE,
+  turn_id     TEXT NOT NULL,
+  turn_name   TEXT,
+  lesson_id   TEXT NOT NULL,
+  lesson_name TEXT,
+  course_name TEXT,
+  course_code TEXT,
+  teacher     TEXT,
+  credits     REAL,
+  mode        TEXT NOT NULL DEFAULT 'predicate',
+  virtual_cost INTEGER,
+  schedule_group_id TEXT,
+  window_wall TEXT,
+  window_end_wall TEXT,
+  await_window INTEGER NOT NULL DEFAULT 0,
+  predicate_done INTEGER NOT NULL DEFAULT 0,
+  status      TEXT NOT NULL DEFAULT 'waiting',
+  phase       TEXT NOT NULL DEFAULT 'idle',
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  polls       INTEGER NOT NULL DEFAULT 0,
+  strikes     INTEGER NOT NULL DEFAULT 0,
+  strike_kind TEXT,
+  request_id  TEXT,
+  last_message TEXT,
+  next_at     INTEGER NOT NULL DEFAULT 0,
+  queued_at   INTEGER NOT NULL DEFAULT 0,
+  finished_at INTEGER
+);
+CREATE INDEX idx_campus_grab_account ON campus_grab_tasks(account_id, status);
+CREATE INDEX idx_campus_grab_due ON campus_grab_tasks(status, next_at);
+"#;
+
+/// 0023 · 抢课任务补一列「进批次拿到的批次 id」。
+///
+/// SPA 提交时用的 `courseSelectTurnAssoc` 不是列表里的 `turnId`，而是
+/// `{studentId}/turn/{turnId}/select` 返回的 `options.turn.id`（见 `course_select.rs`）。
+/// 两者是否相同，我们没有真机样本可验（窗口没开），所以**把两个都留着**：
+/// 路径参数继续用列表 id，提交体用这一列，拿不到时退回列表 id。
+const MIGRATION_0023: &str = r#"
+ALTER TABLE campus_grab_tasks ADD COLUMN turn_assoc TEXT;
+"#;
+
+/// 0024 · AI 虚拟工作区 v2（规范见 docs/ai-workspace.md）。
+///
+/// 三块：
+/// 1. `kb_files` 扩展成「文件节点」：`kind` 区分 文本 / 多模态 / 目录；`pinned` 让用户把手动
+///    归类钉住（钉住后 AI 不再自动移动）；`classify_state` 记录归类状态（inbox/filed/manual）。
+/// 2. `kb_assets` 模态表示层：一个逻辑文件可有多种模态（文本/音频/视频/图片/二进制），
+///    本体一律**引用**（fs 落盘相对路径或 inline 文本），绝不把 base64 灌进索引正文。
+/// 3. `kb_fs_moves`：AI/用户的一切目录整理都留审计，可按 batch 整批撤销。
+const MIGRATION_0024: &str = r#"
+ALTER TABLE kb_files ADD COLUMN kind TEXT NOT NULL DEFAULT 'text';
+ALTER TABLE kb_files ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE kb_files ADD COLUMN classify_state TEXT NOT NULL DEFAULT 'manual';
+
+CREATE TABLE kb_assets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_id INTEGER NOT NULL REFERENCES kb_files(id) ON DELETE CASCADE,
+  modal TEXT NOT NULL,
+  mime TEXT NOT NULL DEFAULT '',
+  storage TEXT NOT NULL DEFAULT 'inline',
+  ref TEXT NOT NULL DEFAULT '',
+  bytes INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER,
+  width INTEGER,
+  height INTEGER,
+  transcript_state TEXT NOT NULL DEFAULT 'none',
+  derived_from TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(file_id, modal, ref)
+);
+CREATE INDEX idx_kb_assets_file ON kb_assets(file_id);
+
+CREATE TABLE kb_fs_moves (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'ai',
+  op TEXT NOT NULL,
+  path_from TEXT NOT NULL DEFAULT '',
+  path_to TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
+  at TEXT NOT NULL DEFAULT (datetime('now')),
+  undone INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_kb_fs_moves_batch ON kb_fs_moves(batch_id);
+CREATE INDEX idx_kb_fs_moves_at ON kb_fs_moves(at);
+"#;
+
+/// 0025 · 动作库（规范见 docs/ARCHITECTURE.md §4）。
+///
+/// 全部运动动作的唯一真源：内置动作来自种子 `resources/exercises.json`
+/// （`is_custom=0`，只读、每次启动覆盖式刷新内容、用户只能隐藏）；
+/// 用户自建动作 `is_custom=1`，可改可删。课程条目以 `exerciseId` 引用本表，
+/// 重量曲线以 `workout_sets.exercise_id` 聚合。
+///
+/// `workout_sets.exercise_id` **刻意不加外键**：自建动作删除后历史做组记录必须
+/// 保留（曲线仍可回看），展示回落 `exercise_name` 快照。
+const MIGRATION_0025: &str = r#"
+CREATE TABLE exercises (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  aliases TEXT NOT NULL DEFAULT '[]',
+  kind TEXT NOT NULL DEFAULT 'strength',
+  category TEXT NOT NULL DEFAULT 'other',
+  equipment TEXT,
+  muscles TEXT NOT NULL DEFAULT '{}',
+  tips TEXT NOT NULL DEFAULT '',
+  default_sets INTEGER NOT NULL DEFAULT 3,
+  default_reps INTEGER,
+  default_weight_kg REAL,
+  default_target_sec INTEGER,
+  default_duration_min INTEGER,
+  default_rest_sec INTEGER NOT NULL DEFAULT 90,
+  weight_step REAL NOT NULL DEFAULT 2.5,
+  is_custom INTEGER NOT NULL DEFAULT 0,
+  hidden INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_exercises_browse ON exercises(kind, category);
+
+ALTER TABLE workout_sets ADD COLUMN exercise_id TEXT;
+CREATE INDEX idx_sets_exercise ON workout_sets(exercise_id, workout_id);
+"#;
+
+/// 0026 · Rein 在线服务：模型来源标记 + 本机成本账本。
+///
+/// 两件事：
+/// 1. `ai_models` 增加来源与计价列。`source='online'` 表示这条模型是从 Rein 在线服务
+///    **由服务端下发**导入的：模型清单、单价、流量单价都以服务端为准，重新同步时按
+///    (service_base, model_id) 覆盖，用户不必也不该手填模型 ID。手动添加的模型
+///    （BYOK）保留旧的自由填写，单价可空 —— 空即成本为 0。
+/// 2. `ai_usage` 是本机口径的成本账本：每轮对话一行，模型费 + 流量费分开记。
+///    金额一律**纳元（1e-9 元）整数**：单次请求的出方向流量费常在 1e-7 元量级，
+///    用分/微元记账会在逐笔取整时被抹成 0，「服务器流量 0.8 元/GB」就永远不显示。
+///
+/// `model_pk` 刻意不加外键：模型删了账不能丢（否则用户删掉一条模型，历史花费凭空消失）。
+const MIGRATION_0026: &str = r#"
+ALTER TABLE ai_models ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE ai_models ADD COLUMN service_base TEXT;
+ALTER TABLE ai_models ADD COLUMN price_in REAL;
+ALTER TABLE ai_models ADD COLUMN price_out REAL;
+ALTER TABLE ai_models ADD COLUMN price_currency TEXT;
+ALTER TABLE ai_models ADD COLUMN traffic_per_gb REAL;
+CREATE UNIQUE INDEX idx_ai_models_online ON ai_models(service_base, model_id) WHERE source = 'online';
+
+CREATE TABLE ai_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL,
+  chat_id TEXT,
+  model_pk INTEGER,
+  model_name TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'openai-compatible',
+  source TEXT NOT NULL DEFAULT 'manual',
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  request_bytes INTEGER NOT NULL DEFAULT 0,
+  response_bytes INTEGER NOT NULL DEFAULT 0,
+  -- 纳元（1e-9 元）
+  cost_model_nano INTEGER NOT NULL DEFAULT 0,
+  cost_traffic_nano INTEGER NOT NULL DEFAULT 0,
+  cost_total_nano INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  note TEXT
+);
+CREATE INDEX idx_ai_usage_ts ON ai_usage(ts);
+CREATE INDEX idx_ai_usage_model ON ai_usage(model_pk);
+"#;
+
+/// 0027 · 抢课任务加「志愿组」。
+///
+/// 互斥志愿组：同组课程是**备选**（时间冲突 / 只能选一门），只会中一个。
+/// `priority` 0 = 独立任务（不参与任何组，行为与加这几列之前完全一致）。
+///
+/// 组名冗余存在任务行上，与「刻意冗余存课名/教师」同一规矩：省掉一张组表与一组组命令，
+/// 而组名本来也只是给人看的。`group_key` 由前端 `crypto.randomUUID()` 生成。
+///
+/// `stuck_since` 只服务于「让贤期限」：记下**从什么时候起一直在满员**。
+/// 让贤期限设成 0（死守，默认）时它永远不被读；设成 >0 时用它决定何时轮到下一志愿。
+const MIGRATION_0027: &str = r#"
+ALTER TABLE campus_grab_tasks ADD COLUMN group_key TEXT;
+ALTER TABLE campus_grab_tasks ADD COLUMN group_name TEXT;
+ALTER TABLE campus_grab_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE campus_grab_tasks ADD COLUMN stuck_since INTEGER;
+"#;
+
+/// 0028 · 记忆的生命周期：衰减排序、自动归档、分类层级与「做梦」整理。
+///
+/// 0018 的记忆表只有「抽取 + 合并」，没有生命周期——只增不减，噪音迟早淹没注入窗口。这里补上：
+///
+/// - `last_used_at`：最近一次被注入（用到）的时间。显著性 = 置信度 × 时间衰减 × 使用强化，
+///   排序据此从「三列硬拼」升级为连续分数（memory.rs::salience_of）。
+/// - `archived_at` / `archived_reason`：归档是**软删除**——长期闲置且低显著性的记忆退出
+///   注入与检索两条链路，但仍在库里可恢复；再次被提及（update / 重复 add）会自动复活。
+/// - `category`：分层分类路径（如 `健康/训练`），路径变成 `记忆/{类型}/{分类}/{主题}-{id}.md`。
+/// - `auto_consolidate` / `last_consolidate_at`：周期性的 LLM 整理任务（合并重叠、统一分类、
+///   校准置信度、归档噪声）的开关与节流时间。`last_maintain_at` 记录本地无模型维护的上次时间。
+const MIGRATION_0028: &str = r#"
+ALTER TABLE kb_memories ADD COLUMN category TEXT NOT NULL DEFAULT '';
+ALTER TABLE kb_memories ADD COLUMN last_used_at TEXT;
+ALTER TABLE kb_memories ADD COLUMN archived_at TEXT;
+ALTER TABLE kb_memories ADD COLUMN archived_reason TEXT;
+CREATE INDEX idx_kb_memories_archived ON kb_memories(archived_at);
+ALTER TABLE kb_settings ADD COLUMN auto_consolidate INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE kb_settings ADD COLUMN last_consolidate_at TEXT;
+ALTER TABLE kb_settings ADD COLUMN last_maintain_at TEXT;
+"#;
+
 const MIGRATIONS: &[&str] = &[
-    MIGRATION_0001,
-    MIGRATION_0002,
+    MIGRATION_0001,    MIGRATION_0002,
     MIGRATION_0003,
     MIGRATION_0004,
     MIGRATION_0005,
@@ -739,6 +1066,14 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0018,
     MIGRATION_0019,
     MIGRATION_0020,
+    MIGRATION_0021,
+    MIGRATION_0022,
+    MIGRATION_0023,
+    MIGRATION_0024,
+    MIGRATION_0025,
+    MIGRATION_0026,
+    MIGRATION_0027,
+    MIGRATION_0028,
 ];
 
 /// 测试用：对给定连接跑完整迁移（含知识库的 FTS 表与全部触发器）。
@@ -788,7 +1123,10 @@ mod tests {
     #[test]
     fn upgrade_from_0016_adds_knowledge_base() {
         let conn = legacy_db();
-        assert!(!table_exists(&conn, "kb_docs"), "前置条件：老库还没有知识库表");
+        assert!(
+            !table_exists(&conn, "kb_docs"),
+            "前置条件：老库还没有知识库表"
+        );
 
         migrate_for_test(&conn).unwrap();
 
@@ -805,7 +1143,9 @@ mod tests {
             assert!(table_exists(&conn, t), "升级后应存在 {t}");
         }
         let ver: i64 = conn
-            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| r.get(0))
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(ver, MIGRATIONS.len() as i64);
     }
@@ -873,7 +1213,8 @@ mod tests {
         assert!(id > 0);
         conn.execute("UPDATE todos SET notes = '改过' WHERE id = ?1", [id])
             .unwrap();
-        conn.execute("DELETE FROM todos WHERE id = ?1", [id]).unwrap();
+        conn.execute("DELETE FROM todos WHERE id = ?1", [id])
+            .unwrap();
         // 插入+更新+删除都作用于同一主键，脏队列里只应留最后一条 delete
         let (op, n): (String, i64) = conn
             .query_row(
@@ -891,9 +1232,11 @@ mod tests {
         let conn = legacy_db();
         migrate_for_test(&conn).unwrap();
         let mode: String = conn
-            .query_row("SELECT embedding_mode FROM kb_settings WHERE id = 1", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT embedding_mode FROM kb_settings WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(mode, "keyword", "默认应为零依赖的关键词模式");
     }

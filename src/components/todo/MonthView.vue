@@ -47,9 +47,9 @@ const ratioOf = (date: string): number => {
 <template>
   <div>
     <header class="row between head">
-      <button class="nav" aria-label="上一月" @click="shift(-1)"><ChevronLeft :size="18" /></button>
+      <button class="nav" aria-label="上一月" @click="shift(-1)"><ChevronLeft :size="16" /></button>
       <b class="title">{{ title }}</b>
-      <button class="nav" aria-label="下一月" @click="shift(1)"><ChevronRight :size="18" /></button>
+      <button class="nav" aria-label="下一月" @click="shift(1)"><ChevronRight :size="16" /></button>
     </header>
 
     <ul class="grid">
@@ -75,23 +75,25 @@ const ratioOf = (date: string): number => {
 </template>
 
 <style scoped>
+/* 月份导航行：与周视图共用同一套「页头 → 内容」节奏（10px + 本行），
+   因此做成紧凑单行，不再在卡片里撑出第二条 38px 高的页头。 */
 .head {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .title {
-  font-size: var(--fs-subhead);
+  font-size: var(--fs-footnote);
   font-weight: 700;
 }
 
 .nav {
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
 .grid {

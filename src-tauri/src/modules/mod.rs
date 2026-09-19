@@ -2,10 +2,12 @@
 //! `models.rs`（数据结构）/ `commands.rs`（Tauri 命令 + SQL）/ 可选共享辅助放 `mod.rs`。
 
 pub mod ai;
+pub mod campus;
 pub mod diet;
+pub mod exercise;
+pub mod exercise_lib;
 pub mod kb;
 pub mod ledger;
-pub mod exercise;
 pub mod nutrition;
 pub mod plan;
 pub mod pomodoro;
@@ -15,5 +17,6 @@ pub mod session;
 pub mod share;
 pub mod todo;
 pub mod tracking;
+pub mod update;
 pub mod voice;
 pub mod web;

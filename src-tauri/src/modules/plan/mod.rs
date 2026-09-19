@@ -13,7 +13,8 @@ use crate::error::Result;
 use models::PlanRecord;
 
 /// workout_plans 表列清单（SELECT 时必须使用，保证行映射下标稳定）
-pub(crate) const PLAN_COLS: &str = "id, name, subtitle, workout_type, exercises_json, last_used_at, \
+pub(crate) const PLAN_COLS: &str =
+    "id, name, subtitle, workout_type, exercises_json, last_used_at, \
      created_at, updated_at, equipment, est_duration_min";
 
 pub(crate) fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<PlanRecord> {

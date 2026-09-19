@@ -5,7 +5,9 @@ use tauri::State;
 use crate::error::Result;
 use crate::state::AppState;
 
-use super::models::{BodyMetric, BodyMetricInput, CalcState, DailySummary, DailyTargets, NutrientIntake, Profile};
+use super::models::{
+    BodyMetric, BodyMetricInput, CalcState, DailySummary, DailyTargets, NutrientIntake, Profile,
+};
 use super::{ensure_found, load_profile, profile_targets};
 
 #[tauri::command]
@@ -48,8 +50,27 @@ pub fn get_daily_summary(state: State<AppState>, date: String) -> Result<DailySu
         ))
     })?;
     for row in rows {
-        let (kcal, protein, carb, fat, fiber, sugar, na, k, ca, fe, zn, mg, va, vc, vd, ve, b12, folate, grams) =
-            row?;
+        let (
+            kcal,
+            protein,
+            carb,
+            fat,
+            fiber,
+            sugar,
+            na,
+            k,
+            ca,
+            fe,
+            zn,
+            mg,
+            va,
+            vc,
+            vd,
+            ve,
+            b12,
+            folate,
+            grams,
+        ) = row?;
         let x = grams / 100.0;
         intake.kcal += kcal * x;
         intake.protein += protein * x;
@@ -77,7 +98,12 @@ pub fn get_daily_summary(state: State<AppState>, date: String) -> Result<DailySu
         |r| r.get(0),
     )?;
 
-    Ok(DailySummary { date, intake, targets, exercise_kcal })
+    Ok(DailySummary {
+        date,
+        intake,
+        targets,
+        exercise_kcal,
+    })
 }
 
 /// `date` 参数为「按天覆盖目标」预留；当前一律返回资料默认目标。
@@ -195,7 +221,14 @@ pub fn save_calc_state(state: State<AppState>, mut s: CalcState) -> Result<CalcS
     conn.execute(
         "UPDATE calc_params SET sex = ?1, age = ?2, height_cm = ?3, weight_kg = ?4, \
          activity_level = ?5, goal = ?6, saved_at = datetime('now') WHERE id = 1",
-        rusqlite::params![s.sex, s.age, s.height_cm, s.weight_kg, s.activity_level, s.goal],
+        rusqlite::params![
+            s.sex,
+            s.age,
+            s.height_cm,
+            s.weight_kg,
+            s.activity_level,
+            s.goal
+        ],
     )?;
     s.saved_at = Some(chrono::Utc::now().to_rfc3339());
     Ok(s)
@@ -229,29 +262,30 @@ pub fn list_body_metrics(state: State<AppState>, limit: Option<i64>) -> Result<V
 #[tauri::command]
 pub fn record_body_metric(state: State<AppState>, metric: BodyMetricInput) -> Result<BodyMetric> {
     if metric.weight_kg.is_none() && metric.height_cm.is_none() {
-        return Err(crate::error::ReinError::Message("体重与身高至少填写一项".into()));
+        return Err(crate::error::ReinError::Message(
+            "体重与身高至少填写一项".into(),
+        ));
     }
     let conn = state.db.lock().unwrap();
-    let m = conn
-        .query_row(
-            "INSERT INTO body_metrics (date, weight_kg, height_cm, created_at, updated_at) \
+    let m = conn.query_row(
+        "INSERT INTO body_metrics (date, weight_kg, height_cm, created_at, updated_at) \
              VALUES (?1, ?2, ?3, datetime('now'), datetime('now')) \
              ON CONFLICT(date) DO UPDATE SET \
                weight_kg = COALESCE(excluded.weight_kg, weight_kg), \
                height_cm = COALESCE(excluded.height_cm, height_cm), \
                updated_at = datetime('now') \
              RETURNING id, date, weight_kg, height_cm, created_at",
-            rusqlite::params![metric.date, metric.weight_kg, metric.height_cm],
-            |r| {
-                Ok(BodyMetric {
-                    id: r.get(0)?,
-                    date: r.get(1)?,
-                    weight_kg: r.get(2)?,
-                    height_cm: r.get(3)?,
-                    created_at: r.get(4)?,
-                })
-            },
-        )?;
+        rusqlite::params![metric.date, metric.weight_kg, metric.height_cm],
+        |r| {
+            Ok(BodyMetric {
+                id: r.get(0)?,
+                date: r.get(1)?,
+                weight_kg: r.get(2)?,
+                height_cm: r.get(3)?,
+                created_at: r.get(4)?,
+            })
+        },
+    )?;
     conn.execute(
         "UPDATE profile SET weight_kg = COALESCE(?1, weight_kg), \
          height_cm = COALESCE(?2, height_cm) WHERE id = 1",

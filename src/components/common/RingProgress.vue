@@ -50,7 +50,7 @@ svg {
 
 .track {
   fill: none;
-  stroke: var(--surface-2);
+  stroke: var(--ring-track);
 }
 
 .val {

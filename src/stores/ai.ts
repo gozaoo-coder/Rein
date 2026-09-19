@@ -1,7 +1,8 @@
 /** AI 域：对话消息流（Rust SQLite 持久化）+ 解析确认写入饮食。 */
 
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { animate } from 'animejs'
 
 import { aiService } from '@/services/aiService'
 import { dietService } from '@/services/dietService'
@@ -11,6 +12,7 @@ import { useNutritionStore } from '@/stores/nutrition'
 import { useModelsStore } from '@/stores/models'
 import { hasImage, getEntry, registerImage, registerSourceImage, resetChat, setActiveChat, setViewEdgeCap } from '@/ai/imageZoom'
 import { chatStreamView } from '@/ai/streamExtract'
+import { createStreamAggregator } from '@/ai/streamBubbles'
 import { toParsedItems, type ModelFoodRow } from '@/ai/foodMatch'
 import { findAppTool } from '@/ai/tools/registry'
 import type { ChatTurn } from '@/ai/chat'
@@ -25,12 +27,15 @@ import type {
   AiMessage,
   MealType,
   ParsedFoodItem,
+  ProcessSegment,
+  ProcessToolCall,
   TargetAdjustProposal,
   ToolCallRecord,
   VoiceMemo,
 } from '@/types'
 import type { MemoGenResult } from '@/ai/memoGen'
 import { useToast } from '@/composables/useToast'
+import { perfDegraded } from '@/system/perf'
 
 let seq = 0
 const uid = () => `m${Date.now().toString(36)}${++seq}`
@@ -85,8 +90,10 @@ function registerMessageImages(chatId: string, m: AiMessage): void {
       viewH: im.h,
     })
   }
-  if (m.kind === 'tools') {
-    for (const c of m.toolCalls ?? []) {
+  if (m.kind === 'tools' || m.segments?.length) {
+    for (const seg of m.segments ?? []) {
+      if (seg.kind !== 'tool') continue
+      const c = seg.call
       if (!c.resultImage || !c.zoomId || hasImage(chatId, c.zoomId)) continue
       const depth = Number(c.zoomId.match(/z(\d+)(?:-\d+)?$/)?.[1] ?? 0)
       const rootId = c.zoomId.replace(/z\d+(?:-\d+)?$/, '')
@@ -94,7 +101,7 @@ function registerMessageImages(chatId: string, m: AiMessage): void {
       if (root && c.zoomRect) {
         registerImage(chatId, {
           id: c.zoomId,
-          label: c.label,
+          label: c.toolName,
           depth,
           viewW: c.zoomW ?? 0,
           viewH: c.zoomH ?? 0,
@@ -104,7 +111,7 @@ function registerMessageImages(chatId: string, m: AiMessage): void {
       } else {
         registerSourceImage(chatId, {
           id: c.zoomId,
-          label: c.label,
+          label: c.toolName,
           source: `data:${c.resultImage.mime};base64,${c.resultImage.base64}`,
           viewW: c.zoomW ?? 0,
           viewH: c.zoomH ?? 0,
@@ -121,23 +128,50 @@ function attachChatContext(chatId: string, messages: AiMessage[]): void {
   for (const m of messages) registerMessageImages(chatId, m)
 }
 
-/** 工具入参摘要：截断 JSON，过程卡单行展示 */
-function argsBrief(args: unknown): string {
+/** 工具入参 → 原始 JSON 字符串（过程段展示用） */
+function safeArgs(args: unknown): string {
   try {
-    const s = JSON.stringify(args) ?? ''
-    return s.length > 48 ? `${s.slice(0, 45)}…` : s
+    return JSON.stringify(args) ?? ''
   } catch {
     return ''
   }
 }
 
-/** 倒序找最近一条同名的执行中记录 */
-function lastRunningCall(calls: ToolCallRecord[], name: string): ToolCallRecord | undefined {
-  for (let i = calls.length - 1; i >= 0; i--) {
-    const c = calls[i]
-    if (c && c.name === name && c.status === 'running') return c
+/** 过程段工具调用 → 旧版持久化记录（保留放大镜元数据；兼容既有读法） */
+function legacyToolRecord(c: ProcessToolCall): ToolCallRecord {
+  return {
+    name: c.rawName ?? c.toolName,
+    label: c.toolName,
+    argsBrief: c.arguments.length > 48 ? `${c.arguments.slice(0, 45)}…` : c.arguments,
+    resultBrief: c.result,
+    status: c.pending ? 'running' : c.isError ? 'error' : 'ok',
+    ...(c.resultImage ? { resultImage: c.resultImage } : {}),
+    ...(c.zoomId
+      ? { zoomId: c.zoomId, zoomW: c.zoomW, zoomH: c.zoomH, ...(c.zoomRect ? { zoomRect: c.zoomRect } : {}) }
+      : {}),
   }
-  return undefined
+}
+
+/** 旧版持久化记录 → 过程段工具调用（历史恢复用） */
+function legacyCallToProcess(t: ToolCallRecord, i: number, msgId: string): ProcessToolCall {
+  return {
+    callId: t.zoomId ?? `tc-${msgId}-${i}`,
+    toolName: t.label || t.name,
+    rawName: t.name,
+    arguments: t.argsBrief,
+    result: t.resultBrief,
+    isError: t.status === 'error',
+    pending: false,
+    ...(t.resultImage ? { resultImage: t.resultImage } : {}),
+    ...(t.zoomId
+      ? { zoomId: t.zoomId, zoomW: t.zoomW, zoomH: t.zoomH, ...(t.zoomRect ? { zoomRect: t.zoomRect } : {}) }
+      : {}),
+  }
+}
+
+/** 无障碍：reduce 下不做入场位移动画 */
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 export const useAiStore = defineStore('ai', () => {
@@ -177,6 +211,8 @@ export const useAiStore = defineStore('ai', () => {
       meta.committedAt = m.committed ? m.at : null
     }
     if (m.kind === 'tools' && m.toolCalls) meta.calls = m.toolCalls
+    if (m.kind === 'tools' && m.segments?.length) meta.segments = m.segments
+    if (m.kind === 'tools' && m.thinkingSec) meta.thinkingSec = m.thinkingSec
     if (m.thinking) meta.thinking = m.thinking
     if (m.quoteText) meta.quote = m.quoteText
     if (m.voiceMeta) meta.voice = m.voiceMeta
@@ -210,6 +246,8 @@ export const useAiStore = defineStore('ai', () => {
           source?: AiMessage['source']
           committedAt?: string | null
           thinking?: string
+          thinkingSec?: number
+          segments?: ProcessSegment[]
           quote?: string
           calls?: ToolCallRecord[]
           doc?: AiDocMeta
@@ -226,6 +264,8 @@ export const useAiStore = defineStore('ai', () => {
           m.thinking = p.thinking
         }
         if (s.kind === 'tools' && p.calls) m.toolCalls = p.calls
+        if (p.segments?.length) m.segments = p.segments
+        if (typeof p.thinkingSec === 'number') m.thinkingSec = p.thinkingSec
         if (p.quote) m.quoteText = p.quote
         if (p.doc) m.doc = p.doc
         if (p.images) m.images = p.images
@@ -234,6 +274,15 @@ export const useAiStore = defineStore('ai', () => {
       } catch {
         /* 损坏的历史 payload 忽略，卡片仍可展示文本 */
       }
+    }
+    // 旧格式（无 payload.segments）补出过程段：推理在前、工具在后，供统一渲染与放大镜注册
+    if (!m.segments?.length) {
+      const segs: ProcessSegment[] = []
+      if (m.thinking) segs.push({ kind: 'reasoning', text: m.thinking })
+      for (const [i, t] of (m.toolCalls ?? []).entries()) {
+        segs.push({ kind: 'tool', call: legacyCallToProcess(t, i, m.id) })
+      }
+      if (segs.length > 0) m.segments = segs
     }
     return m
   }
@@ -252,11 +301,15 @@ export const useAiStore = defineStore('ai', () => {
         chats.value = await aiService.aiChatList()
       }
       messages.value = (await aiService.aiChatMessages(chatId.value)).map(fromStored)
+      resetStreaming()
+      restoreBubbleMetaFromHistory()
       attachChatContext(chatId.value, messages.value)
     } catch {
       messages.value = []
     }
     if (messages.value.length === 0) greet()
+    // 启动时检查一次整库整理是否到期（每天最多一次；模型未配置则直接跳过）
+    scheduleMemoryConsolidation()
   }
 
   async function refreshChats(): Promise<void> {
@@ -295,6 +348,99 @@ export const useAiStore = defineStore('ai', () => {
   }
 
   /**
+   * 取喂给系统提示词的「全量注入区」：系统提示词目录 + 用户记忆目录（docs/ai-workspace.md §3.4）。
+   * 与认知块同样的短 TTL 缓存：改完用户记忆要能很快生效，但也不必每轮都查库。
+   * 知识库不可用时返回 undefined，绝不因此让对话发不出去。
+   */
+  let injectionCache: { at: number; value: { system: string; memory: string; truncated: boolean } } | null =
+    null
+
+  async function injectionForPrompt(): Promise<
+    { system: string; memory: string; truncated: boolean } | undefined
+  > {
+    const now = Date.now()
+    if (!injectionCache || now - injectionCache.at > COGNITION_TTL_MS) {
+      try {
+        const inj = await kbService.injection()
+        injectionCache = {
+          at: now,
+          value: { system: inj.system, memory: inj.memory, truncated: inj.truncated },
+        }
+      } catch {
+        return injectionCache?.value
+      }
+    }
+    const v = injectionCache.value
+    return v.system.trim() || v.memory.trim() ? v : undefined
+  }
+
+  /* ---------- 记忆整理（定期去噪的“做梦”任务） ---------- */
+
+  /** LLM 整理的最小间隔：24 小时。多次启动/多次会话共用它节流。 */
+  const CONSOLIDATE_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000
+  /** 并发护栏：同一时刻只允许一次整理在跑。 */
+  let consolidating = false
+  /** 上次检查时间：避免一次启动里反复查库。 */
+  let lastConsolidateCheck = 0
+
+  /** SQLite 的 datetime('now') 是 UTC 的 `YYYY-MM-DD HH:MM:SS`，转成毫秒时间戳。 */
+  function sqliteUtcMs(raw: string | null): number {
+    if (!raw) return 0
+    const ms = Date.parse(`${raw.replace(' ', 'T')}Z`)
+    return Number.isFinite(ms) ? ms : 0
+  }
+
+  /**
+   * 跑一次整库记忆整理（合并重叠 / 统一分类 / 归档噪声 / 清理归档区）。
+   * `force=true` 供 UI 手动触发，跳过开关与 24h 节流；返回实际改动的条数。
+   * 全程静默：整理失败（模型不可用、网络失败）绝不能影响对话。
+   */
+  async function consolidateMemoriesNow(force = false): Promise<number> {
+    if (consolidating) return 0
+    consolidating = true
+    try {
+      const models = useModelsStore()
+      if (!models.loaded) await models.load()
+      const cfg = models.defaultModel()
+      if (!cfg) return 0
+
+      const s = await kbService.settingsGet()
+      if (!force) {
+        if (!s.autoConsolidate) return 0
+        if (Date.now() - sqliteUtcMs(s.lastConsolidateAt) < CONSOLIDATE_MIN_INTERVAL_MS) return 0
+      }
+
+      const memories = await kbService.memories(undefined, 'all')
+      const { consolidateMemories } = await import('@/ai/memoryConsolidate')
+      const candidates = await consolidateMemories({ config: cfg, memories })
+      if (candidates.length > 0) {
+        const r = await kbService.memoryApply(candidates)
+        invalidateCognitionCache()
+        const changed = r.added + r.updated + r.deleted + r.archived + r.restored
+        if (changed > 0 && force) toast.toast(`已整理 ${changed} 条长期记忆`)
+        // 无论有无变更都记一次：整库健康时不该被反复检查打扰
+        await kbService.memoryConsolidated()
+        return changed
+      }
+      await kbService.memoryConsolidated()
+      return 0
+    } catch {
+      return 0
+    } finally {
+      consolidating = false
+    }
+  }
+
+  /** 会话结束时（抽取之后）检查是否到期需要整理；受开关与节流约束。 */
+  function scheduleMemoryConsolidation(): void {
+    const now = Date.now()
+    // 同一次会话里不必反复查库：节流本身是 24h 粒度
+    if (now - lastConsolidateCheck < 5 * 60_000) return
+    lastConsolidateCheck = now
+    void consolidateMemoriesNow(false).catch(() => {})
+  }
+
+  /**
    * 会话结束时的记忆抽取。刻意做成**不 await 的后台任务**：
    * 一次模型调用要 1~3 秒，让用户等它结束才切会话是不可接受的。
    * 传快照而非读 messages.value，是因为调用方随后就会清空消息。
@@ -318,7 +464,8 @@ export const useAiStore = defineStore('ai', () => {
       const s = await kbService.settingsGet()
       if (!s.autoMemory) return
 
-      const existing = await kbService.memories()
+      // 带上归档条目：模型据此判断「这次提到的旧事该不该复活」
+      const existing = await kbService.memories(undefined, 'all')
       const { extractMemories } = await import('@/ai/memoryExtract')
       const candidates = await extractMemories({ config: cfg, turns, existing })
       if (candidates.length === 0) return
@@ -329,9 +476,14 @@ export const useAiStore = defineStore('ai', () => {
         snapshot.map((m) => m.id),
       )
       invalidateCognitionCache()
-      const changed = r.added + r.updated + r.deleted
+      const changed = r.added + r.updated + r.deleted + r.restored
       if (changed > 0) toast.toast(`已更新 ${changed} 条长期记忆`)
-    })().catch(() => {})
+    })()
+      .catch(() => {})
+      .finally(() => {
+        // 抽取之后顺带检查一次整库整理是否到期（每天最多一次）
+        scheduleMemoryConsolidation()
+      })
   }
 
   /** 切换会话（历史抽屉选择） */
@@ -342,6 +494,8 @@ export const useAiStore = defineStore('ai', () => {
     chatId.value = id
     try {
       messages.value = (await aiService.aiChatMessages(id)).map(fromStored)
+      resetStreaming()
+      restoreBubbleMetaFromHistory()
       attachChatContext(id, messages.value)
     } catch {
       messages.value = []
@@ -360,6 +514,7 @@ export const useAiStore = defineStore('ai', () => {
       resetChat(chatId.value)
       await aiService.aiChatEnsure(chatId.value, null)
       messages.value = []
+      resetStreaming()
       greet()
       await refreshChats()
     } finally {
@@ -376,6 +531,7 @@ export const useAiStore = defineStore('ai', () => {
       await aiService.aiChatClear(chatId.value)
       resetChat(chatId.value)
       messages.value = []
+      resetStreaming()
       greet()
       await refreshChats()
     } finally {
@@ -425,6 +581,158 @@ export const useAiStore = defineStore('ai', () => {
     return m
   }
 
+  /* ---------- 流式气泡聚合 ----------
+   * 聚合规则与数据结构见 @/ai/streamBubbles（照搬 EffiBuddy useChatStreaming）；
+   * 本 store 只负责：消息入列 + 入场动画、增量切片投喂、定稿持久化、历史恢复。 */
+
+  const streamSeq = ref(0)
+  /** 本轮流式创建的消息（定稿时统一收尾/持久化） */
+  let streamCreated: AiMessage[] = []
+
+  function createBubble(id: string, withAnim: boolean): AiMessage {
+    const msg: AiMessage = {
+      id,
+      role: 'assistant',
+      kind: 'text',
+      at: new Date().toISOString(),
+      text: '',
+      streaming: true,
+    }
+    messages.value.push(msg)
+    streamCreated.push(msg)
+    streamSeq.value++
+    // 入场动画仅 opacity + scale，不动 height（思考/工具占位气泡跳过；
+    // 掉帧降级期同样跳过——每个气泡一次合成在弱机上是纯负担）
+    if (withAnim && !prefersReducedMotion() && !perfDegraded.value) {
+      void nextTick(() => {
+        const el = document.getElementById('msg-' + id)
+        if (!el) return
+        // 初始状态:透明 + 缩放 0.96(轻微,避免大幅缩放导致内容模糊)
+        el.style.opacity = '0'
+        el.style.transform = 'scale(0.96)'
+        el.style.transformOrigin = 'center top'
+        void el.offsetHeight // 强制 reflow 确保 anime.js 起点准确
+        animate(el, {
+          opacity: [0, 1],
+          scale: [0.96, 1],
+          duration: 280,
+          ease: 'out(3)',
+          onComplete: () => {
+            el.style.opacity = ''
+            el.style.transform = ''
+            el.style.transformOrigin = ''
+          },
+        })
+      })
+    }
+    return msg
+  }
+
+  const agg = createStreamAggregator<AiMessage>({
+    messages: () => messages.value,
+    createBubble,
+    nextId: uid,
+    onEvent: () => {
+      streamSeq.value++
+    },
+  })
+
+  /** 纯过程气泡定稿：morph 成 tools 载体并附上推理/过程段/工具记录（供历史与放大镜读回） */
+  function settleProcessMessage(m: AiMessage): void {
+    const meta = agg.getMeta(m.id)
+    if (!meta) return
+    m.streaming = false
+    m.kind = 'tools'
+    m.thinking = meta.reasoning || undefined
+    m.thinkingSec = meta.thinkingSec
+    m.segments = meta.segments
+    m.toolCalls = meta.toolCalls.map(legacyToolRecord)
+  }
+
+  /** 本轮创建的流式消息收尾：过程气泡定格、正文气泡保留、纯空占位撤掉 */
+  function settleStreamMessages(finalBubble: AiMessage | null): void {
+    for (const m of streamCreated) {
+      m.streaming = false
+      if (m === finalBubble) continue
+      const meta = agg.getMeta(m.id)
+      if (!m.text && meta && (meta.reasoning || meta.toolCalls.length)) {
+        settleProcessMessage(m)
+        persist(m)
+        continue
+      }
+      if (m.text) {
+        persist(m)
+        continue
+      }
+      // 无正文也无过程的纯空占位 → 从列表撤掉（不落库）
+      const idx = messages.value.indexOf(m)
+      if (idx >= 0) messages.value.splice(idx, 1)
+    }
+    // 注：不清空 streamCreated —— 定稿后若再抛错，catch 里还能补一次收尾（落库按 id 幂等）
+  }
+
+  /** 会话切换/清空:清空全部流式与渲染状态 */
+  function resetStreaming(): void {
+    agg.reset()
+    streamCreated = []
+  }
+
+  /** 历史恢复：从持久化消息重建气泡元数据（照搬 EffiBuddy restoreBubbleMetaFromHistory） */
+  function restoreBubbleMetaFromHistory(): void {
+    // 第一遍：合并连续「纯过程消息」（kind=tools）到同一个容器。
+    // 后端按消息边界分条落盘，流式期间这些轮次共用同一气泡；恢复时若逐条渲染
+    // 会出现多个独立的推理框。这里把紧随其后的纯过程消息内容并入前一条（容器）。
+    let containerId: string | null = null
+    for (const m of messages.value) {
+      if (m.role !== 'assistant') {
+        containerId = null
+        continue
+      }
+      const isProcessOnly = m.kind === 'tools' && !m.text
+      if (isProcessOnly && containerId) {
+        const host = messages.value.find((x) => x.id === containerId)
+        if (host) {
+          if (m.thinking) host.thinking = (host.thinking ?? '') + m.thinking
+          host.thinkingSec = (host.thinkingSec ?? 0) + (m.thinkingSec ?? 0)
+          host.segments = [...(host.segments ?? []), ...(m.segments ?? [])]
+          host.toolCalls = [...(host.toolCalls ?? []), ...(m.toolCalls ?? [])]
+        }
+        // 被吸收消息清空内容，仅保留 id/kind 空壳，渲染跳过
+        agg.ensureMeta(m.id).absorbed = true
+        m.thinking = undefined
+        m.segments = []
+        m.toolCalls = []
+        continue
+      }
+      containerId = isProcessOnly ? m.id : null
+    }
+    // 第二遍：逐条恢复 meta（被吸收消息跳过）
+    for (const m of messages.value) {
+      if (m.role !== 'assistant') continue
+      if (agg.getMeta(m.id)?.absorbed) continue
+      const meta = agg.ensureMeta(m.id)
+      // 思考时长 → 「已思考 X 秒」（历史中视为已思考完成）
+      meta.thinkingSec = m.thinkingSec ?? 0
+      meta.isThinking = false
+      if (m.segments?.length) {
+        // 新格式：过程段按持久化顺序原样恢复（历史记录总是已完成，pending=false）
+        meta.segments = m.segments.map((s) =>
+          s.kind === 'tool' ? { kind: 'tool', call: { ...s.call, pending: false } } : s,
+        )
+        meta.reasoning = m.thinking ?? ''
+      } else {
+        // 旧格式：推理在前、工具在后，按持久化顺序还原过程段
+        if (m.thinking) {
+          meta.reasoning = m.thinking
+          meta.segments.push({ kind: 'reasoning', text: m.thinking })
+        }
+        for (const [i, t] of (m.toolCalls ?? []).entries()) {
+          meta.segments.push({ kind: 'tool', call: legacyCallToProcess(t, i, m.id) })
+        }
+      }
+    }
+  }
+
   /* ---------- 会话 ---------- */
 
   /** 无模型时的兜底：本地关键词解析（无网络依赖） */
@@ -437,8 +745,9 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
-  /** LLM 回复定稿：原地把流式占位气泡 morph 成解析卡或文本气泡，并持久化 */
-  async function applyLlmReply(msg: AiMessage, raw: string, thinking: string | null): Promise<void> {
+  /** LLM 回复定稿：原地把流式气泡 morph 成解析卡或文本气泡，并持久化。
+   * 思考已在过程气泡上（ProcessSection），此处不再回填 thinking。 */
+  async function applyLlmReply(msg: AiMessage, raw: string): Promise<void> {
     msg.streaming = false
     let body: unknown = null
     try {
@@ -456,13 +765,22 @@ export const useAiStore = defineStore('ai', () => {
         msg.source = 'text_ai'
         msg.items = await toParsedItems(rows)
         msg.text = undefined
-        msg.thinking = thinking ?? undefined
         persist(msg)
         return
       }
     }
-    msg.text = obj && typeof obj.text === 'string' ? obj.text : raw
-    msg.thinking = thinking ?? undefined
+    const parsed = obj && typeof obj.text === 'string' ? obj.text : raw
+    // 解析出的正文可能为空（模型只回了结构或空串）：此时保住流式期间已经显示出来的正文，
+    // 不能因为定稿解析这一下把用户刚才看到的内容清掉
+    msg.text = parsed.trim() ? parsed : (msg.text ?? '')
+    if (!msg.text.trim()) {
+      // 模型没输出任何内容：撤掉空正文气泡（过程气泡已由 settleStreamMessages 落库），不写空消息。
+      // 注意这里不再按「有没有过程段」豁免——撇开空文字本身就说明它没有正文可留，
+      // 而承载过程段的气泡在 settleStreamMessages 里已另走一趟，不会走到这里。
+      const idx = messages.value.indexOf(msg)
+      if (idx >= 0) messages.value.splice(idx, 1)
+      return
+    }
     persist(msg)
   }
 
@@ -553,10 +871,11 @@ export const useAiStore = defineStore('ai', () => {
     }
     void maybeRename(clean)
     busy.value = true
-    // 工具过程卡：本轮有工具调用时创建，插在回复占位气泡之前，结束（含失败）后统一持久化
-    let toolsMsg: AiMessage | null = null
-    // 流式占位气泡：增量实时更新文本/思考，定稿后 morph 成卡片或终稿
-    let placeholder: AiMessage | null = null
+    // 本轮流式聚合状态：过程气泡 + 正文气泡按 EffiBuddy 聚合规则生成
+    streamCreated = []
+    // 增量基准：协议流回调给的是「累计全文」，按已展示长度切片投喂聚合器
+    let textShown = ''
+    let thinkingShown = ''
     try {
       const models = useModelsStore()
       if (!models.loaded) await models.load()
@@ -621,72 +940,67 @@ export const useAiStore = defineStore('ai', () => {
           })
           .catch(() => {})
       }
-      // 流式占位气泡：增量实时更新文本/思考，定稿后 morph 成卡片或终稿
-      const bubble = pushAssistant({ kind: 'text', text: '', streaming: true }, false)
-      placeholder = bubble
-      let thinkingAcc: string | null = null
-      // 长期记忆作为「事实前提」预注入，而不是等模型自己去调工具发现
+      // 流式占位气泡：先建一个空 text 气泡承载推理/工具（无内容不播入场动画）；
+      // 正文出现时按聚合规则「断开合并」另起正文气泡
+      agg.openBubble(false)
+      // 长期记忆作为「事实前提」预注入，而不是等模型自己去调工具发现；
+      // 系统提示词 + 用户记忆一并全量注入（§3.4）
       const cognition = await cognitionForPrompt()
+      const injection = await injectionForPrompt()
       const r = await chatWithModel(cfg, history, { text: outgoingText, images: outgoingImages.length > 0 ? outgoingImages : undefined }, {
         onText: (p) => {
-          // 从 JSON 协议流里解出正文实时展示；food 卡 / 未定型阶段保持打字态
+          // 从 JSON 协议流里解出正文；food 卡 / 未定型阶段保持打字态
           const view = chatStreamView(p)
-          bubble.text = view.mode === 'chat' || view.mode === 'plain' ? view.text : ''
+          const visible = view.mode === 'chat' || view.mode === 'plain' ? view.text : ''
+          if (visible.length >= textShown.length && visible.startsWith(textShown)) {
+            const delta = visible.slice(textShown.length)
+            textShown = visible
+            if (delta) agg.appendText(delta)
+          } else {
+            // 基准失效（工具后 textAcc 清零重新累计）→ 仅重置基准
+            textShown = visible
+          }
         },
         onThinking: (p) => {
-          thinkingAcc = p
-          bubble.thinking = p
+          // thinking_delta 给累计增量、thinking_end 重发全量；统一按已展示长度切增量
+          if (p.length >= thinkingShown.length && p.startsWith(thinkingShown)) {
+            const delta = p.slice(thinkingShown.length)
+            thinkingShown = p
+            if (delta) agg.appendReasoning(delta)
+          } else {
+            thinkingShown = p
+          }
         },
         onToolStart: (name, args) => {
-          if (!toolsMsg) {
-            const m: AiMessage = { id: uid(), role: 'assistant', kind: 'tools', at: new Date().toISOString(), toolCalls: [] }
-            const idx = messages.value.indexOf(bubble)
-            messages.value.splice(idx >= 0 ? idx : messages.value.length, 0, m)
-            toolsMsg = m
-          }
-          toolsMsg.toolCalls?.push({
-            name,
-            label: findAppTool(name)?.label ?? name,
-            argsBrief: argsBrief(args),
-            resultBrief: null,
-            status: 'running',
-          })
+          agg.toolCall(name, findAppTool(name)?.label ?? name, safeArgs(args))
         },
         onToolEnd: (name, ok, brief, resultImage, details) => {
-          const calls = toolsMsg?.toolCalls
-          if (!calls) return
-          const rec = lastRunningCall(calls, name)
-          if (rec) {
-            rec.status = ok ? 'ok' : 'error'
-            rec.resultBrief = brief
-            if (resultImage) rec.resultImage = resultImage
-            const d = details as
-              | { zoomId?: string; zoomW?: number; zoomH?: number; zoomRect?: { x: number; y: number; w: number; h: number } }
-              | undefined
-            if (d?.zoomId) {
-              rec.zoomId = d.zoomId
-              rec.zoomW = d.zoomW
-              rec.zoomH = d.zoomH
-              if (d.zoomRect) rec.zoomRect = d.zoomRect
-            }
-          }
+          agg.toolResult(name, { ok, brief, resultImage, details })
         },
-      }, { cognition })
-      if (toolsMsg) persist(toolsMsg)
-      await applyLlmReply(bubble, r.text, thinkingAcc ?? r.thinking)
+      }, { cognition, injection })
+      // 流式收尾：结束思考计时（照搬 EffiBuddy finalizeStream 的状态语义）
+      const lastStreamBubble = agg.streamingBubbleId.value
+        ? (messages.value.find((m) => m.id === agg.streamingBubbleId.value) ?? null)
+        : null
+      agg.finalize()
+      // 正文承载气泡：流式指针上的气泡已有正文、或它本就是纯占位（无过程段）时由它承载；
+      // 指针上是纯过程气泡（有推理/工具无正文）则取最后一条有正文的气泡
+      let bodyBubble: AiMessage | null =
+        lastStreamBubble && (lastStreamBubble.text || !(agg.getMeta(lastStreamBubble.id)?.segments.length))
+          ? lastStreamBubble
+          : ([...streamCreated].reverse().find((m) => m.text) ?? null)
+      if (!bodyBubble) {
+        // 全程只有过程（模型直接出 food 卡 / 空回复）：另起一个空正文气泡承接定稿
+        bodyBubble = pushAssistant({ kind: 'text', text: '', streaming: false }, false)
+        streamCreated.push(bodyBubble)
+      }
+      settleStreamMessages(bodyBubble)
+      await applyLlmReply(bodyBubble, r.text)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      if (toolsMsg) persist(toolsMsg)
-      // 占位气泡已流出部分正文就保留为终稿；空占位直接撤掉再提示失败
-      if (placeholder) {
-        if (placeholder.text) {
-          placeholder.streaming = false
-          persist(placeholder)
-        } else {
-          const idx = messages.value.indexOf(placeholder)
-          if (idx >= 0) messages.value.splice(idx, 1)
-        }
-      }
+      // 流式中断：结束思考计时，过程气泡与已有正文保留，纯空占位撤掉
+      agg.finalize()
+      settleStreamMessages(null)
       pushAssistant({ text: `AI 回复失败：${msg}` })
     } finally {
       busy.value = false
@@ -713,6 +1027,23 @@ export const useAiStore = defineStore('ai', () => {
     // 占位气泡：流式期间周期 upsert（原始协议文本，定稿后替换为 markdown 回复）
     const bubble = pushAssistant({ kind: 'text', text: '', streaming: true }, false)
     let lastPersist = 0
+
+    /** 把这一段（转写 + 音频 + 纪要条目）落进历史。
+     *  **无论 AI 整理成功与否都必须调用** —— 记录与音频是用户自己的东西，
+     *  不该因为模型没配置、没额度或整理报错就从历史里消失。 */
+    const persistMemo = (result: MemoGenResult | null): Promise<VoiceMemo> =>
+      voiceService.memoCreate({
+        id: input.memoId,
+        chatId: chatId.value,
+        messageId: bubble.id,
+        title: result?.title || `语音 ${new Date().toTimeString().slice(0, 5)}`,
+        audioPath: input.audioPath ?? null,
+        durationMs: input.durationMs,
+        words: transcript.length,
+        sentencesJson: JSON.stringify(input.lines),
+        summaryJson: JSON.stringify((result?.items ?? []).map((it) => ({ ...it, written: false }))),
+      })
+
     try {
       const models = useModelsStore()
       if (!models.loaded) await models.load()
@@ -734,17 +1065,7 @@ export const useAiStore = defineStore('ai', () => {
       bubble.streaming = false
       bubble.text = result?.reply ?? '还没有配置 AI 模型，转写已保存，配置后可整理纪要。'
       persist(bubble)
-      const memo = await voiceService.memoCreate({
-        id: input.memoId,
-        chatId: chatId.value,
-        messageId: bubble.id,
-        title: result?.title || `语音 ${new Date().toTimeString().slice(0, 5)}`,
-        audioPath: input.audioPath ?? null,
-        durationMs: input.durationMs,
-        words: transcript.length,
-        sentencesJson: JSON.stringify(input.lines),
-        summaryJson: JSON.stringify((result?.items ?? []).map((it) => ({ ...it, written: false }))),
-      })
+      const memo = await persistMemo(result)
       void refreshChats()
       return memo
     } catch (e) {
@@ -756,7 +1077,14 @@ export const useAiStore = defineStore('ai', () => {
         const idx = messages.value.indexOf(bubble)
         if (idx >= 0) messages.value.splice(idx, 1)
       }
-      pushAssistant({ text: `纪要整理失败：${msg}。转写内容已保存。` })
+      // 整理失败也必须落库：记录与音频不能因为模型报错就丢
+      try {
+        await persistMemo(null)
+        void refreshChats()
+      } catch {
+        /* 连纪要行都写不进去：下面的提示已说明转写仍留在会话里 */
+      }
+      pushAssistant({ text: `纪要整理失败：${msg}。转写与录音已存入历史。` })
       return null
     } finally {
       busy.value = false
@@ -860,6 +1188,10 @@ export const useAiStore = defineStore('ai', () => {
     chatId,
     chats,
     targetProposal,
+    /** 流式渲染状态（AIPage 用：过程段 / 思考计时 / 流式指针） */
+    streamingBubbleId: agg.streamingBubbleId,
+    streamSeq,
+    getMeta: agg.getMeta,
     init,
     greet,
     selectChat,
@@ -867,6 +1199,8 @@ export const useAiStore = defineStore('ai', () => {
     clearContext,
     /** 知识库页改过记忆后调它，让下一轮的认知注入立刻反映改动而不是等 TTL 过期 */
     invalidateCognitionCache,
+    /** 知识库页「AI 整理」按钮：手动跑一次整库整理（跳过开关与节流），返回改动条数 */
+    consolidateMemoriesNow,
     retract,
     sendText,
     sendVoiceTurn,

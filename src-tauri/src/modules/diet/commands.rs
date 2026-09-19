@@ -6,8 +6,10 @@ use crate::error::{ReinError, Result};
 use crate::state::AppState;
 use chrono::Utc;
 
+use super::models::{
+    Food, FoodCreateInput, FoodCreateResult, MealLog, RecipePref, RecipePrefInput,
+};
 use super::{attach_units, food_from_row, food_from_row_at, FOOD_COLS};
-use super::models::{Food, FoodCreateInput, FoodCreateResult, MealLog, RecipePref, RecipePrefInput};
 
 #[tauri::command]
 pub fn list_foods(
@@ -200,11 +202,17 @@ pub fn create_food(state: State<AppState>, food: FoodCreateInput) -> Result<Food
     let conn = state.db.lock().unwrap();
 
     let existing: Option<i64> = conn
-        .query_row("SELECT id FROM foods WHERE name = ?1", [&name], |r| r.get(0))
+        .query_row("SELECT id FROM foods WHERE name = ?1", [&name], |r| {
+            r.get(0)
+        })
         .ok();
     if let Some(id) = existing {
-        let food = fetch_food(&conn, id)?.ok_or_else(|| ReinError::Message("食物查询失败".into()))?;
-        return Ok(FoodCreateResult { food, created: false });
+        let food =
+            fetch_food(&conn, id)?.ok_or_else(|| ReinError::Message("食物查询失败".into()))?;
+        return Ok(FoodCreateResult {
+            food,
+            created: false,
+        });
     }
 
     let now = Utc::now().to_rfc3339();
@@ -368,7 +376,9 @@ pub fn recipe_prefs_set(state: State<AppState>, input: RecipePrefInput) -> Resul
         return Err(ReinError::Message("recipe_id 不能为空".into()));
     }
     if input.rating != 1 && input.rating != -1 {
-        return Err(ReinError::Message("rating 应为 1（喜欢）或 -1（不喜欢）".into()));
+        return Err(ReinError::Message(
+            "rating 应为 1（喜欢）或 -1（不喜欢）".into(),
+        ));
     }
     let conn = state.db.lock().unwrap();
     conn.execute(

@@ -10,6 +10,7 @@ import { useTodoStore } from '@/stores/todo'
 import { recorder, startRecording, stopRecording } from '@/system/recorderRuntime'
 import { minToHHmm, todayStr } from '@/utils/date'
 import { resizeImageAsJpeg } from '@/utils/image'
+import { TODO_CATEGORIES } from '@/types'
 import type {
   RecRule,
   Todo,
@@ -50,6 +51,13 @@ const REC_FREQS: { value: 'none' | RecRule['freq']; label: string }[] = [
   { value: 'weekly', label: '每周' },
   { value: 'interval', label: '间隔 N 天' },
 ]
+
+/**
+ * 分类 chips 只取用户可选白名单（`TODO_CATEGORIES`），不能遍历 `CATEGORY_META`：
+ * 后者还含课表派生专用的 `class`，放出来会让用户手建一条「看起来像课程、但不会被同步管」
+ * 的待办。渲染层缺 `class` 会崩，所以两边用途不同，取值来源也得分开。
+ */
+const CATEGORY_OPTIONS = TODO_CATEGORIES.map((key) => ({ key, ...CATEGORY_META[key] }))
 
 const form = reactive({
   title: '',
@@ -504,11 +512,11 @@ onBeforeUnmount(() => {
         <span class="fb">分类</span>
         <div class="chips">
           <button
-            v-for="(m, key) in CATEGORY_META"
-            :key="key"
+            v-for="m in CATEGORY_OPTIONS"
+            :key="m.key"
             class="chip"
-            :class="{ on: form.category === key }"
-            @click="form.category = key"
+            :class="{ on: form.category === m.key }"
+            @click="form.category = m.key"
           >
             {{ m.label }}
           </button>

@@ -1,14 +1,22 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { Dumbbell, House, Sparkles, User } from 'lucide-vue-next'
+import { House, User } from 'lucide-vue-next'
 
-/** 底部标签导航 · 固定四个一级页面（与 router.ts 一一对应） */
-const items = [
-  { name: 'home', label: '主页', icon: House },
-  { name: 'sports', label: '运动', icon: Dumbbell },
-  { name: 'ai', label: 'AI', icon: Sparkles },
-  { name: 'me', label: '我', icon: User },
-] as const
+import { useFeaturesStore } from '@/stores/features'
+import type { NavContribution } from '@/plugins'
+
+/**
+ * 底部标签导航：内核页固定在两端（主页 / 我），中间条目来自插件层——
+ * 关掉「运动」模块，页签里就不会再有运动这一格。
+ */
+const CORE_TABS: NavContribution[] = [
+  { route: 'home', label: '主页', icon: House, surfaces: ['tabbar'], order: 0 },
+  { route: 'me', label: '我', icon: User, surfaces: ['tabbar'], order: 990 },
+]
+
+const features = useFeaturesStore()
+const items = computed(() => [...CORE_TABS, ...features.nav('tabbar')].sort((a, b) => a.order - b.order))
 
 const route = useRoute()
 </script>
@@ -17,12 +25,12 @@ const route = useRoute()
   <nav class="tabbar">
     <RouterLink
       v-for="it in items"
-      :key="it.name"
-      :to="{ name: it.name }"
+      :key="it.route"
+      :to="{ name: it.route }"
       class="tab"
-      :class="{ active: route.name === it.name }"
+      :class="{ active: route.name === it.route }"
     >
-      <component :is="it.icon" :size="22" :stroke-width="route.name === it.name ? 2.4 : 1.9" />
+      <component :is="it.icon" :size="22" :stroke-width="route.name === it.route ? 2.4 : 1.9" />
       <span>{{ it.label }}</span>
     </RouterLink>
   </nav>
