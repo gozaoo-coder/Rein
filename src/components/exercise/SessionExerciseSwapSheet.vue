@@ -3,14 +3,13 @@ import { computed, ref, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
-import { usePlanStore } from '@/stores/plan'
-import { exerciseSub } from '@/utils/plan'
-import type { PlanExercise, PlanExerciseKind } from '@/types'
+import { EXERCISE_CATEGORY_LABELS, EXERCISE_EQUIPMENT_LABELS } from '@/config/domain'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
+import type { PlanExerciseKind, SwapCandidate } from '@/types'
 
 /**
  * 沉浸模式 · 临时换动作选择面板（嵌套抽屉）。
- * 候选池 = 课程库里全部课程出现过的动作，按「课程 × 动作」不去重地列出
- * （同名动作可能来自不同课程，副标题标明出处，用户按上下文自行选择）。
+ * 候选池 = 动作库内同类型的全部动作（唯一真源，不再从各课程的动作条目里翻找）。
  * 只允许换成与被替换动作同类型（力量↔力量、计时↔计时）的动作：
  * 编排（组数/次数/休息/热身）沿用本课程原动作，换类型会让参数对不上。
  */
@@ -18,16 +17,16 @@ const props = defineProps<{
   open: boolean
   /** 只列出该类型的动作 */
   kind: PlanExerciseKind
-  /** 被替换动作的名称（同名候选无意义，直接排除） */
-  currentName: string
+  /** 被替换动作的动作库 id（同名候选无意义，直接排除） */
+  currentId: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  pick: [exercise: PlanExercise]
+  pick: [exercise: SwapCandidate]
 }>()
 
-const planStore = usePlanStore()
+const lib = useExerciseLibStore()
 const kw = ref('')
 
 watch(
@@ -35,33 +34,19 @@ watch(
   (open) => {
     if (!open) return
     kw.value = ''
-    void planStore.ensureLoaded()
+    void lib.ensureLoaded()
   },
 )
 
-interface Candidate {
-  key: string
-  ex: PlanExercise
-  planName: string
-}
+const candidates = computed(() =>
+  lib.list.filter((e) => e.kind === props.kind && !e.hidden && e.id !== props.currentId),
+)
 
-const candidates = computed<Candidate[]>(() => {
-  const out: Candidate[] = []
-  for (const p of planStore.plans) {
-    for (const ex of p.exercises) {
-      if (ex.kind !== props.kind) continue
-      if (ex.name === props.currentName) continue
-      out.push({ key: `${p.id}__${ex.id}`, ex, planName: p.name })
-    }
-  }
-  return out
-})
-
-const filtered = computed<Candidate[]>(() => {
+const filtered = computed(() => {
   const q = kw.value.trim().toLowerCase()
   if (!q) return candidates.value
   return candidates.value.filter(
-    (c) => c.ex.name.toLowerCase().includes(q) || c.planName.toLowerCase().includes(q),
+    (e) => e.name.toLowerCase().includes(q) || e.aliases.some((a) => a.toLowerCase().includes(q)),
   )
 })
 
@@ -70,28 +55,39 @@ const KIND_LABEL: Record<PlanExerciseKind, string> = {
   timed: '计时动作',
   cardio: '有氧动作',
 }
+
+function metaOf(e: (typeof candidates.value)[number]): string {
+  const bits = [EXERCISE_CATEGORY_LABELS[e.category]]
+  if (e.equipment) bits.push(EXERCISE_EQUIPMENT_LABELS[e.equipment])
+  if (e.sessions > 0) bits.push(`练过 ${e.sessions} 次`)
+  return bits.join(' · ')
+}
 </script>
 
 <template>
   <SheetModal :open="open" :title="`换成哪个${KIND_LABEL[kind]}？`" initial-snap="large" @close="emit('close')">
     <div class="searchrow row">
       <Search :size="15" />
-      <input v-model="kw" class="search" type="search" placeholder="搜索动作或课程" aria-label="搜索动作" />
+      <input v-model="kw" class="search" type="search" placeholder="搜索动作（动作库）" aria-label="搜索动作" />
     </div>
 
-    <p class="hint">只替换动作本体，组数 / 次数 / 组间休息沿用本课程当前动作。</p>
+    <p class="hint">候选来自动作库；只替换动作本体，组数 / 次数 / 组间休息沿用本课程当前动作。</p>
 
     <ul class="list">
-      <li v-for="c in filtered" :key="c.key">
-        <button type="button" class="cand col" @click="emit('pick', c.ex)">
-          <span class="cname">{{ c.ex.name }}</span>
-          <span class="cmeta t-3">{{ c.planName }} · {{ exerciseSub(c.ex) }}</span>
+      <li v-for="c in filtered" :key="c.id">
+        <button
+          type="button"
+          class="cand col"
+          @click="emit('pick', { exerciseId: c.id, name: c.name, tips: c.tips, muscles: c.muscles })"
+        >
+          <span class="cname">{{ c.name }}</span>
+          <span class="cmeta t-3">{{ metaOf(c) }}</span>
         </button>
       </li>
     </ul>
 
     <p v-if="filtered.length === 0" class="empty">
-      {{ candidates.length === 0 ? '课程库里还没有同类动作' : '没有匹配的动作' }}
+      {{ candidates.length === 0 ? '动作库里还没有同类动作' : '没有匹配的动作' }}
     </p>
   </SheetModal>
 </template>

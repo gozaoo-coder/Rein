@@ -32,6 +32,7 @@ npm run dev          # http://localhost:1420
 | 训练课（模板计划 → 做组/组间休息/计时动作 → 汇总保存；运动详情分析） | 运动页「今日训练」 | 纯前端状态机 `stores/session.ts`，保存写入 `modules/exercise` |
 | 健康方案（程序计算三档基线 → 日程级展开 → AI 复盘调参） | 「我 › 个人约束 › 健康方案」 | 持久化 `modules/program`；计算在前端 `utils/programEngine.ts`（食谱模板由 `scripts/gen-recipes.mjs` 生成） |
 | 食谱库 + AI 定制菜单（模板浏览 / 喜欢不喜欢 / 按目标生成一日菜单） | 主页「食谱库」链接 | 偏好存 `recipe_prefs`；AI 在前端 `ai/recipeGen.ts`（模型出结构、食物库实算营养） |
+| 软件更新（多源清单 / 双验签 / 断点续传下载 / Windows·Android 应用内安装） | 设置 → 关于 → 软件更新 | `modules/update`；服务端在 `server/`，发布工具在 `scripts/release/`（[docs/UPDATES.md](docs/UPDATES.md)） |
 
 ## 目录结构
 
@@ -41,6 +42,8 @@ npm run dev          # http://localhost:1420
 ├─ resources/workout_plans.json     # 内置课程种子（含器械 meta）
 ├─ resources/recipe_templates.json  # 食谱模板库（scripts/gen-recipes.mjs 从 foods.json 实算生成）
 ├─ scripts/                 # 工具脚本（图标生成、食谱模板生成等）
+│  └─ release/              # 更新发布工具链（keygen / publish / verify / e2e / deploy）
+├─ server/                  # Rein 在线服务（零依赖 Node：更新分发 + 预留模型网关）
 ├─ src/                     # Vue 前端
 │  ├─ components/{common,layout,diet,nutrition,todo,pomodoro,exercise}
 │  ├─ pages/                # 四个一级页面（主页/运动/AI/我）
@@ -51,13 +54,16 @@ npm run dev          # http://localhost:1420
 │  ├─ utils/  composables/
 │  └─ styles/               # 设计令牌 tokens.css + base.css
 └─ src-tauri/               # Rust 后端
-   └─ src/modules/          # 按领域分模块：diet/nutrition/todo/exercise/pomodoro/ai/seed
+   └─ src/modules/          # 按领域分模块：diet/nutrition/todo/exercise/pomodoro/ai/update…
 ```
 
 ## 文档
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 分层、数据流、IPC 契约、数据库 schema、扩展指南
 - [docs/STANDARDS.md](docs/STANDARDS.md) — 命名、代码风格、提交规范、质量门槛
+- [docs/UPDATES.md](docs/UPDATES.md) — 在线更新与 Rein 在线服务：信任链、发版流程、服务端接口、模型网关预留
+- [docs/SERVER-SECURITY.md](docs/SERVER-SECURITY.md) — 服务器安全审计：服务身份、提权面、已修与待办
+- [server/README.md](server/README.md) — 在线服务端的部署与运维
 
 ## 说明
 

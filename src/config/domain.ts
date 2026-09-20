@@ -5,7 +5,7 @@ import { Apple, Coffee, Utensils } from 'lucide-vue-next'
 
 import type { Goal, ActivityLevel, DailyTargets } from '@/types/nutrition'
 import type { MealLog, MealType } from '@/types/diet'
-import type { Intensity, WorkoutType } from '@/types/exercise'
+import type { Intensity, WorkoutType, ExerciseCategory, ExerciseEquipment, ExerciseKind } from '@/types/exercise'
 import type { TodoCategory } from '@/types/todo'
 
 export const MEAL_LABELS: Record<MealType, string> = {
@@ -63,6 +63,8 @@ export const CATEGORY_META: Record<TodoCategory, { label: string; colorVar: stri
   health: { label: '健康', colorVar: '--cat-health' },
   study: { label: '学习', colorVar: '--cat-study' },
   work: { label: '工作', colorVar: '--cat-work' },
+  // 课表派生行专用；不在 TODO_CATEGORIES 里，用户与 AI 都选不到它
+  class: { label: '课程', colorVar: '--cat-class' },
 }
 
 /**
@@ -116,6 +118,40 @@ export const EXPERIENCE_LABELS: Record<string, string> = {
   beginner: '新手',
   intermediate: '有基础',
   advanced: '进阶',
+}
+
+/* ---------------- 动作库展示元数据（action library：分类 / 器材 / 类型） ---------------- */
+
+/** 动作分类（动作库页分组与筛选的顺序即此数组顺序） */
+export const EXERCISE_CATEGORY_META: { key: ExerciseCategory; label: string }[] = [
+  { key: 'push', label: '推' },
+  { key: 'pull', label: '拉' },
+  { key: 'legs', label: '腿' },
+  { key: 'core', label: '核心' },
+  { key: 'cardio', label: '有氧' },
+  { key: 'mobility', label: '柔韧' },
+  { key: 'other', label: '其他' },
+]
+
+export const EXERCISE_CATEGORY_LABELS: Record<ExerciseCategory, string> = Object.fromEntries(
+  EXERCISE_CATEGORY_META.map((c) => [c.key, c.label]),
+) as Record<ExerciseCategory, string>
+
+export const EXERCISE_EQUIPMENT_LABELS: Record<ExerciseEquipment, string> = {
+  barbell: '杠铃',
+  dumbbell: '哑铃',
+  machine: '器械',
+  cable: '绳索',
+  bodyweight: '自重',
+  band: '弹力带',
+  cardio: '有氧器械',
+  other: '其他',
+}
+
+export const EXERCISE_KIND_LABELS: Record<ExerciseKind, string> = {
+  strength: '力量',
+  timed: '计时',
+  cardio: '有氧',
 }
 
 /** 可编辑目标字段元数据：标签 / 单位（计算器差异、AI 建议卡共用） */

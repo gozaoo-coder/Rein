@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import CanvasTimeline from '@/components/todo/CanvasTimeline.vue'
+import CourseDetailSheet from '@/components/campus/CourseDetailSheet.vue'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
 import { MEAL_LABELS, MEAL_META, mealKcal } from '@/config/domain'
 import { useScheduleUndo } from '@/composables/useScheduleUndo'
@@ -47,8 +48,20 @@ const meals = computed(() =>
 /* 编辑抽屉（点块 / 点池 chip） */
 const editorOpen = ref(false)
 const editorTarget = ref<Todo | null>(null)
+/* 课表派生行走只读详情，不进编辑器。按 id 派生：存对象快照则打卡后面板读到旧对象 */
+const courseOpen = ref(false)
+const courseId = ref<number | null>(null)
+const courseTarget = computed<Todo | null>(
+  () => todo.allTodos.find((t) => t.id === (courseId.value ?? -1)) ?? null,
+)
 
 function onSelect(t: Todo): void {
+  // 课表派生行是只读投影，点开只给看与打卡（见 CourseDetailSheet）
+  if (t.courseSessionId != null) {
+    courseId.value = t.id
+    courseOpen.value = true
+    return
+  }
   editorTarget.value = t
   editorOpen.value = true
 }
@@ -83,13 +96,15 @@ function onMove(t: Todo, startMin: number): void {
       </button>
     </div>
 
-    <!-- 紧凑画布：现在线 / 打勾 / 拖拽改位，与 /todos 画布同一组件同一数据 -->
+    <!-- 紧凑画布：现在线 / 打勾 / 拖拽改位，与 /todos 画布同一组件同一数据。
+         卡片右下角编辑钮与点块同一入口（课程派生行转只读详情抽屉）。 -->
     <div class="cwrap">
       <CanvasTimeline
         :date="date"
         :todos="scheduled"
         compact
         @select="onSelect"
+        @edit="onSelect"
         @toggle="onToggle"
         @move="onMove"
       />
@@ -112,6 +127,12 @@ function onMove(t: Todo, startMin: number): void {
     </button>
 
     <TodoEditorSheet :open="editorOpen" :todo="editorTarget" :date="date" @close="editorOpen = false" />
+    <CourseDetailSheet
+      :open="courseOpen"
+      :todo="courseTarget"
+      @close="courseOpen = false"
+      @toggle="onToggle"
+    />
   </section>
 </template>
 

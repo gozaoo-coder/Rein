@@ -1,6 +1,9 @@
 /**
  * 时间轴块布局（纯函数）：日画布 / 周甘特共用。
  * - 按分钟区间贪心分列（≤2 列并排；≥3 列收成一个叠层簇）；
+ * - 并排的门槛还能按**实际像素宽度**收严：列太窄时并排会把每块压到放不下一个字
+ *   （周甘特一列只有 80px，两列并排 = 每块 37px，标题区不足 11px，只能一字一行），
+ *   这时退化成叠层卡 —— 卡面独占整列，标题才读得出来。不传 `colWidth` 就只看列数（日画布行为不变）。
  * - 输入仅依赖分钟值，不依赖像素 → 缩放变化无需重算，坐标换算留给视图层。
  */
 import type { Todo } from '@/types'
@@ -32,11 +35,30 @@ export interface DayLayout {
   stacks: StackGroup[]
 }
 
+/** 布局的宽度策略（可省略；省略 = 只按列数决定并排 / 叠层） */
+export interface LayoutOptions {
+  /** 单列可用宽度（px） */
+  colWidth?: number
+  /** 并排时每块的最小可读宽度（px）；`colWidth / 列数` 低于它就不并排 */
+  minBlockPx?: number
+}
+
+/**
+ * 分完列后每块还放得下字吗？放不下就别并排。
+ * 只传了 `colWidth` 或只传了 `minBlockPx` 时视为「没给策略」，不拦（避免半套参数悄悄改行为）。
+ */
+function tooNarrowToSplit(cols: number, opts: LayoutOptions): boolean {
+  const { colWidth, minBlockPx } = opts
+  if (!colWidth || !minBlockPx) return false
+  return colWidth / cols < minBlockPx
+}
+
 /**
  * 单日重叠布局：按开始时间排序 → 连通簇 → 簇内贪心分配最左可用列。
  * ≤2 列：块并排（col/cols 定位）；≥3 列：整簇收成叠层卡。
+ * 给了 `colWidth` + `minBlockPx` 时，并排还要过一道宽度关：分完列后每块放不下字就同样收成叠层卡。
  */
-export function layoutDayBlocks(todos: Todo[]): DayLayout {
+export function layoutDayBlocks(todos: Todo[], opts: LayoutOptions = {}): DayLayout {
   const items = [...todos]
     .filter((t) => t.startMin != null)
     .sort((a, b) => (a.startMin ?? 0) - (b.startMin ?? 0) || a.id - b.id)
@@ -60,7 +82,7 @@ export function layoutDayBlocks(todos: Todo[]): DayLayout {
       }
       assigned.push({ t: c.t, col })
     }
-    if (colEnds.length <= 2) {
+    if (colEnds.length <= 2 && !tooNarrowToSplit(colEnds.length, opts)) {
       for (const a of assigned) {
         blocks.push({
           todo: a.t,

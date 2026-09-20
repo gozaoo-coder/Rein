@@ -36,7 +36,7 @@ const quickOpen = ref(false)
     <!-- 快捷入口 -->
     <ul class="quick">
       <li>
-        <QuickTile label="记饮食" icon-bg="var(--accent-soft)" icon-color="var(--accent)" @click="quickOpen = true">
+        <QuickTile label="记饮食" icon-bg="color-mix(in srgb, var(--c-intake) 12%, transparent)" icon-color="var(--c-intake)" @click="quickOpen = true">
           <Camera :size="20" />
         </QuickTile>
       </li>

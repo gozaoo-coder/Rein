@@ -20,7 +20,6 @@ use super::models::VoiceConfig;
 use crate::error::{ReinError, Result};
 
 pub const ASR_EVENT: &str = "voice://asr";
-pub const TTS_EVENT: &str = "voice://tts";
 
 /// 音频采样字节率：16000 samples/s × 2 bytes
 const PCM_BYTES_PER_SEC: usize = 32_000;

@@ -78,6 +78,10 @@ pub struct Todo {
     /// 附件/标记；NULL/空 = 无。重复实例不继承
     #[serde(default)]
     pub attachments: Option<Vec<TodoAttachment>>,
+    /// 来源校园课表时段 id（campus_sessions.id）；NULL = 非课表派生行。
+    /// 非空即「派生只读投影」：update 不写此列，用户不能在时间线上改删。
+    #[serde(default)]
+    pub course_session_id: Option<i64>,
 }
 
 /// AI 分页查询结果（`query_todos` 返回）

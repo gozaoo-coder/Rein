@@ -225,6 +225,14 @@ async function main() {
         return chips.some(t => t.includes('上次 62.5kg × 8')) && chips.some(t => t.includes('计划 60kg'))
       })()`,
     ))
+    // 动作库建议：平均状态（近 3 次 e1RM 基线）× 今日状态（恢复/容量/趋势/自评）
+    ok('S5b2 今日建议 chip 与依据行齐全', await evalJS(
+      `(() => {
+        const chip = [...document.querySelectorAll('.weightcard .wchip.primary')].find(c => c.textContent.includes('建议'))
+        const why = document.querySelector('.whyline')?.textContent ?? ''
+        return !!chip && chip.textContent.includes('62.5kg') && why.includes('上次 62.5kg × 8')
+      })()`,
+    ))
     await evalJS(`[...document.querySelectorAll('.weightcard .wbtn')].find(b => b.textContent.includes('＋'))?.click()`)
     await sleep(300)
     ok('S5c ＋2.5kg 生效', await evalJS(
@@ -281,13 +289,17 @@ async function main() {
       const { invoke } = await import('/src/services/transport.ts')
       const today = new Date()
       const ds = \`\${today.getFullYear()}-\${String(today.getMonth() + 1).padStart(2, '0')}-\${String(today.getDate()).padStart(2, '0')}\`
-      const rows = await invoke('strength_history', { exerciseName: '杠铃卧推' })
-      return { today: rows.filter(r => r.date === ds), total: rows.length }
+      // 曲线按动作库 id 聚合（0025）；传动作名同样命中，两条路径都要能取到
+      const rows = await invoke('strength_history', { exerciseId: 'barbell-bench-press' })
+      const byName = await invoke('strength_history', { exerciseId: '杠铃卧推' })
+      return { today: rows.filter(r => r.date === ds), total: rows.length, nameRows: byName.length }
     })()`)
     ok('S8a 今日逐组记录落库（2 热身 + 1 正式）',
       hist.today.length === 3 && hist.today.filter((r) => r.warmup).length === 2 &&
       hist.today.some((r) => !r.warmup && r.weightKg === 62.5 && r.setNo === 1),
       JSON.stringify(hist.today))
+    ok('S8a2 按库 id 与按名查询结果一致（4 演示×5 + 今日 3 行）',
+      hist.total === 23 && hist.nameRows === 23, `id=${hist.total} name=${hist.nameRows}`)
 
     ok('S8b 力量进步卡曲线点数 5（4 演示 + 今日）', await evalJS(
       `(() => {

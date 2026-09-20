@@ -4,15 +4,16 @@ import { computed, ref, watch } from 'vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
 import WeightCurve from '@/components/exercise/WeightCurve.vue'
-import { resolveActivation } from '@/config/muscles'
 import { sessionService } from '@/services/sessionService'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { fmtDateCn } from '@/utils/date'
 import { aggregateStrengthDays, fmtKg, type StrengthDay } from '@/utils/strength'
 import type { PlanExercise } from '@/types'
 import { exerciseBadge, exerciseSub } from '@/utils/plan'
 
 /** 动作详情抽屉：课程详情页点击动作唤起。
- *  内容 = 动作名与参数摘要 + 激活肌群图 + 训练参数格 + 重量变化曲线（有记录才显示）+ 动作要点。 */
+ *  内容 = 动作名与参数摘要 + 激活肌群图 + 训练参数格 + 重量变化曲线（有记录才显示）+ 动作要点。
+ *  名称/肌群取动作库（改名跟随），曲线按动作库 id 查询。 */
 const props = defineProps<{
   open: boolean
   exercise: PlanExercise | null
@@ -20,8 +21,13 @@ const props = defineProps<{
 
 defineEmits<{ close: [] }>()
 
-/** 激活肌群：显式 muscles 优先（AI/种子提供），否则按动作名关键词识别 */
-const activation = computed(() => props.exercise?.muscles ?? resolveActivation(props.exercise?.name))
+const lib = useExerciseLibStore()
+
+/** 展示名：库内名优先（内置动作随种子更新），缺失回落课程条目快照 */
+const displayName = computed(() => (props.exercise ? lib.resolveName(props.exercise) : ''))
+
+/** 激活肌群：库内显式数据优先，其次课程条目，最后按名关键词识别 */
+const activation = computed(() => (props.exercise ? lib.musclesOf(props.exercise) : null))
 
 /* ---------- 重量曲线：打开且动作有力量记录时加载 ---------- */
 
@@ -29,13 +35,14 @@ const curveDays = ref<StrengthDay[]>([])
 const curveLoadedFor = ref('')
 
 watch(
-  () => [props.open, props.exercise?.name] as const,
-  ([open, name]) => {
-    if (!open || !name || curveLoadedFor.value === name) return
-    curveLoadedFor.value = name
+  () => [props.open, props.exercise?.exerciseId, props.exercise?.name] as const,
+  ([open, exerciseId, name]) => {
+    const key = exerciseId || name || ''
+    if (!open || !key || curveLoadedFor.value === key) return
+    curveLoadedFor.value = key
     curveDays.value = []
     void sessionService
-      .strengthHistory(name)
+      .strengthHistory(key)
       .then((rows) => {
         curveDays.value = aggregateStrengthDays(rows).slice(-10)
       })
@@ -87,7 +94,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   <SheetModal :open="open" title="动作详情" @close="$emit('close')">
     <template v-if="exercise">
       <div class="titlerow row">
-        <h3 class="name">{{ exercise.name }}</h3>
+        <h3 class="name">{{ displayName }}</h3>
         <span v-if="exerciseBadge(exercise)" class="badge">{{ exerciseBadge(exercise) }}</span>
       </div>
       <p class="sub">{{ exerciseSub(exercise) }}</p>
@@ -98,7 +105,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
           <MuscleMap :activation="activation" />
         </div>
       </template>
-      <p v-else class="unknown">暂无「{{ exercise.name }}」的肌群数据</p>
+      <p v-else class="unknown">暂无「{{ displayName }}」的肌群数据</p>
 
       <p class="sec">训练参数</p>
       <div class="stats">

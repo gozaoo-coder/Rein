@@ -8,11 +8,19 @@ use super::models::{
     KbSettings, KbSettingsInput, MODE_CLOUD, MODE_KEYWORD, MODE_LOCAL, SOURCE_TYPES,
 };
 
-const COLS: &str = "embedding_mode, cloud_base_url, cloud_api_key, cloud_model, cloud_dim, sources_enabled, auto_memory, last_error, updated_at";
+const COLS: &str = "embedding_mode, cloud_base_url, cloud_api_key, cloud_model, cloud_dim, sources_enabled, \
+                     auto_memory, auto_consolidate, last_consolidate_at, last_error, updated_at";
 
 fn tail(secret: Option<&str>) -> Option<String> {
     let s = secret.filter(|s| !s.is_empty())?;
-    let last4: String = s.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let last4: String = s
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     if s.chars().count() <= 4 {
         Some("****".to_string())
     } else {
@@ -22,8 +30,8 @@ fn tail(secret: Option<&str>) -> Option<String> {
 
 /// 读取设置。apiKey 只回尾四位——与 AI 模型工具的做法一致，密钥不落前端明文。
 pub fn get(conn: &Connection) -> Result<KbSettings> {
-    let (mode, base_url, api_key, model, dim, sources, auto_memory, last_error, updated_at) =
-        conn.query_row(
+    let (mode, base_url, api_key, model, dim, sources, auto_memory, auto_consolidate, last_consolidate_at, last_error, updated_at) = conn
+        .query_row(
             &format!("SELECT {COLS} FROM kb_settings WHERE id = 1"),
             [],
             |r| {
@@ -35,8 +43,10 @@ pub fn get(conn: &Connection) -> Result<KbSettings> {
                     r.get::<_, Option<i64>>(4)?,
                     r.get::<_, String>(5)?,
                     r.get::<_, i64>(6)?,
-                    r.get::<_, Option<String>>(7)?,
-                    r.get::<_, String>(8)?,
+                    r.get::<_, i64>(7)?,
+                    r.get::<_, Option<String>>(8)?,
+                    r.get::<_, Option<String>>(9)?,
+                    r.get::<_, String>(10)?,
                 ))
             },
         )?;
@@ -49,6 +59,8 @@ pub fn get(conn: &Connection) -> Result<KbSettings> {
         cloud_dim: dim,
         sources_enabled: serde_json::from_str(&sources).unwrap_or(serde_json::json!({})),
         auto_memory: auto_memory != 0,
+        auto_consolidate: auto_consolidate != 0,
+        last_consolidate_at,
         last_error,
         updated_at,
     })
@@ -77,7 +89,10 @@ pub fn update(conn: &Connection, input: &KbSettingsInput) -> Result<KbSettings> 
         // 传空串 = 清除；不传 = 保留原值（前端拿不到明文，无法回传）
         let v = v.trim().to_string();
         if v.is_empty() {
-            conn.execute("UPDATE kb_settings SET cloud_api_key = NULL WHERE id = 1", [])?;
+            conn.execute(
+                "UPDATE kb_settings SET cloud_api_key = NULL WHERE id = 1",
+                [],
+            )?;
         } else if v != "****" {
             conn.execute(
                 "UPDATE kb_settings SET cloud_api_key = ?1 WHERE id = 1",
@@ -106,6 +121,12 @@ pub fn update(conn: &Connection, input: &KbSettingsInput) -> Result<KbSettings> 
             [if v { 1 } else { 0 }],
         )?;
     }
+    if let Some(v) = input.auto_consolidate {
+        conn.execute(
+            "UPDATE kb_settings SET auto_consolidate = ?1 WHERE id = 1",
+            [if v { 1 } else { 0 }],
+        )?;
+    }
     conn.execute(
         "UPDATE kb_settings SET updated_at = datetime('now') WHERE id = 1",
         [],
@@ -114,19 +135,18 @@ pub fn update(conn: &Connection, input: &KbSettingsInput) -> Result<KbSettings> 
 }
 
 pub fn set_last_error(conn: &Connection, msg: Option<&str>) -> Result<()> {
-    conn.execute(
-        "UPDATE kb_settings SET last_error = ?1 WHERE id = 1",
-        [msg],
-    )?;
+    conn.execute("UPDATE kb_settings SET last_error = ?1 WHERE id = 1", [msg])?;
     Ok(())
 }
 
 /// 取当前启用的来源类别。缺省（JSON 里没有该键）视为启用。
 pub fn enabled_sources(conn: &Connection) -> Result<Vec<String>> {
     let raw: Option<String> = conn
-        .query_row("SELECT sources_enabled FROM kb_settings WHERE id = 1", [], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT sources_enabled FROM kb_settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
         .optional()?;
     let map: serde_json::Value = raw
         .as_deref()
@@ -135,17 +155,16 @@ pub fn enabled_sources(conn: &Connection) -> Result<Vec<String>> {
 
     Ok(SOURCE_TYPES
         .iter()
-        .filter(|t| {
-            map.get(**t)
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true)
-        })
+        .filter(|t| map.get(**t).and_then(|v| v.as_bool()).unwrap_or(true))
         .map(|t| t.to_string())
         .collect())
 }
 
+/// 云端嵌入配置的完整内容（含明文密钥），只给 Rust 侧的 embedder 用，绝不 Serialize 出进程。
+pub type CloudConfig = (String, String, String, Option<i64>);
+
 /// 云端嵌入的完整配置（含明文密钥），只给 Rust 侧的 embedder 用。
-pub fn cloud_config(conn: &Connection) -> Result<Option<(String, String, String, Option<i64>)>> {
+pub fn cloud_config(conn: &Connection) -> Result<Option<CloudConfig>> {
     let row = conn
         .query_row(
             "SELECT cloud_base_url, cloud_api_key, cloud_model, cloud_dim FROM kb_settings WHERE id = 1",
@@ -227,7 +246,10 @@ mod tests {
         .unwrap();
         let s = get(&conn).unwrap();
         assert_eq!(s.embedding_mode, MODE_CLOUD);
-        assert_eq!(s.cloud_base_url.as_deref(), Some("https://api.example.com/v1"));
+        assert_eq!(
+            s.cloud_base_url.as_deref(),
+            Some("https://api.example.com/v1")
+        );
         assert_eq!(s.cloud_model.as_deref(), Some("bge-m3"));
         assert!(!s.auto_memory);
     }
@@ -273,7 +295,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(cloud_config(&conn).unwrap().is_none(), "缺 key/model 时不该算配置完整");
+        assert!(
+            cloud_config(&conn).unwrap().is_none(),
+            "缺 key/model 时不该算配置完整"
+        );
         update(
             &conn,
             &KbSettingsInput {

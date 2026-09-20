@@ -5,6 +5,7 @@ import { Plus } from 'lucide-vue-next'
 import { CATEGORY_META } from '@/config/domain'
 import { minToHHmm, nowMin, todayStr, weekDates } from '@/utils/date'
 import { durationOf, layoutDayBlocks, titleLinesFor } from '@/utils/timelineLayout'
+import type { StackGroup } from '@/utils/timelineLayout'
 import type { Todo } from '@/types'
 
 /**
@@ -40,6 +41,11 @@ const MAX_PX = 72
 /** 块内标题行高与纵向内边距（须与样式一致） */
 const TT_LINE_H = 16
 const CARD_PAD_Y = 8
+/**
+ * 并排后每块的最小可读宽度（px）：内边距 12 + 勾选钮与间距 17 + 3 个汉字 33 ≈ 62。
+ * 低于它就宁可收成叠层卡 —— 卡面独占整列（~50px 标题区，4 字/行），比并排出两条「一字一行」强。
+ */
+const MIN_SPLIT_BLOCK_PX = 62
 
 const dates = weekDates(todayStr())
 const today = todayStr()
@@ -67,6 +73,12 @@ function labelMasked(min: number): boolean {
 
 /* ---------- 每日布局 ---------- */
 
+/** 叠层簇 + 视图态（key 作 v-for 键与置顶表索引，front 是当前露在卡面上的那条） */
+interface DayStack extends StackGroup {
+  key: string
+  front: Todo
+}
+
 interface DayColumn {
   date: string
   weekday: string
@@ -74,7 +86,7 @@ interface DayColumn {
   isToday: boolean
   isPast: boolean
   blocks: ReturnType<typeof layoutDayBlocks>['blocks']
-  stacks: ReturnType<typeof layoutDayBlocks>['stacks']
+  stacks: DayStack[]
   done: number
   total: number
 }
@@ -89,7 +101,11 @@ const columns = computed<DayColumn[]>(() => {
   }
   return dates.map((date, i) => {
     const day = byDate.get(date) ?? []
-    const { blocks, stacks } = layoutDayBlocks(day)
+    // 列宽不足时并排会压成「一字一行」，交给叠层卡（见 MIN_SPLIT_BLOCK_PX）
+    const { blocks, stacks } = layoutDayBlocks(day, {
+      colWidth: colW.value || undefined,
+      minBlockPx: MIN_SPLIT_BLOCK_PX,
+    })
     return {
       date,
       weekday: ['一', '二', '三', '四', '五', '六', '日'][i]!,
@@ -97,12 +113,33 @@ const columns = computed<DayColumn[]>(() => {
       isToday: date === today,
       isPast: date < today,
       blocks,
-      stacks,
+      stacks: stacks.map((s) => ({ ...s, key: stackKeyOf(s), front: frontOf(s) })),
       done: day.filter((t) => t.status === 'done').length,
       total: day.length,
     }
   })
 })
+
+/**
+ * 叠层簇的卡面项：点「+N」在簇内轮换（会话内状态，与日画布的 `frontByStack` 同一思路）。
+ * 周列只有 ~80px，塞不下日画布那种展开清单，就地轮换是唯一还能让簇内每条都够得着的办法。
+ */
+const frontByStack = ref(new Map<string, number>())
+
+const stackKeyOf = (s: StackGroup): string => `${s.items[0]!.id}-${s.items.length}`
+
+function frontOf(s: StackGroup): Todo {
+  const pinnedId = frontByStack.value.get(stackKeyOf(s))
+  const pinned = pinnedId != null ? s.items.find((t) => t.id === pinnedId) : undefined
+  if (pinned && pinned.status !== 'done') return pinned
+  return s.items.find((t) => t.status !== 'done') ?? s.items[0]!
+}
+
+function cycleStack(s: StackGroup): void {
+  const cur = frontOf(s)
+  const i = s.items.findIndex((t) => t.id === cur.id)
+  frontByStack.value.set(stackKeyOf(s), s.items[(i + 1) % s.items.length]!.id)
+}
 
 function blkStyle(b: { todo: Todo; startMin: number; durationMin: number; col: number; cols: number }): Record<string, string> {
   return {
@@ -113,6 +150,21 @@ function blkStyle(b: { todo: Todo; startMin: number; durationMin: number; col: n
     '--blk-cat': `var(${CATEGORY_META[b.todo.category].colorVar})`,
     '--blk-lines': `${titleLinesFor(Math.max(15, b.durationMin * ppm.value), TT_LINE_H, CARD_PAD_Y)}`,
   }
+}
+
+/**
+ * 叠层卡几何：卡面独占整列（`cols = 1`），其余同块。
+ * 必须走同一套坐标 —— `.blk` 是 absolute 且没有偏移量，不绑的话卡片会贴在列首（00:00）而不是真实时段。
+ */
+function stkStyle(s: { items: Todo[]; startMin: number }): Record<string, string> {
+  const first = s.items[0]!
+  return blkStyle({
+    todo: first,
+    startMin: s.startMin,
+    durationMin: durationOf(first),
+    col: 0,
+    cols: 1,
+  })
 }
 
 /* ---------- 底部池：按日分组的无时间待办 ---------- */
@@ -183,6 +235,19 @@ let downY = 0
 const gridEl = ref<HTMLElement | null>(null)
 const scroller = ref<HTMLElement | null>(null)
 
+/**
+ * 单列实际宽度（px）：并排与否由它决定，所以要在挂载/窗口变化后量一次。
+ * 周甘特一列只有 ~80px，两列并排后每块 37px，扣掉内边距(12) 与勾选钮(12+5) 只剩不到 11px，
+ * 连一个汉字都放不下（`word-break` 会把它拆成一行一个字）。布局层据此退化成叠层卡。
+ */
+const colW = ref(0)
+let gridRo: ResizeObserver | null = null
+
+function measureCol(): void {
+  const g = gridEl.value
+  if (g) colW.value = g.clientWidth / 7
+}
+
 /** 指针位置 → (dayIndex, minute)，越界钳制 */
 function pointToGrid(e: PointerEvent): { day: number; min: number } {
   const g = gridEl.value
@@ -219,6 +284,9 @@ function onBlockDown(e: PointerEvent, t: Todo): void {
   const pos = pointToGrid(e)
   const day = dates.indexOf(t.date ?? today)
   const base = day === -1 ? pos.day : day
+  // 课表派生行是只读投影（见 types/todo.ts 的 courseSessionId）：只关掉长按武装，
+  // 点选与抛滚照旧，避免用户把它拖到别的时间上造成「看起来改了其实没改」。
+  const readonly = t.courseSessionId != null
   drag.value = {
     todo: t,
     grabDay: pos.day - base,
@@ -239,7 +307,7 @@ function onBlockDown(e: PointerEvent, t: Todo): void {
   clearPress()
   pressTimer = window.setTimeout(() => {
     pressTimer = null
-    if (!drag.value) return
+    if (!drag.value || readonly) return
     drag.value.armed = true
     try { navigator.vibrate?.(8) } catch { /* 设备不支持则无感 */ }
   }, LONGPRESS_MS)
@@ -294,12 +362,19 @@ function quickSchedule(t: Todo): void {
 
 onMounted(() => {
   scrollToAnchor()
+  measureCol()
+  if (gridEl.value && typeof ResizeObserver !== 'undefined') {
+    gridRo = new ResizeObserver(measureCol)
+    gridRo.observe(gridEl.value)
+  }
   nowTimer = window.setInterval(() => {
     nowMin_.value = nowMin()
   }, 30_000)
 })
 
 onBeforeUnmount(() => {
+  gridRo?.disconnect()
+  gridRo = null
   if (nowTimer != null) window.clearInterval(nowTimer)
   clearPress()
   drag.value = null
@@ -389,13 +464,15 @@ const HHMM = minToHHmm
               <span v-if="b.durationMin * ppm >= 30" class="bmin num" :class="{ live: isDragging(b.todo.id) }">{{ HHMM(liveGeom(b.todo, dates.indexOf(c.date), b.startMin).min) }}</span>
             </div>
 
-            <!-- 叠层簇：≥3 条同时段 -->
+            <!-- 叠层簇：≥3 条同时段，或列宽放不下并排（见 MIN_SPLIT_BLOCK_PX） -->
             <div
               v-for="s in c.stacks"
-              :key="`s-${s.items[0]?.id ?? 0}-${s.items.length}`"
+              :key="`s-${s.key}`"
               class="blk stk"
+              :class="{ dragging: isDragging(s.front.id) }"
+              :style="stkStyle(s)"
               :data-title="`${s.items.length} 项同时段`"
-              @pointerdown="onBlockDown($event, s.items[0]!)"
+              @pointerdown="onBlockDown($event, s.front)"
               @pointermove="onBlockMove"
               @pointerup="onBlockUp"
               @pointercancel="onBlockCancel"
@@ -404,13 +481,25 @@ const HHMM = minToHHmm
               <div class="card face">
                 <button
                   class="ck"
-                  :aria-label="s.items[0]!.status === 'done' ? '标记未完成' : '标记完成'"
+                  :aria-label="s.front.status === 'done' ? '标记未完成' : '标记完成'"
                   @pointerdown.stop
-                  @click.stop="emit('toggle', s.items[0]!)"
+                  @click.stop="emit('toggle', s.front)"
                 />
-                <span class="tt">{{ s.items[0]!.title }}</span>
-                <span class="more num">+{{ s.items.length - 1 }}</span>
+                <span class="tt">{{ s.front.title }}</span>
               </div>
+              <!-- 余量徽标放块下方标签行：卡面标题在窄列里每一像素都金贵，不能被它吃掉；
+                   点它在簇内轮换卡面，簇里每条都还够得着 -->
+              <span class="bmin num">
+                <template v-if="durationOf(s.front) * ppm >= 30">{{ HHMM(liveGeom(s.front, ci, s.startMin).min) }}</template>
+                <button
+                  class="more"
+                  :aria-label="`切换到同时段的下一项（共 ${s.items.length} 项）`"
+                  @pointerdown.stop
+                  @click.stop="cycleStack(s)"
+                >
+                  +{{ s.items.length - 1 }}
+                </button>
+              </span>
             </div>
           </div>
 
@@ -731,10 +820,14 @@ const HHMM = minToHHmm
   position: absolute;
   left: 2px;
   top: calc(100% + 1px);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 9px;
   line-height: 1;
   color: var(--text-3);
   pointer-events: none;
+  white-space: nowrap;
 }
 
 .bmin.live {
@@ -746,16 +839,24 @@ const HHMM = minToHHmm
   background: color-mix(in srgb, var(--text-1) 7%, var(--surface));
 }
 
+/* 叠层卡余量：跟时间标签同一行（卡面标题在窄列里不能被它挤掉）；点它在簇内轮换卡面 */
 .more {
-  margin-left: auto;
   flex: none;
-  align-self: center;
+  /* 父级 .bmin 整体禁指针（时间标签不该拦截拖拽），只有这枚徽标要可点 */
+  pointer-events: auto;
+  cursor: pointer;
+  border: 0;
   padding: 1px 5px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--text-1) 10%, transparent);
-  font-size: 9px;
+  font: inherit;
   font-weight: 700;
   color: var(--text-2);
+}
+
+.more:hover {
+  background: color-mix(in srgb, var(--text-1) 18%, transparent);
+  color: var(--text-1);
 }
 
 /* 拖拽影子 */

@@ -67,7 +67,7 @@ function pick(value: string): void {
 
 .card-wrap {
   position: fixed;
-  bottom: calc(var(--tabbar-h) / 2 + 12px);
+  bottom: calc(var(--dock-top) + 12px);
   left: 50%;
   transform: translateX(-50%);
   width: calc(100% - 24px);

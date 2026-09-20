@@ -14,6 +14,7 @@ import { MEAL_LABELS, MEAL_META, MEAL_ORDER, mealKcal } from '@/config/domain'
 import { categoryOf, fmtCents } from '@/config/ledger'
 import { useDietStore } from '@/stores/diet'
 import { useExerciseStore } from '@/stores/exercise'
+import { useFeaturesStore } from '@/stores/features'
 import { useLedgerStore } from '@/stores/ledger'
 import { useNutritionStore } from '@/stores/nutrition'
 import { todayStr } from '@/utils/date'
@@ -26,6 +27,10 @@ const exercise = useExerciseStore()
 const ledger = useLedgerStore()
 const diet = useDietStore()
 const nutrition = useNutritionStore()
+const features = useFeaturesStore()
+
+/** 记运动入口与「本周运动」概览都属运动插件：模块关掉时两块一起消失，布局改由 CSS 收口 */
+const sportsOn = computed(() => features.isEnabled('sports'))
 
 const quickOpen = ref(false)
 const workoutOpen = ref(false)
@@ -62,7 +67,7 @@ const mealChips = computed(() =>
 </script>
 
 <template>
-  <div class="bento">
+  <div class="bento" :class="{ 'no-sports': !sportsOn }">
     <!-- 能量与营养 -->
     <section class="t-hero"><EnergySummary link-to="/nutrition" /></section>
 
@@ -88,13 +93,13 @@ const mealChips = computed(() =>
 
     <!-- 快捷入口 -->
     <section class="t-qa">
-      <QuickTile label="记饮食" icon-bg="var(--accent-soft)" icon-color="var(--accent)" @click="quickOpen = true">
+      <QuickTile label="记饮食" icon-bg="color-mix(in srgb, var(--c-intake) 12%, transparent)" icon-color="var(--c-intake)" @click="quickOpen = true">
         <Camera :size="20" />
       </QuickTile>
-      <QuickTile label="记运动" icon-bg="var(--c-exercise-soft)" icon-color="var(--c-exercise-deep)" @click="workoutOpen = true">
+      <QuickTile v-if="sportsOn" label="记运动" icon-bg="var(--c-exercise-soft)" icon-color="var(--c-exercise-deep)" @click="workoutOpen = true">
         <Dumbbell :size="20" />
       </QuickTile>
-      <QuickTile label="专注" icon-bg="color-mix(in srgb, var(--c-intake) 12%, transparent)" icon-color="var(--c-intake)" @click="router.push({ name: 'focus' })">
+      <QuickTile label="专注" icon-bg="color-mix(in srgb, var(--cat-work) 12%, transparent)" icon-color="var(--cat-work)" @click="router.push({ name: 'focus' })">
         <Timer :size="20" />
       </QuickTile>
       <QuickTile label="AI 助手" icon-bg="color-mix(in srgb, var(--cat-study) 14%, transparent)" icon-color="var(--cat-study)" @click="router.push({ name: 'ai' })">
@@ -136,7 +141,7 @@ const mealChips = computed(() =>
     </section>
 
     <!-- 运动概览 -->
-    <section class="t-wk">
+    <section v-if="sportsOn" class="t-wk">
       <div
         class="pressable inner"
         role="button"
@@ -210,6 +215,20 @@ const mealChips = computed(() =>
 .t-todo { grid-area: todo; min-width: 0; }
 .t-side { grid-area: side; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .t-qa { grid-area: qa; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+/* 运动模块关闭：抽掉 wk 区、空出的列并入记账卡，快捷入口 4 列收成 3 列（不留空洞）。
+   行数必须与原布局一致（四行，含末行 diet）——少写一行会让未声明区域变成隐式轨道。 */
+.bento.no-sports {
+  grid-template-areas:
+    'hero hero hero hero todo todo todo todo side side side side'
+    'hero hero hero hero todo todo todo todo side side side side'
+    'qa qa qa qa led led led led led led led led'
+    'diet diet diet diet diet diet diet diet diet diet diet diet';
+}
+
+.bento.no-sports .t-qa {
+  grid-template-columns: repeat(3, 1fr);
+}
 .t-led {
   grid-area: led;
   display: flex;

@@ -1,22 +1,42 @@
-/** AI 模型配置：列表、CRUD、默认项与能力探测（探测由 src/ai/probe.ts 执行）。 */
+/** AI 模型配置：列表、CRUD、默认项与能力探测（探测由 src/ai/probe.ts 执行）。
+ *  本机成本账本（`ai_usage`）也在这里汇总：模型卡片要显示各自花了多少。 */
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { aiService } from '@/services/aiService'
-import type { AiModel, AiModelInput } from '@/types'
+import type { AiModel, AiModelInput, AiUsageSummary, AiUsageTotals } from '@/types'
 
 export const useModelsStore = defineStore('ai-models', () => {
   const models = ref<AiModel[]>([])
   const loaded = ref(false)
   /** 正在探测的模型 id 集合（键值便于代理追踪） */
   const probing = ref<Record<number, boolean>>({})
+  /** 本机账本汇总（最近 30 天） */
+  const usage = ref<AiUsageSummary | null>(null)
 
   async function load(force = false): Promise<void> {
     if (loaded.value && !force) return
     models.value = await aiService.aiModelList()
     loaded.value = true
   }
+
+  /** 拉本机账本：模型列表加载后调用，失败不影响列表 */
+  async function loadUsage(days = 30): Promise<void> {
+    usage.value = await aiService.aiUsageSummary(days).catch(() => null)
+  }
+
+  /** 某个模型的本机累计花费（按模型名 + 模型 ID 聚合，删了模型也留账） */
+  function usageOf(m: AiModel): AiUsageTotals | null {
+    if (!usage.value) return null
+    return usage.value.byModel.find((x) => x.modelId === m.modelId && x.modelName === m.name) ?? null
+  }
+
+  /** 本机累计总花费（纳元） */
+  const totalCostNano = computed(() => usage.value?.total.costTotalNano ?? 0)
+  /** 本机累计模型费 / 流量费（分开看，才知道流量有没有在花钱） */
+  const totalModelNano = computed(() => usage.value?.total.costModelNano ?? 0)
+  const totalTrafficNano = computed(() => usage.value?.total.costTrafficNano ?? 0)
 
   /** 默认模型；无默认时首条兜底（与 Rust 的删除提升逻辑一致） */
   function defaultModel(): AiModel | null {
@@ -84,7 +104,13 @@ export const useModelsStore = defineStore('ai-models', () => {
     models,
     loaded,
     probing,
+    usage,
+    totalCostNano,
+    totalModelNano,
+    totalTrafficNano,
     load,
+    loadUsage,
+    usageOf,
     defaultModel,
     defaultVisionModel,
     bestVisionModel,

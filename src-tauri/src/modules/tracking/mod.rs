@@ -113,5 +113,8 @@ pub(crate) fn android_refresh_status(webview: &tauri::Webview<tauri::Wry>) {
 #[cfg(target_os = "android")]
 pub(crate) fn android_status() -> (bool, bool) {
     use std::sync::atomic::Ordering;
-    (GRANTED.load(Ordering::Relaxed), BUSY.load(Ordering::Relaxed))
+    (
+        GRANTED.load(Ordering::Relaxed),
+        BUSY.load(Ordering::Relaxed),
+    )
 }

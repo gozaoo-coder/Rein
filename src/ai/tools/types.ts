@@ -31,6 +31,8 @@ export type ToolGroup =
   | 'voice' // 语音对话服务配置（ASR/TTS 凭据、音色与连通性，AI 自管理）
   | 'web' // 联网搜索 / 抓取网页
   | 'image' // 图片查看（放大镜）
+  | 'campus' // 校园教务：培养方案与预约（照常）+ 现场诊断 / 抢课编排 / 带会话的原始请求（补救）
+  | 'system' // 元工具：工具分组装载（load_tools），自身恒常驻
 
 /** rawContent 工具的返回：直接作为工具结果内容块（可含图片），details 附带元数据 */
 export interface RawToolResult {

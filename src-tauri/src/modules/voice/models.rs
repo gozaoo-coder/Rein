@@ -121,7 +121,6 @@ impl VoiceConfig {
     /// 朗读（TTS）是否可用：生效凭据齐 + 已设音色。
     /// 注意识别配 Qwen 时继承凭据是 DashScope 的，不能用于豆包 TTS——
     /// 此时必须配独立凭据，否则此函数返回 false（继承凭据 mode 会带过去，需额外判别）。
-
     pub fn tts_configured(&self) -> bool {
         let (mode, app_key, access_key) = self.tts_effective();
         // 继承场景：识别配了 Qwen（凭据是 DashScope 的）→ 继承凭据对豆包 TTS 无效
@@ -147,22 +146,6 @@ impl VoiceConfig {
             .as_ref()
             .map(|t| !t.app_key.trim().is_empty())
             .unwrap_or(false)
-    }
-
-    /// ASR/TTS 请求的鉴权头（键, 值）列表
-    pub fn auth_headers(&self) -> Vec<(String, String)> {
-        let mut hs = Vec::new();
-        match self.mode.as_str() {
-            "new" => hs.push(("X-Api-Key".into(), self.app_key.trim().to_string())),
-            _ => {
-                hs.push(("X-Api-App-Key".into(), self.app_key.trim().to_string()));
-                hs.push((
-                    "X-Api-Access-Key".into(),
-                    self.access_key.trim().to_string(),
-                ));
-            }
-        }
-        hs
     }
 }
 

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ChevronUp, Square } from 'lucide-vue-next'
 
+import TimeSpine from './TimeSpine.vue'
 import { finishSpeaking, restore, voice } from '@/system/voiceRuntime'
 import { useDragDock } from '@/composables/useDragDock'
 
@@ -19,6 +20,16 @@ function fmtMs(ms: number): string {
   const s = Math.floor(ms / 1000)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
+
+/** 收起态的那根脊：只喂已经定稿的句子，未定稿那句由 head 游标表达 */
+const dockSegs = computed(() =>
+  voice.sentences.map((s) => ({
+    t: s.startMs,
+    durMs: s.endMs > s.startMs ? s.endMs - s.startMs : undefined,
+    who: '我',
+    text: s.text,
+  })),
+)
 </script>
 
 <template>
@@ -42,6 +53,14 @@ function fmtMs(ms: number): string {
               <b>{{ voice.status === 'recording' ? '转写中' : '整理中' }}</b>
               <span class="s num">{{ fmtMs(voice.elapsedMs) }} · {{ voice.sentences.length }} 句</span>
             </button>
+            <!-- 浮条就是那根正在生长的时间脊：收起后也能看出「说到哪、密不密」 -->
+            <TimeSpine
+              v-if="voice.sentences.length"
+              class="barspine"
+              size="mini"
+              :segments="dockSegs"
+              :head-ms="voice.elapsedMs"
+            />
             <div class="acts">
               <button v-if="voice.status === 'recording'" class="abtn end" type="button" @click="finishSpeaking">
                 <Square :size="11" :stroke-width="2.5" /> 完成
@@ -169,6 +188,13 @@ function fmtMs(ms: number): string {
   gap: 10px;
   flex: 1;
   min-width: 0;
+}
+
+/* 浮条里的脊：夹在「转写中 · 时长」与操作按钮之间，是这根条的主体视觉 */
+.barspine {
+  flex: 1;
+  min-width: 44px;
+  max-width: 120px;
 }
 
 .layer-blob {

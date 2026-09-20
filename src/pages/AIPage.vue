@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Camera, Check, ChartPie, Copy, FileText, FolderUp, History, Images, Mic, Plus, Quote, RotateCcw, SendHorizontal, Trash2, Wrench, X } from 'lucide-vue-next'
+import { Camera, Check, ChartPie, Copy, FileText, Folder, FolderUp, History, Images, Mic, Plus, Quote, RotateCcw, SendHorizontal, Trash2, X } from 'lucide-vue-next'
 
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
 import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
+import ProcessSection from '@/components/ai/ProcessSection.vue'
 import MdText from '@/components/common/MdText.vue'
+import ProgressiveBlur from '@/components/common/ProgressiveBlur.vue'
 import MemoPickerSheet from '@/components/voice/MemoPickerSheet.vue'
 import { openMemoById } from '@/system/voiceRuntime'
 import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
@@ -16,13 +18,13 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { MEAL_LABELS, MEAL_ORDER, suggestMeal } from '@/config/domain'
 import { useToast } from '@/composables/useToast'
-import { findAppTool } from '@/ai/tools/registry'
 import { useAiStore } from '@/stores/ai'
 import { useModelsStore } from '@/stores/models'
 import { copyText } from '@/utils/clipboard'
 import { listFoodDrafts, removeFoodDraft, type FoodDraft } from '@/utils/foodDrafts'
 import { bitmapToJpeg, decodeBitmap, DEFAULT_IMAGE_EDGE } from '@/utils/image'
 import { officeKindOf, parseOffice, parseTextFile, type ParsedDoc } from '@/utils/documentParse'
+import { perfDegraded } from '@/system/perf'
 import { shareInbox } from '@/system/shareInbox'
 import type { SendImage } from '@/stores/ai'
 import type { VoiceMemo } from '@/types'
@@ -35,9 +37,43 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 
-/** 该工具是否为删除类高危操作（过程卡红色标注） */
-function isDangerous(name: string): boolean {
-  return findAppTool(name)?.dangerous ?? false
+/** 该消息的气泡元数据（推理过程段 / 思考计时 / 是否被吸收） */
+function metaOf(m: AiMessage): ReturnType<typeof ai.getMeta> {
+  return ai.getMeta(m.id)
+}
+
+/** 正文气泡是否有东西可渲染：有正文，或流式中且还没有过程区（此时显示打字点）。
+ *  流式占位气泡在推理/工具阶段是空 text——内容全在 ProcessSection 里，气泡本体不该出现：
+ *  它的 padding/底色/阴影会渲染成一个什么都没有的「空气泡」，挂在过程区上方。 */
+function showTextBubble(m: AiMessage): boolean {
+  if (m.kind !== 'text') return false
+  if (m.text) return true
+  return !!m.streaming && !metaOf(m)?.segments.length
+}
+
+/** 整条消息是否有东西可渲染。挡掉空壳（连带省掉它的 10px 间距）：
+ *  流式占位气泡在正文到达前是空 text，历史恢复时被吸收的消息只剩 id/kind 空壳。 */
+function showMsg(m: AiMessage): boolean {
+  const meta = metaOf(m)
+  if (meta?.absorbed) return false
+  if (meta?.segments.length) return true
+  if (m.quoteText) return true
+  switch (m.kind) {
+    case 'text':
+      return showTextBubble(m)
+    case 'photo':
+      // 与模板分支同条件：没有图就没有可渲染的部分（纯文字的照片消息按空壳处理）
+      return !!(m.imageBase64 || m.images?.length)
+    case 'doc':
+      return !!m.doc
+    case 'food-parse':
+      return !!m.items
+    // 纯过程载体：内容就是上面的 segments，没有过程段时自己没有可渲染的部分
+    case 'tools':
+      return false
+    default:
+      return true
+  }
 }
 
 /* ---------- 拍照识别弹层与草稿箱 ---------- */
@@ -74,6 +110,7 @@ function fmtDraftTime(iso: string): string {
 }
 
 const draft = ref('')
+const inputEl = ref<HTMLTextAreaElement | null>(null)
 const fileEl = ref<HTMLInputElement | null>(null)
 const galleryEl = ref<HTMLInputElement | null>(null)
 const cameraEl = ref<HTMLInputElement | null>(null)
@@ -171,6 +208,7 @@ function onPickMemo(m: VoiceMemo): void {
   if (memoRefs.value.some((x) => x.id === m.id)) return
   memoRefs.value = [...memoRefs.value, m]
   draft.value = draft.value.slice(0, -1) // 去掉触发的 @
+  void nextTick(() => autoGrow())
 }
 
 function removeMemoRef(id: string): void {
@@ -184,6 +222,19 @@ onMounted(() => {
   refreshDrafts()
   void scrollToBottom()
   if (route.query.intent === 'photo') openCamMenu()
+  // 抢课面板「交给 AI 排查」递过来的现场：**直接发**，不再让人按一次发送 ——
+  // 那正是抢课窗口里最缺时间的时候。取完即清，回到本页不会重复发。
+  const handed = ai.takePendingPrompt()
+  if (handed) {
+    // 正在生成时不能直接发（sendText 会直接返回，那段现场就没了）：落到输入框里等着，
+    // 比默默丢掉强 —— 人至少看得见「有话没发出去」。
+    if (ai.busy) {
+      draft.value = handed
+      void nextTick(() => autoGrow())
+    } else {
+      void ai.sendText(handed)
+    }
+  }
 })
 
 // 分享收件箱：路由带 ?intent=share 时消费预填（冷启动 / 运行中被分享唤起都会走到这里）
@@ -202,6 +253,7 @@ watch(
     if (typeof v === 'string' && v) {
       draft.value = v
       void router.replace({ query: { ...route.query, ask: undefined } })
+      void nextTick(() => autoGrow())
     }
   },
   { immediate: true },
@@ -212,15 +264,38 @@ watch(
   () => void scrollToBottom(),
 )
 
-// 流式输出：最后一条消息文本增长时跟随滚动
+// 流式输出：过程段/思考/工具任一事件后跟随滚动（等价 EffiBuddy 的事件级 scrollBottom）
 watch(
-  () => ai.messages.at(-1)?.text?.length,
+  () => ai.streamSeq,
   () => void scrollToBottom(),
 )
 
 async function scrollToBottom(): Promise<void> {
   await nextTick()
   listEl.value?.scrollTo({ top: listEl.value.scrollHeight })
+}
+
+/** 文本域自适应高度：随内容增高，上限 5 行，发送后复位 */
+function autoGrow(): void {
+  const el = inputEl.value
+  if (!el) return
+  el.style.height = '0'
+  const max = 5 * 22 // 5 行 × line-height 约 22px
+  el.style.height = `${Math.min(el.scrollHeight, max)}px`
+}
+
+/** 文本是否疑似 Markdown（含至少两种语法特征） */
+function looksLikeMarkdown(text: string): boolean {
+  let hits = 0
+  if (/^#{1,6}\s/m.test(text)) hits++
+  if (/^\s*[-*•]\s/m.test(text)) hits++
+  if (/^\s*\d+\.\s/m.test(text)) hits++
+  if (/\*\*[^*]+\*\*/.test(text)) hits++
+  if (/\[[^\]]+\]\([^)]+\)/.test(text)) hits++
+  if (/```/.test(text)) hits++
+  if (/^\s*>\s/m.test(text)) hits++
+  if (/\|.*\|/.test(text)) hits++
+  return hits >= 2
 }
 
 function fmtVoiceDur(ms: number): string {
@@ -230,10 +305,16 @@ function fmtVoiceDur(ms: number): string {
 
 function send(): void {
   if (ai.busy) return
-  const t = draft.value.trim()
+  let t = draft.value.trim()
   const doc = docAtt.value
   if (!t && attachments.value.length === 0 && !doc) return
+  // 粘贴/输入的文本疑似 Markdown 时，告知模型按 Markdown 理解
+  if (t && looksLikeMarkdown(t)) {
+    t = `（以下内容为 Markdown 格式）\n${t}`
+  }
   draft.value = ''
+  // 复位输入框高度
+  if (inputEl.value) inputEl.value.style.height = ''
   const atts = attachments.value
   attachments.value = []
   docAtt.value = null
@@ -437,250 +518,245 @@ async function onMenuSelect(value: string): Promise<void> {
 
 <template>
   <div class="page">
-    <PageHeader title="AI" compact>
-      <template #lead>
-        <button class="hdr-btn" aria-label="历史记录" @click="drawerOpen = true">
-          <History :size="19" />
-        </button>
-      </template>
-      <template #action>
-        <button class="hdr-btn accent" aria-label="新建对话" @click="ai.newChat()">
-          <Plus :size="17" :stroke-width="2.6" />
-        </button>
-        <ManageModelsButton />
-      </template>
-    </PageHeader>
-
-    <!-- 消息流 -->
+    <!-- 消息区是唯一的滚动容器：页头与底栏都粘在它内部（sticky），内容从两端的
+         渐进模糊里滚过，而不是被两条硬边裁断（遮罩见 ProgressiveBlur/PageHeader）。 -->
     <div ref="listEl" class="msgs">
-      <div
-        v-for="m in ai.messages"
-        :key="m.id"
-        class="msg"
-        :class="[m.role]"
-        @pointerdown="onPressStart($event, m)"
-        @pointermove="onPressMove($event)"
-        @pointerup="onPressEnd"
-        @pointerleave="onPressEnd"
-        @pointercancel="onPressEnd"
-        @contextmenu.prevent="onCtxMenu($event, m)"
-      >
-        <div class="msg-col">
-          <!-- 引用块 -->
-          <p v-if="m.quoteText" class="qblock">{{ m.quoteText }}</p>
-
-          <!-- 思考过程（LLM 回复折叠展示） -->
-          <details v-if="m.thinking" class="think">
-            <summary>思考过程</summary>
-            <p class="think-body">{{ m.thinking }}</p>
-          </details>
-
-          <!-- 照片（可多图；可带随图文字，图与文分气泡，同属一条消息） -->
-          <template v-if="m.kind === 'photo' && (m.imageBase64 || m.images?.length)">
-            <div class="photo-bubble" :class="{ multi: (m.images?.length ?? 0) > 1 }">
-              <img
-                v-for="(im, i) in msgImages(m)"
-                :key="i"
-                :src="`data:${im.mime};base64,${im.base64}`"
-                alt="用户上传的照片"
-              >
-            </div>
-            <p v-if="m.text" class="bubble">{{ m.text }}</p>
-          </template>
-
-          <!-- 文档消息（解析文本随消息发给模型，气泡展示卡片与勾选的内嵌图） -->
-          <template v-else-if="m.kind === 'doc' && m.doc">
-            <div class="doc-card">
-              <FileText :size="16" />
-              <div class="dc-info">
-                <p class="dc-name">{{ m.doc.name }}</p>
-                <p class="dc-meta">
-                  {{ m.doc.chars }} 字{{ m.doc.truncated ? '（已截断）' : '' }} · 图片 {{ m.doc.imagesTotal }} 张{{
-                    m.doc.skippedImages > 0 ? `（跳过 ${m.doc.skippedImages} 张不支持/装饰图）` : ''
-                  }}
-                </p>
-              </div>
-            </div>
-            <div v-if="m.images?.length" class="photo-bubble multi">
-              <img
-                v-for="(im, i) in m.images"
-                :key="i"
-                :src="`data:image/jpeg;base64,${im.base64}`"
-                alt="文档内嵌图片"
-              >
-            </div>
-            <p v-if="m.text" class="bubble">{{ m.text }}</p>
-          </template>
-
-          <!-- 纯文本（Markdown 渲染，流式按块增量；还没有正文时显示打字点） -->
-          <div v-else-if="m.kind === 'text'" class="bubble">
-            <MdText v-if="m.text" :text="m.text" :streaming="m.streaming" />
-            <span v-if="m.text && m.streaming" class="caret" aria-hidden="true" />
-            <span v-if="!m.text && m.streaming" class="tdots" aria-hidden="true"><i /><i /><i /></span>
-          </div>
-
-          <!-- 语音轮（转写 + 关联纪要，点开语音会话回看/重放） -->
-          <button v-else-if="m.kind === 'voice'" class="voice-bub" @click="m.voiceMeta && openMemoById(m.voiceMeta.memoId)">
-            <span class="vb-head"><Mic :size="13" /> 语音{{ m.voiceMeta ? ` ${fmtVoiceDur(m.voiceMeta.durationMs)}` : '' }} · 会议纪要</span>
-            <span class="vb-txt">{{ (m.text ?? '').slice(0, 72) }}{{ (m.text ?? '').length > 72 ? '…' : '' }}</span>
-            <span class="vb-go">查看纪要 ›</span>
+      <PageHeader title="AI" compact>
+        <template #lead>
+          <button class="hdr-btn" aria-label="文件" @click="router.push({ name: 'ai-files' })">
+            <Folder :size="18" />
           </button>
+          <button class="hdr-btn" aria-label="历史记录" @click="drawerOpen = true">
+            <History :size="19" />
+          </button>
+        </template>
+        <template #action>
+          <button class="hdr-btn accent" aria-label="新建对话" @click="ai.newChat()">
+            <Plus :size="17" :stroke-width="2.6" />
+          </button>
+          <ManageModelsButton />
+        </template>
+      </PageHeader>
 
-          <!-- 食物解析卡（行内改重量 / 删行，未匹配项不会写入） -->
-          <div v-else-if="m.kind === 'food-parse' && m.items" class="parse">
-            <p class="parse-title">识别到 {{ m.items.length }} 项食物</p>
-            <FoodParseEditor v-model="m.items" />
+      <template v-for="m in ai.messages" :key="m.id">
+        <div
+          v-if="showMsg(m)"
+          :id="`msg-${m.id}`"
+          class="msg"
+          :class="[m.role]"
+          @pointerdown="onPressStart($event, m)"
+          @pointermove="onPressMove($event)"
+          @pointerup="onPressEnd"
+          @pointerleave="onPressEnd"
+          @pointercancel="onPressEnd"
+          @contextmenu.prevent="onCtxMenu($event, m)"
+        >
+          <div class="msg-col">
+            <!-- 推理过程 + 工具调用合并区块：单行摘要标题，进行中展开、完成后自动折叠 -->
+            <ProcessSection
+              v-if="metaOf(m)?.segments.length"
+              :segments="metaOf(m)?.segments ?? []"
+              :is-thinking="metaOf(m)?.isThinking ?? false"
+              :thinking-sec="metaOf(m)?.thinkingSec ?? 0"
+              :final="m.id !== ai.streamingBubbleId"
+            />
 
-            <template v-if="!m.committed">
-              <SegmentedControl
-                class="meal"
-                :model-value="mealByMsg[m.id] ?? suggestMeal()"
-                :options="MEAL_ORDER.map((x) => ({ value: x, label: MEAL_LABELS[x] }))"
-                @update:model-value="mealByMsg[m.id] = $event as MealType"
-              />
-              <div class="row actions between">
-                <small class="t-3">确认后写入今日{{ MEAL_LABELS[mealByMsg[m.id] ?? suggestMeal()] }}</small>
-                <button
-                  class="commit"
-                  :disabled="m.items.every((it) => it.foodId == null)"
-                  @click="ai.commitParse(m.id, mealByMsg[m.id] ?? suggestMeal())"
+            <!-- 引用块 -->
+            <p v-if="m.quoteText" class="qblock">{{ m.quoteText }}</p>
+
+            <!-- 照片（可多图；可带随图文字，图与文分气泡，同属一条消息） -->
+            <template v-if="m.kind === 'photo' && (m.imageBase64 || m.images?.length)">
+              <div class="photo-bubble" :class="{ multi: (m.images?.length ?? 0) > 1 }">
+                <img
+                  v-for="(im, i) in msgImages(m)"
+                  :key="i"
+                  :src="`data:${im.mime};base64,${im.base64}`"
+                  alt="用户上传的照片"
                 >
-                  加入记录
-                </button>
               </div>
+              <p v-if="m.text" class="bubble">{{ m.text }}</p>
             </template>
-            <p v-else class="committed"><Check :size="14" /> 已写入今日饮食</p>
-          </div>
 
-          <!-- 分析卡 -->
-          <div v-else-if="m.kind === 'analysis'" class="analysis">
-            <p class="a-title row center"><ChartPie :size="15" /> 今日饮食分析</p>
-            <p class="a-body">{{ m.text }}</p>
-          </div>
+            <!-- 文档消息（解析文本随消息发给模型，气泡展示卡片与勾选的内嵌图） -->
+            <template v-else-if="m.kind === 'doc' && m.doc">
+              <div class="doc-card">
+                <FileText :size="16" />
+                <div class="dc-info">
+                  <p class="dc-name">{{ m.doc.name }}</p>
+                  <p class="dc-meta">
+                    {{ m.doc.chars }} 字{{ m.doc.truncated ? '（已截断）' : '' }} · 图片 {{ m.doc.imagesTotal }} 张{{
+                      m.doc.skippedImages > 0 ? `（跳过 ${m.doc.skippedImages} 张不支持/装饰图）` : ''
+                    }}
+                  </p>
+                </div>
+              </div>
+              <div v-if="m.images?.length" class="photo-bubble multi">
+                <img
+                  v-for="(im, i) in m.images"
+                  :key="i"
+                  :src="`data:image/jpeg;base64,${im.base64}`"
+                  alt="文档内嵌图片"
+                >
+              </div>
+              <p v-if="m.text" class="bubble">{{ m.text }}</p>
+            </template>
 
-          <!-- 工具调用过程卡 -->
-          <div v-else-if="m.kind === 'tools' && m.toolCalls?.length" class="tools-card">
-            <details :open="m.toolCalls.some((c) => c.status === 'running')">
-              <summary><Wrench :size="13" /> 工具调用 · {{ m.toolCalls.length }}</summary>
-              <ul class="tcalls">
-                <li v-for="(c, i) in m.toolCalls" :key="i" class="tcall">
-                  <div class="t-head">
-                    <span class="t-label" :class="{ danger: isDangerous(c.name) }">{{ c.label }}</span>
-                    <span v-if="c.argsBrief" class="t-args">{{ c.argsBrief }}</span>
-                    <span class="t-state" :class="c.status">{{
-                      c.status === 'running' ? '…' : c.status === 'ok' ? '✓' : '✕'
-                    }}</span>
-                  </div>
-                  <p v-if="c.resultBrief && c.status === 'error'" class="t-result error">{{ c.resultBrief }}</p>
-                  <template v-else>
-                    <img
-                      v-if="c.resultImage"
-                      class="t-img"
-                      :src="`data:${c.resultImage.mime};base64,${c.resultImage.base64}`"
-                      alt="放大结果"
-                    >
-                    <p v-if="c.resultBrief" class="t-result">{{ c.resultBrief }}</p>
-                  </template>
-                </li>
-              </ul>
-            </details>
+            <!-- 纯文本（Markdown 渲染，流式按块增量；正文还没到就显示打字点）。
+                 showTextBubble 已挡掉「有过程区但没正文」的空壳——那正是空气泡的来源 -->
+            <div v-else-if="showTextBubble(m)" class="bubble">
+              <MdText v-if="m.text" :text="m.text" :streaming="m.streaming" />
+              <span v-if="m.text && m.streaming" class="caret" aria-hidden="true" />
+              <span v-else-if="!m.text" class="tdots" aria-hidden="true"><i /><i /><i /></span>
+            </div>
+
+            <!-- 语音轮（转写 + 关联纪要，点开语音会话回看/重放） -->
+            <button v-else-if="m.kind === 'voice'" class="voice-bub" @click="m.voiceMeta && openMemoById(m.voiceMeta.memoId)">
+              <span class="vb-head"><Mic :size="13" /> 语音{{ m.voiceMeta ? ` ${fmtVoiceDur(m.voiceMeta.durationMs)}` : '' }} · 会议纪要</span>
+              <span class="vb-txt">{{ (m.text ?? '').slice(0, 72) }}{{ (m.text ?? '').length > 72 ? '…' : '' }}</span>
+              <span class="vb-go">查看纪要 ›</span>
+            </button>
+
+            <!-- 食物解析卡（行内改重量 / 删行，未匹配项不会写入） -->
+            <div v-else-if="m.kind === 'food-parse' && m.items" class="parse">
+              <p class="parse-title">识别到 {{ m.items.length }} 项食物</p>
+              <FoodParseEditor v-model="m.items" />
+
+              <template v-if="!m.committed">
+                <SegmentedControl
+                  class="meal"
+                  :model-value="mealByMsg[m.id] ?? suggestMeal()"
+                  :options="MEAL_ORDER.map((x) => ({ value: x, label: MEAL_LABELS[x] }))"
+                  @update:model-value="mealByMsg[m.id] = $event as MealType"
+                />
+                <div class="row actions between">
+                  <small class="t-3">确认后写入今日{{ MEAL_LABELS[mealByMsg[m.id] ?? suggestMeal()] }}</small>
+                  <button
+                    class="commit"
+                    :disabled="m.items.every((it) => it.foodId == null)"
+                    @click="ai.commitParse(m.id, mealByMsg[m.id] ?? suggestMeal())"
+                  >
+                    加入记录
+                  </button>
+                </div>
+              </template>
+              <p v-else class="committed"><Check :size="14" /> 已写入今日饮食</p>
+            </div>
+
+            <!-- 分析卡 -->
+            <div v-else-if="m.kind === 'analysis'" class="analysis">
+              <p class="a-title row center"><ChartPie :size="15" /> 今日饮食分析</p>
+              <p class="a-body">{{ m.text }}</p>
+            </div>
           </div>
+        </div>
+      </template>
+
+      <!-- 底栏（快捷操作 → 引用 → 纪要 → 附图 → 输入栏）：与页头同理粘在滚动区底部，
+           内容从底部的渐进模糊里滚过；输入栏是浮起的圆角胶囊，胶囊之间能看到糊住的正文。
+           margin-top:auto 保证消息不足一屏时它依然落在底部，而不是吊在最后一条下面。 -->
+      <div class="composer">
+        <div class="cb-mask" aria-hidden="true">
+          <Transition name="pblur">
+            <ProgressiveBlur v-if="!perfDegraded" direction="up" />
+          </Transition>
+        </div>
+
+        <!-- 快捷操作 -->
+        <div class="chips">
+          <button class="chip" :disabled="ai.busy" @click="ai.analyzeToday()">分析今日饮食</button>
+          <button class="chip" @click="openDrafts()">
+            草稿箱{{ drafts.length > 0 ? ` · ${drafts.length}` : '' }}
+          </button>
+        </div>
+
+        <!-- 引用条 -->
+        <div v-if="quote" class="quote-bar row">
+          <p class="q-text flex-1">引用：{{ quote.text ?? '[图片]' }}</p>
+          <button class="q-x" aria-label="取消引用" @click="quote = null">
+            <X :size="14" />
+          </button>
+        </div>
+
+        <!-- @纪要 chips（发送时注入纪要内容） -->
+        <div v-if="memoRefs.length > 0" class="memo-refs">
+          <span v-for="m in memoRefs" :key="m.id" class="memo-chip">
+            @ {{ m.title }}<button class="mx" aria-label="移除纪要引用" @click="removeMemoRef(m.id)"><X :size="10" :stroke-width="3" /></button>
+          </span>
+        </div>
+
+        <!-- 待发送附图芯片（可多张累积：相机连拍 + 图库多选，随下一条消息发出） -->
+        <div v-if="attachments.length > 0" class="attach-row">
+          <div v-for="(a, i) in attachments" :key="i" class="attach-chip">
+            <img
+              :src="`data:image/jpeg;base64,${a.small ?? a.full}`"
+              alt="待发送图片"
+            >
+            <button class="attach-x" aria-label="移除图片" @click="attachments = attachments.filter((_, j) => j !== i)">
+              <X :size="11" :stroke-width="3" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 待发送文档芯片（解析结果 + 内嵌图勾选，随下一条消息发出） -->
+        <div v-if="docAtt" class="attach-row doc-attach">
+          <div class="doc-chip">
+            <FileText :size="18" />
+            <div class="dc-info">
+              <p class="dc-name">{{ docAtt.file.name }}</p>
+              <p class="dc-meta">
+                {{ docAtt.doc.chars }} 字{{ docAtt.doc.truncated ? '（已截断）' : '' }} · 图片
+                {{ docAtt.doc.images.length }} 张{{ docAtt.doc.skippedImages > 0 ? `（跳过 ${docAtt.doc.skippedImages}）` : '' }}
+              </p>
+            </div>
+            <button class="attach-x" aria-label="移除文档" @click="docAtt = null">
+              <X :size="11" :stroke-width="3" />
+            </button>
+          </div>
+          <div v-if="docAtt.doc.images.length > 0" class="doc-imgs">
+            <button
+              v-for="im in docAtt.doc.images"
+              :key="im.id"
+              class="doc-img"
+              :class="{ on: docAtt.selected.has(im.id) }"
+              :aria-label="`${docAtt.selected.has(im.id) ? '取消发送' : '发送'}${im.where}的图片`"
+              @click="toggleDocImage(im.id)"
+            >
+              <img :src="`data:image/jpeg;base64,${docAtt.views.get(im.id)?.base64 ?? ''}`" alt="文档内嵌图片">
+              <small>{{ im.where }}</small>
+              <span v-if="docAtt.selected.has(im.id)" class="doc-check"><Check :size="11" :stroke-width="3" /></span>
+            </button>
+          </div>
+          <p class="doc-hint">点选要发给 AI 的图片（已默认选前 3 张）；发出后可让 AI 放大查看细节。</p>
+        </div>
+
+        <!-- 输入栏 -->
+        <div class="inbar row">
+          <button ref="camBtn" class="cam" aria-label="添加附件" @click="openCamMenu">
+            <Plus :size="21" :stroke-width="2.4" />
+          </button>
+          <textarea
+            ref="inputEl"
+            v-model="draft"
+            rows="1"
+            :placeholder="docAtt ? '问问这份文档，或让 AI 放大看图' : attachments.length > 1 ? `问问这 ${attachments.length} 张图，或直接记录饮食` : attachments.length === 1 ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
+            @keydown.enter.exact.prevent="send"
+            @input="autoGrow"
+          />
+          <button
+            class="send"
+            :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
+            aria-label="发送"
+            :disabled="ai.busy || (!draft.trim() && attachments.length === 0 && !docAtt && memoRefs.length === 0)"
+            @click="send"
+          >
+            <SendHorizontal :size="18" />
+          </button>
         </div>
       </div>
     </div>
 
-    <!-- 快捷操作 -->
-    <div class="chips">
-      <button class="chip" :disabled="ai.busy" @click="ai.analyzeToday()">分析今日饮食</button>
-      <button class="chip" @click="openDrafts()">
-        草稿箱{{ drafts.length > 0 ? ` · ${drafts.length}` : '' }}
-      </button>
-    </div>
-
-    <!-- 引用条 -->
-    <div v-if="quote" class="quote-bar row">
-      <p class="q-text flex-1">引用：{{ quote.text ?? '[图片]' }}</p>
-      <button class="q-x" aria-label="取消引用" @click="quote = null">
-        <X :size="14" />
-      </button>
-    </div>
-
-    <!-- @纪要 chips（发送时注入纪要内容） -->
-    <div v-if="memoRefs.length > 0" class="memo-refs">
-      <span v-for="m in memoRefs" :key="m.id" class="memo-chip">
-        @ {{ m.title }}<button class="mx" aria-label="移除纪要引用" @click="removeMemoRef(m.id)"><X :size="10" :stroke-width="3" /></button>
-      </span>
-    </div>
-
-    <!-- 待发送附图芯片（可多张累积：相机连拍 + 图库多选，随下一条消息发出） -->
-    <div v-if="attachments.length > 0" class="attach-row">
-      <div v-for="(a, i) in attachments" :key="i" class="attach-chip">
-        <img
-          :src="`data:image/jpeg;base64,${a.small ?? a.full}`"
-          alt="待发送图片"
-        >
-        <button class="attach-x" aria-label="移除图片" @click="attachments = attachments.filter((_, j) => j !== i)">
-          <X :size="11" :stroke-width="3" />
-        </button>
-      </div>
-    </div>
-
-    <!-- 待发送文档芯片（解析结果 + 内嵌图勾选，随下一条消息发出） -->
-    <div v-if="docAtt" class="attach-row doc-attach">
-      <div class="doc-chip">
-        <FileText :size="18" />
-        <div class="dc-info">
-          <p class="dc-name">{{ docAtt.file.name }}</p>
-          <p class="dc-meta">
-            {{ docAtt.doc.chars }} 字{{ docAtt.doc.truncated ? '（已截断）' : '' }} · 图片
-            {{ docAtt.doc.images.length }} 张{{ docAtt.doc.skippedImages > 0 ? `（跳过 ${docAtt.doc.skippedImages}）` : '' }}
-          </p>
-        </div>
-        <button class="attach-x" aria-label="移除文档" @click="docAtt = null">
-          <X :size="11" :stroke-width="3" />
-        </button>
-      </div>
-      <div v-if="docAtt.doc.images.length > 0" class="doc-imgs">
-        <button
-          v-for="im in docAtt.doc.images"
-          :key="im.id"
-          class="doc-img"
-          :class="{ on: docAtt.selected.has(im.id) }"
-          :aria-label="`${docAtt.selected.has(im.id) ? '取消发送' : '发送'}${im.where}的图片`"
-          @click="toggleDocImage(im.id)"
-        >
-          <img :src="`data:image/jpeg;base64,${docAtt.views.get(im.id)?.base64 ?? ''}`" alt="文档内嵌图片">
-          <small>{{ im.where }}</small>
-          <span v-if="docAtt.selected.has(im.id)" class="doc-check"><Check :size="11" :stroke-width="3" /></span>
-        </button>
-      </div>
-      <p class="doc-hint">点选要发给 AI 的图片（已默认选前 3 张）；发出后可让 AI 放大查看细节。</p>
-    </div>
-
-    <!-- 输入栏 -->
-    <div class="inbar row">
-      <button ref="camBtn" class="cam" aria-label="添加附件" @click="openCamMenu">
-        <Plus :size="21" :stroke-width="2.4" />
-      </button>
-      <input
-        v-model="draft"
-        type="text"
-        :placeholder="docAtt ? '问问这份文档，或让 AI 放大看图' : attachments.length > 1 ? `问问这 ${attachments.length} 张图，或直接记录饮食` : attachments.length === 1 ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
-        @keydown.enter="send"
-      >
-      <button
-        class="send"
-        :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
-        aria-label="发送"
-        :disabled="ai.busy || (!draft.trim() && attachments.length === 0 && !docAtt && memoRefs.length === 0)"
-        @click="send"
-      >
-        <SendHorizontal :size="18" />
-      </button>
-    </div>
-
-    <!-- 三个隐藏入口：系统相机 / 图库多选 / 文件（图片+Office+文本） -->
-    <input ref="fileEl" type="file" accept="image/*,.docx,.pptx,.xlsx" hidden @change="onFile">
+    <!-- 三个隐藏入口：系统相机 / 图库多选 / 文件（图片+Office+文本/Markdown） -->
+    <input ref="fileEl" type="file" accept="image/*,.docx,.pptx,.xlsx,.md,.markdown,.txt,.csv" hidden @change="onFile">
     <input ref="galleryEl" type="file" accept="image/*" multiple hidden @change="onGallery">
     <input ref="cameraEl" type="file" accept="image/*" capture="environment" hidden @change="onCamera">
 
@@ -862,11 +938,61 @@ async function onMenuSelect(value: string): Promise<void> {
   color: var(--text-3);
 }
 
+/* 消息滚动区。
+   负外边距把滚动区拉成整帧宽（镜像 .page 的横向内边距），再用同值内边距把内容推回去：
+   滚动容器按 CSS 规范会裁掉溢出——只要有一个轴不是 visible，另一个轴也会变成 auto——
+   于是气泡的 --shadow-card（12px 偏移 + 32/80px 模糊）被自己的滚动区硬切出直边。
+   留出这段横向余量，影子才有地方扩散；气泡内容宽度与之前一致。
+   flex 列：页头与底栏都是它的子项（sticky），内容从两者之间滚过；底部内边距挪给底栏自理。 */
 .msgs {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc(-1 * var(--page-pad-x));
   overflow-y: auto;
-  padding: 4px 2px;
+  padding: 8px var(--page-pad-x) 0;
   scrollbar-width: none;
+}
+
+/* 页头这次粘在消息区的滚动口顶（不是视口）：状态栏那条不在滚动容器里，
+   粘滞偏移归零；但遮罩仍要向上铺足，把滚动区上沿的内容糊掉。 */
+.msgs :deep(.page-header) {
+  --ph-stick: 0px;
+  --ph-up: max(var(--safe-top), 24px);
+}
+
+/* 底栏：粘在滚动区底部，内容从底部的渐进模糊里滚过。
+   自身建立层叠上下文，遮罩才能用 -1 沉到糖果条与输入栏背后。 */
+.composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 30;
+  /* margin-top:auto：消息不足一屏时底栏依然落在底部，而不是吊在最后一条下面；
+     左右负外边距把底栏拉到整帧宽，遮罩才铺得满 */
+  margin: auto calc(-1 * var(--page-pad-x)) 0;
+  padding: 6px var(--page-pad-x) 4px;
+}
+
+/* 向上多铺一段：内容从模糊里滚出来，而不是在输入栏上沿被硬切 */
+.cb-mask {
+  position: absolute;
+  top: -18px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* 底部渐进模糊的显隐淡入淡出（v-if 切档时不闪现、消失不突兀） */
+.pblur-enter-active,
+.pblur-leave-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+.pblur-enter-from,
+.pblur-leave-to {
+  opacity: 0;
 }
 
 .msgs::-webkit-scrollbar {
@@ -904,31 +1030,6 @@ async function onMenuSelect(value: string): Promise<void> {
 
 .msg-col .bubble {
   max-width: 100%;
-}
-
-/* 思考过程折叠框 */
-.think {
-  background: var(--surface-2);
-  border-radius: var(--radius-m);
-  color: var(--text-2);
-  font-size: var(--fs-caption);
-  max-width: 100%;
-}
-
-.think summary {
-  padding: 8px 12px;
-  font-weight: 700;
-  cursor: pointer;
-  user-select: none;
-}
-
-.think-body {
-  padding: 0 12px 8px;
-  line-height: 1.55;
-  white-space: pre-line;
-  max-height: 180px;
-  overflow-y: auto;
-  scrollbar-width: none;
 }
 
 /* 气泡 */
@@ -1138,99 +1239,6 @@ async function onMenuSelect(value: string): Promise<void> {
   font-size: var(--fs-subhead);
   line-height: 1.6;
   white-space: pre-line;
-}
-
-/* 工具调用过程卡 */
-.tools-card {
-  width: 92%;
-  max-width: 360px;
-  background: var(--surface-2);
-  border-radius: var(--radius-m);
-  font-size: var(--fs-caption);
-  overflow: hidden;
-}
-
-.tools-card summary {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 8px 12px;
-  font-weight: 700;
-  color: var(--text-2);
-  cursor: pointer;
-  user-select: none;
-  list-style: none;
-}
-
-.tools-card summary::-webkit-details-marker {
-  display: none;
-}
-
-.tcalls {
-  padding: 0 12px 8px;
-}
-
-.tcall {
-  padding: 6px 0;
-}
-
-.tcall + .tcall {
-  border-top: 0.5px solid var(--line);
-}
-
-.t-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.t-label {
-  flex: none;
-  font-weight: 700;
-}
-
-.t-label.danger {
-  color: var(--danger);
-}
-
-.t-args {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.t-state {
-  flex: none;
-  font-weight: 800;
-}
-
-.t-state.ok {
-  color: var(--ok);
-}
-
-.t-state.error {
-  color: var(--danger);
-}
-
-.t-result.error {
-  margin-top: 3px;
-  color: var(--danger);
-  line-height: 1.45;
-  word-break: break-all;
-}
-
-/* 放大镜结果图（工具过程卡内） */
-.t-img {
-  display: block;
-  margin-top: 6px;
-  max-width: 200px;
-  max-height: 160px;
-  border-radius: var(--radius-s);
-  border: 0.5px solid var(--line);
 }
 
 /* 快捷与输入 */
@@ -1465,13 +1473,27 @@ async function onMenuSelect(value: string): Promise<void> {
   color: var(--text-1);
 }
 
-.inbar input {
+.inbar textarea {
   flex: 1;
   min-width: 0;
   font-size: var(--fs-subhead);
+  font-family: inherit;
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
+  line-height: 22px;
+  padding: 9px 0;
+  max-height: 110px; /* 5 行 × 22px */
+  overflow-y: auto;
+  scrollbar-width: none;
 }
 
-.inbar input::placeholder {
+.inbar textarea::-webkit-scrollbar {
+  display: none;
+}
+
+.inbar textarea::placeholder {
   color: var(--text-3);
 }
 

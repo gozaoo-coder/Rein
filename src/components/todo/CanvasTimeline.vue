@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronRight, Layers } from 'lucide-vue-next'
+import { ChevronRight, Layers, Pencil } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import { CATEGORY_META } from '@/config/domain'
@@ -13,6 +13,8 @@ import type { Todo } from '@/types'
  * - 左侧 48px 刻度栏，块区从 56px 起，不遮挡时间轴；时间跨度块上方标起点、下方标终点；
  * - 重叠块贪心分列：≤2 列并排；≥3 列收成「叠层卡」（全宽卡面 + 底层错位条 + 计数徽标，
  *   点开底部清单逐条勾选/定位），避免窄列把标题挤成省略号；
+ * - 卡面控件按角分配：右下角「编辑」钮（所有块与叠层卡）emit edit 交父级开抽屉，
+ *   叠层卡右上角「展开 +N」钮开同时段清单；两钮 pointerdown 即 stop，绝不进拖拽管线；
  * - 块内标题顶对齐、按块宽折行、按块高截行（行数上限 --blk-lines 由块高折算），
  *   放不下才在行末省略，不单行居中也不出现半行裁切；
  * - 点按选中、长按 320ms 武装后才可拖拽改位（防误触，武装后每 5 分钟吸附）；
@@ -39,6 +41,7 @@ const emit = defineEmits<{
   select: [todo: Todo]
   toggle: [todo: Todo]
   move: [todo: Todo, startMin: number]
+  edit: [todo: Todo]
 }>()
 
 const DEFAULT_PX = 56
@@ -101,6 +104,13 @@ interface Stack {
 
 const minBlkH = computed(() => (props.compact ? 17 : 22))
 
+/**
+ * 叠层卡最小高度：卡面要同时容下右上「展开」与右下「编辑」两枚控件，
+ * 即 纵向内边距 ×2 + 展开钮 + 间隙 + 编辑钮（普通块只有右下编辑钮，现有最小高度已够）。
+ * 数值须与样式里 .stk-card 内边距 / .stk-more 高度 / .edit 尺寸保持一致。
+ */
+const minStackH = computed(() => (props.compact ? 35 : 42))
+
 /** 用户在清单里点选某条 → 置顶为卡面（会话内状态，跨日/重载自然失效） */
 const frontByStack = ref(new Map<string, number>())
 
@@ -131,7 +141,7 @@ const stacks = computed(() =>
         .filter((t) => t.id !== sorted[0]!.id)
         .slice(0, 2)
         .map((t) => CATEGORY_META[t.category].colorVar),
-      h: Math.max(minBlkH.value, durOf(sorted[0]!) * pxPerMin.value),
+      h: Math.max(minStackH.value, durOf(sorted[0]!) * pxPerMin.value),
     }
   }),
 )
@@ -254,6 +264,10 @@ function onBlockDown(e: PointerEvent, t: Todo): void {
   if (t.status === 'done' || e.button !== 0) return
   const el = scroller.value
   if (!el) return
+  // 课表派生行（courseSessionId 非空）是只读投影：标题/时间/地点都由课表同步生成，
+  // 只能回课表配置页改。这里只关掉「长按武装」这一步 —— 点选与抛滚手势全部照旧，
+  // 长按则什么都不发生，比整体禁用更不容易误触。
+  const readonly = t.courseSessionId != null
   const rect = el.getBoundingClientRect()
   const pointerMin = (e.clientY - rect.top + el.scrollTop) / pxPerMin.value
   drag.value = { todo: t, grabMin: pointerMin - t.startMin!, curMin: t.startMin!, armed: false, moved: false, aborted: false }
@@ -268,7 +282,7 @@ function onBlockDown(e: PointerEvent, t: Todo): void {
   clearPress()
   pressTimer = window.setTimeout(() => {
     pressTimer = null
-    if (!drag.value) return
+    if (!drag.value || readonly) return
     drag.value.armed = true
     try { navigator.vibrate?.(8) } catch { /* 设备不支持则无感 */ }
   }, LONGPRESS_MS)
@@ -409,6 +423,14 @@ onBeforeUnmount(() => {
               <div class="body">
                 <span class="tt">{{ b.t.title }}</span>
               </div>
+              <button
+                class="edit"
+                :aria-label="`编辑 ${b.t.title}`"
+                @pointerdown.stop
+                @click.stop="emit('edit', b.t)"
+              >
+                <Pencil :size="9" :stroke-width="2.6" />
+              </button>
             </div>
             <span class="bmin bmin-end num" :class="{ live: drag?.armed && drag.todo.id === b.t.id }">{{ minToHHmm(liveStart(b.t, b.t.startMin!) + durOf(b.t)) }}</span>
           </div>
@@ -447,10 +469,20 @@ onBeforeUnmount(() => {
               <div class="body">
                 <span class="tt">{{ s.front.title }}</span>
               </div>
-              <button class="stk-more" :aria-label="`展开同时段 ${s.items.length} 项日程`" @pointerdown.stop @click.stop="openStack(s)">
-                <Layers :size="11" :stroke-width="2.4" />
-                +{{ s.extra }}
-              </button>
+              <div class="card-acts">
+                <button class="stk-more" :aria-label="`展开同时段 ${s.items.length} 项日程`" @pointerdown.stop @click.stop="openStack(s)">
+                  <Layers :size="11" :stroke-width="2.4" />
+                  +{{ s.extra }}
+                </button>
+                <button
+                  class="edit"
+                  :aria-label="`编辑 ${s.front.title}`"
+                  @pointerdown.stop
+                  @click.stop="emit('edit', s.front)"
+                >
+                  <Pencil :size="9" :stroke-width="2.6" />
+                </button>
+              </div>
             </div>
             <span class="bmin bmin-end num" :class="{ live: drag?.armed && drag.todo.id === s.front.id }">{{ minToHHmm(liveStart(s.front, s.front.startMin!) + durOf(s.front)) }}</span>
           </div>
@@ -805,7 +837,9 @@ onBeforeUnmount(() => {
   height: 100%;
   padding: 4px 8px;
   border-radius: var(--radius-s);
-  border: 0.5px solid var(--line);
+  /* 卡面必须不透明：底层错位条（.stk-under）铺在卡面之后，透出来会让卡面看着发灰发虚 */
+  background: color-mix(in srgb, var(--blk-cat) 15%, var(--surface));
+  border: 0.5px solid color-mix(in srgb, var(--blk-cat) 38%, var(--line));
   overflow: hidden;
   cursor: grab;
   box-shadow: 0 1px 4px color-mix(in srgb, var(--text-1) 8%, transparent);
@@ -839,11 +873,12 @@ onBeforeUnmount(() => {
 
 .stk-more {
   flex: none;
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 3px 8px;
+  /* 高度写死：叠层卡最小高度按「展开钮 + 编辑钮」折算（见 minStackH），不能随字号浮动 */
+  height: 18px;
+  padding: 0 8px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--text-1) 8%, transparent);
   font-size: var(--fs-micro);
@@ -854,6 +889,44 @@ onBeforeUnmount(() => {
 
 .stk-more:active {
   transform: scale(0.96);
+}
+
+/* 卡面右侧控件列：右上「展开本簇」、右下「编辑」，两块控件各占一行 */
+.card-acts {
+  flex: none;
+  margin-left: auto;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+/* 卡片右下角编辑钮：与勾选钮同档尺寸（紧凑再缩一档），最小块高也放得下 */
+.edit {
+  flex: none;
+  align-self: flex-end;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-1) 9%, transparent);
+  color: var(--text-2);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.edit:hover {
+  background: color-mix(in srgb, var(--text-1) 16%, transparent);
+  color: var(--text-1);
+}
+
+.edit svg {
+  width: 9px;
+  height: 9px;
 }
 
 /* 同时段清单 */
@@ -923,7 +996,18 @@ onBeforeUnmount(() => {
 }
 
 .compact .stk-more {
-  padding: 2px 6px;
+  height: 14px;
+  padding: 0 6px;
+}
+
+.compact .edit {
+  width: 11px;
+  height: 11px;
+}
+
+.compact .edit svg {
+  width: 8px;
+  height: 8px;
 }
 
 .compact .tt {

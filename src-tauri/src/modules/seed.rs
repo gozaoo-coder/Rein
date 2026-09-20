@@ -90,10 +90,28 @@ pub fn seed_foods(conn: &Connection) -> Result<()> {
         )?;
         for f in &seed.foods {
             let inserted = stmt.execute(rusqlite::params![
-                f.name, f.category, f.kcal, f.protein, f.carb, f.fat, f.fiber, f.sugar,
-                f.sodium_mg, f.potassium_mg, f.calcium_mg, f.iron_mg, f.zinc_mg, f.magnesium_mg,
-                f.vit_a_ug, f.vit_c_mg, f.vit_d_ug, f.vit_e_mg, f.vit_b12_ug, f.folate_ug,
-                f.default_unit, now
+                f.name,
+                f.category,
+                f.kcal,
+                f.protein,
+                f.carb,
+                f.fat,
+                f.fiber,
+                f.sugar,
+                f.sodium_mg,
+                f.potassium_mg,
+                f.calcium_mg,
+                f.iron_mg,
+                f.zinc_mg,
+                f.magnesium_mg,
+                f.vit_a_ug,
+                f.vit_c_mg,
+                f.vit_d_ug,
+                f.vit_e_mg,
+                f.vit_b12_ug,
+                f.folate_ug,
+                f.default_unit,
+                now
             ])?;
             if inserted == 0 {
                 continue; // 老库已有同名食物：保留原行（id/份量不变）
@@ -152,11 +170,17 @@ pub struct PlanSeedStatus {
 
 impl PlanSeedStatus {
     fn pending() -> PlanSeedStatus {
-        PlanSeedStatus { current_version: 0, latest_version: PLAN_SEED_CONTENT_VERSION }
+        PlanSeedStatus {
+            current_version: 0,
+            latest_version: PLAN_SEED_CONTENT_VERSION,
+        }
     }
 
     fn settled(v: i64) -> PlanSeedStatus {
-        PlanSeedStatus { current_version: v, latest_version: PLAN_SEED_CONTENT_VERSION }
+        PlanSeedStatus {
+            current_version: v,
+            latest_version: PLAN_SEED_CONTENT_VERSION,
+        }
     }
 }
 
@@ -228,7 +252,11 @@ pub fn plan_seed_migrate(conn: &Connection) -> Result<()> {
                 .ok();
             let Some(cur) = current else { continue };
             let merged = merge_plan_exercises(&cur, p.exercises.as_array().unwrap_or(&vec![]));
-            update.execute(rusqlite::params![p.id, merged, chrono::Utc::now().to_rfc3339()])?;
+            update.execute(rusqlite::params![
+                p.id,
+                merged,
+                chrono::Utc::now().to_rfc3339()
+            ])?;
         }
         drop(update);
         settle_seed_decision(conn, PLAN_SEED_CONTENT_VERSION, true)?;
@@ -256,7 +284,10 @@ pub fn plan_seed_override(conn: &Connection) -> Result<()> {
         )?;
         for p in &seed.plans {
             stmt.execute(rusqlite::params![
-                p.id, p.subtitle, p.exercises.to_string(), now
+                p.id,
+                p.subtitle,
+                p.exercises.to_string(),
+                now
             ])?;
         }
         drop(stmt);
@@ -293,7 +324,9 @@ fn merge_plan_exercises(stored_json: &str, seed: &[Value]) -> String {
     let stored: Value = serde_json::from_str(stored_json).unwrap_or(Value::Null);
     let arr = stored.as_array();
     // 本地不是数组（异常数据）或种子为空：保留本地，安全兜底
-    let Some(local) = arr else { return stored_json.to_string() };
+    let Some(local) = arr else {
+        return stored_json.to_string();
+    };
     if seed.is_empty() {
         return stored_json.to_string();
     }
@@ -326,7 +359,9 @@ fn merge_plan_exercises(stored_json: &str, seed: &[Value]) -> String {
             None => {
                 // 新动作：仅当类型与本地同 id 动作一致才补（防御换过动作的 id 冲突）
                 if let Some(kind) = e.get("kind").and_then(|v| v.as_str()) {
-                    let conflict = local.iter().any(|x| x.get("kind").and_then(|v| v.as_str()) == Some(kind));
+                    let conflict = local
+                        .iter()
+                        .any(|x| x.get("kind").and_then(|v| v.as_str()) == Some(kind));
                     if !conflict {
                         out.push(e.clone());
                     }
@@ -337,8 +372,10 @@ fn merge_plan_exercises(stored_json: &str, seed: &[Value]) -> String {
         }
     }
     // 本地独有的动作（用户新增的自定义动作）保留
-    let seed_ids: std::collections::HashSet<&str> =
-        seed.iter().filter_map(|e| e.get("id").and_then(|v| v.as_str())).collect();
+    let seed_ids: std::collections::HashSet<&str> = seed
+        .iter()
+        .filter_map(|e| e.get("id").and_then(|v| v.as_str()))
+        .collect();
     for e in local {
         let id = e.get("id").and_then(|v| v.as_str());
         if let Some(id) = id {
@@ -386,4 +423,148 @@ pub fn seed_builtin_plans(conn: &Connection) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/* ---------- 动作库种子（0025） ---------- */
+
+/// 动作库种子（与前端 mock 共用同一 JSON 单一来源）。
+const EXERCISES_JSON: &str = include_str!("../../../resources/exercises.json");
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExerciseSeedFile {
+    exercises: Vec<ExerciseSeed>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExerciseSeed {
+    id: String,
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    kind: String,
+    category: String,
+    #[serde(default)]
+    equipment: Option<String>,
+    #[serde(default)]
+    muscles: Value,
+    #[serde(default)]
+    tips: String,
+    default_sets: i64,
+    #[serde(default)]
+    default_reps: Option<i64>,
+    #[serde(default)]
+    default_weight_kg: Option<f64>,
+    #[serde(default)]
+    default_target_sec: Option<i64>,
+    #[serde(default)]
+    default_duration_min: Option<i64>,
+    default_rest_sec: i64,
+    weight_step: f64,
+}
+
+/// 内置动作种子：与课程种子相反，内置动作是**只读**的，所以每次启动**覆盖式刷新**
+/// 内容列（种子改名/补肌群/改要点自动生效，无需版本三选一），只保留用户自己的
+/// `hidden` 隐藏标记；`is_custom=1` 的自建动作永不触碰。
+pub fn seed_exercises(conn: &Connection) -> Result<()> {
+    let seed: ExerciseSeedFile = serde_json::from_str(EXERCISES_JSON)?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute_batch("BEGIN")?;
+    let result = (|| {
+        let mut stmt = conn.prepare(
+            "INSERT INTO exercises \
+             (id, name, aliases, kind, category, equipment, muscles, tips, default_sets, default_reps, \
+              default_weight_kg, default_target_sec, default_duration_min, default_rest_sec, weight_step, \
+              is_custom, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0, ?16, ?16) \
+             ON CONFLICT(id) DO UPDATE SET \
+               name = excluded.name, aliases = excluded.aliases, kind = excluded.kind, \
+               category = excluded.category, equipment = excluded.equipment, muscles = excluded.muscles, \
+               tips = excluded.tips, default_sets = excluded.default_sets, \
+               default_reps = excluded.default_reps, default_weight_kg = excluded.default_weight_kg, \
+               default_target_sec = excluded.default_target_sec, \
+               default_duration_min = excluded.default_duration_min, \
+               default_rest_sec = excluded.default_rest_sec, weight_step = excluded.weight_step, \
+               updated_at = excluded.updated_at \
+             WHERE exercises.is_custom = 0",
+        )?;
+        for e in &seed.exercises {
+            stmt.execute(rusqlite::params![
+                e.id,
+                e.name,
+                serde_json::to_string(&e.aliases)?,
+                e.kind,
+                e.category,
+                e.equipment,
+                e.muscles.to_string(),
+                e.tips,
+                e.default_sets,
+                e.default_reps,
+                e.default_weight_kg,
+                e.default_target_sec,
+                e.default_duration_min,
+                e.default_rest_sec,
+                e.weight_step,
+                now,
+            ])?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT")?,
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 不变量：课程种子里出现的每个动作名，动作库种子必须能覆盖
+    /// （否则内置课的动作在打开时就解析不到库内条目，回填会把它当成自建动作）。
+    #[test]
+    fn exercise_seed_covers_all_plan_movements() {
+        let plans: PlanSeedFile = serde_json::from_str(WORKOUT_PLANS_JSON).unwrap();
+        let lib: ExerciseSeedFile = serde_json::from_str(EXERCISES_JSON).unwrap();
+
+        let mut known: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for e in &lib.exercises {
+            known.insert(e.name.as_str());
+            for a in &e.aliases {
+                known.insert(a.as_str());
+            }
+        }
+
+        let mut missing = Vec::new();
+        for p in &plans.plans {
+            for ex in p.exercises.as_array().into_iter().flatten() {
+                let Some(name) = ex.get("name").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if !known.contains(name) {
+                    missing.push(name.to_string());
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "课程种子里的动作没有进动作库：{missing:?}"
+        );
+    }
+
+    /// 动作库种子的 id 唯一（重量曲线按 id 聚合，重复 id 会让两条曲线合并）。
+    #[test]
+    fn exercise_seed_ids_are_unique() {
+        let lib: ExerciseSeedFile = serde_json::from_str(EXERCISES_JSON).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for e in &lib.exercises {
+            assert!(seen.insert(e.id.as_str()), "重复的动作 id：{}", e.id);
+        }
+    }
 }

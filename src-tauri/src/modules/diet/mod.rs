@@ -12,7 +12,8 @@ use models::Food;
 
 /// foods 表列清单（带 f. 前缀，必须配合别名 `FROM foods f` 使用，保证 join 不撞列名；
 /// SELECT 时必须使用，保证行映射下标稳定）
-pub(crate) const FOOD_COLS: &str = "f.id, f.name, f.category, f.kcal, f.protein, f.carb, f.fat, f.fiber, f.sugar, \
+pub(crate) const FOOD_COLS: &str =
+    "f.id, f.name, f.category, f.kcal, f.protein, f.carb, f.fat, f.fiber, f.sugar, \
      f.sodium_mg, f.potassium_mg, f.calcium_mg, f.iron_mg, f.zinc_mg, f.magnesium_mg, \
      f.vit_a_ug, f.vit_c_mg, f.vit_d_ug, f.vit_e_mg, f.vit_b12_ug, f.folate_ug, f.default_unit";
 

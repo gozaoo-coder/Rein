@@ -3,21 +3,27 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, ArrowUp, Plus, X } from 'lucide-vue-next'
 
+import ExercisePickerSheet from '@/components/exercise/ExercisePickerSheet.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import { EXERCISE_CATEGORY_LABELS } from '@/config/domain'
+import { MUSCLE_LABELS, type MuscleKey } from '@/config/muscles'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { usePlanStore } from '@/stores/plan'
 import { useToast } from '@/composables/useToast'
 import { estimatePlanMinutes, PLAN_TYPE_OPTIONS, planTypeLabel } from '@/utils/plan'
-import type { PlanExercise, PlanExerciseKind, WorkoutPlanInput, WorkoutType } from '@/types'
+import type { ExerciseRecord, PlanExercise, PlanExerciseKind, WorkoutPlanInput, WorkoutType } from '@/types'
 
 /**
  * 课程编辑：新建（:id='new'）或整体编辑一门课程。
- * 提交为全量 upsert；动作按类型（力量/计时/有氧）切换字段。
+ * 提交为全量 upsert；动作从动作库选择（exerciseId 是课程与曲线的关联键），
+ * 处方（组数/次数/重量/休息）仍由课程条目自己持有。
  */
 const route = useRoute()
 const router = useRouter()
 const planStore = usePlanStore()
+const lib = useExerciseLibStore()
 const { toast } = useToast()
 
 const isNew = computed(() => route.params.id === 'new')
@@ -29,10 +35,12 @@ const workoutType = ref<WorkoutType>('strength')
 const exercises = ref<PlanExercise[]>([])
 const ready = ref(false)
 const saving = ref(false)
+const pickerIdx = ref<number | null>(null)
 
 function defaultExercise(kind: PlanExerciseKind): PlanExercise {
   return {
     id: crypto.randomUUID(),
+    exerciseId: '',
     name: '',
     kind,
     sets: kind === 'cardio' ? 1 : 3,
@@ -46,6 +54,7 @@ function defaultExercise(kind: PlanExerciseKind): PlanExercise {
 }
 
 onMounted(async () => {
+  await lib.ensureLoaded()
   if (isNew.value) {
     id.value = crypto.randomUUID()
     exercises.value = [defaultExercise('strength')]
@@ -66,6 +75,43 @@ onMounted(async () => {
   }
   ready.value = true
 })
+
+/** 动作行的展示名（库内名优先，缺失回落条目快照） */
+function exName(e: PlanExercise): string {
+  return lib.resolveName(e)
+}
+
+/** 条目副标题：库内主攻肌群 / 分类（让用户确认选对了动作） */
+function exMeta(e: PlanExercise): string {
+  const rec = lib.get(e.exerciseId)
+  if (!rec) return e.exerciseId ? '动作库条目已删除' : '尚未选择动作'
+  const mains = (Object.entries(rec.muscles ?? {}) as [MuscleKey, number][])
+    .filter(([, lv]) => lv === 3)
+    .map(([m]) => MUSCLE_LABELS[m])
+  return `${EXERCISE_CATEGORY_LABELS[rec.category]}${mains.length ? ` · ${mains.join(' · ')}` : ''}`
+}
+
+function openPicker(i: number): void {
+  pickerIdx.value = i
+}
+
+/** 选中库内动作：写 exerciseId + 名称；条目参数仍是初始值时用库内默认处方补足 */
+function onPick(rec: ExerciseRecord): void {
+  const i = pickerIdx.value
+  pickerIdx.value = null
+  const e = i == null ? null : exercises.value[i]
+  if (!e) return
+  e.exerciseId = rec.id
+  e.name = rec.name
+  if (e.kind !== rec.kind) switchKind(e, rec.kind)
+  if (!e.tips) e.tips = rec.tips
+  if (e.kind === 'strength') {
+    if (e.weightKg == null) e.weightKg = rec.defaultWeightKg ?? e.weightKg
+    if (e.reps == null) e.reps = rec.defaultReps ?? e.reps
+  }
+  if (e.kind === 'timed' && e.targetSec == null) e.targetSec = rec.defaultTargetSec ?? e.targetSec
+  if (e.kind === 'cardio' && e.durationMin == null) e.durationMin = rec.defaultDurationMin ?? e.durationMin
+}
 
 /** 切换动作类型：清空无关字段并补默认值 */
 function switchKind(e: PlanExercise, kind: string): void {
@@ -127,10 +173,10 @@ async function save(): Promise<void> {
     return
   }
   const finalExercises = exercises.value
-    .map((e) => ({ ...e, name: e.name.trim() }))
-    .filter((e) => e.name.length > 0)
+    .map((e) => ({ ...e, name: lib.resolveName(e).trim() }))
+    .filter((e) => e.exerciseId || e.name.length > 0)
   if (finalExercises.length === 0) {
-    toast('至少添加一个动作并填写动作名称')
+    toast('至少添加一个动作')
     return
   }
   saving.value = true
@@ -196,10 +242,18 @@ async function save(): Promise<void> {
           </div>
         </div>
 
-        <label class="field">
-          <span class="flabel">动作名称</span>
-          <input v-model="e.name" type="text" maxlength="20" placeholder="如：杠铃卧推" />
-        </label>
+        <div class="field">
+          <span class="flabel">动作</span>
+          <button class="expick row" type="button" @click="openPicker(i)">
+            <span class="col expickmain">
+              <span class="exname" :class="{ empty: !e.exerciseId }">
+                {{ e.exerciseId ? exName(e) : '点击从动作库选择' }}
+              </span>
+              <span class="exmeta t-3">{{ exMeta(e) }}</span>
+            </span>
+            <span class="expickop">选择</span>
+          </button>
+        </div>
 
         <div class="field">
           <span class="flabel">类型</span>
@@ -242,6 +296,14 @@ async function save(): Promise<void> {
       <button class="save row center" :disabled="saving" @click="void save()">
         {{ saving ? '保存中…' : isNew ? '创建课程' : '保存修改' }}
       </button>
+
+      <ExercisePickerSheet
+        :open="pickerIdx !== null"
+        :kind="exercises[pickerIdx ?? 0]?.kind ?? 'strength'"
+        :current-id="exercises[pickerIdx ?? 0]?.exerciseId ?? ''"
+        @pick="onPick"
+        @close="pickerIdx = null"
+      />
     </template>
   </div>
 </template>
@@ -290,6 +352,47 @@ async function save(): Promise<void> {
 
 .typeseg {
   max-width: 100%;
+}
+
+/* 动作选择器：只读展示已选动作（名称/肌群来自动作库），点击开选择弹层 */
+.expick {
+  width: 100%;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.expickmain {
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+
+.exname {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.exname.empty {
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.exmeta {
+  font-size: var(--fs-caption);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.expickop {
+  flex: none;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--c-exercise-deep);
 }
 
 .excard {

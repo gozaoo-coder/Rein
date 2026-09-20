@@ -31,7 +31,9 @@ fn check_embed_assets() {
     let ort_rel = match (target_os().as_str(), target_arch().as_str()) {
         ("windows", "x86_64") => Some("resources/ort/win-x64/onnxruntime.dll"),
         ("windows", "aarch64") => Some("resources/ort/win-arm64/onnxruntime.dll"),
-        ("android", "aarch64") => Some("gen/android/app/src/main/jniLibs/arm64-v8a/libonnxruntime.so"),
+        ("android", "aarch64") => {
+            Some("gen/android/app/src/main/jniLibs/arm64-v8a/libonnxruntime.so")
+        }
         _ => None,
     };
     if let Some(p) = ort_rel {

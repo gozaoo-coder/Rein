@@ -9,14 +9,21 @@
 //! - `search.rs`  结构化过滤 + FTS5(trigram) + 向量召回 → RRF 融合
 //! - `settings.rs` 三档检索模式与逐类开关
 //! - `memory.rs`  长期记忆的增删改与 prompt 注入块
+//! - `files.rs`   真实文件（kb_files）：文本笔记 / 多模态节点 / 目录
+//! - `assets.rs`  模态层（kb_assets）：本体引用、转写状态与降级链（ai-workspace §2）
+//! - `governance.rs` 目录治理：保留区、分类移动、审计与撤销（§3.3）
+//! - `injection.rs` 全量注入区：系统提示词 + 用户记忆（§3.4）
 //! - `embed.rs`   三种 embedding 后端（本地 ORT / 云端 / 纯关键词）
 //! - `worker.rs`  后台索引线程（消费脏队列、补算向量、上报进度）
 
+pub mod assets;
 pub mod chunk;
 pub mod commands;
 pub mod embed;
 pub mod files;
+pub mod governance;
 pub mod index;
+pub mod injection;
 pub mod memory;
 pub mod models;
 pub mod search;

@@ -206,7 +206,7 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
 .fab {
   position: fixed;
   right: max(18px, calc(50% - var(--frame-max) / 2 + 18px));
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 14px);
+  bottom: calc(var(--dock-top) + 14px);
   z-index: 50;
   gap: 6px;
   padding: 12px 20px;

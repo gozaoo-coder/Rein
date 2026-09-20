@@ -160,3 +160,29 @@ button:active,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- 性能降级（system/perf.ts 判定掉帧后写入 data-perf="low"） ----------
+   只关最费合成器的两类：毛玻璃（每帧都要重算背后的内容，渐进模糊页头更是多层叠加）
+   与循环动画（常驻合成层）。一次性过渡刻意保留——按压反馈、弹层进出没有这些会显得
+   失灵。底色用 --surface-translucent → --surface 顶掉，半透明表面在关掉 blur 后
+   会变成一层发灰的薄膜。 */
+html[data-perf='low'] {
+  --surface-translucent: var(--surface);
+  /* 玻璃表面（--glass-*，悬浮 Dock 等）顶成实底：没有 blur 的半透明底会成灰膜；
+     受光环收成普通描边、高光与亮斑归零，投影退回悬浮条常规值 */
+  --glass-fill: var(--surface);
+  --glass-rim-hi: var(--line-strong);
+  --glass-rim-lo: var(--line-strong);
+  --glass-sheen: transparent;
+  --glass-tab-hi: transparent;
+  --glass-shadow: var(--shadow-float);
+}
+
+html[data-perf='low'] *,
+html[data-perf='low'] *::before,
+html[data-perf='low'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

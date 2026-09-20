@@ -21,6 +21,7 @@ import { addDays, fmtDateCn, nowMin, todayStr, weekDates } from '@/utils/date'
 import { busyIntervals, freeGaps } from '@/utils/schedule'
 import type { Todo, TodoSubtask } from '@/types'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
+import CourseDetailSheet from '@/components/campus/CourseDetailSheet.vue'
 
 /**
  * 今日画布：待办与日程熔成一条时间轴。
@@ -87,7 +88,25 @@ const editorTarget = computed<Todo | null>(
 const editorId = ref<number | null>(null)
 const addOpen = ref(false)
 
+/** 课表派生行是只读投影：点开的是课程详情，不是待办编辑器（见 CourseDetailSheet）。
+ *  与 editorTarget 同理按 id 派生 —— 存对象快照的话，打卡后面板读到的还是旧对象。 */
+const courseId = ref<number | null>(null)
+const course = computed<Todo | null>(
+  () => store.allTodos.find((t) => t.id === (courseId.value ?? -1)) ?? null,
+)
+const courseOpen = ref(false)
+
+function openCourse(t: Todo): void {
+  selectedId.value = t.id
+  courseId.value = t.id
+  courseOpen.value = true
+}
+
 function onSelect(t: Todo): void {
+  if (t.courseSessionId != null) {
+    openCourse(t)
+    return
+  }
   selectedId.value = t.id
   if (!isDesktop.value) {
     editorId.value = t.id
@@ -105,8 +124,12 @@ function onMove(t: Todo, startMin: number): void {
   void applyMove(t, { date: canvasDate.value, startMin })
 }
 
-/** 周时间线：选中直接开编辑抽屉（周段无详情右栏）；拖拽跨天+改时统一走撤销 */
-function onWeekSelect(t: Todo): void {
+/** 直开编辑抽屉（周段无详情右栏；画布卡片右下角编辑钮同入口）：课程派生行转只读详情 */
+function openEditor(t: Todo): void {
+  if (t.courseSessionId != null) {
+    openCourse(t)
+    return
+  }
   selectedId.value = t.id
   editorId.value = t.id
   editorOpen.value = true
@@ -170,7 +193,14 @@ async function placeInNextGap(t: Todo): Promise<void> {
 function onChipDown(e: PointerEvent, t: Todo): void {
   if (e.button !== 0) return
   const el = e.currentTarget as HTMLElement
-  el.setPointerCapture(e.pointerId)
+  // **捕获失败不能带走整个拖拽**：合成指针、指针已失效等边缘会抛 NotFoundError，
+  // 而这里没有捕获也能靠元素自身的 pointermove 继续（画布那边就是这么办的）。
+  // 曾经这里少了个 try，于是「捕获一失败，池卡片就完全拖不动」。
+  try {
+    el.setPointerCapture(e.pointerId)
+  } catch {
+    /* 无有效指针：拖拽沿元素事件继续 */
+  }
   chipDrag.value = t
   chipStart = { x: e.clientX, y: e.clientY }
   chipMoved = false
@@ -389,6 +419,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
             :compact="!isDesktop"
             data-testid="canvas-timeline"
             @select="onSelect"
+            @edit="openEditor"
             @toggle="onToggle"
             @move="onMove"
           />
@@ -412,7 +443,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
           :todos="weekScheduled"
           :unscheduled="weekUnscheduled"
           :selected-id="selectedId"
-          @select="onWeekSelect"
+          @select="openEditor"
           @toggle="onToggle"
           @move="onWeekMove"
           @day-select="onWeekDaySelect"
@@ -429,6 +460,12 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
 
     <DailyRitual :open="ritualOpen" :candidates="ritualCandidates" @close="closeRitual" @confirm="onRitualConfirm" />
     <TodoEditorSheet :open="editorOpen" :todo="editorTarget" :date="canvasDate" @close="editorOpen = false" />
+    <CourseDetailSheet
+      :open="courseOpen"
+      :todo="course"
+      @close="courseOpen = false"
+      @toggle="onToggle"
+    />
     <SmartAddSheet :open="addOpen" :date="canvasDate" @close="addOpen = false" />
   </div>
 </template>

@@ -7,6 +7,7 @@ import MonthView from '@/components/todo/MonthView.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import PageHeader from '@/components/layout/PageHeader.vue'
 import WeekView from '@/components/todo/WeekView.vue'
 import { EQUIPMENT_LABELS, EXPERIENCE_LABELS, GOAL_LABELS, TIME_SLOT_LABELS } from '@/config/domain'
 import { fmtCents } from '@/config/ledger'
@@ -64,7 +65,7 @@ const ledgerSub = computed(() => {
 const view = ref<'week' | 'month'>('week')
 const selectedDate = ref(todayStr())
 
-/* ---- 番茄钟（格内调专注时长；完整配置在底部设置抽屉） ---- */
+/* ---- 番茄钟（格内调专注时长；完整配置在「设置 › 番茄钟」） ---- */
 
 /* ---- 个人约束（健康方案生成依据） ---- */
 const SLOT_OPTIONS: TimeSlot[] = ['morning', 'noon', 'evening']
@@ -153,13 +154,12 @@ async function saveConstraints(): Promise<void> {
   })
   editOpen.value = false
 }
-
-/* ---- 底部设置抽屉：番茄钟完整配置 + 关于 ---- */
-const setOpen = ref(false)
 </script>
 
 <template>
   <div class="page">
+    <PageHeader title="我" />
+
     <!-- 身份条：点头像区进约束/身体资料编辑 -->
     <button class="id row" @click="openEdit">
       <div class="avatar col center">{{ avatarChar }}</div>
@@ -245,10 +245,10 @@ const setOpen = ref(false)
       </button>
     </div>
 
-    <!-- 设置入口 -->
-    <button class="setrow row between" @click="setOpen = true">
+    <!-- 设置入口：二级页（功能开关 / 番茄钟完整配置 / 关于） -->
+    <button class="setrow row between" @click="router.push({ name: 'settings' })">
       <span class="row setlabel"><Settings2 :size="16" /> 设置</span>
-      <span class="row setval">番茄钟 · 关于<ChevronRight :size="15" class="chev" /></span>
+      <span class="row setval">功能开关 · 番茄钟 · 关于<ChevronRight :size="15" class="chev" /></span>
     </button>
 
     <!-- 个人约束编辑（保留既有抽屉） -->
@@ -324,26 +324,6 @@ const setOpen = ref(false)
         </div>
 
         <button class="save" type="button" @click="saveConstraints">保存</button>
-      </div>
-    </SheetModal>
-
-    <!-- 设置抽屉：番茄钟完整配置 + 关于 -->
-    <SheetModal :open="setOpen" title="设置" @close="setOpen = false">
-      <div class="sform">
-        <header class="shead row between">
-          <h2>番茄钟</h2>
-          <span class="num t-3">今日专注 {{ pomo.todayFocusMin }} 分钟</span>
-        </header>
-        <div class="sgrid">
-          <NumberStepper v-model="pomo.settings.focusMin" label="专注时长" unit="分钟" :step="5" :min="5" :max="120" />
-          <NumberStepper v-model="pomo.settings.breakMin" label="短休息" unit="分钟" :step="1" :min="1" :max="30" />
-          <NumberStepper v-model="pomo.settings.longBreakMin" label="长休息" unit="分钟" :step="5" :min="5" :max="60" />
-          <NumberStepper v-model="pomo.settings.roundsBeforeLongBreak" label="长休间隔" unit="轮" :step="1" :min="2" :max="8" />
-        </div>
-        <p class="about t-3">
-          Rein v0.2.0 · Tauri + Vue + Rust<br>
-          架构与编码规范见 docs/ARCHITECTURE.md 与 docs/STANDARDS.md
-        </p>
       </div>
     </SheetModal>
   </div>
@@ -439,6 +419,12 @@ button.cell:active {
   font-size: var(--fs-footnote);
   font-weight: 700;
   color: var(--text-2);
+}
+
+/* 格内统一呼吸位：页头行与格内容（周/月视图、大数字、摘要…）之间恒为 10px。
+   此前只有周视图/月视图没有这条边距，「周 · 月」分段控件与日列卡片直接贴住。 */
+.cell > .chead + * {
+  margin-top: 10px;
 }
 
 .go {
@@ -686,31 +672,5 @@ button.cell:active {
   color: var(--on-accent);
   font-size: var(--fs-callout);
   font-weight: 700;
-}
-
-/* 设置抽屉 */
-.sform {
-  display: grid;
-  gap: 12px;
-  padding-bottom: 20px;
-}
-
-.shead h2 {
-  font-size: var(--fs-headline);
-  font-weight: 700;
-}
-
-.sgrid {
-  display: grid;
-  grid-template-columns: 1fr;
-}
-
-.sgrid > * + * {
-  border-top: 0.5px solid var(--line);
-}
-
-.about {
-  font-size: var(--fs-caption);
-  line-height: 1.7;
 }
 </style>

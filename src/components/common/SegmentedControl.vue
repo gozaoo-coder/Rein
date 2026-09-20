@@ -10,20 +10,39 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 
 const index = computed(() => Math.max(0, props.options.findIndex((o) => o.value === props.modelValue)))
+
+/**
+ * 键盘：单选组的常规操作 —— 左右方向键换选项，跳过的项不落焦点（roving tabindex）。
+ * 这些按钮表达的是「选一个」，不是「切一个页签」，所以用 radio 而不是 tab
+ * （tab 会给读屏一个错误的心智模型：它以为下面会有一块跟着换的内容）。
+ */
+function pick(v: string): void {
+  emit('update:modelValue', v)
+}
+
+function onKey(e: KeyboardEvent, i: number): void {
+  const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
+  if (!d) return
+  e.preventDefault()
+  const next = props.options[(i + d + props.options.length) % props.options.length]
+  if (next) pick(next.value)
+}
 </script>
 
 <template>
-  <div class="seg" role="tablist" :style="{ '--n': options.length }">
+  <div class="seg" role="radiogroup" :style="{ '--n': options.length }">
     <div class="thumb" :style="{ transform: `translateX(${index * 100}%)` }" />
     <button
-      v-for="o in options"
+      v-for="(o, i) in options"
       :key="o.value"
       type="button"
-      role="tab"
+      role="radio"
       class="seg-item"
       :class="{ on: o.value === modelValue }"
-      :aria-selected="o.value === modelValue"
-      @click="emit('update:modelValue', o.value)"
+      :aria-checked="o.value === modelValue"
+      :tabindex="o.value === modelValue ? 0 : -1"
+      @click="pick(o.value)"
+      @keydown="onKey($event, i)"
     >
       {{ o.label }}
     </button>

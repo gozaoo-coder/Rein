@@ -18,13 +18,15 @@ import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import ModelFormSheet from '@/components/ai/ModelFormSheet.vue'
+import OnlineServiceCard from '@/components/ai/OnlineServiceCard.vue'
 import VoiceConfigSheet from '@/components/voice/VoiceConfigSheet.vue'
+import { formatCnyNano, formatUnitPrice } from '@/ai/cost'
 import { voiceService } from '@/services/voiceService'
 import { useToast } from '@/composables/useToast'
 import { useModelsStore } from '@/stores/models'
 import type { AiModel, VoiceConfig } from '@/types'
 
-/** 模型管理：添加 / 编辑 / 删除 / 设默认，max_tokens=1 探测视觉·思考·努力。 */
+/** 模型管理：在线服务导入 / 添加 · 编辑 · 删除 · 设默认，max_tokens=1 探测视觉·思考·努力。 */
 const store = useModelsStore()
 const toast = useToast()
 const router = useRouter()
@@ -38,9 +40,24 @@ function askAiSetupVoice(): void {
 }
 
 onMounted(() => {
-  void store.load().catch(() => toast.toast('模型列表加载失败'))
+  void store
+    .load()
+    .then(() => store.loadUsage())
+    .catch(() => toast.toast('模型列表加载失败'))
   void loadVoiceConfig()
 })
+
+/** 在线服务导入完成：账本会多出几条记录，重新拉一次本机成本 */
+function onOnlineSynced(): void {
+  void store.loadUsage()
+}
+
+/** 单条模型的本机累计花费（含模型费与流量费拆分） */
+function costText(m: AiModel): string | null {
+  const u = store.usageOf(m)
+  if (!u || u.calls === 0) return null
+  return `${formatCnyNano(u.costTotalNano)} · ${u.calls} 次`
+}
 
 const formOpen = ref(false)
 const editing = ref<AiModel | null>(null)
@@ -123,15 +140,23 @@ const capMeta = {
       <p>每条模型保存后会自动发送 <b>max_tokens=1</b> 的测试包，探测「视觉（图片上传）、thinking 开关、effort 档位」三项能力，结果以徽章展示。</p>
     </div>
 
+    <!-- 在线服务：服务端下发模型 + 服务密钥 + 双端成本 -->
+    <OnlineServiceCard @synced="onOnlineSynced" />
+
     <ul v-if="store.models.length > 0" class="cards">
       <li v-for="m in store.models" :key="m.id" class="card m-card">
         <div class="row between top">
           <div class="flex-1 min0">
             <p class="m-name">
               {{ m.name }}
+              <span v-if="m.source === 'online'" class="chip-onl">在线</span>
               <span v-if="m.isDefault" class="chip-def">默认</span>
             </p>
             <p class="m-id t-2">{{ m.provider }} · {{ m.modelId }}</p>
+            <p v-if="formatUnitPrice(m) || costText(m)" class="m-cost t-3">
+              <span v-if="formatUnitPrice(m)">{{ formatUnitPrice(m) }}</span>
+              <span v-if="costText(m)" class="spent">{{ costText(m) }}</span>
+            </p>
           </div>
           <div class="acts">
             <button
@@ -259,6 +284,30 @@ const capMeta = {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   font-size: 10px;
+  font-weight: 700;
+}
+
+/* 在线服务导入的模型：与「默认」同族配色，避免引入新颜色 */
+.chip-onl {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.m-cost {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.m-cost .spent {
+  color: var(--text-2);
   font-weight: 700;
 }
 
@@ -440,7 +489,7 @@ const capMeta = {
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 14px);
+  bottom: calc(var(--dock-top) + 14px);
   z-index: 50;
   gap: 5px;
   padding: 13px 24px;

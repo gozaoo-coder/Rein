@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { RouterView } from 'vue-router'
 
@@ -8,12 +8,19 @@ import DesktopRail from '@/components/layout/DesktopRail.vue'
 import DesktopInspector from '@/components/layout/DesktopInspector.vue'
 import ActiveWorkoutBar from '@/components/exercise/ActiveWorkoutBar.vue'
 import RecordFloatBar from '@/components/record/RecordFloatBar.vue'
+import GrabFloatBar from '@/components/campus/GrabFloatBar.vue'
 import VoiceSessionView from '@/components/voice/VoiceSessionView.vue'
 import VoiceFloatBar from '@/components/voice/VoiceFloatBar.vue'
 import SessionOverlay from '@/components/exercise/SessionOverlay.vue'
+import UpdatePrompt from '@/components/update/UpdatePrompt.vue'
 import ToastHost from '@/components/common/ToastHost.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { DESKTOP_MIN } from '@/config/domain'
+import { useUpdateStore } from '@/stores/update'
+import { useCourseSelectStore } from '@/stores/courseSelect'
+import { useToast } from '@/composables/useToast'
+import { askAiForGrabRescue } from '@/utils/campusAi'
+import { kickPerfWatch, startPerfWatch } from '@/system/perf'
 import { immersiveClosing, immersiveOpen } from '@/system/sessionImmersive'
 
 const route = useRoute()
@@ -24,6 +31,54 @@ const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 const fullscreenUI = computed(() => route.meta.fullscreen === true || immersiveOpen.value)
 /** 沉浸层收起动画期间悬浮条提前回归，与形变块同位接续（v-show 保实例，动画不打断弹簧状态） */
 const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value)
+
+/** 路由切换是一轮已知的重负载（整页重建 + 入场过渡）：让性能采样插队补一轮，
+ *  不必等休息窗口到期——卡顿最容易发生在这里，也最容易被「刚好没在采样」漏掉。 */
+watch(() => route.fullPath, () => kickPerfWatch())
+
+/* ---------------- 参数错误 → 立刻交给 AI 补救 ----------------
+ *
+ * 教务说「参数错误」就是**这条请求的写法不对**：重试一万次也是同一个结果，
+ * 而且每次都在用错的参数骚扰教务。引擎那边会停下来把任务标成 `needs_ai`
+ * （见 grab.rs 的 `absorb_error`），这里负责**立刻把现场递给 AI**：
+ * 用户要的是「放着不管它也有人在救」，而不是「先弹个提示等我来点」。
+ *
+ * 放在 App 层而不是抢课页里：用户可能已经翻去别的页面了，救援不该挑页面。
+ * 每条任务只自动递一次（AI 那边可能有来回，不能反复把人拽走），之后
+ * 面板上仍有「交给 AI 排查」的手动入口。
+ */
+const courseSelect = useCourseSelectStore()
+const toast = useToast()
+const aiHandedOff = new Set<number>()
+watch(
+  () => courseSelect.grabTasks.map((t) => `${t.id}:${t.status}`).join(','),
+  () => {
+    const bad = courseSelect.rejectedTasks.filter((t) => !aiHandedOff.has(t.id))
+    if (!bad.length) return
+    for (const t of bad) aiHandedOff.add(t.id)
+    const first = bad[0]!
+    askAiForGrabRescue(courseSelect.grab)
+    toast.toast(
+      `教务拒绝了抢课请求（参数错误）：「${first.courseName ?? first.lessonName ?? '这门课'}」已交给 AI 排查`,
+    )
+  },
+)
+
+/**
+ * 启动静默检查更新：只在「开关开着 + 距上次检查超过间隔」时真的联网，
+ * 有新版本就弹一张明确的更新卡片（立即更新 / 稍后 / 跳过此版本）。
+ * 刻意不阻塞任何首屏渲染：慢网络下最坏的结果只是卡片晚几秒出现。
+ */
+const updatePrompt = ref(false)
+
+onMounted(() => {
+  startPerfWatch()
+  const update = useUpdateStore()
+  void (async () => {
+    await update.load()
+    if (await update.autoCheckIfDue()) updatePrompt.value = true
+  })()
+})
 </script>
 
 <template>
@@ -56,10 +111,14 @@ const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value
   <RecordFloatBar v-show="wbarVisible" />
   <!-- 语音转写悬浮条：语音会话收起后台转写继续（与录音浮条同套停靠、独立 key） -->
   <VoiceFloatBar v-show="wbarVisible" />
+  <!-- 抢课监视器：后台引擎有活儿时顶部落一条，点进选课页（顶部定位，不与底部三条浮条抢位） -->
+  <GrabFloatBar v-show="wbarVisible" />
   <!-- 语音会话视图：单例 runtime 驱动，任何入口可唤起（voiceRuntime.openView） -->
   <VoiceSessionView />
   <!-- 训练课沉浸层：常驻挂载不走路由（system/sessionImmersive 驱动显隐与形变） -->
   <SessionOverlay />
+  <!-- 启动检查到新版本时的更新卡片（立即更新 / 稍后 / 跳过此版本） -->
+  <UpdatePrompt :open="updatePrompt" @close="updatePrompt = false" />
   <ToastHost />
 </template>
 

@@ -1,0 +1,354 @@
+/**
+ * e2e-feature-toggles —— 功能插件开关端到端（无头 Edge + 原生 CDP，浏览器 mock 模式）
+ *
+ * 为什么要 e2e：这套开关的价值全在「关掉之后整个应用真的变了样」——工具格少一张卡、
+ * 底栏少一个页签、直链被守卫拦回主页、刷新后状态还在。这些跨组件的联动单测反映不出来，
+ * 只有真渲染一遍才验证得了；同时它也是回归网：哪天工具格又冒出硬编码卡片，断言会立刻红。
+ *
+ * 剧本：
+ *   1. 「我」页的设置行 → 二级页「设置」三组齐备
+ *   2. 「设置 › 打开或关闭功能」→ 三个模块开关（运动 / 课表 / 健康方案）
+ *   3. 关掉「运动」→ 工具格无「记运动」、底栏无「运动」页签、直链 /#/sports 被拦回主页
+ *   4. 关掉「课表」/「健康方案」→ 工具格对应卡片消失、直链 /#/program 被拦回主页
+ *   5. 重新打开「运动」→ 入口恢复
+ *   6. 刷新后开关状态保持（localStorage 持久化）
+ *
+ * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
+ * 运行：node scripts/e2e-feature-toggles.mjs
+ */
+import { spawn } from 'node:child_process'
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
+
+const EDGE_CANDIDATES = [
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+]
+const BROWSER = EDGE_CANDIDATES.find((p) => existsSync(p))
+if (!BROWSER) {
+  console.error('找不到 Edge/Chrome，无法运行 e2e')
+  process.exit(1)
+}
+
+const APP = process.env.REIN_E2E_URL ?? 'http://localhost:1420'
+/** 输出目录：默认系统临时目录；REIN_E2E_OUT 可指定（便于人工翻看截图） */
+const OUT = process.env.REIN_E2E_OUT ?? `${process.env.TEMP}/rein-e2e-features-${Date.now()}`
+const USER_DATA = `${OUT}/profile`
+const SHOTS = `${OUT}/shots`
+mkdirSync(SHOTS, { recursive: true })
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/* ---------------- 断言与结果汇总 ---------------- */
+
+const results = []
+function ok(name, pass, detail = '') {
+  results.push({ name, pass })
+  console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+/* ---------------- CDP ---------------- */
+
+let ws
+let nextId = 1
+const pending = new Map()
+
+function cdp(method, params = {}) {
+  return new Promise((resolve) => {
+    const id = nextId++
+    pending.set(id, { resolve })
+    ws.send(JSON.stringify({ id, method, params }))
+  })
+}
+
+async function evalJS(expression) {
+  const r = await cdp('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
+  if (r.exceptionDetails) {
+    throw new Error('eval 异常: ' + String(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text))
+  }
+  return r.result.value
+}
+
+async function waitFor(expr, timeoutMs = 8000, label = expr.slice(0, 60)) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    if (await evalJS(`Boolean(${expr})`)) return true
+    await sleep(120)
+  }
+  throw new Error(`等待超时: ${label}`)
+}
+
+async function shot(name) {
+  const r = await cdp('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+  if (!r?.data) return
+  const file = `${SHOTS}/${name}.png`
+  writeFileSync(file, Buffer.from(r.data, 'base64'))
+  console.log(`     截图 ${file}`)
+}
+
+/** 暗色截图：同一页面切 prefers-color-scheme 再拍一张（规范要求 UI 改动浅深各一张） */
+async function shotDark(name) {
+  await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
+  await sleep(350)
+  await shot(name)
+  await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
+  await sleep(250)
+}
+
+async function connect(url) {
+  const list = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`)).json()
+  const target = list.find((t) => t.type === 'page')
+  ws = new WebSocket(target.webSocketDebuggerUrl)
+  await new Promise((r, j) => {
+    ws.onopen = r
+    ws.onerror = j
+  })
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data)
+    if (m.id && pending.has(m.id)) {
+      const p = pending.get(m.id)
+      pending.delete(m.id)
+      p.resolve(m.result ?? m.error)
+    }
+  }
+  await cdp('Page.enable')
+  await cdp('Runtime.enable')
+  await cdp('Page.navigate', { url })
+  const t0 = Date.now()
+  while (Date.now() - t0 < 15000) {
+    try {
+      if ((await evalJS('document.readyState')) === 'complete') return
+    } catch {
+      /* 导航中上下文会短暂失效 */
+    }
+    await sleep(200)
+  }
+  throw new Error('页面加载超时')
+}
+
+/** 点一个按钮：按选择器 + 文本包含匹配 */
+const clickText = (selector, text) =>
+  evalJS(`(() => {
+    const el = [...document.querySelectorAll(${JSON.stringify(selector)})]
+      .find((e) => e.textContent.trim().includes(${JSON.stringify(text)}))
+    if (!el) return false
+    el.click()
+    return true
+  })()`)
+
+/** 工具格里的卡片标题清单（主页移动端工具格） */
+const toolTitles = () =>
+  evalJS(`[...document.querySelectorAll('.tools .tool-txt b')].map((e) => e.textContent.trim())`)
+
+/** 底栏页签文案清单（底栏根类名是 `.dock`，`.tabbar` 已经不存在了） */
+const tabLabels = () => evalJS(`[...document.querySelectorAll('.dock .tab')].map((e) => e.textContent.trim())`)
+
+/** 打开/关闭某模块开关（功能页的行按名字定位） */
+const setToggle = (name, on) =>
+  evalJS(`(() => {
+    const row = [...document.querySelectorAll('.prow')]
+      .find((r) => r.querySelector('.ptxt b')?.textContent.trim() === ${JSON.stringify(name)})
+    if (!row) return 'no-row'
+    const sw = row.querySelector('[role="switch"]')
+    if (!sw) return 'no-switch'
+    const isOn = sw.getAttribute('aria-checked') === 'true'
+    if (isOn !== ${on}) sw.click()
+    return isOn === ${on} ? 'already' : 'clicked'
+  })()`)
+
+/* ---------------- 主流程 ---------------- */
+
+const DEBUG_PORT = 9500 + (process.pid % 200)
+
+async function main() {
+  const edge = spawn(
+    BROWSER,
+    [
+      '--headless=new',
+      `--remote-debugging-port=${DEBUG_PORT}`,
+      '--disable-background-timer-throttling',
+      '--disable-renderer-backgrounding',
+      '--disable-backgrounding-occluded-windows',
+      `--user-data-dir=${USER_DATA}`,
+      '--no-first-run',
+      '--window-size=430,932',
+      'about:blank',
+    ],
+    { stdio: 'ignore' },
+  )
+
+  try {
+    await sleep(1500)
+    await connect(`${APP}/#/me`)
+    // 等应用挂载完成再改 hash：vue-router 的首次导航若与赋值竞争，会把 hash 拽回初始路由
+    await waitFor(`!!document.querySelector('.page')`, 8000, '应用挂载')
+    // 每次从干净状态开跑：清掉上一轮的开关
+    await evalJS(`localStorage.removeItem('rein.features.v1')`)
+    await evalJS(`location.hash = '#/'`)
+    await waitFor(`document.querySelectorAll('.tools .tool').length > 0`, 8000, '主页工具格挂载')
+    await sleep(400)
+
+    /* ---- 1. 我 › 设置 ---- */
+    const beforeTools = await toolTitles()
+    ok(
+      '默认工具格含运动 / 课表 / 健康方案三张卡',
+      ['记运动', '课表', '健康方案'].every((t) => beforeTools.includes(t)),
+      beforeTools.join(' · '),
+    )
+    ok('默认底栏含运动页签', (await tabLabels()).includes('运动'), (await tabLabels()).join(' · '))
+
+    await evalJS(`location.hash = '#/me'`)
+    await waitFor(`document.querySelector('.setrow')`, 8000, '「我」页设置行')
+    await clickText('.setrow', '设置')
+    await waitFor(`document.querySelector('h1')?.textContent === '设置'`, 8000, '设置二级页挂载')
+    ok('「我 › 设置」进入二级页', true)
+    const groups = await evalJS(`[...document.querySelectorAll('.card .gtitle')].map((e) => e.textContent.trim())`)
+    // 设置页的分组会长（性能组就是后加的）——钉住「第一组是功能、最后一组是关于、顺序稳定」，
+    // 而不是把当时的组名清单抄死在断言里
+    ok(
+      '设置页分组齐备（功能在最前、关于在最后）',
+      groups[0] === '功能' && groups.at(-1) === '关于' && groups.includes('番茄钟'),
+      groups.join(' · '),
+    )
+    await shot('1-settings')
+    await shotDark('1-settings-dark')
+
+    /* ---- 2. 打开或关闭功能 ---- */
+    await clickText('.frow', '打开或关闭功能')
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页挂载')
+    const rows = await evalJS(`[...document.querySelectorAll('.prow .ptxt b')].map((e) => e.textContent.trim())`)
+    ok('开关页列出三个可开关模块', rows.join() === '运动,课表,健康方案', rows.join(' · '))
+    const switches = await evalJS(`document.querySelectorAll('.prow [role="switch"]').length`)
+    ok('每个模块一个 role=switch 开关', switches === 3, `${switches} 个`)
+    await shot('2-features')
+    await shotDark('2-features-dark')
+
+    /* ---- 3. 关掉「运动」 ---- */
+    ok('关闭「运动」开关', (await setToggle('运动', false)) === 'clicked')
+    await evalJS(`location.hash = '#/'`)
+    await waitFor(`document.querySelectorAll('.tools .tool').length > 0`, 8000, '回主页')
+    await sleep(400)
+    const afterSports = await toolTitles()
+    ok('工具格不再有「记运动」', !afterSports.includes('记运动'), afterSports.join(' · '))
+    ok('工具格其余卡片仍在', afterSports.includes('记饮食') && afterSports.includes('课表'))
+    const tabsAfter = await tabLabels()
+    ok('底栏不再有「运动」页签', !tabsAfter.includes('运动'), tabsAfter.join(' · '))
+    await shot('3-home-sports-off')
+
+    await evalJS(`location.hash = '#/sports'`)
+    await sleep(700)
+    ok('直链 /#/sports 被守卫拦回主页', (await evalJS(`location.hash`)) === '#/', await evalJS(`location.hash`))
+    ok('拦截时给出原因提示', await evalJS(`document.body.textContent.includes('已关闭')`))
+
+    /* ---- 4. 关掉「课表」「健康方案」 ---- */
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页')
+    ok('关闭「课表」开关', (await setToggle('课表', false)) === 'clicked')
+    await evalJS(`location.hash = '#/settings/features'`) // 关掉的开关会改导航，这里重新确认页面在
+    await sleep(300)
+    ok('关闭「健康方案」开关', (await setToggle('健康方案', false)) === 'clicked')
+    await sleep(450)
+    await shot('4-features-all-off')
+
+    await evalJS(`location.hash = '#/'`)
+    await sleep(700)
+    const afterAll = await toolTitles()
+    ok(
+      '三张模块卡全部消失，内核卡仍在',
+      !afterAll.includes('记运动') && !afterAll.includes('课表') && !afterAll.includes('健康方案') && afterAll.includes('记账'),
+      afterAll.join(' · '),
+    )
+    await shot('5-home-modules-off')
+
+    await evalJS(`location.hash = '#/program'`)
+    await sleep(700)
+    ok('直链 /#/program 被守卫拦回主页', (await evalJS(`location.hash`)) === '#/')
+
+    /* ---- 5. 重新打开「运动」 ---- */
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页')
+    ok('重新打开「运动」开关', (await setToggle('运动', true)) === 'clicked')
+    await evalJS(`location.hash = '#/'`)
+    await sleep(700)
+    const reopened = await toolTitles()
+    ok('工具格恢复「记运动」', reopened.includes('记运动'), reopened.join(' · '))
+    ok('底栏恢复「运动」页签', (await tabLabels()).includes('运动'))
+
+    /* ---- 6. 持久化 ---- */
+    await evalJS(`location.reload()`)
+    await waitFor(`document.querySelectorAll('.tools .tool').length > 0`, 12000, '刷新后工具格挂载')
+    await sleep(500)
+    const afterReload = await toolTitles()
+    ok(
+      '刷新后开关状态保持（运动开、课表 / 健康方案关）',
+      afterReload.includes('记运动') && !afterReload.includes('课表') && !afterReload.includes('健康方案'),
+      afterReload.join(' · '),
+    )
+
+    /* ---- 6. 桌面工作台：导航轨与便当快捷入口同样听开关 ---- */
+    await evalJS(`localStorage.removeItem('rein.features.v1')`)
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false })
+    await evalJS(`location.hash = '#/'`)
+    await evalJS(`location.reload()`)
+    await waitFor(`document.querySelector('.rail') && document.querySelectorAll('.rail .ric').length > 0`, 12000, '桌面导航轨')
+    await sleep(600)
+    const railAll = await evalJS(`[...document.querySelectorAll('.rail .ric')].map((e) => e.getAttribute('aria-label'))`)
+    ok(
+      '桌面导航轨默认含课表与运动',
+      railAll.includes('课表') && railAll.includes('运动'),
+      railAll.join(' · '),
+    )
+    await shot('6-desktop-rail')
+
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页（桌面）')
+    await setToggle('课表', false)
+    await setToggle('运动', false)
+    await evalJS(`location.hash = '#/'`)
+    await sleep(800)
+    const railOff = await evalJS(`[...document.querySelectorAll('.rail .ric')].map((e) => e.getAttribute('aria-label'))`)
+    ok(
+      '关掉后导航轨里课表 / 运动消失，其余保留',
+      !railOff.includes('课表') && !railOff.includes('运动') && railOff.includes('营养') && railOff.includes('待办'),
+      railOff.join(' · '),
+    )
+    const tiles = await evalJS(`[...document.querySelectorAll('.t-qa .qtile, .t-qa button')].map((e) => e.textContent.trim())`)
+    ok('便当快捷入口不再有「记运动」', !tiles.some((t) => t.includes('记运动')), tiles.join(' · '))
+    const wkCard = await evalJS(`!!document.querySelector('.t-wk')`)
+    ok('便当「本周运动」概览一并消失（无空洞布局）', wkCard === false)
+    // 布局自检：grid-template-areas 少写一行会凭空多出隐式轨道，把各块挤成竖条。
+    // 断言「每块都有正常宽度且无横向溢出」，这类错误不会再靠肉眼发现。
+    const bentoFit = await evalJS(`(() => {
+      const b = document.querySelector('.bento')
+      const kids = [...b.children].map((e) => Math.round(e.getBoundingClientRect().width))
+      return { overflowX: b.scrollWidth - b.clientWidth, minW: Math.min(...kids), cols: kids.length }
+    })()`)
+    ok(
+      '便当布局没有隐式轨道（子块宽度正常、无横向溢出）',
+      bentoFit.overflowX <= 1 && bentoFit.minW > 200,
+      `最小块宽 ${bentoFit.minW}px · 横向溢出 ${bentoFit.overflowX}px`,
+    )
+    await shot('7-desktop-modules-off')
+
+    // 收尾：恢复默认，避免污染后续手工演示
+    await cdp('Emulation.clearDeviceMetricsOverride')
+    await evalJS(`localStorage.removeItem('rein.features.v1')`)
+  } finally {
+    try {
+      ws?.close()
+    } catch {
+      /* 忽略 */
+    }
+    edge.kill()
+  }
+
+  const failed = results.filter((r) => !r.pass)
+  console.log(`\n${results.length - failed.length}/${results.length} 通过`)
+  console.log(`截图目录：${SHOTS}`)
+  if (failed.length) process.exit(1)
+}
+
+main().catch((e) => {
+  console.error('e2e 失败：', e.message)
+  process.exit(1)
+})

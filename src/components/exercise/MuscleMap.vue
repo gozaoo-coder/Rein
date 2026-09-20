@@ -5,131 +5,101 @@ import SheetModal from '@/components/common/SheetModal.vue'
 import { MUSCLE_DESCS, MUSCLE_LABELS } from '@/config/muscles'
 import type { ActivationMap, MuscleKey } from '@/config/muscles'
 
-import frontBase from '@/assets/muscles/med/front.svg?raw'
-import frontScm from '@/assets/muscles/med/front-scm.svg?raw'
-import frontDeltoid from '@/assets/muscles/med/muscle-2.svg?raw'
-import frontChest from '@/assets/muscles/med/muscle-4.svg?raw'
-import frontBiceps from '@/assets/muscles/med/muscle-1.svg?raw'
-import frontForearm from '@/assets/muscles/med/front-forearm.svg?raw'
-import frontCoreAbs from '@/assets/muscles/med/muscle-6.svg?raw'
-import frontCoreObliques from '@/assets/muscles/med/muscle-14.svg?raw'
-import frontQuads from '@/assets/muscles/med/muscle-10.svg?raw'
-import backBase from '@/assets/muscles/med/back.svg?raw'
-import backDeltoid from '@/assets/muscles/med/back-deltoid.svg?raw'
-import backTraps from '@/assets/muscles/med/muscle-9.svg?raw'
-import backLats from '@/assets/muscles/med/muscle-12.svg?raw'
-import backTriceps from '@/assets/muscles/med/muscle-5.svg?raw'
-import backForearm from '@/assets/muscles/med/back-forearm.svg?raw'
-import backCore from '@/assets/muscles/med/muscle-16.svg?raw'
-import backGlutes from '@/assets/muscles/med/muscle-8.svg?raw'
-import backHamstrings from '@/assets/muscles/med/muscle-11.svg?raw'
-import backCalves from '@/assets/muscles/med/muscle-7.svg?raw'
-import backSoleus from '@/assets/muscles/med/muscle-15.svg?raw'
-import sideBase from '@/assets/muscles/med/side-base.svg?raw'
-import sideScm from '@/assets/muscles/med/side-scm.svg?raw'
-import sideTraps from '@/assets/muscles/med/side-traps.svg?raw'
-import sideChest from '@/assets/muscles/med/side-chest.svg?raw'
-import sideDeltoid from '@/assets/muscles/med/side-deltoid.svg?raw'
-import sideBiceps from '@/assets/muscles/med/side-biceps.svg?raw'
-import sideTriceps from '@/assets/muscles/med/side-triceps.svg?raw'
-import sideForearm from '@/assets/muscles/med/side-forearm.svg?raw'
-import sideLats from '@/assets/muscles/med/side-lats.svg?raw'
-import sideCore from '@/assets/muscles/med/side-core.svg?raw'
-import sideQuads from '@/assets/muscles/med/side-quads.svg?raw'
-import sideHamstrings from '@/assets/muscles/med/side-hamstrings.svg?raw'
-import sideGlutes from '@/assets/muscles/med/side-glutes.svg?raw'
-import sideCalves from '@/assets/muscles/med/side-calves.svg?raw'
+import frontSvg from '@/assets/muscles/rein/front.svg?raw'
+import backSvg from '@/assets/muscles/rein/back.svg?raw'
+import sideSvg from '@/assets/muscles/rein/side.svg?raw'
 
 /**
- * 全身肌群激活图：正面 / 背面 / 侧面三视图，肌群按档位填色——
- * 3 主攻 = --c-exercise，2 辅助 = --heat-mid，1 稳定 = --c-exercise-soft。
+ * 全身肌群激活图：正面 / 背面 / 侧面三视图。
  *
- * 素材为医科解剖教科书风（wger 项目，源自 OpenStax / Tomáš Kebert，
- * CC BY-SA 4.0，出处见 resources/muscles/SOURCE.md）：中性底图 + 每肌群
- * 一个叠加层同画布堆叠；侧视图与补缺肌群（SCM/前臂/后束）为按医科
- * 风格手绘（scripts/patch-med.mjs）。档位着色走 fill 继承。
+ * 素材来自 BodyParts3D 的真实人体解剖网格（scripts/build-anatomy.mjs 生成）：
+ * 正交投影 → 栅格化 → 等值线追踪，三个视图共用同一套解剖比例，因此等大对齐。
+ * 每个分区是一个 <g data-m="肌群键">，按观察深度用画家算法层叠 —— 远的下、
+ * 近的上，深层肌群同样被画出来，只是被浅层盖住。
+ *
+ * 分区属性：
+ *   data-m      肌群键（26 键，与 src/config/muscles.ts 一一对应）
+ *   data-layer  1 = 浅层肌、2 = 深层肌（「深层」开关控制是否显示）
+ *   data-kind   class="m" 可高亮；class="a" 只是把深层结构画出来，不参与高亮
+ *
+ * 着色走 CSS 继承：3 主攻 = --c-exercise，2 辅助 = --heat-mid，
+ * 1 稳定 = --c-exercise-soft；未激活走中性赭红，深层解剖走冷灰。
+ *
+ * 细化到肌束：三角肌前/中/后束、胸大肌上/下束、斜方肌上/中/下束、
+ * 股四头分股外侧/股直/股内侧、小腿分腓肠肌/比目鱼肌等，均可单独高亮。
  *
  * 交互（interactive）：点击图任意位置弹抽屉，列出本动作全部参与肌群
  * 并按激活档位排序（主攻 → 辅助 → 稳定，同档保持规则顺序）。
  */
 const props = defineProps<{ activation: ActivationMap; interactive?: boolean }>()
 
-interface Layer {
-  key: MuscleKey
-  svg: string
+interface Region {
+  kind: 'm' | 'a'
+  key: string
+  layer: number
+  depth: number
+  markup: string
 }
 
-/** 顺序即层叠顺序：大面积打底、细小组件靠后（后画在上层，点击优先命中） */
-const FRONT_LAYERS: Layer[] = [
-  { key: 'quads', svg: frontQuads },
-  { key: 'core', svg: frontCoreAbs },
-  { key: 'core', svg: frontCoreObliques },
-  { key: 'chest', svg: frontChest },
-  { key: 'biceps', svg: frontBiceps },
-  { key: 'forearm', svg: frontForearm },
-  { key: 'deltoid', svg: frontDeltoid },
-  { key: 'scm', svg: frontScm },
+interface View {
+  viewBox: string
+  base: string
+  regions: Region[]
+}
+
+/** 从生成的 SVG 里拆出底图与各分区（文档顺序即层叠顺序） */
+function parseView(raw: string): View {
+  const viewBox = raw.match(/viewBox="([^"]+)"/)?.[1] ?? '0 0 660 1500'
+  const base = raw.match(/<g id="base">([\s\S]*?)<\/g>/)?.[1] ?? ''
+  const regions: Region[] = []
+  const re = /<g class="(m|a)" data-m="([^"]+)" data-layer="(\d)" data-depth="([^"]+)">([\s\S]*?)<\/g>/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(raw))) {
+    regions.push({
+      kind: m[1] as 'm' | 'a',
+      key: m[2],
+      layer: Number(m[3]),
+      depth: Number(m[4]),
+      markup: m[5],
+    })
+  }
+  return { viewBox, base, regions }
+}
+
+const FRONT = parseView(frontSvg)
+const BACK = parseView(backSvg)
+const SIDE = parseView(sideSvg)
+
+const VIEWS: { label: string; view: View }[] = [
+  { label: '正面', view: FRONT },
+  { label: '背面', view: BACK },
+  { label: '侧面', view: SIDE },
 ]
 
-const BACK_LAYERS: Layer[] = [
-  { key: 'core', svg: backCore },
-  { key: 'lats', svg: backLats },
-  { key: 'glutes', svg: backGlutes },
-  { key: 'hamstrings', svg: backHamstrings },
-  { key: 'calves', svg: backCalves },
-  { key: 'calves', svg: backSoleus },
-  { key: 'traps', svg: backTraps },
-  { key: 'deltoid', svg: backDeltoid },
-  { key: 'triceps', svg: backTriceps },
-  { key: 'forearm', svg: backForearm },
-]
+/** 深层开关：关掉只留浅层肌（被激活的深层肌仍会显示，否则点了没反应） */
+const showDeep = ref(false)
 
-/** 侧面视图（面朝左）：侧向肌群参考，各层与正/背同画布堆叠 */
-const SIDE_LAYERS: Layer[] = [
-  { key: 'quads', svg: sideQuads },
-  { key: 'core', svg: sideCore },
-  { key: 'chest', svg: sideChest },
-  { key: 'traps', svg: sideTraps },
-  { key: 'calves', svg: sideCalves },
-  { key: 'biceps', svg: sideBiceps },
-  { key: 'forearm', svg: sideForearm },
-  { key: 'triceps', svg: sideTriceps },
-  { key: 'lats', svg: sideLats },
-  { key: 'hamstrings', svg: sideHamstrings },
-  { key: 'glutes', svg: sideGlutes },
-  { key: 'deltoid', svg: sideDeltoid },
-  { key: 'scm', svg: sideScm },
-]
+function isVisible(r: Region): boolean {
+  if (r.layer <= 1) return true
+  if (showDeep.value) return true
+  return r.kind === 'm' && props.activation[r.key as MuscleKey] !== undefined
+}
 
 function lv(key: MuscleKey): string {
   const v = props.activation[key]
   return v === 3 ? 'l3' : v === 2 ? 'l2' : v === 1 ? 'l1' : ''
 }
 
-/** 全部肌群始终渲染：激活按档位着色，未激活走中性浅灰（idle）。
- *  素材自带分区（上/中/下胸、前束等），路径间缝隙在中性与高亮
- *  状态下都保留分块感；<title> 注入供悬停提示。 */
-interface Rendered {
-  key: MuscleKey
-  cls: string
-  svg: string
+/** 分区着色只看档位：未激活走中性色，激活按档位 */
+function cls(key: MuscleKey): string {
+  return props.activation[key] ? lv(key) : 'idle'
 }
 
-function renderLayer(l: Layer): Rendered {
-  const v = props.activation[l.key]
-  const title = v
-    ? `${MUSCLE_LABELS[l.key]} · ${v === 3 ? '主攻' : v === 2 ? '辅助' : '稳定'}`
-    : MUSCLE_LABELS[l.key]
-  return {
-    key: l.key,
-    cls: v ? lv(l.key) : 'idle',
-    svg: l.svg.replace(/(<svg[^>]*>)/, `$1<title>${title}</title>`),
-  }
+function title(key: MuscleKey): string {
+  const v = props.activation[key]
+  if (!v) return MUSCLE_LABELS[key]
+  return `${MUSCLE_LABELS[key]} · ${v === 3 ? '主攻' : v === 2 ? '辅助' : '稳定'}`
 }
-
-const frontRendered = computed(() => FRONT_LAYERS.map(renderLayer))
-const backRendered = computed(() => BACK_LAYERS.map(renderLayer))
-const sideRendered = computed(() => SIDE_LAYERS.map(renderLayer))
 
 /* ---------- 交互：点击图 → 全部参与肌群按档位排序 ---------- */
 
@@ -166,6 +136,10 @@ const detailTitle = computed(() => `激活肌群 · ${sortedMuscles.value.length
 function onMapTap(): void {
   if (props.interactive) detailOpen.value = true
 }
+
+function toggleDeep(): void {
+  showDeep.value = !showDeep.value
+}
 </script>
 
 <template>
@@ -180,31 +154,25 @@ function onMapTap(): void {
     @keydown.space.prevent="onMapTap"
   >
     <div class="figs row">
-      <!-- 正面 -->
-      <figure>
-        <div class="figwrap" role="img" aria-label="肌群激活 · 正面视图">
-          <i class="layer base" aria-hidden="true" v-html="frontBase" />
-          <i v-for="(l, i) in frontRendered" :key="`f${i}`" class="layer" :class="l.cls" v-html="l.svg" />
+      <figure v-for="item in VIEWS" :key="item.label">
+        <div class="figwrap">
+          <svg :viewBox="item.view.viewBox" role="img" :aria-label="`肌群激活 · ${item.label}视图`">
+            <g class="layer base" aria-hidden="true" v-html="item.view.base" />
+            <template v-for="r in item.view.regions" :key="`${item.label}-${r.key}`">
+              <g
+                v-show="isVisible(r)"
+                class="layer"
+                :class="r.kind === 'a' ? 'anat' : ['muscle', cls(r.key as MuscleKey)]"
+                :data-m="r.key"
+                :data-layer="r.layer"
+              >
+                <title v-if="r.kind === 'm'">{{ title(r.key as MuscleKey) }}</title>
+                <g v-html="r.markup" />
+              </g>
+            </template>
+          </svg>
         </div>
-        <figcaption>正面</figcaption>
-      </figure>
-
-      <!-- 背面 -->
-      <figure>
-        <div class="figwrap" role="img" aria-label="肌群激活 · 背面视图">
-          <i class="layer base" aria-hidden="true" v-html="backBase" />
-          <i v-for="(l, i) in backRendered" :key="`b${i}`" class="layer" :class="l.cls" v-html="l.svg" />
-        </div>
-        <figcaption>背面</figcaption>
-      </figure>
-
-      <!-- 侧面 -->
-      <figure>
-        <div class="figwrap" role="img" aria-label="肌群激活 · 侧面视图">
-          <i class="layer base" aria-hidden="true" v-html="sideBase" />
-          <i v-for="(l, i) in sideRendered" :key="`s${i}`" class="layer" :class="l.cls" v-html="l.svg" />
-        </div>
-        <figcaption>侧面</figcaption>
+        <figcaption>{{ item.label }}</figcaption>
       </figure>
     </div>
 
@@ -213,6 +181,14 @@ function onMapTap(): void {
       <span><i class="d3" />主攻</span>
       <span><i class="d2" />辅助</span>
       <span><i class="d1" />稳定</span>
+      <button
+        class="depthbtn"
+        type="button"
+        :aria-pressed="showDeep"
+        @click.stop="toggleDeep"
+      >
+        {{ showDeep ? '含深层' : '仅浅层' }}
+      </button>
     </div>
     <p v-if="interactive" class="taphint">点击查看全部激活肌群</p>
 
@@ -241,7 +217,7 @@ function onMapTap(): void {
 
 .figs {
   justify-content: center;
-  gap: 34px;
+  gap: 22px;
 }
 
 figure {
@@ -251,25 +227,12 @@ figure {
   gap: 6px;
 }
 
-/* 所有层左上对齐、等宽锚定；同一视图共用同一 viewBox，叠放即人体 */
+/* 三视图共用同一 viewBox（0 0 660 1500），按宽度等比缩放即得等大人体 */
 .figwrap {
-  position: relative;
   width: 84px;
 }
 
-.layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  display: block;
-}
-
-.layer:first-child {
-  position: relative;
-}
-
-.layer :deep(svg) {
+.figwrap svg {
   width: 100%;
   height: auto;
   display: block;
@@ -280,7 +243,7 @@ figure {
   pointer-events: none;
 }
 
-.layer :deep(svg path) {
+.layer.muscle :deep(path) {
   pointer-events: visiblePainted;
 }
 
@@ -288,37 +251,55 @@ figure {
   cursor: pointer;
 }
 
-.interactive .layer :deep(svg path) {
+.interactive .layer.muscle :deep(path) {
   cursor: pointer;
 }
 
-/* 底图与档位色经 fill 继承进 svg path。
-   医科解剖风：底图=素描灰轮廓；未激活肌群=赭红肌肉罩（教科书红调）；
+/* 底图=素描灰轮廓；未激活肌群=赭红肌肉罩（教科书红调）；
    每块带细描边，分区缝隙+描边清晰可读。激活仍按运动绿色档位打标 */
 .layer.base {
-  fill: rgba(120, 110, 95, 0.38);
+  fill: rgba(120, 110, 95, 0.34);
+}
+
+.layer.base :deep(path) {
+  stroke: rgba(90, 70, 55, 0.55);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
 }
 
 .layer.idle {
   fill: rgba(183, 92, 74, 0.3);
 }
 
-.layer :deep(svg path) {
+/* 深层解剖：冷灰、无描边重音，隐去浅层后读作「更里面一层」 */
+.layer.anat {
+  fill: rgba(112, 106, 128, 0.26);
+}
+
+.layer.muscle :deep(path) {
   stroke: rgba(90, 45, 30, 0.4);
-  stroke-width: 1.2;
+  stroke-width: 1;
   stroke-linejoin: round;
 }
 
 @media (prefers-color-scheme: dark) {
   .layer.base {
-    fill: rgba(150, 142, 130, 0.4);
+    fill: rgba(150, 142, 130, 0.36);
+  }
+
+  .layer.base :deep(path) {
+    stroke: rgba(230, 220, 205, 0.4);
   }
 
   .layer.idle {
     fill: rgba(214, 108, 86, 0.32);
   }
 
-  .layer :deep(svg path) {
+  .layer.anat {
+    fill: rgba(150, 144, 170, 0.22);
+  }
+
+  .layer.muscle :deep(path) {
     stroke: rgba(255, 214, 200, 0.16);
   }
 }
@@ -343,6 +324,7 @@ figcaption {
 
 .legend {
   gap: 16px;
+  align-items: center;
 }
 
 .legend span {
@@ -371,6 +353,20 @@ figcaption {
 .d3 {
   background: var(--c-exercise);
   border-color: transparent;
+}
+
+.depthbtn {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  padding: 2px 9px;
+  border: 0.5px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.depthbtn[aria-pressed='true'] {
+  color: var(--text-1);
+  background: var(--surface-2);
 }
 
 .taphint {

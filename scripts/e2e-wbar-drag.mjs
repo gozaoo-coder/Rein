@@ -44,6 +44,22 @@ async function centerOf(page) {
   return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
 }
 
+/**
+ * 关掉「有新版本」启动提示卡。
+ *
+ * mock 会在加载一两秒后弹出它，而它带**全屏遮罩**（`.up-backdrop`）——
+ * 盖上来之后浮条的横竖拖拽与按钮点按全都落在遮罩上，表现是「怎么点都没反应」，
+ * 一路查下来全是它在捣鬼（探针里 `elementFromPoint` 直接命中的就是 up-backdrop）。
+ * 每次交互前关一次，没弹就什么也不做。
+ */
+async function dismissUpdate(page) {
+  return page.evaluate(() => {
+    const b = [...document.querySelectorAll('.up-card button')].find((x) => x.textContent.trim() === '稍后')
+    if (b) b.click()
+    return !!b
+  })
+}
+
 const browser = await chromium.launch({ executablePath: EDGE, headless: true })
 
 /* ---------- 窄屏 420x820 ---------- */
@@ -57,7 +73,9 @@ await page.addInitScript(
 )
 await page.goto(`${BASE}/#/`)
 await page.waitForSelector('.wdock-root', { state: 'attached' })
-await page.waitForTimeout(700)
+await page.waitForTimeout(1400) // 等静默更新检查把提示卡弹出来（早关会扑空）
+await dismissUpdate(page)
+await page.waitForTimeout(300)
 
 let c = await centerOf(page)
 ok('A1 冷启动落位底部居中', Math.abs(c.x - 210) < 2 && Math.abs(c.y - 719.5) < 2, JSON.stringify(c))
@@ -177,7 +195,9 @@ ok('A6 blob 松手回槽位', dSlot < 12, `距最近槽位 ${dSlot.toFixed(1)}px
   )
   await page2.goto(`${BASE}/#/`)
   await page2.waitForSelector('.wdock-root', { state: 'attached' })
-  await page2.waitForTimeout(700)
+  await page2.waitForTimeout(1400)
+  await dismissUpdate(page2)
+  await page2.waitForTimeout(300)
   let d = await centerOf(page2)
   ok('B1 宽屏落位底部居中', Math.abs(d.x - 720) < 2 && Math.abs(d.y - 801) < 2, JSON.stringify(d))
   const seq = []

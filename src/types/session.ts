@@ -16,6 +16,13 @@ export interface WarmupSet {
 /** 计划中的一个动作 */
 export interface PlanExercise {
   id: string
+  /**
+   * 动作库 id（`exercises.id`）——动作的唯一真源。
+   * 课程条目只是「用哪个动作 + 什么处方」；展示名/肌群/要点优先取库内数据，
+   * 库里查不到（老数据未回填、自建动作被删）时回落下面的 name 快照。
+   */
+  exerciseId: string
+  /** 动作名快照：库内名缺失时展示用（写入时由后端按名称挂库） */
   name: string
   kind: PlanExerciseKind
   /** 力量：组数 */
@@ -99,6 +106,11 @@ export interface SessionSnapshotState {
   extraSets?: Record<string, number>
   /** 已跳过的正式组：动作 id → 被跳过的组号（1-based）。跳过 = 未做，不计入完成统计 */
   skippedSets?: Record<string, number[]>
+  /**
+   * 今日状态自评（1=很差 … 5=很好）；null / 缺省 = 未自评（建议引擎纯自动推断）。
+   * 随快照落盘，训练中断恢复后不丢。
+   */
+  readiness?: number | null
 }
 
 /** 全课扁平化后每一组的状态（抽屉与顶部进度格条的唯一数据源） */
@@ -127,6 +139,8 @@ export interface SessionSetSlot {
 /** 逐组重量落库行（session_finish 事务内写入 workout_sets 表；重量曲线的数据源） */
 export interface StrengthSetRow {
   exerciseKey: string
+  /** 动作库 id —— 重量曲线的聚合键 */
+  exerciseId: string
   exerciseName: string
   kind: PlanExerciseKind
   setNo: number
@@ -136,10 +150,19 @@ export interface StrengthSetRow {
   warmup: boolean
 }
 
-/** workout_sets 查询返回行（含 JOIN workouts 的日期） */
-export interface StrengthSetRecord extends StrengthSetRow {
+/** workout_sets 查询返回行（含 JOIN workouts 的日期）；exerciseName 只是历史快照 */
+export interface StrengthSetRecord {
   workoutId: number
   date: string
+  exerciseKey: string
+  exerciseId: string | null
+  exerciseName: string
+  kind: PlanExerciseKind
+  setNo: number
+  weightKg: number | null
+  reps: number | null
+  sec: number | null
+  warmup: boolean
 }
 
 /** 单次训练里某动作的聚合（曲线/明细展示用，由前端按 date 聚合） */
@@ -150,8 +173,9 @@ export interface StrengthDayEntry {
   sets: { setNo: number; weightKg: number | null; reps: number | null; warmup: boolean }[]
 }
 
-/** 有力量记录的动作（按最近训练排序） */
+/** 有力量记录的动作（按最近训练排序）。exerciseId 为空 = 老库未回填，回落 name 作键 */
 export interface StrengthExerciseRef {
+  exerciseId: string
   name: string
   lastDate: string
   sessions: number
@@ -159,10 +183,22 @@ export interface StrengthExerciseRef {
 
 /** 某动作最近一次做组重量（沉浸页「上次重量」预填用） */
 export interface StrengthLastWeight {
+  exerciseId: string
   name: string
   weightKg: number
   reps: number | null
   date: string
+}
+
+/**
+ * 沉浸页「更换动作」的候选（来自动作库）：
+ * 只换动作本体，编排（组数/次数/休息/热身）沿用课程当前动作。
+ */
+export interface SwapCandidate {
+  exerciseId: string
+  name: string
+  tips: string
+  muscles?: ActivationMap
 }
 
 /** 跑步目标类型 */

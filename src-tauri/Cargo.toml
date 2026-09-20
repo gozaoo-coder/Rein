@@ -1,6 +1,6 @@
 [package]
 name = "rein"
-version = "0.2.0"
+version = "0.2.7"
 description = "Rein · 健康生活运动管理"
 edition = "2021"
 rust-version = "1.77"
@@ -25,6 +25,10 @@ url = "2"
 html2text = "0.17"
 # 分享收件箱（share_read 返回文件内容给前端）
 base64 = "0.22"
+# 校园教务域（modules/campus）：树维 EAMS 门户登录用 JSEncrypt 同款 PKCS#1 v1.5 加密口令。
+# 纯 Rust 实现（num-bigint-dig），不引入 openssl，四端交叉编译无需原生依赖。
+rsa = "0.9"
+rand = "0.8"
 # 语音对话（modules/voice）：豆包 ASR/TTS WS 客户端 + gzip 二进制协议 + 音频落盘
 tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
 tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
@@ -39,6 +43,11 @@ ndarray = "0.17"
 # 显式选 fancy-regex（纯 Rust）而非默认的 onig：后者要编 oniguruma 的 C 代码，是 Android 交叉编译的常见坑。
 # 注意 default-features = false 时 tokenizers 会直接 compile_error!，必须二选一。
 tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+# 在线更新（modules/update）：minisign-verify 正是 tauri-plugin-updater 内部用的那个 crate，
+# 验签行为与官方客户端逐字节一致 —— 发布侧用官方 CLI 签名，两边必须对得上。
+minisign-verify = "0.2"
+sha2 = "0.10"
+semver = "1"
 
 [profile.release]
 codegen-units = 1

@@ -7,7 +7,9 @@ use crate::state::AppState;
 
 use super::models::ParsedFoodItem;
 
-const QUANT_WORDS: [char; 12] = ['个', '碗', '杯', '根', '片', '块', '勺', '份', '颗', '把', '盒', '支'];
+const QUANT_WORDS: [char; 12] = [
+    '个', '碗', '杯', '根', '片', '块', '勺', '份', '颗', '把', '盒', '支',
+];
 
 fn cn_num(c: char) -> Option<f64> {
     match c {
@@ -32,9 +34,8 @@ fn cn_num(c: char) -> Option<f64> {
 pub fn ai_parse_food_text(state: State<AppState>, text: String) -> Result<Vec<ParsedFoodItem>> {
     let conn = state.db.lock().unwrap();
 
-    let mut stmt = conn.prepare(
-        "SELECT id, name, default_unit FROM foods ORDER BY LENGTH(name) DESC",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, default_unit FROM foods ORDER BY LENGTH(name) DESC")?;
     let foods: Vec<(i64, String, Option<String>)> = stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?;
@@ -93,8 +94,7 @@ pub fn ai_parse_food_text(state: State<AppState>, text: String) -> Result<Vec<Pa
             // ② 中文数字 + 量词
             if QUANT_WORDS.contains(&last) && before.len() >= 2 {
                 if let Some(count) = cn_num(before[before.len() - 2]) {
-                    grams =
-                        unit_grams(&conn, id, &last.to_string())?.unwrap_or(grams) * count;
+                    grams = unit_grams(&conn, id, &last.to_string())?.unwrap_or(grams) * count;
                 }
             }
         }
@@ -116,7 +116,11 @@ pub fn ai_parse_food_text(state: State<AppState>, text: String) -> Result<Vec<Pa
 // 拍照解析由前端 pi-ai 直连视觉模型完成（src/ai/foodPhoto.ts），不经过 Rust。
 
 fn kcal_per_100g(conn: &rusqlite::Connection, food_id: i64) -> Result<f64> {
-    Ok(conn.query_row("SELECT kcal FROM foods WHERE id = ?1", [food_id], |r| r.get(0))?)
+    Ok(
+        conn.query_row("SELECT kcal FROM foods WHERE id = ?1", [food_id], |r| {
+            r.get(0)
+        })?,
+    )
 }
 
 fn unit_grams(conn: &rusqlite::Connection, food_id: i64, name: &str) -> Result<Option<f64>> {
@@ -162,12 +166,60 @@ struct FieldSpec {
 }
 
 const FIELD_SPECS: [FieldSpec; 6] = [
-    FieldSpec { field: "kcal", label: "能量", unit: "大卡", keywords: &["热量", "大卡", "千卡", "卡路里", "kcal"], min: 800.0, max: 5000.0, round_step: 10.0 },
-    FieldSpec { field: "protein", label: "蛋白质", unit: "g", keywords: &["蛋白"], min: 20.0, max: 300.0, round_step: 1.0 },
-    FieldSpec { field: "carb", label: "碳水", unit: "g", keywords: &["碳水"], min: 50.0, max: 600.0, round_step: 1.0 },
-    FieldSpec { field: "fat", label: "脂肪", unit: "g", keywords: &["脂肪"], min: 20.0, max: 200.0, round_step: 1.0 },
-    FieldSpec { field: "sodiumMg", label: "钠", unit: "mg", keywords: &["钠", "盐"], min: 500.0, max: 5000.0, round_step: 50.0 },
-    FieldSpec { field: "waterMl", label: "饮水", unit: "ml", keywords: &["饮水", "喝水", "水"], min: 500.0, max: 5000.0, round_step: 100.0 },
+    FieldSpec {
+        field: "kcal",
+        label: "能量",
+        unit: "大卡",
+        keywords: &["热量", "大卡", "千卡", "卡路里", "kcal"],
+        min: 800.0,
+        max: 5000.0,
+        round_step: 10.0,
+    },
+    FieldSpec {
+        field: "protein",
+        label: "蛋白质",
+        unit: "g",
+        keywords: &["蛋白"],
+        min: 20.0,
+        max: 300.0,
+        round_step: 1.0,
+    },
+    FieldSpec {
+        field: "carb",
+        label: "碳水",
+        unit: "g",
+        keywords: &["碳水"],
+        min: 50.0,
+        max: 600.0,
+        round_step: 1.0,
+    },
+    FieldSpec {
+        field: "fat",
+        label: "脂肪",
+        unit: "g",
+        keywords: &["脂肪"],
+        min: 20.0,
+        max: 200.0,
+        round_step: 1.0,
+    },
+    FieldSpec {
+        field: "sodiumMg",
+        label: "钠",
+        unit: "mg",
+        keywords: &["钠", "盐"],
+        min: 500.0,
+        max: 5000.0,
+        round_step: 50.0,
+    },
+    FieldSpec {
+        field: "waterMl",
+        label: "饮水",
+        unit: "ml",
+        keywords: &["饮水", "喝水", "水"],
+        min: 500.0,
+        max: 5000.0,
+        round_step: 100.0,
+    },
 ];
 
 const UP_WORDS: [&str; 5] = ["提高", "提升", "增加", "上调", "多"];
@@ -232,7 +284,10 @@ fn direction_before(chars: &[char], num_start: usize) -> i32 {
     let ctx: String = chars[ws..num_start].iter().collect();
     // 方向词后紧跟「到/为/成/至/在」（允许中间空白）时按绝对目标理解
     let trimmed = ctx.trim_end();
-    let particle = trimmed.chars().next_back().is_some_and(|c| ABSOLUTE_PARTICLES.contains(&c));
+    let particle = trimmed
+        .chars()
+        .next_back()
+        .is_some_and(|c| ABSOLUTE_PARTICLES.contains(&c));
     if particle {
         return 0;
     }
@@ -307,7 +362,8 @@ pub fn ai_parse_target_adjust(text: String, current: DailyTargets) -> Result<Tar
             }
 
             // 数值优先在关键词之后（"热量降到1800"），其次之前（"1800大卡"）
-            let found = number_forward(&chars, pos + len, 6).or_else(|| number_backward(&chars, pos, 6));
+            let found =
+                number_forward(&chars, pos + len, 6).or_else(|| number_backward(&chars, pos, 6));
             let (value, num_start) = match found {
                 Some((v, ns, _)) => (v, ns),
                 None => continue,
@@ -347,7 +403,11 @@ pub fn ai_parse_target_adjust(text: String, current: DailyTargets) -> Result<Tar
         )
     };
 
-    Ok(TargetAdjustProposal { targets: proposal, changes, reply })
+    Ok(TargetAdjustProposal {
+        targets: proposal,
+        changes,
+        reply,
+    })
 }
 
 /* ---------- 模型配置（存储层；请求由前端 pi-ai 直连 provider） ---------- */
@@ -357,13 +417,15 @@ use chrono::Utc;
 use crate::error::ReinError;
 
 use super::models::{
-    AiChat, AiChatMessage, AiChatMessageInput, AiModel, AiModelInput, AiProbeResult, ChatSearchHit,
+    AiChat, AiChatMessage, AiChatMessageInput, AiModel, AiModelInput, AiProbeResult, AiUsageByModel,
+    AiUsageDay, AiUsageInput, AiUsageSummary, AiUsageTotals, ChatSearchHit,
 };
 
-const AI_MODEL_COLS: &str =
-    "id, name, provider, base_url, api_key, model_id, is_default, vision, thinking, effort, image_max_edge, last_error, created_at, updated_at";
+pub(super) const AI_MODEL_COLS: &str =
+    "id, name, provider, base_url, api_key, model_id, is_default, vision, thinking, effort, image_max_edge, last_error, \
+     source, service_base, price_in, price_out, price_currency, traffic_per_gb, created_at, updated_at";
 
-fn ai_model_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModel> {
+pub(super) fn ai_model_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModel> {
     Ok(AiModel {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -377,8 +439,14 @@ fn ai_model_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiModel> {
         effort: row.get(9)?,
         image_max_edge: row.get(10)?,
         last_error: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        source: row.get(12)?,
+        service_base: row.get(13)?,
+        price_in: row.get(14)?,
+        price_out: row.get(15)?,
+        price_currency: row.get(16)?,
+        traffic_per_gb: row.get(17)?,
+        created_at: row.get(18)?,
+        updated_at: row.get(19)?,
     })
 }
 
@@ -421,8 +489,8 @@ pub fn ai_model_add(state: State<AppState>, input: AiModelInput) -> Result<AiMod
         tx.execute("UPDATE ai_models SET is_default = 0", [])?;
     }
     tx.execute(
-        "INSERT INTO ai_models (name, provider, base_url, api_key, model_id, is_default, image_max_edge, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+        "INSERT INTO ai_models (name, provider, base_url, api_key, model_id, is_default, image_max_edge, price_in, price_out, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
         rusqlite::params![
             input.name,
             input.provider,
@@ -431,6 +499,8 @@ pub fn ai_model_add(state: State<AppState>, input: AiModelInput) -> Result<AiMod
             input.model_id,
             make_default as i64,
             input.image_max_edge,
+            input.price_in,
+            input.price_out,
             now
         ],
     )?;
@@ -459,10 +529,14 @@ pub fn ai_model_update(state: State<AppState>, id: i64, input: AiModelInput) -> 
         tx.execute("UPDATE ai_models SET is_default = 0", [])?;
     }
     let now = Utc::now().to_rfc3339();
+    // online 模型的单价以服务端为准（同步时写入），这里不覆盖；手动模型的单价可随手填改
     tx.execute(
         "UPDATE ai_models SET name = ?1, provider = ?2, base_url = ?3, api_key = ?4, \
          model_id = ?5, is_default = ?6, vision = NULL, thinking = NULL, effort = NULL, \
-         image_max_edge = ?7, last_error = NULL, updated_at = ?8 WHERE id = ?9",
+         image_max_edge = ?7, last_error = NULL, \
+         price_in = CASE WHEN source = 'online' THEN price_in ELSE ?9 END, \
+         price_out = CASE WHEN source = 'online' THEN price_out ELSE ?10 END, \
+         updated_at = ?8 WHERE id = ?11",
         rusqlite::params![
             input.name,
             input.provider,
@@ -472,6 +546,8 @@ pub fn ai_model_update(state: State<AppState>, id: i64, input: AiModelInput) -> 
             input.is_default as i64,
             input.image_max_edge,
             now,
+            input.price_in,
+            input.price_out,
             id
         ],
     )?;
@@ -517,7 +593,14 @@ pub fn ai_model_save_probe(state: State<AppState>, id: i64, result: AiProbeResul
     let n = conn.execute(
         "UPDATE ai_models SET vision = ?1, thinking = ?2, effort = ?3, last_error = ?4, \
          updated_at = ?5 WHERE id = ?6",
-        rusqlite::params![result.vision, result.thinking, result.effort, result.error, now, id],
+        rusqlite::params![
+            result.vision,
+            result.thinking,
+            result.effort,
+            result.error,
+            now,
+            id
+        ],
     )?;
     if n == 0 {
         return Err(ReinError::Message("模型不存在".into()));
@@ -583,7 +666,11 @@ pub fn ai_chat_messages(state: State<AppState>, chat_id: String) -> Result<Vec<A
 /// 追加消息：按 id 幂等 upsert（重复调用或 commit 状态更新只刷新内容，
 /// 保留原 seq 与 created_at），并刷新会话时间。
 #[tauri::command]
-pub fn ai_chat_append(state: State<AppState>, chat_id: String, input: AiChatMessageInput) -> Result<()> {
+pub fn ai_chat_append(
+    state: State<AppState>,
+    chat_id: String,
+    input: AiChatMessageInput,
+) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     let conn = state.db.lock().unwrap();
     conn.execute(
@@ -628,7 +715,10 @@ pub fn ai_chat_append(state: State<AppState>, chat_id: String, input: AiChatMess
 pub fn ai_chat_clear(state: State<AppState>, chat_id: String) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     let conn = state.db.lock().unwrap();
-    conn.execute("DELETE FROM ai_chat_messages WHERE chat_id = ?1", [&chat_id])?;
+    conn.execute(
+        "DELETE FROM ai_chat_messages WHERE chat_id = ?1",
+        [&chat_id],
+    )?;
     conn.execute(
         "UPDATE ai_chats SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, chat_id],
@@ -719,3 +809,211 @@ pub fn ai_chat_search(
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(hits)
 }
+
+/* ---------- 本机成本账本（服务端另有权威账本，两边可对账） ---------- */
+
+const AI_USAGE_SUM: &str = "COUNT(*) AS calls, \
+     COALESCE(SUM(prompt_tokens),0) AS pt, COALESCE(SUM(completion_tokens),0) AS ct, \
+     COALESCE(SUM(request_bytes),0) AS rb, COALESCE(SUM(response_bytes),0) AS ob, \
+     COALESCE(SUM(cost_model_nano),0) AS cm, COALESCE(SUM(cost_traffic_nano),0) AS ctr, \
+     COALESCE(SUM(cost_total_nano),0) AS ctot";
+
+fn usage_totals_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::Result<AiUsageTotals> {
+    Ok(AiUsageTotals {
+        calls: row.get(base)?,
+        prompt_tokens: row.get(base + 1)?,
+        completion_tokens: row.get(base + 2)?,
+        request_bytes: row.get(base + 3)?,
+        response_bytes: row.get(base + 4)?,
+        cost_model_nano: row.get(base + 5)?,
+        cost_traffic_nano: row.get(base + 6)?,
+        cost_total_nano: row.get(base + 7)?,
+    })
+}
+
+/// 记一笔用量：一轮对话一行。金额由前端按单价算好（服务端为权威口径，这里只记账）。
+#[tauri::command]
+pub fn ai_usage_record(state: State<AppState>, input: AiUsageInput) -> Result<()> {
+    let conn = state.db.lock().unwrap();
+    usage_record_on(&conn, &input)
+}
+
+pub(super) fn usage_record_on(conn: &rusqlite::Connection, input: &AiUsageInput) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO ai_usage (ts, chat_id, model_pk, model_name, model_id, provider, source, \
+         prompt_tokens, completion_tokens, request_bytes, response_bytes, \
+         cost_model_nano, cost_traffic_nano, cost_total_nano, currency, note) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 'CNY', ?15)",
+        rusqlite::params![
+            now,
+            input.chat_id,
+            input.model_pk,
+            input.model_name,
+            input.model_id,
+            if input.provider.is_empty() { "openai-compatible".to_string() } else { input.provider.clone() },
+            if input.source.is_empty() { "manual".to_string() } else { input.source.clone() },
+            input.prompt_tokens,
+            input.completion_tokens,
+            input.request_bytes,
+            input.response_bytes,
+            input.cost_model_nano,
+            input.cost_traffic_nano,
+            input.cost_model_nano + input.cost_traffic_nano,
+            input.note,
+        ],
+    )?;
+    Ok(())
+}
+
+/// 本机成本汇总：累计 + 今日 + 按天 + 按模型（最近 N 天，默认 30）。
+#[tauri::command]
+pub fn ai_usage_summary(state: State<AppState>, days: Option<i64>) -> Result<AiUsageSummary> {
+    let conn = state.db.lock().unwrap();
+    usage_summary_on(&conn, days.unwrap_or(30).clamp(1, 365))
+}
+
+pub(super) fn usage_summary_on(conn: &rusqlite::Connection, days: i64) -> Result<AiUsageSummary> {
+    let since = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+
+    let sql = format!("SELECT {AI_USAGE_SUM} FROM ai_usage WHERE ts >= ?1");
+    let total = conn.query_row(&sql, [since.as_str()], |r| usage_totals_from_row(r, 0))?;
+
+    let today_sql = format!("SELECT {AI_USAGE_SUM} FROM ai_usage WHERE ts >= ?1");
+    let today_totals = conn.query_row(&today_sql, [today.as_str()], |r| usage_totals_from_row(r, 0))?;
+
+    let day_sql = format!(
+        "SELECT substr(ts, 1, 10) AS d, {AI_USAGE_SUM} FROM ai_usage WHERE ts >= ?1 GROUP BY d ORDER BY d DESC"
+    );
+    let mut stmt = conn.prepare(&day_sql)?;
+    let by_day = stmt
+        .query_map([since.as_str()], |r| {
+            Ok(AiUsageDay {
+                date: r.get(0)?,
+                totals: usage_totals_from_row(r, 1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+
+    // model_pk 可能指向已删除的模型：名称仍按记账时的快照聚合
+    let model_sql = format!(
+        "SELECT model_pk, model_name, model_id, source, {AI_USAGE_SUM} FROM ai_usage WHERE ts >= ?1 \
+         GROUP BY model_name, model_id, source ORDER BY ctot DESC"
+    );
+    let mut stmt = conn.prepare(&model_sql)?;
+    let by_model = stmt
+        .query_map([since.as_str()], |r| {
+            Ok(AiUsageByModel {
+                model_pk: r.get(0)?,
+                model_name: r.get(1)?,
+                model_id: r.get(2)?,
+                source: r.get(3)?,
+                totals: usage_totals_from_row(r, 4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    Ok(AiUsageSummary {
+        days,
+        since,
+        today: today_totals,
+        total,
+        by_day,
+        by_model,
+    })
+}
+
+/// 清空本机账本（换机 / 重新对账时用；服务端的账不受影响）。
+#[tauri::command]
+pub fn ai_usage_clear(state: State<AppState>) -> Result<()> {
+    let conn = state.db.lock().unwrap();
+    conn.execute("DELETE FROM ai_usage", [])?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use crate::db::migrate_for_test;
+
+    use super::*;
+
+    fn fresh() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    /// 一条在线模型调用：100 万输入 token 的模型费 + 128MB 出方向流量费，金额由前端算好传进来
+    fn usage(model_id: &str, model_name: &str, model_nano: i64, traffic_nano: i64) -> AiUsageInput {
+        AiUsageInput {
+            chat_id: Some("main".into()),
+            model_pk: Some(1),
+            model_name: model_name.into(),
+            model_id: model_id.into(),
+            provider: "rein-online".into(),
+            source: "online".into(),
+            prompt_tokens: 1_000_000,
+            completion_tokens: 500,
+            request_bytes: 1024,
+            response_bytes: 128 * 1024 * 1024,
+            cost_model_nano: model_nano,
+            cost_traffic_nano: traffic_nano,
+            note: None,
+        }
+    }
+
+    /// 模型费与流量费要分开累计、合计到一起：这是「服务器流量 0.8 元/GB」能被看见的前提。
+    #[test]
+    fn model_and_traffic_cost_add_up_in_the_summary() {
+        let conn = fresh();
+        usage_record_on(
+            &conn,
+            &usage("deepseek-flash", "DeepSeek · deepseek-flash", 2_000_000_000, 102_400_000),
+        )
+        .unwrap();
+        let mut second = usage("deepseek-v4-pro", "DeepSeek · deepseek-v4-pro", 1_000_000_000, 0);
+        second.prompt_tokens = 100;
+        usage_record_on(&conn, &second).unwrap();
+
+        let s = usage_summary_on(&conn, 30).unwrap();
+        assert_eq!(s.total.calls, 2);
+        assert_eq!(s.total.cost_model_nano, 3_000_000_000, "模型费应累加两笔");
+        assert_eq!(s.total.cost_traffic_nano, 102_400_000, "流量费单独累计");
+        assert_eq!(s.total.cost_total_nano, 3_102_400_000, "合计 = 模型费 + 流量费");
+        assert_eq!(s.total.prompt_tokens, 1_000_100);
+        assert_eq!(s.today.calls, 2, "刚写入的两笔应算在今天");
+        assert_eq!(s.by_day.len(), 1);
+        assert_eq!(s.by_model.len(), 2, "两个模型各自一行");
+        assert_eq!(s.by_model[0].model_id, "deepseek-flash", "按花费降序");
+        assert_eq!(s.by_model[0].totals.cost_total_nano, 2_102_400_000);
+    }
+
+    /// 模型删了账不能丢：否则用户删掉一条模型，历史花费会凭空消失。
+    #[test]
+    fn usage_rows_outlive_the_model_they_referenced() {
+        let conn = fresh();
+        usage_record_on(&conn, &usage("gone", "已删除的模型", 1_000_000_000, 0)).unwrap();
+        conn.execute("DELETE FROM ai_models", []).unwrap();
+        let s = usage_summary_on(&conn, 30).unwrap();
+        assert_eq!(s.total.calls, 1);
+        assert_eq!(s.by_model[0].model_name, "已删除的模型");
+    }
+
+    /// 窗口外的记录不计入（默认 30 天）。
+    #[test]
+    fn window_excludes_older_rows() {
+        let conn = fresh();
+        usage_record_on(&conn, &usage("m", "M", 1_000_000_000, 0)).unwrap();
+        conn.execute("UPDATE ai_usage SET ts = '2020-01-01T00:00:00+00:00'", [])
+            .unwrap();
+        let s = usage_summary_on(&conn, 30).unwrap();
+        assert_eq!(s.total.calls, 0);
+        assert_eq!(s.today.calls, 0);
+        assert_eq!(usage_summary_on(&conn, 3650).unwrap().total.calls, 1);
+    }
+}
+

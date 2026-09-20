@@ -40,14 +40,21 @@ function systemPrompt(): string {
 - 用户明确表示某条不再成立 → 用 delete 带上 id
 - 与现有记忆完全重复 → 什么都不要输出
 - 确实是全新的信息 → 用 add
+- 现有记忆里标了 [已归档] 的条目：这次又被提到就 update 复活它（带上 id）；没被提到就不要管
+
+分类：每条带一个 category，用 1~2 层「大类/小类」路径，如 健康/训练、饮食/禁忌、生活/作息；
+优先复用现有记忆里已经出现的分类，别造同义的新分类；实在拿不准就留空字符串。
 
 内容写法：一句话、完整、自洽、脱离对话上下文也能读懂；不要写「用户说」「他提到」这类转述壳子；
 单条不超过 60 个字。
 
 只输出一个 JSON 对象，不要 markdown 代码块、不要解释：
-{"ops":[{"op":"add","memType":"constraint","topic":"膝盖","content":"膝盖不适，深蹲不宜超过 60kg","confidence":0.9}]}
+{"ops":[{"op":"add","memType":"constraint","topic":"膝盖","category":"健康/训练","content":"膝盖不适，深蹲不宜超过 60kg","confidence":0.9}]}
 update 与 delete 必须带 "id"。没有可记的就输出 {"ops":[]}。`
 }
+
+/** 现有记忆清单的条数上限：记忆库变大后不能让这份上下文无限膨胀。 */
+const MAX_EXISTING_IN_PROMPT = 120
 
 function userPrompt(turns: ChatTurn[], existing: KbMemory[]): string {
   const convo = turns
@@ -55,9 +62,16 @@ function userPrompt(turns: ChatTurn[], existing: KbMemory[]): string {
     .map((t) => `${t.role === 'user' ? '用户' : '助手'}：${t.text.trim().slice(0, 1500)}`)
     .join('\n')
 
+  // 活跃在前、归档在后（Rust 侧已排好），超量时优先保留活跃条目；
+  // 归档条目带上 [已归档] 标记，模型据此决定是否借这次提及把它复活。
   const mem = existing.length
     ? existing
-        .map((m) => `id=${m.id} [${m.memType}]${m.topic ? `(${m.topic})` : ''} ${m.content}`)
+        .slice(0, MAX_EXISTING_IN_PROMPT)
+        .map(
+          (m) =>
+            `id=${m.id} [${m.memType}]${m.topic ? `(${m.topic})` : ''}${m.category ? `{${m.category}}` : ''}` +
+            `${m.archivedAt ? '[已归档]' : ''} ${m.content}`,
+        )
         .join('\n')
     : '（暂无）'
 
@@ -75,8 +89,15 @@ function extractJsonObject(raw: string): unknown {
   return JSON.parse(body.slice(start, end + 1))
 }
 
+export interface ToCandidatesOptions {
+  maxOps?: number
+  /** 是否接受 archive 操作（整理任务用；抽取任务不该归档） */
+  allowArchive?: boolean
+}
+
 /** 校验并收敛模型输出：丢弃形状不对的条目，而不是让坏数据进库。 */
-export function toCandidates(raw: string, maxOps = MAX_OPS): MemoryCandidate[] {
+export function toCandidates(raw: string, opts: ToCandidatesOptions = {}): MemoryCandidate[] {
+  const maxOps = opts.maxOps ?? MAX_OPS
   const parsed = extractJsonObject(raw) as { ops?: unknown }
   if (!Array.isArray(parsed.ops)) return []
 
@@ -85,11 +106,20 @@ export function toCandidates(raw: string, maxOps = MAX_OPS): MemoryCandidate[] {
     if (out.length >= maxOps) break
     const o = item as Record<string, unknown>
     const op = String(o.op ?? '')
-    if (op !== 'add' && op !== 'update' && op !== 'delete') continue
+    const known = op === 'add' || op === 'update' || op === 'delete' || op === 'archive'
+    if (!known) continue
+    if (op === 'archive' && !opts.allowArchive) continue
 
     if (op === 'delete') {
       const id = Number(o.id)
       if (Number.isFinite(id)) out.push({ op: 'delete', id })
+      continue
+    }
+    if (op === 'archive') {
+      const id = Number(o.id)
+      if (Number.isFinite(id)) {
+        out.push({ op: 'archive', id, reason: String(o.reason ?? '').trim().slice(0, 40) })
+      }
       continue
     }
 
@@ -99,11 +129,13 @@ export function toCandidates(raw: string, maxOps = MAX_OPS): MemoryCandidate[] {
       ? (o.memType as KbMemoryType)
       : 'preference'
     const topic = String(o.topic ?? '').trim().slice(0, 40)
+    const category = String(o.category ?? '').trim().slice(0, 40)
     const conf = Number(o.confidence)
     const candidate: MemoryCandidate = {
       op,
       memType,
       topic,
+      category,
       content,
       confidence: Number.isFinite(conf) ? Math.min(Math.max(conf, 0), 1) : undefined,
     }

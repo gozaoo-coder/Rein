@@ -3,7 +3,10 @@
 use tauri::State;
 
 use crate::error::{ReinError, Result};
-use crate::modules::seed::{plan_seed_keep, plan_seed_migrate, plan_seed_override, plan_seed_status, PlanSeedStatus};
+use crate::modules::exercise_lib::resolve::{resolve_plan_exercises, NameIndex};
+use crate::modules::seed::{
+    plan_seed_keep, plan_seed_migrate, plan_seed_override, plan_seed_status, PlanSeedStatus,
+};
 use crate::state::AppState;
 
 use super::models::{PlanInput, PlanRecord};
@@ -26,6 +29,8 @@ pub fn apply_plan_seed_migrate(state: State<AppState>) -> Result<PlanSeedStatus>
         return Ok(status);
     }
     plan_seed_migrate(&conn)?;
+    // 种子内容不含动作库 id：合并后立刻挂回（幂等）
+    crate::modules::exercise_lib::resolve::backfill_exercise_refs(&conn)?;
     plan_seed_status(&conn)
 }
 
@@ -38,6 +43,8 @@ pub fn apply_plan_seed_override(state: State<AppState>) -> Result<PlanSeedStatus
         return Ok(status);
     }
     plan_seed_override(&conn)?;
+    // 覆盖进来的种子内容不含动作库 id：立刻挂回（幂等）
+    crate::modules::exercise_lib::resolve::backfill_exercise_refs(&conn)?;
     plan_seed_status(&conn)
 }
 
@@ -76,6 +83,9 @@ pub fn get_workout_plan(state: State<AppState>, id: String) -> Result<PlanRecord
 
 /// 新建或整体更新一门课程（前端每次提交全量字段）。
 /// equipment / est_duration_min 是内置课程 meta，编辑器不提供：缺省时 COALESCE 保留原值。
+///
+/// 动作条目一律经动作库解析：缺 `exerciseId` 的按动作名挂库（未命中则建自建动作），
+/// 保证任何写入路径都不会留下「没有库 id 的动作」。
 #[tauri::command]
 pub fn upsert_workout_plan(state: State<AppState>, input: PlanInput) -> Result<PlanRecord> {
     let name = input.name.trim().to_string();
@@ -83,6 +93,9 @@ pub fn upsert_workout_plan(state: State<AppState>, input: PlanInput) -> Result<P
         return Err(ReinError::Message("课程名称不能为空".into()));
     }
     let conn = state.db.lock().unwrap();
+    let mut index = NameIndex::load(&conn)?;
+    let (exercises, _) =
+        resolve_plan_exercises(&conn, &mut index, &input.exercises)?;
     conn.execute(
         "INSERT INTO workout_plans (id, name, subtitle, workout_type, exercises_json, equipment, est_duration_min, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'), datetime('now')) \
@@ -97,7 +110,7 @@ pub fn upsert_workout_plan(state: State<AppState>, input: PlanInput) -> Result<P
             name,
             input.subtitle.trim(),
             input.workout_type,
-            input.exercises.to_string(),
+            exercises.to_string(),
             input.equipment,
             input.est_duration_min,
         ],

@@ -19,6 +19,10 @@ pub fn run() {
             let conn = db::init(app.handle())?;
             app.manage(AppState::new(conn));
             app.manage(crate::state::VoiceHub::new());
+            app.manage(crate::state::CampusHub::new());
+            // 在线更新：下载/安装的进程内状态。它不落库（设置走 app_meta），
+            // 但必须 manage 进来 —— 下载线程要用它广播进度、缓存已验签的候选。
+            app.manage(modules::update::UpdateHub::new());
 
             // 知识库：状态 + 后台索引线程。
             // 索引线程要读写与应用同一份数据库，所以先完成 db::init（其中的迁移已建好 kb_* 表）
@@ -30,6 +34,13 @@ pub fn run() {
             let hub = std::sync::Arc::new(modules::kb::worker::KbHub::new(data_dir));
             hub.start(app.handle().clone());
             app.manage(hub);
+
+            // 抢课：任务单落 SQLite，后台线程按服务器时钟开火。
+            // 与知识库同形 —— 先 manage 好状态（其中已含任务表）再启动线程，
+            // 而且它必须在 db::init 之后，因为要读写同一份数据库。
+            let grab = std::sync::Arc::new(modules::campus::grab::GrabHub::new());
+            grab.start(app.handle().clone());
+            app.manage(grab);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -90,6 +101,9 @@ pub fn run() {
             modules::session::commands::strength_history,
             modules::session::commands::strength_exercises,
             modules::session::commands::strength_last_weights,
+            modules::session::commands::strength_recent_sets,
+            // sports/plans/records 见上；这份清单必须与 modules/*/commands.rs 和
+            // 前端 src/services/*Service.ts 三处同步（见 docs/ARCHITECTURE.md §3）。
             // plan（训练课程：CRUD + 最近使用）
             modules::plan::commands::list_workout_plans,
             modules::plan::commands::get_workout_plan,
@@ -100,6 +114,12 @@ pub fn run() {
             modules::plan::commands::apply_plan_seed_migrate,
             modules::plan::commands::apply_plan_seed_override,
             modules::plan::commands::apply_plan_seed_keep,
+            // exercise_lib（动作库：全部运动动作的唯一真源，0025）
+            modules::exercise_lib::commands::list_exercises,
+            modules::exercise_lib::commands::get_exercise,
+            modules::exercise_lib::commands::upsert_exercise,
+            modules::exercise_lib::commands::delete_exercise,
+            modules::exercise_lib::commands::restore_exercise,
             // program（健康方案：持久化 + 单激活 + 日程重排；计算在前端引擎）
             modules::program::commands::program_list,
             modules::program::commands::program_get_active,
@@ -135,6 +155,15 @@ pub fn run() {
             modules::ai::commands::ai_chat_list,
             modules::ai::commands::ai_chat_rename,
             modules::ai::commands::ai_chat_search,
+            // ai · 在线服务（服务端下发模型 + 服务密钥 + 成本对账）
+            modules::ai::online::online_service_settings_get,
+            modules::ai::online::online_service_settings_save,
+            modules::ai::online::online_service_catalog,
+            modules::ai::online::online_service_usage,
+            modules::ai::online::online_service_sync,
+            modules::ai::commands::ai_usage_record,
+            modules::ai::commands::ai_usage_summary,
+            modules::ai::commands::ai_usage_clear,
             // web（AI 联网：搜索/抓页，默认必应）
             modules::web::commands::web_fetch,
             modules::web::commands::web_search,
@@ -174,6 +203,11 @@ pub fn run() {
             modules::kb::commands::kb_memories,
             modules::kb::commands::kb_memory_apply,
             modules::kb::commands::kb_memory_delete,
+            modules::kb::commands::kb_memory_archive,
+            modules::kb::commands::kb_memory_restore,
+            modules::kb::commands::kb_memory_maintain,
+            modules::kb::commands::kb_memory_stats,
+            modules::kb::commands::kb_memory_consolidated,
             modules::kb::commands::kb_cognition,
             modules::kb::commands::kb_memory_bump,
             modules::kb::commands::kb_glob,
@@ -181,6 +215,68 @@ pub fn run() {
             modules::kb::commands::kb_file_rename,
             modules::kb::commands::kb_file_delete,
             modules::kb::commands::kb_file_get,
+            // kb（AI 虚拟工作区 v2：模态层 + 目录治理 + 全量注入，见 docs/ai-workspace.md）
+            modules::kb::commands::kb_media_write,
+            modules::kb::commands::kb_media_get,
+            modules::kb::commands::kb_fs_move,
+            modules::kb::commands::kb_fs_mkdir,
+            modules::kb::commands::kb_fs_pin,
+            modules::kb::commands::kb_fs_moves,
+            modules::kb::commands::kb_fs_undo,
+            modules::kb::commands::kb_injection_get,
+            // campus（校园教务：学校系统选择器 + 课表同步 + 培养方案）
+            modules::campus::commands::campus_systems,
+            modules::campus::commands::campus_account_get,
+            modules::campus::commands::campus_captcha,
+            modules::campus::commands::campus_login,
+            modules::campus::commands::campus_session_probe,
+            modules::campus::commands::campus_logout,
+            modules::campus::commands::campus_account_delete,
+            modules::campus::commands::campus_semesters,
+            modules::campus::commands::campus_set_current_semester,
+            modules::campus::commands::campus_sync,
+            modules::campus::commands::campus_schedule,
+            modules::campus::commands::campus_program,
+            // campus（选课：令牌走 EAMS 会话换取的 SSO JWT）
+            modules::campus::commands::campus_course_select_status,
+            modules::campus::commands::campus_course_select_lessons,
+            modules::campus::commands::campus_course_select_simplest_lessons,
+            modules::campus::commands::campus_course_select_query_condition,
+            modules::campus::commands::campus_course_select_apply,
+            modules::campus::commands::campus_course_select_predicate,
+            modules::campus::commands::campus_course_select_result,
+            modules::campus::commands::campus_course_select_predicate_result,
+            modules::campus::commands::campus_course_select_drop,
+            // campus（自动抢课：任务单 + 后台引擎）
+            modules::campus::commands::campus_grab_state,
+            modules::campus::commands::campus_grab_enqueue,
+            modules::campus::commands::campus_grab_task_action,
+            modules::campus::commands::campus_grab_clear_finished,
+            modules::campus::commands::campus_grab_pause_all,
+            modules::campus::commands::campus_grab_resume_all,
+            modules::campus::commands::campus_grab_settings_get,
+            modules::campus::commands::campus_grab_settings_set,
+            // campus（抢课计划：提前写下「想抢什么」，引擎到点自己解析 + 开抢）
+            modules::campus::commands::campus_grab_intent_add,
+            modules::campus::commands::campus_grab_intent_action,
+            modules::campus::commands::campus_grab_intent_preview,
+            // campus（救援面：AI 的最后补救 —— 现场快照 / 带会话的任意请求 / 导出可重放脚本）
+            modules::campus::commands::campus_rescue_state,
+            modules::campus::commands::campus_http,
+            modules::campus::commands::campus_rescue_note,
+            modules::campus::commands::campus_curl_export,
+            // update（在线更新：多源清单 + 清单/安装包双验签 + 断点续传 + 平台安装）
+            modules::update::commands::update_status,
+            modules::update::commands::update_settings_set,
+            modules::update::commands::update_check,
+            modules::update::commands::update_download,
+            modules::update::commands::update_cancel,
+            modules::update::commands::update_discard,
+            modules::update::commands::update_install,
+            modules::update::commands::update_progress,
+            modules::update::commands::update_prune_cache,
+            // online（Rein 在线服务：更新分发之外的在线能力探测；模型网关为预留接口）
+            modules::update::online::online_service_status,
         ])
         .run(tauri::generate_context!())
         .expect("Rein 启动失败");

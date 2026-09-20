@@ -63,14 +63,19 @@ export const sessionService = {
   forWorkout: (workoutId: number) =>
     invoke<SessionRecord | null>('session_for_workout', { workoutId }),
 
-  /** 某动作的全部做组记录（按日期升序，含热身组）——重量曲线数据源 */
-  strengthHistory: (exerciseName: string) =>
-    invoke<StrengthSetRecord[]>('strength_history', { exerciseName }),
+  /** 某动作的全部做组记录（按日期升序，含热身组）——重量曲线数据源。
+   *  `exerciseId` 传动作库 id；传动作名也能命中（AI 工具与旧调用兼容）。 */
+  strengthHistory: (exerciseId: string) =>
+    invoke<StrengthSetRecord[]>('strength_history', { exerciseId }),
 
   /** 有力量记录的动作（按最近训练倒序）——曲线动作选择 */
   strengthExercises: () => invoke<StrengthExerciseRef[]>('strength_exercises'),
 
-  /** 一批动作各自的「最近一次做组重量」——沉浸页预填上次重量 */
-  strengthLastWeights: (names: string[]) =>
-    invoke<StrengthLastWeight[]>('strength_last_weights', { names }),
+  /** 一批动作各自的「最近一次做组重量」——沉浸页预填上次重量（传动作库 id） */
+  strengthLastWeights: (exerciseIds: string[]) =>
+    invoke<StrengthLastWeight[]>('strength_last_weights', { exerciseIds }),
+
+  /** 近 N 天全部做组记录（默认 42 天）——训练建议引擎的一次性原料 */
+  strengthRecentSets: (days?: number) =>
+    invoke<StrengthSetRecord[]>('strength_recent_sets', { days: days ?? null }),
 }

@@ -5,9 +5,16 @@ import type {
   KbDocDetail,
   KbFile,
   KbFileInput,
+  KbFsMove,
+  KbFsMoveResult,
   KbGlobHit,
   KbHit,
+  KbInjection,
+  KbMedia,
+  KbMediaInput,
   KbMemory,
+  KbMemoryScope,
+  KbMemoryStats,
   KbMemoryType,
   KbQuery,
   KbSettings,
@@ -15,6 +22,7 @@ import type {
   KbStatus,
   MemoryApplyResult,
   MemoryCandidate,
+  MemoryMaintainResult,
 } from '@/types'
 import { invoke } from './transport'
 
@@ -48,13 +56,31 @@ export const kbService = {
   /** 清空全部向量并按当前模型重算 */
   rebuildVectors: () => invoke<number>('kb_rebuild_vectors', {}),
 
-  memories: (memType?: KbMemoryType) => invoke<KbMemory[]>('kb_memories', { memType }),
+  /** 记忆列表。scope: active（默认）/ archived / all */
+  memories: (memType?: KbMemoryType, scope?: KbMemoryScope) =>
+    invoke<KbMemory[]>('kb_memories', { memType, scope }),
 
-  /** 落库一次记忆抽取结果（抽取本身在前端调模型完成） */
+  /** 落库一次记忆抽取/整理结果（抽取与整理本身在前端调模型完成） */
   memoryApply: (candidates: MemoryCandidate[], chatId?: string, messageIds?: string[]) =>
     invoke<MemoryApplyResult>('kb_memory_apply', { candidates, chatId, messageIds }),
 
   memoryDelete: (id: number) => invoke<boolean>('kb_memory_delete', { id }),
+
+  /** 归档一条记忆（软删除，可恢复） */
+  memoryArchive: (id: number, reason?: string) =>
+    invoke<boolean>('kb_memory_archive', { id, reason }),
+
+  /** 恢复一条已归档记忆 */
+  memoryRestore: (id: number) => invoke<boolean>('kb_memory_restore', { id }),
+
+  /** 立即跑一次本地维护（衰减 + 自动归档） */
+  memoryMaintain: () => invoke<MemoryMaintainResult>('kb_memory_maintain', {}),
+
+  /** 记忆库信噪比概况（注入覆盖率 / 噪声占比 / 归档数 / 上次整理时间） */
+  memoryStats: () => invoke<KbMemoryStats>('kb_memory_stats', {}),
+
+  /** 上报「刚完成一次 LLM 整理」，用于周期任务的节流 */
+  memoryConsolidated: () => invoke<void>('kb_memory_consolidated', {}),
 
   /** 按路径模式列文档：* 不跨目录、** 跨目录、? 单字符 */
   glob: (pattern: string, limit = 100) => invoke<KbGlobHit[]>('kb_glob', { pattern, limit }),
@@ -68,6 +94,43 @@ export const kbService = {
 
   /** 取文件原文（编辑用；kb_read 走分块管线会丢原始换行） */
   fileGet: (id: number) => invoke<KbFile>('kb_file_get', { id }),
+
+  /**
+   * 上传 / 产出一个多模态节点（ai-workspace §2）：本体落盘 + 文本模态入索引。
+   * `dataBase64` 可带 data URL 前缀；文本模态缺省时后端生成描述行（保证可检索）。
+   */
+  mediaWrite: (input: KbMediaInput) => invoke<KbFile>('kb_media_write', { input }),
+
+  /**
+   * 读一次模态。给了 modal 就取本体（不可用则降级为文本并给原因），不给只回模态清单。
+   * 本体超过内联上限时返回 tooLarge，只给元信息。
+   */
+  mediaGet: (docId: number, modal?: string) => invoke<KbMedia>('kb_media_get', { docId, modal }),
+
+  /* ---------- 目录治理（ai-workspace §3.3） ---------- */
+
+  /** 把文件移进目标目录（分类）。source='ai' 时有防抖与 pin 保护 */
+  fsMove: (id: number, toDir: string, reason?: string, source: 'ai' | 'user' = 'user') =>
+    invoke<KbFsMoveResult>('kb_fs_move', { id, toDir, reason, source }),
+
+  /** 建目录（空目录也会在文件树里可见） */
+  fsMkdir: (path: string, reason?: string, source: 'ai' | 'user' = 'user') =>
+    invoke<KbFile>('kb_fs_mkdir', { path, reason, source }),
+
+  /** 钉住 / 取消钉住（钉住后 AI 不再自动移动） */
+  fsPin: (id: number, pinned: boolean, source: 'ai' | 'user' = 'user') =>
+    invoke<KbFile>('kb_fs_pin', { id, pinned, source }),
+
+  /** 整理审计流水（最近的在前） */
+  fsMoves: (limit = 50) => invoke<KbFsMove[]>('kb_fs_moves', { limit }),
+
+  /** 整批撤销一批整理，返回撤销条数 */
+  fsUndo: (batchId: string) => invoke<number>('kb_fs_undo', { batchId }),
+
+  /* ---------- 全量注入区（ai-workspace §3.4） ---------- */
+
+  /** 取「系统提示词 + 用户记忆」注入块（前端带 TTL 缓存，不必每轮都取） */
+  injection: () => invoke<KbInjection>('kb_injection_get', {}),
 
   /** 取喂给系统提示词的紧凑认知块 */
   cognition: () => invoke<KbCognition>('kb_cognition', {}),

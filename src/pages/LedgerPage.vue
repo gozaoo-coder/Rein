@@ -237,7 +237,7 @@ const emptyText = computed(() =>
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 14px);
+  bottom: calc(var(--dock-top) + 14px);
   z-index: 50;
   gap: 5px;
   padding: 13px 24px;

@@ -1,16 +1,25 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import {
+  ArrowUp,
+  AudioLines,
+  Check,
+  ChevronDown,
+  FileText,
   Keyboard,
   ListOrdered,
+  ListTodo,
+  MessageCircle,
   Mic,
   Pause,
   Play,
   Square,
+  Utensils,
   X,
 } from 'lucide-vue-next'
 
 import MdText from '@/components/common/MdText.vue'
+import TimeSpine from './TimeSpine.vue'
 import VoiceMemosSheet from './VoiceMemosSheet.vue'
 import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
@@ -27,7 +36,7 @@ import {
   writeMemoAll,
   writeMemoItem,
 } from '@/system/voiceRuntime'
-import type { MemoSummaryItem, VoiceMemo, VoiceSentence } from '@/types'
+import type { MemoSummaryItem, VoiceMemo } from '@/types'
 
 /**
  * 语音会话视图（App 根部常驻挂载，单例 runtime 驱动）。
@@ -47,8 +56,56 @@ function fmtMs(ms: number): string {
 
 /* ---------- 转写视图 ---------- */
 
-/** 未完句 + 定稿句合并渲染（partial 灰字光标） */
-const lines = computed(() => voice.sentences)
+/** 喂给时间脊的形状（与 TimeSpine 的 SpineSeg 结构一致） */
+interface SpineSeg {
+  t: number
+  durMs?: number
+  who: string
+  text: string
+  partial?: boolean
+}
+
+/**
+ * 把句子喂给时间脊。ASR 不给说话人，所以只有一条轨道 —— 脊本身支持多轨，
+ * 等哪天接上说话人分离，这里换个字段就有第二条了。
+ */
+const spineSegs = computed<SpineSeg[]>(() =>
+  voice.sentences.map((s) => ({
+    t: s.startMs,
+    durMs: s.endMs > s.startMs ? s.endMs - s.startMs : undefined,
+    who: '我',
+    text: s.text,
+  })),
+)
+
+/** 纪要里的条目本来就带 refs（指向句 idx），直接当锚点钉在轴上 */
+const memoSpineSegs = computed<SpineSeg[]>(() =>
+  (memo.value?.sentences ?? []).map((s) => ({
+    t: s.startMs,
+    durMs: s.endMs > s.startMs ? s.endMs - s.startMs : undefined,
+    who: '我',
+    text: s.text,
+  })),
+)
+
+const memoPins = computed(() =>
+  (memo.value?.summary ?? []).flatMap((it) => {
+    const ref = it.refs[0]
+    const pos = ref == null ? undefined : posOfSentenceIdx.value.get(ref)
+    return pos == null
+      ? []
+      : [{ idx: pos, kind: it.kind === 'todo' ? ('todo' as const) : ('answer' as const), text: it.text }]
+  }),
+)
+
+/** 转写中的脊：已定稿句 + 那句未定稿（灰块在生长） */
+const liveSpineSegs = computed<SpineSeg[]>(() => {
+  const out: SpineSeg[] = [...spineSegs.value]
+  if (voice.partial) {
+    out.push({ t: voice.elapsedMs, who: '我', text: voice.partial, partial: true })
+  }
+  return out
+})
 
 const liveHint = computed(() => {
   if (voice.lastError) return voice.lastError
@@ -70,47 +127,31 @@ function switchTab(t: 'ov' | 'tr'): void {
   tab.value = t
 }
 
-/** 转文字页渲染序列：句子 + 总结 block（block 插到它引用的最后一个句子之后） */
-interface TrRow {
-  type: 's'
-  s: VoiceSentence
-}
-interface BlockRow {
-  type: 'b'
-  item: MemoSummaryItem
-}
-const trRows = computed<(TrRow | BlockRow)[]>(() => {
-  const memo = voice.currentMemo
-  if (!memo) return []
-  const maxRef = new Map<number, MemoSummaryItem[]>()
-  for (const it of memo.summary) {
-    if (it.kind === 'note' || it.refs.length === 0) continue
-    const last = Math.max(...it.refs)
-    maxRef.set(last, [...(maxRef.get(last) ?? []), it])
-  }
-  const rows: (TrRow | BlockRow)[] = []
-  for (const s of memo.sentences) {
-    rows.push({ type: 's', s })
-    for (const item of maxRef.get(s.idx) ?? []) rows.push({ type: 'b', item })
-  }
-  return rows
+/* 引用角标 → 切到精读并高亮那一句 */
+const focusIdx = ref<number | null>(null)
+let focusTimer: number | null = null
+
+/** refs 里存的是句 idx，时间脊按数组位置索引 —— 这两个不一定相等，必须映射 */
+const posOfSentenceIdx = computed(() => {
+  const m = new Map<number, number>()
+  ;(voice.currentMemo?.sentences ?? []).forEach((s, i) => m.set(s.idx, i))
+  return m
 })
 
-/* 引用角标跳转：切到转文字页 → 定位 → 高亮闪烁 3 次 */
-const flashIdx = ref<number | null>(null)
-let flashTimer: number | null = null
+function focusAt(pos: number, switchTab = true): void {
+  if (pos < 0) return
+  if (switchTab) tab.value = 'tr'
+  focusIdx.value = pos
+  if (focusTimer != null) clearTimeout(focusTimer)
+  focusTimer = window.setTimeout(() => {
+    focusIdx.value = null
+  }, 2400)
+}
 
 function onCite(refs: number[]): void {
   if (refs.length === 0) return
-  tab.value = 'tr'
-  const target = Math.min(...refs.filter((n) => n >= 0))
-  void nextTick(() => {
-    flashIdx.value = target
-    if (flashTimer != null) clearTimeout(flashTimer)
-    flashTimer = window.setTimeout(() => {
-      flashIdx.value = null
-    }, 2100) // 0.65s × 3
-  })
+  const target = posOfSentenceIdx.value.get(Math.min(...refs.filter((n) => n >= 0)))
+  if (target != null) focusAt(target)
 }
 
 /* ---------- 重放 ---------- */
@@ -138,25 +179,29 @@ function seekBar(e: MouseEvent): void {
   void a.play()
 }
 
-/** 点句子 → 音频跳到该句起点播放 */
-function seekSentence(s: VoiceSentence): void {
+/** 时间脊上的 seek：跳音频到该时刻 */
+function onSpineSeek(ms: number): void {
   const a = audioEl.value
   if (!a || !voice.audioUrl) return
-  a.currentTime = s.startMs / 1000
+  a.currentTime = ms / 1000
   void a.play()
 }
 
-/** 播放中的当前句（卡拉OK式跟随高亮） */
-const playingIdx = computed(() => {
+/** 播放中的当前句位置（卡拉OK式跟随高亮） */
+const playingPos = computed(() => {
   const memo = voice.currentMemo
   if (!memo || !playing.value) return -1
-  let idx = -1
-  for (const s of memo.sentences) {
-    if (curMs.value >= s.startMs) idx = s.idx
-    else break
-  }
-  return idx
+  let pos = -1
+  memo.sentences.forEach((s, i) => {
+    if (curMs.value >= s.startMs) pos = i
+  })
+  return pos
 })
+
+/** 脊上要高亮的句：引用跳转优先，其次播放跟随 */
+const spineActive = computed<number | undefined>(
+  () => focusIdx.value ?? (playingPos.value >= 0 ? playingPos.value : undefined),
+)
 
 /* ---------- 写入 ---------- */
 
@@ -220,10 +265,8 @@ function onPickMemo(memo: VoiceMemo): void {
   import('@/system/voiceRuntime').then(({ openMemoById }) => void openMemoById(memo.id))
 }
 
-const exampleHints = ['记一笔午饭', '下午三点提醒我取快递', '帮我看看这周花了多少']
-
 onBeforeUnmount(() => {
-  if (flashTimer != null) clearTimeout(flashTimer)
+  if (focusTimer != null) clearTimeout(focusTimer)
 })
 </script>
 
@@ -237,7 +280,7 @@ onBeforeUnmount(() => {
             <template v-if="voice.status === 'idle'">
               <X :size="17" />
             </template>
-            <span v-else class="chev">⌄</span>
+            <ChevronDown v-else :size="19" />
           </button>
           <span class="vs-title">
             语音对话
@@ -245,7 +288,7 @@ onBeforeUnmount(() => {
             <small v-else-if="voice.status === 'recording' || voice.status === 'processing'">
               与 AI 对话同会话{{ voice.segmentCount > 0 ? ` · 已结算 ${voice.segmentCount} 段` : '' }}
             </small>
-            <small v-else>像开会一样说，AI 帮你整理成纪要</small>
+            <small v-else>逐句实时留档 · 中断可恢复</small>
           </span>
           <button class="vs-tbtn wide" @click="memosOpen = true">
             <ListOrdered :size="14" /> 全部纪要
@@ -266,12 +309,11 @@ onBeforeUnmount(() => {
                 <button class="rbtn" @click="discardRecovered">丢弃</button>
               </div>
             </div>
-            <div class="ready-orb" aria-hidden="true" />
-            <p class="ready-cap">轻点麦克风开始说话</p>
-            <div class="hints">
-              <span v-for="h in exampleHints" :key="h" class="hint-chip">{{ h }}</span>
+            <div class="ready-orb" aria-hidden="true">
+              <AudioLines :size="44" />
             </div>
-            <button class="mic-big ready" aria-label="开始说话" @click="startRecording">
+            <p class="ready-cap">轻点麦克风开始说话</p>
+            <button class="mic-big start" aria-label="开始说话" @click="startRecording">
               <Mic :size="28" />
             </button>
             <p v-if="voice.lastError" class="err t-2">{{ voice.lastError }}</p>
@@ -291,15 +333,15 @@ onBeforeUnmount(() => {
             </span>
             <span class="num time">{{ fmtMs(voice.elapsedMs) }}</span>
           </div>
+          <!-- 转写正文：时间脊的精读形态（顶部保留按真实比例的定位带） -->
           <div class="tr">
-            <div v-for="s in lines" :key="s.idx" class="tl">
-              <time>{{ fmtMs(s.startMs) }}</time>
-              <p>{{ s.text }}</p>
-            </div>
-            <div v-if="voice.partial" class="tl partial">
-              <time>…</time>
-              <p>{{ voice.partial }}<span class="caret" /></p>
-            </div>
+            <TimeSpine
+              size="full"
+              mode="read"
+              :segments="liveSpineSegs"
+              :head-ms="voice.elapsedMs"
+              :fold-silence-over="12"
+            />
           </div>
           <footer class="foot">
             <button class="mode-chip" :class="{ on: voice.autoSettle }" @click="setAutoSettle(!voice.autoSettle)">
@@ -319,7 +361,7 @@ onBeforeUnmount(() => {
               </button>
               <span v-else class="mic-big rec dimmed"><Square :size="22" /></span>
               <button class="side" :disabled="voice.status !== 'recording'" @click="finishSpeaking">
-                ■ 完成，整理纪要
+                <Check :size="13" /> 完成，整理纪要
               </button>
             </div>
             <button class="kbd-toggle t-3" @click="kbdOpen = !kbdOpen">
@@ -327,7 +369,7 @@ onBeforeUnmount(() => {
             </button>
             <div v-if="kbdOpen" class="kbd-bar">
               <input v-model="kbdText" type="text" placeholder="改用键盘输入…" @keydown.enter="sendKbd">
-              <button class="kb-send" :disabled="kbdSending" @click="sendKbd">↑</button>
+              <button class="kb-send" :disabled="kbdSending" @click="sendKbd"><ArrowUp :size="16" /></button>
             </div>
             <div v-if="kbdOpen && kbdReply" class="kbd-reply">
               <MdText v-if="kbdReply.text" :text="kbdReply.text" :streaming="kbdReply.streaming" />
@@ -344,7 +386,7 @@ onBeforeUnmount(() => {
             <template v-else>
               <!-- 纪要头（平铺） -->
               <div class="vm-head">
-                <span class="vm-ic">📋</span>
+                <span class="vm-ic"><FileText :size="17" /></span>
                 <span class="vm-t">
                   <b>{{ memo.title }}</b>
                   <em>
@@ -376,6 +418,25 @@ onBeforeUnmount(() => {
                 <button :class="{ on: tab === 'tr' }" @click="switchTab('tr')">转文字</button>
               </div>
 
+              <!-- 会话结构：整场压成一屏，块宽 = 说话时长，纪要是钉在轴上的锚点 -->
+              <section class="ov-sec spine-sec">
+                <h5>
+                  会话结构
+                  <em class="num">{{ memo.sentences.length }} 句 · {{ fmtMs(memo.durationMs) }}</em>
+                </h5>
+                <TimeSpine
+                  size="full"
+                  mode="structure"
+                  :segments="memoSpineSegs"
+                  :total-ms="memo.durationMs"
+                  :pins="memoPins"
+                  :head-ms="playing ? curMs : undefined"
+                  :active-idx="spineActive"
+                  @seek="onSpineSeek"
+                  @pick="focusAt"
+                />
+              </section>
+
               <!-- 整理中（轻提示行） -->
               <div v-if="voice.status === 'processing' || voice.processingCount > 0" class="proc">
                 <span class="spin" />
@@ -393,7 +454,11 @@ onBeforeUnmount(() => {
                 <section v-if="memo.summary.length > 0" class="ov-sec">
                   <h5>总结</h5>
                   <div v-for="(it, i) in memo.summary" :key="i" class="sum-li">
-                    <i class="ic" :class="`i-${it.kind}`">{{ it.kind === 'food' ? '食' : it.kind === 'todo' ? '办' : '答' }}</i>
+                <i class="ic" :class="`i-${it.kind}`">
+                  <Utensils v-if="it.kind === 'food'" :size="13" />
+                  <ListTodo v-else-if="it.kind === 'todo'" :size="13" />
+                  <MessageCircle v-else :size="13" />
+                </i>
                     <span class="sum-body">
                       <span class="md-line"><MdText :text="it.text" /><button
                         v-if="it.refs.length"
@@ -420,44 +485,37 @@ onBeforeUnmount(() => {
                       </em>
                     </span>
                     <button v-if="!it.written" class="wbtn" @click="onWriteItem(memo, it)">写入</button>
-                    <span v-else class="done-mark">✓</span>
+                    <span v-else class="done-mark"><Check :size="14" /></span>
                   </div>
                 </section>
                 <div class="acts-flat">
                   <button class="commit" :disabled="writing" @click="onWriteAll(memo)">
-                    ✓ 全部写入
+                    <Check :size="15" /> 全部写入
                   </button>
                   <button class="ghost" @click="onSpeak(memo)">
                     <span v-if="voice.speaking" class="mini-wave"><i /><i /><i /></span>
-                    {{ voice.speaking ? '停止朗读' : '▶ 朗读纪要' }}
+                    <Play v-else :size="15" />
+                    {{ voice.speaking ? '停止朗读' : '朗读纪要' }}
                   </button>
                 </div>
               </template>
 
-              <!-- 转文字 -->
+              <!-- 转文字：脊的精读形态（顶带定位 + 句表 + 句尾锚点角标） -->
               <template v-else>
                 <section class="ov-sec tr-sec">
-                  <template v-for="(row, i) in trRows" :key="i">
-                    <div
-                      v-if="row.type === 's'"
-                      class="tl seek"
-                      :class="{ flash: flashIdx === row.s.idx, now: playingIdx === row.s.idx }"
-                      @click="seekSentence(row.s)"
-                    >
-                      <time>{{ fmtMs(row.s.startMs) }}</time>
-                      <p>{{ row.s.text }}<span class="at">▶ {{ fmtMs(row.s.startMs) }}</span></p>
-                    </div>
-                    <div v-else class="sblock">
-                      <span class="sb-ic">{{ row.item.kind === 'food' ? '食' : '办' }}</span>
-                      <p>
-                        {{ row.item.text }}
-                        <button v-if="row.item.refs.length" class="cite" @click="onCite(row.item.refs)">
-                          {{ row.item.refs.map((r) => r + 1).join('') }}
-                        </button>
-                      </p>
-                    </div>
-                  </template>
-                  <p class="vs-hint">点句子跳到音频该句 · 点角标在句间定位总结</p>
+                  <TimeSpine
+                    size="full"
+                    mode="read"
+                    :segments="memoSpineSegs"
+                    :total-ms="memo.durationMs"
+                    :pins="memoPins"
+                    :head-ms="playing ? curMs : undefined"
+                    :active-idx="spineActive"
+                    :fold-silence-over="12"
+                    @seek="onSpineSeek"
+                    @pick="focusAt"
+                  />
+                  <p class="vs-hint">点句子跳到音频该句 · 点句尾角标对照总结</p>
                 </section>
               </template>
             </template>
@@ -465,7 +523,7 @@ onBeforeUnmount(() => {
           <!-- 底部控制：继续说（新一段，独立纪要） -->
           <footer class="foot">
             <div class="btns">
-              <button class="mic-big ready" aria-label="开始说话" @click="startRecording">
+              <button class="mic-big start" aria-label="开始说话" @click="startRecording">
                 <Mic :size="26" />
               </button>
               <button class="side" @click="kbdOpen = !kbdOpen">
@@ -476,7 +534,7 @@ onBeforeUnmount(() => {
           </footer>
         </template>
 
-        <VoiceMemosSheet        <VoiceMemosSheet :open="memosOpen" @close="memosOpen = false" @pick="onPickMemo" />
+        <VoiceMemosSheet :open="memosOpen" @close="memosOpen = false" @pick="onPickMemo" />
         <audio
           v-if="memo?.audioPath"
           ref="audioEl"
@@ -535,12 +593,6 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   color: var(--text-2);
-}
-
-.vs-tbtn .chev {
-  font-size: 17px;
-  line-height: 1;
-  margin-top: -6px;
 }
 
 .vs-tbtn.wide {
@@ -618,16 +670,17 @@ onBeforeUnmount(() => {
   color: var(--on-accent);
 }
 
+/* 待机态的呼吸圆：语音域色的淡彩底 + 同色波形图标。
+   原先是一颗四层径向渐变的霓虹球 + 零偏移彩色光晕 —— 那种写法在全应用里独一份，
+   且光晕是纯装饰。这里回到与工具格同一套语言，动画保留（它表达「在等你开口」）。 */
 .ready-orb {
   width: 110px;
   height: 110px;
   border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 34%),
-    radial-gradient(circle at 68% 72%, rgba(250, 17, 79, 0.4), rgba(250, 17, 79, 0) 52%),
-    radial-gradient(circle at 30% 78%, rgba(30, 234, 239, 0.5), rgba(30, 234, 239, 0) 55%),
-    radial-gradient(circle at 50% 45%, #0a84ff, #063a8f 88%);
-  box-shadow: 0 0 40px rgba(10, 132, 255, 0.35);
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
+  color: var(--led-shopping);
   animation: vbreathe 4s var(--ease-standard) infinite;
 }
 
@@ -644,21 +697,6 @@ onBeforeUnmount(() => {
 .ready-cap {
   font-size: var(--fs-subhead);
   font-weight: 600;
-  color: var(--text-2);
-}
-
-.hints {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
-.hint-chip {
-  padding: 6px 13px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
   color: var(--text-2);
 }
 
@@ -857,11 +895,11 @@ onBeforeUnmount(() => {
   width: 34px;
   height: 34px;
   border-radius: 11px;
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
+  color: var(--led-shopping);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
   flex: none;
 }
 
@@ -921,7 +959,7 @@ onBeforeUnmount(() => {
   flex: 1;
   height: 4px;
   border-radius: var(--radius-full);
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--line-strong);
   position: relative;
   cursor: pointer;
 }
@@ -1280,7 +1318,6 @@ onBeforeUnmount(() => {
   padding: 8px 11px;
   background: var(--accent-soft);
   border-radius: 12px;
-  border-left: 3px solid var(--accent);
   font-size: var(--fs-caption);
   line-height: 1.6;
 }
@@ -1305,9 +1342,10 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+/* 11px 的说明文字用 --text-3 只有约 2.3:1，读不清；提到 --text-2（≈4.9:1） */
 .vs-hint {
   font-size: var(--fs-micro);
-  color: var(--text-3);
+  color: var(--text-2);
   margin-top: 8px;
 }
 
@@ -1351,8 +1389,8 @@ onBeforeUnmount(() => {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  background: var(--surface);
+  box-shadow: var(--shadow-thumb);
   transition: left var(--dur-fast) var(--ease-standard);
 }
 
@@ -1403,17 +1441,21 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--on-accent);
 }
 
-.mic-big.ready {
-  background: linear-gradient(160deg, #0a84ff, #063a8f);
-  box-shadow: 0 8px 26px rgba(10, 132, 255, 0.4);
+/* 待机态的主 CTA。**类名不能叫 ready** —— `.ready` 是外层容器的类，
+   `flex: 1 + padding` 会连带命中按钮，把 72×72 撑成 72×167 的椭圆（真实的坑）。 */
+.mic-big.start {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-float);
 }
 
 .mic-big.rec {
-  background: linear-gradient(160deg, #ff5b52, #c22619);
-  box-shadow: 0 8px 26px rgba(250, 17, 79, 0.45);
+  background: var(--danger);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-float);
 }
 
 .mic-big.dimmed {

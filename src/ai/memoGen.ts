@@ -57,7 +57,12 @@ export async function generateMemo(
     [],
     { text: '（请整理上方转写为纪要）' },
     handlers,
-    { systemPrompt: buildMemoPrompt(lines) },
+    {
+      systemPrompt: buildMemoPrompt(lines),
+      // 转写在提示词里而不在本轮消息里：装载判定要照着被整理的正文走（提到了账目就带上记账工具），
+      // 漏判也没关系 —— 模型还能自己调 load_tools 补
+      routeText: lines.map((l) => l.text).join('\n'),
+    },
   )
   let body: unknown
   try {

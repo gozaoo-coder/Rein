@@ -5,10 +5,11 @@ import { Ellipsis, FastForward } from 'lucide-vue-next'
 import SheetModal from '@/components/common/SheetModal.vue'
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import SessionExerciseSwapSheet from './SessionExerciseSwapSheet.vue'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
 import { exerciseSub } from '@/utils/plan'
-import type { PlanExercise, SessionSetSlot } from '@/types'
+import type { PlanExercise, SessionSetSlot, SwapCandidate } from '@/types'
 
 /**
  * 沉浸模式 · 全课程浏览抽屉（顶部胶囊唤起）。
@@ -24,6 +25,7 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const s = useSessionStore()
+const lib = useExerciseLibStore()
 const { toast } = useToast()
 
 /** 内容滚动容器（SheetModal 暴露），用于打开时定位到当前组 */
@@ -134,7 +136,7 @@ function onMenuPick(value: string): void {
 
 const swapIdx = ref<number | null>(null)
 
-function onSwapPick(src: PlanExercise): void {
+function onSwapPick(src: SwapCandidate): void {
   const i = swapIdx.value
   swapIdx.value = null
   if (i == null) return
@@ -181,7 +183,7 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
       <header class="exhead row">
         <span class="ord num">{{ String(g.exIdx + 1).padStart(2, '0') }}</span>
         <div class="flex-1 exid col">
-          <span class="exname">{{ g.ex.name }}</span>
+          <span class="exname">{{ lib.resolveName(g.ex) }}</span>
           <span class="exsub num t-3">{{ g.sub }}</span>
         </div>
         <span class="excount num t-3">{{ g.done }}/{{ g.total }} 组</span>
@@ -189,7 +191,7 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
           v-if="g.canSwap"
           type="button"
           class="swapbtn"
-          :aria-label="`更换动作 ${g.ex.name}`"
+          :aria-label="`更换动作 ${lib.resolveName(g.ex)}`"
           @click="swapIdx = g.exIdx"
         >
           更换
@@ -243,11 +245,11 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
       @close="menuOpen = false"
     />
 
-    <!-- 换动作：候选来自全部课程出现过的同类动作 -->
+    <!-- 换动作：候选来自动作库内的同类型动作 -->
     <SessionExerciseSwapSheet
       :open="swapIdx !== null"
       :kind="s.plan?.exercises[swapIdx ?? 0]?.kind ?? 'strength'"
-      :current-name="s.plan?.exercises[swapIdx ?? 0]?.name ?? ''"
+      :current-id="s.plan?.exercises[swapIdx ?? 0]?.exerciseId ?? ''"
       @pick="onSwapPick"
       @close="swapIdx = null"
     />

@@ -1,0 +1,14 @@
+{
+  "name": "rein-server",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Rein 在线服务：更新清单/安装包分发 + （预留）大模型 API 网关",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "selftest": "node test/selftest.mjs"
+  }
+}

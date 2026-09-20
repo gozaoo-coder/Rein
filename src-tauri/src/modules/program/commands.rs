@@ -44,7 +44,9 @@ pub fn program_list(state: State<AppState>) -> Result<Vec<ProgramRecord>> {
     let conn = state.db.lock().unwrap();
     let sql = format!("SELECT {COLS} FROM programs ORDER BY id DESC LIMIT 20");
     let mut stmt = conn.prepare(&sql)?;
-    let list = stmt.query_map([], from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let list = stmt
+        .query_map([], from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(list)
 }
 
@@ -52,7 +54,8 @@ pub fn program_list(state: State<AppState>) -> Result<Vec<ProgramRecord>> {
 #[tauri::command]
 pub fn program_get_active(state: State<AppState>) -> Result<Option<ProgramRecord>> {
     let conn = state.db.lock().unwrap();
-    let sql = format!("SELECT {COLS} FROM programs WHERE status = 'active' ORDER BY id DESC LIMIT 1");
+    let sql =
+        format!("SELECT {COLS} FROM programs WHERE status = 'active' ORDER BY id DESC LIMIT 1");
     let res = conn.query_row(&sql, [], from_row);
     match res {
         Ok(p) => Ok(Some(p)),
@@ -168,7 +171,10 @@ pub fn program_delete(state: State<AppState>, id: i64) -> Result<i64> {
             [id],
         )? as i64;
         // 已完成待办保留为普通待办（execution history），只解除关联
-        conn.execute("UPDATE todos SET program_id = NULL WHERE program_id = ?1", [id])?;
+        conn.execute(
+            "UPDATE todos SET program_id = NULL WHERE program_id = ?1",
+            [id],
+        )?;
         conn.execute("DELETE FROM programs WHERE id = ?1", [id])?;
         Ok(removed)
     })();
@@ -282,17 +288,14 @@ pub fn program_meals_range(
          WHERE program_id = ?1 AND date BETWEEN ?2 AND ?3 ORDER BY date",
     )?;
     let rows = stmt
-        .query_map(
-            rusqlite::params![program_id, start_date, end_date],
-            |r| {
-                Ok(ProgramDayMeals {
-                    program_id: r.get(0)?,
-                    date: r.get(1)?,
-                    meals_json: r.get(2)?,
-                    updated_at: r.get(3)?,
-                })
-            },
-        )?
+        .query_map(rusqlite::params![program_id, start_date, end_date], |r| {
+            Ok(ProgramDayMeals {
+                program_id: r.get(0)?,
+                date: r.get(1)?,
+                meals_json: r.get(2)?,
+                updated_at: r.get(3)?,
+            })
+        })?
         .collect::<rusqlite::Result<_>>()?;
     Ok(rows)
 }
@@ -377,7 +380,10 @@ pub fn shopping_check_set(state: State<AppState>, item_key: String, checked: boo
             [&item_key],
         )?;
     } else {
-        conn.execute("DELETE FROM shopping_checks WHERE item_key = ?1", [&item_key])?;
+        conn.execute(
+            "DELETE FROM shopping_checks WHERE item_key = ?1",
+            [&item_key],
+        )?;
     }
     Ok(())
 }

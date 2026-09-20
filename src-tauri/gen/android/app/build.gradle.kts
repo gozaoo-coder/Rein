@@ -25,7 +25,12 @@ android {
     compileSdk = 36
     namespace = "com.gozaoo.rein"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "false"
+        // 明文 HTTP：本项目**按设计**走明文 —— 更新源与在线服务是自建服务器
+        // （`http://47.100.36.179:8787`，无 TLS），而 Android 9+ 的默认策略是拒绝明文，
+        // 结果就是 App 里凡是 http 的请求（更新检查、在线模型、WebView 子资源）
+        // 一律以 Failed to connect / ERR_CLEARTEXT_NOT_PERMITTED 收场。
+        // 这里保持 true 直到服务端上 TLS；那时把它连同 allowHttp 一起翻回 false。
+        manifestPlaceholders["usesCleartextTraffic"] = "true"
         applicationId = "com.gozaoo.rein"
         minSdk = 24
         targetSdk = 36
