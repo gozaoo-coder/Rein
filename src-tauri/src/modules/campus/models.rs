@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 // ─────────────────────────── 远端：学期 ───────────────────────────
 
 /// 课表页面里 `var semesters = JSON.parse("...")` 的元素。
-#[derive(Debug, Clone, Deserialize)]
+///
+/// 带 `Serialize` 是因为开课查询的回执要把它原样交给前端（学期选择器）。
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteSemester {
     pub id: i64,
@@ -499,6 +501,13 @@ pub struct GrabTask {
     pub strike_kind: Option<String>,
     #[serde(default)]
     pub request_id: Option<String>,
+    /// **第二个域上的受理号**（「抢课时两个域都发」）。
+    ///
+    /// 两个域是两套系统，各自有自己的受理号 —— 两条单子都要能查结果。
+    /// 只留一条的话，另一条就成了「发出去了但没人管」的悬空请求，
+    /// 而它可能恰恰是抢到课的那一条。
+    #[serde(default)]
+    pub mirror_request_id: Option<String>,
     #[serde(default)]
     pub last_message: Option<String>,
     /// 下一次该动它的时刻（本机 unix **毫秒**）。引擎用它做「谁最急先管谁」的排序，
@@ -565,6 +574,7 @@ impl GrabTask {
             strikes: 0,
             strike_kind: None,
             request_id: None,
+            mirror_request_id: None,
             last_message: None,
             next_at: 0,
             fire_at: None,
@@ -1182,4 +1192,150 @@ pub struct CurlExport {
     pub script: String,
     pub count: usize,
     pub generated_at: String,
+}
+
+/* ─────────────────────────── 全校开课查询 ─────────────────────────── */
+
+/// 开课查询的入参。
+///
+/// 只保留「教务真的认」的几个字段：教务的数据接口靠 queryPage__ 翻页、
+/// 其余筛选一律由**查询表单**在服务端会话里带过去，所以这里不做一整套筛选器 ——
+/// 需要复杂筛选时应该去教务页面自己筛，本应用不假装能替代它。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonSearchQuery {
+    /// 学期 id（来自课表页 / 开课查询页的学期列表）
+    pub semester_id: i64,
+    #[serde(default)]
+    pub page: Option<i64>,
+    #[serde(default)]
+    pub page_size: Option<i64>,
+}
+
+/// 开课名单里的一行。
+///
+/// 全部字段带 default：这套接口在选课批次未开时也会返回行，但**字段随教务版本漂移过**
+/// （实测 2026-09 的列名见 provider::LESSON_SEARCH_ASSEMBLE_FIELDS）。
+/// 宁可缺字段，也不能让整个列表解析失败 —— 一个解析失败会把
+/// 「教务改了一个列名」升级成「这个功能完全不能用」。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonSearchHit {
+    /// 开课行 id（用于「加入抢课计划」时定位）
+    #[serde(default)]
+    pub id: serde_json::Value,
+    #[serde(default)]
+    pub course: Option<LessonCourse>,
+    /// 教学班名（如「教学班A」「01班」）
+    #[serde(default)]
+    pub name_zh: Option<String>,
+    /// 开课院系
+    #[serde(default)]
+    pub open_department: serde_json::Value,
+    /// 教师列表（形状随教务而变，原样带着）
+    #[serde(default)]
+    pub teacher_assignment_list: serde_json::Value,
+    /// 上课时间地点（结构化）
+    #[serde(default)]
+    pub time_table_layout: serde_json::Value,
+    /// 时间地点的**可读文本**。教务有时直接给一行文本，有时只给结构化数据，
+    /// 所以两个都留着，由前端决定显示哪个。
+    #[serde(default)]
+    pub schedule_text: Option<String>,
+    #[serde(default)]
+    pub campus: serde_json::Value,
+    #[serde(default)]
+    pub course_type: serde_json::Value,
+    #[serde(default)]
+    pub exam_mode: serde_json::Value,
+    #[serde(default)]
+    pub teach_lang: serde_json::Value,
+    #[serde(default)]
+    pub room_type: serde_json::Value,
+    /// 一行原始 JSON。
+    ///
+    /// 有意保留：教务的列名会漂移，而**用户能看到的原始响应**是排障时唯一可靠的东西。
+    /// 有了它，字段名变了也不用等新版本 —— 在界面上就能看出真实列名。
+    #[serde(default)]
+    pub raw: serde_json::Value,
+}
+
+impl LessonSearchHit {
+    /// 从一行原始 JSON 构造。**永不失败**：解不出来就退化成「只有 raw 的一行」。
+    pub fn from_value(v: &serde_json::Value) -> Self {
+        match serde_json::from_value::<Self>(v.clone()) {
+            Ok(mut hit) => {
+                hit.raw = v.clone();
+                hit
+            }
+            Err(_) => Self {
+                raw: v.clone(),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+/// 一页开课名单。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonSearchPage {
+    #[serde(default)]
+    pub hits: Vec<LessonSearchHit>,
+    #[serde(default)]
+    pub page: i64,
+    #[serde(default)]
+    pub page_size: i64,
+    /// 教务给的总条数（可能缺省）
+    #[serde(default)]
+    pub total: Option<i64>,
+    /// 响应顶层键名。空列表时靠它区分「教务改了信封」与「确实没开课」。
+    #[serde(default)]
+    pub raw_keys: Vec<String>,
+}
+
+/// 一个候选域名的探测结论。
+///
+/// **按域名分别汇报，不合并**：两个域不是同一套系统（见 provider），
+/// 合并会把「这个域压根没有 EAMS5」伪装成「两个域都没有这门课」。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchoolDomainProbe {
+    pub base_url: String,
+    /// 连得上（拿到了 HTTP 状态码，哪怕是 404）
+    #[serde(default)]
+    pub reachable: bool,
+    /// 开课查询入口在这个域上存在（200 / 302）
+    #[serde(default)]
+    pub lesson_search_route: bool,
+    /// EAMS5 静态资源在这个域上存在 —— **判断「这套系统在不在」最硬的证据**
+    #[serde(default)]
+    pub eams_assets: bool,
+    /// 静态提示（这个域名预期是什么）
+    #[serde(default)]
+    pub hint: String,
+    #[serde(default)]
+    pub page_status: Option<u16>,
+    #[serde(default)]
+    pub asset_status: Option<u16>,
+    /// 一句话结论，直接可显示
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// 全校开课查询的完整回执：**两个域都探测** + 在能用的那个域上查到的名单。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonSearchOutcome {
+    /// 两个候选域名的探测结果（顺序即 provider::GUET_DOMAINS）
+    #[serde(default)]
+    pub domains: Vec<SchoolDomainProbe>,
+    /// 真正用来查询的域名（None = 两个域都用不了）
+    #[serde(default)]
+    pub used_base_url: Option<String>,
+    #[serde(default)]
+    pub page: LessonSearchPage,
+    /// 学期列表（来自能用的那个域；两个域都用不了时为空）
+    #[serde(default)]
+    pub semesters: Vec<RemoteSemester>,
 }

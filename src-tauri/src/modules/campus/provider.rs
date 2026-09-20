@@ -77,7 +77,20 @@ pub struct EndpointSpec {
     pub course_table_print: &'static str,
     /// 培养方案（响应体很大，按需拉取 + 落缓存）
     pub program_info: &'static str,
+    /// **全校开课查询**入口页。它是独立的菜单项（`for-std-lesson-search:menu`），
+    /// 与选课批次无关 —— 批次没开的时候照样能查全校开了哪些课。
+    pub lesson_search_page: &'static str,
+    /// 开课查询页面（带学生标识，路径里的数字就是 `studentId`）
+    pub lesson_search_index: &'static str,
+    /// 开课查询的数据接口：`/semester/{sem}/search/{std}`，返回分页的开课列表
+    pub lesson_search_data: &'static str,
 }
+
+/// 开课查询数据接口里那些**逐字对齐教务**的固定参数。
+///
+/// `bizTypeAssoc=2` = 本科；`assembleFields` 要哪些附加列（少了它行里就没有
+/// 开课院系 / 教师 / 时间地点这些列）。这两个值来自实测抓包，不要凭直觉改。
+const LESSON_SEARCH_ASSEMBLE_FIELDS: &str = "course.code,minorCourse.nameZh,courseType,openDepartment,teacherAssignmentList,examMode,campus,teachLang,roomType,timeTableLayout,crossBizTypes,courseProperty";
 
 impl EndpointSpec {
     /// `/student/for-std/course-table?bizTypeId=2`
@@ -96,6 +109,37 @@ impl EndpointSpec {
     /// `/student/for-std/program/program-info-json?studentId=241250`
     pub fn program_info_for(&self, student_id: &str) -> String {
         format!("{}?studentId={student_id}", self.program_info)
+    }
+
+    /// `/student/for-std/lesson-search?bizTypeId=2`
+    pub fn lesson_search_page_for(&self, biz_type_id: i64) -> String {
+        format!("{}?bizTypeId={biz_type_id}", self.lesson_search_page)
+    }
+
+    /// `/student/for-std/lesson-search/index/241250`
+    pub fn lesson_search_index_for(&self, student_id: &str) -> String {
+        self.lesson_search_index.replace("{std}", student_id)
+    }
+
+    /// `/student/for-std/lesson-search/semester/321/search/241250?bizTypeAssoc=2&queryPage__=1,20&assembleFields=…`
+    ///
+    /// `queryPage__` 的写法是教务自己的约定（两个下划线，逗号分隔 `页码,每页条数`），
+    /// 不是标准的 `page`/`size` —— 写错会被当成无参请求，静默返回第一页。
+    pub fn lesson_search_data_for(
+        &self,
+        semester_id: i64,
+        student_id: &str,
+        biz_type_id: i64,
+        page: i64,
+        page_size: i64,
+    ) -> String {
+        let path = self
+            .lesson_search_data
+            .replace("{sem}", &semester_id.to_string())
+            .replace("{std}", student_id);
+        format!(
+            "{path}?bizTypeAssoc={biz_type_id}&queryPage__={page},{page_size}&assembleFields={LESSON_SEARCH_ASSEMBLE_FIELDS}"
+        )
     }
 }
 
@@ -150,12 +194,19 @@ pub struct SchoolSystemInfo {
 ///   （口令本身不写进源码 —— 联调需要时用 `REIN_GUET_USER` / `REIN_GUET_PASS` 环境变量，
 ///   见 `guet.rs` 与 `course_select.rs` 里的 `#[ignore]` 实测用例。）
 ///
-/// **同一套系统有两个域名**（本科教务的正式与测试），除了域名之外一字不差：
-/// - `bkjw.guet.edu.cn` —— **正式**，真正的选课就发生在这里，默认选它；
-/// - `bkjwtest.guet.edu.cn` —— 测试，联调与演练用（风控更松，别拿它当生产结论）。
+/// **本科教务有两个域名，但它们不是同一套系统**（2026-09 实测，逐路径比对）：
 ///
-/// 所以这里声明**两份 spec 共享同一套握手与接口表**，只差 `kind` / 名字 / 域名 ——
-/// 避免出现「只在测试域练过拳」而正式域第一次打就露馅。
+/// - `bkjwtest.guet.edu.cn` —— **树维 Supwisdom EAMS5**，也就是本文件声明并打通的那一套。
+///   `/student/home` 302 到登录页、`/student/static/eams-ui/js/eams-ui.js` 200、
+///   `/student/ldap/login-salt` 200 —— 握手与接口表全部对得上。
+/// - `bkjw.guet.edu.cn` —— **另一套系统**：ASP.NET MVC + ExtJS 桌面（`Edu.view.*`、
+///   `/?ticket=srv`），登录走统一身份认证 CAS（`cas.guet.edu.cn/cas/login?service=…`）。
+///   它的 `/student/**` **全部 404**（连静态资源 `eams-ui.js` 也是 404，说明 EAMS5
+///   根本没部署在这个域名上）。
+///
+/// 所以**不能**把 bkjw 声明成同一套 EAMS5 再设成默认：那样用户一登录就撞 404。
+/// 这里只声明确实存在的那一套，默认域用能跑通的这个；bkjw 作为**候选域名**参与
+/// [`GUET_DOMAINS`] 的探测（见 [`probe_hint`]），而不是被当成同构的第二个实例。
 macro_rules! guet_spec {
     ($kind:literal, $name:literal, $vendor:literal, $base:literal) => {
         SchoolSystemSpec {
@@ -175,6 +226,9 @@ macro_rules! guet_spec {
                 course_table_page: "/student/for-std/course-table",
                 course_table_print: "/student/for-std/course-table/semester/{sem}/print-data",
                 program_info: "/student/for-std/program/program-info-json",
+                lesson_search_page: "/student/for-std/lesson-search",
+                lesson_search_index: "/student/for-std/lesson-search/index/{std}",
+                lesson_search_data: "/student/for-std/lesson-search/semester/{sem}/search/{std}",
             },
             term: TermSpec {
                 biz_type_id: 2,
@@ -184,28 +238,46 @@ macro_rules! guet_spec {
     };
 }
 
-const GUET_PROD: SchoolSystemSpec = guet_spec!(
+const GUET: SchoolSystemSpec = guet_spec!(
     "guet-supwisdom-eams5",
-    "桂林电子科技大学 · 本科生教学信息平台（正式）",
-    "树维 Supwisdom EAMS5 · 学生端 · bkjw.guet.edu.cn（正式选课在这里）",
-    "https://bkjw.guet.edu.cn"
-);
-
-/// 测试域。**排在正式后面**：默认选中第一项，而默认该是正式域。
-const GUET_TEST: SchoolSystemSpec = guet_spec!(
-    "guet-supwisdom-eams5-test",
-    "桂林电子科技大学 · 本科生教学信息平台（测试）",
-    "树维 Supwisdom EAMS5 · 学生端 · bkjwtest.guet.edu.cn（联调用，风控更松）",
+    "桂林电子科技大学 · 本科生教学信息平台",
+    "树维 Supwisdom EAMS5 · 学生端 · bkjwtest.guet.edu.cn",
     "https://bkjwtest.guet.edu.cn"
 );
 
-const REGISTRY: &[SchoolSystemSpec] = &[GUET_PROD, GUET_TEST];
+const REGISTRY: &[SchoolSystemSpec] = &[GUET];
 
-/// 正式域判定：抢课节奏的默认值、以及「压测档」的告警都要看它 ——
-/// 测试域压出来的速率不能当作正式域的结论。
+/// 本科教务的**候选域名**，供「两个域都检测」用。
+///
+/// 顺序即探测顺序：正式域在前（真在用的那套），EAMS5 部署在后。
+/// 注意二者**不是同一套系统**（见文件头），所以探测结果要按域名分别汇报，
+/// 不能互相兜底：一个域没有的接口，去另一个域也找不到。
+pub const GUET_DOMAINS: [&str; 2] = ["https://bkjw.guet.edu.cn", "https://bkjwtest.guet.edu.cn"];
+
+/// 规范化域名：去空白、去尾斜杠、转小写。
+pub fn normalize_base(base_url: &str) -> String {
+    base_url.trim().trim_end_matches('/').to_lowercase()
+}
+
+/// 抢课速率是在哪个域上标定的：`bkjwtest` 的风控比正式域松，
+/// 拿它压出来的数字去正式域打，结论不成立 —— 设置页据此给出告警。
+///
+/// 判定的是「**不是**测试域」而不是「等于某个常量」：用户完全可能填一个
+/// 反向代理域名，那种情况同样不该被当成测试域。
 pub fn is_production_base(base_url: &str) -> bool {
-    let b = base_url.trim().trim_end_matches('/').to_lowercase();
-    b == GUET_PROD.default_base_url || (b.starts_with("https://bkjw.guet.edu.cn") && !b.contains("bkjwtest"))
+    let b = normalize_base(base_url);
+    !b.contains("bkjwtest")
+}
+
+/// 候选域名的**静态**提示：这条路是 EAMS5，那条路不是。
+///
+/// 只用于界面说明与探测排序 —— 真伪仍以运行时探测为准（[`super::lesson_search`]）。
+pub fn probe_hint(base_url: &str) -> &'static str {
+    if normalize_base(base_url).contains("bkjwtest") {
+        "树维 EAMS5（本应用打通的那一套）"
+    } else {
+        "另一套系统（ASP.NET + ExtJS 桌面，登录走 CAS）"
+    }
 }
 
 pub fn spec(kind: &str) -> Option<&'static SchoolSystemSpec> {
@@ -234,7 +306,9 @@ mod tests {
 
     #[test]
     fn registry_lookup_roundtrip() {
-        assert_eq!(list_info().len(), 2, "本科教务的正式域与测试域都要在册");
+        // 在册的只有**真跑得通的那一套**（EAMS5）。bkjw 是另一套系统，
+        // 不能当同构实例混进来 —— 它由 GUET_DOMAINS 参与探测，不在 REGISTRY 里。
+        assert_eq!(list_info().len(), 1, "只有打通的那一套 EAMS5 在册");
         let guet = spec("guet-supwisdom-eams5").expect("桂电必须在册");
         assert!(spec("nope").is_none());
         assert_eq!(guet.term.biz_type_id, 2);
@@ -244,37 +318,58 @@ mod tests {
         assert_eq!(list_info()[0].short_name, guet.short_name);
     }
 
-    /// 两个域是同一套系统：**除域名与名字之外必须完全一致**。
+    /// **默认域必须是真跑得通的那一个**。
     ///
-    /// 这条断言防的是「改了一个域忘了另一个」—— 那种漂移只有到正式选课那天才会暴露，
-    /// 而那天没法重来。
+    /// 这条断言防的是一类很贵的错：把「本科教务的正式域名」按名字想当然地当成
+    /// EAMS5 的部署地址。实测 `bkjw.guet.edu.cn` 是另一套系统（ASP.NET + ExtJS 桌面，
+    /// 登录走 CAS），它的 `/student/**` 全部 404 —— 一旦把它设成默认，
+    /// 新装用户填完学号密码就直接撞 404。
     #[test]
-    fn the_two_guet_domains_never_drift_apart() {
-        let prod = spec("guet-supwisdom-eams5").unwrap();
-        let test = spec("guet-supwisdom-eams5-test").unwrap();
+    fn the_default_domain_is_the_one_that_actually_serves_eams5() {
+        let guet = spec("guet-supwisdom-eams5").unwrap();
+        assert_eq!(
+            guet.default_base_url, "https://bkjwtest.guet.edu.cn",
+            "默认域必须是实测能跑通 EAMS5 握手的那一个"
+        );
+        assert_eq!(list_info()[0].kind, "guet-supwisdom-eams5");
+        assert_eq!(list_info()[0].default_base_url, guet.default_base_url);
+    }
 
-        assert_eq!(prod.default_base_url, "https://bkjw.guet.edu.cn", "默认必须是正式域");
-        assert_eq!(test.default_base_url, "https://bkjwtest.guet.edu.cn");
-        assert_eq!(list_info()[0].kind, "guet-supwisdom-eams5", "选择器第一项 = 默认 = 正式域");
-        assert_eq!(list_info()[1].kind, "guet-supwisdom-eams5-test");
+    /// 两个候选域名都要能被探测，且顺序稳定（正式域在前）。
+    #[test]
+    fn both_candidate_domains_are_probeable() {
+        assert_eq!(GUET_DOMAINS.len(), 2);
+        assert_eq!(GUET_DOMAINS[0], "https://bkjw.guet.edu.cn");
+        assert_eq!(GUET_DOMAINS[1], "https://bkjwtest.guet.edu.cn");
+        assert!(probe_hint(GUET_DOMAINS[0]).contains("另一套系统"));
+        assert!(probe_hint(GUET_DOMAINS[1]).contains("EAMS5"));
+    }
 
-        assert_eq!(prod.term.biz_type_id, test.term.biz_type_id);
-        assert_eq!(prod.term.week_start_on_sunday, test.term.week_start_on_sunday);
-        assert_eq!(prod.login.id(), test.login.id());
-        assert_eq!(prod.login.public_key(), test.login.public_key());
-        assert_eq!(prod.endpoints.course_table_page, test.endpoints.course_table_page);
-        assert_eq!(prod.endpoints.program_info, test.endpoints.program_info);
+    /// 域名规范化：带尾斜杠 / 大小写 / 空白都必须归一到同一个判定。
+    #[test]
+    fn base_normalisation_is_forgiving() {
+        assert_eq!(
+            normalize_base("  HTTPS://BkjwTest.GUET.edu.cn/  "),
+            "https://bkjwtest.guet.edu.cn"
+        );
+        assert_eq!(
+            normalize_base("https://bkjwtest.guet.edu.cn"),
+            "https://bkjwtest.guet.edu.cn"
+        );
+    }
 
-        // 两个域名都认得出来，且互不误判 —— 抢课节奏的默认值与压测告警都读它
-        assert!(is_production_base("https://bkjw.guet.edu.cn"));
-        assert!(is_production_base("https://bkjw.guet.edu.cn/"));
+    /// 抢课速率告警的判定：**测试域不算生产**，其余（含自建反代）都按生产对待。
+    #[test]
+    fn production_flag_only_excludes_the_test_domain() {
         assert!(!is_production_base("https://bkjwtest.guet.edu.cn"));
-        assert!(!is_production_base("https://example.edu.cn"));
+        assert!(!is_production_base("https://bkjwtest.guet.edu.cn/"));
+        assert!(is_production_base("https://bkjw.guet.edu.cn"));
+        assert!(is_production_base("https://example.edu.cn"));
     }
 
     #[test]
     fn endpoint_templates_expand() {
-        let e = GUET_PROD.endpoints;
+        let e = GUET.endpoints;
         assert_eq!(
             e.course_table_page_for(2),
             "/student/for-std/course-table?bizTypeId=2"

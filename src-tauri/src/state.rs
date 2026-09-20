@@ -55,12 +55,27 @@ pub struct CourseSelectToken {
     pub expires_at: Option<i64>,
 }
 
-/// 校园教务域：进行中的登录握手 + 选课令牌缓存。
+/// 「两个域都发」的计划缓存。
+///
+/// 探测一个域名要打两次网络请求，而抢课引擎每 2 秒就走一步 —— 绝不能每步都去探。
+/// 域名会不会提供 EAMS5 是**很少变的事实**，缓存十分钟足够，
+/// 又能在「学校把系统挪了域名」时自己纠正回来。
+pub struct DualFireCache {
+    pub account_id: i64,
+    pub at_ms: i64,
+    pub plan: crate::modules::campus::lesson_search::DualFirePlan,
+}
+
+/// 校园教务域：进行中的登录握手 + 选课令牌缓存 + 双发计划缓存。
 #[derive(Default)]
 pub struct CampusHub {
     pub pending: Mutex<Option<PendingLogin>>,
     pub select_token: Mutex<Option<CourseSelectToken>>,
+    pub dual_fire: Mutex<Option<DualFireCache>>,
 }
+
+/// 双发计划的缓存有效期：十分钟。
+pub const DUAL_FIRE_TTL_MS: i64 = 10 * 60 * 1000;
 
 impl CampusHub {
     pub fn new() -> Self {

@@ -1099,8 +1099,18 @@ CREATE INDEX idx_campus_ai_actions_at ON campus_ai_actions(at DESC);
 CREATE INDEX idx_campus_ai_actions_fp ON campus_ai_actions(fp, at);
 "#;
 
+/// 「抢课时两个域都发」在任务上的落点：**第二条受理号**。
+///
+/// 为什么单开一列而不是复用 request_id：两个域是**两套系统**，各自有自己的受理号，
+/// 两条单子都要能查结果 —— 只留一条的话，另一条就成了「发出去了但没人管」的悬空请求，
+/// 而它可能恰恰是抢到课的那一条。
+const MIGRATION_0031: &str = r#"
+ALTER TABLE campus_grab_tasks ADD COLUMN mirror_request_id TEXT;
+"#;
+
 const MIGRATIONS: &[&str] = &[
-    MIGRATION_0001,    MIGRATION_0002,
+    MIGRATION_0001,
+    MIGRATION_0002,
     MIGRATION_0003,
     MIGRATION_0004,
     MIGRATION_0005,
@@ -1129,6 +1139,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0028,
     MIGRATION_0029,
     MIGRATION_0030,
+    MIGRATION_0031,
 ];
 
 /// 测试用：对给定连接跑完整迁移（含知识库的 FTS 表与全部触发器）。

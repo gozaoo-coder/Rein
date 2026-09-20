@@ -667,3 +667,60 @@ export interface CurlExport {
   count: number
   generatedAt: string
 }
+
+/* ─────────────────────────── 全校开课查询 ─────────────────────────── */
+
+/** 一个候选域名的探测结论（两个域**分别**汇报，不合并） */
+export interface SchoolDomainProbe {
+  baseUrl: string
+  /** 连得上（拿到了 HTTP 状态码，哪怕是 404） */
+  reachable: boolean
+  /** 开课查询入口在这个域上存在 */
+  lessonSearchRoute: boolean
+  /** EAMS5 静态资源在这个域上存在 —— 判断「这套系统在不在」最硬的证据 */
+  eamsAssets: boolean
+  /** 这个域名预期是什么 */
+  hint: string
+  pageStatus?: number | null
+  assetStatus?: number | null
+  /** 一句话结论，可直接显示 */
+  detail: string
+}
+
+/** 开课名单里的一行（字段随教务版本漂移，raw 永远在） */
+export interface LessonSearchHit {
+  id?: unknown
+  course?: { code?: string | null; nameZh?: string | null; credits?: number | null } | null
+  nameZh?: string | null
+  openDepartment?: unknown
+  teacherAssignmentList?: unknown
+  timeTableLayout?: unknown
+  /** 时间地点的可读文本（教务有时只给结构化数据，那就为空） */
+  scheduleText?: string | null
+  campus?: unknown
+  courseType?: unknown
+  examMode?: unknown
+  teachLang?: unknown
+  roomType?: unknown
+  /** 一行原始 JSON —— 教务列名漂移时，靠它当场看出真实列名 */
+  raw?: unknown
+}
+
+export interface LessonSearchPage {
+  hits: LessonSearchHit[]
+  page: number
+  pageSize: number
+  total?: number | null
+  /** 响应顶层键名。空列表时靠它区分「教务改了信封」与「确实没开课」 */
+  rawKeys: string[]
+}
+
+/** 全校开课查询回执：两个域都探测 + 在能用的那个域上查到的名单 */
+export interface LessonSearchOutcome {
+  domains: SchoolDomainProbe[]
+  /** 真正用来查询的域名（null = 两个域都用不了） */
+  usedBaseUrl?: string | null
+  page: LessonSearchPage
+  semesters: CampusSemester[]
+}
+

@@ -61,7 +61,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::error::{ReinError, Result};
 use crate::state::{AppState, CampusHub};
 
-use super::course_select::TOKEN_EXPIRED;
+use super::course_select::{CourseSelectClient, TOKEN_EXPIRED};
 use super::matcher::{self, LessonHit};
 use super::models::*;
 
@@ -191,7 +191,8 @@ pub fn verdict_of(message: &str) -> Verdict {
     if m.contains(TOKEN_EXPIRED) || m.contains("选课令牌") {
         return Verdict::TokenRefresh;
     }
-    if m.contains("会话已过期") || m.contains("重新登录") || m.contains("登录已过期") {
+    if m.contains("会话已过期") || m.contains("重新登录") || m.contains("登录已过期")
+    {
         return Verdict::SessionLost;
     }
 
@@ -612,7 +613,9 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
         let probed = read_meta(&conn, PROBED_KEY).and_then(|s| s.parse::<i64>().ok());
         (settings, account_id, probed)
     };
-    let probe_due = probed_at.map(|at| now_ms() - at >= TURN_PROBE_MS).unwrap_or(true);
+    let probe_due = probed_at
+        .map(|at| now_ms() - at >= TURN_PROBE_MS)
+        .unwrap_or(true);
 
     // ── 投递口：外部（开机监控脚本 / 人）投进来的抢课意图先落库，
     //    **落完再读任务** —— 这样这一轮就能把它当普通任务处理，不必等下一次心跳。
@@ -632,7 +635,9 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     //    就每分钟安静地问一次 `open-turns`（照旧走全局节流，不额外加压）。
     let watching = settings.watch_window
         && (tasks.is_empty()
-            || tasks.iter().any(|t| t.await_window && t.window_wall.is_none()));
+            || tasks
+                .iter()
+                .any(|t| t.await_window && t.window_wall.is_none()));
     if watching && probe_due {
         hub.mark_request();
         let ctx = super::commands::select_context(&state.db, &campus);
@@ -813,7 +818,10 @@ fn probe_windows(
     let briefs = fetch_turn_briefs(state, ctx)?;
     let conn = state.db.lock().unwrap();
 
-    for t in tasks.iter().filter(|t| t.await_window && t.window_wall.is_none()) {
+    for t in tasks
+        .iter()
+        .filter(|t| t.await_window && t.window_wall.is_none())
+    {
         let Some(brief) = briefs.iter().find(|b| b.id == t.turn_id) else {
             continue; // 批次还没出现在列表里，继续等
         };
@@ -926,7 +934,12 @@ fn park_everything(
 /// 执行一个任务的一步。就地修改 `task`（调用方负责落库）。
 ///
 /// 一次调用 = 一个网络请求，要么轮询、要么提交。
-fn act(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mut GrabTask, skew_ms: i64) {
+fn act(
+    ctx: &super::commands::SelectContext,
+    settings: &GrabSettings,
+    task: &mut GrabTask,
+    skew_ms: i64,
+) {
     // 窗口已关：收手，并说清为什么
     if window_closed(task, skew_ms) {
         finish(task, GRAB_FAILED, "选课窗口已关闭，未能抢到");
@@ -953,6 +966,59 @@ fn needs_predicate(task: &GrabTask) -> bool {
     task.mode == "predicate" && !task.predicate_done
 }
 
+/// **两个域都发**：把同一份提交同时打向主域与镜像域，取先成功的那个。
+///
+/// 语义要精确，否则会变成「重复选课」这种事故：
+/// - 两个域**不是同一套系统**（见 `lesson_search::plan_dual_fire`），所以这里发的是
+///   「各自系统里的一次正常提交」，不是同一笔请求发两遍；
+/// - 谁先返回受理号就用谁的受理号去轮询（`request_id` + `mirror_pending` 记录另一条）；
+/// - 两边都失败时，把**两边的原话**都留下 —— 只说一边会让人以为另一边没问题。
+///
+/// 镜像域是 `Option`：探测到它没有 EAMS5 时为 `None`，此时**只发主域**，
+/// 并把原因写在 `mirror_note` 里（界面据此说明「另一个域为什么没发」）。
+fn submit_both(
+    ctx: &super::commands::SelectContext,
+    items: &[AddItem],
+    turn: &str,
+    predicate: bool,
+) -> Result<(String, Option<String>)> {
+    let call = |client: &CourseSelectClient| -> Result<String> {
+        if predicate {
+            client.add_predicate(ctx.student_id, turn, items.to_vec(), None)
+        } else {
+            client.add_request(ctx.student_id, turn, items.to_vec(), None)
+        }
+    };
+
+    let primary = call(&ctx.client);
+    let mirror = ctx.mirror.as_ref().map(call);
+
+    let rid = primary.as_ref().ok().cloned().unwrap_or_default();
+    let rid2 = mirror
+        .as_ref()
+        .and_then(|r| r.as_ref().ok().cloned())
+        .unwrap_or_default();
+
+    match (rid.is_empty(), rid2.is_empty()) {
+        (false, _) => Ok((rid, (!rid2.is_empty()).then_some(rid2))),
+        (true, false) => Ok((rid2, None)),
+        (true, true) => {
+            // 两边都没成：把两边的原话合起来，别只报一边
+            let mut msgs = Vec::new();
+            if let Err(e) = &primary {
+                msgs.push(format!("主域：{e}"));
+            }
+            if let Some(Err(e)) = &mirror {
+                msgs.push(format!("镜像域：{e}"));
+            }
+            if msgs.is_empty() {
+                msgs.push("两边都没有返回受理号".into());
+            }
+            Err(ReinError::Message(msgs.join("；")))
+        }
+    }
+}
+
 /// 提交一步：按模式决定先占位还是直接投。
 fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mut GrabTask) {
     let items = vec![AddItem {
@@ -969,12 +1035,11 @@ fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &
     //    只交一次 —— 交过之后每次重试都直接投正式请求，
     //    否则每轮重试都要多打一个请求，白白拉长出手间隔。
     if needs_predicate(task) {
-        match ctx
-            .client
-            .add_predicate(ctx.student_id, &turn, items, None)
-        {
-            Ok(rid) if !rid.is_empty() => {
+        // **两个域都发**：占位也一样两边都占 —— 谁先给受理号就用谁的去轮询。
+        match submit_both(ctx, &items, &turn, true) {
+            Ok((rid, mirror_rid)) => {
                 task.request_id = Some(rid);
+                task.mirror_request_id = mirror_rid;
                 task.predicate_done = true;
                 task.phase = PHASE_POLL.into();
                 task.polls = 0;
@@ -985,38 +1050,34 @@ fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &
                 task.strike_kind = None;
                 return;
             }
-            Ok(_) => {
-                // 占位没给受理号：没交上，下一轮再试
-                task.next_at = now_ms();
-                return;
-            }
             Err(e) => return absorb_error(task, settings, e.to_string()),
         }
     }
 
-    // ② 正式提交
+    // ② 正式提交 —— 同样**两个域都发**
     task.attempts += 1;
-    match ctx.client.add_request(ctx.student_id, &turn, items, None) {
-        Ok(rid) if !rid.is_empty() => {
+    match submit_both(ctx, &items, &turn, false) {
+        Ok((rid, mirror_rid)) => {
             task.request_id = Some(rid);
+            task.mirror_request_id = mirror_rid;
             task.phase = PHASE_POLL.into();
             task.polls = 0;
             task.status = GRAB_RUNNING.into();
-            task.last_message = Some(if task.attempts == 1 {
-                "已提交，等待教务处理".into()
+            // 两边都发时说清「另一条也发了」：否则用户看到一条受理号会以为只有一个域在打
+            let dual = if task.mirror_request_id.is_some() {
+                "（两个域都已提交）"
             } else {
-                format!("第 {} 次提交，等待教务处理", task.attempts)
+                ""
+            };
+            task.last_message = Some(if task.attempts == 1 {
+                format!("已提交，等待教务处理{dual}")
+            } else {
+                format!("第 {} 次提交，等待教务处理{dual}", task.attempts)
             });
             task.next_at = now_ms() + settings.poll_interval_ms;
             task.strikes = 0;
             task.strike_kind = None;
         }
-        // 提交成功但没给受理号：无法跟踪，当作一次失败重新来过
-        Ok(_) => absorb_error(
-            task,
-            settings,
-            "提交未返回受理号，无法跟踪结果".to_string(),
-        ),
         Err(e) => absorb_error(task, settings, e.to_string()),
     }
 }
@@ -1033,15 +1094,36 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
     // 手上这张是占位单还是正式单，取决于占位交没交过
     let is_predicate = needs_predicate(task);
 
-    let raw = if is_predicate {
-        ctx.client.predicate_response(ctx.student_id, &rid)
-    } else {
-        ctx.client.add_drop_response(ctx.student_id, &rid)
+    let ask = |client: &CourseSelectClient, rid: &str| -> Result<serde_json::Value> {
+        if is_predicate {
+            client.predicate_response(ctx.student_id, rid)
+        } else {
+            client.add_drop_response(ctx.student_id, rid)
+        }
     };
-    let raw = match raw {
+
+    let raw = match ask(&ctx.client, &rid) {
         Ok(v) => v,
         Err(e) => return absorb_error(task, settings, e.to_string()),
     };
+
+    // **另一条单子也要看**：两个域是两套系统，各自有自己的受理号。
+    // 主域这条还在处理时，镜像域那条可能已经出结果了 —— 只盯主域的话，
+    // 抢到课的那一条会被当成「还在处理」一直轮询到超时，然后被当成失败重投。
+    if raw.is_null() {
+        if let (Some(mirror), Some(rid2)) = (ctx.mirror.as_ref(), task.mirror_request_id.clone()) {
+            if !rid2.is_empty() {
+                if let Ok(v2) = ask(mirror, &rid2) {
+                    if !v2.is_null() {
+                        // 镜像域先出结果：把它当作本轮的结果来判（下面的逻辑完全一致）
+                        task.mirror_request_id = None;
+                        task.last_message = Some("另一条提交先返回了结果".into());
+                        return judge(settings, task, v2, is_predicate);
+                    }
+                }
+            }
+        }
+    }
 
     // `data` 为空 = 服务端还在处理
     if raw.is_null() {
@@ -1054,6 +1136,15 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
         return;
     }
 
+    judge(settings, task, raw, is_predicate);
+}
+
+/// 判定一条**已经拿到结果**的受理单。
+///
+/// 抽成函数是因为它现在有**两个调用点**：主域那条，以及「两个域都发」时
+/// 镜像域那条先出结果的情况。两处必须走同一套判定 —— 抄一份的话，
+/// 迟早出现「主域认成功、镜像域认失败」这种自相矛盾的行为。
+fn judge(settings: &GrabSettings, task: &mut GrabTask, raw: serde_json::Value, is_predicate: bool) {
     let r: CourseSelectResult = serde_json::from_value(raw).unwrap_or(CourseSelectResult {
         success: false,
         error_message: None,
@@ -1064,6 +1155,9 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
     if is_predicate && r.success {
         task.phase = PHASE_SUBMIT.into();
         task.request_id = None;
+        // 占位这条已经用完了，镜像域那条同样是占位单，一并清掉：
+        // 正式确认会重新两边都发一遍（见 submit_both）。
+        task.mirror_request_id = None;
         task.polls = 0;
         task.next_at = now_ms();
         task.last_message = Some("占位成功，正在正式确认".into());
@@ -1075,6 +1169,7 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
     if r.success {
         finish(task, GRAB_SUCCESS, "已抢到");
         task.request_id = None;
+        task.mirror_request_id = None;
         return;
     }
 
@@ -1084,6 +1179,7 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
             GRAB_CONFLICT,
             "与已选课程时间冲突，需到教务网页端办理免听",
         );
+        task.mirror_request_id = None;
         return;
     }
 
@@ -1170,7 +1266,10 @@ fn finish(task: &mut GrabTask, status: &str, message: &str) {
 
 /// 任务所属的志愿组（空串/空白按「不在组里」处理）。
 fn group_of(t: &GrabTask) -> Option<&str> {
-    t.group_key.as_deref().map(str::trim).filter(|g| !g.is_empty())
+    t.group_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
 }
 
 /// 是否已经「让贤」：连续满员超过了期限。
@@ -1181,7 +1280,8 @@ fn has_ceded(t: &GrabTask, settings: &GrabSettings, now: i64) -> bool {
     if settings.cede_after_ms <= 0 {
         return false;
     }
-    t.stuck_since.is_some_and(|since| now - since >= settings.cede_after_ms)
+    t.stuck_since
+        .is_some_and(|since| now - since >= settings.cede_after_ms)
 }
 
 /// 组里的**当前志愿**：还没结束的成员里 `(priority, id)` 最小的那个。
@@ -1216,7 +1316,9 @@ fn armed(t: &GrabTask, tasks: &[GrabTask], settings: &GrabSettings, now: i64) ->
 
 /// 同组有人中了：把其余还没结束的成员收摊。返回收掉的行数。
 fn close_group(conn: &Connection, winner: &GrabTask) -> Result<usize> {
-    let Some(g) = group_of(winner) else { return Ok(0) };
+    let Some(g) = group_of(winner) else {
+        return Ok(0);
+    };
     let who = winner
         .course_name
         .clone()
@@ -1263,7 +1365,11 @@ pub fn plan_groups(hits: &[LessonHit], spread: bool) -> Vec<Vec<LessonHit>> {
         .cloned()
         .collect();
     if !spread {
-        return if grabbable.is_empty() { Vec::new() } else { vec![grabbable] };
+        return if grabbable.is_empty() {
+            Vec::new()
+        } else {
+            vec![grabbable]
+        };
     }
     let mut order: Vec<String> = Vec::new();
     let mut buckets: HashMap<String, Vec<LessonHit>> = HashMap::new();
@@ -1274,7 +1380,10 @@ pub fn plan_groups(hits: &[LessonHit], spread: bool) -> Vec<Vec<LessonHit>> {
         }
         buckets.entry(key).or_default().push(h);
     }
-    order.into_iter().filter_map(|k| buckets.remove(&k)).collect()
+    order
+        .into_iter()
+        .filter_map(|k| buckets.remove(&k))
+        .collect()
 }
 
 /// 分堆用的课程身份：课程代码优先，退化到课程名，再退化到教学班 id。
@@ -1382,7 +1491,13 @@ fn resolve_intent(
         if !amb.is_empty() {
             let list = amb
                 .iter()
-                .map(|(c, n)| if n.is_empty() { c.clone() } else { format!("{c} {n}") })
+                .map(|(c, n)| {
+                    if n.is_empty() {
+                        c.clone()
+                    } else {
+                        format!("{c} {n}")
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(" / ");
             let sample = amb
@@ -1427,9 +1542,11 @@ fn resolve_intent(
     // 窗口与开火判据与 `probe_windows` 保持一致：有精确区间就用区间；
     // 没有区间但「允许进入」就是窗口正开着（立刻出手）；都没有就等窗口公布。
     let (window, window_end, await_window) = match brief.window_start.as_deref() {
-        Some(start) if !start.trim().is_empty() => {
-            (Some(start.trim().to_string()), brief.window_end.clone(), false)
-        }
+        Some(start) if !start.trim().is_empty() => (
+            Some(start.trim().to_string()),
+            brief.window_end.clone(),
+            false,
+        ),
         _ if brief.allow_enter => (None, None, false),
         _ => (None, None, true),
     };
@@ -1447,7 +1564,9 @@ fn resolve_intent(
                 format!("intent-{}-{}", intent.id, gi + 1)
             };
             let name = if intent.spread {
-                group.first().and_then(|h| matcher::course_name_of(&h.lesson))
+                group
+                    .first()
+                    .and_then(|h| matcher::course_name_of(&h.lesson))
             } else {
                 None
             }
@@ -1619,8 +1738,16 @@ fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
             task.status = GRAB_WAITING.into();
             task.next_at = now_ms() + settings.full_retry_ms;
         }
-        Verdict::Conflict => finish(task, GRAB_CONFLICT, &task.last_message.clone().unwrap_or_default()),
-        Verdict::Fatal => finish(task, GRAB_FAILED, &task.last_message.clone().unwrap_or_default()),
+        Verdict::Conflict => finish(
+            task,
+            GRAB_CONFLICT,
+            &task.last_message.clone().unwrap_or_default(),
+        ),
+        Verdict::Fatal => finish(
+            task,
+            GRAB_FAILED,
+            &task.last_message.clone().unwrap_or_default(),
+        ),
         Verdict::Retry => {
             // 未知错误不能无限撞：连败到上限就交给用户看原始文案
             if task.strikes >= UNKNOWN_STRIKE_LIMIT {
@@ -1648,7 +1775,11 @@ fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
     }
     if settings.max_attempts > 0 && task.attempts >= settings.max_attempts {
         let m = task.last_message.clone().unwrap_or_default();
-        finish(task, GRAB_FAILED, &format!("已达提交上限 {} 次：{m}", settings.max_attempts));
+        finish(
+            task,
+            GRAB_FAILED,
+            &format!("已达提交上限 {} 次：{m}", settings.max_attempts),
+        );
     }
 }
 
@@ -1723,7 +1854,7 @@ const TASK_COLS: &str = "id, turn_id, turn_name, lesson_id, lesson_name, course_
      teacher, credits, mode, virtual_cost, schedule_group_id, window_wall, window_end_wall, \
      await_window, predicate_done, status, phase, attempts, polls, strikes, strike_kind, request_id, \
      last_message, next_at, queued_at, finished_at, turn_assoc, \
-     group_key, group_name, priority, stuck_since";
+     group_key, group_name, priority, stuck_since, mirror_request_id";
 
 fn json_to_col(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "null".into())
@@ -1773,6 +1904,8 @@ fn task_row(r: &Row<'_>) -> rusqlite::Result<GrabTask> {
         group_name: r.get(29)?,
         priority: r.get(30)?,
         stuck_since: r.get(31)?,
+        // 抢课「两个域都发」的第二条受理号（第 32 列）
+        mirror_request_id: r.get(32)?,
         // 派生值，不落库 —— 由 `snapshot` 按同组的志愿序算出来后填上
         held_by: None,
     })
@@ -1836,7 +1969,7 @@ pub fn save_task(conn: &Connection, t: &GrabTask) -> Result<()> {
          predicate_done = ?14, status = ?15, phase = ?16, attempts = ?17, polls = ?18, \
          strikes = ?19, strike_kind = ?20, request_id = ?21, last_message = ?22, next_at = ?23, \
          queued_at = ?24, finished_at = ?25, turn_assoc = ?26, group_key = ?27, group_name = ?28, \
-         priority = ?29, stuck_since = ?30 WHERE id = ?1",
+         priority = ?29, stuck_since = ?30, mirror_request_id = ?31 WHERE id = ?1",
         rusqlite::params![
             t.id,
             t.turn_name,
@@ -1868,6 +2001,7 @@ pub fn save_task(conn: &Connection, t: &GrabTask) -> Result<()> {
             t.group_name,
             t.priority,
             t.stuck_since,
+            t.mirror_request_id,
         ],
     )?;
     Ok(())
@@ -2025,7 +2159,9 @@ fn drain_intake(app: &AppHandle, account_id: i64) -> Option<String> {
             let bad = dir.join("campus_intake.bad.json");
             let _ = std::fs::remove_file(&bad);
             let _ = std::fs::rename(&path, &bad);
-            return Some(format!("投递口不是合法 JSON，已挪到 campus_intake.bad.json：{e}"));
+            return Some(format!(
+                "投递口不是合法 JSON，已挪到 campus_intake.bad.json：{e}"
+            ));
         }
     };
 
@@ -2518,8 +2654,14 @@ mod tests {
             verdict_of("选课令牌已失效，请重新打开选课页重试"),
             Verdict::TokenRefresh
         );
-        assert_eq!(verdict_of("教务会话已过期，请先重新登录"), Verdict::SessionLost);
-        assert_eq!(verdict_of("与已选课程时间冲突，请办理免听"), Verdict::Conflict);
+        assert_eq!(
+            verdict_of("教务会话已过期，请先重新登录"),
+            Verdict::SessionLost
+        );
+        assert_eq!(
+            verdict_of("与已选课程时间冲突，请办理免听"),
+            Verdict::Conflict
+        );
         assert_eq!(verdict_of("不在选课时间内"), Verdict::Fatal);
         assert_eq!(verdict_of("网络请求失败：timed out"), Verdict::Retry);
         // 认不出来的一律可重试，由连败上限兜底
@@ -2548,7 +2690,10 @@ mod tests {
         // 参数错误：请求的写法不对，重试无用
         assert_eq!(verdict_of("请求参数错误：缺少 assoc"), Verdict::BadRequest);
         assert_eq!(verdict_of("参数校验失败"), Verdict::BadRequest);
-        assert_eq!(verdict_of("HTTP 422 Unprocessable Entity"), Verdict::BadRequest);
+        assert_eq!(
+            verdict_of("HTTP 422 Unprocessable Entity"),
+            Verdict::BadRequest
+        );
 
         // **顺序保证**：能判出「这门课不存在」的按终态处理，别把它推给 AI；
         // 「已选人数已达上限」也不能因为带了别的词就变成限流
@@ -2646,6 +2791,7 @@ mod tests {
             strikes: 0,
             strike_kind: None,
             request_id: None,
+            mirror_request_id: None,
             last_message: None,
             next_at: 0,
             fire_at: None,
@@ -2786,7 +2932,10 @@ mod tests {
 
         // 已经开过火的任务不再受窗口约束，全由重试节奏支配 ——
         // 交过占位也算「出过手」：闸门只管第一枪，打出去之后不该再拿它挡路
-        assert_eq!(fire_at_ms(&task(Some("2026-09-17 08:00:00"), 3), 0, 800), None);
+        assert_eq!(
+            fire_at_ms(&task(Some("2026-09-17 08:00:00"), 3), 0, 800),
+            None
+        );
         let mut placed = task(Some("2026-09-17 08:00:00"), 0);
         placed.predicate_done = true;
         assert_eq!(fire_at_ms(&placed, 0, 800), None);
@@ -2805,7 +2954,10 @@ mod tests {
         // 有 await 标记 → 挡住
         t.await_window = true;
         assert_eq!(fire_at_ms(&t, 0, 800), Some(GATE_UNKNOWN));
-        assert!(GATE_UNKNOWN > now_ms(), "闸门未知必须落在遥远的未来，不能立刻到点");
+        assert!(
+            GATE_UNKNOWN > now_ms(),
+            "闸门未知必须落在遥远的未来，不能立刻到点"
+        );
 
         // 拿到窗口之后闸门就正常了
         t.window_wall = Some("2026-09-17 08:00:00".into());
@@ -2961,7 +3113,10 @@ mod tests {
     fn loosening_the_floor_does_not_speed_up_the_default() {
         let d = GrabSettings::default();
         let s = d.clone().sanitized();
-        assert_eq!(s.min_interval_ms, d.min_interval_ms, "默认值本身就落在钳位区间内");
+        assert_eq!(
+            s.min_interval_ms, d.min_interval_ms,
+            "默认值本身就落在钳位区间内"
+        );
         assert_eq!(s.poll_interval_ms, d.poll_interval_ms);
         assert_eq!(s.full_retry_ms, d.full_retry_ms);
         // 默认仍然是「一个学生抢几门课」的节奏，不是压测出来的那档
@@ -3004,10 +3159,40 @@ mod tests {
     fn active_tasks_exclude_paused_and_finished() {
         let conn = db();
         let acct = account(&conn);
-        let a = insert_task(&conn, acct, "77", None, &input(serde_json::json!(1)), "direct", None, None).unwrap();
-        let b = insert_task(&conn, acct, "77", None, &input(serde_json::json!(2)), "direct", None, None).unwrap();
+        let a = insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(1)),
+            "direct",
+            None,
+            None,
+        )
+        .unwrap();
+        let b = insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(2)),
+            "direct",
+            None,
+            None,
+        )
+        .unwrap();
         set_status(&conn, b, GRAB_SUCCESS).unwrap();
-        let paused = insert_task(&conn, acct, "77", None, &input(serde_json::json!(3)), "direct", None, None).unwrap();
+        let paused = insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(3)),
+            "direct",
+            None,
+            None,
+        )
+        .unwrap();
         set_status(&conn, paused, GRAB_PAUSED).unwrap();
 
         let active = load_active_tasks(&conn, acct).unwrap();
@@ -3023,8 +3208,28 @@ mod tests {
     fn clear_finished_keeps_the_running_ones() {
         let conn = db();
         let acct = account(&conn);
-        insert_task(&conn, acct, "77", None, &input(serde_json::json!(1)), "direct", None, None).unwrap();
-        let done = insert_task(&conn, acct, "77", None, &input(serde_json::json!(2)), "direct", None, None).unwrap();
+        insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(1)),
+            "direct",
+            None,
+            None,
+        )
+        .unwrap();
+        let done = insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(2)),
+            "direct",
+            None,
+            None,
+        )
+        .unwrap();
         set_status(&conn, done, GRAB_FAILED).unwrap();
 
         assert_eq!(clear_finished(&conn, acct).unwrap(), 1);
@@ -3036,18 +3241,42 @@ mod tests {
     fn park_keeps_a_paused_family_intact() {
         let conn = db();
         let acct = account(&conn);
-        let id = insert_task(&conn, acct, "77", None, &input(serde_json::json!(1)), "direct", None, None).unwrap();
+        let id = insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(1)),
+            "direct",
+            None,
+            None,
+        )
+        .unwrap();
         let mut t = load_task(&conn, id).unwrap().unwrap();
         t.status = GRAB_RUNNING.into();
         save_task(&conn, &t).unwrap();
 
-        park(&conn, &t, now_ms() + 5000, "教务会话已过期", Verdict::SessionLost).unwrap();
+        park(
+            &conn,
+            &t,
+            now_ms() + 5000,
+            "教务会话已过期",
+            Verdict::SessionLost,
+        )
+        .unwrap();
         let parked = load_task(&conn, id).unwrap().unwrap();
         assert_eq!(parked.status, GRAB_WAITING);
         assert_eq!(parked.strike_kind.as_deref(), Some("session"));
         assert_eq!(parked.strikes, 1);
         // 同类再停一次 → 累加
-        park(&conn, &parked, now_ms() + 5000, "教务会话已过期", Verdict::SessionLost).unwrap();
+        park(
+            &conn,
+            &parked,
+            now_ms() + 5000,
+            "教务会话已过期",
+            Verdict::SessionLost,
+        )
+        .unwrap();
         assert_eq!(load_task(&conn, id).unwrap().unwrap().strikes, 2);
         // 换种类 → 重新计数
         park(&conn, &parked, now_ms(), "人数已满", Verdict::Full).unwrap();
@@ -3139,8 +3368,23 @@ mod tests {
         // 采样发生在 10 秒前（对齐到整秒，让偏差是精确的 12 秒），服务器比本机快 12 秒
         let at = (now_ms() / 1000) * 1000 - 10_000;
         let server_text = format_now(at + 12_000);
-        write_meta(&conn, CLOCK_KEY, &serde_json::to_string(&(at, &server_text)).unwrap()).unwrap();
-        insert_task(&conn, acct, "77", None, &input(serde_json::json!(1)), "direct", None, None).unwrap();
+        write_meta(
+            &conn,
+            CLOCK_KEY,
+            &serde_json::to_string(&(at, &server_text)).unwrap(),
+        )
+        .unwrap();
+        insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(1)),
+            "direct",
+            None,
+            None,
+        )
+        .unwrap();
 
         let s = snapshot(&conn, &hub).unwrap();
         assert!(s.active);
@@ -3223,7 +3467,10 @@ mod tests {
         finish(&mut first, GRAB_CONFLICT, "与已选课程时间冲突，请办理免听");
         let all = vec![first.clone(), second.clone()];
         assert!(!armed(&first, &all, &s, now), "终态的不再出手");
-        assert!(armed(&second, &all, &s, now), "第 1 志愿没了，第 2 志愿该接手");
+        assert!(
+            armed(&second, &all, &s, now),
+            "第 1 志愿没了，第 2 志愿该接手"
+        );
     }
 
     /// 默认**死守**：满员再久也不让位。「让贤期限」是唯一能改变这件事的数，
@@ -3244,15 +3491,24 @@ mod tests {
         assert!(!armed(&second, &all, &s, now_ms()));
 
         // 把期限调出来才让位
-        let ceded = GrabSettings { cede_after_ms: 180_000, ..s };
+        let ceded = GrabSettings {
+            cede_after_ms: 180_000,
+            ..s
+        };
         assert!(!armed(&first, &all, &ceded, now_ms()), "过了期限该让位");
-        assert!(armed(&second, &all, &ceded, now_ms()), "让位后第 2 志愿接手");
+        assert!(
+            armed(&second, &all, &ceded, now_ms()),
+            "让位后第 2 志愿接手"
+        );
 
         // 后面也没成 → 前面那位回到出手位（它一直是非终态，没被写死）
         let mut second_done = second.clone();
         second_done.status = GRAB_FAILED.into();
         let all = vec![first.clone(), second_done];
-        assert!(armed(&first, &all, &ceded, now_ms()), "后面没戏了，前面的该回来");
+        assert!(
+            armed(&first, &all, &ceded, now_ms()),
+            "后面没戏了，前面的该回来"
+        );
     }
 
     /// 没有 group_key（或空串）= 独立任务，行为与加志愿组之前**完全一致**。
@@ -3314,7 +3570,10 @@ mod tests {
         let s = snapshot(&conn, &hub).unwrap();
         let by = |id: i64| s.tasks.iter().find(|t| t.id == id).unwrap().clone();
         assert!(by(loser.id).held_by.is_none(), "出局的不该被标成在等谁");
-        assert!(by(winner.id).held_by.is_none(), "接手的那个是当前志愿，也不被谁压着");
+        assert!(
+            by(winner.id).held_by.is_none(),
+            "接手的那个是当前志愿，也不被谁压着"
+        );
     }
 
     /// 「连续满员了多久」只由满员维护：同一状态要保住起点，换了失败种类就清零。
@@ -3412,7 +3671,10 @@ mod tests {
             .find(|grp| grp.iter().any(|h| h.lesson.id == serde_json::json!(1)))
             .expect("高数那一堆要在");
         assert_eq!(math.len(), 2, "同一门课的多个班必须留在同一组里");
-        assert!(math[0].score >= math[1].score, "组内按「谁先值得出手」排好序");
+        assert!(
+            math[0].score >= math[1].score,
+            "组内按「谁先值得出手」排好序"
+        );
 
         // 已经选上的班不再排进任务
         let mut picked = ls.clone();
@@ -3430,17 +3692,27 @@ mod tests {
         let briefs = vec![brief("9", false), brief("77", true)];
 
         let mut i = intent("高数");
-        assert_eq!(pick_turn(i.turn_id.as_deref(), &briefs).unwrap().id, "77", "没指定就用当前可进入的那个");
+        assert_eq!(
+            pick_turn(i.turn_id.as_deref(), &briefs).unwrap().id,
+            "77",
+            "没指定就用当前可进入的那个"
+        );
 
         i.turn_id = Some("77".into());
         assert_eq!(pick_turn(i.turn_id.as_deref(), &briefs).unwrap().id, "77");
         i.turn_id = Some("404".into());
-        assert!(pick_turn(i.turn_id.as_deref(), &briefs).is_none(), "指定的批次没出现就只能等");
+        assert!(
+            pick_turn(i.turn_id.as_deref(), &briefs).is_none(),
+            "指定的批次没出现就只能等"
+        );
 
         // 都不允许进入时退到第一个：至少能把名字与窗口显示出来
         let none_enter = vec![brief("9", false), brief("77", false)];
         let j = intent("高数");
-        assert_eq!(pick_turn(j.turn_id.as_deref(), &none_enter).unwrap().id, "9");
+        assert_eq!(
+            pick_turn(j.turn_id.as_deref(), &none_enter).unwrap().id,
+            "9"
+        );
     }
 
     /// 计划是**落库**的：进程重启后它还认得自己排了什么，而「还没解析」的计划
@@ -3484,7 +3756,10 @@ mod tests {
 
         let back = load_intent(&conn, id).unwrap().unwrap();
         assert_eq!(back.group_keys, vec!["intent-1".to_string()]);
-        assert_eq!(back.candidates[0].course_name.as_deref(), Some("高等数学（上）"));
+        assert_eq!(
+            back.candidates[0].course_name.as_deref(),
+            Some("高等数学（上）")
+        );
         assert!(back.candidates[0].teacher.is_some());
 
         reset_intent(&conn, id).unwrap();

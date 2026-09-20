@@ -117,7 +117,11 @@ fn decode_js_string(raw: &str) -> String {
 }
 
 /// 抽出 `var semesters = JSON.parse('…')` 里的学期数组。
-fn parse_semesters(html: &str) -> Result<Vec<RemoteSemester>> {
+///
+/// 公开是因为**开课查询页用的是同一份字面量**（见 `lesson_search`）：
+/// 两个页面的学期列表同源，解析器就该只有一份，否则哪天教务改了格式
+/// 会出现「课表能读、开课查询读不出来」这种半坏状态。
+pub fn parse_semesters(html: &str) -> Result<Vec<RemoteSemester>> {
     let at = html
         .find(SEMESTERS_MARKER)
         .ok_or_else(|| ReinError::Message("课表页面结构变化：找不到 semesters 定义".into()))?;
@@ -126,7 +130,9 @@ fn parse_semesters(html: &str) -> Result<Vec<RemoteSemester>> {
     let (offset, quote) = rest
         .char_indices()
         .find_map(|(i, c)| (c == '\'' || c == '"').then_some((i, c)))
-        .ok_or_else(|| ReinError::Message("课表页面结构变化：semesters 实参不是字符串字面量".into()))?;
+        .ok_or_else(|| {
+            ReinError::Message("课表页面结构变化：semesters 实参不是字符串字面量".into())
+        })?;
 
     let raw = scan_js_literal(rest, offset, quote)
         .ok_or_else(|| ReinError::Message("课表页面结构变化：semesters 字面量未闭合".into()))?;
@@ -187,7 +193,11 @@ fn login_failure(raw: &str, need_captcha: bool, captcha: &str) -> (String, Optio
     }
 }
 
-pub fn semester_display_name(school_year: Option<&str>, season: Option<&str>, fallback: &str) -> String {
+pub fn semester_display_name(
+    school_year: Option<&str>,
+    season: Option<&str>,
+    fallback: &str,
+) -> String {
     match school_year {
         Some(y) if !y.is_empty() => format!("{y} {}", season_cn(season)),
         _ => fallback.to_string(),
@@ -241,14 +251,21 @@ impl<'a> GuetAdapter<'a> {
     }
 
     /// 完整登录握手。步骤与登录页 `submit()` 逐行对应。
-    pub fn login(&mut self, login_name: &str, password: &str, captcha: &str) -> Result<LoginOutcome> {
+    pub fn login(
+        &mut self,
+        login_name: &str,
+        password: &str,
+        captcha: &str,
+    ) -> Result<LoginOutcome> {
         // ① 取 salt —— 注意这一步同时替我们建立了携带 SESSION 的 Cookie
         let salt_path = self.spec.login.salt_path();
         let salt_resp = self.session.get(salt_path)?;
         ok_resp(&salt_resp, "获取登录盐值")?;
         let salt = salt_resp.text().trim().to_string();
         if salt.is_empty() {
-            return Err(ReinError::Message("登录盐值为空，教务系统可能已改版".into()));
+            return Err(ReinError::Message(
+                "登录盐值为空，教务系统可能已改版".into(),
+            ));
         }
 
         // ② RSA_PKCS1_v1_5(salt + "-" + password) —— 与 JSEncrypt.encrypt 等价
@@ -268,7 +285,10 @@ impl<'a> GuetAdapter<'a> {
             ));
         }
         let body = resp.json()?;
-        let ok = body.get("result").and_then(|v| v.as_bool()).unwrap_or(false);
+        let ok = body
+            .get("result")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let need_captcha = body
             .get("needCaptcha")
             .and_then(|v| v.as_bool())
@@ -462,7 +482,10 @@ mod tests {
         // 要验证码却没说原因：这不是「原因未知」，而是「还差一步」
         assert_eq!(login_failure("", true, "").0, "需要输入验证码");
         // 填了验证码还是被拒：多半就是验证码错了
-        assert_eq!(login_failure("", true, "8f3d").0, "验证码不正确，请重新输入");
+        assert_eq!(
+            login_failure("", true, "8f3d").0,
+            "验证码不正确，请重新输入"
+        );
         // 什么都没有：至少把「去核对学号密码」讲清楚
         assert!(login_failure("", false, "").0.contains("学号与密码"));
 
@@ -494,8 +517,14 @@ mod tests {
         let end = parse_ymd("2027-01-24").unwrap();
         assert_eq!(total_weeks(start, end), 19);
         assert_eq!(current_week(start, end, start), Some(1));
-        assert_eq!(current_week(start, end, parse_ymd("2026-09-21").unwrap()), Some(2));
-        assert_eq!(current_week(start, end, parse_ymd("2026-09-13").unwrap()), None);
+        assert_eq!(
+            current_week(start, end, parse_ymd("2026-09-21").unwrap()),
+            Some(2)
+        );
+        assert_eq!(
+            current_week(start, end, parse_ymd("2026-09-13").unwrap()),
+            None
+        );
     }
 
     #[test]
@@ -531,7 +560,9 @@ mod tests {
             crate::modules::campus::http::Session::new(spec.default_base_url, Default::default());
         let mut adapter = GuetAdapter::new(spec, &mut session);
 
-        let login = adapter.login(&user, &pass, "").expect("登录请求本身要能发出");
+        let login = adapter
+            .login(&user, &pass, "")
+            .expect("登录请求本身要能发出");
         assert!(login.ok, "登录被拒绝：{:?}", login.message);
         println!("✓ 登录通过");
 
@@ -555,8 +586,7 @@ mod tests {
             .expect("课表数据解析（跳过暑假等空学期时属正常）");
         println!(
             "✓ 课表：{} 门课 / {} 条上课时段（学生 {}）",
-            snap
-                .activities
+            snap.activities
                 .iter()
                 .filter_map(|a| a.lesson_id)
                 .collect::<std::collections::HashSet<_>>()
@@ -575,12 +605,13 @@ mod tests {
 
         // 培养方案：900KB+ 的单体响应，页面完全依赖它的结构，所以这里顺带核实
         // 「拿得到 + 顶层键在」。数据量太大不适合断言具体条目，改钉结构与规模。
-        let student_id = snap
-            .student_id
-            .as_deref()
-            .expect("课表数据里没有学生标识");
-        let program = adapter.fetch_program_info(student_id).expect("培养方案拉取");
-        let text = serde_json::to_string(&program).map(|s| s.len()).unwrap_or(0);
+        let student_id = snap.student_id.as_deref().expect("课表数据里没有学生标识");
+        let program = adapter
+            .fetch_program_info(student_id)
+            .expect("培养方案拉取");
+        let text = serde_json::to_string(&program)
+            .map(|s| s.len())
+            .unwrap_or(0);
         let has_distr = program
             .get("programInfos")
             .and_then(|v| v.as_array())
@@ -591,7 +622,10 @@ mod tests {
             text > 100_000,
             "培养方案只有 {text} 字节，太小，疑似解析或端点不对"
         );
-        assert!(has_distr, "培养方案里没有 creditDistrTable —— 页面画不出学分分布");
+        assert!(
+            has_distr,
+            "培养方案里没有 creditDistrTable —— 页面画不出学分分布"
+        );
         println!("✓ 联调通过");
     }
 }

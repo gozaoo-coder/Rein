@@ -15,12 +15,14 @@ import type {
   GrabState,
   GrabTargetInput,
   LessonQuery,
+  LessonSearchOutcome,
   LoginOutcome,
   ProgramPayload,
   RescueRequest,
   RescueResponse,
   RescueState,
   ScheduleView,
+  SchoolDomainProbe,
   SchoolSystemInfo,
   SyncOutcome,
 } from '@/types'
@@ -76,6 +78,29 @@ export const campusService = {
 
   /* ---------------- 选课（令牌走 EAMS 会话换取的 SSO JWT） ---------------- */
 
+
+  /* ---------------- 全校开课查询（与选课批次无关） ---------------- */
+
+  /**
+   * **两个域都检测**：分别探明每个域名上有什么。
+   *
+   * 只打不需要登录的探测点，所以没登录也能问「另一个域到底是什么」。
+   * 结果按域名分别汇报，不合并 —— 两个域不是同一套系统。
+   */
+  lessonSearchProbe: () => invoke<SchoolDomainProbe[]>('campus_lesson_search_probe'),
+
+  /**
+   * **全校开课查询**：先在两个域上找这条路，再用找得到的那个域查名单。
+   *
+   * 与选课的关键区别：**不依赖选课批次** —— 批次没开也能查全校开了哪些课，
+   * 这正是提前规划抢什么的依据。
+   */
+  lessonSearch: (semesterId: number, opts?: { page?: number; pageSize?: number }) =>
+    invoke<LessonSearchOutcome>('campus_lesson_search', {
+      semesterId,
+      page: opts?.page ?? null,
+      pageSize: opts?.pageSize ?? null,
+    }),
   /** 选课子系统状态：令牌 + 服务器时间 + 学生 + 开放中的批次 */
   courseSelectStatus: () => invoke<CourseSelectStatus>('campus_course_select_status'),
 
