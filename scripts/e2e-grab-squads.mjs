@@ -193,23 +193,13 @@ async function confirmBatch() {
   await waitFor(`!document.querySelector('.panel')`, 5000, '批量抽屉关闭')
 }
 
-/**
- * 清掉任务单里已结束的行，避免上一段场景干扰下一段。
- *
- * 结束态下入口在**结果面**里（两步确认），进行中/暂停态才在底部那条批量出口 ——
- * 因为「没有在抢的了」的时候，用户要的是结果，不是一列不再变化的记录。
- */
+/** 清掉任务单里已结束的行，避免上一段场景干扰下一段。
+ *  结束态由**结果面**负责清理（两步确认），旧版的「清掉已结束的」页脚按钮已经没有了。 */
 async function clearFinished() {
-  if (await evalJS(`!!document.querySelector('.grab .result')`)) {
-    await clickText('.grab .result .link', '清掉')
-    await sleep(150)
-    await clickText('.grab .result .link', '确认清空')
-    await sleep(300)
-    return
-  }
-  const has = await evalJS(`!!document.querySelector('.grab .foot button')`)
+  const has = await evalJS(`!!document.querySelector('.grab .result .link')`)
   if (!has) return
-  await clickText('.grab .foot button', '清掉已结束的')
+  await clickText('.grab .result .link', '清掉')
+  await clickText('.grab .result .link', '确认清空')
   await sleep(300)
 }
 
@@ -276,10 +266,13 @@ async function main() {
     await waitFor(`(${chipOf('高等数学')}) === '已抢到'`, 20000, '第 1 志愿抢到')
     ok('第 1 志愿中选', true)
     await waitFor(`(${chipOf('体育（一）')}) === '已取消'`, 8000, '同组备选被取消')
-    ok('任一中选 → 同组其余自动取消', true, await evalJS(`(${taskRowExpr('体育（一）')})?.textContent.replace(/\\s+/g, ' ').trim()`))
+    ok('任一中选 → 同组其余自动取消', true, await evalJS(`(${taskRowExpr('体育（一）')})?.querySelector('.meta')?.textContent.trim()`))
     ok(
       '取消原因说明了是被谁抢先的',
-      ((await evalJS(`(${taskRowExpr('体育（一）')})?.textContent ?? ''`)).includes('已被第 1 志愿')),
+      // 读整行文本：结束态下这一行由结果面渲染，文案可能落在 .meta 之外的节点上
+      (await evalJS(`(${taskRowExpr('体育（一）')})?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`)).includes(
+        '已被第 1 志愿',
+      ),
       await evalJS(`(${taskRowExpr('体育（一）')})?.textContent.replace(/\\s+/g, ' ').trim()`),
     )
     await shot('3-closed')

@@ -1372,6 +1372,45 @@ fn resolve_intent(
     // 打全了老师名字 → 那是指定，只抢他的班；只打姓 / 打错字 → 模糊匹配照旧（见 `preferred`）
     let pool = matcher::preferred(&hits);
     let picked_off = hits.len().saturating_sub(pool.len());
+
+    // **跨课程**：命中的是两个不同的课程代码 —— 十有八九是年级双开那门课
+    // （只写「羽毛球」，而大一 000004 / 大二 000006 各有一门）。
+    // 这时**不排队**：放着不管，引擎会把两个年级的班一起排进来，可能把大二那门抢回。
+    // 「每门课都要」（spread）是例外 —— 那本来就是「这几门我都要」的意思。
+    if !intent.spread {
+        let amb = matcher::ambiguous_courses(&intent.query, &pool);
+        if !amb.is_empty() {
+            let list = amb
+                .iter()
+                .map(|(c, n)| if n.is_empty() { c.clone() } else { format!("{c} {n}") })
+                .collect::<Vec<_>>()
+                .join(" / ");
+            let sample = amb
+                .iter()
+                .map(|(c, n)| {
+                    if n.is_empty() {
+                        c.clone()
+                    } else {
+                        format!("{n} {c}")
+                    }
+                })
+                .next()
+                .unwrap_or_default();
+            return park_intent(
+                state,
+                intent,
+                INTENT_AMBIGUOUS,
+                format!(
+                    "「{}」同时命中 {} 门课：{} —— 补上课程代码就只抢那一门（例如「{}」）",
+                    intent.query,
+                    amb.len(),
+                    list,
+                    sample
+                ),
+                INTENT_RETRY_MS,
+            );
+        }
+    }
     let groups = plan_groups(&pool, intent.spread);
     if groups.is_empty() {
         let why = if hits.is_empty() {
@@ -2129,12 +2168,14 @@ pub fn load_intent(conn: &Connection, id: i64) -> Result<Option<GrabIntent>> {
 
 /// 到点该解析的那条计划。
 ///
-/// **只有 `pending` / `empty` 会被选中** —— `ready` 的计划不自动重解析：
+/// **只有 `pending` / `empty` / `ambiguous` 会被选中** —— `ready` 的计划不自动重解析：
 /// 它已经排出了任务，再解析一遍只会对着同一批班重排（用户真要重来会按「重新解析」）。
+/// `ambiguous` 也要重试：名单是会变的（后来只剩一个年级的班，它就自己解析成功了）。
 fn load_due_intent(conn: &Connection, account_id: i64, now: i64) -> Result<Option<GrabIntent>> {
     let sql = format!(
         "SELECT {INTENT_COLS} FROM campus_grab_intents \
-         WHERE account_id = ?1 AND status IN ('{INTENT_PENDING}','{INTENT_EMPTY}') AND next_at <= ?2 \
+         WHERE account_id = ?1 AND status IN ('{INTENT_PENDING}','{INTENT_EMPTY}','{INTENT_AMBIGUOUS}') \
+         AND next_at <= ?2 \
          ORDER BY next_at ASC, id ASC LIMIT 1"
     );
     match conn.query_row(&sql, rusqlite::params![account_id, now], intent_row) {

@@ -3411,6 +3411,26 @@ function grabPlanGroups(hits: GrabHit[], spread: boolean): GrabHit[][] {
 
 /* ---------------- 抢课计划（意向） ---------------- */
 
+/**
+ * 「这句查询跨了哪几门课」—— 与 Rust 的 `matcher::ambiguous_courses` 同一条规则。
+ *
+ * 跨课程 = 命中的是**两个不同的课程代码**：年级双开的体育课最典型（大一 000031 / 大二 000006）。
+ * 「中一个就够」时这属于理解错了，引擎不该闷头排队（会把大二那门也排进来），
+ * 而要让人补上课程代码；「每门课都要」（spread）是例外。
+ */
+function grabAmbiguousCourses(query: string, pool: GrabHit[]): { code: string; name: string }[] {
+  const out: { code: string; name: string }[] = []
+  for (const h of pool) {
+    const code = String(h.lesson.course?.code ?? '').trim()
+    if (!code || out.some((o) => o.code === code)) continue
+    out.push({ code, name: String(h.lesson.course?.nameZh ?? '').trim() })
+  }
+  if (out.length <= 1) return []
+  const tokens = query.split(/\s+/).map((t) => t.trim()).filter(Boolean)
+  if (out.some((o) => tokens.includes(o.code))) return []
+  return out
+}
+
 /** 计划解析失败/没匹配到之后的重试间隔（真引擎是 60 秒，mock 压到 2 秒） */
 const GRAB_INTENT_RETRY_MS = 2000
 
@@ -3443,7 +3463,7 @@ function grabIntentBriefs(): GrabTurnBrief[] {
 function grabResolveIntents(): boolean {
   const now = Date.now()
   const due = grabIntents.find(
-    (i) => (i.status === 'pending' || i.status === 'empty') && i.nextAt <= now,
+    (i) => (i.status === 'pending' || i.status === 'empty' || i.status === 'ambiguous') && i.nextAt <= now,
   )
   if (!due) return false
   due.attempts += 1
@@ -3465,6 +3485,20 @@ function grabResolveIntents(): boolean {
   // 打全了老师名字 → 那是指定，只抢他的班；只打姓 / 打错字 → 模糊匹配照旧
   const pool = grabPreferred(hits)
   const pickedOff = hits.length - pool.length
+
+  // 跨课程（年级双开那种）：不排队，把课程代码摆出来让人补 —— 与 Rust 同一条闸门
+  if (!due.spread) {
+    const amb = grabAmbiguousCourses(due.query, pool)
+    if (amb.length) {
+      const list = amb.map((c) => (c.name ? `${c.code} ${c.name}` : c.code)).join(' / ')
+      const sample = amb[0]!.name ? `${amb[0]!.name} ${amb[0]!.code}` : amb[0]!.code
+      due.status = 'ambiguous'
+      due.lastMessage = `「${due.query}」同时命中 ${amb.length} 门课：${list} —— 补上课程代码就只抢那一门（例如「${sample}」）`
+      due.nextAt = now + GRAB_INTENT_RETRY_MS
+      return true
+    }
+  }
+
   const groups = grabPlanGroups(pool, !!due.spread)
   if (!groups.length) {
     due.status = 'empty'
@@ -6899,13 +6933,16 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       }
       const lessons = campusDemoLessons()
       const hits = grabMatchLessons(query, lessons)
+      const pool = grabPreferred(hits)
       return delay({
         turnId: brief.id,
         turnName: brief.name,
         total: lessons.length,
         matched: hits.length,
         // 与真引擎一致：打全了老师名字时只列那位老师的班
-        matches: grabPreferred(hits).slice(0, 30).map(grabMatchDto),
+        matches: pool.slice(0, 30).map(grabMatchDto),
+        // 跨课程告警：与解析共用同一条规则（grabAmbiguousCourses）
+        ambiguous: grabAmbiguousCourses(query, pool),
       } as T)
     }
 

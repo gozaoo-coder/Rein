@@ -52,12 +52,24 @@ interface Lane {
   endAt?: number
 }
 
+/** 给人读的时长：口语里没人说「2000 毫秒」，所以按量级换成秒/分 */
 function fmt(ms: number): string {
   if (ms >= 60_000) return `${Math.round(ms / 60_000)} 分`
   if (ms >= 1000) {
     const s = ms / 1000
     return `${Number.isInteger(s) ? s : s.toFixed(1)} 秒`
   }
+  return `${Math.round(ms)} ms`
+}
+
+/**
+ * 参数值：一律毫秒。
+ *
+ * 参数名自己就带 `Ms`（`leadMs` / `pollIntervalMs` / `minIntervalMs`），
+ * 图上写成「2 秒」而下面的旋钮写着「2000 ms」，是在同一屏里给同一件事两种说法 ——
+ * 对照着调参数的人会被迫自己做换算。
+ */
+function fmtMs(ms: number): string {
   return `${Math.round(ms)} ms`
 }
 
@@ -151,7 +163,7 @@ const lanes = computed<Lane[]>(() => {
       title: '全局闸门',
       hint: '任意两次请求之间的最小间隔 —— 上面每段等待都排在它后面',
       span: spanE,
-      marks: [{ at: v.minIntervalMs, label: `${fmt(v.minIntervalMs)}` }],
+      marks: [{ at: v.minIntervalMs, label: `${fmtMs(v.minIntervalMs)}` }],
       segs: [{ key: 'minIntervalMs', text: '最小间隔', ms: v.minIntervalMs, tone: 'accent' }],
     },
   ]
@@ -282,7 +294,7 @@ const rateWord = computed(() =>
             <line class="leader" :x1="b.cx" :y1="42" :x2="b.cx" :y2="56" />
             <line class="leader" :x1="b.cx" :y1="56" :x2="b.lx + 5" :y2="56" />
             <text class="seg-label" :class="{ hot: b.seg.key === active }" :x="b.lx" y="70">
-              {{ b.seg.key }} = {{ fmt(b.seg.ms) }}
+              {{ b.seg.key }} = {{ fmtMs(b.seg.ms) }}
             </text>
           </template>
         </g>
@@ -291,8 +303,8 @@ const rateWord = computed(() =>
 
     <p class="foot t-3">
       上面每段等待都要和<b>全局闸门</b>取较大者：闸门是
-      {{ fmt(s.minIntervalMs) }}，所以把轮询调得比它还小是没用的 —— 实际间隔仍是
-      {{ fmt(Math.max(s.minIntervalMs, s.pollIntervalMs)) }}。
+      {{ fmtMs(s.minIntervalMs) }}，所以把轮询调得比它还小是没用的 —— 实际间隔仍是
+      {{ fmtMs(Math.max(s.minIntervalMs, s.pollIntervalMs)) }}。
     </p>
   </div>
 </template>

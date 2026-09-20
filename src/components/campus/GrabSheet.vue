@@ -337,20 +337,21 @@ const squadName = computed(() => {
         <Zap :size="16" />
         加入抢课
       </button>
-      <button
-        class="ghost"
-        :disabled="busy || !allowEnter || picked"
-        @click="emit('apply', { virtualCost, scheduleGroupId: groupId })"
-      >
-        立即试一次
-      </button>
       <p class="hint center">
         <Info :size="13" />
         <span>
-          「加入抢课」由后台引擎持续重试，<b>关掉页面也会继续</b>；
-          「立即试一次」只提交一次并等结果。
+          「加入抢课」由后台引擎持续重试，<b>关掉页面也会继续</b>。
         </span>
       </p>
+      <!-- 「只试一次」不再和「加入抢课」并排：两颗平级的按钮、差别只写在 11px 提示里，
+           在时间压力下就是陷阱 —— 现在它是一个明细级的次要动作，标签也自己说明后果 -->
+      <button
+        class="once"
+        :disabled="busy || !allowEnter || picked"
+        @click="emit('apply', { virtualCost, scheduleGroupId: groupId })"
+      >
+        只试一次，不加入任务单
+      </button>
     </div>
   </SheetModal>
 </template>
@@ -535,6 +536,20 @@ const squadName = computed(() => {
   font-weight: 600;
 }
 
+/* 明细级的次要动作：看起来就不像「主按钮」，不会被当成第二个「加入抢课」 */
+.once {
+  align-self: center;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-3);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.once:disabled,
 .primary:disabled,
 .ghost:disabled {
   opacity: 0.4;

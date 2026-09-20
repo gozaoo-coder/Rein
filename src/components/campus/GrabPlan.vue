@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { Info, ListPlus, RefreshCw, Search, Sparkles, Trash2, Wand2 } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { AlertTriangle, Clock, Info, ListPlus, RefreshCw, Search, Sparkles, Trash2, Wand2 } from 'lucide-vue-next'
 
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useToast } from '@/composables/useToast'
@@ -104,6 +104,7 @@ function liveLabel(i: GrabIntent): string {
  * 那是在骗人。
  */
 function chipOf(i: GrabIntent): { label: string; tone: string } {
+  if (i.status === 'ambiguous') return { label: '要补课程代码', tone: 'bad' }
   if (i.status === 'pending') return { label: '等解析', tone: 'run' }
   if (i.status === 'empty') return { label: '没匹配到', tone: 'bad' }
   const live = liveLabel(i)
@@ -117,6 +118,46 @@ function chipOf(i: GrabIntent): { label: string; tone: string } {
 
 function targetOf(i: GrabIntent): string {
   return i.turnName?.trim() || '教务当前批次'
+}
+
+/**
+ * 「这句查询跨了哪几门课」的文案。
+ *
+ * 判定本身在 Rust（`matcher::ambiguous_courses`）—— 这里只把结果拼成人话：
+ * 计划行按 status（引擎说了算），预览按后端回的 `ambiguous`。**两边都不是本地判断**，
+ * 免得出现「界面说没问题、引擎却不动手」。
+ */
+function courseListText(rows: { code: string; name: string }[]): string {
+  return rows.map((r) => (r.name ? `${r.code} ${r.name}` : r.code)).join(' / ')
+}
+
+/**
+ * 计划自己的「下一次唤醒时刻」。
+ *
+ * 引擎早就把 `nextAt` 算好了，但界面从来不渲染它 —— 于是「它到底会不会自己动」
+ * 这件事只存在于「后台有个线程」这句话里。抢课是**人不在场**的动作，屏幕上必须
+ * 有一处能当凭据：几点几分它还会再试一次。
+ */
+const now = ref(Date.now())
+let tick: ReturnType<typeof setInterval> | null = null
+
+onMounted(() => {
+  tick = setInterval(() => (now.value = Date.now()), 1000)
+})
+onBeforeUnmount(() => {
+  if (tick) clearInterval(tick)
+})
+
+function nextText(i: GrabIntent): string {
+  if (!i.nextAt) return ''
+  const ms = i.nextAt - now.value
+  if (ms <= 0) return i.status === 'pending' ? '正在解析…' : '正在重试…'
+  const d = new Date(i.nextAt)
+  const p = (n: number) => String(n).padStart(2, '0')
+  const clock = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  // 一小时内给相对量（「还有多久」比「几点」更好算），更远就给绝对时刻
+  if (ms < 3600_000) return `${Math.ceil(ms / 60000)} 分钟后（${clock}）`
+  return `${clock} 再试`
 }
 
 function seat(m: GrabMatch): string {
@@ -250,6 +291,16 @@ async function onReparse(i: GrabIntent): Promise<void> {
         </li>
       </ul>
 
+      <!-- 跨了多门课：**这是最容易抢错的一步**（年级双开的体育课最典型）——
+           引擎到点不会排队，所以现在就把它说清楚，别让人以为计划已经武装好了 -->
+      <p v-if="preview.ambiguous?.length" class="note warn">
+        <AlertTriangle :size="12" />
+        <span>
+          这句同时命中 <b>{{ preview.ambiguous.length }}</b> 门课：{{ courseListText(preview.ambiguous) }}。
+          「中一个就够」时引擎<b>不会排这个计划</b> —— 补上课程代码就只抢那一门。
+        </span>
+      </p>
+
       <!-- 教师名的两种强信号要说清楚：一个是「按你说的办」，另一个是「我猜的」 -->
       <p v-if="hasExactTeacher(preview.matches)" class="note">
         老师名字打全了，按<b>指定</b>处理：只抢这位老师的班，同一门课的其他老师不进候选。
@@ -311,7 +362,21 @@ async function onReparse(i: GrabIntent): Promise<void> {
           <span>{{ targetOf(i) }}</span>
           <span>·</span>
           <span>{{ i.spread ? '每门课都要' : '只中一个' }}</span>
-          <span v-if="i.lastMessage">· {{ i.lastMessage }}</span>
+          <span v-if="nextText(i)" class="next">
+            <Clock :size="12" />
+            {{ nextText(i) }}
+          </span>
+          <span v-if="i.lastMessage && i.status !== 'ambiguous'">· {{ i.lastMessage }}</span>
+        </p>
+
+        <!-- 跨课程：状态由引擎给（`ambiguous`），这里只把课程代码拼出来。
+             最危险的一种是年级双开 —— 只写「羽毛球」会同时命中大一与大二那两门 -->
+        <p v-if="i.status === 'ambiguous'" class="note warn">
+          <AlertTriangle :size="12" />
+          <span>
+            {{ i.lastMessage ?? '这句同时命中多门课' }}
+            <b>引擎不会排它</b> —— 补上课程代码再「重新解析」。
+          </span>
         </p>
 
         <!-- 教师名是猜的就得说出来：计划会照着它去抢，用户得有机会纠正 -->
@@ -579,7 +644,9 @@ async function onReparse(i: GrabIntent): Promise<void> {
 }
 
 .plan-row .line1 {
-  gap: 6px;
+  /* 16px：两个 28px 圆钮的命中区各自外扩 8px 后正好相接（见 .op::after），
+     再窄一点，「移除计划」就会压住「重新解析」的边缘 */
+  gap: 16px;
 }
 
 .q {
@@ -607,12 +674,11 @@ async function onReparse(i: GrabIntent): Promise<void> {
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 
-/* 命中区撑到 44×44（视觉尺寸不动）—— 手机上是拇指在点。
-   横向只外扩 3px：这两个按钮只隔 6px，扩太多会让「移除计划」压住「重新解析」。 */
+/* 命中区撑到 44×44（视觉尺寸不动）—— 手机上是拇指在点 */
 .op::after {
   content: '';
   position: absolute;
-  inset: -8px -3px;
+  inset: -8px;
 }
 
 .op:active {
@@ -631,5 +697,14 @@ async function onReparse(i: GrabIntent): Promise<void> {
 
 .meta svg {
   flex: none;
+}
+
+/* 「下次唤醒」这一格：把「它还会自己再动一次」写在计划行上（时间压力下它比状态标签重要） */
+.next {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 </style>

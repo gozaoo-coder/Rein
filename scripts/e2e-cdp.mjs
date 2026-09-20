@@ -170,7 +170,7 @@ async function bumpStepper(labelText, dir = '增加', times = 1) {
     await evalJS(`(() => {
       const st = [...document.querySelectorAll('.stepper')].find(s => s.textContent.includes(${JSON.stringify(labelText)}))
       if (!st) return false
-      const btn = [...st.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === ${JSON.stringify(dir)})
+      const btn = [...st.querySelectorAll('button')].find(b => (b.getAttribute('aria-label') ?? '').startsWith(${JSON.stringify(dir)}))
       btn.click()
       return true
     })()`)
@@ -325,7 +325,8 @@ async function main() {
     ok('B5 点列选中 → 差异解说更新', diffText.includes('均衡 vs 进取') && diffText.includes('大卡'), diffText.slice(0, 70))
 
     // 02 强度预览：28 格 + 周时长 + 节奏卡 + 档位 chips
-    await evalJS(`[...document.querySelectorAll('[role="tab"]')].find(t => t.textContent.includes('强度预览'))?.click()`)
+    // 分段控件现在说的是「选一个」（role=radiogroup/radio），不再是 tab —— 这些选择器跟着改
+    await evalJS(`[...document.querySelectorAll('[role="radio"]')].find(t => t.textContent.includes('强度预览'))?.click()`)
     await sleep(400)
     const loadCells = await evalJS(`document.querySelectorAll('.grid .cell').length`)
     ok('B6 强度预览 28 格', loadCells === 28, String(loadCells))
@@ -334,13 +335,13 @@ async function main() {
     await sleep(250)
     ok('B6d 周行数 4（表头 + 4 周）', await evalJS(`document.querySelectorAll('.grid .week-row').length === 5`))
     ok('B6e 切回均衡', await clickButton('均衡', '.tier-pick'))
-    await evalJS(`[...document.querySelectorAll('[role="tab"]')].find(t => t.textContent.includes('参数对比'))?.click()`)
+    await evalJS(`[...document.querySelectorAll('[role="radio"]')].find(t => t.textContent.includes('参数对比'))?.click()`)
     await sleep(300)
 
     // 11 科学依据弹层（三条研究曲线；08-30 频次语义修正后 setup 入口文案随之更新）
     ok('B7 科学依据入口可点', await clickButton('看研究曲线'))
     await waitFor(`!!document.querySelector('.chart')`, 4000, '曲线图渲染')
-    ok('B7b 曲线 tab 三项可切', await evalJS(`document.querySelectorAll('[role="tab"]').length >= 3`))
+    ok('B7b 曲线 tab 三项可切', await evalJS(`document.querySelectorAll('.seg [role="radio"]').length >= 3`))
     ok('B7c 档位要点表渲染', await evalJS(`[...document.querySelectorAll('.rows li')].some(li => li.textContent.includes('次/周'))`))
     await evalJS(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '明白了')?.click()`)
     await sleep(400)
@@ -655,7 +656,7 @@ async function main() {
     await goto('/nutrition/recipes', '食谱库')
     await sleep(700)
     ok('R1 食谱库渲染 22 个模板', await evalJS(`document.querySelectorAll('.rlist .rrow').length === 22`))
-    await evalJS(`[...document.querySelectorAll('[role="tab"]')].find(t => t.textContent.trim() === '午餐')?.click()`)
+    await evalJS(`[...document.querySelectorAll('[role="radio"]')].find(t => t.textContent.trim() === '午餐')?.click()`)
     await sleep(300)
     ok('R2 餐次过滤生效', await evalJS(
       `document.querySelectorAll('.rlist .rrow').length === 6 &&

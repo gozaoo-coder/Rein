@@ -699,6 +699,19 @@ pub const INTENT_PENDING: &str = "pending";
 pub const INTENT_EMPTY: &str = "empty";
 /// 已解析：志愿任务已经排进任务单
 pub const INTENT_READY: &str = "ready";
+/// **跨了多门课，等用户补课程代码**（见 `matcher::ambiguous_courses`）。
+///
+/// 它和 `pending` 必须分开：pending 是「引擎在等教务」，这个状态是「引擎在等你」——
+/// 混成一句话，用户就会一直等一个永远不动的计划。
+pub const INTENT_AMBIGUOUS: &str = "ambiguous";
+
+/// 一门课的身份（代码 + 课名）—— 「这句查询命中了哪几门课」用它表达。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrabCourseRef {
+    pub code: String,
+    pub name: String,
+}
 
 /// 计划命中的一个教学班 —— 给界面「提前确认会抢哪些班」用。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -777,6 +790,11 @@ pub struct GrabPreview {
     pub matched: usize,
     /// 真会抢的那些班，已按志愿序（前面的先出手）
     pub matches: Vec<GrabMatch>,
+    /// **跨课程的命中**：非空 = 这句查询命中的是好几门课（大一/大二双开的体育课最典型）。
+    /// 「中一个就够」时引擎**不会排队**，会等你补上课程代码 —— 判定与解析共用同一条规则，
+    /// 所以预览里看到的就是解析时会发生的事。
+    #[serde(default)]
+    pub ambiguous: Vec<GrabCourseRef>,
 }
 
 /// 引擎节奏参数。默认值按「一个学生抢 1–4 门课」标定：

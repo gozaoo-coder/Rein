@@ -299,6 +299,7 @@ async function onSync(): Promise<void> {
 }
 
 .mini {
+  position: relative;
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -309,6 +310,14 @@ async function onSync(): Promise<void> {
   color: var(--text-1);
   font-size: var(--fs-caption);
   font-weight: 600;
+}
+
+/* 命中区撑到 44 高（34 → 48）。行与行之间靠 .row 的 9px 内边距隔开，
+   纵向各外扩 7px 正好落在自己的行里，不会压到上下两行 */
+.mini::after {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
 }
 
 .acts {

@@ -30,7 +30,7 @@ const DEGRADE_WINDOWS = 2
 const RECOVER_RATIO = 0.08
 const RECOVER_WINDOWS = 4
 
-/** 读本地档位；损坏 / 不可用一律回落 auto（选错档不能拖垮启动） */
+/** 读本地档位；损坏 / 不可用一律回落 low（默认弱档：玻璃与动效是加强项，用户主动去开） */
 function loadMode(): PerfMode {
   try {
     const raw = localStorage.getItem(STORE_KEY)
@@ -38,7 +38,7 @@ function loadMode(): PerfMode {
   } catch {
     /* 本地存储不可用时用默认档 */
   }
-  return 'auto'
+  return 'low'
 }
 
 /** 用户档位：auto 按判定自动切换，high / low 手动钉死 */

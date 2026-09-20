@@ -48,7 +48,11 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
-ReadWritePaths=/var/lib/rein-services
+# /etc/rein-services 必须可写：配置是**运行时可改**的（签发客户端密钥、热更新价目表、
+# 开关 provider 都要落回 config.json）。只给 /var/lib 的话，这些管理接口会以
+# `EROFS: read-only file system, open '/etc/rein-services/config.json.tmp-…'` 收场 ——
+# 表现是「管理面 500」，而服务本身看起来完全正常，非常难查（线上踩过）。
+ReadWritePaths=/var/lib/rein-services /etc/rein-services
 MemoryMax=320M
 TasksMax=64
 

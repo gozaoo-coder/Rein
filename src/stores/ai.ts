@@ -14,7 +14,9 @@ import { hasImage, getEntry, registerImage, registerSourceImage, resetChat, setA
 import { chatStreamView } from '@/ai/streamExtract'
 import { createStreamAggregator } from '@/ai/streamBubbles'
 import { toParsedItems, type ModelFoodRow } from '@/ai/foodMatch'
-import { findAppTool } from '@/ai/tools/registry'
+import { findAppTool, resolveToolPlan } from '@/ai/tools/registry'
+import type { ToolGroup } from '@/ai/tools/types'
+import { useFeaturesStore } from '@/stores/features'
 import type { ChatTurn } from '@/ai/chat'
 import { DEFAULT_IMAGE_EDGE } from '@/utils/image'
 import { todayStr } from '@/utils/date'
@@ -122,10 +124,30 @@ function registerMessageImages(chatId: string, m: AiMessage): void {
   }
 }
 
+/**
+ * 会话内已装载的工具分组（粘住）。
+ *
+ * 为什么要有它：装载判定是「本轮消息命中关键词」这种一次性判断，
+ * 而真实对话是「先聊记账、隔几轮再问『那笔改一下』」——没有粘住的话第二句就丢了工具。
+ * 切换会话时按该会话历史重新播种（重开 App 也能恢复），新对话/清空上下文时归零。
+ */
+let chatToolGroups = new Set<ToolGroup>()
+
+/** 当前启用的功能插件 id：按需组里「课表 / 运动 / 健康方案」的装载门禁 */
+function enabledPluginIds(): string[] {
+  return useFeaturesStore().activePlugins.map((p) => p.id)
+}
+
+/** 按一段文本重播装载判定（会话历史即会话的「话题足迹」） */
+function seedToolGroups(historyText: string): void {
+  chatToolGroups = new Set(resolveToolPlan({ text: historyText, plugins: enabledPluginIds() }).loaded)
+}
+
 /** 恢复/切换会话后重建图片注册表 */
 function attachChatContext(chatId: string, messages: AiMessage[]): void {
   setActiveChat(chatId)
   for (const m of messages) registerMessageImages(chatId, m)
+  seedToolGroups(messages.map((m) => m.text ?? '').join('\n'))
 }
 
 /** 工具入参 → 原始 JSON 字符串（过程段展示用） */
@@ -531,6 +553,7 @@ export const useAiStore = defineStore('ai', () => {
     try {
       chatId.value = newChatId()
       resetChat(chatId.value)
+      chatToolGroups.clear()
       await aiService.aiChatEnsure(chatId.value, null)
       messages.value = []
       resetStreaming()
@@ -549,6 +572,7 @@ export const useAiStore = defineStore('ai', () => {
     try {
       await aiService.aiChatClear(chatId.value)
       resetChat(chatId.value)
+      chatToolGroups.clear()
       messages.value = []
       resetStreaming()
       greet()
@@ -567,6 +591,8 @@ export const useAiStore = defineStore('ai', () => {
     try {
       await aiService.aiChatCut(chatId.value, messageId)
       messages.value = messages.value.slice(0, idx)
+      // 撤回后重新播种：被撤掉的轮次不该继续粘着它的工具分组
+      seedToolGroups(messages.value.map((m) => m.text ?? '').join('\n'))
       await refreshChats()
     } finally {
       busy.value = false
@@ -996,7 +1022,15 @@ export const useAiStore = defineStore('ai', () => {
         onToolEnd: (name, ok, brief, resultImage, details) => {
           agg.toolResult(name, { ok, brief, resultImage, details })
         },
-      }, { cognition, injection })
+      }, {
+        cognition,
+        injection,
+        // 按需装载：常驻组 + 本轮消息命中的组 + 本会话粘住的组；关掉的功能插件整组不给
+        plugins: enabledPluginIds(),
+        loadedGroups: chatToolGroups,
+      })
+      // 本轮扩载过的组（含模型自己调 load_tools 装的）粘到会话上，后续追问不再重猜
+      for (const g of r.loadedGroups) chatToolGroups.add(g)
       // 流式收尾：结束思考计时（照搬 EffiBuddy finalizeStream 的状态语义）
       const lastStreamBubble = agg.streamingBubbleId.value
         ? (messages.value.find((m) => m.id === agg.streamingBubbleId.value) ?? null)

@@ -2085,12 +2085,19 @@ pub async fn campus_grab_intent_preview(
         .take(PREVIEW_CAP)
         .map(matcher::to_match)
         .collect();
+    // 「这句查询跨了哪几门课」和解析共用同一条规则（`matcher::ambiguous_courses`），
+    // 这样不会出现「预览吓唬人、引擎照抢」或者反过来的情况。
+    let ambiguous = matcher::ambiguous_courses(&query, &pool)
+        .into_iter()
+        .map(|(code, name)| GrabCourseRef { code, name })
+        .collect();
     Ok(GrabPreview {
         turn_id: brief.id,
         turn_name: brief.name,
         total: lessons.len(),
         matched: hits.len(),
         matches,
+        ambiguous,
     })
 }
 

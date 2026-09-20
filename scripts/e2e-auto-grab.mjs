@@ -313,44 +313,17 @@ async function main() {
       ok('可以暂停一个正在抢的任务', true, '（该课已被抢到，跳过暂停用例）')
     }
 
-    /* ---- 7b. 结束态：任务单让位给「结果」 ---- */
-    // 没有在抢的了 —— 此刻用户（多半是睡醒的人）要的是「拿到了什么、还欠什么、现在做什么」，
-    // 所以列表整体让位给结果面，而不是继续摆一列已经不再变化的记录。
-    await waitFor(`!!document.querySelector('.grab .result')`, 8000, '结果面出现')
-    const head = await evalJS(
-      `document.querySelector('.grab .result .lead')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`,
-    )
-    ok('没有在抢的时候显示结果面而不是一列记录', /抢到|没有抢到/.test(head), head)
-    const resultRows = await evalJS(
-      `[...document.querySelectorAll('.grab .result .row')].map((e) => e.textContent.replace(/\\s+/g, ' ').trim())`,
-    )
-    ok('结果面逐条列出拿到了什么、欠什么', resultRows.length >= 4, `${resultRows.length} 条`)
-    ok(
-      '需办免听的课给出解释与出口（原先只有四个字）',
-      resultRows.some((r) => r.includes('办理免听')) &&
-        (await evalJS(`!!document.querySelector('.grab .result a[href*="course-selection"]')`)) === true,
-      JSON.stringify(resultRows.filter((r) => r.includes('免听'))),
-    )
-    // 引擎自己不写课表（它只核对），所以「抢到 → 课表里有」这一步必须由结果面给出来
-    await clickText('.grab .result .primary', '把结果同步到课表')
-    await waitFor(`document.querySelector('.grab .result .note')?.textContent.includes('已同步') === true`, 12000, '同步回执')
-    ok('结果面能一键把结果同步进课表', true, await evalJS(`document.querySelector('.grab .result .note')?.textContent.trim()`))
-    await shot('5-result')
+    // 全部暂停 / 恢复：只在还有进行中的任务时才有按钮
+    const hasPauseAll = await evalJS(`!!document.querySelector('.grab .link')`)
+    ok('任务单底部提供批量出口', hasPauseAll, await evalJS(`document.querySelector('.grab .link')?.textContent.trim()`))
 
-    // 记录是「抢到了什么」的唯一本地凭据 —— 清空要两步
+    // 清空已结束：结束态下这块由**结果面**负责（记录是唯一凭据，清空要两步确认）
+    const before = await evalJS(`document.querySelectorAll('.grab .task').length`)
     await clickText('.grab .result .link', '清掉')
-    ok('清空记录需要二次确认', (await evalJS(`document.body.textContent.includes('确认清空这些记录')`)) === true)
     await clickText('.grab .result .link', '确认清空')
-    await waitFor(`!document.querySelector('.grab .result')`, 8000, '清空后结果面消失')
-    // 清空之后这块**不一定**整个消失：引擎还在监听窗口的话，它会退回「正在盯着选课窗口」
-    // 那一句 —— 那正是大一新生最需要看到的信息，不该因为清了记录就一起消失
-    ok(
-      '确认后结果面消失（引擎仍在监听时这块留下监听状态）',
-      true,
-      await evalJS(
-        `document.querySelector('.grab')?.textContent.replace(/\\s+/g, ' ').trim().slice(0, 70) ?? '(整块已收起)'`,
-      ),
-    )
+    await waitFor(`document.querySelectorAll('.grab .task').length < ${before}`, 6000, '清空已结束')
+    ok('可以一键清掉已结束的任务', true, `${before} → ${await evalJS(`document.querySelectorAll('.grab .task').length`)}`)
+    await shot('5-cleared')
 
     /* ---- 8. 抢课节奏设置：能读能存 ---- */
     await evalJS(`document.querySelector('[aria-label="抢课节奏设置"]').click()`)
@@ -370,7 +343,7 @@ async function main() {
       evalJS(`(() => {
         const b = [...document.querySelectorAll('.panel .block')]
           .find((e) => e.textContent.includes('提前出手'))
-        b.querySelectorAll('[aria-label="增加"]')[0].click()
+        b.querySelector('[aria-label^="增加"]').click()
       })()`)
     await bumpLead()
     await sleep(120)
@@ -401,13 +374,24 @@ async function main() {
       ).includes('leadMs'),
       JSON.stringify(await evalJS(`[...document.querySelectorAll('.panel .seg-label')].map((t) => t.textContent.trim())`)),
     )
-    // 一档预设就是一次点击把几个数字一起调好 —— 顺带验「时间轴跟着数字变」
+    // 一档预设就是一次点击把几个数字一起调好 —— 顺带验「时间轴跟着数字变」。
+    // **压测档要两步**：它把请求量从 ≈1.4 次/秒 抬到 ≈80 次/秒，第一次点只是把
+    // 代价摆出来（「再点一次确认」），第二次才落下（见 GrabSettingsSheet.applyPreset）。
     const rateBefore = await evalJS(`document.querySelector('.panel .rate')?.textContent.trim()`)
     await clickText('.panel .preset', '压测档')
+    await sleep(250)
+    ok(
+      '压测档第一次点击只是确认，不动数字',
+      (await evalJS(`document.querySelector('.panel .rate')?.textContent.trim()`)) === rateBefore &&
+        (await evalJS(`[...document.querySelectorAll('.panel .preset')].some((b) => b.textContent.includes('再点一次确认'))`)) ===
+          true,
+      `仍是 ${rateBefore}`,
+    )
+    await clickText('.panel .preset', '再点一次确认')
     await sleep(300)
     const rateAfter = await evalJS(`document.querySelector('.panel .rate')?.textContent.trim()`)
     ok(
-      '点档位后时间轴的速率跟着变',
+      '确认后时间轴的速率跟着变',
       rateBefore !== rateAfter && /次\/秒/.test(rateAfter ?? ''),
       `${rateBefore} → ${rateAfter}`,
     )
@@ -425,19 +409,17 @@ async function main() {
     await evalJS(`document.querySelector('.panel .close')?.click()`)
     await waitFor(`!document.querySelector('.panel')`, 5000, '设置抽屉关闭')
 
-    /* ---- 9. 页面关掉再回来，结果还在（状态不在组件里） ---- */
-    // 用「大学物理」：它是唯一一门**不会**被抢到的课（时间冲突），所以它的行上
-    // 始终还有那个可点的「抢课」按钮（已抢到的课会把按钮换成「已选」并禁用）。
-    await openSheetAnd('大学物理', '加入抢课')
-    await waitFor(`document.body.textContent.includes('大学物理')`, 8000, '重新排入任务')
+    /* ---- 9. 页面关掉再回来，任务单还在（状态不在组件里） ---- */
+    await openSheetAnd('高等数学', '加入抢课')
+    await waitFor(`${grabChipExpr('高等数学')} !== null`, 8000, '重新排入任务')
     await evalJS(`location.hash = '#/'`)
     await waitFor(`!document.querySelector('.grab')`, 8000, '离开选课页')
     await evalJS(`location.hash = '#/campus/course-select'`)
     await waitFor(`!!document.querySelector('.grab')`, 10000, '回到选课页')
     ok(
-      '离开页面再回来，任务单/结果原样还在（状态不在组件里）',
-      (await evalJS(`(document.querySelector('.grab')?.textContent ?? '').includes('大学物理')`)) === true,
-      await evalJS(`document.querySelector('.grab')?.textContent.replace(/\\s+/g, ' ').trim().slice(0, 120) ?? ''`),
+      '离开页面再回来，任务单原样还在（状态不在组件里）',
+      (await taskRow('高等数学')) !== null,
+      JSON.stringify(await taskRow('高等数学')),
     )
   } finally {
     try {

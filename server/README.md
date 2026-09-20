@@ -162,7 +162,7 @@ curl -X PUT http://127.0.0.1:8787/admin/api/ai/pricing \
   logs/                         访问与用量日志（jsonl）
 ```
 
-## 常用命令
+## 常见命令
 
 ```bash
 systemctl status rein-services
@@ -173,6 +173,37 @@ curl -s http://127.0.0.1:8787/admin/api/state -H "Authorization: Bearer $TOKEN" 
 # 回滚到上一个版本（不重新上传字节）
 curl -X POST http://127.0.0.1:8787/admin/api/releases/stable/0.2.0/publish \
   -H "Authorization: Bearer $TOKEN"
+```
+
+### 排障：管理接口 500 / `EROFS ... config.json.tmp-…`
+
+**症状**：`/health` 一切正常、模型也能用，但任何**写配置**的管理接口（签发客户端密钥
+`POST /admin/api/ai/clients`、热更新价目表、改 provider）都回 500，错误里带
+`EROFS: read-only file system` 或 `EACCES`，路径是 `/etc/rein-services/config.json.tmp-…`。
+
+**成因**：配置是运行时可改的，而写入是「同目录建临时文件 + rename」。两道门都可能挡住：
+
+1. systemd 单元 `ProtectSystem=strict` 只放行了 `/var/lib/rein-services` →
+   `/etc/rein-services` 对进程只读。需要 `ReadWritePaths=/var/lib/rein-services /etc/rein-services`。
+2. 文件/目录权限是 `640 root:rein` + `755 root:root` → `rein` 用户读得到、写不进去。
+   需要目录 `775 root:rein`、文件 `664 root:rein`（只对 rein 组开放，别人读不到管理令牌）。
+
+**修**：两者都已在 `deploy/install.sh` 与 `deploy/rein-services.service` 里修好，
+在本地跑一次 `node scripts/release/deploy-server.mjs` 即会重装单元、放权限、重启服务。
+只想手工改的话：
+
+```bash
+sed -i 's#^ReadWritePaths=.*#ReadWritePaths=/var/lib/rein-services /etc/rein-services#' \
+  /etc/systemd/system/rein-services.service
+install -d -o root -g rein -m 775 /etc/rein-services
+chown root:rein /etc/rein-services/config.json && chmod 664 /etc/rein-services/config.json
+systemctl daemon-reload && systemctl restart rein-services
+```
+
+线上体检（会临时签发一把密钥、跑完目录/对话/流式/用量，然后删掉它）：
+
+```bash
+node scripts/verify-online.mjs
 ```
 
 ## 自测

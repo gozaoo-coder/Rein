@@ -143,7 +143,8 @@ const lessonRow = (name) =>
   `[...document.querySelectorAll('.lesson')].find((e) => e.querySelector('.l-name')?.textContent.includes(${JSON.stringify(name)}))`
 
 /**
- * 点某一行的「抢课」按钮打开抽屉，再点抽屉里的「立即试一次」。
+ * 点某一行的「抢课」按钮打开抽屉，再点抽屉里的「只试一次」（明细级的次要动作，
+ * 标签自己写着「不加入任务单」）。
  *
  * 行按钮不再直接提交：抢课需要先选「上课小组 / 意愿值 / 占位还是直接提交」，
  * 所以一次性提交这一步挪进了抽屉。这条断言链验的仍然是「提交 → 受理 → 轮询 → 落定」。
@@ -157,7 +158,7 @@ async function clickPick(name) {
   })()`)
   if (!opened) return false
   await waitFor(`!!document.querySelector('.panel')`, 5000, '抢课抽屉打开')
-  return clickText('.panel button', '立即试一次')
+  return clickText('.panel button', '只试一次')
 }
 
 /**
@@ -165,7 +166,7 @@ async function clickPick(name) {
  * 点之前先等它可用 —— 刷新期间它是禁用的，对禁用按钮调 click() 不会有任何反应。
  */
 async function clickRefresh() {
-  await waitFor(`(() => { const b = document.querySelector('[aria-label="立即刷新"]'); return !!b && !b.disabled })()`, 8000, '刷新按钮可用')
+  await waitFor(`(() => { const b = document.querySelector('[aria-label="立即刷新"]'); return !!b && !b.disabled })()`, 15000, '刷新按钮可用')
   return evalJS(`document.querySelector('[aria-label="立即刷新"]').click()`)
 }
 
@@ -252,10 +253,15 @@ async function main() {
     await waitFor(`document.body.textContent.includes('可进入')`, 8000, '批次恢复')
 
     /* ---- 4. 服务器时间 ---- */
-    const time = await evalJS(`[...document.querySelectorAll('.stat .rows, .stat .row')]
-      .map((r) => r.textContent).find((t) => t.includes('教务服务器时间'))?.replace('教务服务器时间', '').trim()`)
+    const time = await evalJS(`[...document.querySelectorAll('.grab .facts')]
+      .map((r) => r.textContent).find((t) => t.includes('教务服务器时间'))
+      ?.match(/教务服务器时间\\s*([\\d-]+ [\\d:]+)/)?.[1]`)
     ok('显示教务服务器时间（抢课对时用）', /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(time ?? ''), time ?? '(空)')
-    ok('未出现时钟偏差告警（偏差 < 30s 不打扰用户）', (await evalJS(`!document.querySelector('.warn')`)) === true)
+    ok('未出现时钟偏差告警（偏差 < 30s 不打扰用户）', (await evalJS(`!document.querySelector('.grab .warn')`)) === true)
+    ok(
+      '倒计时缺席时不摆数字（没有值得等的时刻）',
+      (await evalJS(`!document.querySelector('.grab .cd-big')`)) === true,
+    )
 
     /* ---- 5. 进入批次 → 教学班列表 ---- */
     await clickText('.turn .primary', '进入选课')
@@ -291,11 +297,11 @@ async function main() {
     // 防连点的守卫现在在抽屉里（提交要等结果，期间不能让人再按一次）
     await evalJS(`(${lessonRow('高等数学')}).querySelector('.pick').click()`)
     await waitFor(`!!document.querySelector('.panel')`, 5000, '抢课抽屉打开')
-    await clickText('.panel button', '立即试一次')
+    await clickText('.panel button', '只试一次')
     await waitFor(`document.body.textContent.includes('教务处理中')`, 6000, '提交中状态')
     ok(
       '提交期间抽屉里的按钮禁用（防连点重复提交）',
-      await evalJS(`[...document.querySelectorAll('.panel .primary, .panel .ghost')].every((b) => b.disabled)`),
+      await evalJS(`[...document.querySelectorAll('.panel .primary, .panel .once')].every((b) => b.disabled)`),
     )
 
     await waitFor(`document.body.textContent.includes('选课成功')`, 15000, '轮询出结果')

@@ -227,10 +227,10 @@ async function main() {
     await waitFor(`document.querySelector('h1')?.textContent === '选课'`, 15000, '选课页')
     await waitFor(`document.body.textContent.includes('教务服务器时间')`, 60000, 'campus_course_select_status')
     const sel = await evalJS(`(() => {
-      const t = [...document.querySelectorAll('.stat .row')].map((r) => r.textContent).find((x) => x.includes('服务器时间'))
+      const facts = [...document.querySelectorAll('.grab .facts')].map((r) => r.textContent).find((x) => x.includes('服务器时间'))
       return {
-        time: t?.replace('教务服务器时间', '').trim() ?? '',
-        student: document.querySelector('.stat .row .v')?.textContent.trim() ?? '',
+        time: (facts?.match(/教务服务器时间\\s*([\\d-]+ [\\d:]+)/)?.[1] ?? ''),
+        student: (facts?.match(/·\\s*([^·]*\\d{6,})/)?.[1] ?? '').trim(),
         body: document.body.textContent.includes('当前没有开放的选课批次') ? 'no-turn' : 'has-turn',
       }
     })()`)

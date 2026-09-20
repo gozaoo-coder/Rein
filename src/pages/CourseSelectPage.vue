@@ -2,10 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   AlertTriangle,
-  CalendarClock,
   Check,
   ChevronLeft,
-  CircleCheck,
   ExternalLink,
   Hourglass,
   Info,
@@ -111,6 +109,35 @@ function tickClock(): void {
     `${wall.getFullYear()}-${pad2(wall.getMonth() + 1)}-${pad2(wall.getDate())} ` +
     `${pad2(wall.getHours())}:${pad2(wall.getMinutes())}:${pad2(wall.getSeconds())}`
 }
+
+/** 「张伟 20231001」—— 账号在副信息行里，够用但不再单开一行 */
+const accountText = computed(() => {
+  const s = status.value
+  if (!s?.studentCode) return ''
+  return `${s.studentName ?? ''} ${s.studentCode}`.trim()
+})
+
+/**
+ * 批次的窗口时间。
+ *
+ * 早先它只在「还没有批次」的空态里出现 —— 一进批次反而查不到自己剩多少时间（rubric #6）。
+ * 现在它跟着账号、时钟一起进阶段条的副信息行，进批次之后仍然看得见。
+ */
+const windowText = computed(() => {
+  const t = store.activeTurn
+  if (!t) return ''
+  const fmt = (raw?: string | null): string => {
+    if (!raw) return ''
+    const m = raw.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/)
+    return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : raw
+  }
+  const r = t.selectDateTimeRange
+  const a = fmt(r?.startDateTime)
+  const b = fmt(r?.endDateTime)
+  if (a && b) return `${a} → ${b}`
+  // 教务没给区间时退回它自己那句话（原样透传，不改写它的措辞）
+  return a || b || t.selectDateTimeText?.trim() || ''
+})
 
 function lessonName(l: CourseSelectLesson): string {
   return l.course?.nameZh || l.course?.nameEn || '（教务未给课程名）'
@@ -280,6 +307,9 @@ const autoText = computed(() => {
   return `${p(t.getHours())}:${p(t.getMinutes())}:${p(t.getSeconds())}`
 })
 
+/** 副信息行里只放**真实的**刷新时刻：还没刷过就干脆不提这一项（「上次刷新 开启中…」是病句） */
+const refreshedText = computed(() => (autoAt.value ? autoText.value : ''))
+
 /** 有请求在飞、或正在提交，就别插队 —— 叠请求既浪费也容易把令牌撞出 401 */
 function autoBusy(): boolean {
   return store.loading || store.lessonsLoading || store.submitting != null || store.grabBusy
@@ -437,31 +467,16 @@ onBeforeUnmount(() => {
     </EmptyState>
 
     <template v-else>
-      <!-- 服务器时间：抢课对时全靠它 -->
-      <section class="card stat">
-        <div class="row">
-          <CalendarClock :size="16" />
-          <span class="k">教务服务器时间</span>
-          <span class="v num">{{ serverClock || '—' }}</span>
-        </div>
-        <div v-if="status?.studentCode" class="row">
-          <CircleCheck :size="16" class="ok" />
-          <span class="k">账号</span>
-          <span class="v">{{ status.studentName ?? '' }} {{ status.studentCode }}</span>
-        </div>
-        <!-- 自动刷新的节拍是看得见的：不然「数字怎么自己变了」比「数字旧了」更让人不安 -->
-        <div class="row">
-          <RefreshCw :size="16" />
-          <span class="k">自动刷新</span>
-          <span class="v num">{{ autoText }}</span>
-        </div>
-        <p v-if="skewWarning" class="warn">
-          <AlertTriangle :size="14" /> {{ skewWarning }}
-        </p>
-      </section>
-
-      <!-- 抢课任务单：全局的，批次列表与教学班列表下都看得到 -->
-      <GrabPanel />
+      <!-- 抢课任务单就是首屏第一块：它现在同时承担「阶段 + 主数字倒计时 + 教务的钟」，
+           批次的窗口时间、账号、自动刷新节拍也一并交给他做副信息 ——
+           早先是「教务服务器时间」单开一张卡摆在最上面，比「还有多久出手」还显眼 -->
+      <GrabPanel
+        :clock="serverClock"
+        :refreshed-at="refreshedText"
+        :skew="skewWarning"
+        :account="accountText"
+        :window-text="windowText"
+      />
 
       <!-- 抢课计划：提前输入「我想抢什么」，引擎到点自己解析 + 开抢。
            摆在批次列表之上 —— 窗口没开时这里就是他唯一能做的事 -->
@@ -674,49 +689,6 @@ onBeforeUnmount(() => {
   margin-bottom: 14px;
 }
 
-/* ---------- 服务器时间 ---------- */
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-2);
-}
-
-.row .k {
-  font-size: var(--fs-caption);
-  flex: none;
-}
-
-.row .v {
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-1);
-  margin-left: auto;
-}
-
-.ok {
-  color: var(--ok-strong);
-}
-
-.num {
-  font-variant-numeric: tabular-nums;
-}
-
-.warn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-micro);
-  color: var(--warn-strong);
-  line-height: 1.4;
-}
-
 /* ---------- 批次 ---------- */
 .turn-head {
   display: flex;
@@ -813,7 +785,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  min-height: 40px;
+  /* 44 而不是 40：这是手机上返回上一层的唯一入口，指头比像素大 */
+  min-height: 44px;
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--accent-strong);
@@ -1016,11 +989,12 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-/* 29px → 45px 的命中区；横向只外扩 2px，因为它和隔壁那个只隔 8px */
+/* 命中区撑到 44 高（横向不动：同一行的两颗只隔 8px）。
+   纵向各外扩 7px：上面是卡片间距、下面是 10px，都不会压到别人 */
 .mini::after {
   content: '';
   position: absolute;
-  inset: -8px -2px;
+  inset: -7px 0;
 }
 
 .mini.on {

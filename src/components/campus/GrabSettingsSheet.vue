@@ -28,6 +28,13 @@ const toast = useToast()
 const draft = ref<GrabSettings | null>(null)
 const saving = ref(false)
 
+/**
+ * 首帧占位用的默认值 —— **不是第二份真相**。
+ *
+ * 真值在 Rust（`grab.rs` 的 `impl Default for GrabSettings`），打开抽屉时会从那边取；
+ * 这份只是在取到之前顶一下，以及在 Rust 还没答上话时别让控件空着。
+ * 改这里之前先改 Rust —— 两边不一致的表现是「没动过任何设置，保存后节奏却变了」。
+ */
 const DEFAULTS: GrabSettings = {
   minIntervalMs: 700,
   pollIntervalMs: 2000,
@@ -43,10 +50,25 @@ const DEFAULTS: GrabSettings = {
 
 const s = computed(() => draft.value ?? store.grabSettings ?? DEFAULTS)
 
+/**
+ * 打开抽屉时**先把 Rust 的设置取回来再起草**。
+ *
+ * 早先是「打开就复制一份当前值」：如果这时还没取到，草稿会落在 DEFAULTS 上，
+ * 而保存会把整份草稿写回去 —— 于是用户只是点开看了一眼就关，节奏却被
+ * 悄悄重置成了默认（那些不在界面上的字段尤其危险）。
+ */
 watch(
   () => props.open,
-  (open) => {
-    if (open) draft.value = { ...(store.grabSettings ?? DEFAULTS) }
+  async (open) => {
+    if (!open) return
+    if (!store.grabSettings) {
+      try {
+        await store.loadGrabSettings()
+      } catch {
+        // 取不到就用占位值起草，保存时会照原样写回；至少不是静默改档
+      }
+    }
+    draft.value = { ...(store.grabSettings ?? DEFAULTS) }
   },
 )
 
@@ -76,12 +98,15 @@ function reset(): void {
 }
 
 /**
- * 让贤期限对用户按**秒**显示（毫秒没人愿意读），存库仍是毫秒。
- * 0 是有意义的取值（= 死守），所以下限就是 0，不做「至少几分钟」的兜底。
+ * 让贤期限按**分钟**显示。
+ *
+ * 一屏里的时间单位本来就有毫秒（其余几个旋钮）、秒（提示语）、次（提交次数）——
+ * 而这个参数的量级是几分钟到几十分钟：写成毫秒读不出来（1800000），写成秒要读三位数。
+ * 存库仍是毫秒，引擎也按毫秒判；0 = 死守。
  */
-const cedeSec = computed({
-  get: () => Math.round(s.value.cedeAfterMs / 1000),
-  set: (v: number) => set('cedeAfterMs', Math.max(0, Math.round(v)) * 1000),
+const cedeMin = computed({
+  get: () => Math.round(s.value.cedeAfterMs / 60000),
+  set: (v: number) => set('cedeAfterMs', Math.max(0, Math.round(v)) * 60000),
 })
 
 /**
@@ -110,7 +135,24 @@ const PRESETS: { name: string; hint: string; patch: Partial<GrabSettings> }[] = 
   { name: '压测档', hint: '≈80 次/秒，实测无异常但风险自负', patch: { minIntervalMs: 12, pollIntervalMs: 300, fullRetryMs: 600 } },
 ]
 
+/**
+ * 档位按钮：**压测档要两步**。
+ *
+ * 它把请求量从「每秒 1.4 次」一步抬到「每秒 80 次」，而它离默认档只有一次点击，
+ * 代价却写在 11px 的提示里、还直接落库。代价大的档位没有第二次确认是不合理的 ——
+ * 这也是审查里唯一被点名的「一次点击就不可逆」的地方。
+ */
+const pendingPreset = ref<string | null>(null)
+let presetTimer: number | null = null
+
 function applyPreset(p: (typeof PRESETS)[number]): void {
+  if (p.name === '压测档' && pendingPreset.value !== p.name) {
+    pendingPreset.value = p.name
+    if (presetTimer != null) window.clearTimeout(presetTimer)
+    presetTimer = window.setTimeout(() => (pendingPreset.value = null), 5000)
+    return
+  }
+  pendingPreset.value = null
   draft.value = { ...s.value, ...p.patch }
   active.value = 'minIntervalMs'
 }
@@ -131,11 +173,14 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
         v-for="p in PRESETS"
         :key="p.name"
         class="preset"
+        :class="{ danger: pendingPreset === p.name }"
         :title="p.hint"
         @click="applyPreset(p)"
       >
-        <b>{{ p.name }}</b>
-        <em>{{ p.hint }}</em>
+        <b>
+          {{ pendingPreset === p.name ? '再点一次确认' : p.name }}
+        </b>
+        <em>{{ pendingPreset === p.name ? '这一档会把请求量抬到 ≈80 次/秒' : p.hint }}</em>
       </button>
     </div>
 
@@ -228,11 +273,11 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
       <!-- 志愿组：这条是「互斥备选」的耐心旋钮 -->
       <section class="block" data-key="cedeAfterMs" @pointerenter="active = 'cedeAfterMs'">
         <NumberStepper
-          v-model="cedeSec"
+          v-model="cedeMin"
           :min="0"
-          :max="3600"
-          :step="30"
-          unit="秒"
+          :max="120"
+          :step="1"
+          unit="分钟"
           label="让贤期限"
         />
         <p class="hint">
@@ -324,6 +369,17 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
   font-style: normal;
   color: var(--text-3);
   line-height: 1.3;
+}
+
+/* 待确认的压测档：一眼看出这一下点下去代价不一样 */
+.preset.danger {
+  background: var(--danger-soft);
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--danger-strong);
+}
+
+.preset.danger b,
+.preset.danger em {
+  color: var(--danger-strong);
 }
 
 .toggle-row {

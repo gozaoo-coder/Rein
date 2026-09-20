@@ -140,8 +140,8 @@ const clickText = (selector, text) =>
 const toolTitles = () =>
   evalJS(`[...document.querySelectorAll('.tools .tool-txt b')].map((e) => e.textContent.trim())`)
 
-/** 底栏页签文案清单 */
-const tabLabels = () => evalJS(`[...document.querySelectorAll('.tabbar .tab')].map((e) => e.textContent.trim())`)
+/** 底栏页签文案清单（底栏根类名是 `.dock`，`.tabbar` 已经不存在了） */
+const tabLabels = () => evalJS(`[...document.querySelectorAll('.dock .tab')].map((e) => e.textContent.trim())`)
 
 /** 打开/关闭某模块开关（功能页的行按名字定位） */
 const setToggle = (name, on) =>

@@ -93,9 +93,14 @@ fi
 
 log "systemd 单元 $SERVICE"
 install -m 644 "$APP_DIR/server/deploy/rein-services.service" "/etc/systemd/system/$SERVICE.service"
-# 配置：root 可写、rein 组可读（服务要读它，但不对其他用户开放）
+log "配置目录 $CONF_DIR"
+# 配置**运行时可改**（签发客户端密钥 / 热更新价目表 / 开关 provider 都写回 config.json），
+# 而写入是「同目录建临时文件 + rename」：目录与文件都得给 rein 组写权限，否则管理接口
+# 会以 `EROFS/EACCES ... config.json.tmp-…` 500 收场（服务本身照常，只有管理面坏掉）。
+# 目录 775 + 文件 664：只对 rein 组开放，其他用户读不到管理令牌。
+install -d -o root -g rein -m 775 "$CONF_DIR"
 chown root:rein "$CONF_DIR/config.json"
-chmod 640 "$CONF_DIR/config.json"
+chmod 664 "$CONF_DIR/config.json"
 systemctl daemon-reload
 systemctl enable "$SERVICE" >/dev/null
 systemctl restart "$SERVICE"

@@ -289,12 +289,12 @@ async function main() {
     await sleep(700)
     await evalJS(`(() => {
       const row = [...document.querySelectorAll('.stepper')].find(s => s.textContent.includes('默认组数'))
-      row?.querySelector('button[aria-label="增加"]')?.click()
+      row?.querySelector('button[aria-label^="增加"]')?.click()
     })()`)
     await sleep(250)
     await evalJS(`(() => {
       const row = [...document.querySelectorAll('.stepper')].find(s => s.textContent.includes('默认组数'))
-      row?.querySelector('button[aria-label="增加"]')?.click()
+      row?.querySelector('button[aria-label^="增加"]')?.click()
     })()`)
     await sleep(400)
     await clickButton('保存修改')

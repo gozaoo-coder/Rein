@@ -25,22 +25,28 @@ const props = withDefaults(
 
 const blurLayers = computed(() => {
   const to = props.direction === 'down' ? 'bottom' : 'top'
-  return Array.from({ length: props.layers }, (_, k) => {
-    const i = k + 1
-    const solid = ((props.layers - i) / props.layers) * 100
-    const stop = solid + 100 / props.layers
-    return {
-      i,
-      blur: `${(i * props.step).toFixed(1)}px`,
-      mask: `linear-gradient(to ${to}, #000 0%, #000 ${solid}%, transparent ${stop}%)`,
-    }
-  })
+  // 容器级全局渐隐：各层的阶梯衰减叠一条「整段淡出到零」的总包络，
+  // 最弱层的收尾不再在遮罩底边形成可感知的硬边（高饱和大色块滚过时尤其明显）。
+  // 方向翻转已由 to bottom/top 承担，两个方向共用同一条 stop 表达式。
+  return {
+    containerMask: `linear-gradient(to ${to}, #000 0%, #000 55%, transparent 100%)`,
+    layers: Array.from({ length: props.layers }, (_, k) => {
+      const i = k + 1
+      const solid = ((props.layers - i) / props.layers) * 100
+      const stop = solid + 100 / props.layers
+      return {
+        i,
+        blur: `${(i * props.step).toFixed(1)}px`,
+        mask: `linear-gradient(to ${to}, #000 0%, #000 ${solid}%, transparent ${stop}%)`,
+      }
+    }),
+  }
 })
 </script>
 
 <template>
-  <div class="pblur" aria-hidden="true">
-    <span v-for="l in blurLayers" :key="l.i" :style="{ '--b': l.blur, '--m': l.mask }" />
+  <div class="pblur" aria-hidden="true" :style="{ '--pm': blurLayers.containerMask }">
+    <span v-for="l in blurLayers.layers" :key="l.i" :style="{ '--b': l.blur, '--m': l.mask }" />
   </div>
 </template>
 
@@ -49,11 +55,26 @@ const blurLayers = computed(() => {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* 总包络：整段从强端向弱端淡出到零，抹平各层阶梯收尾的硬边 */
+  mask-image: var(--pm);
+  -webkit-mask-image: var(--pm);
+  /* 挂载淡入：路由进场 / v-if 切回高画质档时，遮罩从透明淡入而不是闪现 */
+  animation: pblur-in var(--dur-base) var(--ease-out);
+}
+
+@keyframes pblur-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .pblur span {
   position: absolute;
   inset: 0;
+  /* 独立合成层：页面进场的 opacity 过渡期间，带 mask 的 backdrop-filter 可能被
+     合成器整层丢掉遮罩——糊出一块硬边矩形（顶部异常分割）。translateZ(0) 让每层
+     保有自己的图层与遮罩，祖先做透明度动画时也稳定。 */
+  transform: translateZ(0);
   backdrop-filter: blur(var(--b));
   -webkit-backdrop-filter: blur(var(--b));
   mask-image: var(--m);

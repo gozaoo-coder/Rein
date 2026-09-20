@@ -15,6 +15,19 @@
   --scrim: rgba(0, 0, 0, 0.4); /* 全屏遮罩，弹层统一深浅 */
   --switch-knob: #ffffff; /* 开关滑块：亮暗色同为白（iOS 规格），暗色下靠影子托底 */
 
+  /* ---------- 悬浮玻璃 · 高画质档（悬浮 Dock 等玻璃表面） ----------
+     玻璃由四层叠加：fill 半透明玻璃底（blur 写在组件里，弱档被 base.css 全局关掉）、
+     rim 边缘受光环（上亮下暗的渐变描边，模拟顶光打在玻璃截面上）、sheen 内顶高光、
+     tab-hi 活动页签的受光亮斑。弱档（data-perf=low）在 base.css 顶成实底与普通描边。 */
+  --glass-fill: rgba(255, 255, 255, 0.52);
+  --glass-rim-hi: rgba(255, 255, 255, 0.95);
+  --glass-rim-lo: rgba(255, 255, 255, 0.3);
+  --glass-sheen: rgba(255, 255, 255, 0.6);
+  --glass-tab-hi: var(--accent-soft); /* 活动页签的受光亮斑：随主题走 accent 淡色调 */
+  --glass-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 12px 36px rgba(0, 0, 0, 0.18);
+
   /* ---------- 文字 ---------- */
   --text-1: #1d1d1f;
   --text-2: #6e6e73;
@@ -157,8 +170,13 @@
   --frame-max: 480px;
   --frame-max-wide: 1240px; /* 桌面工作台 · 主人区内容上限（便当总览/一日脊柱） */
   --tabbar-h: 58px;
+  /* 悬浮 Dock 的几何：离底边的悬浮距离与上缘位置。
+     底部悬浮元素（FAB / Toast / ActionSheet）用 --dock-top 避让，别再各自拼公式——
+     那些公式是按「贴底整条 tabbar」算的，Dock 改悬浮后会把 gap 吃掉。 */
+  --dock-float: 14px;
+  --dock-top: calc(var(--safe-bottom) + var(--dock-float) + var(--tabbar-h));
   --page-pad-x: 18px;
-  --page-pad-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 40px + var(--wbar-reserve, 0px));
+  --page-pad-bottom: calc(var(--dock-top) + 26px + var(--wbar-reserve, 0px));
 
   /* ---------- 安全区 ----------
      Android WebView 的 env() 只报告状态栏 inset、不报告底部导航；
@@ -179,6 +197,14 @@
     --surface: #1c1c1e;
     --surface-2: #2c2c2e;
     --surface-translucent: rgba(28, 28, 30, 0.72);
+
+    --glass-fill: rgba(40, 40, 46, 0.5);
+    --glass-rim-hi: rgba(255, 255, 255, 0.45);
+    --glass-rim-lo: rgba(255, 255, 255, 0.1);
+    --glass-sheen: rgba(255, 255, 255, 0.18);
+    --glass-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.4),
+      0 12px 36px rgba(0, 0, 0, 0.55);
 
     --text-1: #f5f5f7;
     --text-2: rgba(235, 235, 245, 0.6);

@@ -530,12 +530,31 @@ async function main() {
     ok('I0 点击智能排程', await evalJS(`(() => { document.querySelector('[data-testid="ai-schedule"]').click(); return true })()`))
     await waitFor(`!!document.querySelector('[data-testid="ai-confirm"]')`, 5000, '确认条')
     ok('I1 幽灵块预览 2 个', await evalJS(`document.querySelectorAll('.blk.ghost').length === 2`))
-    ok('I1c 幽灵块入场动画声明', await evalJS(`(() => {
-      const g = document.querySelector('.blk.ghost')
-      if (!g) return false
-      const cs = getComputedStyle(g)
-      return cs.animationName.includes('ghost-in') && parseFloat(cs.animationDuration) >= 0.2
-    })()`))
+    ok(
+      'I1c 幽灵块入场动画声明',
+      await evalJS(`(() => {
+        const list = [...document.querySelectorAll('.blk.ghost')]
+        if (!list.length) return false
+        const cs = getComputedStyle(list[0])
+        if (!cs.animationName.includes('ghost-in')) return false
+        // 时长跟着**性能档与系统减弱动画设置**走：加强档是 250ms；降级档（默认）与
+        // reduced-motion 都会被压到 0.01ms —— 两种都对。断言的是「声明在位」，
+        // 至于时长归谁管，那是 base.css 那两条规则的事
+        const dur = parseFloat(cs.animationDuration)
+        const downgraded =
+          document.documentElement.dataset.perf === 'low' ||
+          matchMedia('(prefers-reduced-motion: reduce)').matches
+        return downgraded ? dur <= 0.05 : dur >= 0.2
+      })()`),
+      await evalJS(`JSON.stringify({
+        perf: document.documentElement.dataset.perf ?? '(未设)',
+        reduce: matchMedia('(prefers-reduced-motion: reduce)').matches,
+        ghosts: [...document.querySelectorAll('.blk.ghost')].map((g) => {
+          const cs = getComputedStyle(g)
+          return { n: cs.animationName, d: cs.animationDuration }
+        }),
+      })`),
+    )
     ok('I1b 依据文案出现', await evalJS(
       `[...document.querySelectorAll('.confirm .cr')].some(e => e.textContent.includes('排') || e.textContent.includes('空档'))`,
     ))

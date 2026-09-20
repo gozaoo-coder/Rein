@@ -155,9 +155,16 @@ const HEADER_STATE = `(() => {
     layerMask: spans[0] ? getComputedStyle(spans[0]).maskImage.slice(0, 70) : null,
     perfAttr: document.documentElement.dataset.perf ?? '(未设)',
     tabbarBg: (() => {
-      const t = document.querySelector('.tabbar')
-      return t ? getComputedStyle(t).backgroundColor : '(无 TabBar)'
+      const t = document.querySelector('.dock')
+      if (!t) return '(无 TabBar)'
+      const cs = getComputedStyle(t)
+      // 底栏的底色是**两层渐变**画的（padding-box 实底 + border-box 受光描边），
+      // 所以 backgroundColor 恒为 transparent —— 要看的是 background-image 里那层底色。
+      // 描边那一层本来就是半透明发丝线，别把它算进来
+      return cs.backgroundImage.split('),').slice(0, 2).join('),').slice(0, 120)
     })(),
+    /** 玻璃填充变量：低档下被顶成 --surface（不透明），加强档下是半透明的 */
+    glassFill: getComputedStyle(document.documentElement).getPropertyValue('--glass-fill').trim(),
   }
 })()`
 
@@ -214,7 +221,9 @@ async function main() {
   /** 档位钉死：这些断言验的是遮罩怎么渲染，不该被无头环境的掉帧判定搅进来 */
   const pinHigh = `localStorage.setItem('rein.perf.v1', 'high');`
   const pinLow = `localStorage.setItem('rein.perf.v1', 'low');`
-  const pinAuto = `localStorage.removeItem('rein.perf.v1');`
+  // 「auto」要显式写进去：现在的**默认档是 low**（玻璃与动效算加强项，缺省不开），
+  // 所以 removeItem 得到的是 low 而不是 auto —— 早先这里就踩了这个坑
+  const pinAuto = `localStorage.setItem('rein.perf.v1', 'auto');`
 
   const edge = spawn(
     EDGE,
@@ -322,14 +331,23 @@ async function main() {
     ok('19 降级档页头仍固定贴顶', Math.abs(s.headerTop - s.viewportTop) <= 1, `headerTop=${s.headerTop}`)
     ok('20 降级档遮罩显形', s.maskOpacity === '1', `opacity=${s.maskOpacity}`)
     ok(
-      '21 降级档毛玻璃表面换成实底（TabBar 不再半透明）',
-      /^rgb\(/.test(String(s.tabbarBg)),
-      String(s.tabbarBg),
+      '21 降级档毛玻璃表面换成实底（玻璃填充不再半透明）',
+      // 低档下 --glass-fill 被顶成 --surface：取得的值必须是不透明色。
+      // 出现 rgba(...,0.x) / 8 位 hex 带 alpha 就说明半透明底还在（关掉 blur 后会成灰膜）
+      (() => {
+        const v = String(s.glassFill)
+        if (/^rgb\(/.test(v)) return true
+        if (/^rgba\(/.test(v)) return !/,\s*0?\.\d+\s*\)$/.test(v)
+        if (/^#[0-9a-f]{6}$/i.test(v)) return true
+        if (/^#[0-9a-f]{8}$/i.test(v)) return /ff$/i.test(v)
+        return /^#[0-9a-f]{3}$/i.test(v)
+      })(),
+      `--glass-fill = ${s.glassFill} · dock=${String(s.tabbarBg).slice(0, 70)}`,
     )
     ok(
       '22 降级档全局不给 backdrop-filter',
       await evalJS(
-        `getComputedStyle(document.querySelector('.tabbar')).backdropFilter === 'none'`,
+        `getComputedStyle(document.querySelector('.dock')).backdropFilter === 'none'`,
       ),
     )
     await shot('4-degraded-scrolled')

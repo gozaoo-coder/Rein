@@ -16,6 +16,29 @@ function ok(name, cond, extra = '') {
   }
 }
 
+/**
+ * 关掉「有新版本」启动提示卡。
+ *
+ * mock 在加载一两秒后弹它，带**全屏遮罩**：盖上来之后页面上的任何点击都落在遮罩上，
+ * Playwright 会卡在「可见、可用、稳定」那一步直到超时（这条链路里已经坑过好几次）。
+ */
+async function dismissUpdate(page) {
+  return page.evaluate(() => {
+    const b = [...document.querySelectorAll('.up-card button')].find((x) => x.textContent.trim() === '稍后')
+    if (b) b.click()
+    return !!b
+  })
+}
+
+/** 关掉待办页的「今日规划」仪式（当天首次进入自动弹，带全屏 scrim） */
+async function dismissRitual(page) {
+  const ritual = page.locator('.scrim .ritual')
+  if ((await ritual.count()) === 0) return false
+  await page.locator('.scrim').click({ position: { x: 6, y: 6 } })
+  await page.waitForTimeout(400)
+  return true
+}
+
 // 1x1 红色 JPEG（最小合法图）
 const JPEG_B64 =
   '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a' +
@@ -33,7 +56,11 @@ page.on('pageerror', (e) => console.log('[pageerror]', e.message))
 
 console.log('== 场景一：食物草稿箱点击进入编辑 ==')
 await page.goto(`${BASE}/#/ai`)
-await page.waitForTimeout(1200)
+// 启动两秒后「有新版本」卡片会自己弹出来，**它带全屏遮罩而且会一直挂着** ——
+// 早先这条链路前面几步跑得快、正好抢在它出现之前，后面就全被它挡住（直到超时）。
+await page.waitForTimeout(2600)
+await dismissUpdate(page)
+await page.waitForTimeout(300)
 
 // 预置两条草稿（一条带 foodId、一条未匹配），走应用自己的存储 key
 await page.evaluate((jpeg) => {
@@ -58,7 +85,9 @@ await page.evaluate((jpeg) => {
   )
 }, JPEG_B64)
 await page.reload()
-await page.waitForTimeout(1000)
+await page.waitForTimeout(1600) // 等静默更新检查把提示卡弹出来（早关会扑空）
+await dismissUpdate(page)
+await page.waitForTimeout(400)
 
 const draftChip = page.locator('button.chip', { hasText: '草稿箱' })
 ok('草稿箱 chip 显示条数', (await draftChip.innerText()).includes('· 2'))
@@ -172,9 +201,10 @@ ok('模糊搜索「可乐」首位 =「可乐」（完全一致 100 分）', fuz
 ok('「无糖可乐」按序命中且排在其后（适当减分）',
   fuzzy.names.indexOf('无糖可乐') >= 0 && fuzzy.names.indexOf('无糖可乐') > 0, JSON.stringify(fuzzy.names))
 
-console.log('== 场景五：主页记饮食 → 智能添加抽屉（草稿区 + 手动食物库） ==')
-await page.goto(`${BASE}/#/`)
-await page.waitForTimeout(1000)
+console.log('== 场景五：营养页「记饮食」 → 智能添加抽屉（草稿区 + 手动食物库） ==')
+// 入口从主页搬到了营养页的快捷格（主页在移动端现在是画布，快捷格只在桌面便当页与营养页上）
+await page.goto(`${BASE}/#/nutrition`)
+await page.waitForTimeout(1200)
 await page.locator('button.qa', { hasText: '记饮食' }).click()
 await page.waitForTimeout(500)
 const smart = page.locator('.panel', { hasText: '记饮食' })
@@ -197,7 +227,10 @@ await page.waitForTimeout(400)
 
 console.log('== 场景六：待办智能添加抽屉（手动填写待办入口） ==')
 await page.goto(`${BASE}/#/todos`)
-await page.waitForTimeout(1000)
+await page.waitForTimeout(1200)
+// 待办页当天首次进入会自己弹「今日规划」三步仪式（DailyRitual），它带全屏 scrim：
+// 不先关掉，页头的「添加待办」根本点不到。点角落的 scrim 关闭（卡片之外的区域是关闭区）
+await dismissRitual(page)
 await page.locator('button.hdr-btn[aria-label="添加待办"]').click()
 await page.waitForTimeout(500)
 const tsmart = page.locator('.panel', { hasText: '添加待办' })

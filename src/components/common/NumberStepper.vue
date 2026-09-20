@@ -51,7 +51,11 @@ function commit(): void {
   <div class="stepper row between">
     <span v-if="label" class="label">{{ label }}</span>
     <div class="row ctrl">
-      <button aria-label="减少" :disabled="modelValue <= min" @click="bump(-step)">
+      <button
+        :aria-label="label ? `减少 ${label}` : '减少'"
+        :disabled="modelValue <= min"
+        @click="bump(-step)"
+      >
         <Minus :size="15" />
       </button>
       <input
@@ -62,6 +66,7 @@ function commit(): void {
         type="number"
         :min="min"
         :max="max"
+        :aria-label="label ? `修改 ${label}` : '修改数值'"
         @blur="commit"
         @keyup.enter="commit"
         @keyup.esc="editing = false"
@@ -69,7 +74,11 @@ function commit(): void {
       <button v-else class="val val-btn" :aria-label="`修改${label || '数值'}`" @click="startEdit">
         <b>{{ modelValue }}</b><small v-if="unit">{{ unit }}</small>
       </button>
-      <button aria-label="增加" :disabled="modelValue >= max" @click="bump(step)">
+      <button
+        :aria-label="label ? `增加 ${label}` : '增加'"
+        :disabled="modelValue >= max"
+        @click="bump(step)"
+      >
         <Plus :size="15" />
       </button>
     </div>
@@ -90,15 +99,36 @@ function commit(): void {
   gap: 2px;
 }
 
+/* + / − 的**命中区是 44×44**，视觉那个 30px 的圆画在 ::before 上。
+   这两颗钮在一屏里成对出现七次，是该按 44px 标准来的地方 —— 但把圆放大到 44
+   会挤掉数值的位置，所以撑命中区而不是撑视觉。 */
 .ctrl button {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-1);
+}
+
+.ctrl button::before {
+  content: '';
+  position: absolute;
   width: 30px;
   height: 30px;
   border-radius: 50%;
   background: var(--surface-2);
-  color: var(--text-1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.ctrl button:active::before {
+  transform: scale(0.92);
+}
+
+.ctrl button svg {
+  position: relative;
 }
 
 .ctrl button:disabled {

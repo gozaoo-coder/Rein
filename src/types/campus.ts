@@ -484,7 +484,7 @@ export interface GrabMatch {
   fields?: string[]
 }
 
-export type GrabIntentStatus = 'pending' | 'empty' | 'ready'
+export type GrabIntentStatus = 'pending' | 'empty' | 'ready' | 'ambiguous'
 
 export interface GrabIntent {
   id: number
@@ -508,6 +508,12 @@ export interface GrabIntent {
   resolvedAt?: number | null
 }
 
+/** 一门课的身份（代码 + 课名） */
+export interface GrabCourseRef {
+  code: string
+  name: string
+}
+
 /** 输入预览（`campus_grab_intent_preview` 返回） */
 export interface GrabPreview {
   turnId: string
@@ -521,6 +527,11 @@ export interface GrabPreview {
    * 注意：**打全了老师名字时这里只剩那位老师的班** —— 那是「指定」而不是「相关」。
    */
   matches: GrabMatch[]
+  /**
+   * **跨课程的命中**：非空 = 这句查询命中的是好几门课（大一/大二双开的体育课最典型）。
+   * 「中一个就够」时引擎**不会排队**，会等你补上课程代码 —— 判定与解析共用同一条规则。
+   */
+  ambiguous?: GrabCourseRef[]
 }
 
 /** 加入抢课任务单时一门课要带的信息 */

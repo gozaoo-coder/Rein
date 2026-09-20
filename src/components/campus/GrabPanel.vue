@@ -9,6 +9,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  ShieldAlert,
   Sparkles,
   Trash2,
   Zap,
@@ -36,6 +37,28 @@ import { askAiForGrabRescue } from '@/utils/campusAi'
 const store = useCourseSelectStore()
 const now = ref(Date.now())
 let tick: ReturnType<typeof setInterval> | null = null
+
+/**
+ * 页面级的几件事实由页面传进来（服务器时钟、上次刷新时刻、对时偏差、账号、当前窗口）。
+ *
+ * 为什么不在这里自己算：这些值每一秒都在变，而页面已经在算它们了 —— 复制一份
+ * 就是给「同一件事两种说法」再开一条路（这块板上已经吃过一次这个亏）。
+ */
+const props = withDefaults(
+  defineProps<{
+    /** 教务服务器时间（已在页面里按采样时刻线性推进到当下） */
+    clock?: string
+    /** 上一次自动刷新的时刻 */
+    refreshedAt?: string
+    /** 对时偏差告警，空串表示没有值得说的偏差 */
+    skew?: string
+    /** 「张伟 20231001」 */
+    account?: string
+    /** 当前批次的窗口：「07-31 10:00 → 09-30 23:00」 */
+    windowText?: string
+  }>(),
+  { clock: '', refreshedAt: '', skew: '', account: '', windowText: '' },
+)
 
 onMounted(() => {
   tick = setInterval(() => { now.value = Date.now() }, 1000)
@@ -89,6 +112,36 @@ const countdown = computed(() => {
   if (ms == null) return ''
   if (ms <= 0) return '正在开抢'
   return formatCountdown(ms)
+})
+
+/**
+ * T-0 前后这块板要**换形态**，而不是只换个数字。
+ *
+ * 一个 12:34 的倒计时和 00:07 的倒计时长得一样，但它们是完全不同的两件事：
+ * 前者是等待，后者是「下一秒就出手」。形态（底色、脉冲、数字颜色）就是用来
+ * 让人从余光里也能分辨这一点 —— 尤其这块板会成为首屏第一眼看到的东西。
+ */
+const stageHot = computed(() => {
+  if (countdown.value === '正在开抢') return true
+  const ms = store.fireInMs(now.value)
+  return ms != null && ms <= 10_000
+})
+
+/**
+ * 给读屏的播报：**只报关键节点**。
+ *
+ * 可见的那个大数字挂的是 `aria-hidden` —— 它每秒都在变，读屏会跟着念一整晚。
+ * 按 5 分钟 / 1 分钟 / 10 秒 / 开抢 四档播报，既听得见关键进展，又不吵。
+ */
+const spoken = computed(() => {
+  const ms = store.fireInMs(now.value)
+  if (ms == null) return ''
+  if (ms <= 0) return '正在开抢'
+  const s = Math.ceil(ms / 1000)
+  if (s <= 10) return `还有 ${s} 秒开抢`
+  if (s <= 60) return '不到一分钟就要开抢'
+  if (s <= 300) return '还有五分钟就要开抢'
+  return ''
 })
 
 /**
@@ -261,21 +314,49 @@ function handToAi(): void {
 <template>
   <!-- 没有任务但**引擎在监听**时也要显示：大一新生在窗口开放前没有任何任务可排，
        「它正在盯着窗口」就是他唯一能看到的进展（早先这块只在出错时才渲染，等于没说） -->
-  <section v-if="hasAny || store.grabError || listening" class="card grab">
+  <section v-if="hasAny || store.grabError || listening || props.clock" class="card grab" :class="{ hot: stageHot }">
     <header class="head">
       <span class="row title">
         <Zap :size="15" class="bolt" />
-        <b>抢课任务</b>
+        <b>抢课</b>
         <span v-if="actives.length" class="live num">{{ actives.length }} 个进行中</span>
+        <span v-if="!store.grab?.alive && (hasAny || listening)" class="chip bad">引擎没在跑</span>
       </span>
-      <!-- 阶段陈述 + 倒计时合成一行：先说「现在在发生什么」，再给「还有多久」。
-           倒计时**只有真的存在时**才出现 —— 没有值得等的时刻就不要摆一个数字在那儿 -->
-      <p class="phase" role="status">
-        <span>{{ phaseText }}</span>
-        <span v-if="countdown" class="cd num" :class="{ hot: countdown === '正在开抢' }">
-          · {{ countdown === '正在开抢' ? '正在开抢' : `距出手 ${countdown}` }}
-        </span>
+
+      <!-- 主数字：这是整页最该一眼看到的东西。倒计时**只有真的存在时**才出现 ——
+           没有值得等的时刻就不摆一个数字在那儿 -->
+      <template v-if="countdown">
+        <span class="cd-label t-3">距出手</span>
+        <p class="cd-big num" :class="{ live: countdown === '正在开抢' }" aria-hidden="true">
+          {{ countdown }}
+        </p>
+      </template>
+
+      <!-- 一句话阶段：先说「现在在发生什么」，再给「还有多久」 -->
+      <p class="phase" role="status" :class="{ lede: !countdown }">
+        {{ phaseText || (listening ? '正在盯着选课窗口' : '等你安排要抢的课') }}
       </p>
+
+      <!-- 副信息：教务的钟、上次刷新、当前窗口、账号，全部降级成这一行小字。
+           抢课对时全靠教务的钟，但它不该比「还有多久出手」更抢眼 -->
+      <p class="facts t-3">
+        <span class="num">教务服务器时间 {{ props.clock || '—' }}</span>
+        <span v-if="props.refreshedAt">· 上次刷新 {{ props.refreshedAt }}</span>
+        <span v-if="props.windowText">· 窗口 {{ props.windowText }}</span>
+        <span v-if="props.account">· {{ props.account }}</span>
+      </p>
+
+      <p class="engine t-3">
+        <ShieldAlert :size="12" />
+        引擎跑在 App 进程里：App 被划掉或清理后就不再出手
+      </p>
+
+      <p v-if="props.skew" class="warn" role="status">
+        <AlertTriangle :size="14" /> {{ props.skew }}
+      </p>
+
+      <!-- 读屏专用：只有跨档才说话（可见的大数字是 aria-hidden 的） -->
+      <span class="sr" aria-live="polite">{{ spoken }}</span>
     </header>
 
     <!-- 引擎级故障：会话失效这类问题必须显眼 -->
@@ -463,16 +544,64 @@ function handToAi(): void {
   line-height: 1.4;
 }
 
-.cd {
-  font-size: var(--fs-callout);
+/* 没有倒计时时，这句话就是主角：抬到 headline 级 */
+.phase.lede {
+  font-size: var(--fs-headline);
+}
+
+/* 那句「距出手」的小标签：说明下面这个数字是什么 */
+.cd-label {
+  font-size: var(--fs-micro);
+  margin-top: 2px;
+}
+
+/* 主数字：整页最大的字。倒计时是决定成败的那个量，它比教务的钟更该抢眼 ——
+   早先这里是 15px/--text-2，比旁边的钟还弱，正好把权重放反了 */
+.cd-big {
+  font-size: var(--fs-display-s);
   font-weight: 700;
-  color: var(--text-2);
+  letter-spacing: -0.5px;
+  line-height: 1.05;
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
 
-.cd.hot {
+.cd-big.live {
+  font-size: var(--fs-display-m);
   color: var(--accent-strong);
   animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* 副信息：一行小字，允许折行；它们是背景事实，不该跟主数字抢注意力 */
+.facts,
+.engine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+}
+
+.engine {
+  gap: 0 4px;
+}
+
+/* T-0 前后换形态：整块板染色 + 描边，余光里也能看出「正在出手」 */
+.grab.hot {
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--accent);
+}
+
+/* 读屏专用文本：可见的那个大数字每秒都变，不能让它当 live region */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 @keyframes pulse {
@@ -485,6 +614,17 @@ function handToAi(): void {
   .cd.hot {
     animation: none;
   }
+}
+
+/* 对时偏差告警：教务的钟与本机差得太多时说一句，抢课一律以教务时间为准 */
+.warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--warn-strong);
+  line-height: 1.4;
+  margin-top: 4px;
 }
 
 .fault {
@@ -580,9 +720,10 @@ function handToAi(): void {
   color: var(--accent);
 }
 
-/* 组内的行往右缩一格，一眼看出「这些是一伙的」 */
+/* 组内的行往右缩一格，一眼看出「这些是一伙的」。
+   2px 等于没缩 —— 组头与成员在视觉上连成一片，志愿组的边界只能靠读文字才知道。 */
 .squad + .task {
-  padding-left: 2px;
+  padding-left: 14px;
 }
 
 .ord {
@@ -673,7 +814,9 @@ function handToAi(): void {
 
 .ops {
   flex: none;
-  gap: 12px;
+  /* 16px 而不是 12px：每个按钮的命中区外扩 7px，相邻两个才不会互相压住
+     （重合成 14px 时「取消」会偷走「暂停」的边缘，那比按钮小更糟） */
+  gap: 16px;
 }
 
 .op {

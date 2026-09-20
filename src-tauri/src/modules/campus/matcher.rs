@@ -332,6 +332,54 @@ pub fn preferred(hits: &[LessonHit]) -> Vec<LessonHit> {
     }
 }
 
+/// 这句话命中的**课程**清单（按课程代码去重，保持「谁先值得出手」的顺序）。
+///
+/// 用来发现「一句话命中多门课」：同一门课在不同年级双开时是两个课程代码
+/// （大一 `000004 大学体育1` / 大二 `000006 大学体育3`），课程名当然也能互相命中。
+pub fn distinct_courses(hits: &[LessonHit]) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for h in hits {
+        let code = h
+            .lesson
+            .course
+            .as_ref()
+            .and_then(|c| c.code.clone())
+            .unwrap_or_default();
+        let code = code.trim().to_string();
+        if code.is_empty() || out.iter().any(|(c, _)| *c == code) {
+            continue;
+        }
+        let name = h
+            .lesson
+            .course
+            .as_ref()
+            .and_then(|c| c.name_zh.clone())
+            .unwrap_or_default();
+        out.push((code, name.trim().to_string()));
+    }
+    out
+}
+
+/// 这句查询是不是**跨课程**了 —— 只有「中一个就够」才会问这个问题。
+///
+/// 最危险的场景就是年级双开：用户只写项目名（「羽毛球」），而大一 / 大二各有一门，
+/// 于是两边一起进志愿组 —— 引擎可能把**大二那门**抢回来，白费一次提交甚至选错课。
+/// 所以跨课程时不该闷头排队，而该让人补上课程代码（`羽毛球 000004`）。
+///
+/// 查询里已经写死了某个课程代码时不算歧义：那一门课的代码就是唯一的那个，
+/// `distinct_courses` 长度已经是 1（这条判断只是把意图写明白）。
+pub fn ambiguous_courses(query: &str, hits: &[LessonHit]) -> Vec<(String, String)> {
+    let codes = distinct_courses(hits);
+    if codes.len() <= 1 {
+        return Vec::new();
+    }
+    let tokens: Vec<String> = query.split_whitespace().map(normalize).collect();
+    if codes.iter().any(|(c, _)| tokens.contains(&normalize(c))) {
+        return Vec::new();
+    }
+    codes
+}
+
 /// 剩余名额。两者缺一就没有意义（教务不勾 `hasCount` 时不给这一对）。
 fn remaining(l: &CourseSelectLesson) -> Option<i64> {
     match (l.std_count, l.limit_count) {
@@ -464,6 +512,65 @@ mod tests {
             lesson(3, "000002", "大学英语（一）", Some("王芳"), 56, 60),
             lesson(4, "000031", "体育（一）", Some("赵强"), 30, 30),
         ]
+    }
+
+    /// 大一 / 大二双开的体育课：两个课程代码、课名互相包含（真实数据里就是这样）
+    fn two_grades() -> Vec<CourseSelectLesson> {
+        vec![
+            lesson(11, "000004", "大学体育1", Some("徐永峰"), 10, 40),
+            lesson(12, "000006", "大学体育3", Some("徐永峰"), 5, 40),
+        ]
+    }
+
+    /// **写下的课程代码绝不放宽**。
+    ///
+    /// 这是「年级双开」那条危险的反面：查询里带了 `000004`，即使某个班里那门课
+    /// 一个班都匹配不上，也**不能**退回去按课名匹配（否则会把大二的 `000006` 抢回来）。
+    /// 命不中就是命不中 —— 交给上层 park 并说清楚。
+    #[test]
+    fn a_written_course_code_is_never_loosened() {
+        let ls = two_grades();
+        let hit = match_lessons("大学体育1 000004", &ls);
+        assert_eq!(names(&hit), vec!["11-000004"], "只该命中大一那门");
+
+        // 代码写错一个字 → 零命中（不许拿课名去兜底）
+        let none = match_lessons("大学体育1 000049", &ls);
+        assert!(none.is_empty(), "代码错了就该是零命中，不能退回按课名匹配");
+
+        // 只写代码，同样只命中那一门
+        assert_eq!(names(&match_lessons("000006", &ls)), vec!["12-000006"]);
+    }
+
+    /// 年级双开：只写项目名会同时命中两个年级 —— 这正是要在排队前拦下来的情况。
+    #[test]
+    fn name_only_query_spanning_two_grades_is_flagged() {
+        let ls = two_grades();
+        let pool = match_lessons("体育", &ls);
+        assert_eq!(pool.len(), 2, "两个年级的班都会被这句命中");
+
+        let amb = ambiguous_courses("体育", &pool);
+        // 顺序跟随「谁该先出手」（余位多的在前），所以这里按集合比
+        let mut got = amb.clone();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                ("000004".to_string(), "大学体育1".to_string()),
+                ("000006".to_string(), "大学体育3".to_string()),
+            ],
+            "跨课程要按课程代码去重后报出来"
+        );
+
+        // 补上代码 → 不再是歧义（只剩一门课）
+        let pinned = match_lessons("体育 000004", &ls);
+        assert!(ambiguous_courses("体育 000004", &pinned).is_empty());
+
+        // 同一门课的多个教学班：代码相同，不算跨课程
+        let same = vec![
+            lesson(1, "000001", "高等数学（上）", Some("张伟"), 1, 2),
+            lesson(2, "000001", "高等数学（上）", Some("李娜"), 1, 2),
+        ];
+        assert!(ambiguous_courses("高数", &match_lessons("高数", &same)).is_empty());
     }
 
     fn names(hits: &[LessonHit]) -> Vec<String> {

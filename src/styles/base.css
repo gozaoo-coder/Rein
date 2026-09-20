@@ -168,6 +168,14 @@ button:active,
    会变成一层发灰的薄膜。 */
 html[data-perf='low'] {
   --surface-translucent: var(--surface);
+  /* 玻璃表面（--glass-*，悬浮 Dock 等）顶成实底：没有 blur 的半透明底会成灰膜；
+     受光环收成普通描边、高光与亮斑归零，投影退回悬浮条常规值 */
+  --glass-fill: var(--surface);
+  --glass-rim-hi: var(--line-strong);
+  --glass-rim-lo: var(--line-strong);
+  --glass-sheen: transparent;
+  --glass-tab-hi: transparent;
+  --glass-shadow: var(--shadow-float);
 }
 
 html[data-perf='low'] *,

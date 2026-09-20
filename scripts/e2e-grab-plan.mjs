@@ -290,6 +290,45 @@ async function main() {
     const emptyText = await evalJS(`document.querySelector('.plan .preview, .plan .err')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`)
     ok('没匹配到时会说清「教务有几个班、你的词没中」', /7\s*个教学班/.test(emptyText) && emptyText.includes('没匹配到'), emptyText)
 
+    /* ---- 3b. 跨课程：一句查询命中两门课 → 拦下来，不排队 ---- */
+    // 「大学」同时命中 大学英语（一）/000002 与 大学物理（含实验）/000011 ——
+    // 真实名单里最危险的那一版是年级双开（大一 000004 / 大二 000006 的同一门体育课）：
+    // 「中一个就够」时把两门课一起排进志愿组，引擎可能抢回**另一个年级**那门。
+    // 所以这类查询不该闷头排队，而要让人补上课程代码。
+    await writeQuery('大学')
+    await preview()
+    const ambText = await evalJS(`document.querySelector('.plan .preview')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`)
+    ok(
+      '跨课程的查询在预览里就说清「命中了 2 门课」',
+      ambText.includes('同时命中') && ambText.includes('000002') && ambText.includes('000011'),
+      ambText.slice(0, 140),
+    )
+    await clickText('.plan .primary', '加入计划')
+    await waitFor(`${planRowExpr('大学')} != null`, 6000, '计划行出现')
+    await waitFor(`(${planChipExpr('大学')}) === '要补课程代码'`, 8000, '引擎判定为跨课程')
+    ok('引擎不排队：计划停在「要补课程代码」', true, await planChipExpr('大学'))
+    ok(
+      '计划行不给候选班（没排志愿，也就没有「会抢哪些班」）',
+      (await evalJS(`(${planRowExpr('大学')}).querySelectorAll('.matches li').length`)) === 0,
+    )
+    ok(
+      '同一时间没有任何任务被排出来',
+      (await evalJS(`document.querySelectorAll('.grab .task').length`)) === 0,
+      `任务 ${await evalJS(`document.querySelectorAll('.grab .task').length`)} 条`,
+    )
+    // 补上课程代码 → 只命中那一门（「写上代码就锁死课程」的用户可见效果）
+    await evalJS(`(${planRowExpr('大学')}).querySelector('[aria-label="移除计划"]').click()`)
+    await waitFor(`${planRowExpr('大学')} == null`, 6000, '移除歧义计划')
+    await writeQuery('大学英语 000002')
+    await preview()
+    const pinned = await evalJS(`[...document.querySelectorAll('.plan .preview .matches li')].map((li) => li.textContent.replace(/\\s+/g, ' ').trim())`)
+    ok(
+      '补上课程代码后只命中那一门（不再跨课程）',
+      pinned.length > 0 && pinned.every((t) => t.includes('000002')),
+      JSON.stringify(pinned).slice(0, 140),
+    )
+    await shot('2c-ambiguous')
+
     /* ---- 4. 加入计划 → 引擎自己解析成志愿任务 → 自己抢到 ---- */
     await writeQuery('高数 张')
     await preview()
