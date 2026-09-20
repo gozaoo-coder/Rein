@@ -354,7 +354,7 @@ export interface LessonQuery {
  * 关掉页面不影响任何事 —— 这正是抢课该有的样子。 */
 
 /** 任务的终态集合：到这里引擎就不再碰它了 */
-export type GrabTerminalStatus = 'success' | 'failed' | 'conflict' | 'cancelled'
+export type GrabTerminalStatus = 'success' | 'failed' | 'conflict' | 'cancelled' | 'needs_ai'
 export type GrabStatus = 'waiting' | 'running' | GrabTerminalStatus | 'paused'
 /** 过程状态：`status` 说结果如何，`phase` 说现在在干嘛 */
 export type GrabPhase = 'idle' | 'submit' | 'poll'

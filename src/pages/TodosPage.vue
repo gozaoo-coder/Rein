@@ -193,7 +193,14 @@ async function placeInNextGap(t: Todo): Promise<void> {
 function onChipDown(e: PointerEvent, t: Todo): void {
   if (e.button !== 0) return
   const el = e.currentTarget as HTMLElement
-  el.setPointerCapture(e.pointerId)
+  // **捕获失败不能带走整个拖拽**：合成指针、指针已失效等边缘会抛 NotFoundError，
+  // 而这里没有捕获也能靠元素自身的 pointermove 继续（画布那边就是这么办的）。
+  // 曾经这里少了个 try，于是「捕获一失败，池卡片就完全拖不动」。
+  try {
+    el.setPointerCapture(e.pointerId)
+  } catch {
+    /* 无有效指针：拖拽沿元素事件继续 */
+  }
   chipDrag.value = t
   chipStart = { x: e.clientX, y: e.clientY }
   chipMoved = false

@@ -7,8 +7,9 @@
  *
  * 剧本：第 1 轮吐思考（3 块）→ list_todos 工具调用；第 2 轮（请求里带 tool 结果）吐思考 + 正文 JSON。
  * 覆盖：合并标题（思考中 N 秒 → 已思考 N 秒 · 使用了工具）、进行中自动展开 + 跳动圆点、
- *       思考文字与工具行按到达顺序穿插、工具行状态（执行中→完成）、结果内联预览、
- *       工具详情手风琴、结束后自动折叠、点击手动展开。
+ *       思考文字与工具行按到达顺序穿插、工具行状态（执行中→完成）、
+ *       工具行只描述「做了什么」且不横向溢出、点击工具行弹出详情抽屉（行内不再展开）、
+ *       结束后自动折叠、点击手动展开。
  *
  * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
  * 运行：node scripts/e2e-ai-stream.mjs
@@ -199,7 +200,7 @@ async function shot(name) {
     return (sec.classList.contains('collapsed') ? 'collapsed' : 'expanded') +
       ' · body显示=' + (getComputedStyle(body).display !== 'none') +
       ' · maxHeight=' + (body.style.maxHeight || '(空)') +
-      ' · 详情=' + (document.querySelector('.tool-detail-inline') ? '开' : '关')
+      ' · 工具抽屉=' + (document.querySelector('.panel') ? '开' : '关')
   })()`)
   console.log(`      [截图 ${name}] ${state}`)
   const r = await cdp('Page.captureScreenshot', { format: 'png' })
@@ -345,67 +346,130 @@ async function main() {
       (await evalJS(`document.querySelector('.tool-name').textContent`)) === '查看待办（分页）',
       await evalJS(`document.querySelector('.tool-name').textContent`),
     )
-    const inline = await evalJS(`document.querySelector('.tool-result-inline')?.textContent?.trim() ?? ''`)
-    ok('10 工具行内联结果预览非空（showResult）', inline.length > 0, inline.slice(0, 40))
+    /* ---------- 工具行：只描述「做了什么」，且不横向溢出 ---------- */
+    const rowMeta = await evalJS(`(() => {
+      const row = document.querySelector('.tool-item')
+      const body = document.querySelector('.process-body')
+      return {
+        text: (row.textContent ?? '').replace(/\\s+/g, ' ').trim(),
+        hasRaw: /[{}\\[\\]]/.test(row.textContent ?? ''),
+        rowSpill: row.scrollWidth - row.clientWidth,
+        bodySpill: body.scrollWidth - body.clientWidth,
+      }
+    })()`)
+    ok(
+      '10 工具行只描述「做了什么」（工具短名 + 目标，无原始参数）',
+      rowMeta.text.includes('查看待办（分页）') && !rowMeta.hasRaw,
+      rowMeta.text,
+    )
+    ok('11 工具行无横向溢出', rowMeta.rowSpill <= 1, `溢出 ${rowMeta.rowSpill}px`)
+    ok('12 过程区无横向溢出', rowMeta.bodySpill <= 1, `溢出 ${rowMeta.bodySpill}px`)
+    ok('13 不再有右侧参数摘要 / 内联结果预览', await evalJS(`!document.querySelector('.tool-args, .tool-result-inline')`))
+
+    // 原缺陷：某个工具入参很长（URL / 长查询串）时行被撑爆、整页横向溢出。
+    // 用克隆行灌一段超长无空格文本做压力探针（测完即移除，不动真实行）
+    const stress = await evalJS(`(() => {
+      const row = document.querySelector('.tool-item')
+      const body = document.querySelector('.process-body')
+      const probe = row.cloneNode(true)
+      const desc = probe.querySelector('.tool-desc')
+      const target = document.createElement('span')
+      target.className = 'tool-target'
+      target.textContent = 'https://a.example.com/' + 'x'.repeat(160) + '/' + '超长参数'.repeat(20)
+      desc.appendChild(target)
+      body.appendChild(probe)
+      const line = parseFloat(getComputedStyle(desc).lineHeight)
+      const out = {
+        lines: Math.round(desc.getBoundingClientRect().height / line),
+        rowSpill: probe.scrollWidth - probe.clientWidth,
+        bodySpill: body.scrollWidth - body.clientWidth,
+        pageSpill: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      }
+      probe.remove()
+      return out
+    })()`)
+    ok(
+      '14 超长入参换行而非溢出',
+      stress.lines >= 2 && stress.rowSpill <= 1 && stress.bodySpill <= 1 && stress.pageSpill <= 1,
+      `折 ${stress.lines} 行 · 行溢出 ${stress.rowSpill}px · 过程区溢出 ${stress.bodySpill}px · 页面溢出 ${stress.pageSpill}px`,
+    )
     await shot('1-streaming')
 
     /* ---------- 结束：标题合并摘要 + 自动折叠 ---------- */
     await waitFor(`/已思考 \\d+ 秒/.test(document.querySelector('.process-title')?.textContent ?? '')`, 15000, '标题转为已思考')
     const title = await evalJS(`document.querySelector('.process-title').textContent`)
-    ok('11 结束后标题为「已思考 N 秒 · 使用了工具」', /^已思考 \d+ 秒 · 使用了工具$/.test(title), title)
-    ok('12 结束后跳动圆点消失', await evalJS(`document.querySelectorAll('.process-dots .dot').length === 0`))
+    ok('15 结束后标题为「已思考 N 秒 · 使用了工具」', /^已思考 \d+ 秒 · 使用了工具$/.test(title), title)
+    ok('16 结束后跳动圆点消失', await evalJS(`document.querySelectorAll('.process-dots .dot').length === 0`))
     await waitFor(`document.querySelector('.process-section').classList.contains('collapsed')`, 6000, '自动折叠')
-    ok('13 结束后自动折叠（600ms 延迟）', true)
+    ok('17 结束后自动折叠（600ms 延迟）', true)
     ok(
-      '14 折叠后展开区隐藏',
+      '18 折叠后展开区隐藏',
       await evalJS(`getComputedStyle(document.querySelector('.process-body')).display === 'none'`),
     )
     await shot('2-collapsed')
 
     /* ---------- 对话气泡切分：过程 + 正文 ---------- */
     const rows = await evalJS(`document.querySelectorAll('.msg.assistant').length`)
-    ok('15 一条提问产生 2 个助手气泡（过程气泡 + 正文气泡）', rows === before + 2, `前 ${before} → 后 ${rows}`)
+    ok('19 一条提问产生 2 个助手气泡（过程气泡 + 正文气泡）', rows === before + 2, `前 ${before} → 后 ${rows}`)
     const bubbleText = await evalJS(`[...document.querySelectorAll('.msg.assistant .bubble')].pop()?.textContent?.trim()`)
-    ok('16 正文气泡为协议解出的纯文本', (bubbleText ?? '').includes('今天有 3 条待办，最要紧的是跑步。'), bubbleText)
-    ok('17 协议 JSON 不外泄到界面', !(bubbleText ?? '').includes('kind'))
+    ok('20 正文气泡为协议解出的纯文本', (bubbleText ?? '').includes('今天有 3 条待办，最要紧的是跑步。'), bubbleText)
+    ok('21 协议 JSON 不外泄到界面', !(bubbleText ?? '').includes('kind'))
 
-    /* ---------- 手动展开：穿插顺序 + 工具详情 ---------- */
+    /* ---------- 手动展开：穿插顺序 + 工具详情抽屉 ---------- */
     await evalJS(`document.querySelector('.process-header').click()`)
     await sleep(500)
-    ok('18 点击标题可手动展开', await evalJS(`!document.querySelector('.process-section').classList.contains('collapsed')`))
+    ok('22 点击标题可手动展开', await evalJS(`!document.querySelector('.process-section').classList.contains('collapsed')`))
     await sleep(400)
     const order = await evalJS(
       `[...document.querySelector('.process-body').children].map(c => c.className.split(' ')[0]).join(',')`,
     )
-    ok('19 思考文字与工具行按到达顺序穿插', order === 'process-reasoning,tool-group,process-reasoning', order)
+    ok('23 思考文字与工具行按到达顺序穿插', order === 'process-reasoning,tool-list,process-reasoning', order)
 
+    /* ---------- 点击工具行 → 底部抽屉（不再行内展开） ---------- */
     await evalJS(`document.querySelector('.tool-item').click()`)
-    await sleep(400)
-    ok('20 工具行点击展开详情（手风琴）', await evalJS(`!!document.querySelector('.tool-detail-inline')`))
-    const detail = await evalJS(`document.querySelector('.tool-detail-inline')?.textContent ?? ''`)
-    ok('21 详情含输入参数与返回结果', detail.includes('输入参数') && detail.includes('返回结果'))
+    await waitFor(`!!document.querySelector('.panel')`, 4000, '工具详情抽屉弹出')
+    ok('24 工具行点击弹出抽屉', await evalJS(`!document.querySelector('.tool-detail-inline')`))
+    const sheet = await evalJS(`document.querySelector('.panel')?.textContent ?? ''`)
+    ok('25 抽屉含输入参数与返回结果', sheet.includes('输入参数') && sheet.includes('返回结果'))
     ok(
-      '22 详情保留原始 JSON 入参',
-      await evalJS(`[...document.querySelectorAll('.detail-pre')].some(p => p.textContent.includes('limit'))`),
+      '26 抽屉保留原始 JSON 入参',
+      await evalJS(`[...document.querySelectorAll('.panel pre')].some(p => p.textContent.includes('limit'))`),
     )
+    ok(
+      '27 抽屉内容不横向溢出',
+      await evalJS(`(() => {
+        const pre = document.querySelector('.panel pre')
+        return pre ? pre.scrollWidth - pre.clientWidth <= 1 : false
+      })()`),
+    )
+    await shot('3-drawer')
 
     // 自动折叠只应发生一次：手动展开后继续交互（打开工具详情）不应被自折叠定时器打断
     ok(
-      '23 手动展开后在后续交互中保持展开',
+      '28 打开抽屉后过程区保持展开',
       await evalJS(`!document.querySelector('.process-section').classList.contains('collapsed')`),
     )
-    await shot('3-expanded-detail')
+
+    /* ---------- 关闭抽屉：过程区仍在，背景滚动锁恢复 ---------- */
+    await evalJS(`document.querySelector('.panel .close').click()`)
+    await waitFor(`!document.querySelector('.panel')`, 4000, '抽屉关闭')
+    ok('29 点关闭按钮收起抽屉', true)
+    ok(
+      '30 关闭后恢复页面滚动（无残留 overflow 锁）',
+      await evalJS(`document.documentElement.style.overflow === ''`),
+      await evalJS(`document.documentElement.style.overflow || '(空)'`),
+    )
 
     /* ---------- 再点一次折叠回去 ---------- */
     await evalJS(`document.querySelector('.process-header').click()`)
     await sleep(500)
-    ok('24 再点标题可折叠回去', await evalJS(`document.querySelector('.process-section').classList.contains('collapsed')`))
+    ok('31 再点标题可折叠回去', await evalJS(`document.querySelector('.process-section').classList.contains('collapsed')`))
 
     /* ---------- 运行期异常 ---------- */
     const errs = await evalJS(`window.__errs`)
-    ok('25 运行期无未捕获异常', Array.isArray(errs) && errs.length === 0, (errs ?? []).join(' | '))
+    ok('32 运行期无未捕获异常', Array.isArray(errs) && errs.length === 0, (errs ?? []).join(' | '))
     ok(
-      '26 provider 恰好收到 2 轮请求（工具后二次调用）',
+      '33 provider 恰好收到 2 轮请求（工具后二次调用）',
       provider.rounds.join(',') === '1,2',
       provider.rounds.join(','),
     )

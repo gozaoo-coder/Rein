@@ -89,6 +89,13 @@ const SESSION_RETRY_MS: i64 = 60_000;
 const CLIENT_RETRY_MS: i64 = 10_000;
 /// 未知错误的最大连败次数。满员/繁忙这类**已知可重试**的不受此限，未知的不能无限撞。
 const UNKNOWN_STRIKE_LIMIT: i64 = 8;
+/// 「教务在限速」与「教务服务器出错」时的**下一次动作**延迟。
+///
+/// 这两类都是**对方的**问题，不是这条请求的问题：教务限速说明我们打得太快（它还能收），
+/// 5xx 说明它自己崩了（等它缓过来就行）。所以这里的策略是**不降速、不放弃**——
+/// 把任务立刻放回队首，真正的节奏交给引擎那唯一的节流闸门（`min_interval_ms`）去管。
+/// 反过来做（连败退避）在抢课里最贵：窗口只有几分钟，退避一次就少几十次机会。
+const BACKPRESSURE_RETRY_MS: i64 = 0;
 /// 去 `open-turns` 问「窗口公布了没有」的间隔。分钟级足够 ——
 /// 窗口是教务处按分钟公布的，不是按毫秒。
 const TURN_PROBE_MS: i64 = 60_000;
@@ -117,6 +124,15 @@ pub enum Verdict {
     TokenRefresh,
     /// 教务会话失效：引擎降速，并把它暴露到界面上等用户处理
     SessionLost,
+    /// **教务在限速**（请求过于频繁 / 429）：对方还有反应，只是让我们慢点。
+    /// 应对是**保持节奏继续打**，而不是退避 —— 见 [`BACKPRESSURE_RETRY_MS`]。
+    Throttled,
+    /// **教务服务器出错**（5xx / 服务异常 / 连接被重置）：对方自己崩了。
+    /// 同样不退避：它缓过来的那一刻正是我们要抢的那一秒。
+    ServerDown,
+    /// **请求本身被拒**（参数错误 / 400 / 422）：重试一万次也是同一个结果，
+    /// 而且每次都在用错误的参数骚扰教务。停下来，立刻交给 AI 去查现场、改参数。
+    BadRequest,
     /// 时间冲突：必须人去教务网页端办免听，本地重试一万次也没用
     Conflict,
     /// 名额满了。名额释放是稀疏事件，值得一直守着，但节奏要慢。
@@ -133,6 +149,9 @@ impl Verdict {
         match self {
             Verdict::TokenRefresh => "token",
             Verdict::SessionLost => "session",
+            Verdict::Throttled => "throttled",
+            Verdict::ServerDown => "server",
+            Verdict::BadRequest => "badreq",
             Verdict::Conflict => "conflict",
             Verdict::Full => "full",
             Verdict::Fatal => "fatal",
@@ -142,7 +161,17 @@ impl Verdict {
 
     /// 这一类失败该不该重置「连败」计数。换令牌是引擎内务，与任务本身无关。
     fn resets_strikes(self) -> bool {
-        matches!(self, Verdict::TokenRefresh)
+        match self {
+            // 限流与 5xx 是**对方的状态**：把连败记在这条任务账上毫无意义，
+            // 记下去只会让退避越来越大 —— 而那正是抢课里最不该做的事。
+            Verdict::TokenRefresh | Verdict::Throttled | Verdict::ServerDown => true,
+            _ => false,
+        }
+    }
+
+    /// 这一类的失败**不该消耗**用户的提交上限：请求根本没被受理。
+    fn spares_attempt_budget(self) -> bool {
+        matches!(self, Verdict::Throttled | Verdict::ServerDown)
     }
 }
 
@@ -164,6 +193,54 @@ pub fn verdict_of(message: &str) -> Verdict {
     }
     if m.contains("会话已过期") || m.contains("重新登录") || m.contains("登录已过期") {
         return Verdict::SessionLost;
+    }
+
+    // ⓪ 先认「对方的毛病」：限流与 5xx 都要**继续打**，而它们的文案里常常带别的词
+    //    （「请求过于频繁，请稍后再试」里有「请稍后」；「服务器繁忙」里有「繁忙」），
+    //    所以这两类必须判在满员/可重试之前，否则会被兜底吞掉、走上退避那条路。
+    for kw in [
+        "请求过于频繁",
+        "操作过于频繁",
+        "请求频繁",
+        "访问频繁",
+        "请求过多",
+        "请求太多",
+        "请求太快",
+        "频率超限",
+        "超出频率",
+        "频率限制",
+        "限流",
+        "too many requests",
+        "rate limit",
+        "429",
+    ] {
+        if m.contains(kw) || m.to_ascii_lowercase().contains(kw) {
+            return Verdict::Throttled;
+        }
+    }
+    for kw in [
+        "服务器内部错误",
+        "服务异常",
+        "服务器异常",
+        "系统异常",
+        "服务器繁忙",
+        "系统繁忙",
+        "服务不可用",
+        "服务器维护",
+        "连接被重置",
+        "连接重置",
+        "502",
+        "503",
+        "504",
+        "500",
+        "bad gateway",
+        "service unavailable",
+        "internal server error",
+        "connection reset",
+    ] {
+        if m.contains(kw) || m.to_ascii_lowercase().contains(kw) {
+            return Verdict::ServerDown;
+        }
     }
 
     // ① 满员（必须在「已选过」之前判）
@@ -220,6 +297,34 @@ pub fn verdict_of(message: &str) -> Verdict {
     ] {
         if m.contains(kw) {
             return Verdict::Fatal;
+        }
+    }
+
+    // ④ **请求本身被拒**：判在终态之后 —— 「参数错误：教学班不存在」这种要按「不存在」处理，
+    //    而不是把一条本来就该收手的请求推给 AI。纯参数问题的典型文案：
+    //    「请求参数错误」「缺少必填参数」「参数校验失败」「HTTP 400/422」。
+    //    这一类**重试不解决问题**，而且每次都在用错的参数骚扰教务 —— 停下来交给 AI。
+    for kw in [
+        "参数错误",
+        "参数有误",
+        "参数不合法",
+        "参数无效",
+        "参数不正确",
+        "参数校验",
+        "缺少参数",
+        "缺少必填",
+        "非法参数",
+        "请求参数",
+        "格式错误",
+        "格式不正确",
+        "反序列化",
+        "bad request",
+        "unprocessable",
+        "400",
+        "422",
+    ] {
+        if m.contains(kw) || m.to_ascii_lowercase().contains(kw) {
+            return Verdict::BadRequest;
         }
     }
 
@@ -1415,6 +1520,9 @@ fn park_intent(
 /// 把一次错误吸收进任务状态：分级 → 定下一次动作 → 必要时判死。
 fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
     let verdict = verdict_of(&message);
+    // 原始文案要留着：下面几档都会把它包进一句「怎么应对」里，光留下包裹后的那句话
+    // 会让事后排查看不到教务的原话。
+    let raw = message.clone();
     task.last_message = Some(message);
     task.request_id = None;
     task.phase = PHASE_IDLE.into();
@@ -1444,6 +1552,30 @@ fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
             task.status = GRAB_WAITING.into();
             task.next_at = now_ms() + 1500;
         }
+        // **教务在限速 / 教务崩了**：继续打，不退避。
+        //
+        // 这两类是抢课里唯一「越挫越要快」的失败：对方还活着（限速说明它正在收，
+        // 5xx 说明它在重启），而窗口往往只有几分钟。退避只会把机会让给手快的人，
+        // 所以这里只把原因写清楚、把任务立刻放回队首，节奏交给全局节流闸门。
+        Verdict::Throttled | Verdict::ServerDown => {
+            let note = if verdict == Verdict::Throttled {
+                "教务在限速（继续按节奏重试）"
+            } else {
+                "教务服务器出错（继续重试）"
+            };
+            task.status = GRAB_WAITING.into();
+            task.next_at = now_ms() + BACKPRESSURE_RETRY_MS;
+            task.last_message = Some(format!("{note}：{raw}"));
+        }
+        // **请求被拒（参数错误）**：停下来交给 AI。硬撞下去既不会成功，又在持续骚扰教务。
+        Verdict::BadRequest => {
+            finish(
+                task,
+                GRAB_NEEDS_AI,
+                &format!("请求被教务拒绝（参数错误），已停下等 AI 排查：{raw}"),
+            );
+            return;
+        }
         Verdict::Full => {
             task.status = GRAB_WAITING.into();
             task.next_at = now_ms() + settings.full_retry_ms;
@@ -1470,6 +1602,11 @@ fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
         }
     }
 
+    // 提交上限是给「我们自己反复撞墙」设的闸门。对方限速/崩溃不算我们撞墙 ——
+    // 被这两类耗掉额度的话，窗口一开就正好没额度可用了。
+    if verdict.spares_attempt_budget() {
+        return;
+    }
     if settings.max_attempts > 0 && task.attempts >= settings.max_attempts {
         let m = task.last_message.clone().unwrap_or_default();
         finish(task, GRAB_FAILED, &format!("已达提交上限 {} 次：{m}", settings.max_attempts));
@@ -2343,11 +2480,86 @@ mod tests {
         assert_eq!(verdict_of("教务会话已过期，请先重新登录"), Verdict::SessionLost);
         assert_eq!(verdict_of("与已选课程时间冲突，请办理免听"), Verdict::Conflict);
         assert_eq!(verdict_of("不在选课时间内"), Verdict::Fatal);
-        assert_eq!(verdict_of("选课接口失败：HTTP 503"), Verdict::Retry);
         assert_eq!(verdict_of("网络请求失败：timed out"), Verdict::Retry);
         // 认不出来的一律可重试，由连败上限兜底
         assert_eq!(verdict_of("教务返回了一段没人见过的话"), Verdict::Retry);
         assert_eq!(verdict_of(""), Verdict::Retry);
+    }
+
+    /// 三类应急：**限流与 5xx 继续打，参数错误立刻停手交给 AI**。
+    ///
+    /// 这个分档是抢课的成败线：窗口只有几分钟，退避一次就少几十次机会；
+    /// 而用错误的参数继续撞，既不会成功，又在持续骚扰教务。
+    #[test]
+    fn verdict_splits_the_three_emergencies() {
+        // 限流：文案五花八门，还得认得出英文与状态码
+        assert_eq!(verdict_of("请求过于频繁，请稍后再试"), Verdict::Throttled);
+        assert_eq!(verdict_of("操作过于频繁"), Verdict::Throttled);
+        assert_eq!(verdict_of("HTTP 429 Too Many Requests"), Verdict::Throttled);
+        assert_eq!(verdict_of("rate limit exceeded"), Verdict::Throttled);
+
+        // 服务器出错：5xx / 服务异常 / 连接被重置
+        assert_eq!(verdict_of("选课接口失败：HTTP 503"), Verdict::ServerDown);
+        assert_eq!(verdict_of("服务器内部错误"), Verdict::ServerDown);
+        assert_eq!(verdict_of("502 Bad Gateway"), Verdict::ServerDown);
+        assert_eq!(verdict_of("连接被重置"), Verdict::ServerDown);
+
+        // 参数错误：请求的写法不对，重试无用
+        assert_eq!(verdict_of("请求参数错误：缺少 assoc"), Verdict::BadRequest);
+        assert_eq!(verdict_of("参数校验失败"), Verdict::BadRequest);
+        assert_eq!(verdict_of("HTTP 422 Unprocessable Entity"), Verdict::BadRequest);
+
+        // **顺序保证**：能判出「这门课不存在」的按终态处理，别把它推给 AI；
+        // 「已选人数已达上限」也不能因为带了别的词就变成限流
+        assert_eq!(verdict_of("参数错误：教学班不存在"), Verdict::Fatal);
+        assert_eq!(verdict_of("已选人数已达上限"), Verdict::Full);
+        assert_eq!(verdict_of("服务器繁忙，请稍后再试"), Verdict::ServerDown);
+    }
+
+    #[test]
+    fn throttled_and_server_errors_keep_hammering_without_backoff() {
+        // 提交上限设成 1：被限流/5xx 消耗掉的话，窗口一开就正好没额度了
+        let s = GrabSettings {
+            max_attempts: 1,
+            ..Default::default()
+        };
+
+        for (msg, note) in [
+            ("请求过于频繁，请稍后再试", "限速"),
+            ("选课接口失败：HTTP 503", "服务器出错"),
+        ] {
+            let mut t = task(None, 1);
+            let before = now_ms();
+            absorb_error(&mut t, &s, msg.into());
+            assert_eq!(t.status, GRAB_WAITING, "{msg}");
+            assert_eq!(t.strikes, 0, "对方的状态不该记在这条任务账上：{msg}");
+            assert!(t.next_at <= now_ms() + 5, "不许退避：{msg}");
+            assert!(t.next_at >= before, "也不许回到过去：{msg}");
+            assert!(
+                t.last_message.as_deref().unwrap_or_default().contains(note),
+                "要把应对方式写给用户看：{msg}"
+            );
+            assert!(
+                t.last_message.as_deref().unwrap_or_default().contains(msg),
+                "教务的原话也要留着：{msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn bad_request_stops_the_task_and_hands_it_to_ai() {
+        let s = GrabSettings {
+            max_attempts: 1,
+            ..Default::default()
+        };
+        let mut t = task(None, 1);
+        absorb_error(&mut t, &s, "请求参数错误：缺少 assoc".into());
+
+        assert_eq!(t.status, GRAB_NEEDS_AI);
+        assert!(grab_is_terminal(&t.status), "引擎不许再碰它");
+        let msg = t.last_message.clone().unwrap_or_default();
+        assert!(msg.contains("参数错误"), "{msg}");
+        assert!(msg.contains("AI"), "要指出下一步是交给 AI：{msg}");
     }
 
     #[test]

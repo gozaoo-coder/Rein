@@ -13,6 +13,7 @@ import { isTauri } from '@/services/transport'
 
 import { contextTools } from './misc'
 import { campusTools } from './campus'
+import { campusProgramTools } from './campusProgram'
 import { dietTools } from './diet'
 import { exerciseTools } from './exercise'
 import { imageTools } from './image'
@@ -53,6 +54,7 @@ export const APP_TOOLS: AppTool[] = [
   ...webTools,
   ...imageTools,
   ...campusTools,
+  ...campusProgramTools,
 ]
 
 const BY_NAME = new Map(APP_TOOLS.map((t) => [t.name, t]))

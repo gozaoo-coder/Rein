@@ -75,6 +75,14 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
   )
   const hasGrabWork = computed(() => activeTasks.value.length > 0)
 
+  /**
+   * **被教务拒了的任务**（参数错误 / 400 / 422）。
+   *
+   * 它们停在 `needs_ai`：重试不会改变结果，引擎也不该再拿错的参数去骚扰教务。
+   * 界面据此给出一句「为什么停了」和一条「交给 AI 排查」的出路。
+   */
+  const rejectedTasks = computed(() => grabTasks.value.filter((t) => t.status === 'needs_ai'))
+
   /** 引擎在跑但教务会话掉了 —— 这类故障要显眼地告诉用户去重登 */
   const grabError = computed(() => grab.value?.lastError ?? '')
 
@@ -396,6 +404,7 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
     grabTasks,
     activeTasks,
     hasGrabWork,
+    rejectedTasks,
     grabError,
     intents,
     intentTasks,
@@ -457,12 +466,18 @@ export function turnWindow(turn: CourseSelectTurn): { start: string | null; end:
 export function grabStatusMeta(t: GrabTask): { label: string; tone: 'run' | 'ok' | 'warn' | 'bad' | 'idle' } {
   if (t.status === 'success') return { label: '已抢到', tone: 'ok' }
   if (t.status === 'conflict') return { label: '需办免听', tone: 'warn' }
+  // 请求被教务拒了（参数错误）：重试不会改变结果，下一步是让 AI 看现场、改请求
+  if (t.status === 'needs_ai') return { label: '请求被拒', tone: 'warn' }
   if (t.status === 'failed') return { label: '未成功', tone: 'bad' }
   if (t.status === 'cancelled') return { label: '已取消', tone: 'idle' }
   if (t.status === 'paused') return { label: '已暂停', tone: 'idle' }
   // 没结束的：把「在干嘛」讲清楚。顺序要紧 —— `phase` 必须先判，
   // 否则刚交出占位单、正在等受理的任务会显示成「待开抢」（它明明已经出手了）。
   if (t.awaitWindow && !t.windowWall) return { label: '等窗口公布', tone: 'run' }
+  // 限流 / 教务服务器出错：引擎**不退避**，正在按节奏继续打 —— 这句话得说出来，
+  // 否则用户看到「第 N 次尝试」会以为卡住了，跑去手动重排反而更慢
+  if (t.strikeKind === 'throttled') return { label: '教务限速中', tone: 'run' }
+  if (t.strikeKind === 'server') return { label: '教务异常中', tone: 'run' }
   if (t.phase === 'poll') return { label: '等教务结果', tone: 'run' }
   if (t.attempts > 0) return { label: `第 ${t.attempts} 次尝试`, tone: 'run' }
   if (t.fireAt != null) return { label: '待开抢', tone: 'run' }

@@ -1,6 +1,9 @@
 /**
  * 校园教务域工具 · **AI 的最后补救**。
  *
+ * 另一半（照常的那一半：读培养方案、提前预约）在 `campusProgram.ts` —— 那边管
+ * 「我该修什么、提前排好」，这边管「排好了却抢不到」。两边共用 `note()` 这一个审计入口。
+ *
  * 抢课引擎（`src-tauri/src/modules/campus/grab.rs`）管「一切照常」：窗口到了开火、满员守着、
  * 会话掉了自己重登。这一组工具管「不照常」——教务改了接口、返回了 HTML 回退、多了个没见过的
  * 报错、任务卡死、计划怎么都解析不出来。那些时刻用户没别的办法，只能让 AI 上。
@@ -240,8 +243,9 @@ async function pollTicket(
   }
 }
 
-/** 审计：把一次动作连同理由写进 `campus_ai_actions`（写操作不弹确认，靠这个兜底）。 */
-async function note(kind: string, summary: string, detail?: unknown): Promise<void> {
+/** 审计：把一次动作连同理由写进 `campus_ai_actions`（写操作不弹确认，靠这个兜底）。
+ *  `campusProgram.ts` 的预约也走它 —— 审计只该有一条写入口。 */
+export async function note(kind: string, summary: string, detail?: unknown): Promise<void> {
   try {
     await campusService.rescueNote({ kind, summary, detail })
   } catch {

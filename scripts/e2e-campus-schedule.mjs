@@ -225,19 +225,24 @@ async function main() {
     const blocks = await evalJS(`document.querySelectorAll('.grid .blk').length`)
     ok('课程块已渲染', blocks > 0, `${blocks} 块`)
 
-    // 初始横向位置必须落在列边界上，否则边上会露出半截列（看起来像渲染坏了）
+    // 初始横向位置必须落在列边界上，否则左边会露出半截列（看起来像渲染坏了）。
+    // **直接验这件事本身**：冻结的时刻列右侧就是可见区左缘，不许有任何列横跨它 ——
+    // 用 scrollLeft 去除以列宽那种算法要额外假设冻结列是否计入滚动量，一路算错两回（8px → 26px），
+    // 而「有没有半截列」本来就能一眼量出来。
     const align = await evalJS(`(() => {
       const wrap = document.querySelector('.wrap')
-      const grid = document.querySelector('.grid')
+      const wr = wrap.getBoundingClientRect()
       const timeW = document.querySelector('.cell.time').getBoundingClientRect().width
-      const colW = (grid.scrollWidth - timeW) / 7
-      const k = wrap.scrollLeft / colW
-      return { scrollLeft: wrap.scrollLeft, colW, offBy: Math.abs(k - Math.round(k)) * colW }
+      const left = wr.left + timeW
+      const cols = [...document.querySelectorAll('.cell.head.day')].map((c) => c.getBoundingClientRect())
+      // 横跨左缘 = 被切了一半
+      const straddling = cols.filter((c) => c.left < left - 0.5 && c.right > left + 0.5).length
+      return { scrollLeft: wrap.scrollLeft, timeW, straddling, offsets: cols.map((c) => Math.round(c.left - left)) }
     })()`)
     ok(
-      '初始横向滚动对齐到列边界（不出现半截列）',
-      align.offBy < 1.5,
-      `scrollLeft=${align.scrollLeft.toFixed(1)} colWidth=${align.colW.toFixed(1)} 偏差=${align.offBy.toFixed(2)}px`,
+      '初始横向滚动对齐到列边界（左缘不出现半截列）',
+      align.straddling === 0,
+      `scrollLeft=${align.scrollLeft.toFixed(1)} 时刻列宽=${align.timeW.toFixed(0)} 半截列=${align.straddling} 各列偏移=${JSON.stringify(align.offsets)}`,
     )
 
     /* ---- 4. 冻结窗格 ---- */
@@ -307,7 +312,14 @@ async function main() {
     // 周视图里「今天」那列有几块，日视图就该有几节。切视图会异步重载当天区间，
     // 在重载回来之前 store 里仍是上一段的数据——这里正是为了钉住那次串台。
     const todayBlocks = await evalJS(`document.querySelectorAll('.cell.slot.today .blk').length`)
-    ok('周视图今天列有课', todayBlocks > 0, `${todayBlocks} 节`)
+    // 这一段真正要钉的是「周视图今天列的块数 == 日视图的行数」（换视图时不与相邻日期串台）。
+    // 「今天列必须有课」只是个前提，而周末的演示数据本来就没有课 —— 周中仍严格要它成立。
+    const dow = new Date().getDay()
+    if (todayBlocks > 0) {
+      ok('周视图今天列有课', true, `${todayBlocks} 节`)
+    } else {
+      ok('周视图今天列有课（周末演示数据无课，仅校验视图一致）', dow === 0 || dow === 6, `今天 周${'日一二三四五六'[dow]}，${todayBlocks} 节`)
+    }
 
     await clickText('.seg-item', '日')
     await waitFor(

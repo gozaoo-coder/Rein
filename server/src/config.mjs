@@ -56,10 +56,49 @@ function defaultPricing() {
     traffic: { perGb: 0.8, scope: 'egress' },
     default: { in: 0, out: 0 },
     models: {
-      'deepseek-flash': { in: 2, out: 8 },
-      'deepseek-v4-pro': { in: 9, out: 27 },
+      // deepseek-flash 是 DeepSeek 官方对 V4.1-Flash 的调用名：方舟欠费兜底到官方平台时
+      // 走的正是它，两边是同一款模型、同一份官方价，价格表里必须两名字都在。
+      'deepseek-flash': { in: 2, out: 8, cacheIn: 0.04 },
+      'deepseek-v4-pro': { in: 9, out: 27, cacheIn: 0.3 },
     },
   }
+}
+
+/**
+ * 备选 provider 清洗：上游账户级故障（欠费/超额）时的退路。
+ * `models` 是「本家模型名 → 备选模型名」的映射 —— 两边对同一款模型的叫法常常不一样
+ * （方舟叫 deepseek-v4.1-flash，DeepSeek 官方叫 deepseek-flash），所以要显式配上。
+ */
+function normalizeFallback(raw) {
+  if (!raw || typeof raw !== 'object' || !raw.providerId) return null
+  const models = {}
+  for (const [from, to] of Object.entries(raw.models ?? {})) {
+    const a = String(from).slice(0, 128)
+    const b = String(to).slice(0, 128)
+    if (a && b) models[a] = b
+  }
+  const sec = Number(raw.cooldownSec)
+  return {
+    providerId: String(raw.providerId).slice(0, 32),
+    // 撞到欠费后先绕开主上游多久（秒）：欠费会持续到充值，没必要每个请求都去撞一遍
+    cooldownSec: Number.isFinite(sec) ? Math.min(Math.max(sec, 1), 3600) : 120,
+    models,
+  }
+}
+
+/** provider 清洗：key 或 baseUrl 为空一律视为未启用。 */
+export function normalizeProviders(list) {
+  return (Array.isArray(list) ? list : []).map((p) => ({
+    id: String(p.id ?? '').slice(0, 32),
+    name: String(p.name ?? p.id ?? 'provider').slice(0, 64),
+    baseUrl: String(p.baseUrl ?? '').replace(/\/+$/, ''),
+    apiKey: String(p.apiKey ?? ''),
+    models: Array.isArray(p.models) ? p.models.map((m) => String(m).slice(0, 128)).slice(0, 64) : [],
+    // 只做备选的 provider：不在模型清单里露出，免得用户直接挑到「备胎」把它的额度也用掉
+    hidden: Boolean(p.hidden),
+    fallback: normalizeFallback(p.fallback),
+    enabled: Boolean(p.enabled && p.apiKey && p.baseUrl),
+  }))
 }
 
 /** 价格表清洗：负数/非数字一律归零，口径只认三个合法值。 */
@@ -107,6 +146,9 @@ function defaultConfig(publicBaseUrl) {
       providers: PROVIDER_PRESETS,
       clients: [],
       rate: { rpm: 60, burst: 10 },
+      // 客户端只认 auto-model 这个名字：换后端模型只改这一行，客户端无需改动。
+      // 该模型必须挂在一个启用中的 provider 上，否则清单里不会出现这个别名。
+      autoModel: 'deepseek-v4.1-flash',
       pricing: defaultPricing(),
     },
   }
@@ -176,15 +218,15 @@ export function loadConfig() {
 
   // 配置里允许写相对路径（data 目录内），部署脚本从别处拷配置时不会踩空
   cfg.update.publicKey = cfg.update.publicKey ? String(cfg.update.publicKey) : null
-  for (const p of cfg.ai.providers) {
-    p.enabled = Boolean(p.enabled && p.apiKey)
-  }
+  cfg.ai.providers = normalizeProviders(cfg.ai.providers)
   cfg.ai.clients = (cfg.ai.clients ?? []).map((c) => ({
     ...c,
     // 旧配置没有白名单字段：空数组 = 该令牌可用全部模型
     models: Array.isArray(c.models) ? c.models.map((m) => String(m)) : [],
   }))
   cfg.ai.pricing = normalizePricing(cfg.ai.pricing)
+  // 空串 = 不下发 auto-model 别名（等价于关掉这个功能），老配置升上来就是这个状态
+  cfg.ai.autoModel = String(cfg.ai.autoModel ?? '').trim().slice(0, 128)
 
   return { cfg, created }
 }

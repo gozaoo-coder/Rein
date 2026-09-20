@@ -66,7 +66,17 @@ function embeddedPublicKey() {
 
 function hostTarget() {
   const osName = os.platform() === 'win32' ? 'windows' : os.platform() === 'darwin' ? 'darwin' : 'linux'
-  const arch = os.arch() === 'arm64' ? 'aarch64' : os.arch() === 'ia32' ? 'i686' : os.arch()
+  // 架构名要与清单键（也就是 Rust `platform_key()` 与 tauri 的 target 命名）**逐字对齐**：
+  // Node 报的是 `x64`，而清单里写的是 `x86_64` —— 直接把 os.arch() 拼进去会得到
+  // `windows-x64`，于是本机永远找不到自己的条目（这条真踩过）。
+  const arch =
+    os.arch() === 'arm64'
+      ? 'aarch64'
+      : os.arch() === 'x64'
+        ? 'x86_64'
+        : os.arch() === 'ia32'
+          ? 'i686'
+          : os.arch()
   return `${osName}-${arch}`
 }
 

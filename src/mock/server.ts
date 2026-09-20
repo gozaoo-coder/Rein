@@ -756,6 +756,7 @@ let aiUsage: (AiUsageInput & { at: string })[] = []
 
 /** 演示用目录：与真服务端 /v1/models 的 rein 扩展字段同构 */
 const MOCK_ONLINE_MODELS = [
+  { id: 'auto-model', providerId: 'ark', providerName: '火山方舟', priceIn: 2, priceOut: 8 },
   { id: 'deepseek-flash', providerId: 'deepseek', providerName: 'DeepSeek', priceIn: 2, priceOut: 8 },
   { id: 'deepseek-v4-pro', providerId: 'deepseek', providerName: 'DeepSeek', priceIn: 9, priceOut: 27 },
   { id: 'qwen3-max', providerId: 'dashscope', providerName: '阿里云百炼', priceIn: 0, priceOut: 0 },
@@ -3091,7 +3092,7 @@ let grabSettings: GrabSettings = {
  * 浏览器里没有那条后台线程，所以规则得在这儿再实现一遍 —— 但**必须同序**：
  * mock 与真引擎的行为只要分叉，e2e 就再也证明不了真引擎对不对。
  */
-const GRAB_TERMINAL = new Set(['success', 'failed', 'conflict', 'cancelled'])
+const GRAB_TERMINAL = new Set(['success', 'failed', 'conflict', 'cancelled', 'needs_ai'])
 
 const grabGroupOf = (t: MockGrabTask): string => (t.groupKey ?? '').trim()
 
@@ -3735,6 +3736,39 @@ function grabTick(): void {
       continue
     }
 
+    // ③' **故障注入**：让 e2e 能在浏览器里把三类应急各走一遍（真机上这些由教务自己触发）。
+    //     注入的是「教务的原话」，判定走下面那份与 Rust 同形的关键词表 ——
+    //     这样浏览器里验的就是同一套分档语义，而不是给测试另开一条捷径。
+    const faultMsg = mockGrabFaultMessage()
+    if (faultMsg) {
+      const kind = mockGrabVerdict(faultMsg)
+      if (kind === 'badreq') {
+        t.status = 'needs_ai'
+        t.phase = 'idle'
+        t.requestId = null
+        t.strikes = 1
+        t.strikeKind = 'badreq'
+        t.finishedAt = now
+        t.lastMessage = `请求被教务拒绝（参数错误），已停下等 AI 排查：${faultMsg}`
+        clearMockGrabFault() // 一次性：AI 查清后重新排队就该能成功
+        worked = true
+        continue
+      }
+      if (kind === 'throttled' || kind === 'server') {
+        t.attempts += 1 // 请求确实发出去了，真机也这么算
+        t.status = 'waiting'
+        t.phase = 'idle'
+        t.requestId = null
+        t.strikes = 0 // 对方的状态不记在这条任务账上
+        t.strikeKind = kind
+        t.lastMessage =
+          (kind === 'throttled' ? '教务在限速（继续按节奏重试）' : '教务服务器出错（继续重试）') + `：${faultMsg}`
+        t.nextAt = now // **不退避**：立刻回到队首，节奏交给节流闸门
+        worked = true
+        continue
+      }
+    }
+
     // ③ 提交一步
     if (t.mode === 'predicate' && !t.predicateDone) {
       t.phase = 'poll'
@@ -3759,6 +3793,68 @@ function grabTick(): void {
 }
 
 setInterval(grabTick, 250)
+
+/* ---------- 抢课的三类应急：mock 侧的故障注入与同形分档 ----------
+ *
+ * e2e 用 `window.__REIN_MOCK_GRAB_FAULT__` 注入一段「教务的原话」：
+ *   '请求过于频繁，请稍后再试' → 限流（继续打，不退避）
+ *   '选课接口失败：HTTP 503'   → 服务器出错（同样继续打）
+ *   '请求参数错误：缺少 assoc' → 参数错误（停下，交给 AI）
+ * 也可以用简写 'throttle' / 'server' / 'params'。
+ *
+ * 判定表与 Rust `grab.rs::verdict_of` 的应急三档逐条对齐 —— 这里只覆盖这三档，
+ * 兜底一律按「可重试」（真机上那段长表在 Rust 里，浏览器 mock 只服务测试）。
+ */
+const MOCK_GRAB_FAULT_ALIASES: Record<string, string> = {
+  throttle: '请求过于频繁，请稍后再试',
+  server: '选课接口失败：HTTP 503',
+  params: '请求参数错误：缺少 assoc',
+}
+
+function mockGrabFaultMessage(): string {
+  if (typeof window === 'undefined') return ''
+  const raw = (window as unknown as Record<string, unknown>).__REIN_MOCK_GRAB_FAULT__
+  if (typeof raw !== 'string' || !raw) return ''
+  return MOCK_GRAB_FAULT_ALIASES[raw] ?? raw
+}
+
+function clearMockGrabFault(): void {
+  if (typeof window === 'undefined') return
+  delete (window as unknown as Record<string, unknown>).__REIN_MOCK_GRAB_FAULT__
+}
+
+function mockGrabVerdict(message: string): 'throttled' | 'server' | 'badreq' | 'retry' {
+  const m = message.trim()
+  const lower = m.toLowerCase()
+  const hit = (kws: string[]) => kws.some((k) => m.includes(k) || lower.includes(k))
+  if (
+    hit([
+      '请求过于频繁', '操作过于频繁', '请求频繁', '访问频繁', '请求过多', '请求太多',
+      '请求太快', '频率超限', '超出频率', '频率限制', '限流', 'too many requests', 'rate limit', '429',
+    ])
+  ) {
+    return 'throttled'
+  }
+  if (
+    hit([
+      '服务器内部错误', '服务异常', '服务器异常', '系统异常', '服务器繁忙', '系统繁忙',
+      '服务不可用', '服务器维护', '连接被重置', '连接重置', '502', '503', '504', '500',
+      'bad gateway', 'service unavailable', 'internal server error', 'connection reset',
+    ])
+  ) {
+    return 'server'
+  }
+  if (
+    hit([
+      '参数错误', '参数有误', '参数不合法', '参数无效', '参数不正确', '参数校验', '缺少参数',
+      '缺少必填', '非法参数', '请求参数', '格式错误', '格式不正确', '反序列化',
+      'bad request', 'unprocessable', '400', '422',
+    ])
+  ) {
+    return 'badreq'
+  }
+  return 'retry'
+}
 
 function grabFind(id: number): MockGrabTask | undefined {
   return grabTasks.find((t) => t.id === id)
@@ -4972,7 +5068,13 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         if (x.source === 'online' && x.serviceBase === base && !keep.has(x.modelId)) aiModels.splice(i, 1)
       }
       const removed = before - aiModels.length
-      if (!aiModels.some((x) => x.isDefault) && aiModels.length > 0) aiModels[0]!.isDefault = true
+      // 镜像 Rust：无默认时优先 auto-model（服务端默认模型的别名），再退回最早一条
+      if (!aiModels.some((x) => x.isDefault) && aiModels.length > 0) {
+        const auto = aiModels.find(
+          (x) => x.source === 'online' && x.serviceBase === base && x.modelId === 'auto-model',
+        )
+        ;(auto ?? aiModels[0]!).isDefault = true
+      }
       saveAiModels()
       return delay({
         added,

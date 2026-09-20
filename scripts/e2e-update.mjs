@@ -258,10 +258,16 @@ async function main() {
     const afterDownload = await pageText()
     ok('下载完成后提示已通过摘要与签名校验', afterDownload.includes('已通过摘要与签名校验'))
     ok('出现「安装并重启」按钮', await evalJS(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('安装并重启'))`))
-    ok(
-      '已就绪后不再显示「跳过此版本」（按钮出现条件自洽）',
-      !(await evalJS(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('跳过此版本'))`)),
+    // 按钮的出现条件是 `!readyToInstall`，而 readyToInstall 是在校验落定之后才翻的 ——
+    // 所以这里要**等它消失**，不能在校验文案一出现就断言（那样测的是时序不是条件）。
+    // 查询限定在页面内：全局那张启动更新卡（UpdatePrompt）也有一个「跳过此版本」，
+    // 它属于另一处（可以边下载边跳过那个提示），不该混进这条断言。
+    await waitFor(
+      `![...document.querySelectorAll('.page button')].some((b) => b.textContent.includes('跳过此版本'))`,
+      6000,
+      '跳过按钮消失',
     )
+    ok('已就绪后不再显示「跳过此版本」（按钮出现条件自洽）', true)
     await shot('3-update-ready')
     await shotDark('3-update-ready-dark')
 

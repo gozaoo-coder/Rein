@@ -203,7 +203,13 @@ async function main() {
     await waitFor(`document.querySelector('h1')?.textContent === '设置'`, 8000, '设置二级页挂载')
     ok('「我 › 设置」进入二级页', true)
     const groups = await evalJS(`[...document.querySelectorAll('.card .gtitle')].map((e) => e.textContent.trim())`)
-    ok('设置页三组齐备（功能 / 番茄钟 / 关于）', groups.join() === '功能,番茄钟,关于', groups.join(' · '))
+    // 设置页的分组会长（性能组就是后加的）——钉住「第一组是功能、最后一组是关于、顺序稳定」，
+    // 而不是把当时的组名清单抄死在断言里
+    ok(
+      '设置页分组齐备（功能在最前、关于在最后）',
+      groups[0] === '功能' && groups.at(-1) === '关于' && groups.includes('番茄钟'),
+      groups.join(' · '),
+    )
     await shot('1-settings')
     await shotDark('1-settings-dark')
 

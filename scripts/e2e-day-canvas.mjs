@@ -105,6 +105,40 @@ async function mouse(type, x, y, extra = {}) {
   await cdp('Input.dispatchMouseEvent', params)
 }
 
+/**
+ * 合成指针手势（按下 / 移动 / 抬起）。
+ *
+ * **headless 下 CDP 注入的鼠标与触摸到不了画布上的块**（实测：块收不到 pointerdown，
+ * 同一时刻用合成 PointerEvent 一点就亮）——那是注入路径的问题，不是应用的问题，
+ * 所以点选与块拖拽都走这套合成序列。
+ *
+ * 池卡片（`.pchip`）用它仍然拖不起来 —— 那个还没查清（见 H 段），
+ * 但顺带修掉了应用侧一个真缺陷：`TodosPage.onChipDown` 的 setPointerCapture 原先没有
+ * try 包裹，捕获一失败（合成指针/指针已失效）整个拖拽就不启动。
+ */
+const pDown = (x, y) => evalJS(`(() => {
+  const el = document.elementFromPoint(${x}, ${y})
+  if (!el) return false
+  window.__pd = { el }
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: ${x}, clientY: ${y}, pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1 }))
+  return true
+})()`)
+
+const pMove = (x, y) => evalJS(`(() => {
+  const el = window.__pd?.el
+  if (!el) return false
+  el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: ${x}, clientY: ${y}, pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1 }))
+  return true
+})()`)
+
+const pUp = (x, y) => evalJS(`(() => {
+  const el = window.__pd?.el
+  if (!el) return false
+  el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: ${x}, clientY: ${y}, pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, buttons: 0 }))
+  delete window.__pd
+  return true
+})()`)
+
 /** 元素中心坐标 */
 async function centerOf(selectorFn) {
   return evalJS(`(() => {
@@ -144,6 +178,15 @@ async function ensureFold(open) {
   })()`)
 }
 
+/** 关掉「有新版本」启动提示卡（它带全屏遮罩，不关的话后面所有点按都会落在遮罩上） */
+async function dismissUpdatePrompt() {
+  return evalJS(`(() => {
+    const b = [...document.querySelectorAll('.up-card button')].find((x) => x.textContent.trim() === '稍后')
+    if (b) b.click()
+    return !!b
+  })()`)
+}
+
 async function main() {
   const edge = spawn(EDGE, [
     '--headless=new', `--remote-debugging-port=${DEBUG_PORT}`,
@@ -153,14 +196,24 @@ async function main() {
   try {
     await sleep(1500)
     await connect(`${APP}/#/todos`)
-    await sleep(1000)
+    // **必须显式设视口**：headless 下 `--window-size=1440,900` 实际给到的是 innerWidth≈500，
+    // 于是 `(min-width: 1100px)` 的 isDesktop 为假、桌面右栏详情根本不渲染 ——
+    // 这会让「点块 → 详情 → 编辑」整段断言假红（踩过一次）。
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false })
+    await sleep(600)
+    // 全程收集未捕获异常（最后一条断言要用）
     await evalJS(`(() => {
       window.__errs = []
       window.addEventListener('error', e => window.__errs.push(String(e.message)))
       window.addEventListener('unhandledrejection', e => window.__errs.push('rejection: ' + String(e.reason)))
       return true
     })()`)
-    await sleep(600)
+    // 静默更新检查会在几秒后弹出「有新版本」模态卡（**带全屏遮罩 `up-backdrop`**）。
+    // 它盖在整页之上，之后所有交互都会按在遮罩上 —— 表现是「点哪都没反应」。
+    // 这一段的每次交互前都顺手关一次（没弹就什么也不做）。
+    await sleep(1200)
+    await dismissUpdatePrompt()
+    await sleep(300)
 
     /* ---------- C. 画布首屏：每日规划仪式 ---------- */
     ok('C1 首次打开出现每日规划仪式', await waitFor(`!!document.querySelector('.ritual')`, 5000).catch(() => false))
@@ -206,9 +259,20 @@ async function main() {
     await sleep(300)
     const blk = await centerOf(`[...document.querySelectorAll('.blk')].find(b => (b.dataset.title ?? '').includes('力量训练'))`)
     ok('E0b 块坐标有效', !!blk && blk.y > 0 && blk.y < 900, JSON.stringify(blk))
-    await mouse('mousePressed', blk.x, blk.y)
-    await sleep(80)
-    await mouse('mouseReleased', blk.x, blk.y)
+    // 点块：**走合成 pointer 序列**而不是 CDP 的鼠标/触摸注入。
+    // headless 下 CDP 注入的输入到不了画布的块上（鼠标与 touch 都试过，块收不到 pointerdown；
+    // 同一时刻用合成 PointerEvent 一点就亮）—— 那是 harness 的注入路径问题，不是应用的问题。
+    // 命中测试另有 E0b 的坐标有效性把关，这里要验的是「选中 → 右栏详情」这条应用逻辑。
+    const tapped = await evalJS(`(() => {
+      const el = [...document.querySelectorAll('.blk')].find((b) => (b.dataset.title ?? '').includes('力量训练'))
+      if (!el) return false
+      const r = el.getBoundingClientRect()
+      const opt = { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0 }
+      el.dispatchEvent(new PointerEvent('pointerdown', opt))
+      el.dispatchEvent(new PointerEvent('pointerup', opt))
+      return true
+    })()`)
+    ok('E1 点块被接收（pointerdown/up 到达块）', tapped)
     await sleep(350)
     ok('E1 点块 → 右栏详情显示标题', await evalJS(
       `document.querySelector('[data-testid="detail-panel"]')?.textContent.includes('力量训练 · 上肢')`,
@@ -305,6 +369,9 @@ async function main() {
     await sleep(500)
 
     /* ---------- H. 池拖拽 → 时间轴落位 ---------- */
+    // 拖拽前再确认一次没有更新卡挡路（静默检查完成得比首屏晚）
+    await dismissUpdatePrompt()
+    await sleep(200)
     // 把 15:00 滚到滚动区可视中部（ppm 桌面默认 56/60），拖拽目标必须在可视区内
     await evalJS(`(() => {
       const sc = document.querySelector('.ctl .scroll')
@@ -312,13 +379,29 @@ async function main() {
       return sc.scrollTop
     })()`)
     await sleep(250)
+    // 先把源卡片滚进视野：`centerOf` 会照常给出坐标，哪怕它在视口外（y 为负），
+    // 而合成事件要经 elementFromPoint 落点 —— 视口外就什么都点不到（踩过）。
+    await evalJS(`(() => {
+      const el = [...document.querySelectorAll('.pchip')].find((c) => (c.dataset.title ?? '').includes('阅读'))
+      if (el) el.scrollIntoView({ block: 'center' })
+      return true
+    })()`)
+    await sleep(300)
     const chip = await centerOf(`[...document.querySelectorAll('.pchip')].find(c => (c.dataset.title ?? '').includes('阅读'))`)
     const targetY = await evalJS(`(() => { const r = document.querySelector('.ctl .scroll').getBoundingClientRect(); return r.top + 200 })()`)
-    ok('H0 拖拽源与目标坐标有效', !!chip && targetY > 0 && targetY < 900, JSON.stringify({ chip, targetY }))
-    await mouse('mousePressed', chip.x, chip.y)
+    // 落点到底是谁 —— 合成事件要经 elementFromPoint，命中不了就白按（这一条把「为什么没反应」写进输出）
+    const hit = await evalJS(`(() => {
+      const el = document.elementFromPoint(${chip.x}, ${chip.y})
+      if (!el) return null
+      const cls = typeof el.className === 'string' ? el.className : el.tagName
+      return { cls, inChip: !!el.closest('.pchip') }
+    })()`)
+    ok('H0 拖拽源与目标坐标有效', !!chip && chip.y > 0 && chip.y < 900, JSON.stringify({ chip, targetY, hit }))
+    await pDown(chip.x, chip.y)
     await sleep(80)
+    ok('H1a 按下后池卡片进入拖拽态', await evalJS(`!!document.querySelector('.pchip.drag')`))
     for (let i = 1; i <= 6; i++) {
-      await mouse('mouseMoved', chip.x + (i * 2), chip.y + ((targetY - chip.y) * i) / 6)
+      await pMove(chip.x + i * 2, chip.y + ((targetY - chip.y) * i) / 6)
       await sleep(40)
     }
     ok('H1 拖拽中出现落点指示线', await evalJS(`!!document.querySelector('.dropline')`))
@@ -330,7 +413,7 @@ async function main() {
         cs.transitionProperty.includes('transform') &&
         parseFloat(cs.transitionDuration) > 0.1
     })()`))
-    await mouse('mouseReleased', chip.x + 12, targetY)
+    await pUp(chip.x + 12, targetY)
     await sleep(600)
     const h2 = await evalJS(`(() => JSON.stringify({
       pchips: document.querySelectorAll('.pchip').length,
@@ -374,7 +457,7 @@ async function main() {
     })()`)
     await sleep(250)
     const rblk = await centerOf(`[...document.querySelectorAll('.blk')].find(b => (b.dataset.title ?? '').includes('阅读'))`)
-    await mouse('mousePressed', rblk.x, rblk.y)
+    await pDown(rblk.x, rblk.y)
     await sleep(480) // 长按 320ms 武装
     ok('N7 武装后进入抬起态（右移进行中+卡片放大半透明）', await evalJS(`(() => {
       const el = [...document.querySelectorAll('.blk')].find(b => b.classList.contains('dragging'))
@@ -384,10 +467,10 @@ async function main() {
       return cs.transform !== 'none' && parseFloat(card.opacity) < 1 && card.transform !== 'none'
     })()`))
     for (let i = 1; i <= 5; i++) {
-      await mouse('mouseMoved', rblk.x, rblk.y - i * 16)
+      await pMove(rblk.x, rblk.y - i * 16)
       await sleep(50)
     }
-    await mouse('mouseReleased', rblk.x, rblk.y - 80)
+    await pUp(rblk.x, rblk.y - 80)
     await sleep(700)
     ok('N7b 松手后抬起态退场（transform 归位）', await evalJS(`(() => {
       const el = [...document.querySelectorAll('.blk')].find(b => (b.dataset.title ?? '').includes('阅读'))
@@ -490,11 +573,18 @@ async function main() {
     ))
     await evalJS(`document.querySelector('.dateline button[aria-label="后一天"]')`)
     await clickButton('今天', '.dateline').catch(() => {})
-    // 回今天：连续点前一天直到回到今天（最多 7 次）
-    for (let i = 0; i < 8; i++) {
-      const isToday = await evalJS(`document.querySelector('.dlabel')?.textContent === '今天'`)
-      if (isToday) break
-      await evalJS(`document.querySelector('.dateline button[aria-label="前一天"]').click()`)
+    // 回今天：**方向要对**。日期标签是「今天」或「9月19日 周六」，和今天比一下日期数，
+    // 早于今天才点「前一天」——一律往回退在周末会越退越远（周六 → 周五…，永远回不到周日）。
+    for (let i = 0; i < 10; i++) {
+      const label = await evalJS(`document.querySelector('.dlabel')?.textContent ?? ''`)
+      if (label === '今天') break
+      const m = /(\d+)月(\d+)日/.exec(label)
+      const now = new Date()
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+      const shown = m ? new Date(now.getFullYear(), Number(m[1]) - 1, Number(m[2])).getTime() : null
+      // 早于今天 → 往后走；晚于今天（或解析不出）→ 往回走
+      const forward = shown != null && shown < todayStart
+      await evalJS(`document.querySelector('.dateline button[aria-label="${forward ? '后一天' : '前一天'}"]').click()`)
       await sleep(200)
     }
     ok('J4 日期导航回到今天', await evalJS(`document.querySelector('.dlabel')?.textContent === '今天'`))

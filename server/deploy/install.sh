@@ -55,6 +55,9 @@ rm -rf "$APP_DIR/server.prev"
 [[ -d "$APP_DIR/server" ]] && mv "$APP_DIR/server" "$APP_DIR/server.prev"
 cp -r "$STAGE/server" "$APP_DIR/server"
 rm -rf "$APP_DIR/server/data" "$APP_DIR/server/config.json"   # 数据与配置属于 /var 与 /etc
+# 从 Windows 部署时 scp 带下来的目录是 700，cp -r 会原样保留 —— 服务以 rein 用户跑，
+# 连 chdir 都进不去就会起不来。这里统一放开「读 + 目录穿越」（代码本来就不该是私有的）。
+chmod -R a+rX "$APP_DIR/server"
 
 log "配置 $CONF_DIR/config.json"
 if [[ ! -f "$CONF_DIR/config.json" ]]; then

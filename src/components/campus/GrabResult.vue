@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CheckCircle2, ExternalLink, RefreshCw, RotateCcw } from 'lucide-vue-next'
+import { CheckCircle2, ExternalLink, RefreshCw, RotateCcw, Sparkles } from 'lucide-vue-next'
 
 import { useToast } from '@/composables/useToast'
 import { useCampusStore } from '@/stores/campus'
 import { grabStatusMeta, useCourseSelectStore } from '@/stores/courseSelect'
+import { askAiForGrabRescue } from '@/utils/campusAi'
 import type { GrabTask } from '@/types'
 
 /**
@@ -37,6 +38,11 @@ const store = useCourseSelectStore()
 const campus = useCampusStore()
 const toast = useToast()
 
+/** 被教务拒绝的请求：把现场（含那条失败的原文）交给 AI，由它查清教务现在要什么参数 */
+function handToAi(): void {
+  askAiForGrabRescue(store.grab)
+}
+
 const syncing = ref(false)
 /** 同步回执：用真实数字说话（「18 门课 / 42 个时段」），不写「同步成功」这种空话 */
 const syncNote = ref('')
@@ -45,10 +51,12 @@ const won = computed(() => props.tasks.filter((t) => t.status === 'success'))
 const conflict = computed(() => props.tasks.filter((t) => t.status === 'conflict'))
 const failed = computed(() => props.tasks.filter((t) => t.status === 'failed'))
 const cancelled = computed(() => props.tasks.filter((t) => t.status === 'cancelled'))
+/** 被教务拒绝的请求（参数错误）：引擎停手了，等 AI 查明教务现在要什么参数 */
+const rejected = computed(() => props.tasks.filter((t) => t.status === 'needs_ai'))
 
-/** 汇总结论。顺序固定：抢到 → 未抢到 → 需办免听，已取消只在后面补一句 */
+/** 汇总结论。顺序固定：抢到 → 未抢到 → 需办免听 → 被拒，已取消只在后面补一句 */
 const headline = computed(() => {
-  if (!won.value.length && !failed.value.length && !conflict.value.length) {
+  if (!won.value.length && !failed.value.length && !conflict.value.length && !rejected.value.length) {
     return `${cancelled.value.length} 条抢课任务已取消`
   }
   const bits: string[] = []
@@ -56,13 +64,15 @@ const headline = computed(() => {
   else bits.push('这一轮没有抢到')
   if (failed.value.length) bits.push(`未抢到 ${failed.value.length} 门`)
   if (conflict.value.length) bits.push(`需办免听 ${conflict.value.length} 门`)
+  if (rejected.value.length) bits.push(`请求被拒 ${rejected.value.length} 门`)
   const tail = cancelled.value.length ? `（另有 ${cancelled.value.length} 条已取消）` : ''
   return bits.join(' · ') + tail
 })
 
-/** 结果行：抢到的在前，需要行动的（免听）紧随，其余按原顺序 */
+/** 结果行：抢到的在前，**需要行动的**（免听 / 被拒）紧随，其余按原顺序 */
 const rows = computed(() => {
-  const rank = (t: GrabTask) => (t.status === 'success' ? 0 : t.status === 'conflict' ? 1 : 2)
+  const rank = (t: GrabTask) =>
+    t.status === 'success' ? 0 : t.status === 'conflict' || t.status === 'needs_ai' ? 1 : 2
   return [...props.tasks].sort((a, b) => rank(a) - rank(b))
 })
 
@@ -136,6 +146,9 @@ async function onSync(): Promise<void> {
           <em v-if="t.status === 'conflict'" class="why">
             与已选课程时间冲突 —— 要在教务网页端办理免听，这门课才会留下
           </em>
+          <em v-else-if="t.status === 'needs_ai'" class="why">
+            教务说这条请求的参数不对 —— 重试不会成功，已经交给 AI 去查明教务现在要什么参数
+          </em>
           <em v-else-if="t.lastMessage" class="meta t-3">{{ t.lastMessage }}</em>
         </span>
         <button
@@ -145,6 +158,14 @@ async function onSync(): Promise<void> {
           @click="emit('retry', t.id)"
         >
           <RotateCcw :size="13" /> 再抢一次
+        </button>
+        <button
+          v-else-if="t.status === 'needs_ai'"
+          class="mini"
+          title="把现场交给 AI：查清教务要的参数再重排"
+          @click="handToAi"
+        >
+          <Sparkles :size="13" /> 交给 AI
         </button>
         <a
           v-else-if="t.status === 'conflict' && entryUrl"

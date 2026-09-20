@@ -59,10 +59,15 @@ async function waitForServer(timeoutMs = 15_000) {
  * 假上游 provider：OpenAI 兼容的最小实现。
  * 固定回 100 万输入 token / 0 输出 token —— 配合配置里 e2e-model 的单价（2 元/百万），
  * 一次调用的模型费正好 2 元，断言不必做浮点撒娇。
+ *
+ * 另外按模型名造两种故障，用来演练「欠费兜底」：e2e-overdue 回方舟欠费时的真实报文
+ * （403 + AccountOverdueError），e2e-badrequest 回一个与账户无关的参数错误（不该兜底）。
+ * 返回 { server, hits } —— hits 记每个模型被打了多少次，用来断言冷却期内没再去撞主上游。
  */
 async function startFakeProvider(port) {
   const http = await import('node:http')
   const usage = { prompt_tokens: 1_000_000, completion_tokens: 0, total_tokens: 1_000_000 }
+  const hits = {}
   const server = http.createServer((req, res) => {
     let body = ''
     req.on('data', (c) => {
@@ -76,6 +81,24 @@ async function startFakeProvider(port) {
         /* 不是 JSON 也照样回 */
       }
       const model = parsed.model ?? 'e2e-model'
+      hits[model] = (hits[model] ?? 0) + 1
+
+      if (model === 'e2e-overdue') {
+        res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' })
+        return res.end(
+          JSON.stringify({
+            error: {
+              code: 'AccountOverdueError',
+              message: 'The request failed because your account has an overdue balance.',
+            },
+          }),
+        )
+      }
+      if (model === 'e2e-badrequest') {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' })
+        return res.end(JSON.stringify({ error: { code: 'InvalidParameter', message: 'temperature 超出取值范围' } }))
+      }
+
       if (parsed.stream) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         res.write(`data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { role: 'assistant', content: 'pong' } }] })}\n\n`)
@@ -97,7 +120,7 @@ async function startFakeProvider(port) {
     })
   })
   await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve))
-  return server
+  return { server, hits }
 }
 
 async function main() {
@@ -125,7 +148,7 @@ async function main() {
   const adminToken = `test_${crypto.randomBytes(12).toString('hex')}`
   fs.mkdirSync(dataDir, { recursive: true })
   // 上游假 provider：网关的转发/流式/记账/计价都靠它跑通，不需要真实模型 key
-  const upstream = await startFakeProvider(FAKE_PORT)
+  const { server: upstream, hits } = await startFakeProvider(FAKE_PORT)
   fs.writeFileSync(
     configFile,
     `${JSON.stringify(
@@ -150,17 +173,34 @@ async function main() {
               name: 'e2e 假上游',
               baseUrl: `${FAKE_BASE}/v1`,
               apiKey: 'sk-e2e-fake',
-              models: ['e2e-model', 'e2e-blocked'],
+              models: ['e2e-model', 'e2e-blocked', 'e2e-overdue', 'e2e-badrequest'],
+              enabled: true,
+              // 欠费兜底：主家回 AccountOverdueError 时换到下面那个备选，并做模型名映射
+              fallback: {
+                providerId: 'e2e-backup',
+                cooldownSec: 60,
+                models: { 'e2e-overdue': 'e2e-backup-model' },
+              },
+            },
+            {
+              id: 'e2e-backup',
+              name: 'e2e 备选上游',
+              baseUrl: `${FAKE_BASE}/v1`,
+              apiKey: 'sk-e2e-backup',
+              models: ['e2e-backup-model'],
+              hidden: true,
               enabled: true,
             },
           ],
           clients: [],
+          // auto-model 别名指向它；换后端模型只改这一行，客户端不必改
+          autoModel: 'e2e-model',
           // 价格写成整百万 tokens 的量级，便于断言：100 万输入 token 正好 2 元
           pricing: {
             currency: 'CNY',
             traffic: { perGb: 0.8, scope: 'egress' },
             default: { in: 0, out: 0 },
-            models: { 'e2e-model': { in: 2, out: 8 } },
+            models: { 'e2e-model': { in: 2, out: 8 }, 'e2e-backup-model': { in: 2, out: 8 } },
           },
         },
       },
@@ -340,16 +380,30 @@ async function main() {
       withToken.status === 200 && Array.isArray(withTokenBody.data),
       `HTTP ${withToken.status} ${JSON.stringify(withTokenBody).slice(0, 160)}`,
     )
-    // 服务端指定可用模型：白名单外的模型不出现在清单里
+    // 服务端指定可用模型：auto-model 别名在前，后面才是白名单里的真实模型
+    const catalogIds = (withTokenBody.data ?? []).map((m) => m.id)
     check(
-      '模型清单只列白名单内的模型',
-      withTokenBody.data?.length === 1 && withTokenBody.data[0].id === 'e2e-model',
-      JSON.stringify(withTokenBody.data),
+      '模型清单只列白名单内的模型（auto-model 别名在前）',
+      catalogIds.join() === 'auto-model,e2e-model',
+      JSON.stringify(catalogIds),
     )
     check(
-      '模型清单带官方单价与 traffic 口径',
+      'auto-model 别名指向服务端配置的默认模型',
+      withTokenBody.data?.[0]?.rein?.auto === true && withTokenBody.data?.[0]?.rein?.target === 'e2e-model',
+      JSON.stringify(withTokenBody.data?.[0]),
+    )
+    check(
+      '别名照抄目标模型的单价（默认模型不能显示成「未定价」）',
       withTokenBody.data?.[0]?.rein?.priceIn === 2 &&
         withTokenBody.data?.[0]?.rein?.priceOut === 8 &&
+        withTokenBody.data?.[0]?.rein?.priced === true,
+      JSON.stringify(withTokenBody.data?.[0]?.rein),
+    )
+    const pricedEntry = (withTokenBody.data ?? []).find((m) => m.id === 'e2e-model')
+    check(
+      '模型清单带官方单价与 traffic 口径',
+      pricedEntry?.rein?.priceIn === 2 &&
+        pricedEntry?.rein?.priceOut === 8 &&
         withTokenBody.rein?.trafficPerGb === 0.8 &&
         withTokenBody.rein?.trafficScope === 'egress',
       JSON.stringify(withTokenBody.rein),
@@ -365,6 +419,57 @@ async function main() {
     check(
       '白名单外的模型返回 403 model_not_allowed',
       forbidden.status === 403 && (await forbidden.json()).error?.code === 'model_not_allowed',
+    )
+
+    // auto-model 落定：上游收到的是真实模型名，账单也记在真实模型身上
+    const viaAuto = await fetch(`${BASE}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${issued.token}` },
+      body: JSON.stringify({ model: 'auto-model', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    const viaAutoBody = await viaAuto.json()
+    check(
+      'auto-model 由服务端落定成默认模型（客户端不必知道背后是谁）',
+      viaAuto.ok && viaAutoBody.model === 'e2e-model',
+      `HTTP ${viaAuto.status} ${JSON.stringify(viaAutoBody).slice(0, 160)}`,
+    )
+    const viaAutoCost = Number(viaAuto.headers.get('x-rein-cost-cny'))
+    check(
+      '别名调用按被指向模型的单价计费（不是「未定价」）',
+      viaAutoCost > 1.99 && viaAutoCost < 2.01,
+      `cost=${viaAutoCost}`,
+    )
+    const aliasLedger = await (
+      await fetch(`${BASE}/admin/api/ai/usage?days=1`, { headers: { Authorization: `Bearer ${adminToken}` } })
+    ).json()
+    check(
+      '账本记在真实模型名下（不出现 auto-model 这个别名）',
+      (aliasLedger.byModel ?? []).every((m) => m.model !== 'auto-model') &&
+        (aliasLedger.byModel ?? []).some((m) => m.key === 'fake/e2e-model'),
+      JSON.stringify((aliasLedger.byModel ?? []).map((m) => m.key)),
+    )
+
+    // 别名绝不是白名单后门：默认模型不在白名单里的令牌看不到、也调不动它
+    const narrow = await (
+      await fetch(`${BASE}/admin/api/ai/clients`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'e2e-narrow', models: ['e2e-blocked'] }),
+      })
+    ).json()
+    const narrowBody = await (
+      await fetch(`${BASE}/v1/models`, { headers: { Authorization: `Bearer ${narrow.token}` } })
+    ).json()
+    const narrowIds = (narrowBody.data ?? []).map((m) => m.id)
+    check('白名单不含默认模型的令牌看不到 auto-model', narrowIds.join() === 'e2e-blocked', JSON.stringify(narrowIds))
+    const narrowAuto = await fetch(`${BASE}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${narrow.token}` },
+      body: JSON.stringify({ model: 'auto-model', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    check(
+      '调用 auto-model 时同样过白名单（别名不是后门）',
+      narrowAuto.status === 403 && (await narrowAuto.json()).error?.code === 'model_not_allowed',
     )
 
     // 一次真实计费调用：100 万输入 token × 2 元/百万 = 2 元（+ 出方向流量的零头）
@@ -460,6 +565,75 @@ async function main() {
 
     const badToken = await fetch(`${BASE}/v1/models`, { headers: { Authorization: 'Bearer rein_sk_deadbeef' } })
     check('伪造令牌被拒', badToken.status === 401)
+
+    // ---------- 9b. 欠费兜底（主家 AccountOverdueError → 备选 provider） ----------
+    log('\n▶ 欠费兜底（上游账户级故障自动切换）')
+    const failoverClient = await (
+      await fetch(`${BASE}/admin/api/ai/clients`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'e2e-failover', models: ['e2e-overdue', 'e2e-badrequest'] }),
+      })
+    ).json()
+    const failoverHeaders = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${failoverClient.token}`,
+    }
+
+    const overdueHitsBefore = hits['e2e-overdue'] ?? 0
+    const switched = await fetch(`${BASE}/v1/chat/completions`, {
+      method: 'POST',
+      headers: failoverHeaders,
+      body: JSON.stringify({ model: 'e2e-overdue', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    const switchedBody = await switched.json()
+    check(
+      '主上游欠费时自动切到备选（客户端无感，报文正常）',
+      switched.ok && switchedBody.model === 'e2e-backup-model',
+      `HTTP ${switched.status} ${JSON.stringify(switchedBody).slice(0, 160)}`,
+    )
+    check(
+      '兜底前确实先撞过一次主上游',
+      (hits['e2e-overdue'] ?? 0) === overdueHitsBefore + 1,
+      `hits=${hits['e2e-overdue'] ?? 0}`,
+    )
+    const switchedCost = Number(switched.headers.get('x-rein-cost-cny'))
+    check(
+      '兜底调用按备选模型的单价计费',
+      switchedCost > 1.99 && switchedCost < 2.01,
+      `cost=${switchedCost}`,
+    )
+
+    const breakerHealth = await (await fetch(`${BASE}/api/v1/ai/health`)).json()
+    const primaryState = (breakerHealth.providers ?? []).find((p) => p.id === 'fake')
+    check(
+      '健康检查暴露退路与冷却状态（运维一眼看出流量已经切走）',
+      primaryState?.fallbackTo === 'e2e-backup' && primaryState?.coolingDown === true,
+      JSON.stringify(primaryState),
+    )
+
+    const secondCall = await fetch(`${BASE}/v1/chat/completions`, {
+      method: 'POST',
+      headers: failoverHeaders,
+      body: JSON.stringify({ model: 'e2e-overdue', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    check(
+      '冷却期内不再去撞已经欠费的主上游',
+      secondCall.ok && (hits['e2e-overdue'] ?? 0) === overdueHitsBefore + 1,
+      `hits=${hits['e2e-overdue'] ?? 0}`,
+    )
+
+    const backupHitsBefore = hits['e2e-backup-model'] ?? 0
+    const notAccount = await fetch(`${BASE}/v1/chat/completions`, {
+      method: 'POST',
+      headers: failoverHeaders,
+      body: JSON.stringify({ model: 'e2e-badrequest', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    check(
+      '与账户无关的上游错误原样透传、不触发兜底',
+      notAccount.status === 400 && (hits['e2e-backup-model'] ?? 0) === backupHitsBefore,
+      `HTTP ${notAccount.status} backupHits=${hits['e2e-backup-model'] ?? 0}`,
+    )
 
     // ---------- 10. 路径穿越防护 ----------
     const traversal = await fetch(`${BASE}/dl/stable/${version}/..%2F..%2Fconfig.json`)

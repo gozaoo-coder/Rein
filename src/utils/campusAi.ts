@@ -39,13 +39,29 @@ function taskLine(t: GrabTask): string {
 /** 现场 → 一段给 AI 的话。没有任务时也要能说清「什么都没有」这件事。 */
 export function grabRescuePrompt(state: GrabState): string {
   const tasks = state.tasks ?? []
-  const live = tasks.filter((t) => t.status !== 'cancelled' && t.status !== 'failed' && t.status !== 'success')
+  // `needs_ai` 单独成段：它不是「还在抢」，而是「这条请求的写法被教务拒了」
+  const rejected = tasks.filter((t) => t.status === 'needs_ai')
+  const live = tasks.filter(
+    (t) => t.status !== 'cancelled' && t.status !== 'failed' && t.status !== 'success' && t.status !== 'needs_ai',
+  )
   const lines: string[] = [
     '【抢课排障】抢课引擎出问题了，请你**先看现场再动手**（campus_status），判清楚是会话问题、教务改了接口、还是任务本身的问题，然后把它救回来。',
     '',
     `引擎级故障：${state.lastError ?? '（无 —— 引擎自己没报错，问题在任务上）'}`,
     `服务器时间：${state.serverTime ?? '未知'} · 时钟偏差：${state.skewSec ?? '未知'} 秒`,
   ]
+
+  if (rejected.length) {
+    lines.push(
+      '',
+      `**被教务拒绝的请求 ${rejected.length} 个（参数错误 —— 重试一万次也是同一个结果，引擎已经停下不再骚扰教务）**：`,
+    )
+    lines.push(...rejected.map(taskLine))
+    lines.push(
+      '这类失败通常是：教务换了参数名 / 少了必填字段 / 批次 id 变了 / 令牌绑的是另一个入口。',
+      '请用同样的参数**手工打一次那接口看原始响应**（campus_request 带会话），再决定是改参数、改流程，还是教务那边变了；改完把任务重新排上。',
+    )
+  }
 
   lines.push('', `在场任务 ${live.length} 个（共 ${tasks.length}）：`)
   lines.push(...(live.length ? live.map(taskLine) : ['- （没有在场的任务）']))

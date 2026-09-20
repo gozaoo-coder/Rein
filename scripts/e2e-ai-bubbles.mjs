@@ -178,6 +178,10 @@ const PAINTED_BOXES = `(() => {
   if (!msgs) return null
   const out = []
   for (const el of msgs.querySelectorAll('*')) {
+    // 消息区是**唯一**的滚动容器，页头与输入栏都粘在它内部（见 AIPage 模板注释）——
+    // 它们本来就该是「画了底色、没有文字」的图标按钮，不是空气泡。
+    // 空气泡的定义是「消息内容里的空盒子」，所以这里只排除交互控件与页头/输入栏这两块 chrome。
+    if (el.closest('button, input, textarea, [contenteditable="true"], .inbar, header')) continue
     const cs = getComputedStyle(el)
     const bare = cs.backgroundColor === 'rgba(0, 0, 0, 0)' && cs.borderTopWidth === '0px' && cs.backgroundImage === 'none'
     if (bare) continue

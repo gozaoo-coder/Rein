@@ -49,7 +49,16 @@ const actives = computed(() => store.activeTasks)
 const paused = computed(() => tasks.value.filter((t) => t.status === 'paused'))
 /** 未结束的排前面，已结束的沉底（后端已经排好序，这里只负责分组渲染） */
 const finished = computed(() =>
-  tasks.value.filter((t) => t.status === 'success' || t.status === 'failed' || t.status === 'conflict' || t.status === 'cancelled'),
+  tasks.value.filter(
+    (t) =>
+      t.status === 'success' ||
+      t.status === 'failed' ||
+      t.status === 'conflict' ||
+      t.status === 'cancelled' ||
+      // 被教务拒绝的也是「这一轮的结局」：引擎已经停手，它该出现在结果里，
+      // 而不是留在任务单上看着像还在抢
+      t.status === 'needs_ai',
+  ),
 )
 
 /**
@@ -91,6 +100,7 @@ const countdown = computed(() => {
  */
 const phaseText = computed(() => {
   if (store.grabError) return '引擎停了 —— 先处理上面的问题'
+  if (store.rejectedTasks.length) return '有请求被教务拒了（参数错误），已交给 AI 排查'
   if (resultMode.value) return ''
   if (!hasAny.value) return listening.value ? '正在盯着选课窗口' : '还没有排队的课程'
   if (actives.value.some((t) => (t.attempts ?? 0) > 0 || (t.polls ?? 0) > 0)) {
@@ -275,6 +285,30 @@ function handToAi(): void {
       <button class="fix" type="button" @click="handToAi">交给 AI 排查</button>
       <RouterLink :to="{ name: 'campus-settings' }" class="fix">去重登</RouterLink>
     </p>
+
+    <!-- **参数错误**：教务拒了这条请求 —— 重试不会改变结果，引擎已经停手。
+         这里要说清「为什么停了」并给出唯一有用的下一步（交 AI / 重新解析），
+         而不是让用户对着一个不动的任务反复点重试。 -->
+    <div v-if="store.rejectedTasks.length" class="rejected" role="status">
+      <p class="rl">
+        <Ban :size="14" />
+        <span>
+          教务拒绝了 {{ store.rejectedTasks.length }} 条请求（参数错误）——
+          <b>重试不会成功</b>，引擎已停手，等 AI 查明教务现在要什么参数
+        </span>
+      </p>
+      <p class="why t-3">{{ store.rejectedTasks[0]!.lastMessage }}</p>
+      <div class="row acts">
+        <button class="fix" type="button" @click="handToAi">交给 AI 排查</button>
+        <button
+          class="fix"
+          type="button"
+          @click="store.rejectedTasks.forEach((t) => act(t.id, 'retry'))"
+        >
+          重新排队试试
+        </button>
+      </div>
+    </div>
 
     <p v-if="!hasAny" class="t-3 empty">
       还没有排队的课程。
@@ -471,6 +505,41 @@ function handToAi(): void {
   font-weight: 700;
   color: var(--accent-strong);
   margin-left: auto;
+}
+
+/* 被教务拒绝的请求：警告色但**给出路**（交 AI / 重新排队），不做成死路一条的红条 */
+.rejected {
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: var(--radius-m);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.rl {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--warn-strong);
+  line-height: 1.45;
+}
+
+.why {
+  font-size: var(--fs-micro);
+  margin-top: 4px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.rejected .acts {
+  gap: 14px;
+  margin-top: 6px;
+}
+
+/* 这一块里的按钮有自己的排布，别继承 .fix 的「推到右边」 */
+.rejected .fix {
+  margin-left: 0;
+  min-height: 32px;
 }
 
 .empty {

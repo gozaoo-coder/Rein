@@ -411,12 +411,16 @@ pub const GRAB_FAILED: &str = "failed";
 pub const GRAB_CONFLICT: &str = "conflict";
 pub const GRAB_PAUSED: &str = "paused";
 pub const GRAB_CANCELLED: &str = "cancelled";
+/// **请求被教务拒了（参数错误）**：重试不会改变结果，引擎停下来把现场交给 AI 排查。
+/// 它与 `failed` 的区别是「还有没有救」：`failed` 是这条任务完了，
+/// `needs_ai` 是**这条请求的写法**不对 —— 改对了还能继续抢，所以界面要给出下一步。
+pub const GRAB_NEEDS_AI: &str = "needs_ai";
 
 /// 是否存在「引擎不该再碰」的终态，供 SQL 与前端共用一套判断。
 pub fn grab_is_terminal(status: &str) -> bool {
     matches!(
         status,
-        GRAB_SUCCESS | GRAB_FAILED | GRAB_CONFLICT | GRAB_CANCELLED
+        GRAB_SUCCESS | GRAB_FAILED | GRAB_CONFLICT | GRAB_CANCELLED | GRAB_NEEDS_AI
     )
 }
 

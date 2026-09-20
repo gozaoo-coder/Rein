@@ -21,6 +21,26 @@ import { clientIp, createBucket, hashToken, nowIso, readJsonBody, sendError, sen
 
 const CHAT_BODY_LIMIT = 24 * 1024 * 1024 // 带图的消息可能几 MB，留足余量
 
+/** 服务端默认模型的别名：客户端只认这一个名字，换后端模型不必改客户端。 */
+const AUTO_MODEL = 'auto-model'
+/** 不写死模型名的老写法（auto / rein-auto / 空）：由服务端挑，与 AUTO_MODEL 同义。 */
+const isAutoAlias = (model) => !model || model === 'auto' || model === 'rein-auto'
+
+/**
+ * 「账户级」故障的判据：只有这类错误换 provider 才有意义 —— 欠费/超额换一家立刻能用，
+ * 而参数写错、模型没开通换到哪都一样，还会白烧一份备选额度。
+ *
+ * 火山方舟欠费的真实报文是 403 + `{"error":{"code":"AccountOverdueError",
+ * "message":"The request failed because your account has an overdue balance."}}`，
+ * 所以按「403/429 + 文案里出现余额/欠费字样」识别；402 无需文案，本身就是支付要求。
+ */
+const ACCOUNT_BLOCK_HINTS = /(insufficient|balance|overdue|arrears|欠费|余额|recharge|credit)/i
+function isAccountBlocked(status, text) {
+  if (status === 402) return true
+  if (status !== 403 && status !== 429) return false
+  return ACCOUNT_BLOCK_HINTS.test(String(text ?? ''))
+}
+
 /** 金额按「元」浮点存：单次请求的流量费常是 1e-7 量级，逐笔四舍五入会把零头抹平。 */
 const round6 = (n) => Math.round(n * 1e6) / 1e6
 const round9 = (n) => Math.round(n * 1e9) / 1e9
@@ -36,6 +56,18 @@ export class AiGateway {
     const burst = Number(cfg.ai?.rate?.burst ?? 10)
     this.limiter = createBucket({ rpm, burst })
     this.authLimiter = createBucket({ rpm: 30, burst: 10 })
+    // 上游账户级故障的冷却表：providerId → 冷却截止时间戳（见 tripBreaker）
+    this.broken = new Map()
+  }
+
+  /** 主上游是否还在冷却中（刚撞过欠费，暂时别去撞第二遍）。 */
+  breakerOpen(providerId) {
+    return Date.now() < (this.broken.get(providerId) ?? 0)
+  }
+
+  /** 记一次账户级故障：欠费会持续到充值，冷却期内直接走备选。 */
+  tripBreaker(providerId, seconds) {
+    this.broken.set(providerId, Date.now() + Math.max(1, seconds) * 1000)
   }
 
   /** 已启用的 provider（配置里 enabled 且带 key）。 */
@@ -52,6 +84,28 @@ export class AiGateway {
     if (exact) return exact
     // 未登记在册的模型名：交给第一个 provider 试（很多 provider 直接认全量模型名）
     return active[0]
+  }
+
+  /**
+   * 主 provider 扛不住时的备选：配置里写了 fallback、这个模型有映射、备选 provider
+   * 也确实挂着映射后的模型 —— 三条都满足才算数，否则宁可原地报错也不乱转。
+   */
+  fallbackOf(provider, model) {
+    const fb = provider?.fallback
+    const to = fb?.models?.[model]
+    if (!fb || !to) return null
+    const target = this.activeProviders().find((p) => p.id === fb.providerId && p.models?.includes(to))
+    return target ? { provider: target, model: to } : null
+  }
+
+  /** 转发链：主 provider 打头，账户级故障（欠费）时沿链往下退。 */
+  chainFor(model) {
+    const primary = this.pickProvider(model)
+    if (!primary) return []
+    const chain = [{ provider: primary, model }]
+    const fb = this.fallbackOf(primary, model)
+    if (fb) chain.push(fb)
+    return chain
   }
 
   // ---- 计价 -------------------------------------------------------------
@@ -136,37 +190,83 @@ export class AiGateway {
   /** 令牌白名单：空数组（或未配置令牌）= 不限制。auto 交给服务端挑，不拦。 */
   modelAllowed(client, model) {
     if (!client) return true
-    if (!model || model === 'auto' || model === 'rein-auto') return true
+    if (isAutoAlias(model)) return true
+    // auto-model 的解析结果一定落在白名单里，所以放不放行取决于「默认模型能不能用」
+    if (model === AUTO_MODEL) return Boolean(this.autoTarget(client))
     const allow = client.models ?? []
     return allow.length === 0 || allow.includes(model)
   }
 
-  /** 当前令牌可见的模型清单（OpenAI 列表 + rein 扩展：单价与 provider）。 */
-  catalog(client = null) {
+  /**
+   * auto-model 指向谁：配置里的默认模型，但必须同时满足「本令牌能用它」和
+   * 「它真的挂在启用中的 provider 上」。任一条不满足就不下发这个别名 ——
+   * 别名绝不能成为绕开令牌白名单的后门。
+   */
+  autoTarget(client = null) {
+    const want = String(this.cfg.ai?.autoModel ?? '').trim()
+    if (!want) return null
+    const allow = client?.models ?? []
+    if (client && allow.length > 0 && !allow.includes(want)) return null
+    return this.activeProviders().some((p) => p.models?.includes(want)) ? want : null
+  }
+
+  /** 真正转发给上游的模型名：auto 系列别名在这里落定成具体模型。 */
+  resolveModel(client, requested) {
+    if (requested && requested !== AUTO_MODEL && !isAutoAlias(requested)) return requested
+    return this.autoTarget(client) ?? this.realModels(client)[0]?.id ?? null
+  }
+
+  /**
+   * 把模型包成 OpenAI 列表项；rein 扩展带单价与所属 provider（客户端据此显示与算账）。
+   * 价格按 `priceModel` 查而不是按条目自身：auto-model 是按目标模型的价转发出去的，
+   * 拿别名去价格表里查只会查到「未定价」，客户端就会把默认模型的 token 费算成 0。
+   */
+  modelEntry(model, provider, { priceModel = model, ...extra } = {}) {
+    const price = this.priceOf(priceModel)
+    return {
+      id: model,
+      object: 'model',
+      owned_by: provider.id,
+      created: 0,
+      rein: {
+        providerId: provider.id,
+        providerName: provider.name,
+        priceIn: price.in,
+        priceOut: price.out,
+        cacheIn: price.cacheIn,
+        priced: this.priced(priceModel),
+        currency: this.cfg.ai?.pricing?.currency ?? 'CNY',
+        unit: 'per_1m_tokens',
+        ...extra,
+      },
+    }
+  }
+
+  /** 真实模型清单（不含 auto-model 别名本身）：按 provider 摊平并过令牌白名单。 */
+  realModels(client = null) {
     const out = []
     for (const p of this.activeProviders()) {
+      // hidden 的 provider 只做备选，不摆到清单里让用户直接挑
+      if (p.hidden) continue
       for (const m of p.models ?? []) {
         if (!this.modelAllowed(client, m)) continue
-        const price = this.priceOf(m)
-        out.push({
-          id: m,
-          object: 'model',
-          owned_by: p.id,
-          created: 0,
-          rein: {
-            providerId: p.id,
-            providerName: p.name,
-            priceIn: price.in,
-            priceOut: price.out,
-            cacheIn: price.cacheIn,
-            priced: this.priced(m),
-            currency: this.cfg.ai?.pricing?.currency ?? 'CNY',
-            unit: 'per_1m_tokens',
-          },
-        })
+        out.push(this.modelEntry(m, p))
       }
     }
     return out
+  }
+
+  /** 当前令牌可见的模型清单：auto-model 别名在前，真实模型在后。 */
+  catalog(client = null) {
+    const out = []
+    const target = this.autoTarget(client)
+    if (target) {
+      const owner = this.activeProviders().find((p) => p.models?.includes(target))
+      // auto: true + target：客户端可据此提示「这个别名此刻指向哪款模型」；
+      // priceModel：别名的单价照抄目标模型，别让默认模型显示成「未定价」
+      if (owner) out.push(this.modelEntry(AUTO_MODEL, owner, { priceModel: target, auto: true, target }))
+    }
+    return out.concat(this.realModels(client))
   }
 
   /** 校验 Authorization: Bearer <token>。 */
@@ -182,16 +282,18 @@ export class AiGateway {
     }
     if (!token) return { ok: false, status: 401, code: 'ai_unauthorized', message: '缺少 Bearer 令牌' }
 
-    const ip = clientIp(req)
-    const gate = this.authLimiter.take(`auth:${ip}`)
-    if (!gate.ok) return { ok: false, status: 429, code: 'rate_limited', message: '尝试过于频繁' }
-
     for (const c of clients) {
       if (c.disabled) continue
       if (timingSafeEqual(hashToken(token, c.tokenSalt), c.tokenHash)) {
         return { ok: true, client: c }
       }
     }
+
+    // 限流只记「猜错令牌」：它是防爆破的闸门（每个客户端另有按令牌的 rpm），
+    // 顺手把正常流量也掐掉的话，同一出口 IP 下的多台设备会互相拖累。
+    const ip = clientIp(req)
+    const gate = this.authLimiter.take(`auth:${ip}`)
+    if (!gate.ok) return { ok: false, status: 429, code: 'rate_limited', message: '尝试过于频繁' }
     return { ok: false, status: 401, code: 'ai_unauthorized', message: '令牌无效' }
   }
 
@@ -247,8 +349,13 @@ export class AiGateway {
         name: p.name,
         enabled: p.enabled,
         models: p.models ?? [],
+        // 欠费兜底：退路是谁、此刻是否在冷却（在冷却 = 流量已经切到备选上了）
+        fallbackTo: p.fallback?.providerId ?? null,
+        coolingDown: this.breakerOpen(p.id),
       })),
       pricing: this.pricingInfo(),
+      // auto-model 别名此刻指向哪款模型（没配就是空串，清单里也不会出现这个别名）
+      autoModel: String(this.cfg.ai?.autoModel ?? ''),
       requireToken: this.cfg.ai?.requireToken !== false,
       clientCount: (this.cfg.ai?.clients ?? []).length,
       endpoints: {
@@ -325,67 +432,102 @@ export class AiGateway {
       })
     }
 
-    const provider = this.pickProvider(requested)
-    if (!provider) return sendError(res, 503, 'ai_not_configured', '没有可用的 provider')
-
-    const upstreamBody = { ...body }
-    if (!requested || requested === 'auto' || requested === 'rein-auto') {
-      // auto：优先挑令牌白名单里的第一个模型，没有白名单就是第一个 provider 的第一个
-      upstreamBody.model = this.catalog(client)[0]?.id ?? provider.models?.[0]
-    }
-    if (!upstreamBody.model) {
+    // auto 系列别名（含 auto-model）在这里落定成真实模型名，再按它挑 provider
+    const model = this.resolveModel(client, requested)
+    if (!model) {
       return sendError(res, 400, 'bad_request', '无法确定模型名（provider 未配置 models）')
     }
+    // 转发链：主 provider 打头；主家欠费时沿链退到备选（模型名按配置的映射改写）
+    const chain = this.chainFor(model)
+    if (chain.length === 0) return sendError(res, 503, 'ai_not_configured', '没有可用的 provider')
 
     const started = Date.now()
     const wantStream = Boolean(body?.stream)
-    if (wantStream) {
-      // 让上游一定回 usage：否则流式请求只能算出流量费，token 费会漏账
-      upstreamBody.stream_options = { ...(upstreamBody.stream_options ?? {}), include_usage: true }
-    }
-    const url = `${provider.baseUrl.replace(/\/+$/, '')}/chat/completions`
+    // 主上游刚撞过欠费、还在冷却里：直接走备选，不必每个请求都去撞一遍已经欠费的墙
+    const steps = chain.length > 1 && this.breakerOpen(chain[0].provider.id) ? chain.slice(1) : chain
 
-    // 请求体里可能带图（base64），先量一下体积，记账用
-    const requestBytes = Buffer.byteLength(JSON.stringify(upstreamBody))
+    let upstream = null
+    let provider = null
+    let upstreamBody = null
+    let requestBytes = 0
 
-    let upstream
-    try {
-      upstream = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${provider.apiKey}`,
-          Accept: wantStream ? 'text/event-stream' : 'application/json',
-          'User-Agent': 'rein-ai-gateway/1.0',
-        },
-        body: JSON.stringify(upstreamBody),
-        signal: AbortSignal.timeout(300_000),
-      })
-    } catch (e) {
+    for (let i = 0; i < steps.length; i += 1) {
+      const step = steps[i]
+      const payload = { ...body, model: step.model }
+      if (wantStream) {
+        // 让上游一定回 usage：否则流式请求只能算出流量费，token 费会漏账
+        payload.stream_options = { ...(payload.stream_options ?? {}), include_usage: true }
+      }
+      const url = `${step.provider.baseUrl.replace(/\/+$/, '')}/chat/completions`
+      // 请求体里可能带图（base64），先量一下体积，记账用
+      const bytes = Buffer.byteLength(JSON.stringify(payload))
+
+      let attempt
+      try {
+        attempt = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${step.provider.apiKey}`,
+            Accept: wantStream ? 'text/event-stream' : 'application/json',
+            'User-Agent': 'rein-ai-gateway/1.0',
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(300_000),
+        })
+      } catch (e) {
+        this.record({
+          clientId: client?.id ?? null,
+          clientName: client?.name ?? null,
+          provider: step.provider.id,
+          model: step.model,
+          status: 'upstream_error',
+          error: String(e),
+          ms: Date.now() - started,
+        })
+        const next = steps[i + 1]
+        // 连不上也是「换一家就能服务」的故障；没有备选就照原样报错
+        if (!next) return sendError(res, 502, 'upstream_unreachable', `无法连接上游 provider：${e.message}`)
+        this.log('ai-failover', { from: step.provider.id, to: next.provider.id, reason: 'unreachable' })
+        continue
+      }
+
+      if (attempt.ok) {
+        upstream = attempt
+        provider = step.provider
+        upstreamBody = payload
+        requestBytes = bytes
+        break
+      }
+
+      const text = await attempt.text().catch(() => '')
       this.record({
         clientId: client?.id ?? null,
         clientName: client?.name ?? null,
-        provider: provider.id,
-        model: upstreamBody.model,
-        status: 'upstream_error',
-        error: String(e),
+        provider: step.provider.id,
+        model: step.model,
+        status: attempt.status,
         ms: Date.now() - started,
       })
-      return sendError(res, 502, 'upstream_unreachable', `无法连接上游 provider：${e.message}`)
-    }
 
-    // 上游报错：原样把状态码与响应体带回去，便于客户端排错（key 不会被回显）
-    if (!upstream.ok) {
-      const text = await upstream.text().catch(() => '')
-      this.record({
-        clientId: client?.id ?? null,
-        clientName: client?.name ?? null,
-        provider: provider.id,
-        model: upstreamBody.model,
-        status: upstream.status,
-        ms: Date.now() - started,
-      })
-      res.writeHead(upstream.status, { 'Content-Type': 'application/json; charset=utf-8' })
+      const next = steps[i + 1]
+      // 只有账户级故障才换：欠费换一家立刻能服务，参数写错换到哪都一样还白烧备选额度
+      if (next && isAccountBlocked(attempt.status, text)) {
+        const cooldownSec = Number(step.provider.fallback?.cooldownSec ?? 120)
+        this.tripBreaker(step.provider.id, cooldownSec)
+        this.log('ai-failover', {
+          from: step.provider.id,
+          to: next.provider.id,
+          model: step.model,
+          status: attempt.status,
+          cooldownSec,
+          detail: text.slice(0, 300),
+        })
+        continue
+      }
+
+      // 上游报错：原样把状态码与响应体带回去，便于客户端排错（key 不会被回显）
+      res.writeHead(attempt.status, { 'Content-Type': 'application/json; charset=utf-8' })
       res.end(text || JSON.stringify({ error: { code: 'upstream_error', message: '上游返回错误' } }))
       return
     }

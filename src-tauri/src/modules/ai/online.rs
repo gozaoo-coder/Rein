@@ -29,6 +29,8 @@ use super::models::{
 
 /// app_meta 键：与语音（voice_config）、更新（update_settings_v1）同一套存储
 const META_KEY: &str = "online_service_v1";
+/// 服务端的默认模型别名：后台换模型不改客户端，我们只是「跟随」这个名字
+const AUTO_MODEL_ID: &str = "auto-model";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_BYTES: u64 = 1024 * 1024;
 const CHAT_SUFFIX: &str = "/v1/chat/completions";
@@ -338,6 +340,33 @@ pub async fn online_service_usage(
 
 /* ---------- 同步（把服务端的清单落库成可用模型） ---------- */
 
+/// 一条默认模型都没有时（比如刚装好就只导入在线模型）挑一个顶上：优先服务端下发的
+/// `auto-model` —— 它是「服务端当前主推模型」的别名，后台换模型不必让用户改设置；
+/// 服务端没下发这个别名（没配默认模型）时退回最早的一条。
+/// 已经有默认就什么都不做：用户自己选过的默认，同步不该抢走。
+fn ensure_default_model(conn: &rusqlite::Connection, service_base: &str) -> Result<()> {
+    let has_default: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM ai_models WHERE is_default = 1)",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_default {
+        return Ok(());
+    }
+    let picked = conn.execute(
+        "UPDATE ai_models SET is_default = 1 WHERE id = (SELECT MIN(id) FROM ai_models \
+         WHERE source = 'online' AND service_base = ?1 AND model_id = ?2)",
+        rusqlite::params![service_base, AUTO_MODEL_ID],
+    )?;
+    if picked == 0 {
+        conn.execute(
+            "UPDATE ai_models SET is_default = 1 WHERE id = (SELECT MIN(id) FROM ai_models)",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 /// 把服务端清单里的模型落库成 `ai_models` 行（`source='online'`）。
 ///
 /// - `model_ids` 为空 = 导入目录里的全部模型；
@@ -440,18 +469,7 @@ pub async fn online_service_sync(
         removed = tx.execute(&sql, params.as_slice())?;
     }
 
-    // 一条默认模型都没有时（比如刚装好就只导入在线模型），把第一条在线模型设成默认
-    let has_default: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM ai_models WHERE is_default = 1)",
-        [],
-        |r| r.get(0),
-    )?;
-    if !has_default {
-        tx.execute(
-            "UPDATE ai_models SET is_default = 1 WHERE id = (SELECT MIN(id) FROM ai_models)",
-            [],
-        )?;
-    }
+    ensure_default_model(&tx, &base)?;
 
     let sql = format!(
         "SELECT {AI_MODEL_COLS} FROM ai_models WHERE source = 'online' AND service_base = ?1 ORDER BY id ASC"
@@ -468,4 +486,77 @@ pub async fn online_service_sync(
         removed,
         models,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use crate::db::migrate_for_test;
+
+    use super::*;
+
+    fn fresh() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    /// 插一条模型：online 的带 service_base，manual 的不带。
+    fn add(conn: &Connection, model_id: &str, source: &str, service_base: Option<&str>) -> i64 {
+        conn.execute(
+            "INSERT INTO ai_models (name, provider, base_url, api_key, model_id, source, service_base, created_at, updated_at) \
+             VALUES (?1, 'rein-online', 'http://s/v1', 'k', ?2, ?3, ?4, 'now', 'now')",
+            rusqlite::params![format!("n-{model_id}"), model_id, source, service_base],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn default_id(conn: &Connection) -> Option<i64> {
+        conn.query_row("SELECT id FROM ai_models WHERE is_default = 1", [], |r| r.get(0))
+            .ok()
+    }
+
+    /// 「客户端默认用服务端的 auto-model」这条承诺就落在这里。
+    #[test]
+    fn auto_model_wins_when_nothing_is_default_yet() {
+        let conn = fresh();
+        add(&conn, "deepseek-v4.1-flash", "online", Some("http://s"));
+        let alias = add(&conn, "auto-model", "online", Some("http://s"));
+        ensure_default_model(&conn, "http://s").unwrap();
+        assert_eq!(default_id(&conn), Some(alias), "默认应落在 auto-model 上");
+    }
+
+    /// 服务端没配默认模型时（清单里没有别名）不能没有默认：退回最早一条。
+    #[test]
+    fn falls_back_to_the_earliest_row_without_the_alias() {
+        let conn = fresh();
+        let first = add(&conn, "glm-5.3-flash", "online", Some("http://s"));
+        add(&conn, "deepseek-v4.1-flash", "online", Some("http://s"));
+        ensure_default_model(&conn, "http://s").unwrap();
+        assert_eq!(default_id(&conn), Some(first), "没有别名就退回最早一条");
+    }
+
+    /// 用户自己选过的默认不该被一次同步抢走。
+    #[test]
+    fn an_existing_default_is_never_stolen() {
+        let conn = fresh();
+        let manual = add(&conn, "local-model", "manual", None);
+        add(&conn, "auto-model", "online", Some("http://s"));
+        conn.execute("UPDATE ai_models SET is_default = 1 WHERE id = ?1", [manual])
+            .unwrap();
+        ensure_default_model(&conn, "http://s").unwrap();
+        assert_eq!(default_id(&conn), Some(manual), "已有默认时同步不该动手");
+    }
+
+    /// 别名带服务地址：换了服务端要重新跟随，别把别人的别名当成自己的。
+    #[test]
+    fn the_alias_of_another_service_does_not_count() {
+        let conn = fresh();
+        let mine = add(&conn, "glm-5.3-flash", "online", Some("http://mine"));
+        add(&conn, "auto-model", "online", Some("http://other"));
+        ensure_default_model(&conn, "http://mine").unwrap();
+        assert_eq!(default_id(&conn), Some(mine), "别的服务地址下的别名不算数");
+    }
 }

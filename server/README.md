@@ -42,9 +42,10 @@ systemctl daemon-reload && systemctl enable --now rein-services
 | `update.publicKey` | 发布方公钥（base64），发布时服务端据此验签 |
 | `update.requireSignature` | true = 没签名的包一律拒收 |
 | `update.keepVersions` | 每通道保留的版本数（默认 8，自动清理旧包） |
-| `ai.providers` | 上游模型 provider（`baseUrl` / `apiKey` / `models` / `enabled`） |
+| `ai.providers` | 上游模型 provider（`baseUrl` / `apiKey` / `models` / `enabled`，可选 `hidden` / `fallback`） |
 | `ai.clients` | 客户端令牌（只存 sha256 摘要）+ 该令牌可用的模型白名单 `models[]`（空 = 全部） |
 | `ai.pricing` | 计价：模型价表（元/百万 tokens，官方同价）+ 流量单价与口径（见下） |
+| `ai.autoModel` | `auto-model` 别名指向哪款模型（默认 `deepseek-v4.1-flash`；留空 = 不下发该别名） |
 | `ai.rate` | 每令牌限流（`rpm` / `burst`） |
 
 环境变量可覆盖端口等单值：`REIN_PORT` / `REIN_HOST` / `REIN_ADMIN_TOKEN` /
@@ -98,13 +99,57 @@ curl -X PUT http://127.0.0.1:8787/admin/api/ai/pricing \
 | `GET /api/v1/ai/usage?days=7` | 客户端密钥 | 这个密钥的调用数、tokens、字节、**总成本**（服务端为权威口径） |
 | `GET /admin/api/ai/usage?days=7` | 管理令牌 | 全局总量 + 按天 / 按模型 / 按令牌拆分，含模型费与流量费 |
 | `GET /admin/api/ai/state` | 管理令牌 | 价目表 + 每个令牌最近 7 天的花费 |
-| `GET /api/v1/ai/health` | 公开 | 是否就绪、provider 列表、计价口径 |
+| `GET /api/v1/ai/health` | 公开 | 是否就绪、provider 列表（含退路与冷却状态）、计价口径、`autoModel` |
 
 明细落在 `data/logs/ai-usage-<日期>.jsonl`，每条含 `usage` 与 `cost`（`tokenCost` /
 `trafficCost` / `total`），按天聚合时不再重新取价 —— 改价只影响之后的调用。
 
 客户端那边同样按这个公式记一份本机账本（`ai_usage` 表），两边可对账；本机是估算，
 服务端为准。
+
+## 默认模型别名：`auto-model`
+
+客户端不必知道后台在用哪家模型：`ai.autoModel` 指定一款模型，`/v1/models` 就会在清单
+最前面下发一个 `auto-model`（`rein.auto = true` / `rein.target = 真实模型名`，单价照抄
+目标模型），客户端拿它当默认项即可。后台换模型只改这一行，客户端与用户设置都不用动。
+
+两条硬约束，都是为了不让别名变成绕过白名单的后门：
+
+- **只在该令牌能用目标模型时才下发**：令牌白名单里没有 `ai.autoModel` 就不出现这个别名，
+  调用它同样回 `403 model_not_allowed`；
+- **目标模型必须挂在一个启用中的 provider 上**，否则不下发。
+
+别名在服务端就地落定成真实模型名再转发，账本也记在真实模型名下（不会出现 `auto-model`
+这条账）。`GET /api/v1/ai/health` 的 `autoModel` 字段能看到当前指向。
+
+## 欠费兜底：`fallback`
+
+上游账户级故障（欠费/超额）会持续到充值，干等只会让客户端一直报错。给 provider 配一条
+退路，撞上这类故障时自动换一家：
+
+```json
+{
+  "id": "ark", "name": "火山方舟", "enabled": true,
+  "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+  "models": ["deepseek-v4.1-flash", "glm-5.3-flash"],
+  "fallback": {
+    "providerId": "deepseek",
+    "cooldownSec": 120,
+    "models": { "deepseek-v4.1-flash": "deepseek-flash" }
+  }
+}
+```
+
+- `models` 是**模型名映射**：同一款模型各家叫法不同（方舟 `deepseek-v4.1-flash`，
+  DeepSeek 官方 `deepseek-flash`），换家时必须改写模型名；
+- 只有**账户级**故障才换（403/429 且报文含 `insufficient|balance|overdue|欠费|余额` 等，
+  或 402）。参数写错、模型没开通这类换到哪都一样，一律原样透传，不烧备选额度；
+- 撞上之后主上游进入 `cooldownSec` 秒冷却，期内直接走备选，不再每个请求都去撞一遍；
+  冷却结束自动回来试，成功即恢复；
+- 备选 provider 建议配 `"hidden": true`：它只做退路，不摆到模型清单里让用户直接挑；
+- `GET /api/v1/ai/health` 的 `fallbackTo` / `coolingDown` 能看出退路是谁、此刻是否已经切走。
+
+兜底调用按**备选模型**的单价计费，所以价格表里两个名字都要有（官方同价，只是叫法不同）。
 
 ## 目录
 

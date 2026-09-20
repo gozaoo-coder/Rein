@@ -303,12 +303,7 @@ const titleText = computed(() => {
     <div v-show="!collapsed" ref="bodyRef" class="process-body">
       <template v-for="(seg, i) in segments" :key="i">
         <div v-if="seg.kind === 'reasoning'" class="process-reasoning">{{ seg.text }}</div>
-        <ToolCallGroup
-          v-else
-          :calls="[seg.call]"
-          embedded
-          show-result
-        />
+        <ToolCallGroup v-else :calls="[seg.call]" />
       </template>
     </div>
   </div>
@@ -327,6 +322,7 @@ const titleText = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
   height: 28px;
   padding: 0 8px;
   margin-left: -8px;
@@ -347,15 +343,19 @@ const titleText = computed(() => {
 }
 
 .process-title {
+  min-width: 0;
   font-size: 12.5px;
   font-weight: 500;
   color: var(--text-3);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 进行中跳动的点 */
 .process-dots {
   display: inline-flex;
+  flex: none;
   gap: 3px;
 }
 
@@ -386,6 +386,7 @@ const titleText = computed(() => {
 
 .process-arrow {
   line-height: 1;
+  flex: none;
   color: var(--text-3);
   transition: transform 150ms ease;
 }
@@ -410,14 +411,16 @@ const titleText = computed(() => {
   overflow-x: hidden;
 }
 
-/* 思考文字段：文档流样式，不单独滚动，跟随整体滚动 */
+/* 思考文字段：文档流样式，不单独滚动，跟随整体滚动。
+   overflow-wrap:anywhere —— 思考里出现长 URL / 哈希时任意断行，不撑出横向滚动 */
 .process-reasoning {
   padding: 2px 6px 2px 0;
+  min-width: 0;
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--text-3);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .process-body::-webkit-scrollbar {

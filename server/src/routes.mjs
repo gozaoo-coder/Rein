@@ -11,7 +11,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 
 import { compareVersions } from './store.mjs'
-import { normalizePricing } from './config.mjs'
+import { normalizePricing, normalizeProviders } from './config.mjs'
 import {
   clientIp,
   dirSize,
@@ -455,14 +455,7 @@ export function createRouter({ cfg, store, ai, log }) {
       if (req.method === 'PUT' && parts[1] === 'providers') {
         const body = await readJsonBody(req)
         if (!Array.isArray(body.providers)) return sendError(res, 400, 'bad_request', 'providers 必须是数组')
-        cfg.ai.providers = body.providers.map((p) => ({
-          id: String(p.id ?? '').slice(0, 32),
-          name: String(p.name ?? p.id ?? 'provider').slice(0, 64),
-          baseUrl: String(p.baseUrl ?? '').replace(/\/+$/, ''),
-          apiKey: String(p.apiKey ?? ''),
-          models: Array.isArray(p.models) ? p.models.map((m) => String(m)).slice(0, 64) : [],
-          enabled: Boolean(p.enabled && p.apiKey && p.baseUrl),
-        }))
+        cfg.ai.providers = normalizeProviders(body.providers)
         writeJsonFile(cfg.configFile, cfg)
         log('ai-providers-updated', { count: cfg.ai.providers.length, ip: clientIp(req) })
         return sendJson(res, 200, { ok: true, providers: cfg.ai.providers.map((p) => ({ ...p, apiKey: p.apiKey ? '***' : '' })) })

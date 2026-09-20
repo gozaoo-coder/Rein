@@ -21,7 +21,12 @@
         "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
         "apiKey": "",
         "models": ["doubao-seed-1-6-250615"],
-        "enabled": false
+        "enabled": false,
+        "fallback": {
+          "providerId": "deepseek",
+          "cooldownSec": 120,
+          "models": { "deepseek-v4.1-flash": "deepseek-flash" }
+        }
       },
       {
         "id": "dashscope",
@@ -37,11 +42,13 @@
         "baseUrl": "https://api.deepseek.com/v1",
         "apiKey": "",
         "models": ["deepseek-flash", "deepseek-v4-pro"],
+        "hidden": true,
         "enabled": false
       }
     ],
     "clients": [],
     "rate": { "rpm": 60, "burst": 10 },
+    "autoModel": "deepseek-v4.1-flash",
     "pricing": {
       "currency": "CNY",
       "unit": "per_1m_tokens",

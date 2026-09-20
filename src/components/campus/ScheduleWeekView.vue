@@ -107,7 +107,14 @@ function scrollToToday(): void {
   // 一屏能完整放下几天（冻结的时间列要先扣掉）
   const perScreen = Math.max(1, Math.min(7, Math.floor((el.clientWidth - timeW) / colWidth)))
   // **必须对齐到列边界**：按像素居中会让边上那一列只露半截，看起来像渲染坏了
-  const first = Math.max(0, Math.min(idx - Math.floor(perScreen / 2), 7 - perScreen))
+  let first = Math.max(0, Math.min(idx - Math.floor(perScreen / 2), 7 - perScreen))
+  // 目标位置可能超出「能滚到的范围」（右边已经没有更多内容）：浏览器会把它夹住，
+  // 而夹完的结果**不落在列边界上** —— 左边会留下几像素的前一天残影。
+  // 这种情况退到最靠右的列边界：今天照样在屏幕里，只是不贴左边。
+  const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth)
+  if (first * colWidth > maxScroll) {
+    first = Math.floor(maxScroll / colWidth)
+  }
   el.scrollLeft = first * colWidth
 }
 
