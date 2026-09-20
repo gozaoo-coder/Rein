@@ -686,16 +686,26 @@ impl Default for GrabSettings {
 }
 
 impl GrabSettings {
-    /// 落库前收口：界面允许用户调，但不能调出「每 50ms 打一次教务」这种东西。
+    /// 落库前收口。
+    ///
+    /// **下限特意压得很低**（最小间隔 10ms ≈ 100 次/秒）：2026-09 拿真账号对教务做过压测，
+    /// 80 次/秒无异常，所以「快」这件事该由用户决定，而不是被一个保守的钳位挡住。
+    ///
+    /// 但**默认值仍然保守**（`Default` 里是最小间隔 700ms）—— 钳位放开的只是「能调到多少」，
+    /// 不是「默认就有多快」。而且压测打的是 `bkjwtest`（测试域），生产域的风控策略未必一样；
+    /// 抢课的胜负手其实是**对时**（`lead_ms` 打得准）与**占位优先**，不是把请求数堆上去。
+    ///
+    /// 唯一还留着「不许调」的东西是那几条**语义上的边界**：退避上限不得低于基数
+    /// （否则退避会越退越快）、`0` 在 `max_attempts` / `cede_after_ms` 上是「不限/死守」这些有意义的取值。
     pub fn sanitized(mut self) -> Self {
-        self.min_interval_ms = self.min_interval_ms.clamp(300, 10_000);
-        self.poll_interval_ms = self.poll_interval_ms.clamp(500, 30_000);
-        self.full_retry_ms = self.full_retry_ms.clamp(1_000, 120_000);
-        self.backoff_ms = self.backoff_ms.clamp(300, 60_000);
+        self.min_interval_ms = self.min_interval_ms.clamp(10, 10_000);
+        self.poll_interval_ms = self.poll_interval_ms.clamp(50, 30_000);
+        self.full_retry_ms = self.full_retry_ms.clamp(100, 120_000);
+        self.backoff_ms = self.backoff_ms.clamp(50, 60_000);
         self.max_backoff_ms = self.max_backoff_ms.clamp(self.backoff_ms, 300_000);
         self.lead_ms = self.lead_ms.clamp(0, 5_000);
         self.max_attempts = self.max_attempts.clamp(0, 100_000);
-        self.max_polls = self.max_polls.clamp(3, 200);
+        self.max_polls = self.max_polls.clamp(1, 200);
         // 0 是「死守」这个有意义的值，别把它钳到别的数上；上限一小时
         self.cede_after_ms = self.cede_after_ms.clamp(0, 3_600_000);
         self

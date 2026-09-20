@@ -75,7 +75,9 @@ const MAX_WAIT_MS: i64 = 5000;
 const APPROACH_WAIT_MS: i64 = 25;
 /// 距开火多久算「临近」：这段时间内的睡眠要细，一秒里要能醒好几回。
 const APPROACH_MS: i64 = 3000;
-/// 刚干完活之后的小憩：让别的任务也能轮到，同时不至于空转。
+/// 探测完窗口之后的小憩。**只用于窗口探测那条路径** ——
+/// 提交/轮询之后不再睡固定值，而是按节流闸门睡（见 `step` 末尾），
+/// 否则「最小间隔」调得再小也会被这个固定值压住。
 const BUSY_WAIT_MS: i64 = 30;
 /// 服务器时间重采样间隔（毫秒）。偏差是缓变量，不必每轮都问。
 const TIME_RESAMPLE_MS: i64 = 30_000;
@@ -574,7 +576,14 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     }
 
     emit(app, hub);
-    Ok(Duration::from_millis(BUSY_WAIT_MS as u64))
+    // 干完活之后按**节流闸门**睡，而不是睡一个固定值。
+    //
+    // 这里原来是固定的 `BUSY_WAIT_MS`（30ms），等于把速率硬压在 ~33 次/秒 ——
+    // 于是「最小间隔调成 10ms」在界面上看着生效、实际完全不起作用（最阴的那种谎）。
+    // 闸门开着就只睡 1ms（把 CPU 让出去），闸门关着就睡够剩下的时间。
+    Ok(Duration::from_millis(
+        hub.pace_gap_ms(settings.min_interval_ms).max(1) as u64,
+    ))
 }
 
 /// 去 `open-turns` 把「窗口什么时候开」问出来，填进那些还在等的任务。
@@ -2091,19 +2100,25 @@ mod tests {
     }
 
     #[test]
-    fn settings_are_clamped_so_nobody_can_hammer_the_school() {
+    fn settings_are_clamped_to_sane_limits() {
         let s = GrabSettings {
-            min_interval_ms: 1,
-            poll_interval_ms: 1,
+            min_interval_ms: 0,
+            poll_interval_ms: 0,
+            full_retry_ms: 0,
+            backoff_ms: 0,
             lead_ms: 999_999,
             max_polls: 0,
             ..Default::default()
         }
         .sanitized();
-        assert_eq!(s.min_interval_ms, 300);
-        assert_eq!(s.poll_interval_ms, 500);
+        // 下限压得很低（压测过 80 次/秒无异常），但**不能是 0 或负数** ——
+        // 那会让闸门失效，变成不留间隙地连打
+        assert_eq!(s.min_interval_ms, 10);
+        assert_eq!(s.poll_interval_ms, 50);
+        assert_eq!(s.full_retry_ms, 100);
+        assert_eq!(s.backoff_ms, 50);
         assert_eq!(s.lead_ms, 5_000);
-        assert_eq!(s.max_polls, 3);
+        assert_eq!(s.max_polls, 1);
         // 退避上限不得低于基数，否则退避会越退越快
         let s = GrabSettings {
             backoff_ms: 9000,
@@ -2112,6 +2127,21 @@ mod tests {
         }
         .sanitized();
         assert!(s.max_backoff_ms >= s.backoff_ms);
+    }
+
+    /// 「快」是用户能调的，但**默认值不许偷偷变快** ——
+    /// 放开钳位只回答「能调到多少」，不回答「默认多快」。
+    #[test]
+    fn loosening_the_floor_does_not_speed_up_the_default() {
+        let d = GrabSettings::default();
+        let s = d.clone().sanitized();
+        assert_eq!(s.min_interval_ms, d.min_interval_ms, "默认值本身就落在钳位区间内");
+        assert_eq!(s.poll_interval_ms, d.poll_interval_ms);
+        assert_eq!(s.full_retry_ms, d.full_retry_ms);
+        // 默认仍然是「一个学生抢几门课」的节奏，不是压测出来的那档
+        assert_eq!(d.min_interval_ms, 700);
+        assert_eq!(d.poll_interval_ms, 2000);
+        assert_eq!(d.full_retry_ms, 5000);
     }
 
     /// 教学班 id 的类型必须原样往返：教务回 `317844` 而我们发 `"317844"` 是两种东西。
@@ -2208,7 +2238,7 @@ mod tests {
         let s = load_settings(&conn).unwrap();
         assert_eq!(s.poll_interval_ms, GrabSettings::default().poll_interval_ms);
 
-        // 存进去的必须是收口后的值
+        // 存进去的必须是收口后的值（下限 10ms —— 见 `GrabSettings::sanitized`）
         save_settings(
             &conn,
             &GrabSettings {
@@ -2217,7 +2247,17 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(load_settings(&conn).unwrap().min_interval_ms, 300);
+        assert_eq!(load_settings(&conn).unwrap().min_interval_ms, 10);
+        // 0 或负数会让节流闸门失效（不留间隙地连打），必须被夹上来
+        save_settings(
+            &conn,
+            &GrabSettings {
+                min_interval_ms: -5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(load_settings(&conn).unwrap().min_interval_ms, 10);
     }
 
     #[test]

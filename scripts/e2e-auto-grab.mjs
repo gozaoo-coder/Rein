@@ -335,7 +335,7 @@ async function main() {
       settingsText.slice(0, 80),
     )
 
-    // 把「提前出手」从 800ms 调到 1000ms（点两下「增加」，步进 100）。
+    // 把「提前出手」从 800ms 调到 900ms（点两下「增加」，步进 50）。
     // **两次点击必须分成两轮**：NumberStepper 在 emit 时读的是 props，
     // 而 Vue 的 props 不会在同一 tick 内更新 —— 连着点两下只会前进一档。
     const bumpLead = () =>
@@ -355,9 +355,43 @@ async function main() {
     await waitFor(`document.body.textContent.includes('抢课节奏')`, 5000, '重新打开设置')
     ok(
       '改动被真的记住（重新打开仍是新值）',
-      /1000\s*ms/.test(await evalJS(`document.querySelector('.panel .body')?.textContent ?? ''`)),
-      await evalJS(`document.querySelector('.panel .body')?.textContent.replace(/\\s+/g,' ').match(/提前出手.{0,12}/)?.[0] ?? ''`),
+      /900\s*ms/.test(await evalJS(`document.querySelector('.panel input, .panel .body')?.textContent ?? ''`)) ||
+        /leadMs = 900/.test(await evalJS(`document.querySelector('.panel .body')?.textContent ?? ''`)),
+      await evalJS(`document.querySelector('.panel .body')?.textContent.replace(/\\s+/g,' ').match(/leadMs.{0,10}/)?.[0] ?? ''`),
     )
+
+    /* ---- 8b. 时间轴：画出来、跟着调、且只点亮正在调的那一段 ---- */
+    ok(
+      '设置抽屉里有抢课循环时间轴',
+      (await evalJS(`document.querySelectorAll('.panel svg.tl g').length`)) > 0,
+      `泳道数 ${await evalJS(`document.querySelectorAll('.panel svg.tl > g').length`)}`,
+    )
+    ok(
+      '每段延迟都有引导线标出参数名',
+      (await evalJS(`[...document.querySelectorAll('.panel .seg-label')].map((t) => t.textContent.trim())`)).join(
+        '|',
+      ).includes('leadMs'),
+      JSON.stringify(await evalJS(`[...document.querySelectorAll('.panel .seg-label')].map((t) => t.textContent.trim())`)),
+    )
+    // 一档预设就是一次点击把几个数字一起调好 —— 顺带验「时间轴跟着数字变」
+    const rateBefore = await evalJS(`document.querySelector('.panel .rate')?.textContent.trim()`)
+    await clickText('.panel .preset', '压测档')
+    await sleep(300)
+    const rateAfter = await evalJS(`document.querySelector('.panel .rate')?.textContent.trim()`)
+    ok(
+      '点档位后时间轴的速率跟着变',
+      rateBefore !== rateAfter && /次\/秒/.test(rateAfter ?? ''),
+      `${rateBefore} → ${rateAfter}`,
+    )
+    ok(
+      '正在调的那一段被点亮（全局闸门），其余淡下去',
+      (await evalJS(`!!document.querySelector('.panel .seg.hot')`)) === true &&
+        (await evalJS(`document.querySelectorAll('.panel .dim').length`)) > 0,
+      `hot=${await evalJS(`document.querySelector('.panel .seg.hot')?.getAttribute('class') ?? '(无)'`)}`,
+    )
+    // 点回保守档再保存，免得把压测档留给后面的场景
+    await clickText('.panel .preset', '保守')
+    await sleep(200)
     await shot('6-settings')
     // 关掉设置抽屉，否则后面找按钮会在两个 .panel 之间挑错那个
     await evalJS(`document.querySelector('.panel .close')?.click()`)

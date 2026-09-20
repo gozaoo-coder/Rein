@@ -6143,14 +6143,14 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'campus_grab_settings_set': {
       const incoming = plain(args.settings as GrabSettings)
       grabSettings = {
-        minIntervalMs: Math.min(10000, Math.max(300, Number(incoming.minIntervalMs) || 700)),
-        pollIntervalMs: Math.min(30000, Math.max(500, Number(incoming.pollIntervalMs) || 2000)),
-        fullRetryMs: Math.min(120000, Math.max(1000, Number(incoming.fullRetryMs) || 5000)),
-        backoffMs: Math.min(60000, Math.max(300, Number(incoming.backoffMs) || 1500)),
+        minIntervalMs: Math.min(10000, Math.max(10, Number(incoming.minIntervalMs) || 700)),
+        pollIntervalMs: Math.min(30000, Math.max(50, Number(incoming.pollIntervalMs) || 2000)),
+        fullRetryMs: Math.min(120000, Math.max(100, Number(incoming.fullRetryMs) || 5000)),
+        backoffMs: Math.min(60000, Math.max(50, Number(incoming.backoffMs) || 1500)),
         maxBackoffMs: Math.min(300000, Math.max(1000, Number(incoming.maxBackoffMs) || 30000)),
         leadMs: Math.min(5000, Math.max(0, Number(incoming.leadMs) ?? 800)),
         maxAttempts: Math.min(100000, Math.max(0, Number(incoming.maxAttempts) || 0)),
-        maxPolls: Math.min(200, Math.max(3, Number(incoming.maxPolls) || 15)),
+        maxPolls: Math.min(200, Math.max(1, Number(incoming.maxPolls) || 15)),
         // 0 是有意义的值（死守），不能用 `|| 0` 兜底写法把它换掉
         cedeAfterMs: Math.min(3600000, Math.max(0, Number(incoming.cedeAfterMs) || 0)),
         watchWindow: incoming.watchWindow !== false,
