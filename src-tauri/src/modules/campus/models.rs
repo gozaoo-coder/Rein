@@ -901,6 +901,12 @@ pub struct CourseSelectStatus {
     pub turns: Vec<CourseSelectTurn>,
     /// 运行时暴露给界面的「选课页」地址（含令牌），便于用户去官方页面核对
     pub entry_url: Option<String>,
+    /// 当前账号连的是**正式**教务（bkjw）而不是测试域（bkjwtest）。
+    ///
+    /// 界面据此说一句实话：测试域的风控比正式域松，压出来的速率不能当作正式域的结论
+    /// （见 `provider::is_production_base`）。
+    #[serde(default)]
+    pub production: bool,
 }
 
 /// 教学班里的课程信息（`lesson.course`）

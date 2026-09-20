@@ -1529,6 +1529,8 @@ pub async fn campus_course_select_status(
 ) -> Result<CourseSelectStatus> {
     let client = select_context(&state.db, &hub)?.client;
     let entry_url = client.entry_url();
+    // 正式域 / 测试域：界面要说清「你练拳的地方是不是真擂台」
+    let production = super::provider::is_production_base(client.host());
 
     // 无锁：拉状态
     let (server_time, student, turns) = tauri::async_runtime::spawn_blocking(
@@ -1568,6 +1570,7 @@ pub async fn campus_course_select_status(
             .map(str::to_string),
         turns,
         entry_url: Some(entry_url),
+        production,
     })
 }
 

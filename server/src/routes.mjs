@@ -257,6 +257,28 @@ export function createRouter({ cfg, store, ai, log }) {
     const query = Object.fromEntries(url.searchParams.entries())
     const ip = clientIp(req)
 
+    // ===== 跨域（AI 接口）=====
+    // App 里的聊天请求是 **WebView 侧的 pi-ai 直接发出**的（目录/用量那两条才走 Rust），
+    // 所以网关必须自己给 CORS —— 少了它，WebView 只会看到 `Failed to fetch`：
+    // 401「密钥不对」、429「限流」、503「provider 全冷却」这些**真正有用**的信息
+    // 全被浏览器吞掉，用户看到的是一句没有下文的 connection error（线上踩过）。
+    // 只对 AI 接口开，且是 Bearer 令牌鉴权、不带 Cookie，所以允许 * 不引入凭据泄露面。
+    if (url.pathname.startsWith('/v1/') || url.pathname.startsWith('/api/v1/ai/')) {
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      // **回显**浏览器要发的头，而不是写死一份白名单：WebView 里的 pi-ai 走 OpenAI SDK，
+      // 它会带 `x-stainless-*` 一类自定义头 —— 白名单少一项，预检就失败，
+      // 表现同样是「一句 connection error，什么都看不到」。
+      const asked = req.headers['access-control-request-headers']
+      res.setHeader('Access-Control-Allow-Headers', asked || 'Authorization, Content-Type')
+      res.setHeader('Access-Control-Max-Age', '86400')
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204)
+        res.end()
+        return
+      }
+    }
+
     // ===== 服务信息 / 健康 =====
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
       return sendJson(res, 200, {

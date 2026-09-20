@@ -6448,11 +6448,22 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     /* ---------- 校园教务（演示数据，只在 mock 里存在） ---------- */
 
     case 'campus_systems':
+      // 与 Rust 的 REGISTRY 同序同形：**正式在前**（默认选中正式域），测试在后。
+      // 两个域是同一套系统，除域名之外一字不差 —— 见 `campus/provider.rs` 的 macro。
       return delay([
         {
           kind: 'guet-supwisdom-eams5',
-          name: '桂林电子科技大学 · 本科生教学信息平台',
-          vendor: '树维 Supwisdom EAMS5 · 学生端',
+          name: '桂林电子科技大学 · 本科生教学信息平台（正式）',
+          vendor: '树维 Supwisdom EAMS5 · 学生端 · bkjw.guet.edu.cn（正式选课在这里）',
+          defaultBaseUrl: 'https://bkjw.guet.edu.cn',
+          loginStrategy: 'supwisdom-portal-rsa',
+          bizTypeId: 2,
+          mayRequireCaptcha: true,
+        },
+        {
+          kind: 'guet-supwisdom-eams5-test',
+          name: '桂林电子科技大学 · 本科生教学信息平台（测试）',
+          vendor: '树维 Supwisdom EAMS5 · 学生端 · bkjwtest.guet.edu.cn（联调用，风控更松）',
           defaultBaseUrl: 'https://bkjwtest.guet.edu.cn',
           loginStrategy: 'supwisdom-portal-rsa',
           bizTypeId: 2,
@@ -6596,7 +6607,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         studentCode: campusAccount.loginName ?? '2600350118',
         studentName: '演示同学',
         turns: campusSelectTurns(),
-        entryUrl: 'https://bkjwtest.guet.edu.cn/course-selection/?token=demo',
+        entryUrl: `${campusAccount.baseUrl ?? 'https://bkjwtest.guet.edu.cn'}/course-selection/?token=demo`,
+        // 与 Rust 同一条判定：正式域（bkjw）才算 production，测试域不算
+        production: /^https:\/\/bkjw\.guet\.edu\.cn\/?$/i.test(String(campusAccount.baseUrl ?? '')),
       } as T)
     }
 

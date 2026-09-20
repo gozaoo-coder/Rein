@@ -221,9 +221,11 @@ async function main() {
   /** 档位钉死：这些断言验的是遮罩怎么渲染，不该被无头环境的掉帧判定搅进来 */
   const pinHigh = `localStorage.setItem('rein.perf.v1', 'high');`
   const pinLow = `localStorage.setItem('rein.perf.v1', 'low');`
-  // 「auto」要显式写进去：现在的**默认档是 low**（玻璃与动效算加强项，缺省不开），
-  // 所以 removeItem 得到的是 low 而不是 auto —— 早先这里就踩了这个坑
+  // 「auto」写进去只是为了明确：**默认档就是 auto**（缺省时 `loadMode()` 回落到 auto），
+  // 所以 removeItem 得到的也是 auto —— 见下面的 22b。
   const pinAuto = `localStorage.setItem('rein.perf.v1', 'auto');`
+  /** 抹掉本地档位 = 全新安装的样子 */
+  const clearPerf = `localStorage.removeItem('rein.perf.v1');`
 
   const edge = spawn(
     EDGE,
@@ -351,6 +353,20 @@ async function main() {
       ),
     )
     await shot('4-degraded-scrolled')
+
+    /* ---------- 4b 全新安装（没有本地档位）：默认必须是高画质 ----------
+       0.2.5 → 0.2.7 升级后「渐进式模糊消失」就是这里翻的车：默认档是 low，
+       而遮罩是 v-if="!perfDegraded"，于是装完就少了一块设计。 */
+    await cdp('Page.addScriptToEvaluateOnNewDocument', { source: clearPerf })
+    await navigateTo(`${APP}/#/settings`)
+    await evalJS(SCROLL_MID)
+    await sleep(500)
+    s = await evalJS(HEADER_STATE)
+    ok(
+      '22b 全新安装（无本地档位）默认高画质：渐进模糊在',
+      s.perfAttr === 'high' && s.layerCount === 5,
+      `data-perf=${s.perfAttr} 层数=${s.layerCount}`,
+    )
 
     /* ---------- 5 默认档（auto）：空闲时保持高画质 ---------- */
     await cdp('Page.addScriptToEvaluateOnNewDocument', { source: pinAuto })

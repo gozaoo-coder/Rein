@@ -148,6 +148,21 @@ async function main() {
     await waitFor(`document.querySelectorAll('.sys').length >= 1`, 10000, '学校系统选择器（走 campus_systems）')
     ok('campus_systems 命令层可用', true, await evalJS(`document.querySelector('.sys-name')?.textContent`))
 
+    // 默认选中第一项（正式域 bkjw.guet.edu.cn）。这条脚本是**冒烟**，
+    // 不该拿正式教务当靶子 —— 除非显式 REIN_GUET_SYSTEM=prod，否则切到测试域。
+    if ((process.env.REIN_GUET_SYSTEM ?? 'test') !== 'prod') {
+      const picked = await evalJS(`(() => {
+        const b = [...document.querySelectorAll('.sys')].find((e) => e.textContent.includes('测试'))
+        if (!b) return false
+        b.click()
+        return true
+      })()`)
+      if (picked) {
+        await sleep(300)
+        ok('切到测试域（正式域留给真实选课，冒烟不打扰它）', true, await evalJS(`document.querySelector('.sys.on .sys-name')?.textContent`))
+      }
+    }
+
     await setInput('input[autocomplete="username"]', USER)
     await setInput('input[autocomplete="current-password"]', PASS)
     await clickText('button', '登录')
