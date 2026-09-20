@@ -97,7 +97,7 @@ pub fn kb_search(
                 // 直接采用返回的实际维度，不与 e.dim() 比较：
                 // 云端模型的维度常常未知（配置里没填 dim），以返回值为准才不会把云端模式
                 // 误降级成关键词。维度混库的安全性由 vector_recall 保证（长度不符即跳过）。
-                let v = e.embed(&[query.query.clone()])?.into_iter().next();
+                let v = e.embed(std::slice::from_ref(&query.query))?.into_iter().next();
                 Some(v).flatten().filter(|x| !x.is_empty())
             }
             None => None,

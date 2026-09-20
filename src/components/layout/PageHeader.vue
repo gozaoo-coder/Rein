@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { ChevronLeft } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
+import ProgressiveBlur from '@/components/common/ProgressiveBlur.vue'
 import { useScrolled } from '@/composables/useScrolled'
 import { perfDegraded } from '@/system/perf'
 
@@ -11,31 +12,21 @@ import { perfDegraded } from '@/system/perf'
  *
  *  页头固定：sticky 顶住滚动容器（移动端滚文档、桌面滚 .desk-main，同一份 CSS 两边
  *  都成立；若用 fixed，桌面壳里会跑到导航轨与信息栏底下）。页面一滚起来就在背后压
- *  一层渐进模糊遮罩——内容从模糊里淡出，而不是被一条硬边切掉。
- *  掉帧降级（system/perf）时同位置换成底色遮罩，不做 backdrop-filter。 */
+ *  一层渐进模糊遮罩（ProgressiveBlur）——内容从模糊里淡出，而不是被一条硬边切掉。
+ *  掉帧降级（system/perf）时同位置换成底色遮罩，不做 backdrop-filter。
+ *
+ *  两个安全区变量，默认值就是「整页滚动」这一最常见形态；页头被放进独立滚动容器
+ *  （如 AI 页的消息区）时由使用方覆写：
+ *  - `--ph-stick`：粘住的纵向偏移。默认 `--safe-top`——状态栏区域不属于任何滚动容器，
+ *    页头粘在视口顶（0）会直接压进手机顶部消息栏，必须让开这段；
+ *  - `--ph-up`：遮罩向上铺出的量。默认与 `--ph-stick` 相同：粘在 safe-top 时遮罩正好
+ *    铺满状态栏那条，滚上去的内容在那一段里也是糊的。 */
 defineProps<{
   title: string
   subtitle?: string
   back?: boolean
   compact?: boolean
 }>()
-
-/** 渐进模糊层数 / 每层递增量：多层 backdrop-filter 叠起来（后一层把前一层的结果
- *  再模糊一次），各自用 mask 梯度限制在一段纵向区间里，越靠上被模糊的次数越多，
- *  于是强度自上而下递减——即 vue-bits GradualBlur 的做法。层数越多过渡越顺滑，
- *  但每层都是一次独立合成，代价同步上涨。 */
-const BLUR_LAYERS = 5
-const BLUR_STEP = 1.6
-
-const blurLayers = Array.from({ length: BLUR_LAYERS }, (_, k) => {
-  const i = k + 1
-  const solid = ((BLUR_LAYERS - i) / BLUR_LAYERS) * 100
-  return {
-    i,
-    blur: `${(i * BLUR_STEP).toFixed(1)}px`,
-    mask: `linear-gradient(to bottom, #000 0%, #000 ${solid}%, transparent ${solid + 100 / BLUR_LAYERS}%)`,
-  }
-})
 
 const router = useRouter()
 const root = ref<HTMLElement | null>(null)
@@ -55,9 +46,7 @@ function goBack(): void {
   <header ref="root" class="page-header" :class="{ compact, scrolled, lite: perfDegraded }">
     <!-- 遮罩：只在页面滚起来后显形（顶部没有内容经过时不该出现任何底色） -->
     <div class="ph-mask" aria-hidden="true">
-      <template v-if="!perfDegraded">
-        <span v-for="l in blurLayers" :key="l.i" :style="{ '--b': l.blur, '--m': l.mask }" />
-      </template>
+      <ProgressiveBlur v-if="!perfDegraded" direction="down" />
     </div>
 
     <slot name="lead" />
@@ -78,8 +67,10 @@ function goBack(): void {
      （移动端是文档、桌面是 .desk-main），sticky 两个都对，fixed 会跑偏。
      z-index 除了抬层级，还负责建立层叠上下文——遮罩用 -1 沉到页头内容背后，
      有上下文它才不会被甩到页面内容下面去。 */
+  --ph-stick: var(--safe-top);
+  --ph-up: var(--safe-top);
   position: sticky;
-  top: 0;
+  top: var(--ph-stick);
   z-index: 30;
   display: flex;
   align-items: flex-end;
@@ -89,15 +80,15 @@ function goBack(): void {
   --ph-tail: 14px;
 }
 
-/* 渐进模糊遮罩（结构见 script：多层 backdrop-filter + mask 梯度）：
-   - 向上多铺 --safe-top：滚动时把状态栏区域一并盖住（桌面为 0，等于没铺）
+/* 渐进模糊遮罩（模糊本身见 ProgressiveBlur 组件）：
+   - 向上多铺 --ph-up：页头粘在 safe-top 时正好盖住状态栏那条（桌面为 0，等于没铺）；
+     页头被放进独立滚动容器时（AI 页）由使用方覆写成容器内的可裁切余量
    - 向下多铺 --ph-tail：模糊在页头下缘之外收尾，不留硬边
    - 左右铺回页面横向内边距（--ph-bleed 可被页面覆写）：把整帧宽一起盖住，
-     否则两侧会露出未模糊的窄条。移动端窗口滚动时若真用 fixed 才需要
-     额外的状态栏处理，sticky 下这段偏移就是全部。 */
+     否则两侧会露出未模糊的窄条 */
 .ph-mask {
   position: absolute;
-  top: calc(-1 * var(--safe-top));
+  top: calc(-1 * var(--ph-up));
   left: calc(-1 * var(--ph-bleed, var(--page-pad-x)));
   right: calc(-1 * var(--ph-bleed, var(--page-pad-x)));
   bottom: calc(-1 * var(--ph-tail));
@@ -109,16 +100,6 @@ function goBack(): void {
 
 .page-header.scrolled .ph-mask {
   opacity: 1;
-}
-
-/* 单层：把背景模糊一次，再用 mask 梯度把自己限制在 [0, solid+1/N] 这段区间里 */
-.ph-mask span {
-  position: absolute;
-  inset: 0;
-  backdrop-filter: blur(var(--b));
-  -webkit-backdrop-filter: blur(var(--b));
-  mask-image: var(--m);
-  -webkit-mask-image: var(--m);
 }
 
 /* 降级档（system/perf 判定掉帧）：不做毛玻璃，改用「画布底色 → 透明」的渐变遮罩。

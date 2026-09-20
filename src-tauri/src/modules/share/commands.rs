@@ -128,7 +128,7 @@ pub async fn share_poll(app: tauri::AppHandle) -> Result<Vec<SharedFileMeta>> {
                 ));
             }
         }
-        files.sort_by(|a, b| b.0.cmp(&a.0));
+        files.sort_by_key(|f| std::cmp::Reverse(f.0));
         Ok(files.into_iter().map(|(_, m)| m).collect())
     })
     .await

@@ -219,9 +219,10 @@ pub struct UpdateCheck {
     pub downgrade_blocked: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
+    #[default]
     Idle,
     Preparing,
     Downloading,
@@ -230,12 +231,6 @@ pub enum Phase {
     Installing,
     Failed,
     Cancelled,
-}
-
-impl Default for Phase {
-    fn default() -> Self {
-        Phase::Idle
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]

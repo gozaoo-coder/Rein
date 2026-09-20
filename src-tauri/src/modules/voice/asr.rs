@@ -167,7 +167,7 @@ impl DoubaoAdapter {
         self.ws
             .as_mut()
             .ok_or_else(|| ReinError::Message("ASR 连接未建立".into()))?
-            .send(Message::Binary(data.into()))
+            .send(Message::Binary(data))
             .await
             .map_err(|e| ReinError::Message(format!("ASR 发送失败：{e}")))
     }
@@ -408,7 +408,7 @@ impl QwenAdapter {
         self.ws
             .as_mut()
             .ok_or_else(|| ReinError::Message("ASR 连接未建立".into()))?
-            .send(Message::Text(msg.to_string().into()))
+            .send(Message::Text(msg.to_string()))
             .await
             .map_err(|e| ReinError::Message(format!("Qwen ASR 发送失败：{e}")))
     }
@@ -443,7 +443,7 @@ impl QwenAdapter {
             self.ws
                 .as_mut()
                 .ok_or_else(|| ReinError::Message("ASR 连接未建立".into()))?
-                .send(Message::Binary(pcm.into()))
+                .send(Message::Binary(pcm))
                 .await
                 .map_err(|e| ReinError::Message(format!("Qwen ASR 发送失败：{e}")))?;
         }
@@ -500,7 +500,7 @@ impl AsrAdapter for QwenAdapter {
         self.ws
             .as_mut()
             .ok_or_else(|| ReinError::Message("ASR 连接未建立".into()))?
-            .send(Message::Binary(pcm.to_vec().into()))
+            .send(Message::Binary(pcm.to_vec()))
             .await
             .map_err(|e| ReinError::Message(format!("Qwen ASR 发送失败：{e}")))
     }

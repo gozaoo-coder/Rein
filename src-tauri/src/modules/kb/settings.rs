@@ -160,8 +160,11 @@ pub fn enabled_sources(conn: &Connection) -> Result<Vec<String>> {
         .collect())
 }
 
+/// 云端嵌入配置的完整内容（含明文密钥），只给 Rust 侧的 embedder 用，绝不 Serialize 出进程。
+pub type CloudConfig = (String, String, String, Option<i64>);
+
 /// 云端嵌入的完整配置（含明文密钥），只给 Rust 侧的 embedder 用。
-pub fn cloud_config(conn: &Connection) -> Result<Option<(String, String, String, Option<i64>)>> {
+pub fn cloud_config(conn: &Connection) -> Result<Option<CloudConfig>> {
     let row = conn
         .query_row(
             "SELECT cloud_base_url, cloud_api_key, cloud_model, cloud_dim FROM kb_settings WHERE id = 1",

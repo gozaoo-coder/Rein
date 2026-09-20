@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, type Component } from 'vue'
 import {
   Brain,
   CalendarDays,
@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  CornerLeftUp,
   Dumbbell,
   FileAudio,
   FileText,
@@ -109,6 +110,26 @@ const NAMESPACES = [
 
 /** 归类时的常用目标（快速 chips） */
 const MOVE_TARGETS = ['运动', '饮食', '日程', '笔记', '文档', '语音', '视频', '用户记忆', '未分类数据']
+
+/**
+ * 根目录清单：按真实文件系统的读法——一行一个目录（名称 + 说明 + 条目数 + 进箭头），
+ * 而不是方块网格。命名空间在前（规范里定义的心智模型），数据里存在的其他顶层目录补在后面，
+ * 保证没有哪个目录会被藏起来。
+ */
+const rootEntries = computed(() => {
+  const counts = new Map(dirs.value.map((d) => [d.name, d.count]))
+  const known = new Set<string>(NAMESPACES.map((n) => n.name))
+  const rows = NAMESPACES.map((n) => ({
+    name: n.name as string,
+    icon: n.icon as Component,
+    hint: n.hint as string,
+    count: counts.get(n.name) ?? 0,
+  }))
+  for (const d of dirs.value) {
+    if (!known.has(d.name)) rows.push({ name: d.name, icon: Folder, hint: '用户目录', count: d.count })
+  }
+  return rows
+})
 
 const crumbs = computed(() => (dir.value ? dir.value.split('/') : []))
 
@@ -772,15 +793,22 @@ onMounted(async () => {
           <p v-else class="t-3 hint-line">{{ recentLoaded ? '知识库还没有内容' : '加载中…' }}</p>
         </section>
 
-        <section class="card">
-          <h3 class="sec">目录</h3>
-          <div class="nsgrid">
-            <button v-for="ns in NAMESPACES" :key="ns.name" class="ns" @click="openDir(ns.name)">
-              <component :is="ns.icon" :size="18" class="nsic" />
-              <b>{{ ns.name }}</b>
-              <small>{{ ns.hint }}</small>
-            </button>
-          </div>
+        <!-- 顶层目录：一行一个（像文件管理器左侧的「位置」栏），不做方块网格 -->
+        <section class="card list">
+          <h3 class="sec">顶层目录</h3>
+          <ul>
+            <li v-for="e in rootEntries" :key="e.name">
+              <button class="row item" @click="openDir(e.name)">
+                <component :is="e.icon" :size="16" class="fic" />
+                <span class="flex-1">
+                  <b>{{ e.name }}</b>
+                  <small>{{ e.hint }}</small>
+                </span>
+                <span v-if="e.count > 0" class="t-3 dcount">{{ e.count }} 项</span>
+                <ChevronRight :size="15" class="t-3" />
+              </button>
+            </li>
+          </ul>
         </section>
 
         <section v-if="files.length" class="card list">
@@ -814,18 +842,28 @@ onMounted(async () => {
         </div>
 
         <section class="card list">
-          <ul v-if="dirs.length || files.length">
+          <!-- 「..」不跟着空状态走：空目录也要留一条回退的路（真实文件管理器就是这样） -->
+          <ul>
+            <li>
+              <button class="row item" @click="jumpCrumb(crumbs.length - 2)">
+                <CornerLeftUp :size="16" class="fic dim" />
+                <span class="flex-1">
+                  <b>..</b>
+                  <small>{{ crumbs.length > 1 ? crumbs[crumbs.length - 2] : '文件' }}</small>
+                </span>
+              </button>
+            </li>
             <li v-for="d in dirs" :key="d.path">
               <button class="row item" @click="openDir(d.path)">
-                <Folder :size="15" class="fic" />
-                <span class="flex-1"><b>{{ d.name }}</b></span>
+                <Folder :size="16" class="fic" />
+                <span class="flex-1"><b>{{ d.name }}</b><small>目录</small></span>
                 <span class="t-3 dcount">{{ d.count }} 项</span>
                 <ChevronRight :size="15" class="t-3" />
               </button>
             </li>
             <li v-for="f in files" :key="`${f.sourceType}-${f.id}`">
               <button class="row item" @click="openDoc(f.id)">
-                <component :is="kindIcon(f.kind)" :size="15" class="fic" :class="{ dim: f.system }" />
+                <component :is="kindIcon(f.kind)" :size="16" class="fic" :class="{ dim: f.system }" />
                 <span class="flex-1">
                   <b>{{ baseName(f.path) }}</b>
                   <small v-if="f.occurredOn">{{ f.occurredOn }}</small>
@@ -835,7 +873,13 @@ onMounted(async () => {
               </button>
             </li>
           </ul>
-          <p v-else class="t-3 hint-line">{{ listingBusy ? '加载中…' : '此目录还没有文件' }}</p>
+          <p v-if="!dirs.length && !files.length" class="t-3 hint-line">
+            {{ listingBusy ? '加载中…' : '此目录还没有文件' }}
+          </p>
+          <!-- 状态栏一行：目录 / 文件计数 + 当前路径，像文件管理器底部的信息栏 -->
+          <p class="listing-meta t-3">
+            {{ dirs.length }} 个目录 · {{ files.length }} 个文件 · /{{ dir }}
+          </p>
           <p v-if="truncated" class="t-3 hint-line">
             目录较大，仅列出前 {{ GLOB_LIMIT }} 项；进入子目录可缩小范围。
           </p>
@@ -964,43 +1008,21 @@ li + li .item {
   font-size: var(--fs-footnote);
 }
 
-/* 根目录命名空间网格 */
-.nsgrid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  padding: 8px 0 12px;
-}
-
-.ns {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 12px 4px 10px;
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-  text-align: center;
-  transition: transform var(--dur-fast) var(--ease-standard);
-}
-
-.ns:active {
-  transform: scale(0.96);
-}
-
-.ns b {
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-  color: var(--text-1);
-}
-
-.ns small {
+/* 状态栏一行（目录 / 文件计数 + 当前路径）：像文件管理器底部的信息栏 */
+.listing-meta {
+  padding: 9px 0 7px;
+  border-top: 0.5px solid var(--line);
+  font-family: ui-monospace, monospace;
   font-size: var(--fs-micro);
-  color: var(--text-3);
+  overflow-wrap: anywhere;
 }
 
-.nsic {
-  color: var(--accent);
+/* 桌面指针：整行给出可点反馈（移动端靠 :active，不要 hover 残留） */
+@media (hover: hover) {
+  .item:hover {
+    background: var(--surface-2);
+    border-radius: var(--radius-m);
+  }
 }
 
 /* 面包屑 */

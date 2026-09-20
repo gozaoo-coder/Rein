@@ -493,7 +493,7 @@ pub fn search(
 
 /// 无查询词的「浏览」模式：按日期倒序列出某类内容。AI 问「最近有什么」时用。
 pub fn browse(conn: &Connection, q: &KbQuery, enabled: &[String]) -> Result<Vec<KbHit>> {
-    let limit = q.limit.unwrap_or(8).clamp(1, 30) as i64;
+    let limit = q.limit.unwrap_or(8).clamp(1, 30);
     let filter = build_filter(q, enabled);
     let sql = format!(
         "SELECT id, source_type, source_id, title, summary, occurred_on, tags,

@@ -231,6 +231,8 @@ impl CourseSelectClient {
     }
 
     /// 令牌是否还够用。留 5 分钟余量：抢课要连续轮询，卡在过期边界上会很难查。
+    /// 目前只在真机联调测试（live_course_select_chain）里用作体检项。
+    #[allow(dead_code)]
     pub fn is_fresh(&self) -> bool {
         match self.expires_at() {
             Some(exp) => exp - chrono::Utc::now().timestamp() > 300,

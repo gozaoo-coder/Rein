@@ -286,12 +286,12 @@ async function main() {
       await sleep(250)
     }
     await sleep(1500)
-    await waitFor(`!!document.querySelector('.inbar input')`, 30000, 'AI 页输入栏就绪')
+    await waitFor(`!!document.querySelector('.inbar textarea')`, 30000, 'AI 页输入栏就绪')
     await waitFor(`!!document.querySelector('.msg.assistant .bubble')`, 15000, '欢迎语上屏')
     await sleep(400)
 
     await evalJS(`(() => {
-      const el = document.querySelector('.inbar input')
+      const el = document.querySelector('.inbar textarea')
       el.value = '看看我今天有什么待办'
       el.dispatchEvent(new Event('input', { bubbles: true }))
       return true

@@ -119,6 +119,10 @@ fn cancelled_error() -> ReinError {
 }
 
 /// 单地址下载（含断点续传）。返回落盘的字节数（不含已存在的部分）。
+///
+/// `candidate` 目前只在 416 递归重试时透传（续传位置已作废、重新整包下载时
+/// 签名/摘要等元数据不能丢）；递归深度固定为 1，不会因透传而无限下钻。
+#[allow(clippy::only_used_in_recursion)]
 fn fetch_one(
     app: &AppHandle,
     hub: &UpdateHub,

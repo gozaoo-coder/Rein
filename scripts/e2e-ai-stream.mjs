@@ -307,7 +307,7 @@ async function main() {
 
     /* ---------- 发送一轮会触发工具调用的提问 ---------- */
     const typed = await evalJS(`(() => {
-      const el = document.querySelector('.inbar input')
+      const el = document.querySelector('.inbar textarea')
       if (!el) return false
       el.value = '看看我今天有什么待办'
       el.dispatchEvent(new Event('input', { bubbles: true }))

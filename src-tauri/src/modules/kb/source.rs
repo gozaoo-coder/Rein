@@ -466,9 +466,9 @@ fn workout_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
     })?;
 
     // (动作名, 正式组数, 拉起的重量, 次数/秒, 热身组数)
+    type SetAgg = (i64, f64, Option<i64>, Option<i64>, i64);
     let mut order: Vec<String> = Vec::new();
-    let mut agg: std::collections::HashMap<String, (i64, f64, Option<i64>, Option<i64>, i64)> =
-        std::collections::HashMap::new();
+    let mut agg: std::collections::HashMap<String, SetAgg> = std::collections::HashMap::new();
     for r in rows {
         let (ex, w, reps, sec, warmup) = r?;
         let e = agg.entry(ex.clone()).or_insert_with(|| {

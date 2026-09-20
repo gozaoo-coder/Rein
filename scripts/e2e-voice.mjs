@@ -243,7 +243,7 @@ async function main() {
     await goto('/ai')
     await sleep(800)
     ok('F3 输入 @ 弹出纪要选择器', await (async () => {
-      await typeInput('.inbar input', '@')
+      await typeInput('.inbar textarea', '@')
       await waitFor(`[...document.querySelectorAll('.head h2')].some(e => e.textContent === '引用纪要')`, 5000, '纪要选择器')
       return true
     })())
@@ -254,7 +254,7 @@ async function main() {
       return true
     })())
     ok('F5 带 @chip 发送 → 用户消息入列', await (async () => {
-      await typeInput('.inbar input', '按这份纪要帮我安排今天')
+      await typeInput('.inbar textarea', '按这份纪要帮我安排今天')
       await clickButton('发送')
       await sleep(1200)
       return evalJS(`[...document.querySelectorAll('.msg.user .bubble')].some(b => b.textContent.includes('按这份纪要帮我安排今天'))`)

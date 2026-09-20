@@ -172,8 +172,10 @@ pub fn resolve_plan_exercises(
 }
 
 /// 幂等回填存量数据（老库升级路径，每次启动跑一次；只填 NULL / 只补字段）：
+///
 /// 1. `workout_sets.exercise_id IS NULL` 的行 → 按 `exercise_name` 解析；
 /// 2. `workout_plans.exercises_json` 里缺 `exerciseId` 的条目 → 按 `name` 解析。
+///
 /// 返回处理过的记录条数（做组行 + 课程条目），仅供日志与测试断言。
 pub fn backfill_exercise_refs(conn: &Connection) -> Result<usize> {
     let mut index = NameIndex::load(conn)?;

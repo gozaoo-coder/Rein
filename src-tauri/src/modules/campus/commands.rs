@@ -643,68 +643,6 @@ pub fn campus_systems() -> Vec<SchoolSystemInfo> {
     provider::list_info()
 }
 
-/// 「服务地址覆盖」在 `app_meta` 里的键。无键 = 用 `SchoolSystemSpec.default_base_url`。
-fn base_url_key(kind: &str) -> String {
-    format!("campus_base_url:{kind}")
-}
-
-/// 归一化服务地址：口径必须与 [`campus_login`] 落库时一致（`trim` + 去尾 `/`），
-/// 否则「账号地址 == 有效地址」的封装判断会被一个尾斜杠搞反。
-fn normalize_base_url(raw: &str) -> Result<String> {
-    let url = raw.trim().trim_end_matches('/').to_string();
-    if url.is_empty() {
-        return Err(ReinError::Message("服务地址不能为空".into()));
-    }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err(ReinError::Message("服务地址需要以 http:// 或 https:// 开头".into()));
-    }
-    Ok(url)
-}
-
-/// 全部「服务地址覆盖」：kind → 用户自定义地址；没改过的学校系统不在表里。
-#[tauri::command]
-pub fn campus_base_urls(state: State<AppState>) -> Result<HashMap<String, String>> {
-    let conn = state.db.lock().unwrap();
-    Ok(load_base_urls(&conn))
-}
-
-/// 设置某学校系统的服务地址；`base_url` 为 None 或空串 = 恢复默认（删键）。
-#[tauri::command]
-pub fn campus_set_base_url(
-    state: State<AppState>,
-    system_kind: String,
-    base_url: Option<String>,
-) -> Result<()> {
-    let conn = state.db.lock().unwrap();
-    store_base_url(&conn, &system_kind, base_url)
-}
-
-/* ───────────────── 服务地址覆盖（与账号生命周期同理：抽成纯函数才测得了，
-   命令层拿不到 State） ───────────────── */
-
-fn load_base_urls(conn: &Connection) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for info in provider::list_info() {
-        if let Some(url) = meta_get(conn, &base_url_key(info.kind)).filter(|s| !s.trim().is_empty()) {
-            out.insert(info.kind.to_string(), url);
-        }
-    }
-    out
-}
-
-fn store_base_url(conn: &Connection, system_kind: &str, base_url: Option<String>) -> Result<()> {
-    provider::spec(system_kind)
-        .ok_or_else(|| ReinError::Message(format!("未知的学校系统：{system_kind}")))?;
-    let key = base_url_key(system_kind);
-    match base_url.filter(|s| !s.trim().is_empty()) {
-        Some(raw) => meta_set(conn, &key, &normalize_base_url(&raw)?),
-        None => {
-            conn.execute("DELETE FROM app_meta WHERE key = ?1", [&key])?;
-            Ok(())
-        }
-    }
-}
-
 /// 当前激活账号（密码与 Cookie 不出 Rust）。
 #[tauri::command]
 pub fn campus_account_get(state: State<AppState>) -> Result<Option<CampusAccount>> {
@@ -767,6 +705,8 @@ pub async fn campus_captcha(
 }
 
 /// 登录。`password` 为空时回落到账号里已保存的密码（用于会话过期后的静默重登）。
+// Tauri 命令参数必须拍平（前端按名传参），两个 State 注入项占掉了额度，无法靠参数结构体收敛。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn campus_login(
     state: State<'_, AppState>,
@@ -1905,6 +1845,8 @@ pub fn campus_grab_state(
 ///
 /// `window_wall` 传 `null` 表示「还不知道窗口什么时候开」—— 引擎不会盲撞，
 /// 而是每分钟去问一次 `open-turns`，拿到时间再精确开火（见 `grab::fire_at_ms`）。
+// 同 campus_login：Tauri 命令参数拍平，三个 State 注入项占掉额度。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn campus_grab_enqueue(
     state: State<'_, AppState>,
@@ -2181,41 +2123,6 @@ mod tests {
         let err = relogin(&account).unwrap_err();
         assert!(err.to_string().contains("保存密码"), "{err}");
         assert!(is_session_lost(&err), "这类失败仍属于「会话过期」家族：{err}");
-    }
-
-    #[test]
-    fn base_url_override_roundtrip() {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::migrate_for_test(&conn).unwrap();
-        let kind = "guet-supwisdom-eams5";
-
-        // 没改过 → 表里没有这个 kind（前端回落到 spec 的 defaultBaseUrl）
-        assert!(load_base_urls(&conn).is_empty());
-
-        // 归一化口径与 campus_login 落库一致：去空白、去尾斜杠
-        store_base_url(&conn, kind, Some(" https://bkjw.guet.edu.cn/ ".into())).unwrap();
-        assert_eq!(
-            load_base_urls(&conn).get(kind).map(String::as_str),
-            Some("https://bkjw.guet.edu.cn")
-        );
-
-        // 恢复默认 = 删键，而不是写回默认值（否则 spec 改默认地址后就被旧值钉死了）
-        store_base_url(&conn, kind, None).unwrap();
-        assert!(load_base_urls(&conn).is_empty());
-        store_base_url(&conn, kind, Some("https://a.b".into())).unwrap();
-        store_base_url(&conn, kind, Some("   ".into())).unwrap();
-        assert!(load_base_urls(&conn).is_empty());
-    }
-
-    #[test]
-    fn base_url_rejects_unknown_system_and_junk() {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::migrate_for_test(&conn).unwrap();
-
-        assert!(store_base_url(&conn, "nope", Some("https://a.b".into())).is_err());
-        assert!(store_base_url(&conn, "guet-supwisdom-eams5", Some("bkjwtest.guet.edu.cn".into())).is_err());
-        assert!(store_base_url(&conn, "guet-supwisdom-eams5", Some("ftp://a.b".into())).is_err());
-        assert_eq!(normalize_base_url(" https://a.b/ ").unwrap(), "https://a.b");
     }
 
     #[test]

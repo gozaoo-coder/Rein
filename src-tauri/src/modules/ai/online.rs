@@ -290,12 +290,15 @@ pub async fn online_service_usage(
     let result = tauri::async_runtime::spawn_blocking({
         let key = key.clone();
         let url = url.clone();
-        move || {
+        // ureq 的错误类型本身很大（result_large_err），进任务边界前先 Box 掉，
+        // 让跨线程搬运的 Result 保持小体积。
+        move || -> std::result::Result<ureq::Response, Box<ureq::Error>> {
             agent()
                 .get(&url)
                 .set("Accept", "application/json")
                 .set("Authorization", &format!("Bearer {key}"))
                 .call()
+                .map_err(Box::new)
         }
     })
     .await
@@ -322,11 +325,13 @@ pub async fn online_service_usage(
             }
             Err(e) => out.error = Some(e),
         },
-        Err(ureq::Error::Status(code, resp)) => {
-            let body = read_json(resp).unwrap_or(serde_json::Value::Null);
-            out.error = message_of_error_body(&body).or_else(|| Some(format!("服务端返回 HTTP {code}")));
-        }
-        Err(e) => out.error = Some(format!("无法连接 {url}：{e}")),
+        Err(e) => match *e {
+            ureq::Error::Status(code, resp) => {
+                let body = read_json(resp).unwrap_or(serde_json::Value::Null);
+                out.error = message_of_error_body(&body).or_else(|| Some(format!("服务端返回 HTTP {code}")));
+            }
+            other => out.error = Some(format!("无法连接 {url}：{other}")),
+        },
     }
     Ok(out)
 }

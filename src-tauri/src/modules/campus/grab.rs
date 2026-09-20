@@ -517,7 +517,7 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
         let wait = if delta <= APPROACH_MS {
             delta.clamp(APPROACH_WAIT_MS, 200)
         } else {
-            delta.min(MAX_WAIT_MS).max(50)
+            delta.clamp(50, MAX_WAIT_MS)
         };
         emit(app, hub);
         return Ok(Duration::from_millis(wait as u64));
@@ -881,7 +881,7 @@ fn verify_picked(ctx: &super::commands::SelectContext, task: &GrabTask) -> Resul
     let lessons = ctx.client.simplest_lessons(&task.turn_id)?;
     Ok(lessons
         .iter()
-        .any(|l| l.id.to_string() == want && l.selected_lesson.is_some()))
+        .any(|l| l.id == want && l.selected_lesson.is_some()))
 }
 
 /// 收尾：写终态、定时间戳。

@@ -212,13 +212,10 @@ fn worker_loop(app: AppHandle, hub: Arc<KbHub>, rx: mpsc::Receiver<()>) {
     // 启动对账里刚跑过一次维护，下一次从这里计时
     let mut last_maintain = Instant::now();
 
-    loop {
-        // 有信号就立刻干；没信号也定期醒一次——触发器写脏队列不会通知我们，
-        // 3 秒的兜底间隔保证「用户改完东西」最迟 3 秒内被索引。
-        match rx.recv_timeout(IDLE_TICK) {
-            Ok(()) | Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
+    // 有信号就立刻干；没信号也定期醒一次——触发器写脏队列不会通知我们，
+    // 3 秒的兜底间隔保证「用户改完东西」最迟 3 秒内被索引。
+    // 通道断开（应用退出）时 recv_timeout 返回 Disconnected，while let 失配即退出循环。
+    while let Ok(()) | Err(RecvTimeoutError::Timeout) = rx.recv_timeout(IDLE_TICK) {
 
         let worked = match cycle(&app, &hub) {
             Ok(n) => {
