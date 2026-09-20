@@ -31,6 +31,8 @@ import type {
   Food,
   FoodCreateInput,
   GrabSettings,
+  GrabIntent,
+  GrabMatch,
   GrabState,
   GrabTurnBrief,
   LedgerEntry,
@@ -2815,6 +2817,107 @@ let campusAccount: Record<string, unknown> | null = null
 let campusNeedCaptcha = false
 let campusCourses = [] as ReturnType<typeof campusDemoCourses>
 
+/* ---------- 救援面（AI 的最后补救）：审计 + 剧本化的原始请求 ----------
+ * 浏览器里没有真教务，也没有真的 AI 会话，所以要验的是**这条链的形状**：
+ * 「带会话的请求长什么样、审计里留下什么、导出的脚本能不能重放」。
+ * 剧本刻意覆盖最要命的那组对照：会话活着但接口返回 HTML 回退（教务改接口）
+ * vs 会话被踢回登录页 —— 这两件事的处理方式完全不同，判错就白折腾。 */
+
+interface MockAiAction {
+  id: number
+  at: string
+  kind: string
+  summary: string
+  detail?: unknown
+  curl?: string | null
+  status: 'ok' | 'error'
+  accountId?: number | null
+}
+
+const mockAiActions: MockAiAction[] = []
+let mockActionId = 0
+
+function mockAction(kind: string, summary: string, curl?: string | null, status: 'ok' | 'error' = 'ok', detail?: unknown): number {
+  mockAiActions.push({
+    id: ++mockActionId,
+    at: new Date().toISOString(),
+    kind,
+    summary,
+    curl: curl ?? null,
+    status,
+    accountId: campusAccount ? 1 : null,
+    detail,
+  })
+  return mockActionId
+}
+
+/** 与 Rust `rescue::render_curl` 同形：凭据写成变量引用，绝不在每行里复制一份 Cookie。 */
+function mockRenderCurl(o: {
+  method: string
+  url: string
+  headers: [string, string][]
+  body?: string | null
+  withCookie: boolean
+  withToken: boolean
+}): string {
+  const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
+  const lines: string[] = []
+  if (o.withCookie || o.withToken) {
+    const vars = [o.withCookie ? 'COOKIE' : null, o.withToken ? 'SELECT_TOKEN' : null].filter(Boolean)
+    lines.push(`# 先设变量再执行：export ${vars.join(' ')}='…'（导出脚本时脚本头部已定义）`)
+  }
+  let cmd = `curl -sS -i -X ${o.method} ${q(o.url)}`
+  for (const [k, v] of o.headers) cmd += `\n  -H ${q(`${k}: ${v}`)}`
+  if (o.withCookie) cmd += '\n  -H "Cookie: $COOKIE"'
+  if (o.withToken) cmd += '\n  -H "Authorization: $SELECT_TOKEN"'
+  if (o.body) cmd += `\n  --data-raw ${q(o.body)}`
+  lines.push(cmd)
+  return lines.join('\n')
+}
+
+/** 剧本化的响应体。命中不了就 404 —— 「教务回了个没见过的页面」本身也是要能演练的状态。 */
+function mockHttpScript(url: string): { status: number; contentType: string; body: string } {
+  const path = url.replace(/^https?:\/\/[^/]+/, '')
+  const broken = !!(globalThis as { __REIN_MOCK_CAMPUS_BREAK__?: boolean })
+    .__REIN_MOCK_CAMPUS_BREAK__
+  const dead = !!(globalThis as { __REIN_MOCK_CAMPUS_SESSION_DEAD__?: boolean })
+    .__REIN_MOCK_CAMPUS_SESSION_DEAD__
+
+  // 会话被踢：门户用 302 回登录页，这是教务表达「你没登录」的唯一方式
+  if (dead) {
+    return { status: 302, contentType: 'text/html', body: '<html><body>302 → /login</body></html>' }
+  }
+  // 「教务改接口」：SPA 的回退页。信封不见了 —— 这正是最值钱的线索
+  if (broken && path.startsWith('/course-selection-api/')) {
+    return {
+      status: 200,
+      contentType: 'text/html;charset=UTF-8',
+      body: '<!DOCTYPE html><html><head><title>选课</title></head><body><div id="app"></div></body></html>',
+    }
+  }
+  if (path === '/student/home') {
+    return { status: 200, contentType: 'text/html', body: '<html><body>桂电教务 · 学生首页</body></html>' }
+  }
+  if (path.includes('/course-selection-api/')) {
+    if (path.includes('getCurrentDateTime')) {
+      return {
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ result: 0, message: '', data: campusServerTime() }),
+      }
+    }
+    return {
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ result: 0, message: '', data: [] }),
+    }
+  }
+  if (path.startsWith('/course-selection/')) {
+    return { status: 200, contentType: 'text/html', body: '<html><body>选课 SPA</body></html>' }
+  }
+  return { status: 404, contentType: 'text/html', body: `<html><body>404 ${path}</body></html>` }
+}
+
 /* ---------- 选课（演示批次刻意设为「开放中」） ----------
  * 真实环境里大一新生的选课窗口还没开，`open-turns` 会返回空数组；
  * mock 这里给一个开放中的批次，好让「进入 → 查询 → 一键选 → 轮询结果」整套流程
@@ -2872,6 +2975,7 @@ function campusDemoLessons() {
     stdCount: number,
     limitCount: number,
     groups: number,
+    teachers: string[] = [],
   ) => ({
     id,
     course: { id: id * 10, code, nameZh, nameEn: null, credits },
@@ -2880,7 +2984,7 @@ function campusDemoLessons() {
       : null,
     stdCount,
     limitCount,
-    teachers: [],
+    teachers: teachers.map((nameZh) => ({ nameZh })),
     scheduleGroups: Array.from({ length: groups }, (_, i) => ({
       id: id * 100 + i,
       no: i + 1,
@@ -2891,13 +2995,19 @@ function campusDemoLessons() {
     canSelect: true,
   })
   return [
-    mk(9001, '000001', '高等数学（上）', 5, 118, 120, 2),
-    mk(9002, '000002', '大学英语（一）', 3, 56, 60, 3),
+    mk(9001, '000001', '高等数学（上）', 5, 118, 120, 2, ['李娜']),
+    // 同一门课的第二个班，且已满、教师不同 ——
+    // 计划的模糊匹配要能分辨「高数 张」与「000001 余量优先」这两件事
+    mk(9006, '000001', '高等数学（上）', 5, 60, 60, 1, ['张伟']),
+    // 9007 的老师名字**包含** 9006 的：用来验「打全了名字 = 只抢这位老师的班」
+    // （查「张伟」不该把「张伟明」的班也拖进志愿组）
+    mk(9007, '000003', '线性代数', 3, 40, 50, 1, ['张伟明']),
+    mk(9002, '000002', '大学英语（一）', 3, 56, 60, 3, ['王芳']),
     // 9003 固定返回「需要免听」，用来演示时间冲突分支
-    mk(9003, '000011', '大学物理（含实验）', 4, 60, 60, 1),
-    mk(9004, '000021', '计算机科学导论', 2, 42, 80, 1),
+    mk(9003, '000011', '大学物理（含实验）', 4, 60, 60, 1, ['刘洋']),
+    mk(9004, '000021', '计算机科学导论', 2, 42, 80, 1, ['陈静']),
     // 9005 固定「先满员两次再放名额」，用来演示守着一个满员班的完整过程
-    mk(9005, '000031', '体育（一）', 1, 30, 30, 4),
+    mk(9005, '000031', '体育（一）', 1, 30, 30, 4, ['赵强']),
   ]
 }
 
@@ -3061,6 +3171,424 @@ function grabWallOf(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+/* ---------------- 计划的模糊匹配（与 Rust `matcher.rs` 同一套语义） ----------------
+ *
+ * mock 里必须再实现一遍：e2e 断言的是**界面显示出来的匹配与排序**，而它在真机上出自引擎。
+ * 两边一旦分叉，这条 e2e 就什么都证明不了 —— 所以这里的规则逐条对齐 Rust：
+ * 空格分词（每个词都要命中）、连续子串优先、退化为散落子序列、按抢课语义排序。 */
+
+const GRAB_FIELD_WEIGHT: Record<string, number> = {
+  course: 1,
+  code: 0.85,
+  teacher: 0.75,
+  place: 0.5,
+}
+
+function grabNormalize(s: string): string {
+  return s.toLowerCase().replace(/[\s()（）[\]【】·\-_—/\\、,，.。:：]/g, '')
+}
+
+/** 散落子序列命中：字符按序出现即可，按「被打散的程度」扣分 */
+function grabSubseqScore(hay: string, needle: string): number | null {
+  if (!needle.length || needle.length > hay.length) return null
+  let cursor = 0
+  let first = -1
+  let last = 0
+  for (const ch of needle) {
+    const at = hay.indexOf(ch, cursor)
+    if (at < 0) return null
+    if (first < 0) first = at
+    last = at
+    cursor = at + 1
+  }
+  const span = last - first + 1
+  return 360 - (span - needle.length) * 12 - Math.min(40, first)
+}
+
+function grabFieldScore(text: string, token: string): number | null {
+  const hay = grabNormalize(text)
+  if (!hay) return null
+  if (hay === token) return 1000
+  const pos = hay.indexOf(token)
+  if (pos >= 0) return 700 - Math.min(60, pos) + (pos === 0 ? 120 : 0)
+  return grabSubseqScore(hay, token)
+}
+
+/** 一个教学班身上所有可匹配的文本（权重与 Rust 一致，课程名最重） */
+function grabLessonFields(l: Record<string, any>): {
+  tag: string
+  text: string
+  names?: string[]
+}[] {
+  const out: { tag: string; text: string; names?: string[] }[] = []
+  const course = l.course ?? {}
+  for (const name of [course.nameZh, course.nameEn]) {
+    if (typeof name === 'string' && name.trim()) out.push({ tag: 'course', text: name })
+  }
+  if (typeof course.code === 'string' && course.code.trim()) out.push({ tag: 'code', text: course.code })
+  const teachers = (l.teachers ?? [])
+    .map((t: any) => t?.nameZh ?? t?.person?.nameZh)
+    .filter(Boolean)
+  if (teachers.length) out.push({ tag: 'teacher', text: teachers.join('、'), names: teachers })
+  const place: string[] = []
+  const walk = (v: any): void => {
+    if (typeof v === 'string') place.push(v)
+    else if (Array.isArray(v)) v.forEach(walk)
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk)
+  }
+  ;(l.scheduleGroups ?? []).forEach((g: any) => walk(g?.dateTimePlace))
+  if (place.length) out.push({ tag: 'place', text: place.join(' ') })
+  return out
+}
+
+/* 教师命中分三档（与 Rust `matcher.rs` 逐条对齐）：
+ *   精确 = 全名全等 → 那是「指定」，只抢这位老师的班（见 grabPreferred）
+ *   普通 = 子串 / 子序列命中
+ *   近似 = 姓对了、其余最多差一个字 → 名字打错时的退路，只加分不独占 */
+const GRAB_TEACHER_EXACT_SCORE = 1000
+const GRAB_TEACHER_NEAR_SCORE = 240
+
+function grabLcsLen(a: string[], b: string[]): number {
+  let prev = new Array(b.length + 1).fill(0)
+  let cur = new Array(b.length + 1).fill(0)
+  for (const ca of a) {
+    for (let j = 0; j < b.length; j++) {
+      cur[j + 1] = ca === b[j] ? prev[j] + 1 : Math.max(cur[j], prev[j + 1])
+    }
+    const t = prev
+    prev = cur
+    cur = t
+    cur.fill(0)
+  }
+  return prev[b.length]
+}
+
+/** 「姓对了、其余最多差一个字」：单字查询不放行（那是子串匹配的活） */
+function grabNearName(name: string, token: string): boolean {
+  const n = [...grabNormalize(name)]
+  const q = [...grabNormalize(token)]
+  if (q.length < 2 || !n.length || n[0] !== q[0]) return false
+  return grabLcsLen(n, q) + 1 >= q.length
+}
+
+/** 一个词在一个字段里的命中：教师字段精确 → 通用 → 近似，精确独占，其余取分高的 */
+function grabFieldHit(
+  f: { tag: string; text: string; names?: string[] },
+  token: string,
+): { score: number; tag: string } | null {
+  const weight = GRAB_FIELD_WEIGHT[f.tag] ?? 1
+  if (f.tag === 'teacher') {
+    const names = f.names ?? []
+    if (names.some((n) => grabNormalize(n) === token)) {
+      return { score: Math.round(GRAB_TEACHER_EXACT_SCORE * weight), tag: 'teacherExact' }
+    }
+    const raw = grabFieldScore(f.text, token)
+    const generic = raw == null ? null : { score: Math.round(raw * weight), tag: 'teacher' }
+    const nearName = names.find((n) => grabNearName(n, token))
+    const near = nearName
+      ? {
+          score: Math.round(
+            (GRAB_TEACHER_NEAR_SCORE - Math.abs([...nearName].length - [...token].length) * 20) * weight,
+          ),
+          tag: 'teacherNear',
+        }
+      : null
+    if (generic && near) return generic.score >= near.score ? generic : near
+    return generic ?? near
+  }
+  const s = grabFieldScore(f.text, token)
+  return s == null ? null : { score: Math.round(s * weight), tag: f.tag }
+}
+
+interface GrabHit {
+  lesson: Record<string, any>
+  score: number
+  fields: string[]
+  /** 有词**精确命中**了教师名 —— 「我就要这位老师的课」的唯一判据（与 Rust 同名） */
+  hard: boolean
+}
+
+const grabRemaining = (l: Record<string, any>): number | null =>
+  l.stdCount != null && l.limitCount != null ? l.limitCount - l.stdCount : null
+
+function grabMatchLessons(query: string, lessons: Record<string, any>[]): GrabHit[] {
+  const tokens = query
+    .split(/\s+/)
+    .map(grabNormalize)
+    .filter(Boolean)
+  if (!tokens.length) return []
+
+  const hits: GrabHit[] = []
+  for (const l of lessons) {
+    const fields = grabLessonFields(l)
+    const used: string[] = []
+    let total = 0
+    let hard = false
+    let ok = true
+    for (const token of tokens) {
+      // 一个词可能同时落在多个字段上：分数取最高，但每个命中都记下来 ——
+      // 精确命中的教师不能被课名那次更高的分吞掉
+      let best: number | null = null
+      for (const f of fields) {
+        const h = grabFieldHit(f, token)
+        if (!h) continue
+        best = best == null ? h.score : Math.max(best, h.score)
+        if (h.tag === 'teacherExact') hard = true
+        if (!used.includes(h.tag)) used.push(h.tag)
+      }
+      if (best == null) {
+        ok = false
+        break
+      }
+      total += best
+    }
+    if (ok) hits.push({ lesson: l, score: total, fields: used, hard })
+  }
+
+  // 抢课语义的排序：没选过的在前 → **精确指定了老师的在前** → 分高的在前 →
+  // 有空位的在前 → 余量多的在前 → id 稳定。
+  // 分在空位之前（与 Rust 同序）：查「张玮」时满员的「张伟」不能被有余量的
+  // 「张伟明」挤到后面 —— 一个错字不该让目标换人。
+  hits.sort((a, b) => {
+    const pick = Number(a.lesson.selectedLesson != null) - Number(b.lesson.selectedLesson != null)
+    if (pick) return pick
+    const hard = Number(!a.hard) - Number(!b.hard)
+    if (hard) return hard
+    if (a.score !== b.score) return b.score - a.score
+    const ra = grabRemaining(a.lesson)
+    const rb = grabRemaining(b.lesson)
+    const full = Number(ra != null && ra <= 0) - Number(rb != null && rb <= 0)
+    if (full) return full
+    const left = (rb ?? -1) - (ra ?? -1)
+    if (left) return left
+    return Number(a.lesson.id) - Number(b.lesson.id)
+  })
+  return hits
+}
+
+/**
+ * 计划要抢的那一批（与 Rust `matcher::preferred` 同规则）：
+ * 打全了老师名字 → 只抢那位老师的班；只打姓 / 打错字 → 原样返回，交给模糊匹配。
+ */
+function grabPreferred(hits: GrabHit[]): GrabHit[] {
+  return hits.some((h) => h.hard) ? hits.filter((h) => h.hard) : hits
+}
+
+/** 命中 → 界面形状（与 Rust `matcher::to_match` 同形） */
+function grabMatchDto(h: GrabHit): GrabMatch {
+  const l = h.lesson
+  const teachers = (l.teachers ?? []).map((t: any) => t?.nameZh ?? t?.person?.nameZh).filter(Boolean)
+  return {
+    lessonId: l.id,
+    courseName: l.course?.nameZh ?? l.course?.nameEn ?? null,
+    courseCode: l.course?.code ?? null,
+    teacher: teachers.length ? teachers.join('、') : null,
+    stdCount: l.stdCount ?? null,
+    limitCount: l.limitCount ?? null,
+    picked: l.selectedLesson != null,
+    fields: h.fields,
+  }
+}
+
+/** 命中分堆：默认合成一组（只中一个），`spread` 时按课程分堆（每门课各中一个） */
+function grabPlanGroups(hits: GrabHit[], spread: boolean): GrabHit[][] {
+  const grabbable = hits.filter((h) => h.lesson.selectedLesson == null)
+  if (!grabbable.length) return []
+  if (!spread) return [grabbable]
+  const order: string[] = []
+  const buckets = new Map<string, GrabHit[]>()
+  for (const h of grabbable) {
+    const c = h.lesson.course ?? {}
+    const key = c.code?.trim() || c.nameZh?.trim() || String(h.lesson.id)
+    if (!buckets.has(key)) order.push(key)
+    const list = buckets.get(key) ?? []
+    list.push(h)
+    buckets.set(key, list)
+  }
+  return order.map((k) => buckets.get(k)!)
+}
+
+/* ---------------- 抢课计划（意向） ---------------- */
+
+/** 计划解析失败/没匹配到之后的重试间隔（真引擎是 60 秒，mock 压到 2 秒） */
+const GRAB_INTENT_RETRY_MS = 2000
+
+interface MockGrabIntent extends GrabIntent {
+  /** mock 内部：下一次该重试解析的时刻 */
+  nextAt: number
+}
+
+const grabIntents: MockGrabIntent[] = []
+let grabIntentSeq = 0
+
+/** 批次摘要：与真引擎读的 `open-turns` 对应（mock 里就是那个演示批次） */
+function grabIntentBriefs(): GrabTurnBrief[] {
+  const noWindow = !!(globalThis as { __REIN_MOCK_GRAB_NO_WINDOW__?: boolean })
+    .__REIN_MOCK_GRAB_NO_WINDOW__
+  return campusSelectTurns().map((t) => ({
+    id: String(t.id),
+    name: t.name ?? null,
+    allowEnter: !!t.allowEnter,
+    selectText: t.selectDateTimeText ?? null,
+    windowStart: noWindow ? null : (t.selectDateTimeRange?.startDateTime ?? null),
+    windowEnd: noWindow ? null : (t.selectDateTimeRange?.endDateTime ?? null),
+  }))
+}
+
+/**
+ * 解析一条到点的计划 —— 与真引擎同序：挑批次 → 拉名单 → 模糊匹配 → 分堆建任务。
+ * 一轮只做一条，返回「有没有干活」。
+ */
+function grabResolveIntents(): boolean {
+  const now = Date.now()
+  const due = grabIntents.find(
+    (i) => (i.status === 'pending' || i.status === 'empty') && i.nextAt <= now,
+  )
+  if (!due) return false
+  due.attempts += 1
+
+  const briefs = grabIntentBriefs()
+  const brief = due.turnId
+    ? briefs.find((b) => b.id === due.turnId)
+    : (briefs.find((b) => b.allowEnter) ?? briefs[0])
+  if (!brief) {
+    due.status = 'pending'
+    due.lastMessage = '还没看到这个选课批次，教务公布后会自动继续'
+    due.nextAt = now + GRAB_INTENT_RETRY_MS
+    return true
+  }
+  due.turnId = brief.id
+  due.turnName = brief.name ?? null
+
+  const hits = grabMatchLessons(due.query, campusDemoLessons())
+  // 打全了老师名字 → 那是指定，只抢他的班；只打姓 / 打错字 → 模糊匹配照旧
+  const pool = grabPreferred(hits)
+  const pickedOff = hits.length - pool.length
+  const groups = grabPlanGroups(pool, !!due.spread)
+  if (!groups.length) {
+    due.status = 'empty'
+    due.lastMessage = hits.length
+      ? '匹配到的教学班都已经在你名下了'
+      : `没匹配到「${due.query}」—— 课名 / 课程代码 / 教师名都可以，空格分词`
+    due.nextAt = now + GRAB_INTENT_RETRY_MS
+    return true
+  }
+
+  const awaitWindow = !brief.windowStart && !brief.allowEnter
+  const keys: string[] = []
+  let created = 0
+  groups.forEach((group, gi) => {
+    // 与 Rust 一致：一条计划生成的组用 `intent-{id}` 起头，界面靠它把任务归到计划名下
+    const key = groups.length === 1 ? `intent-${due.id}` : `intent-${due.id}-${gi + 1}`
+    const groupName = (due.spread ? group[0]?.lesson.course?.nameZh : null) ?? due.query
+    let made = false
+    group.forEach((h, i) => {
+      if (grabTasks.some((t) => String(t.lessonId) === String(h.lesson.id) && !GRAB_TERMINAL.has(t.status))) {
+        return // 同一门课已经在抢了
+      }
+      grabPushTask({
+        turnId: brief.id,
+        turnName: brief.name,
+        lessonId: h.lesson.id,
+        courseName: h.lesson.course?.nameZh ?? null,
+        courseCode: h.lesson.course?.code ?? null,
+        teacher: grabMatchDto(h).teacher,
+        credits: h.lesson.course?.credits ?? null,
+        mode: due.mode,
+        scheduleGroupId: h.lesson.scheduleGroups?.length === 1 ? h.lesson.scheduleGroups[0].id : null,
+        windowWall: brief.windowStart ?? null,
+        windowEndWall: brief.windowEnd ?? null,
+        awaitWindow,
+        groupKey: key,
+        groupName,
+        priority: i + 1,
+      })
+      made = true
+      created += 1
+    })
+    if (made) keys.push(key)
+  })
+
+  due.status = 'ready'
+  due.groupKeys = keys
+  // 候选只列**真会抢的**那些班：被「指定老师」筛掉的不列出来，
+  // 否则用户会问「为什么预览里有它、任务单里没有」
+  due.candidates = pool.slice(0, 12).map(grabMatchDto)
+  due.resolvedAt = now
+  due.nextAt = now
+  // 指定了老师就明说一句 —— 用户下次看到这条计划时，那是解释而不是意外
+  const byTeacher = pickedOff > 0 ? `，只抢指定教师的班（另有 ${pickedOff} 个匹配被滤掉）` : ''
+  due.lastMessage =
+    created === 0
+      ? '这些教学班都已经在抢了'
+      : groups.length > 1
+        ? `已为 ${groups.length} 门课各排一组，共 ${created} 个志愿${byTeacher}`
+        : `已排入 ${created} 个志愿，按序出手${byTeacher}`
+  return true
+}
+
+/** 造一条任务 —— 手动入队与计划解析共用同一形状（否则两种来源的任务会长得不一样） */
+function grabPushTask(input: {
+  turnId: string
+  turnName?: string | null
+  lessonId: unknown
+  lessonName?: string | null
+  courseName?: string | null
+  courseCode?: string | null
+  teacher?: string | null
+  credits?: number | null
+  mode: 'predicate' | 'direct'
+  virtualCost?: number | null
+  scheduleGroupId?: unknown
+  windowWall?: string | null
+  windowEndWall?: string | null
+  awaitWindow?: boolean
+  groupKey?: string | null
+  groupName?: string | null
+  priority?: number
+}): MockGrabTask {
+  const id = ++grabSeq
+  const windowWall = input.windowWall ?? null
+  const task: MockGrabTask = {
+    id,
+    turnId: input.turnId,
+    turnName: input.turnName ?? null,
+    lessonId: input.lessonId,
+    lessonName: input.lessonName ?? null,
+    courseName: input.courseName ?? null,
+    courseCode: input.courseCode ?? null,
+    teacher: input.teacher ?? null,
+    credits: input.credits ?? null,
+    mode: input.mode,
+    virtualCost: input.virtualCost ?? null,
+    scheduleGroupId: input.scheduleGroupId ?? null,
+    windowWall,
+    windowEndWall: input.windowEndWall ?? null,
+    // 没有窗口就往「等窗口」走 —— 盲撞出来的「不在选课时间」会被判终态
+    awaitWindow: input.awaitWindow ?? !windowWall,
+    predicateDone: false,
+    status: 'waiting',
+    phase: 'idle',
+    attempts: 0,
+    polls: 0,
+    strikes: 0,
+    strikeKind: null,
+    requestId: null,
+    lastMessage: windowWall ? `已排队，${windowWall} 开抢` : '等待教务公布选课窗口',
+    nextAt: Date.now(),
+    fireAt: null,
+    queuedAt: Date.now(),
+    finishedAt: null,
+    groupKey: input.groupKey ?? null,
+    groupName: input.groupName ?? null,
+    priority: input.priority ?? 0,
+    stuckSince: null,
+    heldBy: null,
+  }
+  grabTasks.unshift(task)
+  return task
+}
+
 function grabSnapshot(): GrabState {
   const now = Date.now()
   const active = grabTasks.some((t) => t.status === 'waiting' || t.status === 'running')
@@ -3089,6 +3617,11 @@ function grabSnapshot(): GrabState {
     lastError: null,
     turns: grabTurns(),
     probedAt: now,
+    intents: grabIntents.map((i) => ({
+      ...i,
+      groupKeys: [...(i.groupKeys ?? [])],
+      candidates: [...(i.candidates ?? [])],
+    })),
     tasks: grabTasks.map((t) => {
       const g = grabGroupOf(t)
       const lead = g ? leads.get(g) : undefined
@@ -3110,7 +3643,8 @@ function grabEmit(): void {
 /** 一轮推进：与 Rust 引擎同序 —— 先过窗口闸门，再做一步提交或轮询。 */
 function grabTick(): void {
   const now = Date.now()
-  let worked = false
+  // 先解析计划：它可能要新建任务（下面那一轮循环立刻就能推进它们）
+  let worked = grabResolveIntents()
 
   for (const t of grabTasks) {
     if (t.status !== 'waiting' && t.status !== 'running') continue
@@ -5861,8 +6395,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       campusSelectQueue = []
       campusSelectRequestId = ''
       campusSelectPolls = 0
-      // 任务单随账号一起清：换账号后旧任务不该还在后台排队
+      // 任务单与计划随账号一起清：换账号后旧任务不该还在后台排队
       grabTasks.length = 0
+      grabIntents.length = 0
       grabEmit()
       // 删账号 = 连派生行一起清（与 Rust 一致：todos 未开外键级联，必须显式删）
       for (let i = todos.length - 1; i >= 0; i--) {
@@ -6007,6 +6542,156 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'campus_grab_state':
       return delay(grabSnapshot() as T)
 
+    /* ---- 救援面（AI 的最后补救） ---- */
+
+    case 'campus_rescue_state': {
+      // e2e 钩子：把在场（或刚被抢到）的任务打成「连败到该被救」的样子。真引擎里这种状态
+      // 要靠连续撞满员/未知错误攒出来，在无头浏览器里等不起，但它恰恰是 AI 最常要处理的那种。
+      //
+      // 两条细节都是踩出来的：
+      // ① 终态的也要拉回来 —— 从「加计划」到「第一次读现场」之间有十几秒，mock 引擎早就抢到手了，
+      //    只对非终态生效的话这个场景会随机落空；
+      // ② 顺带按在「等窗口公布」上（`probeAt` 推到一小时外），否则引擎下一拍就把它抢走，
+      //    「救一个卡住的任务」根本无从演练。
+      if (!!(globalThis as { __REIN_MOCK_CAMPUS_STUCK__?: boolean }).__REIN_MOCK_CAMPUS_STUCK__) {
+        for (const t of grabTasks) {
+          if (t.status === 'paused') continue
+          if (GRAB_TERMINAL.has(t.status)) {
+            t.status = 'waiting'
+            t.phase = 'idle'
+            t.finishedAt = null
+          }
+          t.strikes = 5
+          t.strikeKind = 'full'
+          t.lastMessage = '教学班人数已满，继续守着'
+          t.awaitWindow = true
+          t.windowWall = null
+          t.windowEndWall = null
+          t.probeAt = Date.now() + 3600_000
+        }
+      }
+      const snap = grabSnapshot()
+      const now = Date.now()
+      const tasks = snap.tasks as unknown as Array<{ id: number; status: string; strikes: number; nextAt: number }>
+      const dead = !!(globalThis as { __REIN_MOCK_CAMPUS_SESSION_DEAD__?: boolean })
+        .__REIN_MOCK_CAMPUS_SESSION_DEAD__
+      return delay({
+        account: campusAccount ? { ...campusAccount } : null,
+        // 探针：没有账号 = null（没探）；被踢 = false；其余 = true
+        sessionAlive: campusAccount ? !dead : null,
+        sessionError: null,
+        grab: snap,
+        stuckTaskIds: tasks
+          .filter((t) => !GRAB_TERMINAL.has(t.status) && t.status !== 'paused')
+          .filter((t) => t.strikes >= 3 || t.nextAt <= now)
+          .map((t) => t.id),
+        recentActions: [...mockAiActions].reverse(),
+      } as T)
+    }
+
+    case 'campus_http': {
+      const req = plain((args.req ?? {}) as Record<string, unknown>)
+      const raw = String(req.url ?? '').trim()
+      const method = String(req.method ?? 'GET').toUpperCase()
+      const reason = String(req.reason ?? '').trim()
+      if (!reason) throw new Error('reason 不能为空：这条请求想搞清楚什么？')
+      const base = String(campusAccount?.baseUrl ?? 'https://bkjwtest.guet.edu.cn')
+      const url = /^https?:\/\//.test(raw) ? raw : `${base.replace(/\/$/, '')}${raw.startsWith('/') ? '' : '/'}${raw}`
+      const sameOrigin = url.startsWith(base.replace(/\/$/, ''))
+      const withToken = !!req.withSelectToken
+      const withSession = req.withSession == null ? sameOrigin : !!req.withSession
+      // 与 Rust 同一条硬边界：带凭据只许打教务同源（安静的降级比报错更危险）
+      if (!sameOrigin && (withSession || withToken)) {
+        throw new Error(`带凭据的请求只能打教务自己的域名（${base}），${url} 是外部地址`)
+      }
+      for (const h of (req.headers as [string, string][] | undefined) ?? []) {
+        if (/^(cookie|authorization|host|content-length)$/i.test(String(h[0]))) {
+          throw new Error(`请求头「${h[0]}」不允许手写：会话与令牌走 withSession / withSelectToken`)
+        }
+      }
+      const script = mockHttpScript(url)
+      const headers: [string, string][] = [
+        ['content-type', script.contentType],
+        ...(sameOrigin ? ([['set-cookie', '__pstsid__=demo; Path=/']] as [string, string][]) : []),
+      ]
+      const curl = mockRenderCurl({
+        method,
+        url,
+        headers: (req.headers as [string, string][] | undefined) ?? [],
+        body: (req.body as string | null) ?? null,
+        withCookie: withSession,
+        withToken,
+      })
+      mockAction('http', `${method} ${url} → HTTP ${script.status}`, curl, script.status < 400 ? 'ok' : 'error', {
+        reason,
+      })
+      return delay({
+        url,
+        method,
+        status: script.status,
+        ok: script.status >= 200 && script.status < 300,
+        sameOrigin,
+        withSession,
+        withSelectToken: withToken,
+        headers,
+        body: script.body,
+        truncated: false,
+        bytes: script.body.length,
+        elapsedMs: 120,
+        curl,
+        healed: false,
+        note: sameOrigin ? null : '外部地址：这条请求没有携带任何教务凭据',
+      } as T)
+    }
+
+    case 'campus_rescue_note': {
+      const kind = String(args.kind ?? '').trim()
+      if (!kind) throw new Error('kind 不能为空')
+      const summary = String(args.summary ?? '').trim()
+      if (!summary) throw new Error('summary 不能为空')
+      return delay(mockAction(kind, summary, null, 'ok', args.detail ?? undefined) as T)
+    }
+
+    case 'campus_curl_export': {
+      const hours = Number(args.hours ?? 6)
+      const entries = mockAiActions.filter((a) => a.curl)
+      if (!entries.length) {
+        throw new Error(`最近 ${hours} 小时里没有可导出的请求。先在 App 里打几条真实请求再导出。`)
+      }
+      const d = new Date()
+      const p = (n: number) => String(n).padStart(2, '0')
+      const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+      const q = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
+      const lines = [
+        '#!/usr/bin/env bash',
+        `# Rein 教务救援脚本 · 生成于 ${d.toISOString()}`,
+        '#',
+        '# 这是什么：把 AI 在 App 里对教务发出的请求**原样搬下来**，脱离 App 也能重放。',
+        '# 用法：bash 本文件（逐条执行，每条之间空一行）。',
+        '#',
+        '# ⚠ 凭据是生成那一刻的快照：Cookie 通常几小时失效，选课令牌（JWT）更短。',
+        '#   过期后不要手工改这里面的值，重新导出一次即可。',
+        '# ⚠ 文件里有你自己的账号凭据，别传到别处去。',
+        'set -euo pipefail',
+        '',
+        `BASE=${q(String(campusAccount?.baseUrl ?? 'https://bkjwtest.guet.edu.cn'))}`,
+      ]
+      if (entries.some((e) => e.curl?.includes('$COOKIE'))) lines.push(`COOKIE='__pstsid__=demo; SESSION=demo'`)
+      if (entries.some((e) => e.curl?.includes('$SELECT_TOKEN'))) lines.push(`SELECT_TOKEN='eyJhbGciOiJIUzI1NiJ9.demo.demo'`)
+      entries.forEach((e, i) => {
+        lines.push('', `# ── ${i + 1}) ${e.at} · ${e.summary}`, String(e.curl), 'echo')
+      })
+      const script = lines.join('\n')
+      const path = `C:\\Users\\demo\\AppData\\Roaming\\com.gozaoo.rein\\rescue\\rescue-${stamp}.sh`
+      mockAction('script', `导出救援脚本：${entries.length} 条请求 → ${path}`)
+      return delay({
+        path,
+        script,
+        count: entries.length,
+        generatedAt: d.toISOString(),
+      } as T)
+    }
+
     case 'campus_grab_enqueue': {
       if (!campusAccount) throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
       const targets = (args.targets as Record<string, unknown>[] | undefined) ?? []
@@ -6020,10 +6705,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
       const ids: number[] = []
       for (const t of targets) {
-        const id = ++grabSeq
-        ids.push(id)
-        grabTasks.unshift({
-          id,
+        const task = grabPushTask({
           turnId: String(args.turnId ?? ''),
           turnName: (args.turnName as string | null) ?? null,
           lessonId: t.lessonId,
@@ -6037,30 +6719,92 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           scheduleGroupId: t.scheduleGroupId ?? null,
           windowWall,
           windowEndWall,
-          // 没有窗口就往「等窗口」走 —— 盲撞出来的「不在选课时间」会被判终态
-          awaitWindow: !windowWall,
-          predicateDone: false,
-          status: 'waiting',
-          phase: 'idle',
-          attempts: 0,
-          polls: 0,
-          strikes: 0,
-          strikeKind: null,
-          requestId: null,
-          lastMessage: windowWall ? `已排队，${windowWall} 开抢` : '等待教务公布选课窗口',
-          nextAt: Date.now(),
-          fireAt: null,
-          queuedAt: Date.now(),
-          finishedAt: null,
           groupKey: (t.groupKey as string | null) ?? null,
           groupName: (t.groupName as string | null) ?? null,
           priority: (t.priority as number | null) ?? 0,
-          stuckSince: null,
-          heldBy: null,
         })
+        ids.push(task.id)
       }
       grabEmit()
       return delay(ids as T)
+    }
+
+    /* ---- 抢课计划（模拟解析见文件上方 grabResolveIntents） ---- */
+
+    case 'campus_grab_intent_add': {
+      if (!campusAccount) throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      const query = String(args.query ?? '').trim()
+      if (!query) throw new Error('要先写清楚想抢什么（课名 / 代码 / 教师）')
+      const intent: MockGrabIntent = {
+        id: ++grabIntentSeq,
+        turnId: args.turnId ? String(args.turnId) : null,
+        turnName: (args.turnName as string | null) ?? null,
+        query,
+        mode: args.mode === 'direct' ? 'direct' : 'predicate',
+        spread: !!args.spread,
+        status: 'pending',
+        groupKeys: [],
+        candidates: [],
+        lastMessage: null,
+        attempts: 0,
+        nextAt: 0,
+        createdAt: Date.now(),
+        resolvedAt: null,
+      }
+      grabIntents.push(intent)
+      grabEmit()
+      return delay({ ...intent } as T)
+    }
+
+    case 'campus_grab_intent_action': {
+      const id = Number(args.intentId)
+      const i = grabIntents.findIndex((x) => x.id === id)
+      if (i < 0) throw new Error('计划不存在（可能已被移除）')
+      if (String(args.action) === 'remove') {
+        // 与 Rust 一致：移除计划连它派出去的任务一起收
+        const keys = grabIntents[i]!.groupKeys ?? []
+        for (const t of grabTasks) {
+          if (keys.includes(grabGroupOf(t)) && !GRAB_TERMINAL.has(t.status)) {
+            t.status = 'cancelled'
+            t.phase = 'idle'
+            t.finishedAt = Date.now()
+            t.lastMessage = '计划已移除'
+          }
+        }
+        grabIntents.splice(i, 1)
+      } else if (String(args.action) === 'now') {
+        const it = grabIntents[i]!
+        it.status = 'pending'
+        it.nextAt = 0
+        it.lastMessage = '正在重新解析教学班…'
+      } else {
+        throw new Error(`未知的操作：${String(args.action)}`)
+      }
+      grabEmit()
+      return delay(undefined as T)
+    }
+
+    case 'campus_grab_intent_preview': {
+      if (!campusAccount) throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      const query = String(args.query ?? '').trim()
+      const briefs = grabIntentBriefs()
+      const want = args.turnId ? String(args.turnId) : null
+      const brief = want
+        ? briefs.find((b) => b.id === want)
+        : (briefs.find((b) => b.allowEnter) ?? briefs[0])
+      if (!brief) {
+        throw new Error('教务还没公布选课批次，等它出现后预览会自动可用')
+      }
+      const lessons = campusDemoLessons()
+      const hits = grabMatchLessons(query, lessons)
+      return delay({
+        turnId: brief.id,
+        turnName: brief.name,
+        total: lessons.length,
+        matched: hits.length,
+        // 与真引擎一致：打全了老师名字时只列那位老师的班
+        matches: grabPreferred(hits).slice(0, 30).map(grabMatchDto),
+      } as T)
     }
 
     case 'campus_grab_task_action': {

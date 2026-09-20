@@ -162,6 +162,15 @@ function toolIcon(name: string): unknown {
     get_strength_progress: toolIcons.Activity,
     probe_model: toolIcons.Settings,
     list_models: toolIcons.Settings,
+    // 校园教务（AI 的最后补救）：抢课与选课都挂在课表这一天里，原始请求按「读网」算
+    campus_status: toolIcons.Calendar,
+    campus_lessons: toolIcons.Calendar,
+    campus_grab_plan: toolIcons.Calendar,
+    campus_grab_control: toolIcons.Calendar,
+    campus_select: toolIcons.Calendar,
+    campus_session: toolIcons.Calendar,
+    campus_http: toolIcons.Globe,
+    campus_export_script: toolIcons.List,
   }
   return map[name] ?? toolIcons.Wrench
 }

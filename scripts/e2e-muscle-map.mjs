@@ -171,13 +171,18 @@ async function main() {
       const map = document.querySelector('.mapcard .mmap')
       const svgs = [...map.querySelectorAll('.figwrap svg')]
       const keysOf = (svg) => [...svg.querySelectorAll('g[data-m]')].map((g) => g.dataset.m)
+      const layersOf = (svg) => [...svg.querySelectorAll('g[data-m]')].map((g) => Number(g.dataset.layer))
       return {
         viewBoxes: svgs.map((s) => s.getAttribute('viewBox')),
         counts: svgs.map((s) => keysOf(s).length),
         keys: svgs.map(keysOf),
         pathFillAttrs: [...map.querySelectorAll('g[data-m] path')].filter((p) => p.hasAttribute('fill')).length,
-        basePaths: svgs.map((s) => s.querySelectorAll('g#base, .base path').length),
-        garment: svgs.map((s) => s.querySelectorAll('.garment').length),
+        basePaths: svgs.map((s) => s.querySelectorAll('.base path').length),
+        layers: svgs.map(layersOf),
+        hasDepthToggle: !!map.querySelector('.depthbtn'),
+        deepHiddenByDefault: svgs.map((s) =>
+          [...s.querySelectorAll('g[data-m]')].filter((g) => Number(g.dataset.layer) > 1).every((g) => getComputedStyle(g).display === 'none'),
+        ),
         styled: svgs.map((s) =>
           [...s.querySelectorAll('g[data-m]')]
             .filter((g) => g.classList.contains('l1') || g.classList.contains('l2') || g.classList.contains('l3'))
@@ -225,13 +230,40 @@ async function main() {
       all.has('delt-ant') && all.has('delt-lat') && all.has('delt-post'),
       `正面分区数 ${info.counts[0]}`,
     )
+    ok('上胸/下胸为独立分区', all.has('chest-up') && all.has('chest-low'))
     ok('分区路径无内联 fill（着色走 CSS 继承）', info.pathFillAttrs === 0, `inline fill=${info.pathFillAttrs}`)
-    ok('底图含衣物分区（避免生殖器官直接暴露）', info.garment.every((n) => n >= 1), `garment=${JSON.stringify(info.garment)}`)
+    ok('底图为真实人体轮廓', info.basePaths.every((n) => n >= 1), `base=${JSON.stringify(info.basePaths)}`)
+    ok(
+      '分区带浅层/深层标注',
+      info.layers.every((ls) => ls.length > 0 && ls.every((n) => n === 1 || n === 2)),
+      `正面层分布 ${JSON.stringify([...new Set(info.layers[0])])}`,
+    )
+    ok('深层分区默认折叠', info.deepHiddenByDefault.every(Boolean), JSON.stringify(info.deepHiddenByDefault))
+    ok('提供深层开关', info.hasDepthToggle)
     ok(
       '激活肌群按档位着色（l1/l2/l3）',
       info.styled.every((v) => v.length > 0),
       JSON.stringify(info.styled[0]?.slice(0, 6)),
     )
+
+    // 深层开关真的能揭示被浅层盖住的深层肌（Vue 的 v-show 在 nextTick 生效，须等一拍）
+    const countDeepVisible = () =>
+      evalJS(`(() => {
+        const map = document.querySelector('.mapcard .mmap')
+        return [...map.querySelectorAll('g[data-m]')].filter((g) => Number(g.dataset.layer) > 1 && getComputedStyle(g).display !== 'none').length
+      })()`)
+    const totalDeep = await evalJS(
+      `(() => { const map = document.querySelector('.mapcard .mmap'); return [...map.querySelectorAll('g[data-m]')].filter((g) => Number(g.dataset.layer) > 1).length })()`,
+    )
+    const before = await countDeepVisible()
+    await evalJS(`(() => { document.querySelector('.mapcard .mmap .depthbtn').click(); return true })()`)
+    await sleep(250)
+    const after = await countDeepVisible()
+    await evalJS(`(() => { document.querySelector('.mapcard .mmap .depthbtn').click(); return true })()`)
+    await sleep(250)
+    const restored = await countDeepVisible()
+    ok('深层开关揭示深层分区', after > before, JSON.stringify({ before, after, restored, totalDeep }))
+    ok('深层开关可收回', restored === before, `restored=${restored}`)
 
     // 分开高亮的直接证据：单独给三角肌前束上色，中束/后束不受影响
     const isolated = await evalJS(`(() => {

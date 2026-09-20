@@ -62,6 +62,7 @@ use crate::error::{ReinError, Result};
 use crate::state::{AppState, CampusHub};
 
 use super::course_select::TOKEN_EXPIRED;
+use super::matcher::{self, LessonHit};
 use super::models::*;
 
 /// 事件名：与前端 `campusService.onGrab` 的监听对应。
@@ -94,6 +95,14 @@ const TURN_PROBE_MS: i64 = 60_000;
 /// [`fire_at_ms`] 的「闸门未知」返回值：不是没有闸门，而是我们还不知道开窗时刻。
 /// 用它把任务挡在门外，交给 [`probe_windows`] 去把时刻问出来。
 const GATE_UNKNOWN: i64 = i64::MAX;
+/// 教学班名单的缓存时长。解析计划与输入预览共用；名单是分钟级才变的东西。
+const LESSON_CACHE_MS: i64 = 60_000;
+/// 计划解析失败（批次没出现 / 名单拉不到 / 一个班都没匹配上）之后的重试间隔。
+/// 比满员重试慢得多：这几件事都是分钟级才可能变。
+const INTENT_RETRY_MS: i64 = 60_000;
+/// 一条计划最多往界面带多少个候选教学班。查询写得很宽时（比如只敲了一个「学」）
+/// 可能匹配上百个班，而快照是每秒都可能推一次的 —— 不能让一屏垃圾拖着事件流走。
+const INTENT_CANDIDATE_CAP: usize = 12;
 
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -313,8 +322,17 @@ pub struct GrabHub {
     /// 上一次真正发出请求的时刻（本机 ms）。**全局节流闸门**：
     /// 不管任务单上有几门课，打向教务的请求速率都由它唯一决定。
     last_request: AtomicI64,
-    /// 上一次去问「窗口公布了没有」的时刻。
-    last_turn_probe: AtomicI64,
+    /// 教学班名单缓存（解析计划用）。见 [`GrabHub::lessons_cached`]。
+    lessons: Mutex<Option<LessonCache>>,
+}
+
+/// 一份缓存下来的教学班名单。
+struct LessonCache {
+    turn_id: String,
+    at: i64,
+    lessons: Vec<CourseSelectLesson>,
+    /// 「进批次」拿到的批次 id（提交体要用的那个），拿不到时为 None
+    assoc: Option<String>,
 }
 
 impl GrabHub {
@@ -351,13 +369,56 @@ impl GrabHub {
         self.last_request.store(now_ms(), Ordering::Relaxed);
     }
 
-    /// 距上次窗口探测还有多久。0 = 现在就能探。
-    fn turn_probe_gap_ms(&self) -> i64 {
-        (TURN_PROBE_MS - (now_ms() - self.last_turn_probe.load(Ordering::Relaxed))).max(0)
-    }
+    /// 拿一个批次的教学班名单（60 秒缓存）。
+    ///
+    /// 「计划解析」与界面上的「输入预览」都要看**教务现在有哪些班**，所以两边共用这一份缓存：
+    /// 名单是分钟级才变的东西，而人敲一次预览不该变成一次全量查询。
+    ///
+    /// 顺带把 `assoc`（提交体要用的批次 id）也带回来 —— 它同样是「进批次」才拿得到的，
+    /// 而解析出来的任务马上要用，不想在开窗前那一秒再多一次往返。
+    pub(crate) fn lessons_cached(
+        &self,
+        ctx: &super::commands::SelectContext,
+        turn_id: &str,
+    ) -> Result<(Vec<CourseSelectLesson>, Option<String>)> {
+        if let Ok(guard) = self.lessons.lock() {
+            if let Some(c) = guard.as_ref() {
+                if c.turn_id == turn_id && now_ms() - c.at < LESSON_CACHE_MS {
+                    return Ok((c.lessons.clone(), c.assoc.clone()));
+                }
+            }
+        }
 
-    fn mark_turn_probe(&self) {
-        self.last_turn_probe.store(now_ms(), Ordering::Relaxed);
+        let query = LessonQuery {
+            has_count: Some(true),
+            ..Default::default()
+        };
+        let lessons = match ctx.client.query_lesson(ctx.student_id, turn_id, &query) {
+            Ok(l) => l,
+            // 教务若在这个轮次的表单里没有 `hasCount`，整条查询可能被拒。
+            // 名额只是排序的加分项 —— **宁可没有名额，也不能拿不到名单**。
+            Err(e)
+                if !matches!(
+                    verdict_of(&e.to_string()),
+                    Verdict::TokenRefresh | Verdict::SessionLost
+                ) =>
+            {
+                ctx.client
+                    .query_lesson(ctx.student_id, turn_id, &LessonQuery::default())?
+            }
+            Err(e) => return Err(e),
+        };
+        let assoc = ctx.client.turn_assoc(ctx.student_id, turn_id);
+
+        if let Ok(mut guard) = self.lessons.lock() {
+            *guard = Some(LessonCache {
+                turn_id: turn_id.to_string(),
+                at: now_ms(),
+                lessons: lessons.clone(),
+                assoc: Some(assoc.clone()),
+            });
+        }
+        Ok((lessons, Some(assoc)))
     }
 
     /// 启动后台线程。与 `KbHub::start` 同形：先 manage 好状态再调它。
@@ -436,15 +497,17 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     let state = app.state::<AppState>();
 
     // ── 短锁：读设置 + 账号。出了这个块就没有锁了。
-    let (settings, account_id) = {
+    let (settings, account_id, probed_at) = {
         let conn = state.db.lock().unwrap();
         let settings = load_settings(&conn)?;
         let Some(account_id) = active_account_id(&conn)? else {
             // 没登录：静默待命，什么都不做（界面会提示去配置）
             return Ok(Duration::from_millis(IDLE_WAIT_MS as u64));
         };
-        (settings, account_id)
+        let probed = read_meta(&conn, PROBED_KEY).and_then(|s| s.parse::<i64>().ok());
+        (settings, account_id, probed)
     };
+    let probe_due = probed_at.map(|at| now_ms() - at >= TURN_PROBE_MS).unwrap_or(true);
 
     // ── 投递口：外部（开机监控脚本 / 人）投进来的抢课意图先落库，
     //    **落完再读任务** —— 这样这一轮就能把它当普通任务处理，不必等下一次心跳。
@@ -465,8 +528,7 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     let watching = settings.watch_window
         && (tasks.is_empty()
             || tasks.iter().any(|t| t.await_window && t.window_wall.is_none()));
-    if watching && hub.turn_probe_gap_ms() == 0 {
-        hub.mark_turn_probe();
+    if watching && probe_due {
         hub.mark_request();
         let ctx = super::commands::select_context(&state.db, &campus);
         match ctx {
@@ -479,6 +541,51 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
         }
         emit(app, hub);
         return Ok(Duration::from_millis(BUSY_WAIT_MS as u64));
+    }
+
+    // ── 计划解析：把「我想抢 高数 张」落成具体的教学班任务。
+    //    **排在任务之前**：一条没解析的计划在任务单上一个字都没有，用户看到的是「没反应」；
+    //    而解析只花一次名单查询（60 秒缓存），不该等任务都忙完才轮到它。
+    //    与任务共用同一个节流闸门 —— 「一轮一个请求」这条规矩对解析同样成立。
+    let due_intent = {
+        let conn = state.db.lock().unwrap();
+        load_due_intent(&conn, account_id, now_ms())?
+    };
+    if let Some(mut intent) = due_intent {
+        let gap = hub.pace_gap_ms(settings.min_interval_ms);
+        if gap > 0 {
+            return Ok(Duration::from_millis(gap as u64));
+        }
+        hub.mark_request();
+        match super::commands::select_context(&state.db, &campus) {
+            // 账号对不上（用户切了账号）：计划留着给人看，但不动手
+            Ok(ctx) if ctx.account_id != account_id => {}
+            Ok(ctx) => {
+                if let Err(e) = resolve_intent(&state, hub, &ctx, &mut intent) {
+                    // 解析失败不判死计划：写一句能看懂的话，等下一次重试
+                    let msg = e.to_string();
+                    let status = if intent.status == INTENT_EMPTY {
+                        INTENT_EMPTY
+                    } else {
+                        INTENT_PENDING
+                    };
+                    let _ = park_intent(&state, &mut intent, status, msg, INTENT_RETRY_MS);
+                }
+            }
+            Err(e) => {
+                let _ = park_intent(
+                    &state,
+                    &mut intent,
+                    INTENT_PENDING,
+                    e.to_string(),
+                    INTENT_RETRY_MS,
+                );
+            }
+        }
+        emit(app, hub);
+        return Ok(Duration::from_millis(
+            hub.pace_gap_ms(settings.min_interval_ms).max(1) as u64,
+        ));
     }
 
     if tasks.is_empty() {
@@ -596,20 +703,16 @@ fn probe_windows(
     ctx: &super::commands::SelectContext,
     tasks: &[GrabTask],
 ) -> Result<()> {
-    let turns = ctx.client.open_turns(ctx.student_id)?;
+    // 强制拉一次：这个调用点本来就是「到点了，去问一次」。
+    // 计划解析走的是 [`turn_briefs`]，同一个一分钟内不会再打一遍教务。
+    let briefs = fetch_turn_briefs(state, ctx)?;
     let conn = state.db.lock().unwrap();
 
-    // 监听结果落一份：界面要显示「窗口开没开、有哪些批次」，而这件事不该只活在
-    // 这一轮心跳的内存里 —— 关掉 App 再打开，它得还在（否则界面上会闪回「未知」）。
-    let briefs: Vec<GrabTurnBrief> = turns.iter().map(turn_brief).collect();
-    let _ = write_meta(&conn, TURNS_KEY, &serde_json::to_string(&briefs).unwrap_or_default());
-    let _ = write_meta(&conn, PROBED_KEY, &now_ms().to_string());
-
     for t in tasks.iter().filter(|t| t.await_window && t.window_wall.is_none()) {
-        let Some(turn) = turns.iter().find(|x| id_text(&x.id) == t.turn_id) else {
+        let Some(brief) = briefs.iter().find(|b| b.id == t.turn_id) else {
             continue; // 批次还没出现在列表里，继续等
         };
-        match (turn.opens_at_text(), turn.closes_at_text()) {
+        match (brief.window_start.as_deref(), brief.window_end.as_deref()) {
             // 窗口时间有了 → 转成精确开火
             (Some(open), end) => {
                 conn.execute(
@@ -625,7 +728,7 @@ fn probe_windows(
                 )?;
             }
             // 没有时间但允许进入 → 窗口就是现在开着的，立刻出手
-            (None, _) if turn.allow_enter => {
+            (None, _) if brief.allow_enter => {
                 conn.execute(
                     "UPDATE campus_grab_tasks SET await_window = 0, next_at = ?2, \
                      last_message = ?3 WHERE id = ?1",
@@ -642,6 +745,48 @@ fn probe_windows(
         }
     }
     Ok(())
+}
+
+/// 教务当前有哪些批次，**一分钟内复用上回的结果**。
+///
+/// 窗口监听与计划解析都要它，而「有哪些批次、窗口开没开」是分钟级才变的东西；
+/// 两边各打一次只会让开窗那一分钟多出无谓的请求。
+fn turn_briefs(
+    state: &tauri::State<'_, AppState>,
+    ctx: &super::commands::SelectContext,
+) -> Result<Vec<GrabTurnBrief>> {
+    let cached = {
+        let conn = state.db.lock().unwrap();
+        read_meta(&conn, PROBED_KEY)
+            .and_then(|s| s.parse::<i64>().ok())
+            .map(|at| (read_turns(&conn), at))
+    };
+    if let Some((briefs, at)) = cached {
+        if now_ms() - at < TURN_PROBE_MS {
+            return Ok(briefs);
+        }
+    }
+    fetch_turn_briefs(state, ctx)
+}
+
+/// 真的去 `open-turns` 问一次，并把结果落库 —— 界面要显示「窗口开没开」，
+/// 而这件事不该只活在某一轮心跳的内存里（关掉 App 再打开，它得还在）。
+fn fetch_turn_briefs(
+    state: &tauri::State<'_, AppState>,
+    ctx: &super::commands::SelectContext,
+) -> Result<Vec<GrabTurnBrief>> {
+    let turns = ctx.client.open_turns(ctx.student_id)?;
+    let briefs: Vec<GrabTurnBrief> = turns.iter().map(turn_brief).collect();
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = write_meta(
+            &conn,
+            TURNS_KEY,
+            &serde_json::to_string(&briefs).unwrap_or_default(),
+        );
+        let _ = write_meta(&conn, PROBED_KEY, &now_ms().to_string());
+    }
+    Ok(briefs)
 }
 
 /// 拿不到选课客户端时：**不判死任何任务**，只把整批降速重排。
@@ -980,6 +1125,291 @@ fn close_group(conn: &Connection, winner: &GrabTask) -> Result<usize> {
         rusqlite::params![g, winner.id, GRAB_CANCELLED, PHASE_IDLE, now_ms(), msg],
     )?;
     Ok(n)
+}
+
+/* ─────────────────────── 计划（意向） ───────────────────────
+ *
+ * 计划回答「我想抢什么」，任务回答「正在抢哪个教学班」。中间那次翻译就是
+ * [`resolve_intent`]：拿**当时**的教学班名单做模糊匹配 → 命中的班按抢课语义排序 →
+ * 排成志愿组任务。
+ *
+ * 三条不肯让步的性质：
+ *
+ * 1. **可以还没有批次**。提前一晚写下「高数 张」时，教务可能连批次都没公布。
+ *    计划照样落库，等名单拉得到的那一刻自己解析（每分钟试一次）。
+ * 2. **解析看的是当时的名单**。哪个班还有空位是开窗那一刻才知道的事；
+ *    预先抄下来的 `lessonAssoc` 赌的是「名单没变过」，那是拿抢课去赌。
+ * 3. **生成的仍是普通任务**。解析不是另一条提交链路，它只写 `campus_grab_tasks`——
+ *    后面怎么抢、怎么退避、怎么换令牌，全归已有的任务引擎管。
+ */
+
+/// 把命中按「志愿组」分堆。
+///
+/// - `spread = false`（默认）：所有命中合成一堆，只中一个。「任意一个班都行」就该是这个
+///   语义 —— 多抢到一门时间冲突的课，比没抢到更麻烦。
+/// - `spread = true`：按课程分堆 —— 每门课各抢一个班（同一门课的多个班仍互斥），
+///   课程之间互不影响。适合「查询写得很宽、但我确实每门都要」。
+///
+/// 已选过的班一律排除：引擎不该再对已经在名下的课动手。
+pub fn plan_groups(hits: &[LessonHit], spread: bool) -> Vec<Vec<LessonHit>> {
+    let grabbable: Vec<LessonHit> = hits
+        .iter()
+        .filter(|h| h.lesson.selected_lesson.is_none())
+        .cloned()
+        .collect();
+    if !spread {
+        return if grabbable.is_empty() { Vec::new() } else { vec![grabbable] };
+    }
+    let mut order: Vec<String> = Vec::new();
+    let mut buckets: HashMap<String, Vec<LessonHit>> = HashMap::new();
+    for h in grabbable {
+        let key = course_key(&h.lesson);
+        if !buckets.contains_key(&key) {
+            order.push(key.clone());
+        }
+        buckets.entry(key).or_default().push(h);
+    }
+    order.into_iter().filter_map(|k| buckets.remove(&k)).collect()
+}
+
+/// 分堆用的课程身份：课程代码优先，退化到课程名，再退化到教学班 id。
+///
+/// **不能拿教学班 id 当第一选择** —— 那是「班」的身份，用它分堆等于每班一堆，
+/// 而 spread 的全部意义正是「同一门课的多个班只中一个」。
+fn course_key(l: &CourseSelectLesson) -> String {
+    let course = l.course.as_ref();
+    course
+        .and_then(|c| c.code.clone())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            course
+                .and_then(|c| c.name_zh.clone())
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| matcher::id_text(&l.id))
+}
+
+/// 上课小组：教务只给**一个**可选组时直接指定它（与抢课抽屉里的默认一致），
+/// 多组时交给教务的默认值 —— 「抢哪个组」这件事我们没有比它更靠谱的判据。
+fn schedule_group_of(l: &CourseSelectLesson) -> Option<Value> {
+    match l.schedule_groups.as_slice() {
+        [only] => Some(only.id.clone()).filter(|v| !v.is_null()),
+        _ => None,
+    }
+}
+
+/// 计划的目标批次：计划指定的优先；没指定就用教务当前开放的那个。
+///
+/// 指定的那个不在列表里就返回 None，**绝不自动换一个批次** ——
+/// 「我排的是 A 轮，引擎跑去 B 轮抢」比抢不到更难查。
+fn pick_turn(want: Option<&str>, briefs: &[GrabTurnBrief]) -> Option<GrabTurnBrief> {
+    match want.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => briefs.iter().find(|b| b.id == id).cloned(),
+        None => briefs
+            .iter()
+            .find(|b| b.allow_enter)
+            .or_else(|| briefs.first())
+            .cloned(),
+    }
+}
+
+/// 目标批次（缓存优先）。计划解析与界面上的「预览」都从这一步起步 ——
+/// 两边必须挑到同一个批次，否则预览里看到的班和真抢的班不是一回事。
+pub(crate) fn resolve_turn(
+    state: &tauri::State<'_, AppState>,
+    ctx: &super::commands::SelectContext,
+    want: Option<&str>,
+) -> Result<Option<GrabTurnBrief>> {
+    Ok(pick_turn(want, &turn_briefs(state, ctx)?))
+}
+
+/// 解析一条计划。引擎每轮心跳最多做一条（见 [`step`]），所以这里可以放心是一次完整流程。
+///
+/// 任何「现在做不了」都走 [`park_intent`]：记一句能看懂的话 + 定个重试时刻，**绝不删计划**。
+fn resolve_intent(
+    state: &tauri::State<'_, AppState>,
+    hub: &GrabHub,
+    ctx: &super::commands::SelectContext,
+    intent: &mut GrabIntent,
+) -> Result<()> {
+    intent.attempts += 1;
+
+    let briefs = turn_briefs(state, ctx)?;
+    let Some(brief) = pick_turn(intent.turn_id.as_deref(), &briefs) else {
+        return park_intent(
+            state,
+            intent,
+            INTENT_PENDING,
+            "还没看到这个选课批次，教务公布后会自动继续".into(),
+            INTENT_RETRY_MS,
+        );
+    };
+    intent.turn_id = Some(brief.id.clone());
+    intent.turn_name = brief.name.clone();
+
+    // 窗口已经过去的批次不再解析：解析出来也只会立刻落进「窗口已关闭」的终态。
+    // 关门判断不校时钟偏差 —— 差几秒对「今天还抢不抢」没有影响。
+    if let Some(end) = brief.window_end.as_deref().and_then(wall_to_ms) {
+        if now_ms() >= end {
+            let who = brief.name.clone().unwrap_or_else(|| brief.id.clone());
+            return park_intent(
+                state,
+                intent,
+                INTENT_PENDING,
+                format!("批次「{who}」的选课窗口已经结束"),
+                INTENT_RETRY_MS * 10,
+            );
+        }
+    }
+
+    let (lessons, assoc) = hub.lessons_cached(ctx, &brief.id)?;
+    let hits = matcher::match_lessons(&intent.query, &lessons);
+    // 打全了老师名字 → 那是指定，只抢他的班；只打姓 / 打错字 → 模糊匹配照旧（见 `preferred`）
+    let pool = matcher::preferred(&hits);
+    let picked_off = hits.len().saturating_sub(pool.len());
+    let groups = plan_groups(&pool, intent.spread);
+    if groups.is_empty() {
+        let why = if hits.is_empty() {
+            format!(
+                "没匹配到「{}」—— 课名 / 课程代码 / 教师名都可以，空格分词",
+                intent.query
+            )
+        } else {
+            "匹配到的教学班都已经在你名下了".to_string()
+        };
+        return park_intent(state, intent, INTENT_EMPTY, why, INTENT_RETRY_MS);
+    }
+
+    // 窗口与开火判据与 `probe_windows` 保持一致：有精确区间就用区间；
+    // 没有区间但「允许进入」就是窗口正开着（立刻出手）；都没有就等窗口公布。
+    let (window, window_end, await_window) = match brief.window_start.as_deref() {
+        Some(start) if !start.trim().is_empty() => {
+            (Some(start.trim().to_string()), brief.window_end.clone(), false)
+        }
+        _ if brief.allow_enter => (None, None, false),
+        _ => (None, None, true),
+    };
+
+    // 建任务。**短锁里只做写**：名单与匹配都在锁外算完了。
+    let (created, keys) = {
+        let conn = state.db.lock().unwrap();
+        let mut created = 0usize;
+        let mut keys: Vec<String> = Vec::new();
+        for (gi, group) in groups.iter().enumerate() {
+            // 一条计划生成的组用 `intent-{id}` 起头：界面靠它把任务归到计划名下
+            let key = if groups.len() == 1 {
+                format!("intent-{}", intent.id)
+            } else {
+                format!("intent-{}-{}", intent.id, gi + 1)
+            };
+            let name = if intent.spread {
+                group.first().and_then(|h| matcher::course_name_of(&h.lesson))
+            } else {
+                None
+            }
+            .unwrap_or_else(|| intent.query.clone());
+
+            let mut made = false;
+            for (i, h) in group.iter().enumerate() {
+                // 同一门课已经在抢了就别再来一条 —— 与投递口用的是同一套幂等判据
+                let lid = json_to_col(&h.lesson.id);
+                if active_task_exists(&conn, ctx.account_id, &brief.id, &lid) {
+                    continue;
+                }
+                let input = GrabTargetInput {
+                    lesson_id: h.lesson.id.clone(),
+                    lesson_name: None,
+                    course_name: matcher::course_name_of(&h.lesson),
+                    course_code: h.lesson.course.as_ref().and_then(|c| c.code.clone()),
+                    teacher: matcher::teacher_text(&h.lesson),
+                    credits: h.lesson.course.as_ref().and_then(|c| c.credits),
+                    virtual_cost: None,
+                    schedule_group_id: schedule_group_of(&h.lesson),
+                    group_key: Some(key.clone()),
+                    group_name: Some(name.clone()),
+                    priority: (i + 1) as i64,
+                };
+                let id = insert_task(
+                    &conn,
+                    ctx.account_id,
+                    &brief.id,
+                    brief.name.as_deref(),
+                    &input,
+                    &intent.mode,
+                    window.as_deref(),
+                    window_end.as_deref(),
+                )?;
+                if let Some(a) = assoc.as_deref() {
+                    let _ = set_turn_assoc(&conn, id, a);
+                }
+                if await_window {
+                    let _ = conn.execute(
+                        "UPDATE campus_grab_tasks SET await_window = 1, last_message = ?2 WHERE id = ?1",
+                        rusqlite::params![id, "等待教务公布选课窗口"],
+                    );
+                }
+                made = true;
+                created += 1;
+            }
+            if made {
+                keys.push(key);
+            }
+        }
+        (created, keys)
+    };
+
+    intent.status = INTENT_READY.into();
+    intent.group_keys = keys;
+    // 候选清单只列**真会抢的**那些班：被「指定老师」筛掉的不列出来，
+    // 否则用户会问「为什么预览里有它、任务单里没有」。
+    intent.candidates = pool
+        .iter()
+        .take(INTENT_CANDIDATE_CAP)
+        .map(matcher::to_match)
+        .collect();
+    intent.resolved_at = Some(now_ms());
+    intent.next_at = now_ms();
+    let hidden = pool.len().saturating_sub(INTENT_CANDIDATE_CAP);
+    let tail = if hidden > 0 {
+        format!("（另有 {hidden} 个匹配未列出）")
+    } else {
+        String::new()
+    };
+    // 指定了老师就明说一句 —— 用户下次看到这条计划时，「只抢张伟的班」是解释而不是意外
+    let by_teacher = if picked_off > 0 {
+        format!("，只抢指定教师的班（另有 {picked_off} 个匹配被滤掉）")
+    } else {
+        String::new()
+    };
+    intent.last_message = Some(if created == 0 {
+        "这些教学班都已经在抢了".to_string()
+    } else if groups.len() > 1 {
+        format!(
+            "已为 {} 门课各排一组，共 {created} 个志愿{by_teacher}{tail}",
+            groups.len()
+        )
+    } else {
+        format!("已排入 {created} 个志愿，按序出手{by_teacher}{tail}")
+    });
+
+    let conn = state.db.lock().unwrap();
+    save_intent(&conn, intent)
+}
+
+/// 把一条计划挂起：说清为什么、定好下次什么时候再试。**不删计划** ——
+/// 用户排的是明天早上的事，「现在看不到批次」根本不算失败。
+fn park_intent(
+    state: &tauri::State<'_, AppState>,
+    intent: &mut GrabIntent,
+    status: &str,
+    message: String,
+    delay_ms: i64,
+) -> Result<()> {
+    intent.status = status.to_string();
+    intent.last_message = Some(message);
+    intent.next_at = now_ms() + delay_ms;
+    let conn = state.db.lock().unwrap();
+    save_intent(&conn, intent)
 }
 
 /// 把一次错误吸收进任务状态：分级 → 定下一次动作 → 必要时判死。
@@ -1510,6 +1940,157 @@ pub fn set_status(conn: &Connection, id: i64, status: &str) -> Result<()> {
     Ok(())
 }
 
+/* ─────────────────────── 计划（意向）：读写 ─────────────────────── */
+
+const INTENT_COLS: &str = "id, turn_id, turn_name, query, mode, spread, status, group_keys, \
+     candidates, last_message, attempts, next_at, created_at, resolved_at";
+
+fn intent_row(r: &Row<'_>) -> rusqlite::Result<GrabIntent> {
+    let keys: String = r.get(7)?;
+    let candidates: String = r.get(8)?;
+    Ok(GrabIntent {
+        id: r.get(0)?,
+        turn_id: r.get(1)?,
+        turn_name: r.get(2)?,
+        query: r.get(3)?,
+        mode: r.get(4)?,
+        spread: r.get::<_, i64>(5)? != 0,
+        status: r.get(6)?,
+        // 坏 JSON 按空数组处理：一条计划的候选清单不该拖垮整份快照
+        group_keys: serde_json::from_str(&keys).unwrap_or_default(),
+        candidates: serde_json::from_str(&candidates).unwrap_or_default(),
+        last_message: r.get(9)?,
+        attempts: r.get(10)?,
+        next_at: r.get(11)?,
+        created_at: r.get(12)?,
+        resolved_at: r.get(13)?,
+    })
+}
+
+/// 全部计划（界面用），按写下顺序。
+pub fn load_intents(conn: &Connection, account_id: i64) -> Result<Vec<GrabIntent>> {
+    let sql = format!(
+        "SELECT {INTENT_COLS} FROM campus_grab_intents WHERE account_id = ?1 ORDER BY id ASC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([account_id], intent_row)?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn load_intent(conn: &Connection, id: i64) -> Result<Option<GrabIntent>> {
+    let sql = format!("SELECT {INTENT_COLS} FROM campus_grab_intents WHERE id = ?1");
+    match conn.query_row(&sql, [id], intent_row) {
+        Ok(i) => Ok(Some(i)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(ReinError::from(e)),
+    }
+}
+
+/// 到点该解析的那条计划。
+///
+/// **只有 `pending` / `empty` 会被选中** —— `ready` 的计划不自动重解析：
+/// 它已经排出了任务，再解析一遍只会对着同一批班重排（用户真要重来会按「重新解析」）。
+fn load_due_intent(conn: &Connection, account_id: i64, now: i64) -> Result<Option<GrabIntent>> {
+    let sql = format!(
+        "SELECT {INTENT_COLS} FROM campus_grab_intents \
+         WHERE account_id = ?1 AND status IN ('{INTENT_PENDING}','{INTENT_EMPTY}') AND next_at <= ?2 \
+         ORDER BY next_at ASC, id ASC LIMIT 1"
+    );
+    match conn.query_row(&sql, rusqlite::params![account_id, now], intent_row) {
+        Ok(i) => Ok(Some(i)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(ReinError::from(e)),
+    }
+}
+
+/// 记下一条计划。`next_at = 0` 意味着「马上解析」。
+pub fn insert_intent(
+    conn: &Connection,
+    account_id: i64,
+    turn_id: Option<&str>,
+    turn_name: Option<&str>,
+    query: &str,
+    mode: &str,
+    spread: bool,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO campus_grab_intents \
+         (account_id, turn_id, turn_name, query, mode, spread, status, next_at, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)",
+        rusqlite::params![
+            account_id,
+            turn_id,
+            turn_name,
+            query,
+            mode,
+            spread as i64,
+            INTENT_PENDING,
+            now_ms(),
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// 写回一条计划的可变部分（解析结果与重试安排）。
+pub fn save_intent(conn: &Connection, i: &GrabIntent) -> Result<()> {
+    conn.execute(
+        "UPDATE campus_grab_intents SET turn_id = ?2, turn_name = ?3, query = ?4, mode = ?5, \
+         spread = ?6, status = ?7, group_keys = ?8, candidates = ?9, last_message = ?10, \
+         attempts = ?11, next_at = ?12, resolved_at = ?13 WHERE id = ?1",
+        rusqlite::params![
+            i.id,
+            i.turn_id,
+            i.turn_name,
+            i.query,
+            i.mode,
+            i.spread as i64,
+            i.status,
+            serde_json::to_string(&i.group_keys)?,
+            serde_json::to_string(&i.candidates)?,
+            i.last_message,
+            i.attempts,
+            i.next_at,
+            i.resolved_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// 删一条计划，同时**收掉它派出去的任务**。
+///
+/// 只删计划不收任务会留下一个说不通的局面：界面上的计划没了，抢课却还在跑。
+/// 终态任务留着（那是历史记录），非终态的取消 —— 与「取消」这个动作的语义一致。
+pub fn delete_intent(conn: &Connection, id: i64) -> Result<()> {
+    if let Some(i) = load_intent(conn, id)? {
+        for key in &i.group_keys {
+            conn.execute(
+                "UPDATE campus_grab_tasks SET status = ?2, phase = 'idle', next_at = ?3, \
+                 finished_at = ?3, last_message = '计划已移除' \
+                 WHERE group_key = ?1 AND status NOT IN ('success','failed','conflict','cancelled')",
+                rusqlite::params![key, GRAB_CANCELLED, now_ms()],
+            )?;
+        }
+    }
+    conn.execute("DELETE FROM campus_grab_intents WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// 让一条计划立刻重新解析（用户按「重新解析」）。
+///
+/// **不清候选**：解析要等一次名单查询，界面在这期间仍显示上一次的结果比显示空白强。
+pub fn reset_intent(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE campus_grab_intents SET status = ?2, next_at = 0, \
+         last_message = '正在重新解析教学班…' WHERE id = ?1",
+        rusqlite::params![id, INTENT_PENDING],
+    )?;
+    Ok(())
+}
+
 fn read_meta(conn: &Connection, key: &str) -> Option<String> {
     conn.query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| {
         r.get::<_, String>(0)
@@ -1546,32 +2127,19 @@ pub fn save_settings(conn: &Connection, s: &GrabSettings) -> Result<()> {
 
 /* ─────────────────────────── 快照 ─────────────────────────── */
 
-/// `serde_json::Value` 里的不透明 id → 纯文本。
-///
-/// **不能直接 `to_string()`**：字符串型的 id 会带上引号（`"123"` 而不是 `123`），
-/// 与前端 `idOf()` 的 `String(v)` 就不是一个东西了。带 `lessonAssoc` 的教训在前 ——
-/// 类型对不对，教务是会直接拒绝的。
-fn id_text(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
 /// 批次 → 界面用的轻量摘要。
+///
+/// 窗口时刻走 `opens_at_text` / `closes_at_text` 那一套优先级（结构化区间优先，
+/// 退化才抠 `selectDateTimeText`）—— **界面显示的开窗时间与引擎实际开火的时刻必须同源**，
+/// 否则用户看到的倒计时和它真正出手的那一刻对不上。
 fn turn_brief(t: &CourseSelectTurn) -> GrabTurnBrief {
-    // 与 `CourseSelectTurn::opens_at_text` 同一套优先级：结构化区间优先，退化才抠文本
-    let range = t
-        .select_date_time_range
-        .as_ref()
-        .or(t.open_date_time_range.as_ref());
     GrabTurnBrief {
-        id: id_text(&t.id),
+        id: matcher::id_text(&t.id),
         name: t.name.clone(),
         allow_enter: t.allow_enter,
         select_text: t.select_date_time_text.clone(),
-        window_start: range.and_then(|r| r.start_date_time.clone()),
-        window_end: range.and_then(|r| r.end_date_time.clone()),
+        window_start: t.opens_at_text(),
+        window_end: t.closes_at_text(),
     }
 }
 
@@ -1590,6 +2158,10 @@ pub fn snapshot(conn: &Connection, hub: &GrabHub) -> Result<GrabState> {
     let account_id = active_account_id(conn)?;
     let mut tasks = match account_id {
         Some(id) => load_tasks(conn, id)?,
+        None => Vec::new(),
+    };
+    let intents = match account_id {
+        Some(id) => load_intents(conn, id)?,
         None => Vec::new(),
     };
     let settings = load_settings(conn)?;
@@ -1659,6 +2231,7 @@ pub fn snapshot(conn: &Connection, hub: &GrabHub) -> Result<GrabState> {
         last_error: hub.last_error(),
         turns: read_turns(conn),
         probed_at: read_meta(conn, PROBED_KEY).and_then(|s| s.parse::<i64>().ok()),
+        intents,
         tasks,
     })
 }
@@ -2513,8 +3086,183 @@ mod tests {
     /// 两边必须在同一个表示上，否则 `probe_windows` 永远匹配不到自己的批次。
     #[test]
     fn opaque_ids_lose_their_json_quotes() {
-        assert_eq!(id_text(&serde_json::json!(317844)), "317844");
-        assert_eq!(id_text(&serde_json::json!("317844")), "317844");
-        assert_eq!(id_text(&serde_json::json!(null)), "null");
+        assert_eq!(matcher::id_text(&serde_json::json!(317844)), "317844");
+        assert_eq!(matcher::id_text(&serde_json::json!("317844")), "317844");
+        assert_eq!(matcher::id_text(&serde_json::json!(null)), "null");
+    }
+
+    /* ─────────────────── 计划（意向） ─────────────────── */
+
+    fn lesson(id: i64, code: &str, name: &str) -> CourseSelectLesson {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "course": { "id": id * 10, "code": code, "nameZh": name },
+            "stdCount": 10,
+            "limitCount": 20,
+        }))
+        .unwrap()
+    }
+
+    fn intent(query: &str) -> GrabIntent {
+        GrabIntent {
+            id: 1,
+            turn_id: None,
+            turn_name: None,
+            query: query.into(),
+            mode: "predicate".into(),
+            spread: false,
+            status: INTENT_PENDING.into(),
+            group_keys: Vec::new(),
+            candidates: Vec::new(),
+            last_message: None,
+            attempts: 0,
+            next_at: 0,
+            created_at: 0,
+            resolved_at: None,
+        }
+    }
+
+    fn brief(id: &str, allow_enter: bool) -> GrabTurnBrief {
+        GrabTurnBrief {
+            id: id.into(),
+            name: Some(format!("批次{id}")),
+            allow_enter,
+            select_text: None,
+            window_start: None,
+            window_end: None,
+        }
+    }
+
+    /// 分堆是这套解析的语义核心：
+    /// 默认「任意一个班都行」（全合成一组，只中一个），`spread` 才是「每门课各来一个」。
+    /// 已选过的班必须排除 —— 引擎不该再对已经在名下的课动手。
+    #[test]
+    fn plan_groups_splits_by_course_only_when_asked() {
+        let ls = vec![
+            lesson(1, "000001", "高等数学（上）"),
+            lesson(2, "000001", "高等数学（上）"),
+            lesson(3, "000002", "大学英语（一）"),
+        ];
+        let hits = matcher::match_lessons("学", &ls);
+        assert_eq!(hits.len(), 3, "三个班都该被这句查询命中");
+
+        // 默认：合成一组，它们互为备选
+        let g = plan_groups(&hits, false);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].len(), 3);
+
+        // spread：按课程分堆；同一门课的两个班仍在一堆里（只中一个）
+        let g = plan_groups(&hits, true);
+        assert_eq!(g.len(), 2, "命中的是两门课，就该两堆");
+        let math = g
+            .iter()
+            .find(|grp| grp.iter().any(|h| h.lesson.id == serde_json::json!(1)))
+            .expect("高数那一堆要在");
+        assert_eq!(math.len(), 2, "同一门课的多个班必须留在同一组里");
+        assert!(math[0].score >= math[1].score, "组内按「谁先值得出手」排好序");
+
+        // 已经选上的班不再排进任务
+        let mut picked = ls.clone();
+        picked[0].selected_lesson =
+            Some(serde_json::from_value(serde_json::json!({ "status": "已选中" })).unwrap());
+        let hits = matcher::match_lessons("学", &picked);
+        let g = plan_groups(&hits, false);
+        assert_eq!(g[0].len(), 2, "已选过的教学班必须排除");
+    }
+
+    /// 计划的批次选择：指定的优先，**指定了但没出现就什么都别做**。
+    /// 「我排的是 A 轮，引擎跑去 B 轮抢」比抢不到更难查，所以绝不自动换批次。
+    #[test]
+    fn intent_picks_its_turn_and_never_switches_silently() {
+        let briefs = vec![brief("9", false), brief("77", true)];
+
+        let mut i = intent("高数");
+        assert_eq!(pick_turn(i.turn_id.as_deref(), &briefs).unwrap().id, "77", "没指定就用当前可进入的那个");
+
+        i.turn_id = Some("77".into());
+        assert_eq!(pick_turn(i.turn_id.as_deref(), &briefs).unwrap().id, "77");
+        i.turn_id = Some("404".into());
+        assert!(pick_turn(i.turn_id.as_deref(), &briefs).is_none(), "指定的批次没出现就只能等");
+
+        // 都不允许进入时退到第一个：至少能把名字与窗口显示出来
+        let none_enter = vec![brief("9", false), brief("77", false)];
+        let j = intent("高数");
+        assert_eq!(pick_turn(j.turn_id.as_deref(), &none_enter).unwrap().id, "9");
+    }
+
+    /// 计划是**落库**的：进程重启后它还认得自己排了什么，而「还没解析」的计划
+    /// 必须每分钟被引擎捞起来重试 —— 用户排的是明天早上十点的事。
+    #[test]
+    fn intents_round_trip_and_only_pending_ones_are_due() {
+        let conn = db();
+        let acc = account(&conn);
+        let id = insert_intent(
+            &conn,
+            acc,
+            Some("77"),
+            Some("正选"),
+            "高数 张",
+            "predicate",
+            false,
+        )
+        .unwrap();
+        let mut i = load_intent(&conn, id).unwrap().unwrap();
+        assert_eq!(i.query, "高数 张");
+        assert_eq!(i.status, INTENT_PENDING);
+        assert_eq!(i.next_at, 0, "新计划必须立刻可解析");
+        assert!(load_due_intent(&conn, acc, now_ms()).unwrap().is_some());
+
+        // 解析完成 → 不再自动重解析（要重来是用户按「重新解析」）
+        i.status = INTENT_READY.into();
+        i.group_keys = vec!["intent-1".into()];
+        i.candidates = vec![GrabMatch {
+            lesson_id: serde_json::json!(7),
+            course_name: Some("高等数学（上）".into()),
+            course_code: Some("000001".into()),
+            teacher: Some("张伟".into()),
+            std_count: Some(10),
+            limit_count: Some(20),
+            picked: false,
+            fields: vec!["course".into()],
+        }];
+        i.resolved_at = Some(now_ms());
+        save_intent(&conn, &i).unwrap();
+        assert!(load_due_intent(&conn, acc, now_ms()).unwrap().is_none());
+
+        let back = load_intent(&conn, id).unwrap().unwrap();
+        assert_eq!(back.group_keys, vec!["intent-1".to_string()]);
+        assert_eq!(back.candidates[0].course_name.as_deref(), Some("高等数学（上）"));
+        assert!(back.candidates[0].teacher.is_some());
+
+        reset_intent(&conn, id).unwrap();
+        assert!(load_due_intent(&conn, acc, now_ms()).unwrap().is_some());
+
+        // 移除计划要**连它派出去的任务一起收**：只删计划会留下「计划没了、课还在抢」
+        let t = grouped(&conn, acc, "intent-1", 1);
+        delete_intent(&conn, id).unwrap();
+        assert!(load_intent(&conn, id).unwrap().is_none());
+        assert_eq!(
+            load_task(&conn, t.id).unwrap().unwrap().status,
+            GRAB_CANCELLED
+        );
+    }
+
+    /// 坏 JSON 不该让整份快照失败：一条计划的候选清单烂掉，界面宁可少显示，
+    /// 也不能整个抢课面板空掉。
+    #[test]
+    fn broken_intent_json_degrades_to_empty_lists() {
+        let conn = db();
+        let acc = account(&conn);
+        let id = insert_intent(&conn, acc, None, None, "体育", "direct", true).unwrap();
+        conn.execute(
+            "UPDATE campus_grab_intents SET candidates = '不是 JSON', group_keys = '{' WHERE id = ?1",
+            [id],
+        )
+        .unwrap();
+        let hub = GrabHub::new();
+        let s = snapshot(&conn, &hub).unwrap();
+        assert_eq!(s.intents.len(), 1);
+        assert!(s.intents[0].candidates.is_empty());
+        assert!(s.intents[0].group_keys.is_empty());
     }
 }

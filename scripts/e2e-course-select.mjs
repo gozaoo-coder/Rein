@@ -165,8 +165,8 @@ async function clickPick(name) {
  * 点之前先等它可用 —— 刷新期间它是禁用的，对禁用按钮调 click() 不会有任何反应。
  */
 async function clickRefresh() {
-  await waitFor(`(() => { const b = document.querySelector('[aria-label="刷新"]'); return !!b && !b.disabled })()`, 8000, '刷新按钮可用')
-  return evalJS(`document.querySelector('[aria-label="刷新"]').click()`)
+  await waitFor(`(() => { const b = document.querySelector('[aria-label="立即刷新"]'); return !!b && !b.disabled })()`, 8000, '刷新按钮可用')
+  return evalJS(`document.querySelector('[aria-label="立即刷新"]').click()`)
 }
 
 /** 某一行的状态：按钮文案 + 徽标 */
@@ -259,7 +259,7 @@ async function main() {
 
     /* ---- 5. 进入批次 → 教学班列表 ---- */
     await clickText('.turn .primary', '进入选课')
-    await waitFor(`document.querySelectorAll('.lesson').length === 5`, 8000, '教学班列表')
+    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 8000, '教学班列表')
     ok('进入批次后列出教学班', true, await evalJS(`document.querySelectorAll('.lesson').length`) + ' 个')
 
     const full = await rowState('大学物理')
@@ -283,7 +283,7 @@ async function main() {
 
     await setInput('.search input', '')
     await evalJS(`document.querySelector('.go').click()`)
-    await waitFor(`document.querySelectorAll('.lesson').length === 5`, 8000, '清空搜索')
+    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 8000, '清空搜索')
     ok('清空搜索回到全部', true)
     await shot('3-lessons')
 

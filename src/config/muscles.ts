@@ -2,9 +2,15 @@
  * 全身肌群激活 · 领域配置
  *
  * 肌群键与 src/assets/muscles/rein/{front,back,side}.svg 中的
- * <g data-m="…"> 分区一一对应（自行描线，见 scripts/build-anatomy.mjs）。
+ * <g data-m="…"> 分区一一对应。三视图由 BodyParts3D 的真实人体解剖网格
+ * 正交投影生成（scripts/build-anatomy.mjs，见 resources/muscles/SOURCE.md），
+ * 因此分区边界来自解剖本体而非手绘。
+ *
  * 细化到「肌束」层级：三角肌分前/中/后束、胸大肌分上/下束、斜方肌分
  * 上/中/下束、股四头分股外侧/股直/股内侧、小腿分腓肠肌/比目鱼肌等。
+ * 其中上/下胸对应 FMA 的 clavicular / sternocostal+abdominal part of
+ * pectoralis major，前/中/后三角肌对应 clavicular / acromial / spinal
+ * part of deltoid，细分直接来自解剖本体。
  *
  * 动作名 → 肌群激活档位的映射。课程种子只有少量动作，而用户会在
  * 计划编辑页自建动作（自由命名），因此采用「关键词规则、先专后泛」

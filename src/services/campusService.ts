@@ -7,13 +7,19 @@ import type {
   CourseSelectPoll,
   CourseSelectStatus,
   CourseSelectTicket,
+  CurlExport,
   GrabAction,
+  GrabIntent,
+  GrabPreview,
   GrabSettings,
   GrabState,
   GrabTargetInput,
   LessonQuery,
   LoginOutcome,
   ProgramPayload,
+  RescueRequest,
+  RescueResponse,
+  RescueState,
   ScheduleView,
   SchoolSystemInfo,
   SyncOutcome,
@@ -181,6 +187,70 @@ export const campusService = {
 
   grabSettingsSet: (settings: GrabSettings) =>
     invoke<GrabSettings>('campus_grab_settings_set', { settings }),
+
+  /* ---------------- 抢课计划（意向） ----------------
+   * 「提前输入 → 到点全自动抢」：计划只是一句模糊查询，解析成具体教学班是引擎的事。 */
+
+  /**
+   * 记下一条计划。`turnId` 可以不给（= 用教务当前开放的那个批次）——
+   * 提前一晚写计划时，批次往往还没在列表里出现。
+   */
+  grabIntentAdd: (input: {
+    turnId?: string | null
+    turnName?: string | null
+    query: string
+    mode?: 'predicate' | 'direct'
+    spread?: boolean
+  }) =>
+    invoke<GrabIntent>('campus_grab_intent_add', {
+      turnId: input.turnId ?? null,
+      turnName: input.turnName ?? null,
+      query: input.query,
+      mode: input.mode ?? null,
+      spread: input.spread ?? null,
+    }),
+
+  /** 计划的动作：`remove`（移除，连它派出去的任务一起收）/ `now`（立刻重新解析） */
+  grabIntentAction: (intentId: number, action: 'remove' | 'now') =>
+    invoke<void>('campus_grab_intent_action', { intentId, action }),
+
+  /** 输入预览：这句查询照**教务现在的名单**能匹配到哪些班（顺序就是志愿序） */
+  grabIntentPreview: (query: string, turnId?: string | null) =>
+    invoke<GrabPreview>('campus_grab_intent_preview', { query, turnId: turnId ?? null }),
+
+  /* ---------------- 救援面（AI 的最后补救） ----------------
+   * 引擎管「一切照常」，这几个命令管「不照常」：教务改了接口、会话怎么都救不回来、
+   * 任务卡在一个没见过的错误上。审计与脚本导出都在 Rust 侧一次做掉。 */
+
+  /**
+   * 现场快照：账号 + 会话探针 + 抢课引擎整份状态 + 卡住的任务 + 最近 AI 动作。
+   * `probe=false` 跳过网络探针（只想看落库状态时用）。
+   */
+  rescueState: (probe?: boolean) =>
+    invoke<RescueState>('campus_rescue_state', { probe: probe ?? true }),
+
+  /**
+   * 带会话打一条任意请求。相对路径（`/student/home`）会拼在教务 base 后面。
+   *
+   * 两条边界（都在 Rust 侧强制）：带凭据的请求只打教务同源；公网地址一律不带凭据、
+   * 但过 SSRF 白名单（拒私网/环回）。同一条请求 1 分钟内超过 20 次会熔断。
+   */
+  rescueHttp: (req: RescueRequest) => invoke<RescueResponse>('campus_http', { req }),
+
+  /** 把一次不带请求的动作写进审计（加任务、重试、改节奏、退课……） */
+  rescueNote: (input: { kind: string; summary: string; detail?: unknown }) =>
+    invoke<number>('campus_rescue_note', {
+      kind: input.kind,
+      summary: input.summary,
+      detail: input.detail ?? null,
+    }),
+
+  /** 导出救援脚本：把这段时间里打过的请求渲染成一份能脱离 App 运行的 `.sh` */
+  curlExport: (opts?: { hours?: number; limit?: number }) =>
+    invoke<CurlExport>('campus_curl_export', {
+      hours: opts?.hours ?? null,
+      limit: opts?.limit ?? null,
+    }),
 }
 
 /* ---------------- 抢课引擎的事件桥 ----------------

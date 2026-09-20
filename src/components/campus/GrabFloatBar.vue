@@ -130,12 +130,17 @@ const lead = computed(() => {
   })[0]!
 })
 
+/**
+ * 倒计时**只认引擎算好的那个时刻**（`GrabState.nextFireAt`）。
+ *
+ * 早先这里是自己在任务行里找「最早的 fireAt」，于是和面板上的倒计时会互相打架；
+ * 而且碰到「窗口还没公布」的任务（`fireAt` 是 `i64::MAX` 那种哨兵值）时，
+ * 算出来是一串天文数字。引擎那边已经算过一遍了 —— 它还知道时钟偏差与提前量，
+ * 界面不该再算第二遍。
+ */
 const countdown = computed(() => {
-  if (!lead.value) return ''
-  const at = lead.value.fireAt
-  if (at == null) return ''
-  const ms = at - now.value
-  if (ms <= 0) return ''
+  const ms = store.fireInMs(now.value)
+  if (ms == null || ms <= 0) return ''
   const s = Math.floor(ms / 1000)
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
@@ -145,8 +150,8 @@ const countdown = computed(() => {
 
 /** 倒计时只剩几秒就该用「马上要开始了」的语气 */
 const imminent = computed(() => {
-  const at = lead.value?.fireAt
-  return at != null && at - now.value <= 60_000
+  const ms = store.fireInMs(now.value)
+  return ms != null && ms <= 60_000
 })
 
 const finishedFresh = computed(() => {
@@ -201,21 +206,20 @@ function open(): void {
 
 <template>
   <Transition name="hud">
-    <button
-      v-if="show"
-      class="hud"
-      :class="tone"
-      :aria-label="`抢课监视：${text}`"
-      @click="open"
-    >
+    <!-- 整条浮条**不再是**一个按钮：它压在页头之上横跨大半屏，装在兜里误触一下就跳页。
+         现在是「一块会播报的状态条 + 一个明确的『去看』按钮」——
+         既让读屏能读到（role=status），也不会再躺着中枪 -->
+    <div v-if="show" class="hud" :class="tone" role="status" :aria-label="`抢课监视：${text}`">
       <span class="dot" :class="{ pulse: tone === 'run' }" />
       <Zap v-if="tone === 'run'" :size="14" class="ico" />
       <CheckCircle2 v-else-if="tone === 'ok'" :size="14" class="ico" />
       <TriangleAlert v-else :size="14" class="ico" />
       <span class="txt">{{ text }}</span>
       <Loader2 v-if="tone === 'run' && !countdown" :size="13" class="spin" />
-      <ChevronRight :size="15" class="go" />
-    </button>
+      <button class="go" type="button" aria-label="查看抢课任务" @click="open">
+        <ChevronRight :size="15" />
+      </button>
+    </div>
   </Transition>
 </template>
 
@@ -308,9 +312,28 @@ function open(): void {
   }
 }
 
+/* 「去看」是浮条里**唯一**的按钮：命中区撑到 44×44（浮条本身才 33px 高），
+   这样它既好点，又不会像整条浮条那样在兜里被误触 */
 .go {
+  position: relative;
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
   color: var(--text-3);
+}
+
+.go::after {
+  content: '';
+  position: absolute;
+  inset: -9px;
+}
+
+.go:active {
+  background: var(--surface-2);
 }
 
 /* 进出：从顶部滑入，别用缩放——它是「降下来的一条」，不是弹出来的 */

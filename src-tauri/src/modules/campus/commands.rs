@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{Duration, Local, NaiveDate, Utc};
 use rusqlite::Connection;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::error::{ReinError, Result};
 use crate::state::{AppState, CampusHub, CourseSelectToken, PendingLogin};
@@ -19,9 +19,11 @@ use crate::state::{AppState, CampusHub, CourseSelectToken, PendingLogin};
 use super::course_select::CourseSelectClient;
 use super::grab::{self, GrabHub};
 use super::guet::{self, GuetAdapter, TimetableSnapshot};
-use super::http::{CookieJar, Session};
+use super::http::{CookieJar, HttpResponse, Session};
+use super::matcher;
 use super::models::*;
 use super::provider::{self, SchoolSystemInfo, SchoolSystemSpec};
+use super::rescue;
 
 const ACCOUNT_COLS: &str = "id, system_kind, base_url, login_name, password, cookies, session_at, \
      student_id, student_code, student_name, department, major, adminclass, grade, total_credits, \
@@ -1980,6 +1982,121 @@ pub fn campus_grab_clear_finished(
     Ok(n)
 }
 
+/* ─────────────────── 抢课计划（意向） ───────────────────
+ *
+ * 计划是「提前输入」的落点：窗口开放前教学班列表常常还查不到，但人的意图现在就能写下。
+ * 写完之后**不需要用户再做任何事** —— 引擎每分钟试一次，名单能拉到的那一刻自己解析成任务，
+ * 到点自己开抢（见 `grab.rs` 的 `resolve_intent`）。
+ */
+
+/// 记下一条计划。`turn_id` 可为空（= 用教务当前开放的那个批次）——
+/// 提前一晚写计划时，批次往往还没在列表里出现。
+#[tauri::command]
+pub fn campus_grab_intent_add(
+    state: State<'_, AppState>,
+    grab: State<'_, Arc<GrabHub>>,
+    turn_id: Option<String>,
+    turn_name: Option<String>,
+    query: String,
+    mode: Option<String>,
+    spread: Option<bool>,
+) -> Result<GrabIntent> {
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Err(ReinError::Message("要先写清楚想抢什么（课名 / 代码 / 教师）".into()));
+    }
+    // 上限是给误触和粘贴事故兜底的：一句正常的查询不会超过几十个字
+    if query.chars().count() > 80 {
+        return Err(ReinError::Message("这句话太长了，只写课名或教师就行".into()));
+    }
+    let mode = match mode.as_deref() {
+        None | Some("predicate") => "predicate",
+        Some("direct") => "direct",
+        Some(other) => return Err(ReinError::Message(format!("未知的抢课模式：{other}"))),
+    };
+    let id = {
+        let conn = state.db.lock().unwrap();
+        let account = require_account(&conn)?;
+        grab::insert_intent(
+            &conn,
+            account.id,
+            turn_id.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            turn_name.as_deref().filter(|s| !s.trim().is_empty()),
+            &query,
+            mode,
+            spread.unwrap_or(false),
+        )?
+    };
+    // 叫醒引擎：能解析的话立刻就解析（窗口已经开着时，用户按下就该看到志愿排好）
+    grab.notify();
+
+    let conn = state.db.lock().unwrap();
+    grab::load_intent(&conn, id)?
+        .ok_or_else(|| ReinError::Message("计划写入后读不回来，请重试".into()))
+}
+
+/// 计划的动作：`remove`（移除，连它派出去的任务一起收） / `now`（立刻重新解析）。
+#[tauri::command]
+pub fn campus_grab_intent_action(
+    state: State<'_, AppState>,
+    grab: State<'_, Arc<GrabHub>>,
+    intent_id: i64,
+    action: String,
+) -> Result<()> {
+    {
+        let conn = state.db.lock().unwrap();
+        match action.as_str() {
+            "remove" => grab::delete_intent(&conn, intent_id)?,
+            "now" => grab::reset_intent(&conn, intent_id)?,
+            other => return Err(ReinError::Message(format!("未知的操作：{other}"))),
+        }
+    }
+    grab.notify();
+    Ok(())
+}
+
+/// 输入预览：把一句模糊查询照**教务现在的名单**跑一遍，让人在按下「加入计划」之前
+/// 就看清会抢哪些班。
+///
+/// 与解析共用同一个匹配器和同一份名单缓存（见 `grab::resolve_turn` /
+/// `GrabHub::lessons_cached`）—— 预览里看到的顺序，就是解析后排出来的志愿序。
+#[tauri::command]
+pub async fn campus_grab_intent_preview(
+    state: State<'_, AppState>,
+    hub: State<'_, CampusHub>,
+    grab: State<'_, Arc<GrabHub>>,
+    query: String,
+    turn_id: Option<String>,
+) -> Result<GrabPreview> {
+    let query = query.trim().to_string();
+    let ctx = select_context(&state.db, &hub)?;
+    let brief = grab::resolve_turn(&state, &ctx, turn_id.as_deref())?.ok_or_else(|| {
+        ReinError::Message("教务还没公布选课批次，等它出现后预览会自动可用".into())
+    })?;
+
+    // 名单走引擎那份缓存：几分钟内重复预览不该反复打教务
+    let (lessons, _) = grab.lessons_cached(&ctx, &brief.id)?;
+    let hits = matcher::match_lessons(&query, &lessons);
+    // **预览必须和解析看到同一批班**：指定了老师时只列那位老师的班，
+    // 否则「预览里有它、计划里没有」会让人以为哪里漏了。
+    let pool = matcher::preferred(&hits);
+    let matches: Vec<GrabMatch> = pool
+        .iter()
+        .take(PREVIEW_CAP)
+        .map(matcher::to_match)
+        .collect();
+    Ok(GrabPreview {
+        turn_id: brief.id,
+        turn_name: brief.name,
+        total: lessons.len(),
+        matched: hits.len(),
+        matches,
+    })
+}
+
+/// 预览一次最多回多少行。只是给人看一眼「会抢哪些班」，再多也没人读。
+const PREVIEW_CAP: usize = 30;
+
 /// 暂停全部 / 恢复全部。抢课途中学生常要临时收手（比如换了网络），
 /// 逐个点太慢，所以给一对批量动作。
 #[tauri::command]
@@ -2046,6 +2163,505 @@ pub fn campus_grab_settings_set(
     };
     grab.notify();
     Ok(saved)
+}
+
+/* ─────────────────────────── 救援面（AI 的最后补救） ───────────────────────────
+ *
+ * 与抢课引擎的分工：引擎管「一切照常」——窗口到了就开火、满员就守着、会话掉了自己重登；
+ * 这一片管「不照常」——教务改了接口、换了返回信封、多了个没见过的报错、批次规则变了。
+ * 那种时刻唯一能救回来的动作是：**带会话打一条任意请求，然后看清它到底回了什么**。
+ *
+ * 三条不可让步的规矩（都能说清为什么）：
+ * 1. **凭据只去同源**（`rescue::check_target`）：上游是模型的输出，而模型的输入里混着远程响应 ——
+ *    「把 Cookie 发到这个地址」这种注入必须从一开始就不可能成立。
+ * 2. **任意公网可打，但不带任何凭据**：教务改接口时要去读它自己的 SPA 包、去核公开文档，
+ *    这条路连门户的 Origin/Referer 都不带 —— 来源信息也是信息。
+ * 3. **每一步留痕**：写操作不弹确认（抢课窗口里每一次确认都是拖延），
+ *    那份信任由 `campus_ai_actions` 兜底：可查、可重放、有理由。
+ */
+
+/// 快照里带多少条「AI 自己干过的事」。够看清上一轮做了什么，又不至于把上下文撑爆。
+const RESCUE_RECENT: usize = 20;
+
+/// 熔断窗口（分钟）：同一条请求在这个窗口里超过 `rescue::CIRCUIT_LIMIT` 次就拒绝。
+const RESCUE_WINDOW_MIN: i64 = 1;
+
+/// 救援请求的最终形态。渲染 curl、发请求、写审计三处都从这一份出发 ——
+/// 三处各拼一遍的话，重放时对不上号只是时间问题。
+#[derive(Clone)]
+struct Prepared {
+    spec: rescue::RequestSpec,
+    same_origin: bool,
+}
+
+/// 真发一次请求。同源走 [`Session`]（Cookie + 可选选课令牌，屏蔽 302 跟随）；
+/// 公网走裸 ureq agent（无凭据、无门户头，过 SSRF 白名单）。
+///
+/// 返回「响应 + 这一趟之后的 Cookie + 耗时」：`Set-Cookie` 可能把会话换掉了，
+/// 换了就得落库 —— 否则下一次又拿旧会话去撞，白换一次。
+fn send_request(
+    p: &Prepared,
+    base: &str,
+    jar: CookieJar,
+    token: Option<String>,
+) -> Result<(HttpResponse, CookieJar, i64)> {
+    let started = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(rescue::RESCUE_TIMEOUT_SECS);
+    if p.same_origin {
+        let mut session = Session::with_timeout(base, jar, timeout);
+        let mut extra: Vec<(&str, &str)> = p
+            .spec
+            .headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        // 树维选课接口要的是**裸 JWT**（没有 Bearer 前缀），见 `course_select.rs` 的模块注释
+        if let Some(t) = token.as_deref() {
+            extra.push(("Authorization", t));
+        }
+        let content_type = content_type_of(&p.spec);
+        let bytes = p.spec.body.as_ref().map(|b| b.as_bytes().to_vec());
+        let resp = session.request(
+            &p.spec.method,
+            &p.spec.url,
+            None,
+            &extra,
+            bytes.as_ref().map(|b| (content_type.as_str(), b.clone())),
+        )?;
+        let jar = session.jar().clone();
+        return Ok((resp, jar, started.elapsed().as_millis() as i64));
+    }
+
+    let url = crate::modules::web::commands::validate_url(&p.spec.url)?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .user_agent(super::http::USER_AGENT)
+        .redirects(4)
+        .build();
+    let mut req = agent.request(&p.spec.method, &url);
+    for (k, v) in &p.spec.headers {
+        req = req.set(k, v);
+    }
+    let outcome = match &p.spec.body {
+        Some(b) => req.send_bytes(b.as_bytes()),
+        None => req.call(),
+    };
+    // 非 2xx 也是「拿到了响应」，要原样交给模型看 —— 救援时那条错误正文常常就是答案
+    let resp = match outcome {
+        Ok(r) => r,
+        Err(ureq::Error::Status(_, r)) => r,
+        Err(e) => return Err(ReinError::Message(format!("网络请求失败：{e}"))),
+    };
+    let out = super::http::read_response(resp)?;
+    Ok((out, CookieJar::default(), started.elapsed().as_millis() as i64))
+}
+
+/// 正文的 Content-Type。**以请求头里的那一份为准**（模型手写的内容类型要生效），
+/// 没写才回落 `application/json` —— 门口那些教务接口全是 JSON。
+fn content_type_of(spec: &rescue::RequestSpec) -> String {
+    spec.headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| "application/json".into())
+}
+
+/// 现场快照：账号 + 会话探针 + 抢课引擎整份状态 + 卡住的任务 + AI 最近干过的事。
+///
+/// 做成**一次调用**而不是让模型连着问五个命令：排障时它最需要的是「同时看到全部」，
+/// 而分开问的代价不只是慢 —— 五次调用之间现场会变，拼出来的因果可能根本不存在。
+#[tauri::command]
+pub async fn campus_rescue_state(
+    state: State<'_, AppState>,
+    grab: State<'_, Arc<GrabHub>>,
+    probe: Option<bool>,
+) -> Result<RescueState> {
+    let (account, snapshot, recent_actions) = {
+        let conn = state.db.lock().unwrap();
+        (
+            load_active_account(&conn)?,
+            grab::snapshot(&conn, &grab)?,
+            rescue::recent(&conn, RESCUE_RECENT)?,
+        )
+    };
+
+    // 探针要发网络请求：手上的东西先取全，再进闭包（DB 锁绝不能跨过网络，见文件头铁律）
+    let (session_alive, session_error) = match (probe.unwrap_or(true), account.as_ref()) {
+        (true, Some(acc)) => {
+            let spec = acc.spec()?;
+            let base = acc.base_url.clone();
+            let jar = CookieJar::from_json(acc.cookies.as_deref());
+            let probed = tauri::async_runtime::spawn_blocking(move || {
+                let mut session = Session::new(&base, jar);
+                GuetAdapter::new(spec, &mut session).probe_session()
+            })
+            .await;
+            match probed {
+                Ok(Ok(alive)) => (Some(alive), None),
+                Ok(Err(e)) => (None, Some(e.to_string())),
+                Err(e) => (None, Some(format!("会话探针任务失败：{e}"))),
+            }
+        }
+        _ => (None, None),
+    };
+
+    let stuck_task_ids = rescue::stuck_tasks(&snapshot.tasks, Utc::now().timestamp_millis());
+    Ok(RescueState {
+        account: account.map(to_account),
+        session_alive,
+        session_error,
+        grab: snapshot,
+        stuck_task_ids,
+        recent_actions,
+    })
+}
+
+/// 带会话打一条任意请求 —— AI 的 curl。
+///
+/// `url` 可以是相对路径（拼在教务 base 后面），也可以是绝对地址。
+/// 相对路径 / 同源地址默认带上教务会话；外部地址一律不带凭据（给了也拒，
+/// 见本节的规矩 1：安静的降级比报错更危险，模型会以为自己拿到的是「带会话的结果」）。
+#[tauri::command]
+pub async fn campus_http(
+    state: State<'_, AppState>,
+    hub: State<'_, CampusHub>,
+    req: RescueRequest,
+) -> Result<RescueResponse> {
+    let reason = req.reason.trim().to_string();
+    if reason.is_empty() {
+        return Err(ReinError::Message(
+            "reason 不能为空：这条请求想搞清楚什么？事后只有它能解释审计里那一行".into(),
+        ));
+    }
+    let method = rescue::normalize_method(req.method.as_deref())?;
+
+    let account = {
+        let conn = state.db.lock().unwrap();
+        load_active_account(&conn)?
+    };
+    let base = account.as_ref().map(|a| a.base_url.clone()).unwrap_or_default();
+    let relative = !(req.url.trim().starts_with("http://") || req.url.trim().starts_with("https://"));
+    if relative && account.is_none() {
+        return Err(ReinError::Message(
+            "还没有绑定教务系统账号，相对路径没有可拼的域名 —— 请先在「课表配置」里登录".into(),
+        ));
+    }
+    let url = rescue::resolve_url(&req.url, &base)?;
+
+    let same_origin = rescue::check_target(&url, account.as_ref().map(|a| a.base_url.as_str()))?
+        == rescue::Target::SameOrigin;
+    let with_token = req.with_select_token.unwrap_or(false);
+    // 不写 withSession 时的默认：同源就带（「看一眼教务现在怎么说」是这个工具的主用例）
+    let with_session = req.with_session.unwrap_or(same_origin);
+    if !same_origin && (with_session || with_token) {
+        return Err(ReinError::Message(format!(
+            "带凭据的请求只能打教务自己的域名（{}），{url} 是外部地址。\
+             要带会话请用相对路径（如 /student/home）；要读外部页面就别带凭据 —— \
+             这条请求没有发出去，避免你以为它带着会话说的是同一件事。",
+            if base.is_empty() { "未登录" } else { &base }
+        )));
+    }
+
+    for (k, _) in &req.headers {
+        let lower = k.trim().to_ascii_lowercase();
+        if matches!(lower.as_str(), "cookie" | "authorization" | "host" | "content-length") {
+            return Err(ReinError::Message(format!(
+                "请求头「{k}」不允许手写：会话与令牌走 withSession / withSelectToken，\
+                 长度与主机由底层决定 —— 手写会让审计与导出脚本里那条命令跟实际发出的请求对不上"
+            )));
+        }
+    }
+
+    let mut headers: Vec<(String, String)> = req
+        .headers
+        .iter()
+        .map(|(k, v)| (k.trim().to_string(), v.clone()))
+        .collect();
+    // 带正文就必须有一条 Content-Type：否则教务网关多半回 415，而模型看到的只是一句
+    // 「失败」——把默认值在这里补上，渲染出的 curl 里也才是完整可重放的一条命令。
+    if req.body.is_some()
+        && !headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+    {
+        headers.push((
+            "Content-Type".into(),
+            req.content_type
+                .clone()
+                .unwrap_or_else(|| "application/json".into()),
+        ));
+    }
+
+    let prepared = Prepared {
+        spec: rescue::RequestSpec {
+            method,
+            url: url.clone(),
+            headers,
+            body: req.body.clone(),
+            with_cookie: with_session,
+            with_token,
+        },
+        same_origin,
+    };
+    let fp = prepared.spec.fingerprint();
+    let curl = rescue::render_curl(&prepared.spec);
+
+    // 熔断：救援工具自己不能变成新的故障（模型在一个错误上原地转圈是它最典型的失败模式）
+    {
+        let conn = state.db.lock().unwrap();
+        let since = (Utc::now() - Duration::minutes(RESCUE_WINDOW_MIN)).to_rfc3339();
+        if rescue::circuit_broken(&conn, &fp, &since)? {
+            return Err(ReinError::Message(format!(
+                "熔断：同一条请求（{} {}）在 {RESCUE_WINDOW_MIN} 分钟内已经打过 {} 次。\
+                 停手 —— 重复同一条请求不会得到不同的答案，换个判断依据（先 campus_status 看现场）。",
+                prepared.spec.method,
+                url,
+                rescue::CIRCUIT_LIMIT
+            )));
+        }
+    }
+
+    let mut token = if with_token {
+        Some(select_context(&state.db, &hub)?.client.token().to_string())
+    } else {
+        None
+    };
+    let jar = account
+        .as_ref()
+        .map(|a| CookieJar::from_json(a.cookies.as_deref()))
+        .unwrap_or_default();
+
+    let first = {
+        let p = prepared.clone();
+        let base = base.clone();
+        let t = token.clone();
+        tauri::async_runtime::spawn_blocking(move || send_request(&p, &base, jar, t))
+            .await
+            .map_err(|e| ReinError::Message(format!("救援请求任务失败：{e}")))??
+    };
+    let (mut resp, mut jar_after, mut elapsed_ms) = first;
+
+    // 会话失效（门户 302 回登录页 / 选课接口 401）：自愈一次再打。
+    // 这正是救援面最常遇到的现场 —— 用户之所以来找 AI，十有八九就是会话怎么都救不回来。
+    let lost = resp.status == 302 || (with_token && resp.status == 401);
+    let mut healed = false;
+    if same_origin && lost && account.is_some() {
+        let acc = account.as_ref().unwrap();
+        recover_session(&state.db, &hub, acc)?;
+        let fresh = {
+            let conn = state.db.lock().unwrap();
+            require_account(&conn)?
+        };
+        if with_token {
+            token = Some(select_context(&state.db, &hub)?.client.token().to_string());
+        }
+        let retried = {
+            let p = prepared.clone();
+            let b = fresh.base_url.clone();
+            let j = CookieJar::from_json(fresh.cookies.as_deref());
+            let t = token.clone();
+            tauri::async_runtime::spawn_blocking(move || send_request(&p, &b, j, t))
+                .await
+                .map_err(|e| ReinError::Message(format!("救援请求任务失败：{e}")))??
+        };
+        resp = retried.0;
+        jar_after = retried.1;
+        elapsed_ms = retried.2;
+        healed = true;
+    }
+
+    // 会话可能在响应里被换掉了（`Set-Cookie`）：立刻落库，否则下一次又拿旧的去撞
+    if same_origin {
+        if let Some(acc) = account.as_ref() {
+            let stored = CookieJar::from_json(acc.cookies.as_deref());
+            if jar_after.to_json() != stored.to_json() {
+                let conn = state.db.lock().unwrap();
+                persist_session(&conn, acc.id, &jar_after)?;
+            }
+        }
+    }
+
+    let (body, truncated, bytes) = rescue::truncate(&resp.body, rescue::clamp_max_bytes(req.max_bytes));
+    let ok = resp.is_ok();
+    let note = if healed {
+        Some("会话已失效，已自动重新登录并重试了一次 —— 上面是重试后的响应".to_string())
+    } else if !same_origin {
+        Some("外部地址：这条请求没有携带任何教务凭据".to_string())
+    } else {
+        None
+    };
+    let summary = format!(
+        "{} {} → HTTP {}{}",
+        prepared.spec.method,
+        prepared.spec.url,
+        resp.status,
+        if healed { "（会话已自动重登）" } else { "" }
+    );
+
+    {
+        let conn = state.db.lock().unwrap();
+        rescue::record(
+            &conn,
+            &now_iso(),
+            rescue::Audit {
+                kind: rescue::KIND_HTTP,
+                summary: &summary,
+                detail: Some(&serde_json::json!({
+                    "reason": reason,
+                    "url": prepared.spec.url,
+                    "method": prepared.spec.method,
+                    "status": resp.status,
+                    "bytes": bytes,
+                    "truncated": truncated,
+                    "sameOrigin": same_origin,
+                    "healed": healed,
+                })),
+                curl: Some(&curl),
+                fp: Some(&fp),
+                status: if ok { rescue::STATUS_OK } else { rescue::STATUS_ERROR },
+                account_id: account.as_ref().map(|a| a.id),
+            },
+        )?;
+        let _ = rescue::prune(&conn);
+    }
+
+    Ok(RescueResponse {
+        url: prepared.spec.url,
+        method: prepared.spec.method,
+        status: resp.status,
+        ok,
+        same_origin,
+        with_session: prepared.spec.with_cookie,
+        with_select_token: prepared.spec.with_token,
+        headers: resp.headers,
+        body,
+        truncated,
+        bytes,
+        elapsed_ms,
+        curl,
+        healed,
+        note,
+    })
+}
+
+/// 把一次**不带请求**的动作写进审计（加任务、重试、改节奏、退课……）。
+///
+/// 为什么这些也要记：出事以后人问的第一个问题永远是「AI 都干了什么」。
+/// 只有请求记录的话，答案会是「它打过 12 条请求」——那是过程，不是结果。
+#[tauri::command]
+pub fn campus_rescue_note(
+    state: State<'_, AppState>,
+    kind: String,
+    summary: String,
+    detail: Option<serde_json::Value>,
+) -> Result<i64> {
+    let summary = summary.trim().to_string();
+    if summary.is_empty() {
+        return Err(ReinError::Message("summary 不能为空".into()));
+    }
+    let kind = rescue::normalize_kind(&kind)?;
+    let conn = state.db.lock().unwrap();
+    let account_id = load_active_account(&conn)?.map(|a| a.id);
+    let id = rescue::record(
+        &conn,
+        &now_iso(),
+        rescue::Audit {
+            kind,
+            summary: &summary,
+            detail: detail.as_ref(),
+            curl: None,
+            fp: None,
+            status: rescue::STATUS_OK,
+            account_id,
+        },
+    )?;
+    let _ = rescue::prune(&conn);
+    Ok(id)
+}
+
+/// 导出救援脚本：把这段时间里打过的请求渲染成一份能脱离 App 运行的 `.sh`。
+///
+/// 为什么要落盘而不是把文本回给模型：**会话是会过期的**。这份脚本的用法是
+/// 「AI 现在把路趟通 → 人过一会儿/换个网络/在另一台机器上照着再走一遍」，
+/// 那时 App 可能已经不在了，而脚本里带着当时那份凭据快照。
+#[tauri::command]
+pub fn campus_curl_export(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    hub: State<'_, CampusHub>,
+    hours: Option<i64>,
+    limit: Option<usize>,
+) -> Result<CurlExport> {
+    let hours = hours.unwrap_or(6).clamp(1, 24 * 7);
+    let limit = limit.unwrap_or(200).clamp(1, 500);
+    let since = (Utc::now() - Duration::hours(hours)).to_rfc3339();
+
+    let (entries, account, token) = {
+        let conn = state.db.lock().unwrap();
+        let entries = rescue::scriptable_since(&conn, &since, limit)?;
+        let account = load_active_account(&conn)?;
+        // 令牌缓存在进程内（见 state.rs）：换过进程就没了，脚本里那只说明「现在拿不到」
+        let token = account.as_ref().and_then(|a| hub.cached_select_token(a.id));
+        (entries, account, token)
+    };
+    if entries.is_empty() {
+        return Err(ReinError::Message(format!(
+            "最近 {hours} 小时里没有可导出的请求（{since} 之后）。先在 App 里打几条真实请求再导出。"
+        )));
+    }
+
+    let base = account.as_ref().map(|a| a.base_url.clone()).unwrap_or_default();
+    let cookie = account
+        .as_ref()
+        .and_then(|a| CookieJar::from_json(a.cookies.as_deref()).header());
+    let generated_at = now_iso();
+    let script = rescue::render_script(
+        &entries,
+        &rescue::ScriptEnv {
+            base: &base,
+            cookie: cookie.as_deref(),
+            select_token: token.as_deref(),
+            generated_at: &generated_at,
+        },
+    );
+
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| ReinError::Message(format!("无法定位应用数据目录：{e}")))?
+        .join("rescue");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("rescue-{}.sh", Local::now().format("%Y%m%d-%H%M%S")));
+    std::fs::write(&path, script.as_bytes())?;
+
+    {
+        let conn = state.db.lock().unwrap();
+        rescue::record(
+            &conn,
+            &generated_at,
+            rescue::Audit {
+                kind: rescue::KIND_SCRIPT,
+                summary: &format!(
+                    "导出救援脚本：{} 条请求 → {}",
+                    entries.len(),
+                    path.display()
+                ),
+                detail: None,
+                curl: None,
+                fp: None,
+                status: rescue::STATUS_OK,
+                account_id: account.as_ref().map(|a| a.id),
+            },
+        )?;
+        let _ = rescue::prune(&conn);
+    }
+
+    Ok(CurlExport {
+        path: path.to_string_lossy().to_string(),
+        script,
+        count: entries.len(),
+        generated_at,
+    })
 }
 
 #[cfg(test)]

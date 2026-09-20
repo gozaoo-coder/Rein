@@ -1046,6 +1046,59 @@ ALTER TABLE kb_settings ADD COLUMN last_consolidate_at TEXT;
 ALTER TABLE kb_settings ADD COLUMN last_maintain_at TEXT;
 "#;
 
+/// 0029 · 抢课计划（意向）：把「我想抢什么」提前写下来，由引擎在能看见教学班时解析成具体任务。
+///
+/// 与 `campus_grab_tasks` 分开建表而不是往任务表里塞一行 `lesson_id = NULL`：
+/// 任务表的每一行都必须是**可提交的**（有教学班、有批次、有窗口），而计划恰恰在
+/// 「还不知道要抢哪个班」的时候存在 —— 两者的生命周期与不变量都不一样。
+/// 计划解析成功后生成的仍是普通任务行（`group_key` 把一组任务归到计划名下）。
+const MIGRATION_0029: &str = r#"
+CREATE TABLE campus_grab_intents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES campus_accounts(id) ON DELETE CASCADE,
+  turn_id TEXT,
+  turn_name TEXT,
+  query       TEXT NOT NULL,
+  mode        TEXT NOT NULL DEFAULT 'predicate',
+  spread      INTEGER NOT NULL DEFAULT 0,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  group_keys  TEXT NOT NULL DEFAULT '[]',
+  candidates  TEXT NOT NULL DEFAULT '[]',
+  last_message TEXT,
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  next_at     INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  resolved_at INTEGER
+);
+CREATE INDEX idx_campus_grab_intents ON campus_grab_intents(account_id, status, next_at);
+"#;
+
+/// 0030 · AI 救援审计：AI 对教务/抢课引擎做过的每一件事。
+///
+/// 为什么要单独一张表，而不是复用 `app_meta` 或干脆不记：
+/// 写操作是不弹确认的（抢课窗口里每一次确认都是拖延），那份信任必须由「事后能一条条查、
+/// 且每条都能重放」来兜底。`curl` 一列同时喂三个消费方 —— 界面上的操作记录、
+/// 导出给人手动跑的救援脚本、以及熔断（`fp` 上的计数）。
+///
+/// `fp` 是请求指纹（方法+地址+正文的哈希）：**不含凭据**。同一个请求换个 Cookie
+/// 还是同一条请求，熔断判据不能被「会话刷新」这件事绕过去。
+/// `account_id` 刻意不设外键：删号不该带走「AI 当时做了什么」这段历史。
+const MIGRATION_0030: &str = r#"
+CREATE TABLE campus_ai_actions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  detail TEXT,
+  curl TEXT,
+  fp TEXT,
+  status TEXT NOT NULL,
+  account_id INTEGER
+);
+CREATE INDEX idx_campus_ai_actions_at ON campus_ai_actions(at DESC);
+CREATE INDEX idx_campus_ai_actions_fp ON campus_ai_actions(fp, at);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,    MIGRATION_0002,
     MIGRATION_0003,
@@ -1074,6 +1127,8 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0026,
     MIGRATION_0027,
     MIGRATION_0028,
+    MIGRATION_0029,
+    MIGRATION_0030,
 ];
 
 /// 测试用：对给定连接跑完整迁移（含知识库的 FTS 表与全部触发器）。

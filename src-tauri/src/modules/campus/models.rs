@@ -531,6 +531,50 @@ pub struct GrabTask {
     pub held_by: Option<i64>,
 }
 
+/// 测试用的空白任务：字段三十多个，逐个写一遍的测试没人愿意维护。
+/// 只对「判读会读到的字段」负责，其余给中性值 —— 放在结构体旁边，加字段时才不会漏。
+#[cfg(test)]
+impl GrabTask {
+    pub fn blank() -> Self {
+        Self {
+            id: 0,
+            turn_id: "77".into(),
+            turn_name: None,
+            turn_assoc: None,
+            lesson_id: serde_json::Value::Null,
+            lesson_name: None,
+            course_name: None,
+            course_code: None,
+            teacher: None,
+            credits: None,
+            mode: "predicate".into(),
+            virtual_cost: None,
+            schedule_group_id: None,
+            window_wall: None,
+            window_end_wall: None,
+            await_window: false,
+            predicate_done: false,
+            status: GRAB_WAITING.into(),
+            phase: PHASE_IDLE.into(),
+            attempts: 0,
+            polls: 0,
+            strikes: 0,
+            strike_kind: None,
+            request_id: None,
+            last_message: None,
+            next_at: 0,
+            fire_at: None,
+            queued_at: None,
+            finished_at: None,
+            group_key: None,
+            group_name: None,
+            priority: 0,
+            stuck_since: None,
+            held_by: None,
+        }
+    }
+}
+
 /// 加入抢课任务单时，一门课要带的信息。
 ///
 /// 课程名/教师/学分都由前端在**入队那一刻**从刚查回来的教学班里抄一份 ——
@@ -603,6 +647,10 @@ pub struct GrabState {
     /// 最近一次窗口探测的时刻（本机 unix 秒）
     #[serde(default)]
     pub probed_at: Option<i64>,
+    /// 抢课计划（意向）。与任务单一起推给界面：计划说的「我想抢什么」，
+    /// 任务单说的「正在抢什么」，两者在同一屏里对照着看才讲得清。
+    #[serde(default)]
+    pub intents: Vec<GrabIntent>,
     pub tasks: Vec<GrabTask>,
 }
 
@@ -625,6 +673,106 @@ pub struct GrabTurnBrief {
     pub window_start: Option<String>,
     #[serde(default)]
     pub window_end: Option<String>,
+}
+
+/* ─────────────────────── 抢课计划（意向） ───────────────────────
+ *
+ * 计划 = 一句**模糊查询** + 抢法。它回答的是「我想抢什么」，而不是「抢哪个教学班」——
+ * 后者由引擎在能看见教学班的时候解析出来（见 `grab.rs` 的 `resolve_intent`）。
+ *
+ * 为什么要多这一层，而不是让人直接挑教学班：
+ *
+ * 1. **提前输入**。窗口开放前教学班列表往往还拉不到（批次未开、教务不给查），
+ *    而人的意图（「高数 张」「体育」）现在就能写下来 —— 计划落库，等能查了再解析。
+ * 2. **教学班会变**。真到开窗那一刻，哪个班还有空位是新的信息；拿一周前抄下来的
+ *    `lessonAssoc` 去抢，赌的是「名单没变过」。计划每次解析都看**当时的**名单。
+ * 3. 解析结果照样是给人确认的：命中了哪几个班、排成第几志愿，都在任务单上摆着。
+ */
+
+/// 还没解析（等批次 / 等教学班 / 等下次重试）
+pub const INTENT_PENDING: &str = "pending";
+/// 解析过了，但一个教学班都没匹配上（查询写错、或教务还没公布）
+pub const INTENT_EMPTY: &str = "empty";
+/// 已解析：志愿任务已经排进任务单
+pub const INTENT_READY: &str = "ready";
+
+/// 计划命中的一个教学班 —— 给界面「提前确认会抢哪些班」用。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrabMatch {
+    /// 教学班 id（提交时的 `lessonAssoc`）
+    pub lesson_id: serde_json::Value,
+    #[serde(default)]
+    pub course_name: Option<String>,
+    #[serde(default)]
+    pub course_code: Option<String>,
+    #[serde(default)]
+    pub teacher: Option<String>,
+    #[serde(default)]
+    pub std_count: Option<i64>,
+    #[serde(default)]
+    pub limit_count: Option<i64>,
+    /// 这门课已经在你名下了（解析时会跳过它）
+    #[serde(default)]
+    pub picked: bool,
+    /// 命中的字段（`course` / `code` / `teacher` / `place`，见 `matcher`）：界面据此解释「为什么是它」
+    #[serde(default)]
+    pub fields: Vec<String>,
+}
+
+/// 一条抢课计划。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrabIntent {
+    pub id: i64,
+    /// 目标批次。**空 = 用教务当前开放的那个** —— 提前一晚写下计划时批次可能还没出现。
+    #[serde(default)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    pub turn_name: Option<String>,
+    /// 模糊查询（课名 / 代码 / 教师，空格分词，全部词都要命中）
+    pub query: String,
+    /// `predicate`（占位优先）/ `direct`
+    pub mode: String,
+    /// 命中多门课程时：`true` = 每门课各排一组（同名课程只中一个班）；
+    /// `false`（默认）= 全部命中合成一组，只中一个。
+    #[serde(default)]
+    pub spread: bool,
+    pub status: String,
+    /// 解析出来的志愿组 id（`spread` 时可能不止一个），任务行靠它归到这条计划下
+    #[serde(default)]
+    pub group_keys: Vec<String>,
+    /// 命中的教学班，**已按志愿序**（前面的先出手）
+    #[serde(default)]
+    pub candidates: Vec<GrabMatch>,
+    #[serde(default)]
+    pub last_message: Option<String>,
+    /// 解析尝试了几次（含「什么都没匹配到」的那些）
+    pub attempts: i64,
+    /// 下一次该重试解析的时刻（本机 unix 毫秒）
+    pub next_at: i64,
+    #[serde(default)]
+    pub created_at: i64,
+    #[serde(default)]
+    pub resolved_at: Option<i64>,
+}
+
+/// 「输入预览」的结果：一句模糊查询照**当前**名单跑一遍。
+///
+/// 带 `total` 与 `matched` 是为了把几种「少」分开说：教务还没公布教学班（`total = 0`）/
+/// 查询没匹配上（`matched = 0`）/ 匹配上了但被「指定教师」筛掉（`matched > matches.len()`）。
+/// 它们要用户做的事完全不同，糊成一句「没找到」只会让人反复改查询词。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrabPreview {
+    pub turn_id: String,
+    pub turn_name: Option<String>,
+    /// 这个批次教务给了多少教学班
+    pub total: usize,
+    /// 模糊匹配命中多少个（**筛选前**）
+    pub matched: usize,
+    /// 真会抢的那些班，已按志愿序（前面的先出手）
+    pub matches: Vec<GrabMatch>,
 }
 
 /// 引擎节奏参数。默认值按「一个学生抢 1–4 门课」标定：
@@ -891,4 +1039,119 @@ pub struct SyncOutcome {
     pub synced_at: String,
     /// 远端有、但本次未产生时段的活动数（如纯考试安排），用于诊断
     pub skipped_activities: i64,
+}
+
+/* ─────────────────────── 救援面（AI 的最后补救） ───────────────────────
+ *
+ * 与抢课引擎的分工：引擎负责「一切照常」时把课抢到；这一片负责「不照常」的时候
+ * 还能把现场摸清、把状态摆回去、把一条能脱离 App 重放的命令交到人手里。
+ * 逻辑在 `rescue.rs`，命令在 `commands.rs`。
+ */
+
+/// AI 对教务/抢课引擎做过的一件事。审计表 `campus_ai_actions` 的一行。
+///
+/// 存在的理由有两个，且都不是「留个日志好看」：
+/// 1. **给模型自己看**（`RescueState.recent_actions`）—— 没有它，模型会在同一个错误上原地转圈；
+/// 2. **给人看** —— 写操作不弹确认（抢课要快），那份信任必须由「事后能一条条查」来兜底。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAction {
+    pub id: i64,
+    pub at: String,
+    /// `http` / `session` / `grab` / `select` / `script`
+    pub kind: String,
+    /// 一行中文摘要（模型和人都先看这一行）
+    pub summary: String,
+    #[serde(default)]
+    pub detail: Option<serde_json::Value>,
+    /// 这条动作对应的可重放 curl（没有请求的动作是 `None`）
+    #[serde(default)]
+    pub curl: Option<String>,
+    /// `ok` / `error`
+    pub status: String,
+    #[serde(default)]
+    pub account_id: Option<i64>,
+}
+
+/// 现场快照：一次调用把模型判读要用到的东西全给它，省得它连着问五轮。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RescueState {
+    pub account: Option<CampusAccount>,
+    /// 会话探针结果。`None` = 没探（`probe=false`，或根本没有账号）
+    pub session_alive: Option<bool>,
+    /// 探针本身报错时的原文（区别于「探通了但说会话无效」）
+    pub session_error: Option<String>,
+    /// 抢课引擎的一整份快照：任务、计划、节奏、批次、偏差、引擎级故障
+    pub grab: GrabState,
+    /// 卡住的任务 id（非终态、没被暂停，但连败或逾期未动）—— 只是提示，不是结论
+    pub stuck_task_ids: Vec<i64>,
+    /// 最近 AI 动作（新的在前）
+    pub recent_actions: Vec<AiAction>,
+}
+
+/// 一条原始请求。字段都是「模型友好」的：路径可以只写 `/student/home`，
+/// 方法可以小写，正文直接给字符串。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RescueRequest {
+    /// 绝对地址或相对路径（相对 = 拼在教务 base 后面）
+    pub url: String,
+    #[serde(default)]
+    pub method: Option<String>,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub body: Option<String>,
+    /// 正文的 Content-Type，默认 `application/json`
+    #[serde(default)]
+    pub content_type: Option<String>,
+    /// 带教务 Cookie。**只在同源生效**：跨域给了也不带（见 `rescue.rs` 的不变量 1）
+    #[serde(default)]
+    pub with_session: Option<bool>,
+    /// 带选课 SSO 令牌（`Authorization: <JWT>`，裸 token 无 Bearer 前缀）
+    #[serde(default)]
+    pub with_select_token: Option<bool>,
+    #[serde(default)]
+    pub max_bytes: Option<usize>,
+    /// 人话理由：写进审计与脚本注释。必填 —— 「为什么打这条请求」是事后复盘时最缺的一栏
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RescueResponse {
+    /// 实际打到的地址（相对路径已补全）
+    pub url: String,
+    pub method: String,
+    pub status: u16,
+    pub ok: bool,
+    /// 目标是不是教务同源（决定这条请求带没带凭据）
+    pub same_origin: bool,
+    pub with_session: bool,
+    pub with_select_token: bool,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+    pub truncated: bool,
+    /// 响应正文字节数（截断前）
+    pub bytes: usize,
+    pub elapsed_ms: i64,
+    /// 等价 curl（凭据用 `$COOKIE` / `$SELECT_TOKEN` 变量引用）
+    pub curl: String,
+    /// 会话失效后已自动重登并重试过一次
+    pub healed: bool,
+    /// 需要人/模型额外知道的一句话（如「已自动重登，请核对结果」）
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// 导出的救援脚本。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurlExport {
+    /// 落盘的 `.sh` 绝对路径
+    pub path: String,
+    pub script: String,
+    pub count: usize,
+    pub generated_at: String,
 }

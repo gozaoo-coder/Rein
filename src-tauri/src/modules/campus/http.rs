@@ -29,7 +29,7 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 pub const SELECT_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// 与登录页实际发送的一致，避免被风控当成脚本。
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+pub(crate) const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                           (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 /// Cookie 名 → 值。只保留 (name, value)，Path/Domain 一律忽略——
@@ -59,7 +59,8 @@ impl CookieJar {
     }
 
     /// `"a=1; b=2"`，空 jar 返回 None（不发送空 Cookie 头）。
-    fn header(&self) -> Option<String> {
+    /// `pub(crate)` 是给救援面的脚本导出用的：脚本头部要把这份 Cookie 写成一个变量。
+    pub(crate) fn header(&self) -> Option<String> {
         if self.items.is_empty() {
             return None;
         }
@@ -107,6 +108,10 @@ impl CookieJar {
 /// 归一化后的响应：不看 ureq 的错误类型，只看状态码与内容。
 pub struct HttpResponse {
     pub status: u16,
+    /// 响应头（原样、按到达顺序）。业务代码一向只看状态码与正文，
+    /// 这一列是给**救援面**的：教务改接口时，`Location` / `Content-Type` / 自定义头
+    /// 往往是「到底发生了什么」的第一手线索，而这些东西只在浏览器 DevTools 里看得到。
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 
@@ -179,10 +184,10 @@ impl Session {
         body: Option<(&str, Vec<u8>)>,
     ) -> Result<HttpResponse> {
         let url = self.url(path);
-        let mut req = match method {
-            "POST" => self.agent.post(&url),
-            _ => self.agent.get(&url),
-        };
+        // 用 `Agent::request` 而不是逐个 match 便捷方法：救援面要能发 PUT / DELETE 这类
+        // 任意方法，而「未识别的方法悄悄退化成 GET」会让日志与实际发出的请求对不上号 ——
+        // 排障时最怕的就是这种安静的谎。
+        let mut req = self.agent.request(method, &url);
 
         req = req
             .set("User-Agent", USER_AGENT)
@@ -216,13 +221,7 @@ impl Session {
             self.jar.absorb(raw);
         }
 
-        let status = resp.status();
-        let body = resp
-            .into_reader()
-            .read_to_end_vec()
-            .map_err(|e| ReinError::Message(format!("读取响应失败：{e}")))?;
-
-        Ok(HttpResponse { status, body })
+        read_response(resp)
     }
 
     pub fn get(&mut self, path: &str) -> Result<HttpResponse> {
@@ -243,6 +242,32 @@ impl Session {
             Some(("application/json", bytes)),
         )
     }
+}
+
+/// 把 ureq 的响应读成归一化形状（状态码 + 响应头 + 正文）。
+///
+/// 抽成自由函数是为了给救援面的**公网路径**复用：那条路刻意不走 [`Session`]
+/// （它会把门户的 Origin/Referer 与 Cookie 一起带上），但「响应怎么读」只该有一份实现。
+pub(crate) fn read_response(resp: ureq::Response) -> Result<HttpResponse> {
+    let status = resp.status();
+    let headers: Vec<(String, String)> = resp
+        .headers_names()
+        .into_iter()
+        .flat_map(|k| {
+            resp.all(&k)
+                .into_iter()
+                .map(move |v| (k.clone(), v.to_string()))
+        })
+        .collect();
+    let body = resp
+        .into_reader()
+        .read_to_end_vec()
+        .map_err(|e| ReinError::Message(format!("读取响应失败：{e}")))?;
+    Ok(HttpResponse {
+        status,
+        headers,
+        body,
+    })
 }
 
 /// `Read::read_to_end` 的小包装，省得在调用处再 `use std::io::Read`。

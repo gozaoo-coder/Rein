@@ -7,6 +7,8 @@ import type {
   CourseSelectStatus,
   CourseSelectTurn,
   GrabAction,
+  GrabIntent,
+  GrabPreview,
   GrabSettings,
   GrabState,
   GrabTargetInput,
@@ -328,6 +330,52 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
     grabSettings.value = await campusService.grabSettingsSet(next)
   }
 
+  /* ---------------- 抢课计划（意向） ----------------
+   *
+   * 计划是「提前输入」的落点：写下一句模糊查询（课名 / 代码 / 教师），
+   * 引擎在能看见教学班名单时自己解析成具体的志愿任务，窗口一开就出手。
+   * 所以这里**没有「现在抢」这个动作** —— 计划本身不抢，抢是引擎的事。
+   */
+
+  const intents = computed<GrabIntent[]>(() => grab.value?.intents ?? [])
+
+  /** 这条计划派出去的任务（按志愿序）。计划行靠它显示「现在抢到哪一步了」。 */
+  function intentTasks(intent: GrabIntent): GrabTask[] {
+    const keys = (intent.groupKeys ?? []).filter(Boolean)
+    if (!keys.length) return []
+    return grabTasks.value
+      .filter((t) => keys.includes((t.groupKey ?? '').trim()))
+      .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+  }
+
+  /** 写下一条计划。返回落库后的那条（状态由引擎随后推进）。 */
+  async function addIntent(input: {
+    turnId?: string | null
+    turnName?: string | null
+    query: string
+    mode?: 'predicate' | 'direct'
+    spread?: boolean
+  }): Promise<GrabIntent> {
+    grabBusy.value = true
+    try {
+      const intent = await campusService.grabIntentAdd(input)
+      await refreshGrab()
+      return intent
+    } finally {
+      grabBusy.value = false
+    }
+  }
+
+  async function intentAction(intentId: number, action: 'remove' | 'now'): Promise<void> {
+    await campusService.grabIntentAction(intentId, action)
+    await refreshGrab()
+  }
+
+  /** 预览：这句查询照教务现在的名单能匹配到哪些班。 */
+  async function previewMatches(query: string, turnId?: string | null): Promise<GrabPreview> {
+    return campusService.grabIntentPreview(query, turnId)
+  }
+
   return {
     status,
     loading,
@@ -349,6 +397,8 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
     activeTasks,
     hasGrabWork,
     grabError,
+    intents,
+    intentTasks,
     loadStatus,
     enterTurn,
     leaveTurn,
@@ -364,6 +414,9 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
     pauseAll,
     resumeAll,
     saveGrabSettings,
+    addIntent,
+    intentAction,
+    previewMatches,
     taskFor,
     fireInMs,
   }

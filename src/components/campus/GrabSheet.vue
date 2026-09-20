@@ -155,18 +155,6 @@ const squadName = computed(() => {
   if (!squadMode.value) return null
   return squadPick.value === 'new' ? name.value : (pickedSquad.value?.name ?? name.value)
 })
-
-watch(
-  () => [props.open, props.lesson?.id] as const,
-  ([open]) => {
-    if (!open) return
-    // 每次打开回到保守默认：占位优先（抢位次）、意愿值 0（普通轮次的要求）
-    mode.value = 'predicate'
-    virtualCost.value = 0
-    // 只有一个组时直接选中它 —— 只有一个选择还让人点一下是浪费
-    groupChoice.value = groups.value.length === 1 ? idOf(groups.value[0]?.id) : 'default'
-  },
-)
 </script>
 
 <template>
@@ -213,14 +201,18 @@ watch(
       </p>
     </section>
 
-    <!-- 上课小组 -->
+    <!-- 上课小组。用 button + role=radio 而不是 label + 装饰点：
+         后者键盘完全够不着（没有 input 也没有 tabindex），而这是一列真正的单选。 -->
     <section class="block">
       <h3>上课小组</h3>
       <p v-if="!groups.length" class="hint">
         <Info :size="13" /> 教务没有给出可选小组，将按它的默认安排提交。
       </p>
-      <template v-else>
-        <label
+      <div v-else class="opts" role="radiogroup" aria-label="上课小组">
+        <button
+          type="button"
+          role="radio"
+          :aria-checked="groupChoice === 'default'"
           class="opt row"
           :class="{ on: groupChoice === 'default' }"
           @click="groupChoice = 'default'"
@@ -230,10 +222,13 @@ watch(
             <b>不指定</b>
             <em class="t-3">由教务按默认组分配</em>
           </span>
-        </label>
-        <label
+        </button>
+        <button
           v-for="g in groups"
           :key="idOf(g.id)"
+          type="button"
+          role="radio"
+          :aria-checked="groupChoice === idOf(g.id)"
           class="opt row"
           :class="{ on: groupChoice === idOf(g.id) }"
           @click="groupChoice = idOf(g.id)"
@@ -243,8 +238,8 @@ watch(
             <b>第 {{ g.no ?? '?' }} 组{{ g.default ? '（默认）' : '' }}</b>
             <em v-if="g.limitCount != null" class="t-3 num">容量 {{ g.limitCount }}</em>
           </span>
-        </label>
-      </template>
+        </button>
+      </div>
     </section>
 
     <!-- 意愿值 -->
@@ -271,33 +266,41 @@ watch(
       />
 
       <template v-if="squadMode">
-        <label
-          v-for="g in squads"
-          :key="g.key"
-          class="opt row"
-          :class="{ on: squadPick === g.key }"
-          @click="squadPick = g.key; squadPriority = nextPriority()"
-        >
-          <span class="dot" />
-          <span class="col flex-1">
-            <b>{{ g.name }}</b>
-            <em class="t-3">
-              已有 {{ g.members.length }} 个志愿：
-              {{ g.members.map((m) => `第${m.priority ?? '?'}志愿 ${m.courseName ?? '（未命名）'}`).join(' · ') }}
-            </em>
-          </span>
-        </label>
-        <label
-          class="opt row"
-          :class="{ on: squadPick === 'new' }"
-          @click="squadPick = 'new'; squadPriority = 1"
-        >
-          <span class="dot" />
-          <span class="col flex-1">
-            <b>新建一组</b>
-            <em class="t-3">把「同一门课的多个教学班」或「时间冲突的几门课」放一起</em>
-          </span>
-        </label>
+        <div class="opts" role="radiogroup" aria-label="志愿组">
+          <button
+            v-for="g in squads"
+            :key="g.key"
+            type="button"
+            role="radio"
+            :aria-checked="squadPick === g.key"
+            class="opt row"
+            :class="{ on: squadPick === g.key }"
+            @click="squadPick = g.key; squadPriority = nextPriority()"
+          >
+            <span class="dot" />
+            <span class="col flex-1">
+              <b>{{ g.name }}</b>
+              <em class="t-3">
+                已有 {{ g.members.length }} 个志愿：
+                {{ g.members.map((m) => `第${m.priority ?? '?'}志愿 ${m.courseName ?? '（未命名）'}`).join(' · ') }}
+              </em>
+            </span>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            :aria-checked="squadPick === 'new'"
+            class="opt row"
+            :class="{ on: squadPick === 'new' }"
+            @click="squadPick = 'new'; squadPriority = 1"
+          >
+            <span class="dot" />
+            <span class="col flex-1">
+              <b>新建一组</b>
+              <em class="t-3">把「同一门课的多个教学班」或「时间冲突的几门课」放一起</em>
+            </span>
+          </button>
+        </div>
 
         <NumberStepper v-model="squadPriority" :min="1" :max="20" :step="1" label="第几志愿" />
 
@@ -378,12 +381,12 @@ watch(
 }
 
 .banner.warn {
-  color: var(--warn);
+  color: var(--warn-strong);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
 }
 
 .banner.ok {
-  color: var(--ok);
+  color: var(--ok-strong);
   background: var(--ok-soft);
 }
 
@@ -419,6 +422,8 @@ watch(
 }
 
 .opt {
+  width: 100%;
+  text-align: left;
   gap: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-m);
@@ -500,7 +505,7 @@ watch(
   padding: 1px 7px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .primary {

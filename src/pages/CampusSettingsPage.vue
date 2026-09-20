@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ChevronRight, CircleCheck, CircleAlert, LogOut, RefreshCw, School, Trash2 } from 'lucide-vue-next'
+import { BookOpen, ChevronRight, CircleCheck, CircleAlert, FileDown, LogOut, RefreshCw, School, Sparkles, Trash2 } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { campusService } from '@/services/campusService'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
-import type { SchoolSystemInfo } from '@/types'
+import type { AiAction, SchoolSystemInfo } from '@/types'
 
 const store = useCampusStore()
 const router = useRouter()
@@ -183,8 +183,48 @@ async function onLogout(): Promise<void> {
   }
 }
 
+/* ---------------- AI 操作记录 ---------------- */
+
+const audit = ref<AiAction[]>([])
+const auditBusy = ref(false)
+const exportBusy = ref(false)
+/** 记录里的时刻：只给到分钟 —— 一口气看二十条时，秒没有意义 */
+function shortAt(at: string): string {
+  const d = new Date(at)
+  if (Number.isNaN(d.getTime())) return at
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+async function loadAudit(): Promise<void> {
+  auditBusy.value = true
+  try {
+    // probe=false：这里只看落库的现场，不该因为打开设置页就打一次教务
+    const st = await campusService.rescueState(false)
+    audit.value = st.recentActions
+  } catch {
+    /* 读不到就不显示：它只是记录，不该在设置页弹错误 */
+  } finally {
+    auditBusy.value = false
+  }
+}
+
+async function onExportScript(): Promise<void> {
+  exportBusy.value = true
+  try {
+    const out = await campusService.curlExport({ hours: 24 })
+    toast.toast(`已导出 ${out.count} 条请求 → ${out.path}`)
+    await loadAudit()
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : '导出失败')
+  } finally {
+    exportBusy.value = false
+  }
+}
+
 onMounted(async () => {
   await store.init()
+  void loadAudit()
   const a = store.account
   if (a) {
     loginName.value = a.loginName
@@ -365,7 +405,37 @@ onMounted(async () => {
       </button>
     </section>
 
-    <!-- ⑤ 账号管理 -->
+    <!-- ⑤ AI 排障：操作记录 + 救援脚本。写操作不弹确认（抢课窗口里确认就是拖延），
+         那份信任必须由「事后能一条条查、且每条都能重放」来兜底。 -->
+    <section v-if="store.account" class="card">
+      <div class="sec-head">
+        <Sparkles :size="17" />
+        <h2>AI 操作记录</h2>
+        <button class="mini" :disabled="auditBusy" @click="loadAudit">
+          {{ auditBusy ? '读取中…' : '刷新' }}
+        </button>
+      </div>
+      <p class="tip">
+        让 AI 排查抢课问题时（抢课页的「交给 AI 排查」），它对教务与抢课引擎做过的每一步都会记在这里。
+        导出的脚本把这一路的请求原样搬下来，**脱离 App 也能重放**。
+      </p>
+      <button class="mini wide" :disabled="exportBusy" @click="onExportScript">
+        <FileDown :size="14" />
+        {{ exportBusy ? '导出中…' : '导出救援脚本' }}
+      </button>
+      <ul v-if="audit.length" class="audit">
+        <li v-for="a in audit.slice(0, 20)" :key="a.id">
+          <span class="at num">{{ shortAt(a.at) }}</span>
+          <span class="kind">{{ a.kind }}</span>
+          <span class="what" :class="{ bad: a.status === 'error' }">{{ a.summary }}</span>
+        </li>
+      </ul>
+      <p v-else class="tip">
+        还没有记录 —— AI 一旦对教务动手（探请求、重排任务、重登、导出脚本），这里会一条条出现。
+      </p>
+    </section>
+
+    <!-- ⑥ 账号管理 -->
     <section v-if="store.account" class="card danger-card">
       <div class="sec-head">
         <Trash2 :size="17" />
@@ -404,6 +474,69 @@ onMounted(async () => {
   font-size: var(--fs-subhead);
   font-weight: 700;
   color: var(--text-1);
+}
+
+/* 记录区的「刷新」「导出脚本」：次级按钮，不跟页面的主操作抢注意力 */
+.mini {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 12px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-full);
+}
+
+.mini:disabled {
+  opacity: 0.55;
+}
+
+.mini.wide {
+  width: 100%;
+  margin-left: 0;
+  margin-bottom: 10px;
+}
+
+.audit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.audit li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+
+.audit .at {
+  flex: none;
+  color: var(--text-3);
+}
+
+.audit .kind {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  font-weight: 700;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+
+.audit .what {
+  color: var(--text-2);
+  word-break: break-all;
+}
+
+.audit .what.bad {
+  color: var(--warn);
 }
 
 .ok {

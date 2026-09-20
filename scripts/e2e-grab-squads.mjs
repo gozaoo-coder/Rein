@@ -163,7 +163,7 @@ async function enterTurn() {
   await waitFor(`document.querySelector('h1')?.textContent === '选课'`, 15000, '选课页挂载')
   await waitFor(`document.body.textContent.includes('可进入')`, 10000, '批次渲染')
   await clickText('.turn .primary', '进入选课')
-  await waitFor(`document.querySelectorAll('.lesson').length === 5`, 10000, '教学班列表')
+  await waitFor(`document.querySelectorAll('.lesson').length === 7`, 10000, '教学班列表')
 }
 
 /** 多选模式下按顺序勾选（顺序 = 志愿序） */
@@ -193,8 +193,20 @@ async function confirmBatch() {
   await waitFor(`!document.querySelector('.panel')`, 5000, '批量抽屉关闭')
 }
 
-/** 清掉任务单里已结束的行，避免上一段场景干扰下一段 */
+/**
+ * 清掉任务单里已结束的行，避免上一段场景干扰下一段。
+ *
+ * 结束态下入口在**结果面**里（两步确认），进行中/暂停态才在底部那条批量出口 ——
+ * 因为「没有在抢的了」的时候，用户要的是结果，不是一列不再变化的记录。
+ */
 async function clearFinished() {
+  if (await evalJS(`!!document.querySelector('.grab .result')`)) {
+    await clickText('.grab .result .link', '清掉')
+    await sleep(150)
+    await clickText('.grab .result .link', '确认清空')
+    await sleep(300)
+    return
+  }
   const has = await evalJS(`!!document.querySelector('.grab .foot button')`)
   if (!has) return
   await clickText('.grab .foot button', '清掉已结束的')
@@ -264,11 +276,11 @@ async function main() {
     await waitFor(`(${chipOf('高等数学')}) === '已抢到'`, 20000, '第 1 志愿抢到')
     ok('第 1 志愿中选', true)
     await waitFor(`(${chipOf('体育（一）')}) === '已取消'`, 8000, '同组备选被取消')
-    ok('任一中选 → 同组其余自动取消', true, await evalJS(`(${taskRowExpr('体育（一）')})?.querySelector('.meta')?.textContent.trim()`))
+    ok('任一中选 → 同组其余自动取消', true, await evalJS(`(${taskRowExpr('体育（一）')})?.textContent.replace(/\\s+/g, ' ').trim()`))
     ok(
       '取消原因说明了是被谁抢先的',
-      ((await evalJS(`(${taskRowExpr('体育（一）')})?.querySelector('.meta')?.textContent ?? ''`)).includes('已被第 1 志愿')),
-      await evalJS(`(${taskRowExpr('体育（一）')})?.querySelector('.meta')?.textContent.trim()`),
+      ((await evalJS(`(${taskRowExpr('体育（一）')})?.textContent ?? ''`)).includes('已被第 1 志愿')),
+      await evalJS(`(${taskRowExpr('体育（一）')})?.textContent.replace(/\\s+/g, ' ').trim()`),
     )
     await shot('3-closed')
 
@@ -279,7 +291,7 @@ async function main() {
     await evalJS(`location.hash = '#/'`)
     await sleep(400)
     await evalJS(`location.hash = '#/campus/course-select'`)
-    await waitFor(`document.querySelectorAll('.lesson').length === 5`, 10000, '回到教学班列表')
+    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 10000, '回到教学班列表')
 
     await startMultiSelect()
     await pick('大学物理（含实验）') // 第 1 志愿，会走到「时间冲突」终态
@@ -316,7 +328,7 @@ async function main() {
     await evalJS(`location.hash = '#/'`)
     await sleep(400)
     await evalJS(`location.hash = '#/campus/course-select'`)
-    await waitFor(`document.querySelectorAll('.lesson').length === 5`, 10000, '回到教学班列表')
+    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 10000, '回到教学班列表')
 
     await startMultiSelect()
     await pick('高等数学（上）')

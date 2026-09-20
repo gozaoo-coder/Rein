@@ -186,6 +186,25 @@ export const useAiStore = defineStore('ai', () => {
   const loaded = ref(false)
   /** 目标调整建议：解析后待用户确认，不直接生效 */
   const targetProposal = ref<TargetAdjustProposal | null>(null)
+  /**
+   * 从别处递进来的一句话（抢课面板的「交给 AI 排查」等）。
+   *
+   * 为什么走 store 而不是路由参数：携带的是**现场快照**（任务、报错原文），
+   * 几十行文本塞进 URL 既难看又会被编码搞乱；而 AI 页挂载时取一次就够了。
+   */
+  const pendingPrompt = ref<string | null>(null)
+
+  /** 递给 AI 页一句话；调用方负责跳转 */
+  function askFrom(text: string): void {
+    pendingPrompt.value = text
+  }
+
+  /** AI 页取走（取完即清，避免回到页面时重复发送） */
+  function takePendingPrompt(): string | null {
+    const t = pendingPrompt.value
+    pendingPrompt.value = null
+    return t
+  }
 
   function greet(): void {
     if (messages.value.length > 0) return
@@ -1194,6 +1213,9 @@ export const useAiStore = defineStore('ai', () => {
     getMeta: agg.getMeta,
     init,
     greet,
+    /** 别的页面递进来的一句话（抢课面板的「交给 AI 排查」） */
+    askFrom,
+    takePendingPrompt,
     selectChat,
     newChat,
     clearContext,

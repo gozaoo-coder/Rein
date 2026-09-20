@@ -57,6 +57,10 @@ scripts/shots/
 src-tauri/resources/models/
 src-tauri/resources/ort/
 
+# BodyParts3D 解剖网格（约 76 MB，可复现）：build-anatomy 的输入，
+# 用 scripts/fetch-anatomy.mjs 按需拉取；产出 src/assets/muscles/rein/*.svg 入库。
+resources/anatomy/meshes/
+
 # 视觉审查/浏览器自动化本地产物（一次性快照与截图，不入库）
 .impeccable/
 .tmp-critique/

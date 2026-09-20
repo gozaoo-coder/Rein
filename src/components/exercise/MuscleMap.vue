@@ -12,11 +12,18 @@ import sideSvg from '@/assets/muscles/rein/side.svg?raw'
 /**
  * 全身肌群激活图：正面 / 背面 / 侧面三视图。
  *
- * 素材为按参考图逐点描线的自绘 SVG（scripts/build-anatomy.mjs 生成），
- * 每个视图一个文件，内部以 <g data-m="肌群键"> 分区；分区之间共享
- * 边界点，既不重叠也不留缝。渲染时把每个分区当成一层，按激活档位
- * 走 fill 继承着色：3 主攻 = --c-exercise，2 辅助 = --heat-mid，
- * 1 稳定 = --c-exercise-soft；未激活走中性赭红。
+ * 素材来自 BodyParts3D 的真实人体解剖网格（scripts/build-anatomy.mjs 生成）：
+ * 正交投影 → 栅格化 → 等值线追踪，三个视图共用同一套解剖比例，因此等大对齐。
+ * 每个分区是一个 <g data-m="肌群键">，按观察深度用画家算法层叠 —— 远的下、
+ * 近的上，深层肌群同样被画出来，只是被浅层盖住。
+ *
+ * 分区属性：
+ *   data-m      肌群键（26 键，与 src/config/muscles.ts 一一对应）
+ *   data-layer  1 = 浅层肌、2 = 深层肌（「深层」开关控制是否显示）
+ *   data-kind   class="m" 可高亮；class="a" 只是把深层结构画出来，不参与高亮
+ *
+ * 着色走 CSS 继承：3 主攻 = --c-exercise，2 辅助 = --heat-mid，
+ * 1 稳定 = --c-exercise-soft；未激活走中性赭红，深层解剖走冷灰。
  *
  * 细化到肌束：三角肌前/中/后束、胸大肌上/下束、斜方肌上/中/下束、
  * 股四头分股外侧/股直/股内侧、小腿分腓肠肌/比目鱼肌等，均可单独高亮。
@@ -27,7 +34,10 @@ import sideSvg from '@/assets/muscles/rein/side.svg?raw'
 const props = defineProps<{ activation: ActivationMap; interactive?: boolean }>()
 
 interface Region {
-  key: MuscleKey
+  kind: 'm' | 'a'
+  key: string
+  layer: number
+  depth: number
   markup: string
 }
 
@@ -37,15 +47,21 @@ interface View {
   regions: Region[]
 }
 
-/** 从生成的 SVG 里拆出底图与各肌群分区（顺序即层叠顺序） */
+/** 从生成的 SVG 里拆出底图与各分区（文档顺序即层叠顺序） */
 function parseView(raw: string): View {
   const viewBox = raw.match(/viewBox="([^"]+)"/)?.[1] ?? '0 0 660 1500'
   const base = raw.match(/<g id="base">([\s\S]*?)<\/g>/)?.[1] ?? ''
   const regions: Region[] = []
-  const re = /<g class="m" data-m="([^"]+)">([\s\S]*?)<\/g>/g
+  const re = /<g class="(m|a)" data-m="([^"]+)" data-layer="(\d)" data-depth="([^"]+)">([\s\S]*?)<\/g>/g
   let m: RegExpExecArray | null
   while ((m = re.exec(raw))) {
-    regions.push({ key: m[1] as MuscleKey, markup: m[2] })
+    regions.push({
+      kind: m[1] as 'm' | 'a',
+      key: m[2],
+      layer: Number(m[3]),
+      depth: Number(m[4]),
+      markup: m[5],
+    })
   }
   return { viewBox, base, regions }
 }
@@ -60,6 +76,15 @@ const VIEWS: { label: string; view: View }[] = [
   { label: '侧面', view: SIDE },
 ]
 
+/** 深层开关：关掉只留浅层肌（被激活的深层肌仍会显示，否则点了没反应） */
+const showDeep = ref(false)
+
+function isVisible(r: Region): boolean {
+  if (r.layer <= 1) return true
+  if (showDeep.value) return true
+  return r.kind === 'm' && props.activation[r.key as MuscleKey] !== undefined
+}
+
 function lv(key: MuscleKey): string {
   const v = props.activation[key]
   return v === 3 ? 'l3' : v === 2 ? 'l2' : v === 1 ? 'l1' : ''
@@ -67,8 +92,7 @@ function lv(key: MuscleKey): string {
 
 /** 分区着色只看档位：未激活走中性色，激活按档位 */
 function cls(key: MuscleKey): string {
-  const v = props.activation[key]
-  return v ? lv(key) : 'idle'
+  return props.activation[key] ? lv(key) : 'idle'
 }
 
 function title(key: MuscleKey): string {
@@ -112,6 +136,10 @@ const detailTitle = computed(() => `激活肌群 · ${sortedMuscles.value.length
 function onMapTap(): void {
   if (props.interactive) detailOpen.value = true
 }
+
+function toggleDeep(): void {
+  showDeep.value = !showDeep.value
+}
 </script>
 
 <template>
@@ -130,16 +158,18 @@ function onMapTap(): void {
         <div class="figwrap">
           <svg :viewBox="item.view.viewBox" role="img" :aria-label="`肌群激活 · ${item.label}视图`">
             <g class="layer base" aria-hidden="true" v-html="item.view.base" />
-            <g
-              v-for="r in item.view.regions"
-              :key="`${item.label}-${r.key}`"
-              class="layer muscle"
-              :class="cls(r.key)"
-              :data-m="r.key"
-            >
-              <title>{{ title(r.key) }}</title>
-              <g v-html="r.markup" />
-            </g>
+            <template v-for="r in item.view.regions" :key="`${item.label}-${r.key}`">
+              <g
+                v-show="isVisible(r)"
+                class="layer"
+                :class="r.kind === 'a' ? 'anat' : ['muscle', cls(r.key as MuscleKey)]"
+                :data-m="r.key"
+                :data-layer="r.layer"
+              >
+                <title v-if="r.kind === 'm'">{{ title(r.key as MuscleKey) }}</title>
+                <g v-html="r.markup" />
+              </g>
+            </template>
           </svg>
         </div>
         <figcaption>{{ item.label }}</figcaption>
@@ -151,6 +181,14 @@ function onMapTap(): void {
       <span><i class="d3" />主攻</span>
       <span><i class="d2" />辅助</span>
       <span><i class="d1" />稳定</span>
+      <button
+        class="depthbtn"
+        type="button"
+        :aria-pressed="showDeep"
+        @click.stop="toggleDeep"
+      >
+        {{ showDeep ? '含深层' : '仅浅层' }}
+      </button>
     </div>
     <p v-if="interactive" class="taphint">点击查看全部激活肌群</p>
 
@@ -223,33 +261,24 @@ figure {
   fill: rgba(120, 110, 95, 0.34);
 }
 
-.layer.base :deep(.garment) {
-  fill: rgba(120, 110, 95, 0.16);
-}
-
-.layer.base :deep(.hair) {
-  fill: rgba(120, 110, 95, 0.5);
-}
-
 .layer.base :deep(path) {
   stroke: rgba(90, 70, 55, 0.55);
-  stroke-width: 1.6;
-  stroke-linejoin: round;
-}
-
-/* 腹直肌腱划等细节线只描边，不参与档位着色 */
-.layer.base :deep(.detail) {
-  stroke: rgba(90, 70, 55, 0.45);
   stroke-width: 1.2;
+  stroke-linejoin: round;
 }
 
 .layer.idle {
   fill: rgba(183, 92, 74, 0.3);
 }
 
+/* 深层解剖：冷灰、无描边重音，隐去浅层后读作「更里面一层」 */
+.layer.anat {
+  fill: rgba(112, 106, 128, 0.26);
+}
+
 .layer.muscle :deep(path) {
   stroke: rgba(90, 45, 30, 0.4);
-  stroke-width: 1.4;
+  stroke-width: 1;
   stroke-linejoin: round;
 }
 
@@ -264,6 +293,10 @@ figure {
 
   .layer.idle {
     fill: rgba(214, 108, 86, 0.32);
+  }
+
+  .layer.anat {
+    fill: rgba(150, 144, 170, 0.22);
   }
 
   .layer.muscle :deep(path) {
@@ -291,6 +324,7 @@ figcaption {
 
 .legend {
   gap: 16px;
+  align-items: center;
 }
 
 .legend span {
@@ -319,6 +353,20 @@ figcaption {
 .d3 {
   background: var(--c-exercise);
   border-color: transparent;
+}
+
+.depthbtn {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  padding: 2px 9px;
+  border: 0.5px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+}
+
+.depthbtn[aria-pressed='true'] {
+  color: var(--text-1);
+  background: var(--surface-2);
 }
 
 .taphint {

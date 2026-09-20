@@ -222,6 +222,19 @@ onMounted(() => {
   refreshDrafts()
   void scrollToBottom()
   if (route.query.intent === 'photo') openCamMenu()
+  // 抢课面板「交给 AI 排查」递过来的现场：**直接发**，不再让人按一次发送 ——
+  // 那正是抢课窗口里最缺时间的时候。取完即清，回到本页不会重复发。
+  const handed = ai.takePendingPrompt()
+  if (handed) {
+    // 正在生成时不能直接发（sendText 会直接返回，那段现场就没了）：落到输入框里等着，
+    // 比默默丢掉强 —— 人至少看得见「有话没发出去」。
+    if (ai.busy) {
+      draft.value = handed
+      void nextTick(() => autoGrow())
+    } else {
+      void ai.sendText(handed)
+    }
+  }
 })
 
 // 分享收件箱：路由带 ?intent=share 时消费预填（冷启动 / 运行中被分享唤起都会走到这里）

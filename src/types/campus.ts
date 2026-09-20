@@ -453,7 +453,74 @@ export interface GrabState {
   turns?: GrabTurnBrief[]
   /** 最近一次窗口探测的时刻（本机 unix 毫秒） */
   probedAt?: number | null
+  /**
+   * 抢课计划（意向）。「我想抢什么」写在计划里，「正在抢什么」写在任务里 ——
+   * 两者同屏对照，才看得出这条计划现在到底走到哪一步了。
+   */
+  intents?: GrabIntent[]
   tasks: GrabTask[]
+}
+
+/* ─────────────────── 抢课计划（意向） ───────────────────
+ * 「提前输入 → 到点全自动抢」的落点：计划只描述意图（一句模糊查询），
+ * 具体抢哪个教学班由引擎在能看见名单时解析出来（见 Rust `grab.rs::resolve_intent`）。
+ * 所以**窗口开放前就能把计划写好**，不必守着屏幕等批次出现。 */
+
+/** 计划命中的一个教学班（界面靠它回答「会抢哪些班」） */
+export interface GrabMatch {
+  lessonId: unknown
+  courseName?: string | null
+  courseCode?: string | null
+  teacher?: string | null
+  stdCount?: number | null
+  limitCount?: number | null
+  /** 这门课已经在你名下了（解析时会跳过） */
+  picked?: boolean
+  /**
+   * 命中的字段：`course` / `code` / `teacher` / `place`，
+   * 以及教师的两种强信号：`teacherExact`（**打全了名字 = 指定**）与
+   * `teacherNear`（姓对了、其余最多差一个字 = 可能打错了）。
+   */
+  fields?: string[]
+}
+
+export type GrabIntentStatus = 'pending' | 'empty' | 'ready'
+
+export interface GrabIntent {
+  id: number
+  /** 目标批次；null = 用教务当前开放的那个（提前一晚写计划时批次常常还没出现） */
+  turnId?: string | null
+  turnName?: string | null
+  /** 模糊查询：课名 / 课程代码 / 教师，空格分词，每个词都要命中 */
+  query: string
+  mode: GrabMode
+  /** true = 每门课各排一组；false = 全部命中合成一组，只中一个 */
+  spread?: boolean
+  status: GrabIntentStatus
+  /** 解析出来的志愿组 id（任务行靠它归到这条计划下） */
+  groupKeys?: string[]
+  /** 命中的教学班，**已按志愿序**（前面的先出手） */
+  candidates?: GrabMatch[]
+  lastMessage?: string | null
+  attempts: number
+  nextAt: number
+  createdAt?: number
+  resolvedAt?: number | null
+}
+
+/** 输入预览（`campus_grab_intent_preview` 返回） */
+export interface GrabPreview {
+  turnId: string
+  turnName?: string | null
+  /** 这个批次教务给了多少教学班 —— 用来区分「教务还没公布」与「没匹配上」 */
+  total: number
+  /** 模糊匹配命中多少个（**筛选前**）。比 matches 多时说明被「指定教师」筛掉了 */
+  matched: number
+  /**
+   * 真会抢的那些班（顺序就是志愿序）。
+   * 注意：**打全了老师名字时这里只剩那位老师的班** —— 那是「指定」而不是「相关」。
+   */
+  matches: GrabMatch[]
 }
 
 /** 加入抢课任务单时一门课要带的信息 */
@@ -506,3 +573,81 @@ export interface GrabSettings {
 
 /** `campus_grab_task_action` 支持的动作 */
 export type GrabAction = 'pause' | 'cancel' | 'retry' | 'remove'
+
+/* ─────────────────── 救援面（AI 的最后补救） ───────────────────
+ * 抢课引擎管「一切照常」，这一片管「不照常」：教务改了接口、会话怎么都救不回来、
+ * 批次规则换了、任务卡在一个没见过的错误上。对应 Rust `modules/campus/rescue.rs`
+ * 与 `commands.rs` 里的 `campus_rescue_state` / `campus_http` / `campus_rescue_note` / `campus_curl_export`。 */
+
+/** AI 对教务/抢课引擎做过的一件事（审计表的一行） */
+export interface AiAction {
+  id: number
+  at: string
+  /** `http` / `session` / `grab` / `select` / `script` */
+  kind: string
+  summary: string
+  detail?: unknown
+  /** 这条动作对应的可重放 curl（没有请求的动作没有它） */
+  curl?: string | null
+  status: 'ok' | 'error'
+  accountId?: number | null
+}
+
+/** 现场快照：一次调用把判读要用到的东西全给出来 */
+export interface RescueState {
+  account: CampusAccount | null
+  /** 会话探针结果；`null` = 没探（probe=false 或没有账号） */
+  sessionAlive: boolean | null
+  /** 探针本身报错时的原文（区别于「探通了但说会话无效」） */
+  sessionError: string | null
+  grab: GrabState
+  /** 卡住的任务 id —— 只是提示，不是结论（引擎那些刻意等待也会让 nextAt 落在未来） */
+  stuckTaskIds: number[]
+  recentActions: AiAction[]
+}
+
+/** 一条原始请求。相对路径会拼在教务 base 后面 */
+export interface RescueRequest {
+  url: string
+  method?: string
+  headers?: [string, string][]
+  body?: string | null
+  contentType?: string | null
+  /** 带教务 Cookie。**只在教务同源生效**：跨域给了也拒（不允许把会话发给第三方） */
+  withSession?: boolean
+  /** 带选课 SSO 令牌（`Authorization: <JWT>`，裸 token 无 Bearer 前缀） */
+  withSelectToken?: boolean
+  maxBytes?: number
+  /** 人话理由：这条请求想搞清楚什么？写进审计与脚本注释，必填 */
+  reason: string
+}
+
+export interface RescueResponse {
+  url: string
+  method: string
+  status: number
+  ok: boolean
+  /** 目标是不是教务同源 —— 决定这条请求带没带凭据 */
+  sameOrigin: boolean
+  withSession: boolean
+  withSelectToken: boolean
+  headers: [string, string][]
+  body: string
+  truncated: boolean
+  /** 响应正文字节数（截断前） */
+  bytes: number
+  elapsedMs: number
+  /** 等价 curl（凭据用 `$COOKIE` / `$SELECT_TOKEN` 变量引用） */
+  curl: string
+  /** 会话失效后已自动重登并重试过一次 */
+  healed: boolean
+  note?: string | null
+}
+
+/** 导出的救援脚本 */
+export interface CurlExport {
+  path: string
+  script: string
+  count: number
+  generatedAt: string
+}

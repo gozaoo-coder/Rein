@@ -257,7 +257,11 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
         />
         <p class="hint">
           <Info :size="13" />
-          关掉它，你就只能在手动刷新页面时才发现窗口开了。开着才可能「窗口一开就收到提示」。
+          <span>
+            关掉它，你就只能在手动刷新页面时才发现窗口开了。开着才可能「窗口一开就收到提示」。
+            <b>监听同样活在 App 进程里</b>：App 被划掉或清理后它就不再问教务了 ——
+            窗口按教务处的钟点开，而那时人往往不在电脑前。
+          </span>
         </p>
       </section>
     </div>

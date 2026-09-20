@@ -28,16 +28,26 @@
      半透明黑/白的好处是不管背后渐变走到哪一档，轨道都稳定地比背景深/浅一档。 */
   --ring-track: rgba(0, 0, 0, 0.16);
 
-  /* ---------- 语义色（iOS 系统色） ---------- */
+  /* ---------- 语义色（iOS 系统色） ----------
+   * 每个语义色都有两档，**用途不同、不要混用**：
+   *   实底档（--ok / --warn / --danger / --accent）：填充、描边、图标、大色块；
+   *   文字档（--*-strong）：**当文字用**（尤其是落在同名 soft 底上时）——
+   *   实底档直接当文字用对比度不够（`--ok` 落在 `--ok-soft` 上只有 1.95:1），
+   *   而这类文字往往是「赢/满员/故障」这类最要紧的状态词，看不清等于没写。
+   */
   --accent: #007aff;
   --accent-soft: rgba(0, 122, 255, 0.12);
+  --accent-strong: #0a5ec2; /* accent-soft 底或白底上的文字蓝 */
   --on-accent: #ffffff; /* accent 及语义色实底按钮 / 分类彩底图标的前景白 */
   --ok: #34c759;
   --ok-soft: rgba(52, 199, 89, 0.16); /* 完成态 soft 底 */
   --ok-strong: #248a3d; /* ok-soft 底上的文字绿（亮色加深保对比，暗色提亮） */
   --warn: #ff9500;
+  --warn-soft: rgba(255, 149, 0, 0.14); /* 警告 soft 底（原先散落在各组件里 color-mix，收进来一份） */
+  --warn-strong: #8a5300; /* warn-soft 底上仍读得清的文字橙 */
   --danger: #ff3b30;
   --danger-soft: rgba(255, 59, 48, 0.12); /* 危险操作 soft 底 */
+  --danger-strong: #c1271d; /* danger-soft 底上的文字红 */
 
   /* ---------- 健康域色 ---------- */
   /* 三环：摄入 / 运动 / 均衡（继承自 Apple Fitness 三环） */
@@ -180,7 +190,11 @@
 
     --accent: #0a84ff;
     --accent-soft: rgba(10, 132, 255, 0.18);
+    --accent-strong: #4da3ff;
     --ok-strong: #30d158;
+    --warn-soft: rgba(255, 179, 64, 0.16);
+    --warn-strong: #ffb340;
+    --danger-strong: #ff6961;
 
     --shadow-card: none;
     --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.6);

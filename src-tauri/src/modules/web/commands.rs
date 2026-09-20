@@ -46,8 +46,11 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
-/// SSRF 防护：仅 http/https，且目标（含域名解析结果）不得为私网/环回地址
-fn validate_url(raw: &str) -> Result<String> {
+/// SSRF 防护：仅 http/https，且目标（含域名解析结果）不得为私网/环回地址。
+///
+/// `pub(crate)`：教务救援面的公网请求也走这一关。那条路允许模型指定任意地址，
+/// 但绝不允许它摸到本机与内网的任何服务 —— 这是「任意 URL」这个能力唯一不能让步的边界。
+pub(crate) fn validate_url(raw: &str) -> Result<String> {
     let u = url::Url::parse(raw).map_err(|_| ReinError::Message(format!("URL 无效：{raw}")))?;
     let scheme = u.scheme();
     if scheme != "http" && scheme != "https" {

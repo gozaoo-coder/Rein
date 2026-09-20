@@ -256,6 +256,15 @@ pub fn run() {
             modules::campus::commands::campus_grab_resume_all,
             modules::campus::commands::campus_grab_settings_get,
             modules::campus::commands::campus_grab_settings_set,
+            // campus（抢课计划：提前写下「想抢什么」，引擎到点自己解析 + 开抢）
+            modules::campus::commands::campus_grab_intent_add,
+            modules::campus::commands::campus_grab_intent_action,
+            modules::campus::commands::campus_grab_intent_preview,
+            // campus（救援面：AI 的最后补救 —— 现场快照 / 带会话的任意请求 / 导出可重放脚本）
+            modules::campus::commands::campus_rescue_state,
+            modules::campus::commands::campus_http,
+            modules::campus::commands::campus_rescue_note,
+            modules::campus::commands::campus_curl_export,
             // update（在线更新：多源清单 + 清单/安装包双验签 + 断点续传 + 平台安装）
             modules::update::commands::update_status,
             modules::update::commands::update_settings_set,

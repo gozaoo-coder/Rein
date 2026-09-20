@@ -1,0 +1,635 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { Info, ListPlus, RefreshCw, Search, Sparkles, Trash2, Wand2 } from 'lucide-vue-next'
+
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import { useToast } from '@/composables/useToast'
+import { grabStatusMeta, idOf, useCourseSelectStore } from '@/stores/courseSelect'
+import type { GrabIntent, GrabMatch, GrabPreview } from '@/types'
+
+/**
+ * 抢课计划 —— 「提前输入，到点自动抢」的入口。
+ *
+ * 它回答的问题是**「我会抢到哪些课」**，而不是「怎么抢」：
+ *
+ * 1. 用户写的是一句**人的说法**（「高数 张」「体育」「000031」），
+ *    不是教学班编号 —— 后者在窗口开放前根本拿不到，而且随时会变。
+ * 2. 引擎在能看见名单时把它解析成具体的教学班（`grab.rs::resolve_intent`），
+ *    命中的班按「有空位的优先」排成志愿序，**只中一个**（同一门课的多个班是备选）。
+ * 3. 解析结果就摆在这里给人确认：哪几个班、谁是第一志愿、谁满员。
+ *    窗户开放前看到的就是它 —— 用户不需要守屏幕，关掉 App 也照样抢。
+ *
+ * 「预览」按钮不是装饰：它拿的是教务**此刻**的名单（与解析共用同一份缓存与同一个匹配器），
+ * 所以预览里看到的顺序就是解析后排出来的顺序。
+ */
+const store = useCourseSelectStore()
+const toast = useToast()
+
+const query = ref('')
+/** true = 每门课各抢一个班；false = 所有命中合成一组，只中一个 */
+const spread = ref(false)
+
+const preview = ref<GrabPreview | null>(null)
+const previewing = ref(false)
+const previewError = ref('')
+
+/* ---------------- 输入预览 ---------------- */
+
+async function onPreview(): Promise<void> {
+  const q = query.value.trim()
+  if (!q) return
+  previewing.value = true
+  previewError.value = ''
+  try {
+    preview.value = await store.previewMatches(q, store.activeTurn ? idOf(store.activeTurn.id) : null)
+  } catch (e) {
+    preview.value = null
+    previewError.value = e instanceof Error ? e.message : '预览失败'
+  } finally {
+    previewing.value = false
+  }
+}
+
+/** 输入变了就把上一次的预览作废：留着它只会让人以为「这就是这次的结果」 */
+function onInput(): void {
+  preview.value = null
+  previewError.value = ''
+}
+
+async function onAdd(): Promise<void> {
+  const q = query.value.trim()
+  if (!q) return
+  // **先清空再提交**：提交要等一个来回，回来再清的话，「按了却没反应」会持续几百毫秒 ——
+  // 而这段时间里用户很可能已经开始敲下一门课了，那半句会被清空悄悄吃掉。
+  // 失败时把原文放回去，不让他白打一遍。
+  query.value = ''
+  preview.value = null
+  try {
+    await store.addIntent({
+      query: q,
+      turnId: store.activeTurn ? idOf(store.activeTurn.id) : null,
+      turnName: store.activeTurn?.name ?? null,
+      spread: spread.value,
+    })
+    toast.toast('已加入计划，引擎会自动解析成志愿任务')
+  } catch (e) {
+    query.value = q
+    toast.toast(e instanceof Error ? e.message : '加入计划失败')
+  }
+}
+
+/* ---------------- 计划列表 ---------------- */
+
+const intents = computed(() => store.intents)
+
+/** 计划派出去的任务现在到哪一步了 —— 这是「抢到没有」的答案 */
+function liveLabel(i: GrabIntent): string {
+  const tasks = store.intentTasks(i)
+  if (!tasks.length) return ''
+  if (tasks.some((t) => t.status === 'success')) return '已抢到'
+  const alive = tasks.filter((t) => t.status === 'waiting' || t.status === 'running')
+  if (alive.length) {
+    const lead = alive.find((t) => !t.heldBy) ?? alive[0]
+    return lead ? grabStatusMeta(lead).label : '抢课中'
+  }
+  if (tasks.every((t) => t.status === 'cancelled')) return '已取消'
+  return '已结束'
+}
+
+/**
+ * 状态徽标：**解析状态优先，解析完才看任务进展**。
+ *
+ * 顺序不能反：重新解析时状态会回到「等解析」，而它上一次派出去的任务还挂在那儿
+ * （可能是「已抢到」）—— 先看任务的话，界面上会显示着「已抢到」而引擎正在重新排志愿，
+ * 那是在骗人。
+ */
+function chipOf(i: GrabIntent): { label: string; tone: string } {
+  if (i.status === 'pending') return { label: '等解析', tone: 'run' }
+  if (i.status === 'empty') return { label: '没匹配到', tone: 'bad' }
+  const live = liveLabel(i)
+  if (live) return { label: live, tone: live === '已抢到' ? 'ok' : live === '已结束' ? 'idle' : 'run' }
+  const n = (i.groupKeys ?? []).length
+  // 排过志愿意味着它派出过任务；任务被清掉之后不能还挂着蓝色的「已排好志愿」——
+  // 那会让一条已经出局的计划看起来还在排队（这条链路上最容易骗到自己的地方）
+  if (n && !store.intentTasks(i).length) return { label: '任务已清理', tone: 'idle' }
+  return { label: n > 1 ? `已排 ${n} 组` : '已排好志愿', tone: 'run' }
+}
+
+function targetOf(i: GrabIntent): string {
+  return i.turnName?.trim() || '教务当前批次'
+}
+
+function seat(m: GrabMatch): string {
+  const a = m.stdCount
+  const b = m.limitCount
+  if (a == null && b == null) return ''
+  if (a == null || b == null) return `${a ?? '?'} / ${b ?? '?'}`
+  const left = b - a
+  // 满员不写「余 0」：那一行已经有「已满」徽标了，同一件事说两遍只是噪音
+  return left > 0 ? `${a} / ${b} · 余 ${left}` : `${a} / ${b}`
+}
+
+function full(m: GrabMatch): boolean {
+  return m.limitCount != null && m.stdCount != null && m.stdCount >= m.limitCount
+}
+
+/** 命中字段 → 中文名。用户有权知道「为什么这条匹配上了」。 */
+const FIELD_LABEL: Record<string, string> = {
+  course: '课程名',
+  code: '代码',
+  teacher: '教师',
+  teacherExact: '教师精确',
+  teacherNear: '教师近似',
+  place: '时间地点',
+}
+
+function fieldLabel(f: string): string {
+  return FIELD_LABEL[f] ?? f
+}
+
+/** 这批候选里有没有「打全了老师名字」的 —— 有就说明计划只抢那几位老师的班 */
+function hasExactTeacher(list: GrabMatch[]): boolean {
+  return list.some((m) => (m.fields ?? []).includes('teacherExact'))
+}
+
+/** 有没有靠「可能打错了」才命中的 —— 这种必须提醒用户核对，因为那是猜的 */
+function hasNearTeacher(list: GrabMatch[]): boolean {
+  return list.some((m) => (m.fields ?? []).includes('teacherNear'))
+}
+
+function matchTitle(m: GrabMatch): string {
+  return m.courseName?.trim() || `教学班 ${idOf(m.lessonId)}`
+}
+
+async function onRemove(i: GrabIntent): Promise<void> {
+  try {
+    await store.intentAction(i.id, 'remove')
+    toast.toast('已移除计划（它派出去的任务也一并取消）')
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : '移除失败')
+  }
+}
+
+async function onReparse(i: GrabIntent): Promise<void> {
+  try {
+    await store.intentAction(i.id, 'now')
+    toast.toast('正在重新解析…')
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : '重新解析失败')
+  }
+}
+</script>
+
+<template>
+  <section class="card plan">
+    <header class="head">
+      <span class="row title">
+        <Sparkles :size="15" class="spark" />
+        <b>抢课计划</b>
+      </span>
+      <span class="t-3 sub">写好就不用管了，窗口一开自动抢</span>
+    </header>
+
+    <!-- 与「教学班搜索」刻意不同名：同一屏上有两个输入框，
+         选择器和人眼都该一眼分得清谁是「写计划」、谁是「筛当前列表」 -->
+    <div class="entry">
+      <Search :size="15" />
+      <input
+        v-model="query"
+        type="search"
+        placeholder="课名 / 课程代码 / 教师，如：高数 张"
+        @input="onInput"
+        @keyup.enter="onPreview"
+      />
+      <button class="entry-go" :disabled="previewing || !query.trim()" @click="onPreview">
+        {{ previewing ? '…' : '预览' }}
+      </button>
+    </div>
+
+    <p class="hint">
+      <Info :size="13" />
+      <span>
+        <b>模糊匹配</b>：空格分词、每个词都要命中，词可以落在课名 / 代码 / 教师上。
+        「高数」也能命中「高等数学」—— 窗口前只来得及打两个字。
+      </span>
+    </p>
+
+    <!-- 预览：先看清会抢哪些班，再决定写不写进计划 -->
+    <div v-if="preview" class="preview">
+      <p class="p-head">
+        <template v-if="preview.total === 0">
+          教务还没公布这个批次的教学班 —— 计划可以先写好，引擎会等它出现。
+        </template>
+        <template v-else-if="!preview.matches.length">
+          教务有 {{ preview.total }} 个教学班，但没匹配到「{{ query.trim() }}」。换个词试试。
+        </template>
+        <template v-else>
+          匹配到 <b>{{ preview.matches.length }}</b> / {{ preview.total }} 个教学班，按这个顺序抢：
+          <template v-if="preview.matched > preview.matches.length">
+            （另有 {{ preview.matched - preview.matches.length }} 个匹配被「指定教师」滤掉）
+          </template>
+        </template>
+      </p>
+
+      <ul v-if="preview.matches.length" class="matches">
+        <li v-for="(m, i) in preview.matches" :key="idOf(m.lessonId)">
+          <span class="ord num">{{ i + 1 }}</span>
+          <span class="col flex-1">
+            <b>{{ matchTitle(m) }}</b>
+            <em class="t-3">
+              <span v-if="m.courseCode" class="num">{{ m.courseCode }}</span>
+              <span v-if="m.teacher">{{ m.teacher }}</span>
+              <span v-if="seat(m)" class="num">{{ seat(m) }}</span>
+            </em>
+          </span>
+          <!-- 「为什么匹配到它」与「能不能抢」是两件事，都摆出来：
+               满员的班照样值得排（等别人退），但也得让人看见它是怎么被选中的 -->
+          <span v-if="m.picked" class="chip ok">已选</span>
+          <span v-else-if="full(m)" class="chip bad">已满</span>
+          <span v-for="f in m.fields ?? []" :key="f" class="chip hit">{{ fieldLabel(f) }}</span>
+        </li>
+      </ul>
+
+      <!-- 教师名的两种强信号要说清楚：一个是「按你说的办」，另一个是「我猜的」 -->
+      <p v-if="hasExactTeacher(preview.matches)" class="note">
+        老师名字打全了，按<b>指定</b>处理：只抢这位老师的班，同一门课的其他老师不进候选。
+      </p>
+      <p v-else-if="hasNearTeacher(preview.matches)" class="note warn">
+        教师名没完全对上 —— 这是按「姓相同、最多差一个字」<b>猜</b>的，核对一下上面列出的老师姓名。
+      </p>
+    </div>
+    <p v-else-if="previewError" class="err">{{ previewError }}</p>
+
+    <SegmentedControl
+      :model-value="spread ? 'all' : 'one'"
+      :options="[
+        { value: 'one', label: '中一个就够' },
+        { value: 'all', label: '每门课都要' },
+      ]"
+      @update:model-value="spread = $event === 'all'"
+    />
+    <p class="hint">
+      <Info :size="13" />
+      <span v-if="!spread">
+        命中的教学班<b>互为备选</b>：按上面的顺序出手，只中一个。同一门课的多个班、
+        或「谁来教都行」的课，都选这个。
+      </span>
+      <span v-else>
+        按课程分组，<b>每门课各中一个班</b>（同一门课的多个班仍只中一个），课程之间互不影响。
+      </span>
+    </p>
+
+    <button class="primary" :disabled="store.grabBusy || !query.trim()" @click="onAdd">
+      <ListPlus :size="16" />
+      加入计划
+    </button>
+
+    <p class="hint">
+      <Info :size="13" />
+      <span>
+        写完就可以关掉<b>页面</b>：引擎每分钟自己去看一次教务的名单，能查到时把计划解析成
+        <b>志愿任务</b>，到点开抢 —— 全程不需要你再操作。
+        只有一条前提要记住：<b>引擎跑在 App 进程里，App 被划掉或清理后就不会再出手</b>。
+      </span>
+    </p>
+
+    <!-- 已排的计划 -->
+    <ul v-if="intents.length" class="plans">
+      <li v-for="i in intents" :key="i.id" class="plan-row">
+        <div class="row line1">
+          <b class="q">{{ i.query }}</b>
+          <span class="chip" :class="chipOf(i).tone">{{ chipOf(i).label }}</span>
+          <button class="op" title="重新解析" aria-label="重新解析" @click="onReparse(i)">
+            <RefreshCw :size="14" />
+          </button>
+          <button class="op" title="移除计划" aria-label="移除计划" @click="onRemove(i)">
+            <Trash2 :size="14" />
+          </button>
+        </div>
+        <p class="meta t-3">
+          <Wand2 :size="12" />
+          <span>{{ targetOf(i) }}</span>
+          <span>·</span>
+          <span>{{ i.spread ? '每门课都要' : '只中一个' }}</span>
+          <span v-if="i.lastMessage">· {{ i.lastMessage }}</span>
+        </p>
+
+        <!-- 教师名是猜的就得说出来：计划会照着它去抢，用户得有机会纠正 -->
+        <p v-if="hasNearTeacher(i.candidates ?? [])" class="note warn">
+          教师名可能打错了：按「姓相同、最多差一个字」猜的，核对下面列出的老师姓名。
+        </p>
+
+        <!-- 会抢哪些班：这就是「提前确认」的答案 -->
+        <ul v-if="i.candidates?.length" class="matches tight">
+          <li v-for="(m, k) in i.candidates" :key="idOf(m.lessonId)">
+            <span class="ord num">{{ k + 1 }}</span>
+            <span class="col flex-1">
+              <b>{{ matchTitle(m) }}</b>
+              <em class="t-3">
+                <span v-if="m.teacher">{{ m.teacher }}</span>
+                <span v-if="seat(m)" class="num">{{ seat(m) }}</span>
+              </em>
+            </span>
+            <span v-if="m.picked" class="chip ok">已选</span>
+            <span v-else-if="full(m)" class="chip bad">已满</span>
+          </li>
+        </ul>
+      </li>
+    </ul>
+  </section>
+</template>
+
+<style scoped>
+.card {
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.title {
+  gap: 6px;
+  font-size: var(--fs-callout);
+  color: var(--text-1);
+}
+
+.spark {
+  color: var(--accent);
+}
+
+.sub {
+  font-size: var(--fs-micro);
+  min-width: 0;
+}
+
+/* 输入行与「教学班搜索」同一套视觉语言，但类名不重（同屏两个输入框，选择器要分得清）。
+   `min-height: 44px` + 按钮纵向拉伸：手机在这一行上点的是「预览」，
+   一个 21px 高的文字按钮在拇指下是按不准的。 */
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 2px 8px 2px 12px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+.entry input {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-1);
+  background: none;
+}
+
+.entry-go {
+  flex: none;
+  align-self: stretch;
+  padding: 0 10px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
+.entry-go:disabled {
+  opacity: 0.5;
+}
+
+.hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.5;
+  margin: 6px 0;
+}
+
+.hint svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.preview {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-m);
+  background: var(--accent-soft);
+}
+
+.p-head {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.err {
+  font-size: var(--fs-micro);
+  color: var(--warn-strong);
+  line-height: 1.5;
+  margin: 8px 0;
+}
+
+/* 教师命中的两种解释：指定（按你说的办）/ 近似（我猜的）。
+   猜的那条要更显眼 —— 它会照着去抢，用户得有机会纠正。 */
+.note {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 6px 0 0;
+}
+
+.note.warn {
+  color: var(--warn-strong);
+}
+
+.matches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.matches li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.matches .col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.matches b {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.matches em {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  font-style: normal;
+  font-size: var(--fs-micro);
+}
+
+.ord {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--accent-strong);
+  background: var(--surface);
+  border-radius: var(--radius-full);
+  padding: 1px 0;
+}
+
+.matches.tight {
+  margin-top: 6px;
+}
+
+.chip {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.chip.ok {
+  color: var(--ok-strong);
+  background: var(--ok-soft);
+}
+
+.chip.bad {
+  color: var(--danger-strong);
+  background: var(--danger-soft);
+}
+
+.chip.run {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.chip.idle {
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+.chip.hit {
+  color: var(--text-2);
+  background: var(--surface);
+}
+
+.primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 12px;
+  border-radius: var(--radius-m);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-callout);
+  font-weight: 700;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.primary:active {
+  transform: scale(0.985);
+}
+
+.primary:disabled {
+  opacity: 0.45;
+}
+
+.plans {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 12px 0 0;
+  border-top: 0.5px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plan-row .line1 {
+  gap: 6px;
+}
+
+.q {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.op {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--text-2);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* 命中区撑到 44×44（视觉尺寸不动）—— 手机上是拇指在点。
+   横向只外扩 3px：这两个按钮只隔 6px，扩太多会让「移除计划」压住「重新解析」。 */
+.op::after {
+  content: '';
+  position: absolute;
+  inset: -8px -3px;
+}
+
+.op:active {
+  transform: scale(0.9);
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  margin-top: 3px;
+}
+
+.meta svg {
+  flex: none;
+}
+</style>

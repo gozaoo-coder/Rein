@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   AlertTriangle,
   CalendarClock,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-vue-next'
 
 import GrabPanel from '@/components/campus/GrabPanel.vue'
+import GrabPlan from '@/components/campus/GrabPlan.vue'
 import GrabSettingsSheet from '@/components/campus/GrabSettingsSheet.vue'
 import GrabSheet from '@/components/campus/GrabSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -72,6 +73,44 @@ const skewWarning = computed(() => {
     ? `教务服务器比你本机快 ${s} 秒，抢课时以服务器时间为准`
     : `教务服务器比你本机慢 ${-s} 秒，抢课时以服务器时间为准`
 })
+
+/* ---------------- 教务服务器时间 ----------------
+ * 它**必须每秒走**。之前这里显示的是最近一次采样的字符串（几十秒才更新一次），
+ * 而学生会在 09:59:40 拿它对表 —— 一个不走的钟比没有钟更糟：它看着像准的。
+ * 偏差是缓变量，采到一次就能推到当下，所以这里只在采样时刻上做线性推进。
+ */
+const serverClock = ref('')
+let clockAt = 0
+let clockText = ''
+
+watch(
+  () => store.serverTime,
+  (t) => {
+    if (!t) return
+    clockText = t
+    clockAt = Date.now()
+    serverClock.value = t
+  },
+  { immediate: true },
+)
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+function tickClock(): void {
+  if (!clockAt) {
+    serverClock.value = clockText || '—'
+    return
+  }
+  const base = new Date(clockText.replace(' ', 'T'))
+  if (Number.isNaN(base.getTime())) {
+    serverClock.value = clockText
+    return
+  }
+  const wall = new Date(base.getTime() + (Date.now() - clockAt))
+  serverClock.value =
+    `${wall.getFullYear()}-${pad2(wall.getMonth() + 1)}-${pad2(wall.getDate())} ` +
+    `${pad2(wall.getHours())}:${pad2(wall.getMinutes())}:${pad2(wall.getSeconds())}`
+}
 
 function lessonName(l: CourseSelectLesson): string {
   return l.course?.nameZh || l.course?.nameEn || '（教务未给课程名）'
@@ -229,6 +268,8 @@ const TICK_MS = 15_000
 
 const autoAt = ref<Date | null>(null)
 let ticker: number | null = null
+/** 服务器时钟自己的秒针（与自动刷新那条 15 秒的节拍分开） */
+let clockTicker: number | null = null
 let lastStatusAt = 0
 let lastLessonsAt = 0
 
@@ -339,12 +380,15 @@ onMounted(async () => {
   await store.attachGrab()
 
   ticker = window.setInterval(tick, TICK_MS)
+  clockTicker = window.setInterval(tickClock, 1000)
+  tickClock()
   document.addEventListener('visibilitychange', onVisible)
   window.addEventListener('focus', onFocus)
 })
 
 onBeforeUnmount(() => {
   if (ticker != null) window.clearInterval(ticker)
+  if (clockTicker != null) window.clearInterval(clockTicker)
   document.removeEventListener('visibilitychange', onVisible)
   window.removeEventListener('focus', onFocus)
   exitSelect()
@@ -398,7 +442,7 @@ onBeforeUnmount(() => {
         <div class="row">
           <CalendarClock :size="16" />
           <span class="k">教务服务器时间</span>
-          <span class="v num">{{ store.serverTime || '—' }}</span>
+          <span class="v num">{{ serverClock || '—' }}</span>
         </div>
         <div v-if="status?.studentCode" class="row">
           <CircleCheck :size="16" class="ok" />
@@ -418,6 +462,10 @@ onBeforeUnmount(() => {
 
       <!-- 抢课任务单：全局的，批次列表与教学班列表下都看得到 -->
       <GrabPanel />
+
+      <!-- 抢课计划：提前输入「我想抢什么」，引擎到点自己解析 + 开抢。
+           摆在批次列表之上 —— 窗口没开时这里就是他唯一能做的事 -->
+      <GrabPlan />
 
       <!-- 批次列表 -->
       <template v-if="!store.activeTurn">
@@ -653,7 +701,7 @@ onBeforeUnmount(() => {
 }
 
 .ok {
-  color: var(--ok);
+  color: var(--ok-strong);
 }
 
 .num {
@@ -665,7 +713,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   font-size: var(--fs-micro);
-  color: var(--warn);
+  color: var(--warn-strong);
   line-height: 1.4;
 }
 
@@ -697,7 +745,7 @@ onBeforeUnmount(() => {
 
 .tag.open {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .line {
@@ -710,7 +758,7 @@ onBeforeUnmount(() => {
   margin: 8px 0 0;
   padding-left: 18px;
   font-size: var(--fs-micro);
-  color: var(--warn);
+  color: var(--warn-strong);
   line-height: 1.5;
 }
 
@@ -756,7 +804,7 @@ onBeforeUnmount(() => {
 }
 
 .cta.ghost {
-  color: var(--accent);
+  color: var(--accent-strong);
   background: var(--accent-soft);
 }
 
@@ -765,17 +813,21 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-height: 40px;
   font-size: var(--fs-caption);
   font-weight: 600;
-  color: var(--accent);
-  padding: 2px 0 10px;
+  color: var(--accent-strong);
+  padding: 2px 0;
 }
 
 .search {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 10px;
+  /* 44px 是手机上的下限：这一行里点的是「查询」，而它是 21px 高的文字按钮 ——
+     行高撑起来、按钮纵向拉伸之后才有像个样的命中区 */
+  min-height: 44px;
+  padding: 2px 8px 2px 12px;
   border-radius: var(--radius-m);
   background: var(--surface);
   box-shadow: var(--shadow-card);
@@ -793,10 +845,11 @@ onBeforeUnmount(() => {
 
 .go {
   flex: none;
+  align-self: stretch;
   font-size: var(--fs-caption);
   font-weight: 600;
-  color: var(--accent);
-  padding: 2px 8px;
+  color: var(--accent-strong);
+  padding: 0 10px;
 }
 
 .go:disabled {
@@ -805,7 +858,7 @@ onBeforeUnmount(() => {
 
 .progress {
   font-size: var(--fs-micro);
-  color: var(--accent);
+  color: var(--accent-strong);
   margin-bottom: 8px;
 }
 
@@ -861,32 +914,32 @@ onBeforeUnmount(() => {
 }
 
 .chip.ok {
-  color: var(--ok);
+  color: var(--ok-strong);
   background: var(--ok-soft);
 }
 
 .chip.bad {
-  color: var(--danger);
+  color: var(--danger-strong);
   background: var(--danger-soft);
 }
 
 .chip.grab {
-  color: var(--accent);
+  color: var(--accent-strong);
   background: var(--accent-soft);
 }
 
 .chip.grab.ok {
-  color: var(--ok);
+  color: var(--ok-strong);
   background: var(--ok-soft);
 }
 
 .chip.grab.warn {
-  color: var(--warn);
+  color: var(--warn-strong);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 
 .chip.grab.bad {
-  color: var(--danger);
+  color: var(--danger-strong);
   background: var(--danger-soft);
 }
 
@@ -908,6 +961,7 @@ onBeforeUnmount(() => {
 }
 
 .pick {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
@@ -919,6 +973,14 @@ onBeforeUnmount(() => {
   font-size: var(--fs-caption);
   font-weight: 700;
   transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* 32px 高的主按钮在拇指下太窄：视觉不动，命中区纵向撑到 44、横向各让 4px
+   （它旁边是整行的 .l-main，4px 不会抢走它的点击） */
+.pick::after {
+  content: '';
+  position: absolute;
+  inset: -6px -4px;
 }
 
 .pick:active {
@@ -943,6 +1005,7 @@ onBeforeUnmount(() => {
 }
 
 .mini {
+  position: relative;
   flex: none;
   padding: 6px 13px;
   border-radius: var(--radius-full);
@@ -953,9 +1016,16 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+/* 29px → 45px 的命中区；横向只外扩 2px，因为它和隔壁那个只隔 8px */
+.mini::after {
+  content: '';
+  position: absolute;
+  inset: -8px -2px;
+}
+
 .mini.on {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .mini.primary-mini {
@@ -1000,7 +1070,7 @@ onBeforeUnmount(() => {
 }
 
 .l-meta .ord {
-  color: var(--accent);
+  color: var(--accent-strong);
   font-weight: 700;
 }
 
@@ -1050,7 +1120,7 @@ onBeforeUnmount(() => {
   padding: 1px 7px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .flex-1 {

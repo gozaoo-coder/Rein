@@ -9,7 +9,10 @@
 
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core'
 
+import { isTauri } from '@/services/transport'
+
 import { contextTools } from './misc'
+import { campusTools } from './campus'
 import { dietTools } from './diet'
 import { exerciseTools } from './exercise'
 import { imageTools } from './image'
@@ -49,6 +52,7 @@ export const APP_TOOLS: AppTool[] = [
   ...voiceTools,
   ...webTools,
   ...imageTools,
+  ...campusTools,
 ]
 
 const BY_NAME = new Map(APP_TOOLS.map((t) => [t.name, t]))
@@ -80,4 +84,23 @@ function toAgentTool(t: AppTool): AgentTool {
 export function buildAppAgentTools(onlyNames?: string[]): AgentTool[] {
   const tools = onlyNames ? APP_TOOLS.filter((t) => onlyNames.includes(t.name)) : APP_TOOLS
   return tools.map(toAgentTool)
+}
+
+/**
+ * 浏览器直连（`npm run dev`，后端是内存 mock）时把工具直调暴露到 `window.__REIN_TOOL__`，
+ * 供 e2e 断言「工具 → service → 命令」这条链。
+ *
+ * 为什么需要它：模型不在环里 —— 无头浏览器里没有真模型可调，而这条链上真正会坏的
+ * 是参数形状与命令名，不是模型的措辞。与 `window.__REIN_MOCK_*` 那批钩子同一套路，
+ * 且与 `transport.isTauri` 同一判据：真机上（桌面 / Android）永远不存在这个钩子。
+ */
+if (!isTauri) {
+  ;(window as unknown as { __REIN_TOOL__?: unknown }).__REIN_TOOL__ = async (
+    name: string,
+    args?: unknown,
+  ): Promise<unknown> => {
+    const t = findAppTool(name)
+    if (!t) throw new Error(`没有这个工具：${name}`)
+    return t.execute((args ?? {}) as never)
+  }
 }

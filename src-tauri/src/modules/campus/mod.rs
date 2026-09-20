@@ -8,6 +8,8 @@
 //! - [`course_select`] —— 选课/抢课子系统（`/course-selection-api`）客户端，鉴权走门户发的 SSO 令牌。
 //! - [`models`] —— 远端 JSON 映射 + 本地落库形状 + IPC 契约。
 //! - [`grab`] —— **自动抢课引擎**：后台线程按服务器时钟开火、按错误分级重试，任务落库可重启续跑。
+//! - [`rescue`] —— **救援面**：把一次任意请求渲染成可重放的 curl、写审计、导出脱机脚本。
+//!   引擎管「一切照常」，它管「不照常」——教务改接口、会话被踢、批次规则变了的时候。
 //! - [`commands`] —— Tauri 命令 + SQL，以及**周次 → 公历日期**这条全链路唯一的换算。
 //!
 //! 课表与时间线的关系：`campus_sessions` 是真源，`todos` 里 `course_session_id` 非空的行
@@ -19,5 +21,7 @@ pub mod course_select;
 pub mod grab;
 pub mod guet;
 pub mod http;
+pub mod matcher;
 pub mod models;
 pub mod provider;
+pub mod rescue;

@@ -218,13 +218,22 @@ const rateTone = computed(() => (perSec.value >= 20 ? 'bad' : perSec.value >= 5 
 const rateText = computed(() =>
   perSec.value < 10 ? perSec.value.toFixed(1) : String(Math.round(perSec.value)),
 )
+/**
+ * 速率档位的**文字**。
+ *
+ * 原先这里只有颜色（绿/橙/红），而这是整个抽屉里唯一在说「你现在的节奏有多冒险」的地方 ——
+ * 色觉障碍、或者只是没记住颜色含义的人，看到的就只是一个数字。
+ */
+const rateWord = computed(() =>
+  rateTone.value === 'bad' ? '过密' : rateTone.value === 'warn' ? '偏快' : '稳妥',
+)
 </script>
 
 <template>
   <div class="wrap">
     <header class="top">
       <b>抢课循环</b>
-      <span class="rate" :class="rateTone">≈ {{ rateText }} 次/秒</span>
+      <span class="rate" :class="rateTone">≈ {{ rateText }} 次/秒 · {{ rateWord }}</span>
     </header>
     <p class="sub t-3">
       每一段的长短都按<b>真实比例</b>画。调下面的数字，这里会跟着变 —— 调整中的那一段会被点亮。
@@ -318,17 +327,17 @@ const rateText = computed(() =>
 }
 
 .rate.ok {
-  color: var(--ok);
+  color: var(--ok-strong);
   background: var(--ok-soft);
 }
 
 .rate.warn {
-  color: var(--warn);
+  color: var(--warn-strong);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 
 .rate.bad {
-  color: var(--danger);
+  color: var(--danger-strong);
   background: var(--danger-soft);
 }
 
