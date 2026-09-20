@@ -303,6 +303,11 @@ export interface CourseSelectStatus {
   turns: CourseSelectTurn[]
   /** 官方选课页地址（含令牌），出问题时进去核对最省事 */
   entryUrl?: string | null
+  /**
+   * 当前账号连的是**正式**教务（bkjw）而不是测试域（bkjwtest）。
+   * 测试域的风控比正式域松，压出来的速率不能当作正式域的结论。
+   */
+  production?: boolean
 }
 
 /** 一次选课提交的受理回执 */

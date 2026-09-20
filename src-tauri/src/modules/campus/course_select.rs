@@ -222,6 +222,11 @@ impl CourseSelectClient {
         format!("{}/course-selection/?token={}", self.host, self.token)
     }
 
+    /// 这套会话打的是哪个域（正式 / 测试靠它区分，见 `provider::is_production_base`）。
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
     pub fn token(&self) -> &str {
         &self.token
     }

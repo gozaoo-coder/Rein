@@ -143,37 +143,70 @@ pub struct SchoolSystemInfo {
 
 /// 桂林电子科技大学 · 本科生教学信息平台学生端。
 ///
-/// 实测（2026-09，bkjwtest）：
+/// 实测（2026-09，bkjwtest / bkjw 同一套系统）：
 /// - 门户入口链路是 `v.guet.edu.cn` → `pcportal.guet.edu.cn/sopplus`，**但直连
 ///   `/student/ldap/login` 用同一套学号密码即可登录**，无需走门户——这正是免浏览器自动化的前提。
 /// - 密码区分大小写且**不做任何 trim**：实测用户口令结尾的句点也是密码的一部分。
 ///   （口令本身不写进源码 —— 联调需要时用 `REIN_GUET_USER` / `REIN_GUET_PASS` 环境变量，
 ///   见 `guet.rs` 与 `course_select.rs` 里的 `#[ignore]` 实测用例。）
-const GUET: SchoolSystemSpec = SchoolSystemSpec {
-    kind: "guet-supwisdom-eams5",
-    name: "桂林电子科技大学 · 本科生教学信息平台",
-    short_name: "桂林电子科技大学",
-    vendor: "树维 Supwisdom EAMS5 · 学生端",
-    default_base_url: "https://bkjwtest.guet.edu.cn",
-    login: LoginStrategy::SupwisdomPortalRsa {
-        public_key: "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCFY5N+9UX+0BF+xz1svFguI4CIDvmQTfINkOZ1HOO3ltBNHGQTUirUPQTyEph/+q/l8b16YYw3I2fyTH6y15s3tHf5jMei+R/20jFRGo5udwVJUwq/RozKQIRzCtPYkXG4YWBnHKhXalZ5K2fhd5i/QtB016nVugH/7eiBDWbKVwIDAQAB",
-        salt_path: "/student/ldap/login-salt",
-        login_path: "/student/ldap/login",
-        captcha_path: "/student/ldap/login-captcha",
-        probe_path: "/student/home",
-    },
-    endpoints: EndpointSpec {
-        course_table_page: "/student/for-std/course-table",
-        course_table_print: "/student/for-std/course-table/semester/{sem}/print-data",
-        program_info: "/student/for-std/program/program-info-json",
-    },
-    term: TermSpec {
-        biz_type_id: 2,
-        week_start_on_sunday: false,
-    },
-};
+///
+/// **同一套系统有两个域名**（本科教务的正式与测试），除了域名之外一字不差：
+/// - `bkjw.guet.edu.cn` —— **正式**，真正的选课就发生在这里，默认选它；
+/// - `bkjwtest.guet.edu.cn` —— 测试，联调与演练用（风控更松，别拿它当生产结论）。
+///
+/// 所以这里声明**两份 spec 共享同一套握手与接口表**，只差 `kind` / 名字 / 域名 ——
+/// 避免出现「只在测试域练过拳」而正式域第一次打就露馅。
+macro_rules! guet_spec {
+    ($kind:literal, $name:literal, $vendor:literal, $base:literal) => {
+        SchoolSystemSpec {
+            kind: $kind,
+            name: $name,
+            short_name: "桂林电子科技大学",
+            vendor: $vendor,
+            default_base_url: $base,
+            login: LoginStrategy::SupwisdomPortalRsa {
+                public_key: "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCFY5N+9UX+0BF+xz1svFguI4CIDvmQTfINkOZ1HOO3ltBNHGQTUirUPQTyEph/+q/l8b16YYw3I2fyTH6y15s3tHf5jMei+R/20jFRGo5udwVJUwq/RozKQIRzCtPYkXG4YWBnHKhXalZ5K2fhd5i/QtB016nVugH/7eiBDWbKVwIDAQAB",
+                salt_path: "/student/ldap/login-salt",
+                login_path: "/student/ldap/login",
+                captcha_path: "/student/ldap/login-captcha",
+                probe_path: "/student/home",
+            },
+            endpoints: EndpointSpec {
+                course_table_page: "/student/for-std/course-table",
+                course_table_print: "/student/for-std/course-table/semester/{sem}/print-data",
+                program_info: "/student/for-std/program/program-info-json",
+            },
+            term: TermSpec {
+                biz_type_id: 2,
+                week_start_on_sunday: false,
+            },
+        }
+    };
+}
 
-const REGISTRY: &[SchoolSystemSpec] = &[GUET];
+const GUET_PROD: SchoolSystemSpec = guet_spec!(
+    "guet-supwisdom-eams5",
+    "桂林电子科技大学 · 本科生教学信息平台（正式）",
+    "树维 Supwisdom EAMS5 · 学生端 · bkjw.guet.edu.cn（正式选课在这里）",
+    "https://bkjw.guet.edu.cn"
+);
+
+/// 测试域。**排在正式后面**：默认选中第一项，而默认该是正式域。
+const GUET_TEST: SchoolSystemSpec = guet_spec!(
+    "guet-supwisdom-eams5-test",
+    "桂林电子科技大学 · 本科生教学信息平台（测试）",
+    "树维 Supwisdom EAMS5 · 学生端 · bkjwtest.guet.edu.cn（联调用，风控更松）",
+    "https://bkjwtest.guet.edu.cn"
+);
+
+const REGISTRY: &[SchoolSystemSpec] = &[GUET_PROD, GUET_TEST];
+
+/// 正式域判定：抢课节奏的默认值、以及「压测档」的告警都要看它 ——
+/// 测试域压出来的速率不能当作正式域的结论。
+pub fn is_production_base(base_url: &str) -> bool {
+    let b = base_url.trim().trim_end_matches('/').to_lowercase();
+    b == GUET_PROD.default_base_url || (b.starts_with("https://bkjw.guet.edu.cn") && !b.contains("bkjwtest"))
+}
 
 pub fn spec(kind: &str) -> Option<&'static SchoolSystemSpec> {
     REGISTRY.iter().find(|s| s.kind == kind)
@@ -201,7 +234,7 @@ mod tests {
 
     #[test]
     fn registry_lookup_roundtrip() {
-        assert_eq!(list_info().len(), 1);
+        assert_eq!(list_info().len(), 2, "本科教务的正式域与测试域都要在册");
         let guet = spec("guet-supwisdom-eams5").expect("桂电必须在册");
         assert!(spec("nope").is_none());
         assert_eq!(guet.term.biz_type_id, 2);
@@ -211,9 +244,37 @@ mod tests {
         assert_eq!(list_info()[0].short_name, guet.short_name);
     }
 
+    /// 两个域是同一套系统：**除域名与名字之外必须完全一致**。
+    ///
+    /// 这条断言防的是「改了一个域忘了另一个」—— 那种漂移只有到正式选课那天才会暴露，
+    /// 而那天没法重来。
+    #[test]
+    fn the_two_guet_domains_never_drift_apart() {
+        let prod = spec("guet-supwisdom-eams5").unwrap();
+        let test = spec("guet-supwisdom-eams5-test").unwrap();
+
+        assert_eq!(prod.default_base_url, "https://bkjw.guet.edu.cn", "默认必须是正式域");
+        assert_eq!(test.default_base_url, "https://bkjwtest.guet.edu.cn");
+        assert_eq!(list_info()[0].kind, "guet-supwisdom-eams5", "选择器第一项 = 默认 = 正式域");
+        assert_eq!(list_info()[1].kind, "guet-supwisdom-eams5-test");
+
+        assert_eq!(prod.term.biz_type_id, test.term.biz_type_id);
+        assert_eq!(prod.term.week_start_on_sunday, test.term.week_start_on_sunday);
+        assert_eq!(prod.login.id(), test.login.id());
+        assert_eq!(prod.login.public_key(), test.login.public_key());
+        assert_eq!(prod.endpoints.course_table_page, test.endpoints.course_table_page);
+        assert_eq!(prod.endpoints.program_info, test.endpoints.program_info);
+
+        // 两个域名都认得出来，且互不误判 —— 抢课节奏的默认值与压测告警都读它
+        assert!(is_production_base("https://bkjw.guet.edu.cn"));
+        assert!(is_production_base("https://bkjw.guet.edu.cn/"));
+        assert!(!is_production_base("https://bkjwtest.guet.edu.cn"));
+        assert!(!is_production_base("https://example.edu.cn"));
+    }
+
     #[test]
     fn endpoint_templates_expand() {
-        let e = GUET.endpoints;
+        let e = GUET_PROD.endpoints;
         assert_eq!(
             e.course_table_page_for(2),
             "/student/for-std/course-table?bizTypeId=2"

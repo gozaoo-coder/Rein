@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Info, RotateCcw } from 'lucide-vue-next'
+import { AlertTriangle, Info, RotateCcw } from 'lucide-vue-next'
 
 import GrabTimeline from '@/components/campus/GrabTimeline.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
@@ -23,6 +23,9 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const store = useCourseSelectStore()
+
+/** 连的是正式域时，实测数字的来处（bkjwtest）与靶子（bkjw）不是同一套风控，要说出来 */
+const production = computed(() => store.status?.production === true)
 const toast = useToast()
 
 const draft = ref<GrabSettings | null>(null)
@@ -163,6 +166,15 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
     <p class="lead t-2">
       这些数字是<b>概率上的取舍</b>：快一点更容易被教务风控拦下，慢一点更容易被别人抢走。
       默认值按「抢 1–4 门课」标定，不确定就别改。
+    </p>
+
+    <!-- 正式域 / 测试域必须说清：压测档那 12ms 是**在 bkjwtest 上**实测出来的数 -->
+    <p v-if="production" class="note warn">
+      <AlertTriangle :size="12" />
+      <span>
+        你连的是<b>正式教务</b>（bkjw）：下面这些实测数字来自测试域，正式域的风控策略未知。
+        保守档是默认值；「压测档」只在你清楚代价时用。
+      </span>
     </p>
 
     <!-- 时间轴放在最前面：先看懂循环长什么样，再谈调哪个数字 -->
@@ -325,6 +337,17 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
   font-size: var(--fs-caption);
   line-height: 1.55;
   margin-bottom: 14px;
+}
+
+/* 正式域提醒：和计划行里的「教师名可能打错了」同一种语气（amber，不是错误） */
+.note.warn {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--warn);
+  margin-bottom: 12px;
 }
 
 .block {

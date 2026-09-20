@@ -30,7 +30,15 @@ const DEGRADE_WINDOWS = 2
 const RECOVER_RATIO = 0.08
 const RECOVER_WINDOWS = 4
 
-/** 读本地档位；损坏 / 不可用一律回落 low（默认弱档：玻璃与动效是加强项，用户主动去开） */
+/**
+ * 读本地档位；损坏 / 不可用一律回落 **auto**。
+ *
+ * 为什么默认不是 low：渐进模糊、玻璃、页面进场动效都是**产品的一部分**，
+ * 默认关掉等于「装完就像坏了一样」—— 0.2.5 升到 0.2.7 后用户看到的正是
+ * 「渐进式模糊消失了」（全新安装没有本地档位 → 默认 low → 遮罩 v-if 掉）。
+ * 默认 auto 的语义是「先给最好的，实测扛不住再退」：判定见下面的帧采样，
+ * 连续两窗 30% 掉帧才降级、连续四窗干净再升回来。
+ */
 function loadMode(): PerfMode {
   try {
     const raw = localStorage.getItem(STORE_KEY)
@@ -38,7 +46,7 @@ function loadMode(): PerfMode {
   } catch {
     /* 本地存储不可用时用默认档 */
   }
-  return 'low'
+  return 'auto'
 }
 
 /** 用户档位：auto 按判定自动切换，high / low 手动钉死 */
