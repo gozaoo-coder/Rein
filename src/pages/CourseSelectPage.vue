@@ -17,6 +17,7 @@ import GrabPanel from '@/components/campus/GrabPanel.vue'
 import GrabPlan from '@/components/campus/GrabPlan.vue'
 import GrabSettingsSheet from '@/components/campus/GrabSettingsSheet.vue'
 import GrabSheet from '@/components/campus/GrabSheet.vue'
+import OpenCourseQuery from '@/components/campus/OpenCourseQuery.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -518,6 +519,11 @@ onBeforeUnmount(() => {
             {{ t.allowEnter ? '进入选课' : '尚未开放' }}
           </button>
         </section>
+
+        <!-- 全校开课查询：**不依赖批次** —— 窗口没开的时候，这里就是他能做的规划。
+             摆在批次列表之后而不是之前：批次开着时「进去选」才是主线，
+             开课查询是辅助；批次没开时它自然成了唯一可用的一块。 -->
+        <OpenCourseQuery />
       </template>
 
       <!-- 教学班列表 -->

@@ -20,6 +20,7 @@ use super::course_select::CourseSelectClient;
 use super::grab::{self, GrabHub};
 use super::guet::{self, GuetAdapter, TimetableSnapshot};
 use super::http::{CookieJar, HttpResponse, Session};
+use super::lesson_search::{self, LessonSearchClient};
 use super::matcher;
 use super::models::*;
 use super::provider::{self, SchoolSystemInfo, SchoolSystemSpec};
@@ -1454,6 +1455,16 @@ pub(crate) struct SelectContext {
     pub client: CourseSelectClient,
     pub student_id: i64,
     pub account_id: i64,
+    /// **第二个域上的客户端**（「抢课时两个域都发」用）。
+    ///
+    /// `None` = 只有账号自己那个域可用，原因见 `mirror_note`。
+    /// 这不是降级 —— 本科教务的两个域名**不是同一套系统**：
+    /// 实测 bkjw 的 `/student/**` 全部 404（连静态资源都没有），
+    /// 对它盲发选课请求只会拿到 404，既浪费一次出手机会，
+    /// 又会在结果面上留一条把人引向错误方向的「失败」。
+    pub mirror: Option<CourseSelectClient>,
+    /// 没有第二个域可发时的原因（可直接显示）。
+    pub mirror_note: String,
 }
 
 /// 取选课上下文。缓存命中则零网络；未命中才去门户换一张令牌。
@@ -1484,11 +1495,79 @@ pub(crate) fn select_context(db: &Mutex<Connection>, hub: &CampusHub) -> Result<
 
 /// 取上下文本身。抽出来是为了让上面那段「失败 → 自愈 → 重来一次」读起来像一句话。
 fn build_select_context(hub: &CampusHub, account: &AccountRow) -> Result<SelectContext> {
+    let client = select_client(hub, account)?;
+    let (mirror, mirror_note) = mirror_client(hub, account, &client);
     Ok(SelectContext {
-        client: select_client(hub, account)?,
+        client,
         student_id: select_student_id(account)?,
         account_id: account.id,
+        mirror,
+        mirror_note,
     })
+}
+
+/// 「抢课时两个域都发」里的**第二个域**。
+///
+/// 关键是**先探测再发**：两个域名不是同一套系统，对没有 EAMS5 的那个盲发只会 404。
+/// 探测结果缓存在 `CampusHub::dual_fire`（十分钟），因为引擎每 2 秒走一步，
+/// 而「这个域提不提供 EAMS5」是很少变的事实。
+///
+/// 只有探测到第二个域**确实提供 EAMS5** 时才建客户端：那说明它可能是同一套系统的
+/// 另一个部署，两边都发才是有意义的冗余。
+fn mirror_client(
+    hub: &CampusHub,
+    account: &AccountRow,
+    primary: &CourseSelectClient,
+) -> (Option<CourseSelectClient>, String) {
+    let plan = dual_fire_plan(hub, account);
+    let primary_base = provider::normalize_base(primary.host());
+
+    let Some(base) = plan
+        .targets
+        .iter()
+        .find(|b| **b != primary_base)
+        .cloned()
+    else {
+        return (None, plan.note);
+    };
+
+    // 换域换令牌：第二个域上的选课令牌要单独去它自己的门户换一张。
+    // 换不出来只说明这个域这条路不通 —— 不能因此挡住主域的抢课。
+    match CourseSelectClient::acquire(&base, CookieJar::from_json(account.cookies.as_deref())) {
+        Ok(c) => (Some(c), plan.note),
+        Err(e) => (
+            None,
+            format!("{base} 上的选课令牌没换出来（{e}），本次只在主域发送"),
+        ),
+    }
+}
+
+/// 取「两个域都发」的计划，命中缓存则零网络。
+fn dual_fire_plan(hub: &CampusHub, account: &AccountRow) -> lesson_search::DualFirePlan {
+    let now = Utc::now().timestamp_millis();
+    if let Ok(slot) = hub.dual_fire.lock() {
+        if let Some(c) = slot.as_ref() {
+            if c.account_id == account.id && now - c.at_ms < crate::state::DUAL_FIRE_TTL_MS {
+                return c.plan.clone();
+            }
+        }
+    }
+
+    // 缓存未命中：探测两个域（各两次网络请求）。**不持锁**。
+    let probes: Vec<SchoolDomainProbe> = provider::GUET_DOMAINS
+        .iter()
+        .map(|b| lesson_search::probe_domain(b))
+        .collect();
+    let plan = lesson_search::plan_dual_fire(&account.base_url, &probes);
+
+    if let Ok(mut slot) = hub.dual_fire.lock() {
+        *slot = Some(crate::state::DualFireCache {
+            account_id: account.id,
+            at_ms: now,
+            plan: plan.clone(),
+        });
+    }
+    plan
 }
 
 /// 取选课客户端。缓存命中则零网络；未命中才去门户换一张令牌。
@@ -1518,6 +1597,107 @@ fn select_student_id(account: &AccountRow) -> Result<i64> {
         .ok_or_else(|| ReinError::Message("缺少学生标识，请先同步一次课表".into()))
 }
 
+
+/* ───────────────────── 全校开课查询 · 两个域都检测 ───────────────────── */
+
+/// **两个域都检测**：分别探明每个域名上到底有什么。
+///
+/// 有意只打不需要登录的探测点（入口页 + EAMS5 静态资源）：
+/// 「另一个域是什么」这个问题不该要求用户先登录一遍才能问。
+/// 结果**按域名分别汇报**，不合并 —— 两个域不是同一套系统，
+/// 合并会把「这个域压根没有 EAMS5」伪装成「两个域都没这门课」。
+#[tauri::command]
+pub async fn campus_lesson_search_probe() -> Result<Vec<SchoolDomainProbe>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        provider::GUET_DOMAINS
+            .iter()
+            .map(|base| lesson_search::probe_domain(base))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| ReinError::Message(format!("域名探测失败：{e}")))
+}
+
+/// **全校开课查询**：先在两个域上找「开课查询」这条路，再用找得到的那个域查名单。
+///
+/// 与选课的关键区别：**不依赖选课批次**。批次没开的时候照样能查全校开了哪些课，
+/// 这正是「提前规划抢什么」的依据（先看清开课名单与时间地点，再去排志愿）。
+///
+/// 两个域都用不了时**不静默降级**：把两个域的探测结论一起返回，
+/// 让界面能说清「是哪个域 404、哪个域连不上」，而不是笼统报一句失败。
+#[tauri::command]
+pub async fn campus_lesson_search(
+    state: State<'_ , AppState>,
+    hub: State<'_, CampusHub>,
+    semester_id: i64,
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<LessonSearchOutcome> {
+    // 短锁读账号：探测与查询都是网络，绝不能持锁（见文件头那条铁律）。
+    let account = {
+        let conn = state.db.lock().unwrap();
+        require_account(&conn)?
+    };
+    let jar = CookieJar::from_json(account.cookies.as_deref());
+    let student_id = select_student_id(&account)?;
+    let spec = provider::spec(&account.system_kind)
+        .ok_or_else(|| ReinError::Message(format!("未知的学校系统：{}", account.system_kind)))?;
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<LessonSearchOutcome> {
+        // ① 两个域都探测（不依赖会话）
+        let domains: Vec<SchoolDomainProbe> = provider::GUET_DOMAINS
+            .iter()
+            .map(|base| lesson_search::probe_domain(base))
+            .collect();
+
+        // ② 优先用「账号当前登录的那个域」，其次用探测到有 EAMS5 的那个。
+        //    顺序有意义：账号的 Cookie 只在自己那个域上有效，
+        //    换域去查只会拿到 302（会话在别的域不存在）。
+        let account_base = provider::normalize_base(&account.base_url);
+        let mut candidates: Vec<String> = vec![account_base.clone()];
+        for d in &domains {
+            if d.eams_assets && d.base_url != account_base {
+                candidates.push(d.base_url.clone());
+            }
+        }
+
+        let q = LessonSearchQuery {
+            semester_id,
+            page,
+            page_size,
+        };
+        let mut last_err: Option<String> = None;
+        for base in candidates {
+            let mut session = Session::new(&base, jar.clone());
+            let mut client = LessonSearchClient::new(spec, &mut session);
+            // 页面能打开才继续；打不开（404/302）就换下一个候选域
+            if let Err(e) = client.open(&student_id.to_string()) {
+                last_err = Some(format!("{base}：{e}"));
+                continue;
+            }
+            let semesters = client.semesters().unwrap_or_default();
+            match client.search(&student_id.to_string(), &q) {
+                Ok(page) => {
+                    return Ok(LessonSearchOutcome {
+                        domains,
+                        used_base_url: Some(base),
+                        page,
+                        semesters,
+                    })
+                }
+                Err(e) => last_err = Some(format!("{base}：{e}")),
+            }
+        }
+
+        // 两个域都没成：把探测结论一并交回，让界面能说清是哪个域不行
+        Err(ReinError::Message(format!(
+            "两个域名都没有可用的开课查询：{}",
+            last_err.unwrap_or_else(|| "未探测到任何候选域名".into())
+        )))
+    })
+    .await
+    .map_err(|e| ReinError::Message(format!("开课查询任务失败：{e}")))?
+}
 /// 选课子系统状态：令牌就绪情况 + 服务器时间 + 学生档案 + 开放中的批次。
 ///
 /// **批次列表为空是正常状态**（大一新生还没轮到选课窗口时就是空的），不是错误 ——

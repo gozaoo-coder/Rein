@@ -2930,6 +2930,51 @@ function campusServerTime(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+/**
+ * 全校开课查询的演示数据。
+ *
+ * 与「选课批次里的教学班」刻意分开：开课查询是**全校开课名单**，
+ * 批次没开的时候照样有；批次里只放你这一轮能抢的班。
+ * 混用会让界面演示出「批次没开但能抢」这种不可能的状态。
+ */
+function campusLessonSearchHits() {
+  const mk = (
+    id: number,
+    code: string,
+    nameZh: string,
+    credits: number,
+    lessonName: string,
+    teacher: string,
+    when: string,
+  ) => ({
+    id,
+    course: { id: id * 10, code, nameZh, nameEn: null, credits },
+    nameZh: lessonName,
+    openDepartment: { nameZh: '计算机与信息安全学院' },
+    teacherAssignmentList: [{ nameZh: teacher }],
+    timeTableLayout: [],
+    scheduleText: when,
+    campus: { nameZh: '花江校区' },
+    courseType: { nameZh: '专业选修' },
+    examMode: { nameZh: '考查' },
+    teachLang: { nameZh: '中文' },
+    roomType: { nameZh: '普通教室' },
+    raw: { id, courseCode: code, courseName: nameZh },
+  })
+  return [
+    mk(9001, '000031', '高等数学A1', 5, '01班', '张伟', '周一 1-2节 花江A101；周三 3-4节 花江A101'),
+    mk(9002, '000031', '高等数学A1', 5, '02班', '张伟明', '周一 3-4节 花江A102；周三 1-2节 花江A102'),
+    mk(9003, '000031', '高等数学A1', 5, '03班', '李娜', '周二 1-2节 花江B201；周四 3-4节 花江B201'),
+    mk(9004, '000004', '大学体育1', 1, '羽毛球 01班', '王强', '周五 5-6节 体育馆'),
+    mk(9005, '000006', '大学体育3', 1, '羽毛球 01班', '王强', '周五 7-8节 体育馆'),
+    mk(9006, '000018', '数据结构', 4, '01班', '陈静', '周二 3-4节 花江C301；周四 1-2节 花江C301'),
+    mk(9007, '000018', '数据结构', 4, '02班', '陈静', '周二 5-6节 花江C302；周四 3-4节 花江C302'),
+    mk(9008, '000052', '线性代数', 3, '01班', '刘洋', '周三 5-6节 花江A203'),
+    mk(9009, '000077', '大学英语3', 3, '01班', 'Sarah', '周一 5-6节 花江D401；周五 1-2节 花江D401'),
+    mk(9010, '000077', '大学英语3', 3, '02班', '赵敏', '周一 7-8节 花江D402；周五 3-4节 花江D402'),
+  ]
+}
+
 function campusSelectTurns() {
   // e2e 钩子：置空批次列表，用来验证「选课窗口还没开放」的等待态 ——
   // 那才是大一新生的真实状态，而演示批次刻意是开放中的，两者都要能看。
@@ -6595,6 +6640,78 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     /* ---- 选课（演示批次是「开放中」，好让整套流程能在浏览器里走通） ---- */
 
+
+    /* ---------- 全校开课查询（两个域都检测） ---------- */
+
+    case 'campus_lesson_search_probe': {
+      // 与 Rust 的结论保持一致：bkjw 是另一套系统（/student/** 全 404），
+      // bkjwtest 才是这套 EAMS5。演示数据要如实反映，否则界面会骗人。
+      return delay([
+        {
+          baseUrl: 'https://bkjw.guet.edu.cn',
+          reachable: true,
+          lessonSearchRoute: false,
+          eamsAssets: false,
+          hint: '另一套系统（ASP.NET + ExtJS 桌面，登录走 CAS）',
+          pageStatus: 404,
+          assetStatus: 404,
+          detail: '开课查询入口 404、EAMS5 静态资源 404 —— 这个域上没有 EAMS5，另一套系统（ASP.NET + ExtJS 桌面，登录走 CAS）',
+        },
+        {
+          baseUrl: 'https://bkjwtest.guet.edu.cn',
+          reachable: true,
+          lessonSearchRoute: true,
+          eamsAssets: true,
+          hint: '树维 EAMS5（本应用打通的那一套）',
+          pageStatus: 302,
+          assetStatus: 200,
+          detail: '开课查询入口 302、EAMS5 静态资源 200 —— 这条路通',
+        },
+      ] as T)
+    }
+
+    case 'campus_lesson_search': {
+      if (!campusAccount) {
+        throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      }
+      const page = Number(args.page ?? 1)
+      const pageSize = Number(args.pageSize ?? 20)
+      const hits = campusLessonSearchHits()
+      const start = (page - 1) * pageSize
+      return delay({
+        domains: [
+          {
+            baseUrl: 'https://bkjw.guet.edu.cn',
+            reachable: true,
+            lessonSearchRoute: false,
+            eamsAssets: false,
+            hint: '另一套系统（ASP.NET + ExtJS 桌面，登录走 CAS）',
+            pageStatus: 404,
+            assetStatus: 404,
+            detail: '开课查询入口 404、EAMS5 静态资源 404 —— 这个域上没有 EAMS5',
+          },
+          {
+            baseUrl: 'https://bkjwtest.guet.edu.cn',
+            reachable: true,
+            lessonSearchRoute: true,
+            eamsAssets: true,
+            hint: '树维 EAMS5（本应用打通的那一套）',
+            pageStatus: 302,
+            assetStatus: 200,
+            detail: '开课查询入口 302、EAMS5 静态资源 200 —— 这条路通',
+          },
+        ],
+        usedBaseUrl: 'https://bkjwtest.guet.edu.cn',
+        page: {
+          hits: hits.slice(start, start + pageSize),
+          page,
+          pageSize,
+          total: hits.length,
+          rawKeys: ['rows', 'total'],
+        },
+        semesters: [campusSemester()],
+      } as T)
+    }
     case 'campus_course_select_status': {
       if (!campusAccount) {
         throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
@@ -6608,8 +6725,10 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         studentName: '演示同学',
         turns: campusSelectTurns(),
         entryUrl: `${campusAccount.baseUrl ?? 'https://bkjwtest.guet.edu.cn'}/course-selection/?token=demo`,
-        // 与 Rust 同一条判定：正式域（bkjw）才算 production，测试域不算
-        production: /^https:\/\/bkjw\.guet\.edu\.cn\/?$/i.test(String(campusAccount.baseUrl ?? '')),
+        // 与 Rust 的 is_production_base 同一条判定：**只有 bkjwtest 不算生产**。
+        // 判定「不是测试域」而不是「等于某个常量」—— 用户可能填反向代理域名，
+        // 那种同样不该被当成测试域。
+        production: !String(campusAccount.baseUrl ?? '').toLowerCase().includes('bkjwtest'),
       } as T)
     }
 
