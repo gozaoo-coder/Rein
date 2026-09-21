@@ -82,6 +82,56 @@ async function shot(name) {
   console.log(`      [截图] ${file}`)
 }
 
+/** 页头背后铺一张高频条纹：糊掉之后条纹并成灰，像素能量随之骤降。
+ *  放在 z-index 5——低于页头（30），高于页面内容，于是它正好落在模糊层的「背后」。 */
+const STRIPES = `(() => {
+  let el = document.getElementById('__e2e-stripes')
+  if (!el) {
+    el = document.createElement('div')
+    el.id = '__e2e-stripes'
+    el.style.cssText = [
+      'position:fixed', 'left:0', 'right:0', 'top:0', 'height:260px',
+      'z-index:5', 'pointer-events:none',
+      'background:repeating-linear-gradient(to right, #000 0 4px, #fff 4px 8px)',
+    ].join(';')
+    document.body.appendChild(el)
+  }
+  return true
+})()`
+
+/** 一段区域的「边缘能量」= 相邻像素差的均值。清晰条纹 ≈ 190，糊掉 ≈ 3。
+ *  ⚠️ CDP 的 clip 是**相对文档**的（实测：滚到 300 之后抓 y=0..40 得到的是文档顶部，
+ *  不是视口顶部那个 fixed 元素）。所以这里整屏抓、在页内按**视口坐标**裁子区域来量。 */
+async function bandEnergy(rect) {
+  const r = await cdp('Page.captureScreenshot', { format: 'png' })
+  if (!r?.data) return -1
+  return evalJS(`(async () => {
+    const img = new Image()
+    img.src = 'data:image/png;base64,${r.data}'
+    await img.decode()
+    const c = document.createElement('canvas')
+    c.width = img.width
+    c.height = img.height
+    const g = c.getContext('2d')
+    g.drawImage(img, 0, 0)
+    const x0 = Math.max(0, ${Math.round(rect.x)})
+    const y0 = Math.max(0, ${Math.round(rect.y)})
+    const w = Math.min(${Math.round(rect.width)}, c.width - x0)
+    const h = Math.min(${Math.round(rect.height)}, c.height - y0)
+    if (w <= 1 || h <= 0) return -1
+    const d = g.getImageData(x0, y0, w, h).data
+    let sum = 0, n = 0
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w - 1; x++) {
+        const i = (y * w + x) * 4
+        sum += Math.abs(d[i] - d[i + 4]) + Math.abs(d[i + 1] - d[i + 5]) + Math.abs(d[i + 2] - d[i + 6])
+        n++
+      }
+    }
+    return n ? sum / n : -1
+  })()`)
+}
+
 async function waitFor(expr, timeoutMs = 10000, label = expr.slice(0, 60)) {
   const t0 = Date.now()
   while (Date.now() - t0 < timeoutMs) {
@@ -151,6 +201,8 @@ const HEADER_STATE = `(() => {
     maskOpacity: mcs ? mcs.opacity : null,
     maskBg: mcs ? mcs.backgroundImage.slice(0, 60) : null,
     layerCount: spans.length,
+    /** 模糊层自身的 opacity：高画质档的显隐挂在这里（挂容器上是空转，见 ProgressiveBlur） */
+    spanOpacity: spans[0] ? getComputedStyle(spans[0]).opacity : null,
     layerBlur: spans[0] ? getComputedStyle(spans[0]).backdropFilter : null,
     layerMask: spans[0] ? getComputedStyle(spans[0]).maskImage.slice(0, 70) : null,
     perfAttr: document.documentElement.dataset.perf ?? '(未设)',
@@ -254,7 +306,7 @@ async function main() {
     let s = await evalJS(HEADER_STATE)
     ok('1 页头为 sticky（非 fixed）', s.position === 'sticky', `position=${s.position}`)
     ok('2 页头建立层叠上下文（z-index 非 auto）', s.zIndex !== 'auto', `z-index=${s.zIndex}`)
-    ok('3 未滚动时遮罩透明', s.maskOpacity === '0', `opacity=${s.maskOpacity}`)
+    ok('3 未滚动时模糊层不可见', s.spanOpacity === '0', `层 opacity=${s.spanOpacity}`)
     ok('4 未滚动时无 scrolled 类', !s.scrolledClass)
     ok('5 渐进模糊层已就位（5 层）', s.layerCount === 5, `层数=${s.layerCount}`)
     ok(
@@ -282,7 +334,7 @@ async function main() {
     await sleep(500)
     s = await evalJS(HEADER_STATE)
     ok('9 滚动生效', sc.top > 0, `经 ${sc.via} 滚到 ${sc.top}`)
-    ok('10 滚动后遮罩显形', s.maskOpacity === '1', `opacity=${s.maskOpacity}`)
+    ok('10 滚动后模糊层显形', s.spanOpacity === '1', `层 opacity=${s.spanOpacity}`)
     ok('11 滚动后挂上 scrolled 类', s.scrolledClass)
     ok(
       '12 页头仍贴容器顶（未被滚走）',
@@ -290,6 +342,38 @@ async function main() {
       `headerTop=${s.headerTop} 容器顶=${s.viewportTop}`,
     )
     await shot('2-mobile-scrolled')
+
+    /* ---------- 2b 像素级：模糊真的画出来了吗 ----------
+       这是本页最要紧的一条。曾经的翻车：DOM 里 5 层俱在、backdrop-filter / mask 的计算样式
+       全对（上面那些断言全绿），但容器上挂了 mask → 容器成了 backdrop root，层在容器内部
+       采样（空无一物），屏幕上一片干净 —— 「样式正确、像素为空」。计算样式断言天生抓不到，
+       必须量像素：在页头背后铺一张高频条纹，糊过之后条纹并成灰、边缘能量骤降。 */
+    await evalJS(STRIPES)
+    await evalJS(SCROLL_MID)
+    await sleep(400)
+    s = await evalJS(HEADER_STATE)
+    await shot('2b-mobile-stripes')
+    // 页头中部那一段（避开标题与按钮，取右侧空白列）：条纹在页头背后 → 必须被糊
+    const blurred = await bandEnergy({ x: 150, y: s.headerTop + 8, width: 260, height: 18, scale: 1 })
+    // 对照段：仍在条纹之内（条纹高 260px）、但在遮罩范围之外 → 条纹应保持清晰
+    const sharp = await bandEnergy({ x: 150, y: 170, width: 260, height: 18, scale: 1 })
+    ok(
+      '12b 页头背后确实糊住了（像素级，糊掉=边缘能量骤降）',
+      sharp > 60 && blurred < sharp * 0.25,
+      `页头段=${blurred.toFixed(1)} 对照段=${sharp.toFixed(1)}`,
+    )
+    // 未滚动时遮罩整体不可见：同一段条纹必须是清晰的（反证下面的判据不是恒真）
+    await evalJS(SCROLL_TOP)
+    await sleep(500)
+    const clear = await bandEnergy({ x: 150, y: 8, width: 260, height: 18, scale: 1 })
+    ok(
+      '12c 未滚动时同一段条纹未被糊（遮罩确实没在显示）',
+      clear > 60,
+      `未滚段=${clear.toFixed(1)}`,
+    )
+    await evalJS(`document.getElementById('__e2e-stripes')?.remove()`)
+    await evalJS(SCROLL_MID)
+    await sleep(300)
 
     /* ---------- 3 桌面壳：sticky 跟着 .desk-main ---------- */
     await cdp('Emulation.setDeviceMetricsOverride', {
@@ -311,7 +395,7 @@ async function main() {
       Math.abs(s.headerTop - s.viewportTop) <= 1,
       `headerTop=${s.headerTop} .desk-main顶=${s.viewportTop}`,
     )
-    ok('15 桌面壳里遮罩同样显形', s.maskOpacity === '1', `opacity=${s.maskOpacity}`)
+    ok('15 桌面壳里遮罩同样显形', s.spanOpacity === '1', `层 opacity=${s.spanOpacity}`)
     await shot('3-desktop-scrolled')
 
     await cdp('Emulation.clearDeviceMetricsOverride')
@@ -389,8 +473,8 @@ async function main() {
       const st = await evalJS(HEADER_STATE)
       ok(
         `24 ${route} 页头固定、标题为「${title}」且滚动后显形遮罩`,
-        Math.abs(st.headerTop - st.viewportTop) <= 1 && st.maskOpacity === '1' && st.scrolledClass,
-        `headerTop=${st.headerTop} opacity=${st.maskOpacity} scrolled=${st.scrolledClass}`,
+        Math.abs(st.headerTop - st.viewportTop) <= 1 && st.spanOpacity === '1' && st.scrolledClass,
+        `headerTop=${st.headerTop} 层 opacity=${st.spanOpacity} scrolled=${st.scrolledClass}`,
       )
       const h1 = await evalJS(`document.querySelector('.page-header h1')?.textContent ?? '(无)'`)
       ok(`25 ${route} 页头标题文本正确`, h1 === title, `h1=${h1}`)
@@ -413,8 +497,8 @@ async function main() {
     console.log(`      [home 滚动] ${JSON.stringify(homeScroll)} · 实际 ${JSON.stringify(s.scrollInfo)}`)
     ok(
       '27 暗色 + 桌面便当页：页头固定、遮罩显形、模糊层在位',
-      Math.abs(s.headerTop - s.viewportTop) <= 1 && s.maskOpacity === '1' && s.layerCount === 5 && s.scrollInfo.top > 0,
-      `headerTop=${s.headerTop} opacity=${s.maskOpacity} 层数=${s.layerCount} 滚动=${JSON.stringify(s.scrollInfo)}`,
+      Math.abs(s.headerTop - s.viewportTop) <= 1 && s.spanOpacity === '1' && s.layerCount === 5 && s.scrollInfo.top > 0,
+      `headerTop=${s.headerTop} 层 opacity=${s.spanOpacity} 层数=${s.layerCount} 滚动=${JSON.stringify(s.scrollInfo)}`,
     )
     ok('28 遮罩向左右铺出页头之外（盖满整帧，不留未模糊的窄条）', s.maskLeft < s.headerLeft && s.maskRight > s.headerRight, `mask=${s.maskLeft}..${s.maskRight} header=${s.headerLeft}..${s.headerRight}`)
     ok('29 遮罩向下超出页头（模糊有化开的空间）', s.maskTail > 0, `超出 ${s.maskTail}px`)
