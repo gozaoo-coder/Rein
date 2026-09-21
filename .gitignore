@@ -39,6 +39,9 @@ Thumbs.db
 
 # 一次性调试探针/截屏脚本与探针产物（定位单个问题时临时写的，不入库）
 scripts/probe-*
+# 例外：选课链路探测不是一次性探针 —— course-watch.mjs 拉起会话时会指名让它跑这一条
+# （窗口开没开、真实响应长什么样都以它为准），会话里没有它就只剩临场 improvisation。
+!scripts/probe-course-select.mjs
 scripts/*-probe.*
 scripts/shots-active.mjs
 scripts/shots-immerse-morph.mjs

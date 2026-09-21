@@ -272,9 +272,13 @@ pub struct ScheduleView {
 /// 一个选课批次（`open-turns` 的元素）。
 ///
 /// 字段名对齐教务，且**全部带 `default`**：不同轮次的字段会缺，缺字段不该让整个批次列表失败。
-/// 唯一没有类型假设的是 `id` —— 它在教务那边可能是数字、在路由参数里又是字符串，
-/// 而我手上没有非空样本可验证（批次当前关闭），所以原样透传，
+/// 唯一没有类型假设的是 `id`（实测是数字 `1921`，而路由参数里又是字符串），所以原样透传，
 /// 前端当不透明标识用。
+///
+/// 2026-09-21 窗口开放后拿到非空样本：批次 `1921`「2026-2027学年第一学期新生选课」，
+/// `selectDateTimeRange` = `2026-09-21 10:00:00 ~ 2026-09-30 23:00:00`，`allowEnter: true`、
+/// `disallowReasons: []`。字段名与本结构逐字对齐；另有 `turnMode` / `limitCount` /
+/// `capPercentage` 等本结构不建模的键（serde 忽略未知键，不影响解析）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseSelectTurn {
@@ -968,9 +972,14 @@ pub struct ScheduleGroup {
 
 /// 一个教学班（`query-lesson` 的元素）。
 ///
-/// 字段从 SPA 的表格渲染代码逆推而来，且**真机上没有非空样本**（选课批次当前未开），
-/// 所以全部带 `default`：能缺就缺，缺了也别让列表整个挂掉。
-/// 真正提交选课时只用得上 `id`，其余都是给人看的。
+/// 字段名与 2026-09-21 的实测样本（批次 1921，395 个教学班）逐字对齐，
+/// 仍全部带 `default`：能缺就缺，缺了也别让列表整个挂掉。真正提交选课时只用得上 `id`。
+///
+/// 两个实测要点：
+/// 1. **批次关掉人数显示时（`turnMode.showCount: false`）`stdCount` 根本不返回** ——
+///    此时「满没满」判不出来，只能靠提交结果说话；`canSelect` / `selectedLesson` 也不是每行都有。
+/// 2. `limitCount` 每行都有（教学班上限），`scheduleGroups[].schedules[]` 带 weekday/unit/时间 ——
+///    这些是给人看的，字段比这里建模的更多（`courseType` / `campus` / `weekDays` 等）。
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CourseSelectLesson {

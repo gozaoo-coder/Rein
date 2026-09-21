@@ -182,6 +182,26 @@ pub struct CourseSelectClient {
     token: String,
 }
 
+/// 从 `turn-select` 的返回里取提交要用的批次 id。
+///
+/// **真实形状（2026-09-21 窗口开放后实测）**：批次 id 在**顶层** `turn.id`，
+/// `{"turn":{"id":1921,"bizTypeAssoc":2,"semesterAssoc":321,…},"bizTypeId":2,…}` ——
+/// `options` 这个键压根不存在。旧写法去找 `options.turn.id` 永远取不到，
+/// 于是每次都退回列表 id；实测两者恰好相等（1921 = 1921），所以结果蒙对了 —— 但那是运气：
+/// 一旦教务让两者分叉，我们就会拿着错的 id 去提交。
+/// 现在按实测形状取值，`options.turn.id` 仅作兜底（历史写法，留着不亏）。
+fn turn_id_of(v: &serde_json::Value) -> Option<String> {
+    v.get("turn")
+        .and_then(|t| t.get("id"))
+        .or_else(|| {
+            v.get("options")
+                .and_then(|o| o.get("turn"))
+                .and_then(|t| t.get("id"))
+        })
+        .and_then(scalar_text)
+        .filter(|s| !s.is_empty())
+}
+
 impl CourseSelectClient {
     /// 用已有的 EAMS 会话去门户换一张选课令牌。
     ///
@@ -369,18 +389,12 @@ impl CourseSelectClient {
 
     /// 提交体里要用的批次 id（`courseSelectTurnAssoc`）。
     ///
-    /// **绝不假定它与列表 id 相同**：拿不到（接口失败 / 结构变了 / 字段不叫这个）
-    /// 就原样退回列表 id —— 那是我们唯一有把握的值，且在「两者其实相等」时完全正确。
+    /// **绝不假定它与列表 id 相同**：取不到（接口失败 / 结构变了）就原样退回列表 id ——
+    /// 那是我们唯一有把握的值。真实形状见 [`turn_id_of`]。
     pub fn turn_assoc(&self, student_id: i64, turn_id: &str) -> String {
         self.turn_select(student_id, turn_id)
             .ok()
-            .and_then(|v| {
-                v.get("options")
-                    .and_then(|o| o.get("turn"))
-                    .and_then(|t| t.get("id"))
-                    .and_then(scalar_text)
-            })
-            .filter(|s| !s.is_empty())
+            .and_then(|v| turn_id_of(&v))
             .unwrap_or_else(|| turn_id.to_string())
     }
 
@@ -737,6 +751,34 @@ mod tests {
         assert_eq!(request_id_of(&serde_json::json!("abc")), "abc");
         assert_eq!(request_id_of(&serde_json::json!(42)), "42");
         assert_eq!(request_id_of(&serde_json::json!(null)), "");
+    }
+
+    /// `turn-select` 的真实形状：批次 id 在**顶层** `turn.id`（2026-09-21 窗口开放后逐字抄下来）。
+    /// 这条断言钉住的是「别再回去找 `options.turn.id`」—— 那键压根不存在，旧写法每次都退回
+    /// 列表 id，只是这次两者恰好相等（1921 = 1921）才没出事。
+    #[test]
+    fn turn_select_reads_the_top_level_turn_id() {
+        let real = serde_json::json!({
+            "packCourseSelect": false,
+            "turn": {"id": 1921, "bizTypeAssoc": 2, "semesterAssoc": 321, "name": "2026-2027学年第一学期新生选课"},
+            "bizTypeId": 2,
+            "semester": {"id": 321, "nameZh": "2026-2027上学期", "season": "AUTUMN"},
+            "campusId": 3
+        });
+        assert_eq!(turn_id_of(&real).as_deref(), Some("1921"));
+
+        // 老形状（`options.turn.id`）仍然认得，免得哪个部署还留着它
+        let legacy = serde_json::json!({"options": {"turn": {"id": "77"}}});
+        assert_eq!(turn_id_of(&legacy).as_deref(), Some("77"));
+
+        // 两个都在时，顶层优先
+        let both = serde_json::json!({"turn": {"id": 1}, "options": {"turn": {"id": 2}}});
+        assert_eq!(turn_id_of(&both).as_deref(), Some("1"));
+
+        // 空值/坏形状一律 None，让调用方退回列表 id
+        assert_eq!(turn_id_of(&serde_json::json!({"turn": {"id": null}})), None);
+        assert_eq!(turn_id_of(&serde_json::json!({"turn": {}})), None);
+        assert_eq!(turn_id_of(&serde_json::json!({})), None);
     }
 
     #[test]

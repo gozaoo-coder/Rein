@@ -871,10 +871,11 @@ CREATE INDEX idx_campus_grab_due ON campus_grab_tasks(status, next_at);
 
 /// 0023 · 抢课任务补一列「进批次拿到的批次 id」。
 ///
-/// SPA 提交时用的 `courseSelectTurnAssoc` 不是列表里的 `turnId`，而是
-/// `{studentId}/turn/{turnId}/select` 返回的 `options.turn.id`（见 `course_select.rs`）。
-/// 两者是否相同，我们没有真机样本可验（窗口没开），所以**把两个都留着**：
-/// 路径参数继续用列表 id，提交体用这一列，拿不到时退回列表 id。
+/// SPA 提交时用的 `courseSelectTurnAssoc` 取的是
+/// `{studentId}/turn/{turnId}/select` 返回的批次 id —— **实测（2026-09-21 窗口开放）
+/// 它在顶层 `turn.id`**（`options.turn.id` 不存在），而这次它与列表里的 `turnId` 相等
+/// （1921 = 1921）。相等与否**没有保证**，所以两者都留着：路径参数继续用列表 id，
+/// 提交体用这一列，拿不到时退回列表 id。
 const MIGRATION_0023: &str = r#"
 ALTER TABLE campus_grab_tasks ADD COLUMN turn_assoc TEXT;
 "#;
