@@ -656,9 +656,9 @@ async function onMenuSelect(value: string): Promise<void> {
            margin-top:auto 保证消息不足一屏时它依然落在底部，而不是吊在最后一条下面。 -->
       <div class="composer">
         <div class="cb-mask" aria-hidden="true">
-          <Transition name="pblur">
-            <ProgressiveBlur v-if="!perfDegraded" direction="up" />
-          </Transition>
+          <!-- 切档（v-if）时由 ProgressiveBlur 自己从透明淡入：淡入不能挂在容器或
+               组件根上——容器 opacity<1 就成 backdrop root，模糊在过渡期间不渲染 -->
+          <ProgressiveBlur v-if="!perfDegraded" direction="up" />
         </div>
 
         <!-- 快捷操作 -->
@@ -982,17 +982,6 @@ async function onMenuSelect(value: string): Promise<void> {
   bottom: 0;
   z-index: -1;
   pointer-events: none;
-}
-
-/* 底部渐进模糊的显隐淡入淡出（v-if 切档时不闪现、消失不突兀） */
-.pblur-enter-active,
-.pblur-leave-active {
-  transition: opacity var(--dur-base) var(--ease-out);
-}
-
-.pblur-enter-from,
-.pblur-leave-to {
-  opacity: 0;
 }
 
 .msgs::-webkit-scrollbar {

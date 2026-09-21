@@ -94,18 +94,31 @@ function goBack(): void {
   bottom: calc(-1 * var(--ph-tail));
   z-index: -1;
   pointer-events: none;
+}
+
+/* 模糊层的显隐只能挂在「层自己」身上：容器一旦 opacity<1 就成为 backdrop-filter 的
+   backdrop root，过渡那 0.2 秒里模糊根本不渲染，结束后才「啪」地弹出来（看着像闪现）。
+   详见 ProgressiveBlur 的文件头。 */
+.ph-mask :deep(.pblur span) {
   opacity: 0;
   transition: opacity var(--dur-base) var(--ease-out);
 }
 
-.page-header.scrolled .ph-mask {
+.page-header.scrolled .ph-mask :deep(.pblur span) {
   opacity: 1;
 }
 
 /* 降级档（system/perf 判定掉帧）：不做毛玻璃，改用「画布底色 → 透明」的渐变遮罩。
-   底色是 --bg 而非 --surface：遮罩压的是页面画布，不是卡片。 */
+   底色是 --bg 而非 --surface：遮罩压的是页面画布，不是卡片。
+   这条是纯渐变背景、不涉及 backdrop-filter，照旧用容器自身的透明度淡入。 */
 .page-header.lite .ph-mask {
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
   background: linear-gradient(to bottom, var(--bg) 0%, var(--bg) 55%, transparent 100%);
+}
+
+.page-header.lite.scrolled .ph-mask {
+  opacity: 1;
 }
 
 .back {

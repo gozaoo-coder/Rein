@@ -1,6 +1,6 @@
 [package]
 name = "rein"
-version = "0.2.8"
+version = "0.2.9"
 description = "Rein · 健康生活运动管理"
 edition = "2021"
 rust-version = "1.77"
