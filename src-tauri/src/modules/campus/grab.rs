@@ -1019,6 +1019,30 @@ fn submit_both(
     }
 }
 
+/// 「另一个域」这一句：两边都发了就说两边，没发就说清**为什么没发**。
+///
+/// 抽成纯函数是为了能被测 —— 它是三种状态的一句话总结，塞进 `submit` 里就只能
+/// 靠真抢一次课去看文案。三种状态都要有话说：
+///
+/// - 两边都受理 → 报「两个域都已提交」；否则用户看到一条受理号会以为只有一个域在打；
+/// - 有第二个域但这次没受理 → 明说「只跟踪主域」，别让人以为镜像那条也在跑；
+/// - 压根没有第二个域 → 用 `mirror_note`（里面写着是哪个域、为什么不发）。
+///
+/// 最后一种正是「静默跳过比发错更糟」的落点：探测到对方没有 EAMS5 时我们**故意不发**，
+/// 那就必须说出来，否则用户会以为两边都在打（见 `lesson_search::plan_dual_fire`）。
+fn dual_suffix(has_mirror: bool, sent_both: bool, mirror_note: &str) -> String {
+    if sent_both {
+        return "（两个域都已提交）".to_string();
+    }
+    if has_mirror {
+        return "（镜像域未受理，只跟踪主域）".to_string();
+    }
+    if mirror_note.is_empty() {
+        return String::new();
+    }
+    format!("（{mirror_note}）")
+}
+
 /// 提交一步：按模式决定先占位还是直接投。
 fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mut GrabTask) {
     let items = vec![AddItem {
@@ -1044,7 +1068,12 @@ fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &
                 task.phase = PHASE_POLL.into();
                 task.polls = 0;
                 task.status = GRAB_RUNNING.into();
-                task.last_message = Some("已占位，等待教务受理".into());
+                let dual = dual_suffix(
+                    ctx.mirror.is_some(),
+                    task.mirror_request_id.is_some(),
+                    &ctx.mirror_note,
+                );
+                task.last_message = Some(format!("已占位，等待教务受理{dual}"));
                 task.next_at = now_ms() + settings.poll_interval_ms;
                 task.strikes = 0;
                 task.strike_kind = None;
@@ -1064,11 +1093,11 @@ fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &
             task.polls = 0;
             task.status = GRAB_RUNNING.into();
             // 两边都发时说清「另一条也发了」：否则用户看到一条受理号会以为只有一个域在打
-            let dual = if task.mirror_request_id.is_some() {
-                "（两个域都已提交）"
-            } else {
-                ""
-            };
+            let dual = dual_suffix(
+                ctx.mirror.is_some(),
+                task.mirror_request_id.is_some(),
+                &ctx.mirror_note,
+            );
             task.last_message = Some(if task.attempts == 1 {
                 format!("已提交，等待教务处理{dual}")
             } else {
@@ -3792,5 +3821,38 @@ mod tests {
         assert_eq!(s.intents.len(), 1);
         assert!(s.intents[0].candidates.is_empty());
         assert!(s.intents[0].group_keys.is_empty());
+    }
+
+    /// 两边都受理时要说「两个域都已提交」—— 否则用户看到一条受理号，
+    /// 会以为只有一个域在打，另一条单子就成了他不知道存在的悬空请求。
+    #[test]
+    fn both_domains_accepted_is_said_out_loud() {
+        let s = dual_suffix(true, true, "将向 2 个域同时发送");
+        assert!(s.contains("两个域都已提交"), "实际：{s}");
+    }
+
+    /// 有第二个域、但这次没拿到它的受理号 —— 必须明说「只跟踪主域」，
+    /// 不能因为「反正主域成了」就闭嘴：另一条到底发没发、跟不跟，用户有权知道。
+    #[test]
+    fn mirror_without_receipt_says_only_primary_is_tracked() {
+        let s = dual_suffix(true, false, "将向 2 个域同时发送");
+        assert!(s.contains("只跟踪主域"), "实际：{s}");
+    }
+
+    /// **最关键的一条**：探测到另一个域没有 EAMS5 时我们**故意不发**。
+    /// 那就必须把原因说出来 —— 静默跳过比发错更糟，用户会以为两边都在打。
+    /// （`mirror_note` 曾经是个只写不读的死字段，这个断言就是防它再变回去。）
+    #[test]
+    fn a_skipped_domain_always_carries_its_reason() {
+        let note = "https://bkjw.guet.edu.cn 未发送：该域没有 EAMS5，发过去只会 404，已跳过";
+        let s = dual_suffix(false, false, note);
+        assert!(s.contains("bkjw.guet.edu.cn"), "必须点名是哪个域：{s}");
+        assert!(s.contains("404"), "必须说清为什么不发：{s}");
+    }
+
+    /// 只有一个域可用、且没有第二个候选时，不要凭空添一句废话。
+    #[test]
+    fn a_single_domain_without_a_note_stays_quiet() {
+        assert!(dual_suffix(false, false, "").is_empty());
     }
 }
