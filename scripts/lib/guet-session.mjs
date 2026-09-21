@@ -163,10 +163,15 @@ export class GuetSession {
         return false
       }
     }
+    // 库里存的是 Rust `CookieJar { items: Vec<(String,String)> }` 的序列化形状：
+    // `{"items":[["__pstsid__","…"],["SESSION","…"]]}` —— **成对数组**，不是 {name,value} 对象。
+    // 只认裸数组时这一步永远返回 false，于是每次心跳都退回密码登录：
+    // 一天一百多次登录，正是风控最容易被点亮的东西（2026-09-21 实测确认这条路径从未生效）。
+    if (list && !Array.isArray(list) && Array.isArray(list.items)) list = list.items
     if (!Array.isArray(list) || !list.length) return false
     for (const c of list) {
-      const name = c?.name?.trim?.()
-      const value = c?.value?.trim?.()
+      const name = (Array.isArray(c) ? c[0] : c?.name)?.trim?.()
+      const value = (Array.isArray(c) ? c[1] : c?.value)?.trim?.()
       if (name && value) this.jar.set(name, value)
     }
     return this.jar.size > 0
@@ -175,15 +180,24 @@ export class GuetSession {
   /**
    * EAMS 门户登录。成功返回 `{ ok: true }`；失败把教务的原话带回来
    * （`needCaptcha` / `weak_password` 这类要用户去处理的，不能吞掉）。
+   *
+   * **判定语义与选课接口相反：这里的 `result` 为真才是成功。**
+   * 2026-09-21 实测的拒绝形状：`{"result":false,"message":"用户名或密码错误","needCaptcha":true}`
+   * —— `result:false` 配上明说「密码错误」的 message，不可能是成功。
+   *
+   * 这里曾经把选课接口那套「result 为真是出错」照搬过来，后果不是记错一行日志：
+   * **成功被当成失败丢掉**，于是监控脚本一天里 140 多次「本轮失败：登录失败：教务拒绝了
+   * 这次登录（未给出原因，通常是密码已变更）」全是假警报，而真正失败的那几次反倒被当成
+   * 成功继续往下跑。判定表与 Rust 侧 `guet.rs::login_failure` 对齐，两边只此一份口径。
    */
-  async login(username, password) {
+  async login(username, password, captcha = '') {
     const saltRes = await this.req('GET', '/student/ldap/login-salt')
     if (saltRes.status !== 200) {
       return { ok: false, message: `取登录盐失败：HTTP ${saltRes.status}`, needCaptcha: false }
     }
     const salt = saltRes.text.trim()
     const res = await this.reqJson('POST', '/student/ldap/login', {
-      body: { username, password: rsaEncrypt(salt, password), captcha: '' },
+      body: { username, password: rsaEncrypt(salt, password), captcha },
       referer: '/student/ldap/login',
       timeoutMs: 30000,
     })
@@ -191,19 +205,24 @@ export class GuetSession {
       return { ok: false, message: `登录响应异常：HTTP ${res.status}`, needCaptcha: false }
     }
     const needCaptcha = res.json.needCaptcha === true
-    if (res.json.result === true) {
-      const raw = String(res.json.message ?? '').trim()
-      // 教务拒绝时**未必给 message**（实测只回 {result:true,needCaptcha:false}）。
-      // 这种情况不许替它编一个原因 —— 编出来的「密码错误」会把「会话能救」的线索带偏。
-      const message =
-        raw === 'weak_password'
-          ? '密码强度不足，需先在教务改密'
-          : raw === 'login_first'
-            ? '教务要求先完成首次登录（去 App 里登录一次）'
-            : raw || '教务拒绝了这次登录（未给出原因，通常是密码已变更）'
-      return { ok: false, message, needCaptcha, raw }
-    }
-    return { ok: true, needCaptcha, message: String(res.json.message ?? '') }
+    if (res.json.result === true) return { ok: true, needCaptcha, message: String(res.json.message ?? '') }
+
+    const raw = String(res.json.message ?? '').trim()
+    // 教务拒绝时**未必给 message**，这种情况不许替它编一个原因 —— 编出来的「密码错误」
+    // 会把「其实只是缺验证码」的线索带偏（Rust 侧同一张表）。
+    const message =
+      raw === 'weak_password'
+        ? '密码强度不足，需先在教务改密'
+        : raw === 'login_first'
+          ? '教务要求先完成首次登录（去 App 里登录一次）'
+          : raw
+            ? raw
+            : needCaptcha && !String(captcha).trim()
+              ? '需要输入验证码'
+              : needCaptcha
+                ? '验证码不正确，请重新输入'
+                : '登录被拒绝：请核对学号与密码（教务系统没有返回具体原因）'
+    return { ok: false, message, needCaptcha, raw }
   }
 
   /** 会话是否还有效。302 = 过期（`redirect: manual` 才看得见）。 */

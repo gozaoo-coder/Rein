@@ -42,6 +42,8 @@ const STATE_FILE = path.join(STATE_DIR, 'state.json')
 const LOCK_FILE = path.join(STATE_DIR, 'watch.lock')
 const LOG_FILE = path.join(STATE_DIR, 'watch.log')
 const REPORTS_DIR = path.join(STATE_DIR, 'reports')
+/** 上一轮拿到的教务会话（供下一轮复用，也供救援面取用；只写在本机状态目录） */
+const SESSION_FILE = path.join(STATE_DIR, 'session.json')
 
 const DEFAULT_INTERVAL_MS = 60_000
 /** 批次已经开放 → 名额是秒级事件，盯紧一点 */
@@ -285,7 +287,34 @@ function diffTurns(prev, next) {
 
 async function snapshot() {
   const account = readAccount()
-  const { session, via } = await connect(account)
+
+  // 先试**上一轮落盘的自己那份会话**。这一步是要紧的：教务对短时间内反复登录会给出
+  // 「用户名或密码错误」这种伪装成凭据问题的风控答复，而一份 EAMS 会话本来能活几个小时。
+  // 每轮心跳都重新登录（一天一百多次）正是把风控点亮的东西 —— 能在本地复用的会话，
+  // 就不该再去换一张新的。
+  let reusable = null
+  try {
+    const saved = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'))
+    if (saved?.base === account.base && Array.isArray(saved.cookies) && saved.cookies.length) {
+      reusable = { ...account, cookies: saved.cookies }
+    }
+  } catch {
+    /* 没有或坏了 → 走正常连接（库里的 Cookie → 密码） */
+  }
+
+  const { session, via } = await connect(reusable ?? account)
+
+  // 落盘，供下一轮复用 —— 也供救援面取用：AI 排查 / 手动核对时不必再登录一次。
+  // 只写在本机状态目录（与日志、报告同级），不打印、不随报告外传。
+  try {
+    ensureDirs()
+    fs.writeFileSync(
+      SESSION_FILE,
+      JSON.stringify({ base: account.base, at: stamp(), cookies: [...session.jar] }),
+    )
+  } catch {
+    /* 写不了不影响本轮：大不了下一轮再登一次 */
+  }
 
   const serverTime = await session.serverTime().catch(() => null)
   let studentId = account.studentId
