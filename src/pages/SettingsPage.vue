@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronRight, RefreshCw, ToggleLeft } from 'lucide-vue-next'
+import { ChevronRight, RefreshCw, Sparkles, ToggleLeft } from 'lucide-vue-next'
 
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
@@ -9,7 +9,7 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { toggleablePlugins } from '@/plugins'
 import { usePomodoroStore } from '@/stores/pomodoro'
 import { useUpdateStore } from '@/stores/update'
-import { perfDegraded, perfMode, setPerfMode } from '@/system/perf'
+import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, type PerfMode } from '@/system/perf'
 
 /**
  * 设置（二级内容页）：从「我」页的设置抽屉升级而来——抽屉放不下第二个分组，
@@ -29,23 +29,20 @@ const updateHint = computed(() => {
   return `当前 v${update.currentVersion || '—'}`
 })
 
-/** 性能档位：auto 按掉帧判定自动切换，high / low 手动钉死（判定逻辑见 system/perf） */
-const PERF_OPTIONS = [
-  { value: 'auto', label: '自动' },
-  { value: 'high', label: '高画质' },
-  { value: 'low', label: '流畅优先' },
-]
+/** 性能档位：auto 按掉帧判定自动切换，high / ultra / low 手动钉死（判定逻辑见 system/perf） */
+const PERF_OPTIONS = PERF_MODES.map(({ value, label }) => ({ value, label }))
 
 const perfChoice = computed({
   get: () => perfMode.value as string,
   set: (v: string) => {
-    if (v === 'auto' || v === 'high' || v === 'low') setPerfMode(v)
+    if (PERF_MODES.some((m) => m.value === v)) setPerfMode(v as PerfMode)
   },
 })
 
 /** 副标要说清当下生效的是哪一档——自动降级和用户自己选的「流畅优先」不是一回事 */
 const perfHint = computed(() => {
   if (perfMode.value === 'low') return '始终流畅优先'
+  if (perfMode.value === 'ultra') return liquidGlass.value ? '超高 · 液态玻璃已开' : '超高（本机不支持折射）'
   if (perfMode.value === 'high') return '始终高画质'
   return perfDegraded.value ? '已自动降级' : '当前高画质'
 })
@@ -98,8 +95,19 @@ onMounted(() => {
       <SegmentedControl v-model="perfChoice" class="perfseg" :options="PERF_OPTIONS" />
       <p class="pnote t-3">
         连续掉帧时自动降级：页头的渐进模糊换成底色遮罩，并关掉毛玻璃与循环动画。
-        低端机可手动固定「流畅优先」，画面更好的机器可固定「高画质」省去判定。
+        低端机可手动固定「流畅优先」，画面更好的机器可固定「高画质」省去判定；
+        「超高」在高画质之上再开液态玻璃（折射表面），是本机最耗性能的一档。
       </p>
+      <button class="frow row" @click="router.push({ name: 'settings-perf' })">
+        <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
+          <Sparkles :size="18" />
+        </i>
+        <span class="col ftxt">
+          <b>液态玻璃预览</b>
+          <em class="t-3">看这一档的按钮与底部栏长什么样，也可就地切档</em>
+        </span>
+        <ChevronRight :size="16" class="t-3" />
+      </button>
     </section>
 
     <!-- 关于 -->
@@ -195,6 +203,13 @@ onMounted(() => {
 
 .perfseg {
   margin-top: 10px;
+}
+
+/* 性能卡里的功能行排在说明文字之后：补一条细线，免得跟上面那段话黏成一块 */
+.pnote + .frow {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--line);
 }
 
 .pnote {
