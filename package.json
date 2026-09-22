@@ -1,7 +1,7 @@
 {
   "name": "rein",
   "private": true,
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "Rein · 健康生活运动管理（Tauri + Vue + Rust）",
   "type": "module",
   "scripts": {
