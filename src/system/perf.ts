@@ -12,9 +12,28 @@ import { computed, ref, watch } from 'vue'
  * 落地：结论写进 <html data-perf="low">，base.css 据此关掉毛玻璃与循环动画、
  * 把半透明表面换成实底；PageHeader 读降级态把渐进模糊换成底色遮罩。
  * 后台挂起（窗口最小化 / 系统休眠）造成的长间隔不是掉帧，直接丢弃。
+ *
+ * 四个档位（data-perf 的取值与之一致）：
+ *   auto  按掉帧判定自动在 high / low 之间切
+ *   high  始终高画质（毛玻璃 + 渐进模糊 + 动效）
+ *   ultra 超高：在 high 之上再开**液态玻璃**（GlassSurface 的折射表面）——
+ *         只有它认 `backdrop-filter: url(#svg-filter)` 的内核画得出来，
+ *         所以能力不足时这一档退化回 high 的观感（见 liquidGlass）。
+ *   low   流畅优先（玻璃顶成实底、关模糊与循环动画）
  */
 
-export type PerfMode = 'auto' | 'high' | 'low'
+export type PerfMode = 'auto' | 'high' | 'ultra' | 'low'
+
+/**
+ * 档位清单：设置页与画质预览页共用这一份（标签、说明都不在页面里另抄一遍）。
+ * hint 说的是这一档**做了什么**，与页面上「此刻生效的是哪一档」是两件事。
+ */
+export const PERF_MODES: { value: PerfMode; label: string; hint: string }[] = [
+  { value: 'auto', label: '自动', hint: '按掉帧判定在 高画质 / 流畅优先 之间自动切' },
+  { value: 'high', label: '高画质', hint: '毛玻璃、渐进模糊与动效全开' },
+  { value: 'ultra', label: '超高', hint: '高画质之上再开液态玻璃（折射表面，最耗性能）' },
+  { value: 'low', label: '流畅优先', hint: '玻璃顶成实底、关模糊与循环动画' },
+]
 
 const STORE_KEY = 'rein.perf.v1'
 
@@ -42,14 +61,14 @@ const RECOVER_WINDOWS = 4
 function loadMode(): PerfMode {
   try {
     const raw = localStorage.getItem(STORE_KEY)
-    if (raw === 'auto' || raw === 'high' || raw === 'low') return raw
+    if (raw === 'auto' || raw === 'high' || raw === 'ultra' || raw === 'low') return raw
   } catch {
     /* 本地存储不可用时用默认档 */
   }
   return 'auto'
 }
 
-/** 用户档位：auto 按判定自动切换，high / low 手动钉死 */
+/** 用户档位：auto 按判定自动切换，high / ultra / low 手动钉死 */
 export const perfMode = ref<PerfMode>(loadMode())
 
 /** auto 档下的判定结果（手动档不参与） */
@@ -58,6 +77,37 @@ const perfAutoLow = ref(false)
 /** 实际生效的降级态：页面头遮罩与动效开关都读它 */
 export const perfDegraded = computed(
   () => perfMode.value === 'low' || (perfMode.value === 'auto' && perfAutoLow.value),
+)
+
+/**
+ * `backdrop-filter: url(#f)` 只有 Chromium 系认（滤镜当背景滤镜用是它独有的一步）；
+ * Safari / Firefox 会**静默忽略**整条声明 —— 不探测的话表现就是「一片没玻璃的空白」。
+ * 探测一次后缓存：能力在一台设备上是常量。
+ */
+let svgBackdropCache: boolean | null = null
+
+export function supportsSvgBackdrop(): boolean {
+  if (svgBackdropCache !== null) return svgBackdropCache
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return (svgBackdropCache = false)
+  const ua = navigator.userAgent
+  if ((/Safari/.test(ua) && !/Chrome/.test(ua)) || /Firefox/.test(ua)) return (svgBackdropCache = false)
+  try {
+    const probe = document.createElement('div')
+    probe.style.setProperty('backdrop-filter', 'url(#pv-probe)')
+    svgBackdropCache = probe.style.getPropertyValue('backdrop-filter') !== ''
+  } catch {
+    svgBackdropCache = false
+  }
+  return svgBackdropCache
+}
+
+/**
+ * 液态玻璃开关（超高档专属）：用户选了超高、没被降级、且这台设备画得出来。
+ * 判定放在 perf 层而不是组件里 —— 档位是应用级状态，「哪些表面用得起玻璃」
+ * 应当由状态说了算，组件不该各自去猜。
+ */
+export const liquidGlass = computed(
+  () => perfMode.value === 'ultra' && !perfDegraded.value && supportsSvgBackdrop(),
 )
 
 export function setPerfMode(mode: PerfMode): void {
@@ -161,9 +211,12 @@ export function kickPerfWatch(): void {
 }
 
 watch(
-  perfDegraded,
-  (low) => {
-    document.documentElement.dataset.perf = low ? 'low' : 'high'
+  [perfDegraded, perfMode],
+  ([degraded, mode]) => {
+    // 档位原样写进 DOM：base.css 与各处断言都读它。
+    // 与 high 一样，ultra 是手动钉死的档，不参与掉帧判定 ——
+    // 所以不会出现「选了超高又被悄悄降级」这种前后不一致的状态。
+    document.documentElement.dataset.perf = degraded ? 'low' : mode === 'ultra' ? 'ultra' : 'high'
   },
   { immediate: true },
 )

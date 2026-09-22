@@ -186,3 +186,22 @@ html[data-perf='low'] *::after {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
+
+/* ---------- 徽章/标签不拆行 ----------
+   中文标签只有两三个字，窄容器里会被拆成「在 / 线」两行：卡片高度跟着变、看着像
+   布局错乱（真机 406px 视口下「火山方舟 · deepseek-v4.1-flash 在线」就会这样）。
+   这类短标签一律不换行；真放不下时宁可溢出，也不要拆字。 */
+.chip,
+.chip-def,
+.chip-onl,
+.pchip,
+.doc-chip,
+.memo-chip,
+.attach-chip,
+.cap,
+.cap-img,
+.cap-input,
+.badge,
+.paused-badge {
+  white-space: nowrap;
+}

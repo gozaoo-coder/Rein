@@ -83,6 +83,13 @@ export const routes = [
     meta: { title: '软件更新' },
   },
   {
+    path: '/settings/perf',
+    name: 'settings-perf',
+    component: () => import('@/pages/SettingsPerfPage.vue'),
+    // 三级页：画质预览（入口在「设置 › 性能 › 液态玻璃预览」）
+    meta: { title: '画质预览' },
+  },
+  {
     path: '/focus',
     name: 'focus',
     component: () => import('@/pages/FocusPage.vue'),
