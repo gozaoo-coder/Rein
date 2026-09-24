@@ -814,15 +814,24 @@ async function onMenuSelect(value: string): Promise<void> {
 
 <style scoped>
 .page {
-  /* 可用高度 = 100dvh - safe-top（app-frame 的状态栏 padding-top）- 底栏总高（tabbar-h + safe-bottom）
-     - wbar-reserve（悬浮运动条停靠 bottom 时写入的高度预留，无运动 / 其他槽位为 0）。
-     少任何一项，输入栏都会被对应悬浮物盖住（真机手势导航 + 运动中最明显）。 */
-  height: calc(
-    100dvh - var(--safe-top) - var(--tabbar-h) - var(--safe-bottom) - var(--wbar-reserve, 0px)
-  );
+  /* 整帧：页面盒恒为 100dvh × 100vw，安全区不从高度里扣。
+     顶部让开交给消息区的 padding-top（页头因此落在安全区之下，与其余页面同观感），
+     底部让开交给 padding-bottom（输入栏胶囊的底边正好落在 Dock 顶）。
+     从前这里是 height: calc(100dvh - safe-top - tabbar-h - safe-bottom - wbar-reserve)：
+     高度一缩，页头与底栏就被挤进「视口减安全区」的盒子里，表现自然与别处不同 ——
+     挪进内边距后，盒子的尺寸只由视口决定，安全区成了各自的内边距，两者不再互相污染。 */
+  height: 100dvh;
+  /* 抵掉 .app-frame 的 padding-top（那一层是给整页滚动的内容让开状态栏的）；
+     页面自己要占满整帧，安全区由页头与底栏各自让开 */
+  margin-top: calc(-1 * var(--safe-top));
   display: flex;
   flex-direction: column;
-  padding: 10px var(--page-pad-x) 10px;
+  /* 输入栏自身的下内边距（给胶囊的投影在滚动区里留一点余地）。
+     底部让开 = Dock 顶 − 它，输入栏底边才正好压在 Dock 顶上
+     （间距不变量：AI 输入栏底→底栏顶 = 0，见 scripts/e2e-layout-guard.mjs）。
+     悬浮运动条停靠在底部时写入的 --wbar-reserve 一并计进来。 */
+  --inbar-pad-b: 4px;
+  padding: 0 var(--page-pad-x) calc(var(--dock-top) - var(--inbar-pad-b) + var(--wbar-reserve, 0px));
 }
 
 /* 消息长按菜单：禁用原生文本选择避免冲突（复制走菜单） */
@@ -950,15 +959,17 @@ async function onMenuSelect(value: string): Promise<void> {
   flex-direction: column;
   margin: 0 calc(-1 * var(--page-pad-x));
   overflow-y: auto;
-  padding: 8px var(--page-pad-x) 0;
+  padding: 0 var(--page-pad-x);
   scrollbar-width: none;
 }
 
-/* 页头这次粘在消息区的滚动口顶（不是视口）：状态栏那条不在滚动容器里，
-   粘滞偏移归零；但遮罩仍要向上铺足，把滚动区上沿的内容糊掉。 */
+/* 页头自己让开状态栏：margin-top = 安全区高度（其余页面由 .app-frame 的 padding-top 给同一段），
+   粘滞位保持 PageHeader 默认的 --safe-top，滚动后正好压在状态栏下缘、遮罩起点落在 0。
+   别改成给滚动容器加 padding-top：sticky 的粘滞位会**叠加**在容器的上内边距之上 ——
+   实测 `.msgs` padding-top:52 + --ph-stick:42 时页头落在 94（而不是 52），
+   页头被顶下去一整段，遮罩起点也跟着错位，越调越乱。 */
 .msgs :deep(.page-header) {
-  --ph-stick: 0px;
-  --ph-up: max(var(--safe-top), 24px);
+  margin-top: var(--safe-top);
 }
 
 /* 底栏：粘在滚动区底部，内容从底部的渐进模糊里滚过。
@@ -970,7 +981,7 @@ async function onMenuSelect(value: string): Promise<void> {
   /* margin-top:auto：消息不足一屏时底栏依然落在底部，而不是吊在最后一条下面；
      左右负外边距把底栏拉到整帧宽，遮罩才铺得满 */
   margin: auto calc(-1 * var(--page-pad-x)) 0;
-  padding: 6px var(--page-pad-x) 4px;
+  padding: 6px var(--page-pad-x) var(--inbar-pad-b);
 }
 
 /* 向上多铺一段：内容从模糊里滚出来，而不是在输入栏上沿被硬切 */

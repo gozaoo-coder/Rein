@@ -227,10 +227,13 @@ const capMeta = {
       <span class="v-go">›</span>
     </button>
 
-    <button class="fab row center" aria-label="添加模型" @click="onAdd">
-      <Plus :size="17" />
-      添加模型
-    </button>
+    <!-- 悬浮按钮移出页面层（Teleport）：页面层 translate 会改 fixed 后代的包含块，留在层内拖动时会跑位 -->
+    <Teleport to="body">
+      <button class="fab row center" aria-label="添加模型" @click="onAdd">
+        <Plus :size="17" />
+        添加模型
+      </button>
+    </Teleport>
 
     <ModelFormSheet :open="formOpen" :model="editing" @close="formOpen = false" @saved="onSaved" />
     <VoiceConfigSheet :open="voiceOpen" :config="voiceConfig" @close="voiceOpen = false" @saved="onVoiceSaved" />
@@ -252,8 +255,22 @@ const capMeta = {
     100dvh - var(--safe-top) - var(--tabbar-h) - var(--safe-bottom) - var(--wbar-reserve, 0px)
   );
   overflow-y: auto;
-  padding: 10px var(--page-pad-x) 96px;
+  /* 顶部那 10px 不写在这里 —— 滚动容器的上内边距会把页头顶下去，见下 */
+  padding: 0 var(--page-pad-x) 96px;
   scrollbar-width: none;
+}
+
+/* 页头自己让开页面顶部那 10px。**不能**写成滚动容器的 padding-top：sticky 的粘滞位是
+   从容器「内容盒顶」起算的，容器带内边距时页头会被顶下去「内边距 + --ph-stick」那么多
+   （真机 safe-top=42 下实测落在 94 —— 页头上方留出一条 52px 的空白，滚起来也贴不住容器顶）。
+   挪到页头自己的 margin 上，未滚动时的静态位置一模一样，滚起来则一路贴到容器顶。
+   粘滞位与遮罩一并归零：页面盒本身已经让开了状态栏（.app-frame 的 padding-top，高度里
+   又扣过一次 --safe-top），滚动容器顶就是该贴住的位置；容器之上没有任何内容会滚过去，
+   遮罩不必向上铺（越上去也只会被容器裁掉）。与 AIPage 的 .msgs 同因同治。 */
+.page :deep(.page-header) {
+  --ph-stick: 0px;
+  --ph-up: 0px;
+  margin-top: 10px;
 }
 
 .intro {

@@ -44,6 +44,7 @@ const ROUTES = [
   ['#/settings', '设置'],
   ['#/settings/features', '打开或关闭功能'],
   ['#/settings/update', '软件更新'],
+  ['#/settings/perf', '画质预览'],
   ['#/ai/models', '管理模型'],
   ['#/ai/knowledge', '知识库'],
   ['#/ai/files', '文件'],
@@ -132,6 +133,18 @@ const STATE = `(() => {
     if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight) { scroller = node; break }
     node = node.parentElement
   }
+  // 「会卡住页头」的容器：祖先里第一个 overflow auto|scroll 的盒子，**与当下有没有溢出
+  // 无关**。sticky 的粘滞位是从它的「内容盒顶」起算的，它的上内边距会原样叠加到页头的
+  // 落点上；空态页内容不足一屏时按「可滚」判定会整个漏掉这个容器，而它恰恰是页头贴不贴
+  // 顶的决定者（管理模型页就是这么漏过去的）。
+  let cap = null
+  for (let n = h.parentElement; n && n !== document.documentElement; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY
+    if (oy === 'auto' || oy === 'scroll') {
+      cap = n
+      break
+    }
+  }
   const mask = h.querySelector('.ph-mask')
   const mr = mask ? mask.getBoundingClientRect() : null
   const spans = mask ? [...mask.querySelectorAll('span')] : []
@@ -142,6 +155,8 @@ const STATE = `(() => {
     stickyVar: resolveVar('--ph-stick'),
     stickyTop: px(cs.top),
     scroller: scroller ? 'nested' : 'document',
+    capName: cap ? cap.className || cap.tagName : 'document',
+    capPadTop: cap ? px(getComputedStyle(cap).paddingTop) : 0,
     scrollerTop: scroller ? Math.round(scroller.getBoundingClientRect().top) : 0,
     scrollerScrollTop: scroller ? Math.round(scroller.scrollTop) : Math.round(window.scrollY),
     headerTop: Math.round(hr.top),
@@ -335,7 +350,18 @@ async function main() {
           s.maskLeft <= s.headerLeft && s.maskRight >= s.headerRight,
           `mask=${s.maskLeft}..${s.maskRight} 页头=${s.headerLeft}..${s.headerRight} 视口宽=${s.viewportW}`,
         )
-        // 5 滚动相关的三条只在真的滚起来时才有判据：
+        // 5 撑起页头的滚动容器不许带**上内边距**：sticky 的粘滞位是从容器的「内容盒顶」
+        //   起算的，容器带上内边距，页头就被顶下去「内边距 + --ph-stick」那么多
+        //   （管理模型页真机 safe-top=42 下实测落在 94 —— 页头上方留出一条 52px 的空白，
+        //   滚起来也贴不住容器顶，那条里的内容是**没被遮住**地从页头上方滑过去）。
+        //   这条与「能不能滚」无关：容器按「祖先里有 overflow」找，空态页照样验得到 ——
+        //   而恰恰是内容不足一屏的页面，下面那批滚动类断言会被整段跳过。
+        ok(
+          `${hash} 页头的滚动容器没有上内边距`,
+          s.capPadTop === 0,
+          `容器=${s.capName} 上内边距=${s.capPadTop}px`,
+        )
+        // 6 滚动相关的三条只在真的滚起来时才有判据：
         //   空态页（mock 没数据）内容不足一屏，滚不动，靠截图人工看
         if (scrolledTop > 0) {
           ok(

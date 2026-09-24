@@ -99,11 +99,13 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
       <EmptyState v-else-if="ready" :icon="Search" title="没有匹配的食物" hint="换个关键词或分类试试" />
     </section>
 
-    <!-- 右下角悬浮按钮：快速记一笔 -->
-    <button class="fab row center" aria-label="记录食物" @click="onAdd">
-      <Pencil :size="18" :stroke-width="2.4" />
-      <span>记录</span>
-    </button>
+    <!-- 右下角悬浮按钮：快速记一笔（Teleport 出页面层：translate 会改 fixed 后代的包含块） -->
+    <Teleport to="body">
+      <button class="fab row center" aria-label="记录食物" @click="onAdd">
+        <Pencil :size="18" :stroke-width="2.4" />
+        <span>记录</span>
+      </button>
+    </Teleport>
 
     <!-- 详情抽屉（Teleport；保证页面单根） -->
     <FoodDetailDrawer :open="detailOpen" :food="detailFood" @close="detailOpen = false" @record="onRecord" />

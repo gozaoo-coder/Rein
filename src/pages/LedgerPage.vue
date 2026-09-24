@@ -118,11 +118,13 @@ const emptyText = computed(() =>
     <LedgerList v-if="filtered.length > 0" :entries="filtered" @edit="onEdit" />
     <section v-else class="card empty t-3">{{ emptyText }}</section>
 
-    <!-- 记一笔 -->
-    <button class="fab row center" aria-label="记一笔" @click="onAdd">
-      <Plus :size="20" :stroke-width="2.6" />
-      <span>记一笔</span>
-    </button>
+    <!-- 记一笔（Teleport 出页面层：translate 会改 fixed 后代的包含块，留在层内拖动时会跑位） -->
+    <Teleport to="body">
+      <button class="fab row center" aria-label="记一笔" @click="onAdd">
+        <Plus :size="20" :stroke-width="2.6" />
+        <span>记一笔</span>
+      </button>
+    </Teleport>
 
     <LedgerEntrySheet :open="entryOpen" :entry="editing" @close="entryOpen = false" @saved="entryOpen = false" />
     <BudgetSheet :open="budgetOpen" @close="budgetOpen = false" @saved="budgetOpen = false" />
