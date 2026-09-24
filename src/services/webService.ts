@@ -4,9 +4,10 @@
 import { invoke } from './transport'
 
 export interface WebFetchResult {
-  /** 实际抓取到的最终地址（跟随重定向后） */
+  /** 实际抓取到的最终地址（请求重定向后） */
   url: string
-  content_type: string
+  /** Rust 侧 `WebFetchResult.content_type` 序列化后的键（camelCase） */
+  contentType: string
   /** HTML 转纯文本后的正文（已按 maxChars 截断） */
   text: string
   truncated: boolean

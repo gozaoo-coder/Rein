@@ -34,7 +34,7 @@ export const webTools: AppTool[] = [
     }),
     async execute(args) {
       const r = await webService.webFetch(args.url, args.maxChars)
-      return { url: r.url, contentType: r.content_type, text: r.text, truncated: r.truncated }
+      return { url: r.url, contentType: r.contentType, text: r.text, truncated: r.truncated }
     },
   }),
 ]
