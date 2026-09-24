@@ -15,6 +15,7 @@
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { createServer } from 'node:net'
 
 const EDGE_CANDIDATES = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -81,7 +82,21 @@ async function shot(name) {
 }
 
 async function connect(url) {
-  const list = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`)).json()
+  // 冷启动（每次都是全新的 user-data-dir）时，浏览器把调试端口开出来可能慢于
+  // 上面那 1.5 秒的固定等待 —— 那就是一句与页面毫无关系的 `fetch failed`，
+  // 而它看起来像「应用挂了」。所以这里改成有界重试。
+  let list = null
+  const dl = Date.now() + 20000
+  while (Date.now() < dl) {
+    try {
+      list = await (await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`)).json()
+      if (list.length) break
+    } catch {
+      /* 端口还没开：继续等 */
+    }
+    await sleep(500)
+  }
+  if (!list?.length) throw new Error(`浏览器调试端口 ${DEBUG_PORT} 20 秒内没起来`)
   const target = list.find((t) => t.type === 'page')
   ws = new WebSocket(target.webSocketDebuggerUrl)
   await new Promise((r, j) => {
@@ -183,9 +198,27 @@ async function login(user, pass) {
 
 /* ---------------- 主流程 ---------------- */
 
-const DEBUG_PORT = 9900 + (process.pid % 90)
+/** 让系统给一个真的能绑的端口。
+ *
+ * 这原先写死成 `9900 + pid%90`，而 Windows 上有一段**保留端口区间**
+ * （本机是 9936–10035，Hyper-V/WSL 占的）—— 落在里面的端口 Edge 绑不上：
+ * 进程起得来、profile 也建得出来，只是调试端口永远不开，脚本报一句
+ * 与页面毫无关系的 `fetch failed`。listen(0) 拿到的端口不会落在保留段里。 */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const srv = createServer()
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address()
+      srv.close(() => resolve(port))
+    })
+    srv.on('error', reject)
+  })
+}
+
+let DEBUG_PORT = 0
 
 async function main() {
+  DEBUG_PORT = await freePort()
   const edge = spawn(
     BROWSER,
     [

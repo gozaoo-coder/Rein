@@ -7,13 +7,17 @@
  * （前景带 alpha 时先与采样到的底色合成 —— 那才是人眼看到的颜色）。
  *
  * 覆盖：
- *   1 亮 / 暗 · 超高：页签（未选中 / 选中衬底）与读数胶囊的对比度 ≥ 4.5:1、无横向溢出
+ *   1 亮 / 暗 · 超高：**底栏标本与真实 Dock 逐项一致**（块数 / 几何 / 页签前景 /
+ *     受光亮斑 / 玻璃底色，逐项比计算样式）、读数胶囊对比度 ≥ 4.5:1、无横向溢出
  *   2 拖动态：把壁纸横拖一段留档（玻璃边缘的位移与色散靠这张图人工核对）
  *   3 退化态：Firefox UA（内核不支持 url() 折射）· 高画质档（未开折射）· 弱档（顶成实底）
  *     三条路径都要**如实报出**自己是哪一种，而不是让人对着退化结果猜
  *   4 系统「减弱透明度」：折射一并关掉（内联样式压过媒体查询，靠调用处的 !important 压住），
- *     顶成实底后前景仍读得出来
+ *     顶成实底；这两档里标本也必须继续与真实 Dock 一致
  *   5 窄屏 320：不横向溢出、底栏不出界、页签触区 ≥ 44
+ *   6 真实 Dock（左圆钮 + 中药丸 + 右圆钮，三块并列玻璃）：超高逐块折射 / 高画质普通
+ *     毛玻璃 / 弱档顶成实底，页签对比度真图采像素
+ *   7 参数调节面板：11 行参数、拖滑杆滤镜跟着重烘、点值就地输入、恢复默认
  *
  * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
  * 运行：node scripts/e2e-perf-glass.mjs
@@ -110,16 +114,46 @@ function parseColor(s) {
   return [p[0], p[1], p[2], p[3] ?? 1]
 }
 
-/** 页签/胶囊的采样点：页签取文字左侧的玻璃（避开字形），选中取衬底内 */
-const TAB_POINTS = `(() => {
-  const tabs = [...document.querySelectorAll('.bench .tab')]
-  const off = tabs.find((t) => !t.classList.contains('on'))
-  const on = tabs.find((t) => t.classList.contains('on'))
-  const r = (el) => el.getBoundingClientRect()
-  return [
-    { name: '未选中页签玻璃', x: r(off).left + 3, y: r(off).top + r(off).height / 2 },
-    { name: '选中页签衬底', x: r(on).left + 9, y: r(on).top + r(on).height / 2 },
-  ]
+/** 读数胶囊的采样点（暗场芯片材质，前景浅色） */
+const PLAQUE_POINT = `(() => { const p = document.querySelector('.plaque'); const r = p.getBoundingClientRect(); return { x: r.right - 6, y: r.top + r.height / 2, color: getComputedStyle(p).color } })()`
+
+/**
+ * 标本台的底栏 vs 真实 Dock：逐项比对**计算样式与几何**。
+ * 这是「标本必须与真实 Dock 长得一样」的那条约束 —— 两边各写一套样式迟早会漂
+ * （标本曾经用暗场令牌 + 自己的一版页签），所以这里比对的是同一份全局定义落出来的结果。
+ */
+const SYNC_PROBE = `(() => {
+  const cs = (el) => (el ? getComputedStyle(el) : null)
+  const pick = (root) => {
+    if (!root) return null
+    const tab = root.querySelector('.dock-tab')
+    const slot = root.querySelector('.dock-slot')
+    const block = root.querySelector('.dock-block')
+    const pill = root.querySelector('.dock-block.pill')
+    const blob = tab ? getComputedStyle(tab, '::before') : null
+    const rect = (el) => (el ? { w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) } : null)
+    return {
+      blocks: root.querySelectorAll('.dock-block').length,
+      tabs: root.querySelectorAll('.dock-tab').length,
+      slots: root.querySelectorAll('.dock-slot').length,
+      block: rect(block),
+      blockFill: cs(block)?.backgroundColor,
+      // 滤镜 id 每个实例都不同（glass-filter-xxxx）：只比「挂没挂折射」
+      blockFilter: String(cs(block)?.backdropFilter).replace(/glass-filter-[a-z0-9]+/g, 'glass-filter-*'),
+      tabH: Math.round(tab?.getBoundingClientRect().height ?? 0),
+      pillGrow: cs(pill)?.flexGrow,
+      tabColor: cs(tab)?.color,
+      tabSize: cs(tab)?.fontSize,
+      tabWeight: cs(tab)?.fontWeight,
+      tabGap: cs(tab)?.gap,
+      tabRadius: cs(tab)?.borderRadius,
+      blob: blob?.backgroundImage,
+      blobInset: blob?.inset,
+      blobRadius: blob?.borderRadius,
+      slotColor: cs(slot)?.color,
+    }
+  }
+  return { bench: pick(document.querySelector('.bench .dockrow')), dock: pick(document.querySelector('.dock')) }
 })()`
 
 async function main() {
@@ -194,15 +228,17 @@ async function main() {
       await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] })
       await reload()
       const data = await shot(`ultra-${theme}`)
-      const px = await sampleAt(data, await evalJS(TAB_POINTS))
-      const offColor = await evalJS(`getComputedStyle(document.querySelector('.bench .tab:not(.on)')).color`)
-      const onColor = await evalJS(`getComputedStyle(document.querySelector('.bench .tab.on')).color`)
-      for (const p of px) {
-        const fg = p.name.includes('未选中') ? parseColor(offColor) : parseColor(onColor)
-        const ratio = contrast(fg, p.bg)
-        ok(`${theme} · ${p.name}对比度 ≥ 4.5:1`, ratio >= 4.5, `${ratio.toFixed(2)}:1 · 底 rgb(${p.bg.join(',')})`)
-      }
-      const chip = await evalJS(`(() => { const p = document.querySelector('.plaque'); const r = p.getBoundingClientRect(); return { x: r.right - 6, y: r.top + r.height / 2, color: getComputedStyle(p).color } })()`)
+
+      // 标本台的底栏必须与真实 Dock **逐项一致**（结构与前景类共用 base.css 一份定义）
+      const sync = await evalJS(SYNC_PROBE)
+      const same = JSON.stringify(sync.bench) === JSON.stringify(sync.dock)
+      ok(
+        `${theme} · 底栏标本与真实 Dock 逐项一致（块数 / 几何 / 页签前景 / 受光亮斑）`,
+        same && sync.dock?.blocks === 3,
+        same ? `3 块 · ${sync.dock.tabColor} · 亮斑 ${String(sync.dock.blob).slice(0, 48)}…` : `标本 ${JSON.stringify(sync.bench)} · Dock ${JSON.stringify(sync.dock)}`,
+      )
+
+      const chip = await evalJS(PLAQUE_POINT)
       const [chipPx] = await sampleAt(data, [{ name: '读数胶囊', x: chip.x, y: chip.y }])
       const chipRatio = contrast(parseColor(chip.color), chipPx.bg)
       ok(`${theme} · 读数胶囊对比度 ≥ 4.5:1`, chipRatio >= 4.5, `${chipRatio.toFixed(2)}:1 · 底 rgb(${chipPx.bg.join(',')})`)
@@ -234,7 +270,7 @@ async function main() {
 
     await setTier('low')
     const low = await evalJS(`(() => {
-      const g = document.querySelector('.bench .glass')
+      const g = document.querySelector('.parts .glass')
       const cs = getComputedStyle(g)
       return {
         fill: cs.backgroundColor,
@@ -242,31 +278,34 @@ async function main() {
         text: document.querySelector('.plaque').className,
         detail: document.querySelector('.plaque').textContent.trim(),
         mounted: document.documentElement.dataset.perf,
-        tabColor: getComputedStyle(document.querySelector('.bench .tab:not(.on)')).color,
       }
     })()`)
-    const lowShot = await shot('tier-low')
-    ok('弱档玻璃顶成实底且不挂模糊', low.mounted === 'low' && low.noBlur && low.fill === 'rgb(11, 11, 14)', `data-perf=${low.mounted} bg=${low.fill} backdrop=${low.noBlur ? 'none' : '仍在'}`)
+    await shot('tier-low')
+    ok('弱档玻璃顶成实底且不挂模糊（暗场基本件）', low.mounted === 'low' && low.noBlur && low.fill === 'rgb(11, 11, 14)', `data-perf=${low.mounted} bg=${low.fill} backdrop=${low.noBlur ? 'none' : '仍在'}`)
     ok('弱档读数说「已降级到流畅优先」', low.text.includes('warn') && low.detail.includes('已降级到流畅优先'), `${low.text} · ${low.detail}`)
-    const lowPt = await evalJS(`(() => { const t = document.querySelector('.bench .tab:not(.on)'); const r = t.getBoundingClientRect(); return [{ name: '弱档未选中页签', x: r.left + 3, y: r.top + r.height / 2 }] })()`)
-    const [lpx] = await sampleAt(lowShot, lowPt)
-    const lowRatio = contrast(parseColor(low.tabColor), lpx.bg)
-    ok('弱档页签仍读得出来 ≥ 4.5:1', lowRatio >= 4.5, `${lowRatio.toFixed(2)}:1 · 底 rgb(${lpx.bg.join(',')})`)
+    const lowSync = await evalJS(SYNC_PROBE)
+    ok(
+      '弱档 · 底栏标本仍与真实 Dock 一致（退化语义两边同步）',
+      JSON.stringify(lowSync.bench) === JSON.stringify(lowSync.dock),
+      `标本 ${JSON.stringify(lowSync.bench)} · Dock ${JSON.stringify(lowSync.dock)}`,
+    )
 
     // ---------- 4 减弱透明度 ----------
     await setTier('ultra')
     await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }, { name: 'prefers-reduced-transparency', value: 'reduce' }] })
     await reload()
     const rt = await evalJS(`(() => {
-      const g = document.querySelector('.bench .glass')
-      return { bg: getComputedStyle(g).backgroundColor, blur: getComputedStyle(g).backdropFilter, color: getComputedStyle(document.querySelector('.bench .tab:not(.on)')).color }
+      const g = document.querySelector('.parts .glass')
+      return { bg: getComputedStyle(g).backgroundColor, blur: getComputedStyle(g).backdropFilter }
     })()`)
-    const rtShot = await shot('reduced-transparency')
-    const rtPt = await evalJS(`(() => { const t = document.querySelector('.bench .tab:not(.on)'); const r = t.getBoundingClientRect(); return [{ name: '减弱透明度未选中页签', x: r.left + 3, y: r.top + r.height / 2 }] })()`)
-    const [rtpx] = await sampleAt(rtShot, rtPt)
-    const rtRatio = contrast(parseColor(rt.color), rtpx.bg)
-    ok('减弱透明度时折射被关掉（顶成实底）', rt.blur === 'none' && rt.bg === 'rgb(11, 11, 14)', `bg=${rt.bg} backdrop=${rt.blur}`)
-    ok('减弱透明度下页签仍读得出来 ≥ 4.5:1', rtRatio >= 4.5, `${rtRatio.toFixed(2)}:1 · 前景=${rt.color} 采样底 rgb(${rtpx.bg.join(',')})`)
+    await shot('reduced-transparency')
+    ok('减弱透明度时折射被关掉（基本件顶成实底）', rt.blur === 'none' && rt.bg === 'rgb(11, 11, 14)', `bg=${rt.bg} backdrop=${rt.blur}`)
+    const rtSync = await evalJS(SYNC_PROBE)
+    ok(
+      '减弱透明度 · 底栏标本仍与真实 Dock 一致',
+      JSON.stringify(rtSync.bench) === JSON.stringify(rtSync.dock),
+      `标本 ${JSON.stringify(rtSync.bench)} · Dock ${JSON.stringify(rtSync.dock)}`,
+    )
     await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'no-preference' }] })
 
     // ---------- 5 窄屏 320 ----------
@@ -274,30 +313,30 @@ async function main() {
     await reload()
     const narrow = await evalJS(`(() => {
       const q = (s) => { const el = document.querySelector(s); if (!el) return null; const r = el.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), h: Math.round(r.height) } }
-      return { doc: document.documentElement.scrollWidth, vw: window.innerWidth, dock: q('.dockrow'), tab: q('.bench .tab') }
+      return { doc: document.documentElement.scrollWidth, vw: window.innerWidth, dock: q('.dockrow'), tab: q('.bench .dock-tab') }
     })()`)
     await shot('narrow-320')
     ok('窄屏 320 无横向溢出', narrow.doc <= narrow.vw + 1, `doc=${narrow.doc} 视口=${narrow.vw}`)
     ok('窄屏底栏不出界', narrow.dock.l >= 0 && narrow.dock.r <= narrow.vw, `dock=${narrow.dock.l}..${narrow.dock.r}`)
     ok('窄屏页签触区高度 ≥ 44', narrow.tab.h >= 44, `高=${narrow.tab.h}`)
 
-    // ---------- 6 真实 Dock：液态玻璃落地（超高档开折射、其余档同一套材质） ----------
+    // ---------- 6 真实 Dock：液态玻璃落地（三块并列玻璃，超高档逐块折射） ----------
     // 站在主页上测：内容滚到 Dock 底下，折射才有得采（背后若是纯背景，看不出差别）。
     const dockProbe = `(() => {
       const nav = document.querySelector('.dock')
       const navCs = getComputedStyle(nav)
-      const layer = nav.querySelector('.refract-layer')
-      const tab = nav.querySelector('.tab:not(.active)')
+      const blocks = [...nav.querySelectorAll('.dock-block')]
+      const tab = nav.querySelector('.dock-tab:not(.active)')
       const r = tab.getBoundingClientRect()
+      const filters = blocks.map((b) => getComputedStyle(b).backdropFilter)
       return {
         tier: document.documentElement.dataset.perf,
-        sharedMaterial: nav.classList.contains('glass-surface'),
-        hasLayer: !!layer,
-        layerFilter: layer ? layer.style.backdropFilter : null,
-        layerFill: layer ? getComputedStyle(layer).backgroundColor : null,
+        blocks: blocks.length,
+        filters,
+        refracting: filters.filter((f) => String(f).includes('url(')).length,
+        blurring: filters.filter((f) => String(f).includes('blur(')).length,
+        fills: blocks.map((b) => getComputedStyle(b).backgroundColor),
         navBg: navCs.backgroundImage,
-        navOrigin: navCs.backgroundOrigin,
-        bgLayers: (navCs.backgroundImage.match(/linear-gradient\\(/g) ?? []).length,
         navFilter: navCs.backdropFilter,
         tabColor: getComputedStyle(tab).color,
         probe: { name: 'Dock 未选中页签玻璃', x: r.left + 3, y: r.top + r.height / 2 },
@@ -318,22 +357,21 @@ async function main() {
     const [duPx] = await sampleAt(dockUltraShot, [dockUltra.probe])
     const dockUltraRatio = contrast(parseColor(dockUltra.tabColor), duPx.bg)
 
-    ok('超高 · Dock 用共用材质类（与悬浮条同一份定义）', dockUltra.sharedMaterial, `class=${dockUltra.sharedMaterial}`)
+    ok('超高 · Dock 是三块并列玻璃（左圆钮 + 中药丸 + 右圆钮）', dockUltra.blocks === 3, `${dockUltra.blocks} 块`)
     ok(
-      '超高 · Dock 垫了折射层（与预览页同一个 GlassSurface）',
-      dockUltra.hasLayer && String(dockUltra.layerFilter).includes('url(') && String(dockUltra.layerFilter).includes('glass-filter-'),
-      `layer=${dockUltra.hasLayer} filter=${dockUltra.layerFilter}`,
-    )
-    ok('超高 · 折射层的底沿用高画质档的浓度（0.5）', String(dockUltra.layerFill).includes('0.5'), dockUltra.layerFill)
-    ok(
-      '超高 · nav 不画底也不模糊（底与模糊让给折射层，否则它采到的是自己那层膜）',
-      dockUltra.bgLayers === 1 && (dockUltra.navFilter === 'none' || dockUltra.navFilter === ''),
-      `层=${dockUltra.bgLayers} bg=${dockUltra.navBg} backdrop=${dockUltra.navFilter}`,
+      '超高 · 三块各自折射（与预览页标本同一个 GlassSurface）',
+      dockUltra.refracting === 3 && dockUltra.filters.every((f) => String(f).includes('glass-filter-')),
+      dockUltra.filters.join(' | '),
     )
     ok(
-      '超高 · 受光边留着（画在 border-box 的渐变描边，玻璃的厚度靠它）',
-      dockUltra.navOrigin === 'border-box',
-      `origin=${dockUltra.navOrigin}`,
+      '超高 · 三块的底同色且不是全透的膜（都取自 --glass-fill）',
+      dockUltra.fills.every((f) => f === dockUltra.fills[0] && !/rgba?\(0, 0, 0, 0\)/.test(String(f))),
+      dockUltra.fills.join(' | '),
+    )
+    ok(
+      '超高 · nav 自己不画底也不模糊（底与模糊都在三块玻璃上，nav 只是定位壳）',
+      dockUltra.navBg === 'none' && (dockUltra.navFilter === 'none' || dockUltra.navFilter === ''),
+      `bg=${dockUltra.navBg} backdrop=${dockUltra.navFilter}`,
     )
     const dockUltraOverflow = await evalJS(`({ doc: document.documentElement.scrollWidth, vw: window.innerWidth })`)
     ok(
@@ -351,9 +389,16 @@ async function main() {
     const dockHighRatio = contrast(parseColor(dockHigh.tabColor), dhPx.bg)
 
     ok(
-      '高画质 · Dock 无折射层、走普通毛玻璃',
-      dockHigh.hasLayer === false && String(dockHigh.navFilter).includes('blur(28px)'),
-      `layer=${dockHigh.hasLayer} backdrop=${dockHigh.navFilter}`,
+      '高画质 · Dock 不挂折射、三块都走普通毛玻璃',
+      dockHigh.refracting === 0 && dockHigh.blurring === 3,
+      `折射 ${dockHigh.refracting} · 模糊 ${dockHigh.blurring}：${dockHigh.filters.join(' | ')}`,
+    )
+    // 折射的底若与其余档位不同色（比如暗色下用纯黑），页签文字的真图对比度会整档下滑 ——
+    // 这条把「同色」钉成结构不变量，而不是靠对比度阈值兜
+    ok(
+      '超高 · 折射的底与高画质档同色（同一份 --glass-fill）',
+      dockUltra.fills.every((f, i) => f === dockHigh.fills[i]),
+      `超高 ${dockUltra.fills.join(' | ')} · 高画质 ${dockHigh.fills.join(' | ')}`,
     )
     // 未选中页签的前景是 --text-3（既有设计），这里锁的是「折射不该让它更差」：
     // 折射层的底若调得太薄，这条会立刻红（真图采像素，不是算合成）
@@ -395,10 +440,98 @@ async function main() {
     const dockLow = await evalJS(dockProbe)
     await shot('dock-low')
     ok(
-      '弱档 · Dock 无折射层也不挂模糊（顶成实底）',
-      dockLow.hasLayer === false && (dockLow.navFilter === 'none' || dockLow.navFilter === ''),
-      `layer=${dockLow.hasLayer} backdrop=${dockLow.navFilter}`,
+      '弱档 · Dock 无折射也不挂模糊（顶成实底）',
+      dockLow.refracting === 0 && dockLow.filters.every((f) => f === 'none' || f === ''),
+      dockLow.filters.join(' | '),
     )
+
+    // ---------- 7 参数调节面板（system/glassParams） ----------
+    // 面板改的是**全局可调参数**：拖一下滑杆，标本的滤镜定义必须跟着重烘 ——
+    // 「样式写对了但没生效」这类毛病只有真拖一遍才看得出来。
+    await setTier('ultra')
+    await evalJS(`localStorage.removeItem('rein.glass.v1')`)
+    await cdp('Page.navigate', { url: `${APP}/#/settings/perf` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
+
+    ok('画质预览页有参数调节入口', await evalJS(`!!document.querySelector('.tuner')`))
+    await evalJS(`document.querySelector('.tuner').click()`)
+    await sleep(700)
+    const tuner = await evalJS(`(() => {
+      const rows = [...document.querySelectorAll('.prow')]
+      return {
+        open: !!document.querySelector('.panel'),
+        title: document.querySelector('.panel h2')?.textContent.trim(),
+        keys: rows.map((r) => r.querySelector('.pkey')?.textContent.trim()),
+        labelled: rows.every((r) => !!r.querySelector('.pcn') && !!r.querySelector('button.pval') && !!r.querySelector('.prange')),
+      }
+    })()`)
+    ok(
+      '面板拉开并列出全部 11 项参数',
+      tuner.open && tuner.title === '液态玻璃参数' && tuner.keys.length === 11,
+      `${tuner.title} · ${tuner.keys.join(' ')}`,
+    )
+    ok(
+      '每行都是「英文键名 + 中文名 + 当前值 + 滑杆」',
+      tuner.labelled && tuner.keys.includes('distortionScale') && tuner.keys.includes('backgroundOpacity'),
+      `键名 ${tuner.keys.join(' ')}`,
+    )
+
+    const rowExpr = (key, inner) => `(() => {
+      const row = [...document.querySelectorAll('.prow')].find((r) => r.querySelector('.pkey')?.textContent.trim() === ${JSON.stringify(key)})
+      if (!row) return null
+      ${inner}
+    })()`
+    const scaleExpr = `document.querySelector('.bench .glass filter feDisplacementMap')?.getAttribute('scale')`
+
+    const scaleBefore = await evalJS(scaleExpr)
+    await evalJS(
+      rowExpr('distortionScale', `const input = row.querySelector('.prange'); input.value = '40'; input.dispatchEvent(new Event('input', { bubbles: true }))`),
+    )
+    await sleep(400)
+    const scaleAfter = await evalJS(scaleExpr)
+    const stored = await evalJS(`localStorage.getItem('rein.glass.v1')`)
+    ok(
+      '拖滑杆 → 滤镜定义跟着重烘（scale 40）',
+      scaleAfter === '40' && scaleAfter !== scaleBefore,
+      `${scaleBefore} → ${scaleAfter}`,
+    )
+    ok('改动落盘（rein.glass.v1）', String(stored).includes('"distortionScale":40'), String(stored))
+
+    // 点一下就地输入：值钮 → 输入框 → 回车提交（吸附到步长、夹回区间）
+    await evalJS(rowExpr('borderWidth', `row.querySelector('button.pval').click()`))
+    await sleep(200)
+    const editing = await evalJS(`!!document.querySelector('.prow input.pval.edit')`)
+    await evalJS(`(() => {
+      const inp = document.querySelector('.prow input.pval.edit')
+      inp.value = '0.62'
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })()`)
+    await sleep(300)
+    const typed = await evalJS(
+      rowExpr('borderWidth', `return { text: row.querySelector('button.pval')?.textContent.trim(), stored: JSON.parse(localStorage.getItem('rein.glass.v1')).borderWidth }`),
+    )
+    ok(
+      '点数值可就地输入（0.62 吸附到步长并生效）',
+      editing && typed.text === '0.62' && typed.stored === 0.62,
+      `显示 ${typed.text} · 存储 ${typed.stored}`,
+    )
+
+    await evalJS(`document.querySelector('.panel .reset').click()`)
+    await sleep(400)
+    const reset = await evalJS(`(() => ({
+      stored: JSON.parse(localStorage.getItem('rein.glass.v1')),
+      scale: ${scaleExpr},
+    }))()`)
+    ok(
+      '「恢复默认」回到出厂参数',
+      reset.stored.borderWidth === 0.28 && reset.stored.distortionScale === -31 && reset.scale === '-31',
+      JSON.stringify(reset.stored),
+    )
+    await evalJS(`document.querySelector('.panel .close').click()`)
+    await sleep(600)
+    ok('面板可关闭', (await evalJS(`!!document.querySelector('.panel')`)) === false)
 
     const errs = await evalJS('window.__errs ?? []')
     ok('末次运行期无未捕获异常', errs.length === 0, errs.join(' | '))

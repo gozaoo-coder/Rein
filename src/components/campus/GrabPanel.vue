@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   AlertTriangle,
   Ban,
+  CalendarClock,
   Check,
   CheckCircle2,
   Layers,
@@ -67,6 +68,18 @@ async function runPreflight(): Promise<void> {
     preflightBusy.value = false
   }
 }
+
+/**
+ * 自检结果：**先看坏的**。
+ *
+ * 只排序、不截断 —— 自检是用户自己点出来的，他要的就是一份完整结论；
+ * 把第 5 项折叠成「还有 1 项」反而把最该看的那条藏了
+ * （计划那一项恰恰是「一个候选都没匹配上」最可能出现的地方）。
+ */
+const pfItems = computed(() => {
+  const items = preflight.value?.items ?? []
+  return [...items.filter((i) => !i.ok), ...items.filter((i) => i.ok)]
+})
 
 /**
  * 页面级的几件事实由页面传进来（服务器时钟、上次刷新时刻、对时偏差、账号、当前窗口）。
@@ -158,6 +171,45 @@ const stageHot = computed(() => {
 })
 
 /**
+ * **窗口已经开了，而任务单是空的** —— 整套机制里最危险的那一格。
+ *
+ * 危险在哪：名额正在以秒为单位消失，而他手上一条任务都没有。
+ * 而它原先长什么样？——没有倒计时（`fireInMs` 在没有任务时返回 null）、没有变色、
+ * 没有一句话说要紧 —— 整页呈现出的是一天里最平静的样子，
+ * 恰恰把「更危险的态」画成了「更安心的态」。
+ *
+ * 所以这个态要自己站出来：换底色（警告档）、把窗口时间从 11px 副信息里提出来、
+ * 并且明确说清「现在该干什么」。判据用 `allowEnter`（窗口真的开了）
+ * 而不是「有没有批次」——批次存在但进不去时，确实没什么可急的。
+ */
+const stageOpen = computed(
+  () => store.activeTurn?.allowEnter === true && actives.value.length === 0 && !resultMode.value,
+)
+
+/** 窗口已经开了多久 / 还剩多久：比一个静态的时间区间更像「正在发生的事」 */
+const openFor = computed(() => {
+  if (!stageOpen.value) return ''
+  const raw = store.activeTurn?.selectDateTimeRange?.endDateTime
+  if (!raw) return ''
+  const end = new Date(String(raw).replace(' ', 'T')).getTime()
+  if (Number.isNaN(end)) return ''
+  const ms = end - now.value
+  if (ms <= 0) return '窗口已结束'
+  return `还剩 ${formatCountdown(ms)}`
+})
+
+/**
+ * **窗口是否开着** —— 这件事本身要一直看得见，但不该一直报警。
+ *
+ * 正选窗口可以开好几天，把整块板染成警告色过一整天就成了狼来了。
+ * 所以拆成两层：窗口开着是**事实**（说出来、用颜色标出来），
+ * 而「进了批次却一条任务都没排」才是**警报**（stageOpen，整块板变色）。
+ */
+const windowOpen = computed(
+  () => store.activeTurn?.allowEnter === true || store.turns.some((t) => t.allowEnter),
+)
+
+/**
  * 给读屏的播报：**只报关键节点**。
  *
  * 可见的那个大数字挂的是 `aria-hidden` —— 它每秒都在变，读屏会跟着念一整晚。
@@ -185,7 +237,11 @@ const phaseText = computed(() => {
   if (store.grabError) return '引擎停了 —— 先处理上面的问题'
   if (store.rejectedTasks.length) return '有请求被教务拒了（参数错误），已交给 AI 排查'
   if (resultMode.value) return ''
-  if (!hasAny.value) return listening.value ? '正在盯着选课窗口' : '还没有排队的课程'
+  if (!hasAny.value) {
+    if (stageOpen.value) return '窗口开着，但还没有排课'
+    if (windowOpen.value) return '窗口开放中 · 还没有排队的课程'
+    return listening.value ? '正在盯着选课窗口' : '还没有排队的课程'
+  }
   if (actives.value.some((t) => (t.attempts ?? 0) > 0 || (t.polls ?? 0) > 0)) {
     return '已经出手了'
   }
@@ -362,7 +418,11 @@ function handToAi(): void {
 <template>
   <!-- 没有任务但**引擎在监听**时也要显示：大一新生在窗口开放前没有任何任务可排，
        「它正在盯着窗口」就是他唯一能看到的进展（早先这块只在出错时才渲染，等于没说） -->
-  <section v-if="hasAny || store.grabError || listening || props.clock" class="card grab" :class="{ hot: stageHot }">
+  <section
+    v-if="hasAny || store.grabError || listening || props.clock"
+    class="card grab"
+    :class="{ hot: stageHot, open: stageOpen }"
+  >
     <header class="head">
       <span class="row title">
         <Zap :size="15" class="bolt" />
@@ -374,7 +434,7 @@ function handToAi(): void {
       <!-- 主数字：这是整页最该一眼看到的东西。倒计时**只有真的存在时**才出现 ——
            没有值得等的时刻就不摆一个数字在那儿 -->
       <template v-if="countdown">
-        <span class="cd-label t-3">距出手</span>
+        <span class="cd-label">距出手</span>
         <p class="cd-big num" :class="{ live: countdown === '正在开抢' }" aria-hidden="true">
           {{ countdown }}
         </p>
@@ -385,16 +445,27 @@ function handToAi(): void {
         {{ phaseText || (listening ? '正在盯着选课窗口' : '等你安排要抢的课') }}
       </p>
 
-      <!-- 副信息：教务的钟、上次刷新、当前窗口、账号，全部降级成这一行小字。
+      <!-- 窗口开没开，是「现在该不该动手」的唯一依据。
+           它原先只是副信息行里的第 3 个片段（窗口 09-24 00:00 → …），
+           和「上次刷新」「演示同学」同一个份量、同一档 11px 灰字 ——
+           等于把「现在能选课」这件事藏进了一行背景事实里 -->
+      <p v-if="props.windowText" class="win" :class="{ on: windowOpen }">
+        <CalendarClock :size="12" />
+        <span>{{ windowOpen ? '选课窗口开放中' : '选课窗口' }} {{ props.windowText }}</span>
+        <b v-if="openFor" class="num">{{ openFor }}</b>
+      </p>
+
+      <!-- 副信息：教务的钟、上次刷新、账号，全部降级成这一行小字。
            抢课对时全靠教务的钟，但它不该比「还有多久出手」更抢眼 -->
-      <p class="facts t-3">
+      <p class="facts">
         <span class="num">教务服务器时间 {{ props.clock || '—' }}</span>
         <span v-if="props.refreshedAt">· 上次刷新 {{ props.refreshedAt }}</span>
-        <span v-if="props.windowText">· 窗口 {{ props.windowText }}</span>
         <span v-if="props.account">· {{ props.account }}</span>
       </p>
 
-      <p class="engine t-3">
+      <!-- 这条硬前提原先是最淡的一档小字。可它是「关掉 App 就不再出手」——
+           整个产品最容易让人误解的地方，读不清就等于没说 -->
+      <p class="engine">
         <ShieldAlert :size="12" />
         引擎跑在 App 进程里：App 被划掉或清理后就不再出手
       </p>
@@ -410,12 +481,12 @@ function handToAi(): void {
           {{ preflight.summary }}
         </span>
       </div>
-      <ul v-if="preflight?.items.length" class="pf-list">
-        <li v-for="it in preflight.items" :key="it.key + it.label" :class="it.ok ? 'ok' : 'bad'">
+      <ul v-if="pfItems.length" class="pf-list">
+        <li v-for="it in pfItems" :key="it.key + it.label" :class="it.ok ? 'ok' : 'bad'">
           <span class="pf-mark" aria-hidden="true">{{ it.ok ? '✓' : '✕' }}</span>
           <span class="col">
             <b>{{ it.label }}</b>
-            <em class="t-3">{{ it.detail }}</em>
+            <em class="pf-detail">{{ it.detail }}</em>
           </span>
         </li>
       </ul>
@@ -447,7 +518,7 @@ function handToAi(): void {
           <b>重试不会成功</b>，引擎已停手，等 AI 查明教务现在要什么参数
         </span>
       </p>
-      <p class="why t-3">{{ store.rejectedTasks[0]!.lastMessage }}</p>
+      <p class="why">{{ store.rejectedTasks[0]!.lastMessage }}</p>
       <div class="row acts">
         <button class="fix" type="button" @click="handToAi">交给 AI 排查</button>
         <button
@@ -460,10 +531,10 @@ function handToAi(): void {
       </div>
     </div>
 
-    <p v-if="!hasAny" class="t-3 empty">
-      还没有排队的课程。
-      <span v-if="listening" class="listen">{{ listenText }}</span>
-    </p>
+    <!-- 没有任务时只剩「引擎在替你看什么」这一条新信息 ——
+         上面那句阶段陈述已经在说「还没有排队的课程」了，
+         同一张卡上把同一句话说两遍，只是让人多读一遍 -->
+    <p v-if="!hasAny" class="listen-line">{{ listenText }}</p>
 
     <!-- 结束态：没有在抢的了 —— 把「结果」顶上来。此刻「正在抢什么」已经没有内容，
          而用户（多半是睡醒的人）要的是「拿到了什么、还欠什么、现在做什么」 -->
@@ -480,7 +551,7 @@ function handToAi(): void {
         <li v-if="row.kind === 'head'" class="squad">
           <Layers :size="13" />
           <b>{{ row.name }}</b>
-          <span class="t-3">
+          <span>
             {{ row.lead ? `第 ${row.lead.priority ?? '?'} 志愿在抢` : '等待接手' }}
           </span>
         </li>
@@ -493,7 +564,7 @@ function handToAi(): void {
               <span class="chip" :class="chipOf(row.t).tone">{{ chipOf(row.t).label }}</span>
               <span v-if="row.t.heldBy" class="chip idle">{{ waitingOn(row.t) }}</span>
             </div>
-            <p v-if="detail(row.t)" class="meta t-3">{{ detail(row.t) }}</p>
+            <p v-if="detail(row.t)" class="meta">{{ detail(row.t) }}</p>
           </div>
 
           <div class="row ops">
@@ -621,6 +692,7 @@ function handToAi(): void {
 /* 那句「距出手」的小标签：说明下面这个数字是什么 */
 .cd-label {
   font-size: var(--fs-micro);
+  color: var(--text-2);
   margin-top: 2px;
 }
 
@@ -641,7 +713,9 @@ function handToAi(): void {
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-/* 副信息：一行小字，允许折行；它们是背景事实，不该跟主数字抢注意力 */
+/* 副信息：一行小字，允许折行；它们是背景事实，不该跟主数字抢注意力。
+   但「不抢注意力」不等于「读不出来」—— 这两行里装着教务的钟和对时的依据，
+   原先 11px 的 --text-3 在亮色下只有约 2.5:1，暗色下更低，等于印了一层水印。 */
 .facts,
 .engine {
   display: flex;
@@ -650,10 +724,18 @@ function handToAi(): void {
   gap: 0 6px;
   font-size: var(--fs-micro);
   line-height: 1.6;
+  color: var(--text-2);
 }
 
 .engine {
   gap: 0 4px;
+  align-items: flex-start;
+}
+
+.engine svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warn-strong);
 }
 
 /* 起飞前自检：按钮与逐项结果。刻意做成「一行小字 + 一个按钮」的份量 ——
@@ -667,16 +749,26 @@ function handToAi(): void {
 }
 
 .pf-go {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  min-height: 30px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill, 999px);
   background: transparent;
   color: var(--text-2);
   font-size: var(--fs-micro);
   cursor: pointer;
+}
+
+/* 命中区纵向撑到 44：它是 T-1 分钟最可能被按的那颗按钮，
+   而它视觉上只有 30 高（横向不外扩：右边紧挨着自检结论那句话） */
+.pf-go::after {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
 }
 
 .pf-go:disabled {
@@ -724,6 +816,12 @@ function handToAi(): void {
   word-break: break-word;
 }
 
+/* 自检的**证据**（「会话有效，选课令牌可用」这类）—— 这一行才是自检存在的理由，
+   它不能比上面那个 ✓/✕ 还看不见 */
+.pf-detail {
+  color: var(--text-2);
+}
+
 .pf-mark {
   flex: none;
   width: 1em;
@@ -742,6 +840,43 @@ function handToAi(): void {
 .grab.hot {
   background: var(--accent-soft);
   box-shadow: var(--shadow-card), inset 0 0 0 1px var(--accent);
+}
+
+/* **窗口开着、任务单却是空的** —— 名额正在消失，而他一条任务都还没排。
+   这个态必须自己站出来，否则它长得和一天里最平静的那几秒一模一样：
+   没有倒计时（没有任务就没有 fireInMs）、没有变色、没有一句话说要紧。
+   用警告档而不是强调档：强调档是「正在出手」（好事），警告档是「你还什么都没做」。 */
+.grab.open {
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--warn);
+}
+
+.grab.open .bolt {
+  color: var(--warn-strong);
+}
+
+/* 窗口开没开：一行事实，开着的用强调色说出来 */
+.win {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 5px;
+  font-size: var(--fs-micro);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.win svg {
+  flex: none;
+}
+
+.win.on {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.win b {
+  font-weight: 700;
 }
 
 /* 读屏专用文本：可见的那个大数字每秒都变，不能让它当 live region */
@@ -815,11 +950,13 @@ function handToAi(): void {
   line-height: 1.45;
 }
 
+/* 被教务拒绝的那句原话：它是「为什么停了」的唯一直接证据 */
 .why {
   font-size: var(--fs-micro);
   margin-top: 4px;
   line-height: 1.45;
   word-break: break-word;
+  color: var(--text-2);
 }
 
 .rejected .acts {
@@ -833,17 +970,14 @@ function handToAi(): void {
   min-height: 32px;
 }
 
-.empty {
+/* 窗口监听：没有任务时也要让人看到「它还在盯着」，否则关掉页面就等于什么都没发生。
+   这一行是那块板上唯一的新信息（上面已经说过「还没有排队的课程」了），
+   所以给它强调色 —— 它是「引擎还活着」的证据 */
+.listen-line {
   font-size: var(--fs-caption);
-  padding: 6px 0;
-}
-
-/* 窗口监听：没有任务时也要让人看到「它还在盯着」，否则关掉页面就等于什么都没发生 */
-.listen {
-  display: block;
-  margin-top: 4px;
-  font-size: var(--fs-micro);
   color: var(--accent-strong);
+  line-height: 1.5;
+  padding: 4px 0;
 }
 
 .list {
@@ -851,20 +985,20 @@ function handToAi(): void {
   flex-direction: column;
 }
 
-/* 志愿组头：浅色小标题，不抢任务行的注意力 */
+/* 志愿组头：小标题级，但读得出来 —— 「第 2 志愿在抢」是理解这份任务单的关键 */
 .squad {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 0 4px;
   font-size: var(--fs-micro);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .squad b {
   font-size: var(--fs-caption);
   font-weight: 700;
-  color: var(--text-2);
+  color: var(--text-1);
 }
 
 .squad svg {
@@ -924,6 +1058,10 @@ function handToAi(): void {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+  /* 这一行是「这一秒为什么没在打」的答案（第几次尝试、几秒后重试、教务的原话），
+     它是任务行里唯一会解释沉默的东西 —— 不能是最淡的一档 */
+  color: var(--text-2);
 }
 
 .chip {
@@ -933,7 +1071,9 @@ function handToAi(): void {
   padding: 1px 8px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
-  color: var(--text-3);
+  /* 中性档徽标（已取消 / 待命）也是**状态词**，不是装饰 ——
+     原先的 --text-3 压 --surface-2 只有 2.3:1，等于这些状态读不出来 */
+  color: var(--text-2);
 }
 
 .chip.run {
@@ -1005,23 +1145,35 @@ function handToAi(): void {
 .foot {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  align-items: center;
+  /* 行距留 18：每颗按钮的命中区纵向各外扩 6px，折行之后相邻两行才不会互相吃掉 */
+  gap: 18px 14px;
   padding-top: 10px;
   margin-top: 4px;
   border-top: 0.5px solid var(--line);
 }
 
+/* 这一排是 16px 高的文字按钮（原先实测 48×16 / 114×16），
+   而它们里面有「全部暂停」这种一键改变全局的动作 —— 拇指按不准就等于按不到 */
 .link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
+  padding: 7px 0;
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--accent-strong);
 }
 
+.link::after {
+  content: '';
+  position: absolute;
+  inset: -6px -4px;
+}
+
 .link.t-3 {
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* AI 排障入口：平时不抢注意力（和「全部暂停」同档），出问题时它才是最有用的那个。

@@ -408,6 +408,13 @@ onBeforeUnmount(() => {
             <slot />
           </div>
         </div>
+
+        <!-- 固定操作区（可选插槽）：抽屉打开的目的常常就是按这颗按钮 ——
+             让它跟内容一起滚出视野，等于把主操作藏起来。
+             不用这个插槽的抽屉完全不受影响（渲染上什么都不会多出来） -->
+        <div v-if="$slots.footer" class="foot">
+          <slot name="footer" />
+        </div>
       </section>
     </Transition>
   </Teleport>
@@ -504,6 +511,7 @@ onBeforeUnmount(() => {
 }
 
 .close {
+  position: relative;
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -514,6 +522,23 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 
+/* 视觉尺寸不动，命中区撑到 44×44：这是抽屉唯一一扇「什么都不选就退出去」的门 */
+.close::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+
+/* 固定操作区：不滚、不缩，永远钉在抽屉底部。
+   上边线把「按钮」和「设置」分开，滚动内容的截断也就有了去处 ——
+   底下是实底而不是被切掉的半行字 */
+.foot {
+  flex: none;
+  padding: 10px 18px calc(14px + var(--safe-bottom));
+  border-top: 0.5px solid var(--line);
+  background: var(--surface);
+}
+
 .body {
   flex: 1;
   min-height: 0;
@@ -521,7 +546,7 @@ onBeforeUnmount(() => {
   /* 垂直手势交给组件决策（先调高度后滚动），横向不拦截 */
   touch-action: pan-y;
   overscroll-behavior: contain;
-  padding: 4px 18px calc(20px + var(--safe-bottom));
+  padding: 4px 18px 16px;
 }
 
 /* 进出同路径：都走底部 */

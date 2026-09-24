@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Check,
   ChevronLeft,
+  Clock,
   ExternalLink,
   Hourglass,
   Info,
@@ -25,7 +26,7 @@ import SheetModal from '@/components/common/SheetModal.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
-import { grabStatusMeta, idOf, useCourseSelectStore } from '@/stores/courseSelect'
+import { grabStatusMeta, idOf, teacherText, useCourseSelectStore } from '@/stores/courseSelect'
 import type { CourseSelectLesson } from '@/types'
 
 /**
@@ -148,6 +149,30 @@ function lessonCode(l: CourseSelectLesson): string {
   return l.course?.code ?? ''
 }
 
+/**
+ * 上课时间地点。
+ *
+ * 教务把 `dateTimePlace` 给成什么形状没有保证（字符串 / 数组 / 嵌套对象都见过），
+ * 所以按「能认出来就认」处理：把里面所有字符串掏出来拼成一行 —— 与 Rust 匹配器
+ * 和 mock 用的是同一套读法。**这一行必须出现在列表上**：一门课挂了 7 个教学班时，
+ * 「谁在什么时候上」才是选班的依据，藏在抽屉里等于逼用户逐个点开背下来。
+ */
+function scheduleTextOf(l: CourseSelectLesson): string {
+  const out: string[] = []
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') {
+      if (v.trim()) out.push(v.trim())
+    } else if (Array.isArray(v)) {
+      v.forEach(walk)
+    } else if (v && typeof v === 'object') {
+      Object.values(v as Record<string, unknown>).forEach(walk)
+    }
+  }
+  ;(l.scheduleGroups ?? []).forEach((g) => walk(g.dateTimePlace))
+  // 同一段时间会在多个组里重复出现，去重后再拼
+  return [...new Set(out)].join(' ')
+}
+
 function picked(l: CourseSelectLesson): boolean {
   return l.selectedLesson != null
 }
@@ -210,10 +235,37 @@ async function onEnter(turnId: unknown): Promise<void> {
   }
 }
 
+/**
+ * 打开抽屉看这门的设置。
+ *
+ * **已选中的课也要能打开**：那是「我刚才到底怎么排的」的唯一入口 ——
+ * 早先这里对已选直接 return，于是抢到手之后这门课在列表上就变成一块点不动的死砖，
+ * 想去核对一下「我当时选的是哪个组」，全应用没有任何地方答得上来。
+ */
 function openSheet(l: CourseSelectLesson): void {
-  if (picked(l)) return
   sheetLessonId.value = idOf(l.id)
 }
+
+/* ---------------- 名单新鲜度 ----------------
+ * 座位数是会变的，而「已选 118 / 120」看起来永远是当下的数字。抢课当天
+ * 一份 90 秒前的名单和一份 3 秒前的名单，看到的是同一行字，但前者可能已经没位了。
+ * 所以列表必须说得出自己是几秒前拉的 —— 数据本来就在（每次 loadLessons 都会换掉
+ * `store.lessons` 这个数组），差的只是把它显示出来。
+ */
+const lessonsAt = ref(0)
+const stampNow = ref(Date.now())
+watch(
+  () => store.lessons,
+  (list) => {
+    if (list.length) lessonsAt.value = Date.now()
+  },
+)
+const lessonsAge = computed(() => {
+  if (!lessonsAt.value) return ''
+  const s = Math.max(0, Math.floor((stampNow.value - lessonsAt.value) / 1000))
+  if (s < 10) return '刚刚'
+  return s < 60 ? `${s} 秒前` : `${Math.floor(s / 60)} 分钟前`
+})
 
 /* ---------------- 批量预定 ----------------
  * 「多个抢课任务」在引擎里本来就是一行一条，缺的是**一次把它们排好**的入口：
@@ -338,6 +390,8 @@ function tick(): void {
   // 后台标签页的定时器会被 WebView 节流（普遍降到 1 次/分钟），
   // 与其按一个不准的节拍空打教务，不如等切回来时补一次
   if (document.hidden) return
+  // 名单新鲜度跟着这条 15 秒的节拍走就够了（显示到「分钟」级，不必每秒重排）
+  stampNow.value = Date.now()
   void autoRefresh()
 }
 
@@ -435,12 +489,20 @@ onBeforeUnmount(() => {
       back
     >
       <template #action>
-        <button class="hdr-btn" aria-label="抢课节奏设置" @click="settingsOpen = true">
-          <Settings2 :size="19" />
+        <!-- 多选是个**模式**：开着的时候点整行不再是「打开设置」而是「追加一个志愿」。
+           一旦这个模式滚出视野，用户就没有任何线索知道自己处在哪种解释里了 ——
+           所以它的状态与出口交给**页头**（本来就吸顶），而不是列表顶上那条会滚走的工具条 -->
+        <button v-if="selectMode" class="exit-sel" @click="exitSelect()">
+          退出多选<template v-if="selectedIds.length"> · {{ selectedIds.length }}</template>
         </button>
-        <button class="hdr-btn" :disabled="refresh" aria-label="立即刷新" title="立即刷新" @click="onRefresh">
-          <RefreshCw :size="19" :class="{ spin: refresh }" />
-        </button>
+        <template v-else>
+          <button class="hdr-btn" aria-label="抢课节奏设置" @click="settingsOpen = true">
+            <Settings2 :size="19" />
+          </button>
+          <button class="hdr-btn" :disabled="refresh" aria-label="立即刷新" title="立即刷新" @click="onRefresh">
+            <RefreshCw :size="19" :class="{ spin: refresh }" />
+          </button>
+        </template>
       </template>
     </PageHeader>
 
@@ -479,12 +541,12 @@ onBeforeUnmount(() => {
         :window-text="windowText"
       />
 
-      <!-- 抢课计划：提前输入「我想抢什么」，引擎到点自己解析 + 开抢。
-           摆在批次列表之上 —— 窗口没开时这里就是他唯一能做的事 -->
-      <GrabPlan />
-
       <!-- 批次列表 -->
       <template v-if="!store.activeTurn">
+        <!-- 抢课计划：提前输入「我想抢什么」，引擎到点自己解析 + 开抢。
+             窗口没开时这里就是他唯一能做的事，所以摆在批次列表之上 -->
+        <GrabPlan />
+
         <EmptyState
           v-if="!store.hasTurn"
           :icon="Hourglass"
@@ -545,11 +607,21 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
+        <!-- 名单是几秒前拉的。座位数每一秒都在变，而「已选 118 / 120」看上去永远是
+             当下的数字 —— 抢课当天，一份 90 秒前的名单和一份 3 秒前的名单，
+             看到的是同一行字，前者却可能已经没位了 -->
+        <p v-if="lessonsAge" class="fresh">
+          <Clock :size="12" />
+          名单更新于 {{ lessonsAge }}
+        </p>
+
+        <!-- 多选工具条**钉住**：它一滚出视野，「退出多选」和已排好的志愿序就都没了入口，
+             而这时点整行已经不再是「打开设置」而是「追加一个志愿」—— 模式必须一直可见 -->
         <div class="pick-bar">
           <button class="mini" :class="{ on: selectMode }" @click="selectMode ? exitSelect() : (selectMode = true)">
             {{ selectMode ? '退出多选' : '多选预定' }}
           </button>
-          <span v-if="selectMode" class="t-3 count">已选 {{ selectedIds.length }}</span>
+          <span v-if="selectMode" class="count">已选 {{ selectedIds.length }}</span>
           <button v-if="selectMode" class="mini primary-mini" :disabled="!selectedIds.length" @click="openBatch">
             加入抢课
           </button>
@@ -571,10 +643,10 @@ onBeforeUnmount(() => {
             class="lesson"
             :class="{ sel: selectMode && selectedIds.includes(idOf(l.id)) }"
           >
-            <!-- 点整行开抽屉（选「上课小组 / 意愿值 / 志愿组」的地方）；多选模式下改成勾选 -->
+            <!-- 点整行开抽屉（选「上课小组 / 意愿值 / 志愿组」的地方）；多选模式下改成勾选。
+                 已选中的课同样可以点开 —— 那是核对「我当时怎么排的」的唯一入口 -->
             <button
               class="l-main"
-              :disabled="picked(l) && !selectMode"
               @click="selectMode ? toggleSelect(l) : openSheet(l)"
             >
               <span class="l-top">
@@ -582,18 +654,21 @@ onBeforeUnmount(() => {
                 <span class="l-name">{{ lessonName(l) }}</span>
                 <span v-if="picked(l)" class="chip ok">已选</span>
                 <span v-else-if="full(l)" class="chip bad">已满</span>
+                <!-- 余量挨着课名：抢课当天最稀缺的就是座位，它该在视线落点上 -->
+                <span v-if="seatText(l)" class="seats num">{{ seatText(l) }}</span>
               </span>
+              <!-- 选班的依据：谁在教、什么时候上。一门课挂 7 个教学班时，
+                   这两项才是用户真正在比较的东西 —— 藏进抽屉等于让他逐个点开背下来 -->
               <span class="l-meta">
                 <span v-if="lessonCode(l)" class="num">{{ lessonCode(l) }}</span>
+                <span v-if="teacherText(l)">{{ teacherText(l) }}</span>
                 <span v-if="l.course?.credits != null">{{ l.course.credits }} 学分</span>
-                <span v-if="seatText(l)" class="num">已选 {{ seatText(l) }}</span>
+                <span v-if="l.scheduleGroups?.length">{{ l.scheduleGroups.length }} 个小组</span>
                 <span v-if="selectMode && selectedIds.includes(idOf(l.id))" class="num ord">
                   第 {{ selectedIds.indexOf(idOf(l.id)) + 1 }} 志愿
                 </span>
               </span>
-              <span v-if="l.scheduleGroups?.length" class="l-meta dim">
-                {{ l.scheduleGroups.length }} 个上课小组
-              </span>
+              <span v-if="scheduleTextOf(l)" class="l-meta dim l-sched">{{ scheduleTextOf(l) }}</span>
             </button>
 
             <!-- 已在任务单里：显示引擎给的状态，而不是再给一个按钮 -->
@@ -602,10 +677,13 @@ onBeforeUnmount(() => {
               class="chip grab"
               :class="grabChip(l)!.tone"
             >{{ grabChip(l)!.label }}</span>
+            <!-- 已选中的课不该变成一块点不动的砖：这颗按钮改成「查看」的语义，
+                 点开是对这门课当前设置的只读回执 -->
             <button
               v-else-if="!selectMode"
               class="pick"
-              :disabled="picked(l) || store.grabBusy"
+              :class="{ picked: picked(l) }"
+              :disabled="store.grabBusy"
               @click="openSheet(l)"
             >
               <template v-if="picked(l)"><Check :size="14" /> 已选</template>
@@ -613,6 +691,11 @@ onBeforeUnmount(() => {
             </button>
           </li>
         </ul>
+
+        <!-- 抢课计划：批次里它排在列表**之后** —— 那一刻用户是来挑课的，能一眼看到
+             教学班才是主线；按关键词批量排队是次要入口。窗口没开时它才该在最上面
+             （见上面那个分支） -->
+        <GrabPlan />
       </template>
     </template>
 
@@ -740,12 +823,15 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
+/* 批次公告：教务的原话，里面常有「只能选 X 门」「先到先得」这类硬约束 ——
+   它不该比课程名更看不见 */
 .bulletin {
   margin-top: 8px;
   font-size: var(--fs-micro);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: 1.5;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .primary {
@@ -817,9 +903,23 @@ onBeforeUnmount(() => {
 .search input {
   flex: 1;
   min-width: 0;
+  /* 输入框自己撑满整行高度：整行看着可点，就不该只有那条 16px 的文字线真的可点
+     （手机上一行 44px、其中 16px 是热的，是那种「点了没反应」的来源） */
+  align-self: stretch;
   font-size: var(--fs-caption);
   color: var(--text-1);
   background: none;
+}
+
+/* 名单新鲜度：一行小字，跟着「查询」这一排走，不占额外一份注意力 */
+.fresh {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin: -4px 0 8px 2px;
+  font-variant-numeric: tabular-nums;
 }
 
 .go {
@@ -866,14 +966,22 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
-.l-main:disabled {
-  opacity: 0.6;
-}
-
 .l-top {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+/* 余量：紧挨课名的数字。它是这一行里最该被比出来的量（60 / 60 与 118 / 120
+   是两个完全不同的处境），所以放在视线落点上、用正文色，而不是埋进 11px 灰字里 */
+.seats {
+  flex: none;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: auto;
+  padding-left: 8px;
 }
 
 .l-name {
@@ -923,7 +1031,7 @@ onBeforeUnmount(() => {
 }
 
 .chip.grab.idle {
-  color: var(--text-3);
+  color: var(--text-2);
   background: var(--surface-2);
 }
 
@@ -935,8 +1043,21 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 
+/* 「N 个小组」与上课时间：都是**用来做决定的信息**（哪个班、什么时候上），
+   不是装饰。11px 的 --text-3 在亮色下只有 2.5:1、暗色下更低 —— 那等于把它们藏起来，
+   而它们恰恰是列表存在的理由。降级到 --text-2 就够：层级还在（比课名弱），读得出来 */
 .l-meta.dim {
-  color: var(--text-3);
+  color: var(--text-2);
+}
+
+/* 上课时间地点：教务给的是自由文本，可能一长串（周次 + 节次 + 教室，还可能多段）。
+   限两行：它要能读到，但不该把整个列表的行高撑成参差不齐的样子 */
+.l-sched {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .pick {
@@ -971,6 +1092,14 @@ onBeforeUnmount(() => {
   color: var(--text-3);
 }
 
+/* 已选：从「蓝底白字的行动」变成「淡蓝底的既成事实」。
+   两颗按钮的差别是语义上的（一个让你去抢、一个已经抢到了），颜色要跟着变；
+   顺带也把它从白字压蓝底（4.0:1）抬到 accent-strong 压 accent-soft（4.6:1） */
+.pick.picked {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }
@@ -996,11 +1125,11 @@ onBeforeUnmount(() => {
 }
 
 /* 命中区撑到 44 高（横向不动：同一行的两颗只隔 8px）。
-   纵向各外扩 7px：上面是卡片间距、下面是 10px，都不会压到别人 */
+   纵向各外扩 8px：上面是卡片间距、下面是 10px，都不会压到别人 */
 .mini::after {
   content: '';
   position: absolute;
-  inset: -7px 0;
+  inset: -8px 0;
 }
 
 .mini.on {
@@ -1020,6 +1149,30 @@ onBeforeUnmount(() => {
 
 .count {
   font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+/* 多选的退出键：材质与页头那两颗圆钮一致（surface + 卡片阴影 + 同高），
+   但它是胶囊配文字 —— 它说的是一句话（还开着、已选几个），不是一个图标动作 */
+.exit-sel {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 14px;
+  margin-bottom: 3px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--accent-strong);
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.exit-sel:active {
+  transform: scale(0.94);
 }
 
 /* 选中态要一眼看得出，而且要看得出**排第几** —— 顺序就是志愿序 */
@@ -1061,12 +1214,14 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 
+/* 说明文字：它是「怎么用」的唯一解释，却曾经是全页最淡的一档。
+   11px 的 --text-3 在亮色下约 2.5:1、暗色下更低 —— 解释读不出来，等于没有解释 */
 .hint {
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   line-height: 1.5;
   margin: 8px 0;
 }

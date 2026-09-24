@@ -12,6 +12,7 @@
  *   4. 关掉「课表」/「健康方案」→ 工具格对应卡片消失、直链 /#/program 被拦回主页
  *   5. 重新打开「运动」→ 入口恢复
  *   6. 刷新后开关状态保持（localStorage 持久化）
+ *   7. 底栏三块（左自定义圆钮 / 中药丸 / 右 AI 圆钮）：长按左钮换落点、关掉模块后回落
  *
  * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
  * 运行：node scripts/e2e-feature-toggles.mjs
@@ -140,8 +141,19 @@ const clickText = (selector, text) =>
 const toolTitles = () =>
   evalJS(`[...document.querySelectorAll('.tools .tool-txt b')].map((e) => e.textContent.trim())`)
 
-/** 底栏页签文案清单（底栏根类名是 `.dock`，`.tabbar` 已经不存在了） */
-const tabLabels = () => evalJS(`[...document.querySelectorAll('.dock .tab')].map((e) => e.textContent.trim())`)
+/** 底栏页签文案清单（底栏根类名是 `.dock`，页签类是 `.dock-tab`） */
+const tabLabels = () => evalJS(`[...document.querySelectorAll('.dock .dock-tab')].map((e) => e.textContent.trim())`)
+
+/** 底栏三块：左独立圆钮（自定义）/ 中药丸页签 / 右独立圆钮（AI） */
+const dockParts = () =>
+  evalJS(`(() => {
+    const txt = (sel) => document.querySelector(sel)?.textContent.trim() ?? null
+    return {
+      left: txt('.dock [data-slot="left"] .dock-slot'),
+      pill: [...document.querySelectorAll('.dock .dock-tab')].map((e) => e.textContent.trim()),
+      ai: txt('.dock [data-slot="ai"] .dock-slot'),
+    }
+  })()`)
 
 /** 打开/关闭某模块开关（功能页的行按名字定位） */
 const setToggle = (name, on) =>
@@ -196,6 +208,50 @@ async function main() {
       beforeTools.join(' · '),
     )
     ok('默认底栏含运动页签', (await tabLabels()).includes('运动'), (await tabLabels()).join(' · '))
+
+    const dock0 = await dockParts()
+    ok(
+      '底栏三块：左独立圆钮=课表 · 中药丸=主页/运动/我 · 右独立圆钮=AI',
+      dock0.left === '课表' && dock0.ai === 'AI' && dock0.pill.join() === '主页,运动,我',
+      JSON.stringify(dock0),
+    )
+
+    /* ---- 1b. 左钮：长按换落点（自定义 + 持久化） ---- */
+    await evalJS(`(() => {
+      const btn = document.querySelector('.dock [data-slot="left"] .dock-slot')
+      btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    })()`)
+    await sleep(700)
+    const picker = await evalJS(`(() => ({
+      open: !!document.querySelector('.card-wrap'),
+      opts: [...document.querySelectorAll('.card-wrap .opt')].map((e) => e.textContent.trim()),
+    }))()`)
+    ok(
+      '长按左钮弹出选择器（候选来自插件层的模块主页面）',
+      picker.open && picker.opts.includes('营养') && picker.opts.includes('待办'),
+      picker.opts.join(' · '),
+    )
+    await clickText('.card-wrap .opt', '待办')
+    await sleep(500)
+    ok(
+      '选中「待办」后左钮就地换落点',
+      (await evalJS(`document.querySelector('.dock [data-slot="left"] .dock-slot').textContent.trim()`)) === '待办',
+    )
+    await evalJS(`location.reload()`)
+    await waitFor(`!!document.querySelector('.dock [data-slot="left"] .dock-slot')`, 12000, '刷新后的底栏')
+    await sleep(600)
+    ok(
+      '刷新后左钮落点保持（rein.dock.v1）',
+      (await evalJS(`document.querySelector('.dock [data-slot="left"] .dock-slot').textContent.trim()`)) === '待办',
+    )
+    // 收尾：落点放回默认（后面的断言按「课表」写的）。store 是内存单例，删掉本地键
+    // 还得刷新一次才真的回到默认 —— 否则后续断言会看到刚才选中的那一项
+    await evalJS(`localStorage.removeItem('rein.dock.v1')`)
+    await evalJS(`location.reload()`)
+    await waitFor(`!!document.querySelector('.dock [data-slot="left"] .dock-slot')`, 12000, '刷新后的底栏')
+    await sleep(600)
+    await evalJS(`location.hash = '#/'`)
+    await sleep(700)
 
     await evalJS(`location.hash = '#/me'`)
     await waitFor(`document.querySelector('.setrow')`, 8000, '「我」页设置行')
@@ -257,6 +313,12 @@ async function main() {
       '三张模块卡全部消失，内核卡仍在',
       !afterAll.includes('记运动') && !afterAll.includes('课表') && !afterAll.includes('健康方案') && afterAll.includes('记账'),
       afterAll.join(' · '),
+    )
+    const dockNoCampus = await dockParts()
+    ok(
+      '关掉课表后：左钮回落到候选第一项（营养），右钮不受影响',
+      dockNoCampus.left === '营养' && dockNoCampus.ai === 'AI',
+      JSON.stringify(dockNoCampus),
     )
     await shot('5-home-modules-off')
 
@@ -333,6 +395,7 @@ async function main() {
     // 收尾：恢复默认，避免污染后续手工演示
     await cdp('Emulation.clearDeviceMetricsOverride')
     await evalJS(`localStorage.removeItem('rein.features.v1')`)
+    await evalJS(`localStorage.removeItem('rein.dock.v1')`)
   } finally {
     try {
       ws?.close()

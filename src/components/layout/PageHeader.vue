@@ -122,6 +122,7 @@ function goBack(): void {
 }
 
 .back {
+  position: relative;
   width: 38px;
   height: 38px;
   flex: none;
@@ -135,9 +136,21 @@ function goBack(): void {
   justify-content: center;
 }
 
+/* 返回键与页头图标钮：视觉尺寸不动，命中区撑到 44×44。
+   38 是这些圆钮的视觉规格，不该为了触控改掉；但 44 是拇指的下限，
+   而返回是每个二级页**唯一**的退路（图标钮则常常是这一页唯一的设置入口）。
+   横向外扩 3px：同一排按钮间隔 12px，不会互相压住。 */
+.back::after,
+.page-header :slotted(.hdr-btn)::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+
 /* 页头图标按钮统一规范（lead / action 插槽内使用 class="hdr-btn"）：
    与返回键同尺寸同材质；accent 变体留给正向 CTA（如“添加”）。 */
 .page-header :slotted(.hdr-btn) {
+  position: relative;
   width: 38px;
   height: 38px;
   flex: none;

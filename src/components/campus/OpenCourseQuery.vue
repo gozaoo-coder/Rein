@@ -10,22 +10,30 @@
  * 另一个是 ASP.NET + ExtJS 桌面走 CAS）。合并汇报会把「这个域压根没有 EAMS5」
  * 伪装成「两个域都没这门课」，那种谎在抢课当天很贵。
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { AlertTriangle, Info, RefreshCw, Search } from 'lucide-vue-next'
 
 import EmptyState from '@/components/common/EmptyState.vue'
-import { useToast } from '@/composables/useToast'
 import { campusService } from '@/services/campusService'
+import { useCampusStore } from '@/stores/campus'
 import type { LessonSearchHit, LessonSearchOutcome, SchoolDomainProbe } from '@/types'
 
-const { toast } = useToast()
+const campus = useCampusStore()
 
 const loading = ref(false)
 const outcome = ref<LessonSearchOutcome | null>(null)
 const probe = ref<SchoolDomainProbe[]>([])
 const error = ref<string | null>(null)
-/** 学期：默认用回执里带回的第一个（教务按当前学期排在最前） */
-const semesterId = ref<number | null>(null)
+
+/**
+ * 学期取自校园 store —— **唯一来源**。
+ *
+ * 这个组件原先自己存了一个 `semesterId = ref(null)`，但全文件没有任何地方
+ * 给它赋过值（`run()` 里那句 `if (!semesterId.value && …)` 写在「它非空」的分支里，
+ * 是够不着的死代码）。于是这张卡永远停在「还没有拿到学期列表」，
+ * 而它给的出口「先刷新一次」只会再弹同一句话 —— 用户被卡在一个没有出路的循环里。
+ */
+const semesterId = computed(() => campus.currentSemesterId ?? campus.semesters[0]?.id ?? null)
 const keyword = ref('')
 
 /** 本地过滤：教务那边的筛选要靠服务端会话，这里只做「已经拿到的这页」的检索 */
@@ -93,17 +101,19 @@ async function loadProbe(): Promise<void> {
 }
 
 async function run(): Promise<void> {
-  if (semesterId.value == null) {
-    toast('还没有拿到学期列表，先刷新一次')
+  const id = semesterId.value
+  if (id == null) {
+    // 说清「为什么查不了」以及**出口在哪**，而不是弹一句让用户去点刷新、
+    // 点完还是同一句话的死循环
+    error.value = '还没有拿到学期列表 —— 到「课表配置与设置」登录或同步一次，再回来看。'
     return
   }
   loading.value = true
   error.value = null
   try {
-    const r = await campusService.lessonSearch(semesterId.value)
+    const r = await campusService.lessonSearch(id)
     outcome.value = r
     probe.value = r.domains
-    if (!semesterId.value && r.semesters.length) semesterId.value = r.semesters[0].id
     applyFilter()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -114,7 +124,7 @@ async function run(): Promise<void> {
   }
 }
 
-/** 先探一次拿到学期列表，再查第一页 */
+/** 先探一次拿到两个域的结论，再查第一页 */
 async function init(): Promise<void> {
   await loadProbe()
   await run()
@@ -137,19 +147,25 @@ onMounted(init)
       查到合适的班可以照着去排抢课计划。
     </p>
 
-    <!-- 两个域都检测：把各自的结论摆出来，不合并 -->
+    <!-- 两个域都检测：把各自的结论摆出来，不合并。
+         **但结论是说给学生的**：域名、EAMS5、HTTP 码是他没法处理的东西 ——
+         他要知道的只有一句「这个学期能不能在它上面查到开课名单」，
+         技术细节收进「技术详情」里，排障时照样拿得到 -->
     <div v-if="probe.length" class="domains">
       <div v-for="d in probe" :key="d.baseUrl" class="domain" :class="{ ok: d.eamsAssets, off: !d.eamsAssets }">
         <span class="host">{{ d.baseUrl.replace(/^https?:\/\//, '') }}</span>
-        <span class="verdict">{{ d.eamsAssets ? 'EAMS5' : '另一套系统' }}</span>
-        <span class="detail">{{ d.detail }}</span>
+        <span class="verdict">{{ d.eamsAssets ? '可以查开课' : '另一套系统，查不到' }}</span>
+        <details v-if="d.detail" class="tech">
+          <summary>技术详情</summary>
+          <p>{{ d.detail }}</p>
+        </details>
       </div>
     </div>
 
     <EmptyState
       v-if="error"
       :icon="AlertTriangle"
-      title="两个域都没查到"
+      title="没有查到开课名单"
       :hint="error"
     />
 
@@ -174,11 +190,7 @@ onMounted(init)
         v-if="!filtered.length"
         :icon="Info"
         title="这一页没有开课记录"
-        :hint="
-          outcome.page.rawKeys.length
-            ? `教务返回的字段：${outcome.page.rawKeys.join('、')} —— 空列表时先看这里，能区分「确实没开课」和「教务改了字段名」`
-            : '换个学期或稍后再试'
-        "
+        hint="换个筛选词，或稍后再刷新一次"
       />
 
       <ul v-else class="list">
@@ -197,6 +209,13 @@ onMounted(init)
           </div>
         </li>
       </ul>
+
+      <!-- 空页时把教务回的字段名收进详情：它能区分「确实没开课」和「教务改了字段名」，
+           但那是排障信息，不该印在学生的卡片正面 -->
+      <details v-if="!filtered.length && outcome.page.rawKeys.length" class="tech">
+        <summary>技术详情</summary>
+        <p>教务这一页返回的字段：{{ outcome.page.rawKeys.join('、') }}</p>
+      </details>
     </template>
 
     <p v-else-if="loading" class="hint">正在查开课名单…</p>
@@ -204,10 +223,14 @@ onMounted(init)
 </template>
 
 <style scoped>
+/* 这一块原先自带一套外观（--radius-m + 1px 描边、没有卡片阴影），
+   在一页 --radius-xl + shadow-card 的卡片里像是另一个应用。拉回同一套语言 ——
+   它是同一页上的第二块内容，不是嵌进来的工具 */
 .card {
-  padding: 14px;
-  border-radius: var(--radius-m);
+  padding: 14px 16px;
+  border-radius: var(--radius-xl);
   background: var(--surface);
+  box-shadow: var(--shadow-card);
   margin-bottom: 14px;
 }
 .head {
@@ -217,20 +240,32 @@ onMounted(init)
   gap: 10px;
 }
 .head h2 {
-  font-size: var(--fs-title);
-  font-weight: 600;
+  /* 原先写的是 var(--fs-title) —— 这个令牌**不存在**（阶梯里叫 title1/2/3），
+     于是标题字号一直落在浏览器的默认档上。与同页其它卡片标题对齐 */
+  font-size: var(--fs-callout);
+  font-weight: 700;
+  color: var(--text-1);
   margin: 0;
 }
 .mini {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: var(--fs-caption);
-  padding: 5px 10px;
-  border-radius: var(--radius-s);
+  min-height: 32px;
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
   border: 1px solid var(--line);
   background: transparent;
-  color: var(--text);
+  /* 原先的 var(--text) 也不存在（只有 --text-1/2/3），文字色一直是继承来的 */
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+.mini::after {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
 }
 .hint {
   font-size: var(--fs-caption);
@@ -249,21 +284,44 @@ onMounted(init)
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
-  padding: 7px 9px;
-  border-radius: var(--radius-s);
-  border: 1px solid var(--line);
+  padding: 8px 10px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
   font-size: var(--fs-caption);
 }
-.domain.ok { border-color: var(--ok, #2f9e63); }
-.domain.off { opacity: 0.75; }
-.host { font-weight: 600; }
-.verdict {
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
+.domain.ok .verdict {
+  color: var(--ok-strong);
+  background: var(--ok-soft);
+}
+.domain.off {
   color: var(--text-2);
 }
-.detail { color: var(--text-2); flex: 1 1 100%; }
+.host {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.verdict {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-2);
+}
+/* 技术详情：折起来，但它必须**拿得到** —— 排障时全靠它区分
+   「确实没开课」和「教务改了字段名」 */
+.tech {
+  flex: 1 1 100%;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.tech summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+.tech p {
+  margin: 4px 0 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .toolbar {
   display: flex;
   align-items: center;
@@ -275,16 +333,25 @@ onMounted(init)
   align-items: center;
   gap: 6px;
   flex: 1;
-  padding: 6px 9px;
-  border-radius: var(--radius-s);
-  border: 1px solid var(--line);
-  background: var(--surface-2, transparent);
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+/* 原先这里 `outline: none` 之后没有任何替代的焦点环 ——
+   键盘用户在这一行上看不出自己停在哪 */
+.field:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .field input {
   flex: 1;
+  min-width: 0;
+  align-self: stretch;
   border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--text-1);
   font-size: var(--fs-caption);
   outline: none;
 }
@@ -293,11 +360,11 @@ onMounted(init)
 .list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .row {
   padding: 9px 10px;
-  border-radius: var(--radius-s);
-  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
 }
 .l1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-.name { font-weight: 600; }
+.name { font-weight: 600; color: var(--text-1); }
 .lesson { font-size: var(--fs-caption); color: var(--text-2); }
 .num { font-variant-numeric: tabular-nums; font-size: var(--fs-caption); color: var(--text-2); }
 .l2 { display: flex; flex-wrap: wrap; gap: 10px; font-size: var(--fs-caption); margin-top: 4px; }

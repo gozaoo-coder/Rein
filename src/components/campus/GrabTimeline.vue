@@ -247,7 +247,7 @@ const rateWord = computed(() =>
       <b>抢课循环</b>
       <span class="rate" :class="rateTone">≈ {{ rateText }} 次/秒 · {{ rateWord }}</span>
     </header>
-    <p class="sub t-3">
+    <p class="sub">
       每一段的长短都按<b>真实比例</b>画。调下面的数字，这里会跟着变 —— 调整中的那一段会被点亮。
     </p>
 
@@ -301,7 +301,7 @@ const rateWord = computed(() =>
       </g>
     </svg>
 
-    <p class="foot t-3">
+    <p class="foot">
       上面每段等待都要和<b>全局闸门</b>取较大者：闸门是
       {{ fmtMs(s.minIntervalMs) }}，所以把轮询调得比它还小是没用的 —— 实际间隔仍是
       {{ fmtMs(Math.max(s.minIntervalMs, s.pollIntervalMs)) }}。
@@ -357,6 +357,7 @@ const rateWord = computed(() =>
   font-size: var(--fs-micro);
   line-height: 1.45;
   margin: 3px 0 4px;
+  color: var(--text-2);
 }
 
 .tl {
@@ -373,13 +374,16 @@ const rateWord = computed(() =>
   font-weight: 700;
 }
 
+/* 图里的三种小字（提示 / 刻度 / 引导线标签）都在 8px —— 这个尺寸上已经没有
+   留「层次」的余地了，全部给到可读的那一档，层次交给字重与字号
+   （.lane-title 是 9.5px/700）。刻度是**数字**，读不出来这张图就白画了。 */
 .lane-hint {
-  fill: var(--text-3);
+  fill: var(--text-2);
   font-size: 8px;
 }
 
 .lane-scale {
-  fill: var(--text-3);
+  fill: var(--text-2);
   font-size: 8px;
   font-variant-numeric: tabular-nums;
 }
@@ -396,7 +400,7 @@ const rateWord = computed(() =>
 }
 
 .mark-label {
-  fill: var(--text-3);
+  fill: var(--text-2);
   font-size: 8px;
 }
 
@@ -468,6 +472,7 @@ const rateWord = computed(() =>
   font-size: var(--fs-micro);
   line-height: 1.5;
   margin-top: 4px;
+  color: var(--text-2);
 }
 
 .foot b {

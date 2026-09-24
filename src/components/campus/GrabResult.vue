@@ -90,6 +90,19 @@ function detail(t: GrabTask): string {
   return bits.join(' · ')
 }
 
+/**
+ * 教务最近那句话 —— 但**它如果只是在复述徽标，就不必再说一遍**。
+ *
+ * 抢到之后 `lastMessage` 常常就是「已抢到」，而左边那枚徽标已经写着同样的三个字，
+ * 于是同一行上把同一件事说了两遍（真正的新信息是上面那行「已尝试 N 次」）。
+ * 这条规矩在本模块的余量文案里已经用过一次：「满员不写余 0」。
+ */
+function message(t: GrabTask): string {
+  const m = t.lastMessage?.trim() ?? ''
+  if (!m) return ''
+  return m === grabStatusMeta(t).label ? '' : m
+}
+
 /** 官方选课页（含令牌）—— 出问题时去那里核对最省事 */
 const entryUrl = computed(() => store.status?.entryUrl ?? '')
 
@@ -142,14 +155,14 @@ async function onSync(): Promise<void> {
         <span class="chip" :class="grabStatusMeta(t).tone">{{ grabStatusMeta(t).label }}</span>
         <span class="col flex-1 body">
           <b class="name">{{ title(t) }}</b>
-          <em v-if="detail(t)" class="meta t-3">{{ detail(t) }}</em>
+          <em v-if="detail(t)" class="meta">{{ detail(t) }}</em>
           <em v-if="t.status === 'conflict'" class="why">
             与已选课程时间冲突 —— 要在教务网页端办理免听，这门课才会留下
           </em>
           <em v-else-if="t.status === 'needs_ai'" class="why">
             教务说这条请求的参数不对 —— 重试不会成功，已经交给 AI 去查明教务现在要什么参数
           </em>
-          <em v-else-if="t.lastMessage" class="meta t-3">{{ t.lastMessage }}</em>
+          <em v-else-if="message(t)" class="meta">{{ message(t) }}</em>
         </span>
         <button
           v-if="t.status === 'failed'"
@@ -195,7 +208,7 @@ async function onSync(): Promise<void> {
       </div>
     </div>
 
-    <p v-if="syncNote" class="note t-3">{{ syncNote }}</p>
+    <p v-if="syncNote" class="note">{{ syncNote }}</p>
   </div>
 </template>
 
@@ -258,6 +271,8 @@ async function onSync(): Promise<void> {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  /* 课程号 · 教师 · 已尝试 N 次 —— 结果行里唯一说明「它经历了什么」的一行 */
+  color: var(--text-2);
 }
 
 /* 免听不是「一条失败」，是一件今天就要去办的事 —— 给它正文级权重 */
@@ -275,7 +290,8 @@ async function onSync(): Promise<void> {
   padding: 1px 8px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
-  color: var(--text-3);
+  /* 中性档（已取消）也是状态词：--text-3 压 --surface-2 只有 2.3:1 */
+  color: var(--text-2);
 }
 
 .chip.ok {
@@ -294,7 +310,7 @@ async function onSync(): Promise<void> {
 }
 
 .chip.idle {
-  color: var(--text-3);
+  color: var(--text-2);
   background: var(--surface-2);
 }
 

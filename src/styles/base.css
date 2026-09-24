@@ -227,6 +227,95 @@ html[data-perf='low'] *::after {
   }
 }
 
+/* ---------- 底部 Dock 的三块玻璃（真实 Dock 与画质预览页的标本共用这一份） ----------
+   为什么放在全局而不是各自的 scoped 里：标本台的意义就是「所见即应用里的那一块」，
+   两份各写一套样式必然会漂（标本曾经用暗场令牌 + 自己的一版页签，与真实 Dock
+   长得不像）。几何（fixed 定位 / 高度 / 间距）仍归各自容器，这里只管**三块玻璃的
+   尺寸关系与前景**：
+
+     · 两侧正圆定宽、药丸吃掉余量（.dock-block / .pill）；
+     · 页签与独立圆钮共用一套前景：图标在上、微标签在下，未选中 --text-3、
+       选中 --accent；
+     · **受光亮斑**（选中态的「微微打光」）是顶光在玻璃面留下的柔亮区 ——
+       --glass-tab-hi 自上而下淡出（不是一块平色），z-index 压到内容下面；
+     · 按下一拍快速挤压（volume-preserving squash），松手沿弹簧曲线回弹过冲。 */
+.dock-block {
+  flex: none;
+}
+
+.dock-block.pill {
+  flex: 1;
+  min-width: 0;
+}
+
+.dock-tab,
+.dock-slot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: var(--radius-full);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-decoration: none;
+  /* 松手后的回弹段：弹簧曲线冲过 1 再收回（压扁 → 拉长 → 回正） */
+  transition:
+    transform 480ms var(--ease-spring),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+.dock-tab {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+/* 圆钮里只有一颗按钮：撑满整块玻璃（命中区 = 玻璃面积） */
+.dock-slot {
+  width: 100%;
+  height: 100%;
+}
+
+/* 按压段：快速挤压（纵向压得多、横向略胀，近似体积守恒）并即时换色 */
+.dock-tab:active,
+.dock-slot:active {
+  transform: scale(1.06, 0.9);
+  transition:
+    transform 120ms var(--ease-out),
+    color var(--dur-fast) var(--ease-standard);
+}
+
+/* 活动落点的受光亮斑：z-index 压到内容下面（.gbody 是 GlassSurface 的层叠上下文，
+   -1 恰落在玻璃底之上） */
+.dock-tab::before,
+.dock-slot::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 4px 5px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(to bottom, var(--glass-tab-hi), transparent 78%);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+
+.dock-slot::before {
+  inset: 4px;
+}
+
+.dock-tab.active,
+.dock-slot.active {
+  color: var(--accent);
+}
+
+.dock-tab.active::before,
+.dock-slot.active::before {
+  opacity: 1;
+}
+
 /* ---------- 徽章/标签不拆行 ----------
    中文标签只有两三个字，窄容器里会被拆成「在 / 线」两行：卡片高度跟着变、看着像
    布局错乱（真机 406px 视口下「火山方舟 · deepseek-v4.1-flash 在线」就会这样）。

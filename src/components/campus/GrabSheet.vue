@@ -161,7 +161,7 @@ const squadName = computed(() => {
   <SheetModal
     :open="open && !!lesson"
     :title="name"
-    initial-snap="medium"
+    initial-snap="large"
     @close="emit('close')"
   >
     <p class="meta">
@@ -202,13 +202,12 @@ const squadName = computed(() => {
     </section>
 
     <!-- 上课小组。用 button + role=radio 而不是 label + 装饰点：
-         后者键盘完全够不着（没有 input 也没有 tabindex），而这是一列真正的单选。 -->
-    <section class="block">
+         后者键盘完全够不着（没有 input 也没有 tabindex），而这是一列真正的单选。
+         教务没给小组时**整段不出现** —— 一个「没有可选项」的选择器，
+         配上三行解释自己是空的，对用户来说只是噪声 -->
+    <section v-if="groups.length" class="block">
       <h3>上课小组</h3>
-      <p v-if="!groups.length" class="hint">
-        <Info :size="13" /> 教务没有给出可选小组，将按它的默认安排提交。
-      </p>
-      <div v-else class="opts" role="radiogroup" aria-label="上课小组">
+      <div class="opts" role="radiogroup" aria-label="上课小组">
         <button
           type="button"
           role="radio"
@@ -220,7 +219,7 @@ const squadName = computed(() => {
           <span class="dot" />
           <span class="col flex-1">
             <b>不指定</b>
-            <em class="t-3">由教务按默认组分配</em>
+            <em>由教务按默认组分配</em>
           </span>
         </button>
         <button
@@ -236,7 +235,7 @@ const squadName = computed(() => {
           <span class="dot" />
           <span class="col flex-1">
             <b>第 {{ g.no ?? '?' }} 组{{ g.default ? '（默认）' : '' }}</b>
-            <em v-if="g.limitCount != null" class="t-3 num">容量 {{ g.limitCount }}</em>
+            <em v-if="g.limitCount != null" class="num">容量 {{ g.limitCount }}</em>
           </span>
         </button>
       </div>
@@ -280,7 +279,7 @@ const squadName = computed(() => {
             <span class="dot" />
             <span class="col flex-1">
               <b>{{ g.name }}</b>
-              <em class="t-3">
+              <em>
                 已有 {{ g.members.length }} 个志愿：
                 {{ g.members.map((m) => `第${m.priority ?? '?'}志愿 ${m.courseName ?? '（未命名）'}`).join(' · ') }}
               </em>
@@ -297,7 +296,7 @@ const squadName = computed(() => {
             <span class="dot" />
             <span class="col flex-1">
               <b>新建一组</b>
-              <em class="t-3">把「同一门课的多个教学班」或「时间冲突的几门课」放一起</em>
+              <em>把「同一门课的多个教学班」或「时间冲突的几门课」放一起</em>
             </span>
           </button>
         </div>
@@ -309,7 +308,7 @@ const squadName = computed(() => {
           <li v-for="m in pickedSquad.members" :key="m.id">
             <span class="tag-mini">第 {{ m.priority ?? '?' }}</span>
             {{ m.courseName ?? m.lessonName ?? '（未命名）' }}
-            <em v-if="m.heldBy" class="t-3">{{ holderLabel(m) }}</em>
+            <em v-if="m.heldBy">{{ holderLabel(m) }}</em>
           </li>
         </ul>
 
@@ -328,31 +327,33 @@ const squadName = computed(() => {
       </p>
     </section>
 
-    <div class="acts">
-      <button
-        class="primary"
-        :disabled="busy || !allowEnter || picked"
-        @click="emit('grab', { mode, virtualCost, scheduleGroupId: groupId, groupKey: squadKey, groupName: squadName, priority: squadMode ? squadPriority : 0 })"
-      >
-        <Zap :size="16" />
-        加入抢课
-      </button>
-      <p class="hint center">
-        <Info :size="13" />
-        <span>
-          「加入抢课」由后台引擎持续重试，<b>关掉页面也会继续</b>。
-        </span>
-      </p>
-      <!-- 「只试一次」不再和「加入抢课」并排：两颗平级的按钮、差别只写在 11px 提示里，
-           在时间压力下就是陷阱 —— 现在它是一个明细级的次要动作，标签也自己说明后果 -->
-      <button
-        class="once"
-        :disabled="busy || !allowEnter || picked"
-        @click="emit('apply', { virtualCost, scheduleGroupId: groupId })"
-      >
-        只试一次，不加入任务单
-      </button>
-    </div>
+    <template #footer>
+      <div class="acts">
+        <button
+          class="primary"
+          :disabled="busy || !allowEnter || picked"
+          @click="emit('grab', { mode, virtualCost, scheduleGroupId: groupId, groupKey: squadKey, groupName: squadName, priority: squadMode ? squadPriority : 0 })"
+        >
+          <Zap :size="16" />
+          加入抢课
+        </button>
+        <p class="hint center">
+          <Info :size="13" />
+          <span>
+            「加入抢课」由后台引擎持续重试，<b>关掉这个页面也会继续</b>。
+          </span>
+        </p>
+        <!-- 「只试一次」不再和「加入抢课」并排：两颗平级的按钮、差别只写在 11px 提示里，
+             在时间压力下就是陷阱 —— 现在它是一个明细级的次要动作，标签也自己说明后果 -->
+        <button
+          class="once"
+          :disabled="busy || !allowEnter || picked"
+          @click="emit('apply', { virtualCost, scheduleGroupId: groupId })"
+        >
+          只试一次，不加入任务单
+        </button>
+      </div>
+    </template>
   </SheetModal>
 </template>
 
@@ -402,12 +403,14 @@ const squadName = computed(() => {
   margin-bottom: 7px;
 }
 
+/* 这些说明是「占位优先 / 直接提交」「意愿值填多少」「同组互斥」唯一的解释 ——
+   写在界面上却读不出来，等于没写。11px 的 --text-3 在亮色下只有约 2.5:1 */
 .hint {
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   line-height: 1.5;
   margin-top: 6px;
 }
@@ -447,6 +450,9 @@ const squadName = computed(() => {
   font-size: var(--fs-micro);
   font-style: normal;
   margin-top: 1px;
+  /* 选项的说明（容量多少 / 已有几个志愿 / 这个组是干什么的）——
+     它们是决定选哪个的依据，不是脚注 */
+  color: var(--text-2);
 }
 
 .dot {
@@ -474,7 +480,6 @@ const squadName = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 4px;
 }
 
 /* 组内次序：一眼看出「谁在等谁」 */
@@ -543,7 +548,7 @@ const squadName = computed(() => {
   padding: 0 12px;
   font-size: var(--fs-caption);
   font-weight: 600;
-  color: var(--text-3);
+  color: var(--text-2);
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 3px;

@@ -308,7 +308,15 @@ async function main() {
     ok('轮询后提示选课成功', true)
     await waitFor(`document.querySelectorAll('.chip.ok').length === 1`, 6000, '已选标记')
     const picked = await rowState('高等数学')
-    ok('成功的课在列表里标「已选」并禁用按钮', picked?.chip === '已选' && picked?.disabled === true, JSON.stringify(picked))
+    // 这条原先断言「已选之后按钮必须禁用」。**那是个缺陷，不是规格** ——
+    // 一旦禁用，这门课在列表上就成了一块点不动的死砖：用户没有任何地方能核对
+    // 自己当初是怎么排的（选了哪个上课小组、填了多少意愿值）。
+    // 现在断言的是「标成已选，且仍然点得开」。
+    ok(
+      '成功的课在列表里标「已选」，且仍可点开核对',
+      picked?.chip === '已选' && picked?.disabled === false,
+      JSON.stringify(picked),
+    )
 
     /* ---- 8. 冲突课：提示免听，且不能被算成已选 ---- */
     await clickPick('大学物理')

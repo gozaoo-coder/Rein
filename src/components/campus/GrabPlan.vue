@@ -228,7 +228,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
         <Sparkles :size="15" class="spark" />
         <b>抢课计划</b>
       </span>
-      <span class="t-3 sub">写好就不用管了，窗口一开自动抢</span>
+      <span class="sub">写好就不用管了，窗口一开自动抢</span>
     </header>
 
     <!-- 与「教学班搜索」刻意不同名：同一屏上有两个输入框，
@@ -277,7 +277,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
           <span class="ord num">{{ i + 1 }}</span>
           <span class="col flex-1">
             <b>{{ matchTitle(m) }}</b>
-            <em class="t-3">
+            <em>
               <span v-if="m.courseCode" class="num">{{ m.courseCode }}</span>
               <span v-if="m.teacher">{{ m.teacher }}</span>
               <span v-if="seat(m)" class="num">{{ seat(m) }}</span>
@@ -355,9 +355,8 @@ async function onReparse(i: GrabIntent): Promise<void> {
     <p class="hint">
       <Info :size="13" />
       <span>
-        写完就可以关掉<b>页面</b>：引擎每分钟自己去看一次教务的名单，能查到时把计划解析成
-        <b>志愿任务</b>，到点开抢 —— 全程不需要你再操作。
-        只有一条前提要记住：<b>引擎跑在 App 进程里，App 被划掉或清理后就不会再出手</b>。
+        写完就可以关掉<b>这个页面</b>：引擎每分钟自己去看一次教务的名单，能查到时把计划解析成
+        <b>志愿任务</b>，到点开抢 —— 不需要你再操作。
       </span>
     </p>
 
@@ -374,7 +373,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
             <Trash2 :size="14" />
           </button>
         </div>
-        <p class="meta t-3">
+        <p class="meta">
           <Wand2 :size="12" />
           <span>{{ targetOf(i) }}</span>
           <span>·</span>
@@ -407,7 +406,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
             <span class="ord num">{{ k + 1 }}</span>
             <span class="col flex-1">
               <b>{{ matchTitle(m) }}</b>
-              <em class="t-3">
+              <em>
                 <span v-if="m.teacher">{{ m.teacher }}</span>
                 <span v-if="seat(m)" class="num">{{ seat(m) }}</span>
               </em>
@@ -450,6 +449,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
 .sub {
   font-size: var(--fs-micro);
   min-width: 0;
+  color: var(--text-2);
 }
 
 /* 输入行与「教学班搜索」同一套视觉语言，但类名不重（同屏两个输入框，选择器要分得清）。
@@ -470,6 +470,8 @@ async function onReparse(i: GrabIntent): Promise<void> {
 .entry input {
   flex: 1;
   min-width: 0;
+  /* 输入框自己撑满整行高度（整行看着可点，就不该只有那条 16px 的文字线真的可点） */
+  align-self: stretch;
   font-size: var(--fs-caption);
   color: var(--text-1);
   background: none;
@@ -488,12 +490,14 @@ async function onReparse(i: GrabIntent): Promise<void> {
   opacity: 0.5;
 }
 
+/* 计划怎么用：它是「模糊匹配」这套规则唯一的说明，必须读得出来 ——
+   原先 11px 的 --text-3 在亮色下约 2.5:1、暗色下更低，解释看不见等于没解释 */
 .hint {
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   line-height: 1.5;
   margin: 6px 0;
 }
@@ -573,6 +577,8 @@ async function onReparse(i: GrabIntent): Promise<void> {
   gap: 0 10px;
   font-style: normal;
   font-size: var(--fs-micro);
+  /* 教师与余量：确认「这条命中的到底是不是我想抢的那个班」，得读得出来 */
+  color: var(--text-2);
 }
 
 .ord {
@@ -598,7 +604,8 @@ async function onReparse(i: GrabIntent): Promise<void> {
   padding: 1px 8px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
-  color: var(--text-3);
+  /* 中性档（任务已清理）也是状态词，不该是最淡的一档 */
+  color: var(--text-2);
 }
 
 .chip.ok {
@@ -617,7 +624,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
 }
 
 .chip.idle {
-  color: var(--text-3);
+  color: var(--text-2);
   background: var(--surface-2);
 }
 
@@ -710,6 +717,8 @@ async function onReparse(i: GrabIntent): Promise<void> {
   font-size: var(--fs-micro);
   line-height: 1.45;
   margin-top: 3px;
+  /* 目标批次 / 只中一个 / 下次唤醒 / 教务最近说了什么 —— 这一行是计划的进度说明 */
+  color: var(--text-2);
 }
 
 .meta svg {

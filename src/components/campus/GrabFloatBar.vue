@@ -202,23 +202,54 @@ const text = computed(() => {
 function open(): void {
   void router.push({ name: 'campus-course-select' })
 }
+
+/**
+ * 给读屏的播报：**只报关键节点**（与面板同一套档位）。
+ *
+ * 可见那行文字里嵌着每秒都在变的倒计时。原先它被挂成 `role="status"` 的
+ * `aria-label` —— 一个**每秒改写自己名字的 live region**：读屏要么被刷屏，
+ * 要么排出一长串已经过时的播报，而用户没有办法让它停下。
+ * 而这条浮条是全应用常驻的，等于每翻一页都带着它。
+ *
+ * 现在拆开：可见内容 `aria-hidden`，播报另走一条只在跨档时才改写的隐藏文本。
+ */
+const spoken = computed(() => {
+  if (store.grabError) return '抢课引擎已暂停'
+  if (windowFresh.value) return windowFresh.value.label
+  if (finishedFresh.value) return finishedFresh.value.label
+  if (!actives.value.length) return ''
+  const name = lead.value ? (lead.value.courseName || lead.value.lessonName || '课程') : '课程'
+  const ms = store.fireInMs(now.value)
+  if (ms == null) return `正在抢《${name}》`
+  if (ms <= 0) return `正在开抢《${name}》`
+  const s = Math.ceil(ms / 1000)
+  if (s <= 10) return `还有 ${s} 秒开抢《${name}》`
+  if (s <= 60) return `不到一分钟就要抢《${name}》`
+  if (s <= 300) return `还有五分钟就要抢《${name}》`
+  return `待开抢《${name}》`
+})
 </script>
 
 <template>
   <Transition name="hud">
     <!-- 整条浮条**不再是**一个按钮：它压在页头之上横跨大半屏，装在兜里误触一下就跳页。
-         现在是「一块会播报的状态条 + 一个明确的『去看』按钮」——
-         既让读屏能读到（role=status），也不会再躺着中枪 -->
-    <div v-if="show" class="hud glass-surface" :class="tone" role="status" :aria-label="`抢课监视：${text}`">
-      <span class="dot" :class="{ pulse: tone === 'run' }" />
+         现在是「一块会播报的状态条 + 一个明确的『去看』按钮」。
+         注意 aria-hidden 只挂在**会每秒变的文字**上，不能挂在整块上 ——
+         那样会把「去看」这颗唯一的可操作元素一起从读屏里抹掉。
+         真正给读屏的是下面那条只在跨档时才改写的 .sr 播报。 -->
+    <div v-if="show" class="hud glass-surface" :class="tone">
+      <span class="dot" :class="{ pulse: tone === 'run' }" aria-hidden="true" />
       <Zap v-if="tone === 'run'" :size="14" class="ico" />
       <CheckCircle2 v-else-if="tone === 'ok'" :size="14" class="ico" />
       <TriangleAlert v-else :size="14" class="ico" />
-      <span class="txt">{{ text }}</span>
-      <Loader2 v-if="tone === 'run' && !countdown" :size="13" class="spin" />
+      <span class="txt" aria-hidden="true">{{ text }}</span>
+      <Loader2 v-if="tone === 'run' && !countdown" :size="13" class="spin" aria-hidden="true" />
       <button class="go" type="button" aria-label="查看抢课任务" @click="open">
         <ChevronRight :size="15" />
       </button>
+      <!-- 读屏专用：只在跨档（5 分钟 / 1 分钟 / 10 秒 / 开抢）时才改写，
+           所以它不是那个「每秒改一次名字」的 live region —— 那才是原来的病 -->
+      <span class="sr" aria-live="polite">{{ spoken }}</span>
     </div>
   </Transition>
 </template>
@@ -330,6 +361,17 @@ function open(): void {
 
 .go:active {
   background: var(--surface-2);
+}
+
+/* 读屏专用：视觉上不存在，但它是这条浮条留给读屏的唯一出口 */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* 进出：从顶部滑入，别用缩放——它是「降下来的一条」，不是弹出来的 */

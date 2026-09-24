@@ -305,7 +305,7 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
       <section class="block toggle-row" data-key="watchWindow" @pointerenter="active = 'watchWindow'">
         <div class="col">
           <b>窗口监听</b>
-          <em class="t-3">App 开着就每分钟问一次「窗口公布了没有」，即使还没排任何课</em>
+          <em>App 开着就每分钟问一次「窗口公布了没有」，即使还没排任何课</em>
         </div>
         <ToggleSwitch
           :model-value="s.watchWindow"
@@ -339,14 +339,20 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
   margin-bottom: 14px;
 }
 
-/* 正式域提醒：和计划行里的「教师名可能打错了」同一种语气（amber，不是错误） */
+/* 「你连的是正式教务」这条警告原先直接拿 --warn 当文字色（#ff9500 压在白底上
+   只有 2.2:1），而 tokens.css 开头就写明了：实底档是给填充/描边用的，
+   当文字用要换 --*-strong 那一档。这里按模块里其它警告块的做法统一：
+   soft 底 + strong 文字 */
 .note.warn {
   display: flex;
   gap: 6px;
   align-items: flex-start;
   font-size: var(--fs-caption);
   line-height: 1.5;
-  color: var(--warn);
+  color: var(--warn-strong);
+  background: var(--warn-soft);
+  border-radius: var(--radius-m);
+  padding: 9px 11px;
   margin-bottom: 12px;
 }
 
@@ -390,7 +396,8 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
 .preset em {
   font-size: var(--fs-micro);
   font-style: normal;
-  color: var(--text-3);
+  /* 每一档的**代价**（「默认节奏，最不容易被风控盯上」）—— 那正是选档时要读的 */
+  color: var(--text-2);
   line-height: 1.3;
 }
 
@@ -435,12 +442,14 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
   grid-column: 1 / -1;
 }
 
+/* 这七个数字各自是什么意思、动了会怎样，全靠这一行说明 ——
+   它是整个抽屉里信息密度最高的地方，不能又是最淡的一档 */
 .hint {
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   line-height: 1.5;
   margin-top: 4px;
 }

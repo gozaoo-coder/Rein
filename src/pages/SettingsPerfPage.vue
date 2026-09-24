@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CalendarDays, Dumbbell, House, LayoutGrid, Plus, Sparkles } from 'lucide-vue-next'
+import { CalendarDays, ChevronRight, Dumbbell, House, Plus, SlidersHorizontal, Sparkles, User } from 'lucide-vue-next'
 
 import GlassSurface from '@/components/common/GlassSurface.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import GlassTunerSheet from '@/components/perf/GlassTunerSheet.vue'
 import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
 
 /**
@@ -14,6 +15,8 @@ import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, supportsS
  *   1. 这一档在我这台设备上到底生效了吗（能力探测 + 当前档位，如实说）
  *   2. 两块基本件好不好看：仅图标按钮（正圆）与图标 + 文字按钮（胶囊）
  *   3. 一整套底部栏装起来是什么样（左圆钮 + 中间药丸 + 右圆钮，三块玻璃各留缝并列）
+ *   4. 不满意就**就地调**：台下的入口拉开参数面板 —— 管线上的 11 个数字摊开成
+ *      滑杆 + 可点输入的数值（system/glassParams，改的是全局那份，定稿写回 GLASS_DEFAULTS）
  *
  * 为什么不摆在一张白卡上：液态玻璃折射的是**它背后的东西**，背后越热闹它才越有得看。
  * 但"热闹"不等于"花"—— 上一版拿五段满饱和撞色 + 30% 白斜纹当壁纸，玻璃边缘那道折射
@@ -26,8 +29,9 @@ import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, supportsS
  *   · 单光源（一道柔光带 + 同色相族的两团光晕）代替五段撞色，色相噪声收掉；
  *   · 只留一层 1px 细格当量尺：位移错开几个像素一眼可见，而不是靠斜纹"糊"出高频。
  * 台上三件按「状态 / 基本件 / 组件装配」三层陈列，各自占满整行 —— 读成展台，而不是
- * 三块玻璃漂在中间。玻璃参数仍一律走组件默认（那套是按 54~58px 的 UI 尺寸标定过的，
- * 见 GlassSurface 头注释），调用处只给尺寸、圆角与"压在暗底上"这一个语义（tint="dark"）。
+ * 三块玻璃漂在中间。玻璃参数仍一律走组件默认（那套出厂数按 54~58px 的 UI 尺寸标定过，
+ * 见 GlassSurface 头注释；现在**可调**，见 system/glassParams），
+ * 调用处只给尺寸、圆角与"压在暗底上"这一个语义（tint="dark"）。
  */
 const mode = computed({
   get: () => perfMode.value as string,
@@ -47,13 +51,16 @@ const glassState = computed(() => {
   return { tone: 'idle', text: '当前档位用普通毛玻璃 · 切到「超高」即开折射' }
 })
 
-/** 底部栏的三项（与应用里的 Dock 同名，方便对照观感） */
+/** 底部栏的三项（与应用里的 Dock 同名同图标，方便对照观感） */
 const TABS = [
   { id: 'home', label: '主页', icon: House },
   { id: 'sports', label: '运动', icon: Dumbbell },
-  { id: 'ai', label: 'AI', icon: Sparkles },
+  { id: 'me', label: '我', icon: User },
 ]
 const active = ref('sports')
+
+/** 参数调节面板（液态玻璃管线上的 11 个数字）：入口在标本台正下方 */
+const tunerOpen = ref(false)
 
 /** 仅图标按钮的边长（与应用里主按钮的 54 一致），正圆取半高 */
 const ICON_BTN = 54
@@ -100,40 +107,54 @@ const DOCK_BTN = 58
           </GlassSurface>
         </div>
 
-        <!-- ③ 组件装配：底部栏（视频同款）圆 + 药丸 + 圆 —— 三块玻璃**并列留缝**，
-              不互相叠压：各自都带受光边，一叠就会在缝上出现一道月牙形的硬边（像画错了） -->
+        <!-- ③ 组件装配：底部栏（左圆钮 + 中药丸 + 右圆钮）—— 三块玻璃**并列留缝**，
+              不互相叠压：各自都带受光边，一叠就会在缝上出现一道月牙形的硬边（像画错了）。
+              这一行**不另画一遍**：结构与前景类（.dock-block / .dock-tab / .dock-slot）
+              与真实 Dock 共用 base.css 里的那一份，材质也走同一份令牌（不套暗场那套，
+              否则标本会比真实 Dock 暗一档）—— 所见即应用里的那一块 -->
         <div class="dockrow">
-          <GlassSurface class="rnd" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" tint="dark">
-            <button type="button" class="dockbtn" aria-label="全部功能">
-              <LayoutGrid :size="20" />
+          <GlassSurface class="dock-block" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" fill="var(--glass-fill)">
+            <button type="button" class="dock-slot" aria-label="课表（自定义落点示例）">
+              <CalendarDays :size="21" />
+              <span>课表</span>
             </button>
           </GlassSurface>
 
-          <GlassSurface class="pill" :height="DOCK_BTN" :border-radius="DOCK_BTN / 2" tint="dark">
-            <div class="tabs" role="group" aria-label="底栏页签示例">
-              <button
-                v-for="t in TABS"
-                :key="t.id"
-                type="button"
-                class="tab"
-                :class="{ on: active === t.id }"
-                :aria-pressed="active === t.id"
-                @click="active = t.id"
-              >
-                <component :is="t.icon" :size="21" :stroke-width="active === t.id ? 2.3 : 1.9" />
-                <span>{{ t.label }}</span>
-              </button>
-            </div>
+          <GlassSurface class="dock-block pill" :height="DOCK_BTN" border-radius="var(--radius-full)" fill="var(--glass-fill)">
+            <button
+              v-for="t in TABS"
+              :key="t.id"
+              type="button"
+              class="dock-tab"
+              :class="{ active: active === t.id }"
+              :aria-pressed="active === t.id"
+              @click="active = t.id"
+            >
+              <component :is="t.icon" :size="22" :stroke-width="active === t.id ? 2.4 : 1.9" />
+              <span>{{ t.label }}</span>
+            </button>
           </GlassSurface>
 
-          <GlassSurface class="rnd" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" tint="dark">
-            <button type="button" class="dockbtn" aria-label="记录日历">
-              <CalendarDays :size="20" />
+          <GlassSurface class="dock-block" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" fill="var(--glass-fill)">
+            <button type="button" class="dock-slot" aria-label="AI">
+              <Sparkles :size="21" />
+              <span>AI</span>
             </button>
           </GlassSurface>
         </div>
       </div>
     </section>
+
+    <!-- 参数调节入口：紧贴标本台 —— 调的就是刚才看到的那几块玻璃。
+         面板里改动即时生效（改的是全局那份可调参数），台上三件跟着一起变 -->
+    <button type="button" class="tuner" @click="tunerOpen = true">
+      <SlidersHorizontal :size="18" />
+      <span class="tuner-txt">
+        <b>液态玻璃参数调节</b>
+        <small class="t-3">折射位移 · 边缘厚度 · 底色浓度…共 11 项，拖动即时生效</small>
+      </span>
+      <ChevronRight :size="18" class="chev" />
+    </button>
 
     <section class="card">
       <h2 class="ctitle">档位</h2>
@@ -161,6 +182,9 @@ const DOCK_BTN = 58
         手机上若觉得发烫或掉帧，切回「自动」即可。
       </p>
     </section>
+
+    <!-- 参数调节面板：自带暗场预览，改的就是全局那份可调参数（system/glassParams） -->
+    <GlassTunerSheet :open="tunerOpen" @close="tunerOpen = false" />
   </div>
 </template>
 
@@ -175,20 +199,24 @@ const DOCK_BTN = 58
   margin: 4px calc(var(--page-pad-x) * -1) 14px;
   overflow: hidden;
   background: var(--hero-bg);
-  /* 台内换一套玻璃材质（**调用处的材质上下文**，组件自己的令牌默认值不动）：
-     暗底上的玻璃按应用在暗场的做法压暗（HUD 芯片材质），受光边换中性白 ——
-     前景因此永远是浅色（--hero-text*），与当前主题无关。 */
+}
+
+/* 台内换一套玻璃材质（**调用处的材质上下文**，组件自己的令牌默认值不动）：
+   暗底上的玻璃按应用在暗场的做法压暗（HUD 芯片材质），受光边换中性白 ——
+   前景因此永远是浅色（--hero-text*），与当前主题无关。
+   **只加在「基本件」这一行上**（读数胶囊直接用 --hero-chip-*，不走玻璃令牌）：
+   底下的底栏标本要与真实 Dock 一模一样，套上这套暗场令牌就比真实 Dock 暗一档 ——
+   它走应用自己的 --glass-* 与前景令牌（见 base.css 的 .dock-* 一份定义）。 */
+.parts {
   --glass-fill: var(--hero-chip-bg);
   --glass-rim-hi: var(--hero-chip-line);
   --glass-rim-lo: var(--hero-chip-line);
   --glass-sheen: color-mix(in srgb, var(--hero-text) 8%, transparent);
-  /* 活动页签的亮斑：中性白、**不带色相也不带渐变** —— 带色相的衬底压在任意壁纸上
-     会与背后的内容混成脏色；选中这件事改由前景的明度与字重承担 */
   --glass-tab-hi: color-mix(in srgb, var(--hero-text) 16%, transparent);
 }
 
 /* 弱档：玻璃顶成实底、受光亮斑归零（与 base.css 同一套退化语义，实底取暗场底色） */
-html[data-perf='low'] .bench {
+html[data-perf='low'] .parts {
   --glass-fill: var(--hero-bg);
   --glass-rim-hi: var(--hero-chip-line);
   --glass-rim-lo: var(--hero-chip-line);
@@ -197,17 +225,18 @@ html[data-perf='low'] .bench {
 }
 
 /* 「减弱透明度」档：组件的退化分支会把玻璃顶成 --surface（亮色下是白的），
-   而台上的前景是浅色 —— 会撞成白字白底。台内把「表面」这个词换成暗场底色，
+   而台上这一行的前景是浅色 —— 会撞成白字白底。台内把「表面」这个词换成暗场底色，
    退化分支于是落回同一块暗玻璃，前景不用跟着变。 */
 @media (prefers-reduced-transparency: reduce) {
-  .bench {
+  .parts {
     --surface: var(--hero-bg);
     --line-strong: var(--hero-chip-line);
   }
 
   /* 折射分支要单独压：白雾底与折射滤镜都是**内联样式**，媒体查询在组件里够不着它。
-     系统既然要求了「减弱透明度」，台上就不该还有一层半透明玻璃在折射 */
-  .bench :deep(.glass) {
+      系统既然要求了「减弱透明度」，台上就不该还有一层半透明玻璃在折射。
+      （底栏标本不压：它要跟真实 Dock 一样走组件的退化分支） */
+  .parts :deep(.glass) {
     background: var(--hero-bg) !important;
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
@@ -357,8 +386,7 @@ html[data-perf='low'] .bench {
 
 /* 按钮本体透明：玻璃由 GlassSurface 画，按钮只负责命中区与前景 */
 .ibtn,
-.tbtn,
-.dockbtn {
+.tbtn {
   width: 100%;
   height: 100%;
   display: flex;
@@ -371,8 +399,7 @@ html[data-perf='low'] .bench {
 }
 
 .ibtn:active,
-.tbtn:active,
-.dockbtn:active {
+.tbtn:active {
   transform: scale(0.94);
 }
 
@@ -381,67 +408,52 @@ html[data-perf='low'] .bench {
   font-weight: 600;
 }
 
+/* 底栏标本：三块玻璃的尺寸关系与页签前景在 base.css 的 .dock-block / .dock-tab /
+   .dock-slot（与真实 Dock 共用一份，见那里的注释）—— 这里只管这一行的排版 */
 .dockrow {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.rnd {
-  flex: none;
-}
-
-.pill {
-  flex: 1;
-  min-width: 0;
-}
-
-.tabs {
-  display: flex;
+/* ---------- 参数调节入口 ---------- */
+.tuner {
   width: 100%;
-  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 13px 16px;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  text-align: left;
 }
 
-/* 未选中压暗、选中提亮：在暗底玻璃上，明度差比色相差更容易一眼分辨 */
-.tab {
-  position: relative;
+.tuner:active {
+  background: var(--surface-2);
+}
+
+.tuner-txt {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  border-radius: var(--radius-full);
-  color: var(--hero-text-dim);
-  font-size: var(--fs-micro);
+  gap: 1px;
+}
+
+.tuner-txt b {
+  font-size: var(--fs-callout);
   font-weight: 600;
-  transition:
-    color var(--dur-fast) var(--ease-standard),
-    transform var(--dur-fast) var(--ease-standard);
 }
 
-.tab:active {
-  transform: scale(0.94);
+.tuner-txt small {
+  font-size: var(--fs-caption);
 }
 
-.tab::before {
-  content: '';
-  position: absolute;
-  inset: 5px 6px;
-  z-index: -1;
-  border-radius: var(--radius-full);
-  background: var(--glass-tab-hi);
-  opacity: 0;
-  transition: opacity var(--dur-base) var(--ease-standard);
-}
-
-.tab.on {
-  color: var(--hero-text);
-}
-
-.tab.on::before {
-  opacity: 1;
+.chev {
+  flex: none;
+  color: var(--text-3);
 }
 
 /* ---------- 档位 ---------- */

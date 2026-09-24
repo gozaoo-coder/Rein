@@ -101,19 +101,25 @@ function commit(): void {
 
 /* + / − 的**命中区是 44×44**，视觉那个 30px 的圆画在 ::before 上。
    这两颗钮在一屏里成对出现七次，是该按 44px 标准来的地方 —— 但把圆放大到 44
-   会挤掉数值的位置，所以撑命中区而不是撑视觉。 */
+   会挤掉数值的位置，所以撑命中区而不是撑视觉。
+   **数值钮必须排除在外**（:not(.val-btn)）：它和这两颗钮同在一个 .ctrl 里，
+   曾经被同一条规则盖上了一个 30px 的圆底 —— 圆正好落在数字上（颜色还与两侧
+   步进钮一致），把值挡得看不见。 */
 .ctrl button {
   position: relative;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-1);
 }
 
-.ctrl button::before {
+.ctrl button:not(.val-btn) {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+
+.ctrl button:not(.val-btn)::before {
   content: '';
   position: absolute;
   width: 30px;
@@ -123,7 +129,7 @@ function commit(): void {
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 
-.ctrl button:active::before {
+.ctrl button:not(.val-btn):active::before {
   transform: scale(0.92);
 }
 
@@ -150,10 +156,13 @@ function commit(): void {
   margin-left: 2px;
 }
 
+/* 数值钮：点一下就地输入。命中区与两侧步进钮同高（44），但没有圆底 —— 它只在自己
+   被按下时铺一层浅底，读数始终压在干净的画布上 */
 .val-btn {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 44px;
   padding: 2px 0;
   border-radius: var(--radius-s, 6px);
   color: inherit;

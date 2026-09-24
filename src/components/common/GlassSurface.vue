@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
+import { glassParams, type GlassParamKey } from '@/system/glassParams'
 import { liquidGlass } from '@/system/perf'
 
 /**
@@ -22,7 +23,9 @@ import { liquidGlass } from '@/system/perf'
  *   2. width / height 默认 '100%'（跟着容器走）、borderRadius 除了数字也接受 '50%' / '999px'
  *      —— 按钮这类「尺寸由内容决定」的场景不必再去量一遍像素；
  *   3. 低画质档（system/perf 的 low）直接走退化分支：省掉一次全屏合成，
- *      与「流动性优先」这一档的承诺一致。
+ *      与「流动性优先」这一档的承诺一致；
+ *   4. 材质参数（边缘厚度 / 亮度 / 位移量…）的默认值外置到 system/glassParams：
+ *      画质预览页的调节面板就地改、存本地，这里只负责「调用方没给就用当前生效值」。
  *
  * 退化（不是兜底补丁，是常态路径之一）：
  *   - 内核不认 `backdrop-filter: url()`（Safari / Firefox）→ 普通毛玻璃（模糊 + 玻璃令牌）；
@@ -55,27 +58,23 @@ const props = withDefaults(
     /** 玻璃底色方向：auto 跟随亮暗色（上游行为），dark / light 强制 ——
      *  压在彩色照片或墙纸上的玻璃无论什么主题都该压暗，否则白字读不出来 */
     tint?: 'auto' | 'light' | 'dark'
+    /** 折射分支的底用什么颜色（CSS 颜色，可带 var()）：缺省按亮暗色取半透明黑 / 白。
+     *  Dock 传 --glass-fill 与其余玻璃**同色** —— 暗色下纯黑底会把页签文字的
+     *  真图对比度压低一档（2.52 vs 2.72，见 scripts/e2e-perf-glass.mjs 第 6 节）。 */
+    fill?: string
     /** 额外的内联样式（上游同名 prop）：与内部计算出的尺寸/背景合并，同名时以调用方为准 */
     style?: Record<string, string>
   }>(),
   {
     width: '100%',
     height: '100%',
-    // 这套数是给「UI 尺寸的表面」（54~60px 的按钮、底部栏）标定过的：
+    borderRadius: 50,
+    // 材质参数（边缘厚度 / 亮度 / 位移量 / 底色浓度…）的默认值**不写在这里**：它们是
+    // 可调参数，由 system/glassParams 统一持有（画质预览页的「液态玻璃参数调节」面板
+    // 改的就是那一份），调用方不传时用当前生效值 —— 调用处因此仍然只给尺寸与圆角。
+    // 出厂那套数是按「UI 尺寸的表面」（54~60px 的按钮、底部栏）标定的：
     // 亮度 50 = 位移贴图中心中灰 = 中心不位移（只有边缘在折射），这是整块看着"是玻璃"
     // 而不是"糊成一团"的关键；边缘带在小表面上留足比例，位移量按绝对像素收小。
-    borderRadius: 50,
-    borderWidth: 0.4,
-    brightness: 50,
-    opacity: 1,
-    blur: 30,
-    displace: 1.5,
-    backgroundOpacity: 0.2,
-    saturation: 1.8,
-    distortionScale: -18,
-    redOffset: 0,
-    greenOffset: 0,
-    blueOffset: 0,
     xChannel: 'R',
     yChannel: 'G',
     mixBlendMode: 'difference',
@@ -106,6 +105,15 @@ const blueGradId = `blue-grad-${uid}`
  */
 const canRefract = computed(() => liquidGlass.value)
 
+/**
+ * 材质参数取值：调用方显式给了就用调用方的，没给用**当前生效值**
+ * （system/glassParams —— 画质预览页的调节面板改的就是那一份）。
+ */
+function mat(key: GlassParamKey): number {
+  const own = props[key]
+  return typeof own === 'number' ? own : glassParams.value[key]
+}
+
 function length(value: string | number): string {
   return typeof value === 'number' ? `${value}px` : value
 }
@@ -131,7 +139,7 @@ function radiusPx(w: number, h: number): number {
  */
 
 function mapDataUri(w: number, h: number): string {
-  const edge = Math.min(w, h) * (props.borderWidth * 0.5)
+  const edge = Math.min(w, h) * (mat('borderWidth') * 0.5)
   const rx = radiusPx(w, h)
   const svg = `
       <svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
@@ -148,7 +156,7 @@ function mapDataUri(w: number, h: number): string {
         <rect x="0" y="0" width="${w}" height="${h}" fill="black"></rect>
         <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" fill="url(#${redGradId})" />
         <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" fill="url(#${blueGradId})" style="mix-blend-mode: ${props.mixBlendMode}" />
-        <rect x="${edge}" y="${edge}" width="${w - edge * 2}" height="${h - edge * 2}" rx="${rx}" fill="hsl(0 0% ${props.brightness}% / ${props.opacity})" style="filter:blur(${props.blur}px)" />
+        <rect x="${edge}" y="${edge}" width="${w - edge * 2}" height="${h - edge * 2}" rx="${rx}" fill="hsl(0 0% ${mat('brightness')}% / ${mat('opacity')})" style="filter:blur(${mat('blur')}px)" />
       </svg>
     `
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
@@ -164,17 +172,17 @@ function updateMap(): void {
 
 function updateFilter(): void {
   const pairs: [SVGElement | null, number][] = [
-    [redRef.value, props.redOffset],
-    [greenRef.value, props.greenOffset],
-    [blueRef.value, props.blueOffset],
+    [redRef.value, mat('redOffset')],
+    [greenRef.value, mat('greenOffset')],
+    [blueRef.value, mat('blueOffset')],
   ]
   for (const [el, offset] of pairs) {
     if (!el) continue
-    el.setAttribute('scale', String(props.distortionScale + offset))
+    el.setAttribute('scale', String(mat('distortionScale') + offset))
     el.setAttribute('xChannelSelector', props.xChannel)
     el.setAttribute('yChannelSelector', props.yChannel)
   }
-  blurRef.value?.setAttribute('stdDeviation', String(props.displace))
+  blurRef.value?.setAttribute('stdDeviation', String(mat('displace')))
 }
 
 /** 玻璃压暗还是提亮：auto 跟主题，dark / light 由调用方指定 */
@@ -187,13 +195,16 @@ const rootStyle = computed<Record<string, string>>(() => {
     borderRadius: length(props.borderRadius),
   }
   if (!canRefract.value) return base
+  const fill =
+    props.fill ||
+    (darkTint.value
+      ? `hsl(0 0% 0% / ${mat('backgroundOpacity')})`
+      : `hsl(0 0% 100% / ${mat('backgroundOpacity')})`)
   return {
     ...base,
-    background: darkTint.value
-      ? `hsl(0 0% 0% / ${props.backgroundOpacity})`
-      : `hsl(0 0% 100% / ${props.backgroundOpacity})`,
-    backdropFilter: `url(#${filterId}) saturate(${props.saturation})`,
-    WebkitBackdropFilter: `url(#${filterId}) saturate(${props.saturation})`,
+    background: fill,
+    backdropFilter: `url(#${filterId}) saturate(${mat('saturation')})`,
+    WebkitBackdropFilter: `url(#${filterId}) saturate(${mat('saturation')})`,
   }
 })
 
@@ -214,6 +225,8 @@ watch(
     props.xChannel,
     props.yChannel,
     props.mixBlendMode,
+    // 全局可调参数（面板拖动时换的是这个对象的引用）：改一次就重烘贴图与滤镜
+    glassParams.value,
   ],
   () => {
     updateMap()

@@ -114,9 +114,11 @@
 - **页头固定与渐进模糊遮罩**：每个非 fullscreen 页面都必须有 PageHeader，它 `position: sticky; top: 0` 顶住**最近滚动容器**——移动端滚文档、桌面工作台滚 `.desk-main`，两种壳同一份 CSS 都成立（`fixed` 在桌面壳里会跑到导航轨与信息栏底下）。滚动状态由 `composables/useScrolled` 沿父链解析出真正的滚动容器后监听，不写死 `window`。页面滚起来后页头背后压一层遮罩：正常档是多层 `backdrop-filter` + `mask` 梯度叠出的渐进模糊（越靠上被模糊的次数越多，向下递减到零，避免硬切边），降级档换成「`--bg` → 透明」的渐变底色遮罩。遮罩向上多铺 `--safe-top` 盖住状态栏、向下多铺 `--ph-tail` 让模糊化开、左右按 `--ph-bleed`（缺省 `--page-pad-x`，页面可覆写）铺满整帧。回归：`node scripts/e2e-page-header.mjs`（sticky 归属、遮罩显隐、层数与模糊量、降级档换底色、逐页标题）。
 - **滚动容器按规范会裁掉溢出**（一个轴不是 `visible` 时另一个轴也变 `auto`）：气泡/卡片的 `--shadow-card` 会被自己的滚动区切出直边。聊天区 `.msgs` 用「负外边距拉满整帧 + 等值内边距推回内容」留出影子扩散位，新增滚动容器同理。
 - **运行时性能降级**：`system/perf.ts` 按 90 帧一个窗口统计掉帧（>32ms）占比，连续 2 个窗口 >30% 判定降级、连续 4 个窗口 <8% 恢复（恢复更保守，避免临界点抖动）；空闲时歇 6 秒不常驻 rAF，路由切换与流式输出用 `kickPerfWatch()` 插队。结论落 `<html data-perf="low">`，`base.css` 据此关掉 `backdrop-filter` 与循环动画（一次性过渡保留），并把 `--surface-translucent` 顶成实底。用户的 `auto|high|ultra|low` 档位存 localStorage `rein.perf.v1`，UI 在「设置 › 性能」（档位清单 `PERF_MODES` 由设置页与画质预览页共用一份）。
-- **超高档与液态玻璃**：`ultra` 在 `high` 之上再开 `components/common/GlassSurface.vue` 的折射表面（移植自 vue-bits 的 GlassSurface：SVG 位移贴图 + R/G/B 三通道分别位移再叠加，经 `backdrop-filter: url(#f)` 作用在元素自身，折射的是**它背后的真实内容**）。三道门缺一不可：用户选了超高档、没被降级、且内核认 `backdrop-filter: url()`（Safari / Firefox 会静默忽略整条声明，故有 `supportsSvgBackdrop()` 探测与「普通毛玻璃」退化分支）。`data-perf` 会写成 `ultra`（`auto|high|low` 的语义不变）。回归：`scripts/e2e-perf-glass.mjs`（预览页逐档 + 真实 Dock：折射层挂载 / 受光边 / 不参与布局 / 页签对比度真图采像素）。
-- **玻璃材质只有一份定义**：`styles/base.css` 的 `.glass-surface`（半透明 fill + 上亮下暗的受光描边 + 内顶高光 + `blur(28) saturate(180%)` + 影；弱档由 `data-perf` 把 fill 顶成实底并全局关掉 blur，「减弱透明度」退化成实底 + 常规描边）。**Dock 与四个悬浮条（运动 / 录音 / 语音 / 抢课）共用它** —— 悬浮的这一族看起来才是同一种材料。
-- **折射只挂在底部 Dock 上**（`layout/TabBar.vue`）：一块 GlassSurface 垫在页签底下，与预览页标本同一个组件、同一组默认参数，只有底的浓度按真实内容调厚（0.5 ≈ 高画质档 `--glass-fill`；标本压在暗场壁上，真实 Dock 背后是任意页面）。折射采样的是元素背后**页面真实内容**，所以它必须在最底层：这一档 nav 自己不再画底、不再模糊，只留 border-box 的受光边（玻璃的「厚度」全在这条边上），折射层 inset 1px 正好让出它。其余档位与弱档/减弱透明度走 `.glass-surface` 的普通毛玻璃分支，观感与改动前一致。
+- **超高档与液态玻璃**：`ultra` 在 `high` 之上再开 `components/common/GlassSurface.vue` 的折射表面（移植自 vue-bits 的 GlassSurface：SVG 位移贴图 + R/G/B 三通道分别位移再叠加，经 `backdrop-filter: url(#f)` 作用在元素自身，折射的是**它背后的真实内容**）。三道门缺一不可：用户选了超高档、没被降级、且内核认 `backdrop-filter: url()`（Safari / Firefox 会静默忽略整条声明，故有 `supportsSvgBackdrop()` 探测与「普通毛玻璃」退化分支）。`data-perf` 会写成 `ultra`（`auto|high|low` 的语义不变）。回归：`scripts/e2e-perf-glass.mjs`（预览页逐档 + 真实 Dock：三块玻璃逐块折射 / 不参与布局 / 页签对比度真图采像素 + 参数调节面板）。
+- **液态玻璃参数可调**（`system/glassParams.ts`）：管线上 11 个数字（边缘厚度 / 中心亮度 / 位移强度 / 三通道偏移 / 底色浓度…）摊在「画质预览 › 液态玻璃参数调节」面板里 —— 英文键名 + 中文名，滑杆给宽区间，数值点一下就地输入（吸附到步长、夹回区间）。GlassSurface 的默认值读这份（调用处仍只给尺寸与圆角），改动即时生效并落 localStorage `rein.glass.v1`；定稿 = 把选定的一组数写回 `GLASS_DEFAULTS`（面板的「恢复默认」就是回到它）。
+- **玻璃材质只有一份定义**：`styles/base.css` 的 `.glass-surface`（半透明 fill + 上亮下暗的受光描边 + 内顶高光 + `blur(28) saturate(180%)` + 影；弱档由 `data-perf` 把 fill 顶成实底并全局关掉 blur，「减弱透明度」退化成实底 + 常规描边）。**四个悬浮条（运动 / 录音 / 语音 / 抢课）共用它**；底部 Dock 与画质预览页的标本改用 `GlassSurface` 组件 —— 它要能整块折射，而折射必须是元素自己的 `backdrop-filter`。两族同源（同一套 `--glass-*` 令牌、同一组可调参数），Dock 这一族多了「超高」这一档。
+- **Dock 是三块并列玻璃**（`layout/TabBar.vue`）：左独立圆钮（**用户自定义落点**，默认课表，长按换；`stores/dock.ts` / localStorage `rein.dock.v1`）+ 中药丸（内核两格 主页/我 + 插件条目，如运动）+ 右独立圆钮（AI，内核落点）。三块各是一块 `GlassSurface`，**并列留缝、互不叠压** —— 各自都带受光边，一叠就会在缝上出现一道月牙形硬边（与标本台同一条结论）。超高档三块**各自折射**背后的页面真实内容，底的浓度取 `--glass-fill`（与高画质档同色，薄一档页签文字的真图对比度就掉）；nav 自己只是定位壳（不画底、不模糊）。其余档位与弱档 / 减弱透明度走退化分支。
+- **Dock 的尺寸关系与前景只有一份定义**（`base.css` 的 `.dock-block` / `.dock-tab` / `.dock-slot`，含受光亮斑与按压弹簧）：**画质预览页的底栏标本直接用同一份** —— 标本的意义就是「所见即应用里的那一块」，两边各写一套必然漂（标本曾经用暗场令牌 + 自己的一版页签，与真实 Dock 长得不像，2026-09-24 修）。回归把「逐项一致」钉死：`scripts/e2e-perf-glass.mjs` 第 1 节逐项比对标本与真实 Dock 的计算样式与几何（块数 / 页签前景 / 受光亮斑 / 玻璃底色 / 折射挂载），亮暗两色 + 弱档 + 减弱透明度各比一次。
 - 三环语义固定：红=摄入达标，绿=运动消耗（目标 `EXERCISE_KCAL_GOAL`=300kcal），青=营养均衡（三大宏量完成度均值）。
 - 动效默认 `--ease-standard`；弹层用 `--ease-sheet`（Apple sheet 曲线）；进出必须同路径；遵守 `prefers-reduced-motion` / `prefers-reduced-transparency`。
 - 反馈即时性：按压态在 `:active`（pointer-down）生效，不做延迟反馈。
@@ -128,7 +130,7 @@
 
 ## 7. 扩展指南
 
-**新增一个页面**：`pages/X.vue` → `router.ts` 登记（meta.tab）→ 若属一级导航，在对应插件的 `nav` 里加一条（`surfaces: ['tabbar']`）；路由若归属于某个功能模块，写进该插件的 `routes` → 本文件登记路由清单。
+**新增一个页面**：`pages/X.vue` → `router.ts` 登记（meta.tab）→ 若属一级导航，在对应插件的 `nav` 里加一条（`surfaces: ['tabbar']` 落在移动端 Dock 的药丸、`['rail']` 落在桌面导航轨）；路由若归属于某个功能模块，写进该插件的 `routes` → 本文件登记路由清单。
 
 **新增一个功能模块（插件）**：
 1. `src/plugins/builtin/<模块>.ts`：`definePlugin({ id, name, desc, icon, accent, routes, tools, nav })`；可被用户开关的模块加 `toggleable: true`（列表自动出现在「设置 › 打开或关闭功能」）
@@ -162,7 +164,7 @@
 | `/settings` | settings | 设置（二级内容页：功能分组入口 + 番茄钟完整配置 + 关于；入口在「我 › 设置」，原设置抽屉已升级为页面） |
 | `/settings/features` | settings-features | 打开或关闭功能（三级页：插件层的逐项开关，列表来自 `src/plugins` 里 `toggleable` 的声明） |
 | `/settings/update` | settings-update | 软件更新（三级页：版本/多源状态/下载进度/安装/更新源与通道设置 + Rein 在线服务探测；入口在「设置 › 关于 › 软件更新」，启动时也会静默检查并在有新版本时 toast 一次） |
-| `/settings/perf` | settings-perf | 画质预览（三级页：超高档的液态玻璃长什么样 —— 仅图标按钮 / 图标+文字按钮 / 视频同款底部栏（圆 + 药丸 + 圆叠压）；可就地切档看折射与退化的差别；入口在「设置 › 性能 › 液态玻璃预览」） |
+| `/settings/perf` | settings-perf | 画质预览（三级页：超高档的液态玻璃长什么样 —— 仅图标按钮 / 图标+文字按钮 / 底部栏（圆 + 药丸 + 圆，并列留缝；**与应用里的 Dock 共用同一份样式**，逐项一致）；可就地切档看折射与退化的差别；台下入口拉开**液态玻璃参数调节面板**（11 项可调参数 + 自带暗场预览）；入口在「设置 › 性能 › 液态玻璃预览」） |
 | `/focus` | focus | 专注（二级内容页：番茄钟 + 待办 + 日程时间线预览；完整时间线、超量待办收抽屉） |
 | `/todos` | todos | 待办 · 今日画布（二级内容页：未安排池 + 单日时间轴 + 详情联动 + 智能排程；周视图为 7 列时间线（WeekTimeline）含周回顾；清单保留原分组列表；桌面端宽栏三窗格） |
 | `/nutrition` | nutrition | 营养全览（二级内容页：能量/宏量/微量元素详解 + 记饮食、改目标快捷入口） |
@@ -177,7 +179,7 @@
 | `/sports/plans/:id/edit` | sports-plan-edit | 课程编辑（二级内容页；`:id='new'` 表示新建；动作从动作库选择器里选，`exerciseId` 是课程与曲线的关联键） |
 | `/sports/exercises` | sports-exercises | 动作库（二级内容页：全部运动动作的唯一真源——搜索 + 分类筛选 + 逐条详情（肌群图 / 重量曲线 / 今日建议）；内置动作只读可隐藏，自建动作可增删改；入口在运动页快捷磁贴） |
 | `/sports/records` | sports-records | 全部运动记录（二级内容页：日/周/年三视图，概览卡=周期导航+分钟柱状图+统计行，列表按日/月分组；入口为本周运动卡「详情」角标） |
-| `/campus/schedule` | campus-schedule | 我的课表（**一级入口：底部导航第 5 项**，同时保留页头返回键；日/周/月三视图 + 顶栏同步刷新 + 课表配置入口。周视图为 7 列 × 节次网格，双向冻结窗格，左列显示实际上课时间） |
+| `/campus/schedule` | campus-schedule | 我的课表（**一级入口：底部 Dock 左键的默认落点**，同时保留页头返回键；日/周/月三视图 + 顶栏同步刷新 + 课表配置入口。周视图为 7 列 × 节次网格，双向冻结窗格，左列显示实际上课时间） |
 | `/campus/settings` | campus-settings | 课表配置与设置（二级内容页：学校系统选择器 + 教务登录（含验证码）+ 学期切换与同步 + 培养方案与选课入口 + 账号管理） |
 | `/campus/program` | campus-program | 培养方案（二级内容页：方案档案 + 学分进度 + 学分分布树 + 课程清单；数据源 900KB+，后端缓存） |
 | `/campus/course-select` | campus-course-select | 选课·抢课（二级内容页：教务服务器时间 + 抢课任务单 + 批次列表 → 教学班搜索/加入抢课；批次未开放时是「等待窗口开放」态，入口在课表配置页） |
@@ -186,7 +188,7 @@
 
 页面分级约定：一级页 `meta.tab`（页签条目由插件层贡献，见 §13）；二级内容页 `meta.title`（保留 TabBar，`PageHeader back` 提供返回键）；沉浸页 `meta.fullscreen`。**训练课沉浸层不再走路由**（2026-09-03）：`components/exercise/SessionOverlay.vue` 由 `App.vue` 常驻挂载，显隐与 container transform 形变动画由 `system/sessionImmersive.ts` 驱动——收起/恢复零重建，原 `/session` 路由已移除。每日目标的编辑入口收敛在「饮食调整」二级页，「我」页只展示摘要。训练课程的全部管理动作收敛在「全部课程」及其详情/编辑二级页，运动主页只放跑步/手动记快速入口与最近使用的三个课程。
 
-**桌面工作台（2026-08-24）**：视口 ≥ `config/domain.ts::DESKTOP_MIN`（1100px）时 `App.vue` 切换到三窗格壳——左侧导航轨 `layout/DesktopRail.vue`（替代底部 TabBar）、主人区 `RouterView`、右侧信息栏 `layout/DesktopInspector.vue`（**全部页面常驻**，保证构图平衡：三环小结 + 今日待办快切 + AI 问句）。主页本身提供两个可切换视图（页头分段控件，选择持久化 `localStorage:'rein.homeView.v1'`）：`workbench/BentoOverview.vue`（便当总览：能量磁贴 + 待办 + 番茄/AI + 快捷入口 + 记账/运动概览）与 `workbench/DaySpine.vue`（一日脊柱：体重/饮食/运动/番茄/收支/待办按分钟聚合的纵向时间线，未来安排虚线 + 「现在」呼吸点）。移动端（< DESKTOP_MIN）保持底部导航（内核两格「主页 / 我」固定，中间格由插件贡献，见 §13），主页为「状态条 + 主页画布 + 常用工具栏」（2026-08-26 起：无壳能量状态条 → 2026-08-29 升级为 `home/HomeCanvas.vue` **主页画布**：未安排池 chips（点卡片进编辑抽屉快排）+ 紧凑版 `todo/CanvasTimeline.vue`（现在线/打勾/拖拽改位，与 /todos 画布同组件同数据，216px 视窗锚定「现在」）+ 餐次摘要 chips → 查阅文字链 → 移动便当风格 2 列工具格：图标章+标题+副标，卡片全部来自插件层（`stores/features.tools`，见 §13），桌面端其他页面内容以 560px 窄栏居中（`App.vue` `.desk-main:not(.wide)` 约束）。断点检测用 `composables/useMediaQuery.ts`（matchMedia 响应式），不依赖窗口 resize 监听。沉浸页（`meta.fullscreen`）在两形态下都隐藏导航。
+**桌面工作台（2026-08-24）**：视口 ≥ `config/domain.ts::DESKTOP_MIN`（1100px）时 `App.vue` 切换到三窗格壳——左侧导航轨 `layout/DesktopRail.vue`（替代底部 TabBar）、主人区 `RouterView`、右侧信息栏 `layout/DesktopInspector.vue`（**全部页面常驻**，保证构图平衡：三环小结 + 今日待办快切 + AI 问句）。主页本身提供两个可切换视图（页头分段控件，选择持久化 `localStorage:'rein.homeView.v1'`）：`workbench/BentoOverview.vue`（便当总览：能量磁贴 + 待办 + 番茄/AI + 快捷入口 + 记账/运动概览）与 `workbench/DaySpine.vue`（一日脊柱：体重/饮食/运动/番茄/收支/待办按分钟聚合的纵向时间线，未来安排虚线 + 「现在」呼吸点）。移动端（< DESKTOP_MIN）保持底部 Dock（左独立圆钮=自定义落点，默认课表 / 中药丸=内核两格「主页 / 我」+ 插件条目 / 右独立圆钮=AI，见 §13），主页为「状态条 + 主页画布 + 常用工具栏」（2026-08-26 起：无壳能量状态条 → 2026-08-29 升级为 `home/HomeCanvas.vue` **主页画布**：未安排池 chips（点卡片进编辑抽屉快排）+ 紧凑版 `todo/CanvasTimeline.vue`（现在线/打勾/拖拽改位，与 /todos 画布同组件同数据，216px 视窗锚定「现在」）+ 餐次摘要 chips → 查阅文字链 → 移动便当风格 2 列工具格：图标章+标题+副标，卡片全部来自插件层（`stores/features.tools`，见 §13），桌面端其他页面内容以 560px 窄栏居中（`App.vue` `.desk-main:not(.wide)` 约束）。断点检测用 `composables/useMediaQuery.ts`（matchMedia 响应式），不依赖窗口 resize 监听。沉浸页（`meta.fullscreen`）在两形态下都隐藏导航。
 
 ## 9. 训练课会话与跑步（stores/session.ts · stores/run.ts · system/workoutRuntime.ts）
 
@@ -502,7 +504,7 @@ App 里的窗口监听只救「App 开着」的情况；**窗口在 App 没开�
 - **注册表**：`src/plugins/registry.ts`。`routeOwner(routeName)` 供路由守卫查「这条路由归谁」，`toggleablePlugins()` 供设置页取开关清单。
 - **启用态**：`stores/features.ts`，唯一事实来源。`tools`（主页工具卡，已过滤未开模块并按 order 排好）、`nav(surface)`（`tabbar` / `rail` 两种导航容器的条目）、`isEnabled(id)`（守卫与条件渲染）。持久化在 localStorage `rein.features.v1`：它与番茄钟设置同属**界面级偏好**，不进 SQLite、不进知识库索引；只存用户改过的项，未覆盖的回落声明里的 `defaultEnabled`，所以新增插件不需要迁移旧数据。
 - **扩展点（当前两处）**：
-  - `nav`（`NavContribution`）：`surfaces: ['tabbar' | 'rail']` 决定落点，`TabBar.vue` / `DesktopRail.vue` 只渲染「内核条目 + 插件条目」，没有第二份清单。
+  - `nav`（`NavContribution`）：`surfaces: ['tabbar' | 'rail']` 决定落点，`TabBar.vue` / `DesktopRail.vue` 只渲染「内核条目 + 插件条目」，没有第二份清单。移动端 Dock 里：`tabbar` 的条目落在**中药丸**；内核落点（主页 / 我 / AI）由 TabBar 自己声明 —— AI 是右独立圆钮，所以插件层的 AI 只投 `rail`；**左独立圆钮是用户自定义落点**（`stores/dock.ts`，候选 = `nav('rail')` 去掉 Dock 已有的项），关掉模块后候选自然消失、存量落点回落到候选第一项。
   - `tools`（`ToolContribution`）：主页工具卡。跳转用 `to`；就地交互用 `action`（`ToolAction` 联合类型）——动作由**承载工具格的页面**实现（`HomePage.vue` 的 ACTIONS 表，开弹层 / 唤起运行时），插件不 import router，页面也不反过来认识插件内部。
 - **关闭一个模块的连锁效果**：工具卡与导航条目消失（响应式）、其名下路由被 `router.beforeEach` 拦回主页并 toast 说明、页面按 `isEnabled` 跳过该模块的数据加载（如主页不再 `program.load()`、体重提醒卡不出现）、桌面便当总览收起对应的概览块（`.bento.no-sports` 重排网格，不留空洞）。
 - **不变量**：开关页 `/settings/features` 自身不属于任何插件，任何组合下都可达；关闭**只影响入口与路由**，不删任何数据（记住「关掉 ≠ 删掉」）。
