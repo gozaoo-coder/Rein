@@ -46,8 +46,8 @@ export function defaultStartDate(): string {
 }
 
 /** 食物分类映射（采购清单分组用）：id 与名称双键；页面/工具共享、进程内缓存 */
-let foodCatById = new Map<number, string>()
-let foodCatByName = new Map<string, string>()
+const foodCatById = new Map<number, string>()
+const foodCatByName = new Map<string, string>()
 
 /** 采购清单组装结果（rows 已叠加勾选状态） */
 export interface ShoppingBuild {

@@ -1,0 +1,21 @@
+# 编辑器级的最小公约数（仓库索引里是 LF，见 git ls-files --eol）。
+# 只约束编辑器的**新写入**行为，不要求对既有文件做任何批量重排。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{ts,vue,js,mjs,json,css,html,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+[*.rs]
+indent_style = space
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false

@@ -58,7 +58,7 @@ let takeover: Promise<void> | null = null
 function init(): Promise<void> {
   if (takeover) return takeover
   takeover = (async () => {
-    let planId: string | null = null
+    let planId: string | null
     try {
       const rec = await sessionService.getActive()
       planId = rec?.planId ?? null

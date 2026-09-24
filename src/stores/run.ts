@@ -393,7 +393,7 @@ export const useRunStore = defineStore('run', () => {
   /** RunPage 挂载时调用：恢复进行中的跑步会话（强制暂停态） */
   async function hydrateFromServer(): Promise<boolean> {
     courseConflict.value = false
-    let rec: SessionRecord | null = null
+    let rec: SessionRecord | null
     try {
       rec = await sessionService.getActive()
     } catch {

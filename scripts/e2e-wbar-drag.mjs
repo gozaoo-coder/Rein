@@ -5,7 +5,8 @@
 import { chromium } from 'playwright-core'
 
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
-const BASE = 'http://127.0.0.1:1420'
+/** 与其它 e2e 同一条约定：默认共享 dev（1420）；端口被系统排除或并发会话时指向独立实例 */
+const BASE = process.env.REIN_E2E_URL ?? 'http://127.0.0.1:1420'
 
 const SESSION = [
   {

@@ -690,7 +690,7 @@ export function parseBlob(record: { paramsJson: string }): ProgramBlob {
     if (!blob.params || !Array.isArray(blob.days)) throw new Error('结构缺失')
     return blob
   } catch (e) {
-    throw new Error(`方案数据损坏，无法解析：${String(e)}`)
+    throw new Error(`方案数据损坏，无法解析：${String(e)}`, { cause: e })
   }
 }
 

@@ -5,7 +5,7 @@ import { MessageSquarePlus, X } from 'lucide-vue-next'
 import { useAiStore } from '@/stores/ai'
 
 /** 历史记录抽屉：会话列表（最新置顶）+ 新对话；点击切换会话。 */
-const props = defineProps<{ open: boolean }>()
+defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const ai = useAiStore()

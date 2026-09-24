@@ -9,7 +9,7 @@ import TimelineSheet from './TimelineSheet.vue'
  * 日程卡：连续时间线折叠为固定一屏预览（自动锚定今天），
  * 点按把完整时间线（含历史/未来 + 缩放）收进抽屉。
  */
-const props = defineProps<{
+defineProps<{
   date: string
   title?: string
 }>()

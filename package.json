@@ -9,6 +9,8 @@
     "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit -p tsconfig.app.json",
+    "lint": "eslint src",
+    "contract": "node scripts/check-ipc-contract.mjs",
     "icon": "node scripts/gen-icon.mjs",
     "tauri": "tauri",
     "app:dev": "tauri dev",
@@ -26,11 +28,16 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^24.0.0",
     "@vitejs/plugin-vue": "^6.0.0",
+    "eslint": "^10.11.0",
+    "eslint-plugin-vue": "^10.11.0",
+    "globals": "^17.12.0",
     "playwright-core": "^1.62.1",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.70.1",
     "vite": "^7.0.0",
     "vue-tsc": "^3.0.0"
   }

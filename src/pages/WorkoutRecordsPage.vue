@@ -55,6 +55,8 @@ const atCurrent = computed(() => {
       return weekRange.value[1]! >= today
     case 'year':
       return yearNum.value === Number(today.slice(0, 4))
+    default:
+      return false
   }
 })
 
@@ -97,6 +99,8 @@ const periodLabel = computed(() => {
     }
     case 'year':
       return `${yearNum.value}年`
+    default:
+      return ''
   }
 })
 
@@ -108,6 +112,8 @@ const currentWord = computed(() => {
       return '本周'
     case 'year':
       return '今年'
+    default:
+      return ''
   }
 })
 
@@ -125,6 +131,8 @@ const periodWorkouts = computed<Workout[]>(() => {
       const y = String(yearNum.value)
       return ex.allWorkouts.filter((w) => w.date.slice(0, 4) === y)
     }
+    default:
+      return []
   }
 })
 

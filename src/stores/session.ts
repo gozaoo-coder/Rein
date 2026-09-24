@@ -1002,7 +1002,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
    * （可能存在跑步会话，此时 foreignRoute 指向 /session/run）。
    */
   async function hydrateFromServer(): Promise<boolean> {
-    let rec: SessionRecord | null = null
+    let rec: SessionRecord | null
     try {
       rec = await sessionService.getActive()
     } catch {
