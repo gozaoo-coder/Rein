@@ -140,8 +140,8 @@ async function onSync(): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : '同步失败'
     // 会话过期：把登录表单请出来。存了密码的账号后端已经自动重登过一轮了，
-    // 走到这里说明那一轮也没成（多半是没存密码），只能用户亲手上。
-    if (isSessionLostMessage(msg)) sessionLost.value = true
+    // 走到这里说明那一轮也没成（多半是没存密码），只能用户亲手上。判据优先看错误码
+    if (isSessionLostMessage(e)) sessionLost.value = true
     toast.toast(msg)
   }
 }

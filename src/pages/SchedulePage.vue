@@ -98,8 +98,8 @@ async function onSync(): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : '同步失败'
     // 会话过期且自动重登也没成（多半是没存密码）：直接把入口递到手上，
-    // 而不是丢一句「请重新登录」让用户自己找路
-    if (isSessionLostMessage(msg)) {
+    // 而不是丢一句「请重新登录」让用户自己找路。传错误对象而非 msg —— 判据优先看错误码
+    if (isSessionLostMessage(e)) {
       toast.toast(msg, {
         action: { label: '去重新登录', run: () => void router.push({ name: 'campus-settings' }) },
       })

@@ -211,14 +211,18 @@ export function defaultRange(today = todayStr()): { from: string; to: string } {
 /**
  * 这条错误是不是「教务会话过期」。
  *
- * 后端所有「需要重新登录」的出口都带这几个词（见 Rust `commands::is_session_lost`），
- * 两边是同一套判据 —— 改一边就得改另一边。前端认它只为一件事：
+ * 判据以 IPC 错误码为准（Rust `ReinError::code = "session_lost"`，后端所有
+ * 「需要重新登录」的出口都带着它）；关键词只作兜底 —— 错误被二次包装后码会丢，
+ * mock/浏览器模式下的普通 Error 也没有码。前端认它只为一件事：
  * 把「去重新登录」这个动作直接递给用户，而不是让他自己去配置页里找。
  */
-export function isSessionLostMessage(message: string): boolean {
+export function isSessionLostMessage(err: unknown): boolean {
+  const obj = typeof err === 'object' && err !== null ? (err as { code?: unknown; message?: unknown }) : null
+  if (obj?.code === 'session_lost') return true
+  const msg = obj ? String(obj.message ?? '') : String(err ?? '')
   return (
-    message.includes('会话已过期') ||
-    message.includes('重新登录') ||
-    message.includes('登录已过期')
+    msg.includes('会话已过期') ||
+    msg.includes('重新登录') ||
+    msg.includes('登录已过期')
   )
 }
