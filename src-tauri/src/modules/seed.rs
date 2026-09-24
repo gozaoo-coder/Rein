@@ -207,26 +207,14 @@ pub fn plan_seed_status(conn: &Connection) -> Result<PlanSeedStatus> {
 /// 保证三种决策互斥、幂等（重复调用无害）。
 fn settle_seed_decision(conn: &Connection, version: i64, applied: bool) -> Result<()> {
     let overridden = !applied;
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES ('plan_seed_version', ?1) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [version.to_string()],
+    crate::db::meta_set(conn, "plan_seed_version", &version.to_string())?;
+    crate::db::meta_set(conn, META_APPLIED, &(if applied { version } else { 0 }).to_string())?;
+    crate::db::meta_set(
+        conn,
+        META_OVERRIDE,
+        &(if overridden { version } else { 0 }).to_string(),
     )?;
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES ('plan_seed_applied', ?1) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [(if applied { version } else { 0 }).to_string()],
-    )?;
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES ('plan_seed_override', ?1) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [(if overridden { version } else { 0 }).to_string()],
-    )?;
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES ('plan_seed_keep', ?1) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [0_i64.to_string()],
-    )?;
+    crate::db::meta_set(conn, META_KEEP, "0")?;
     Ok(())
 }
 

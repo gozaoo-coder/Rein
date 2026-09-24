@@ -16,20 +16,13 @@ use crate::state::{AppState, VoiceHub};
 const META_CONFIG: &str = "voice_config";
 const META_DRAFT: &str = "voice_draft";
 
+/// `app_meta` 读写走 `db` 的唯一实现（本模块只留短别名，便于阅读）。
 fn meta_get(conn: &Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| {
-        r.get(0)
-    })
-    .ok()
+    crate::db::meta_get(conn, key)
 }
 
 fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        [key, value],
-    )?;
-    Ok(())
+    crate::db::meta_set(conn, key, value)
 }
 
 /* ---------------- 配置 ---------------- */

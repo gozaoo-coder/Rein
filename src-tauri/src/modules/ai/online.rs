@@ -100,22 +100,13 @@ fn message_of_error_body(body: &serde_json::Value) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// `app_meta` 读写走 `db` 的唯一实现（本模块只留短别名，便于阅读）。
 fn meta_get(conn: &rusqlite::Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| {
-        r.get(0)
-    })
-    .optional()
-    .ok()
-    .flatten()
+    crate::db::meta_get(conn, key)
 }
 
 fn meta_set(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        rusqlite::params![key, value],
-    )?;
-    Ok(())
+    crate::db::meta_set(conn, key, value)
 }
 
 /* ---------- 设置（地址 + 密钥） ---------- */

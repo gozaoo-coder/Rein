@@ -406,24 +406,14 @@ impl UpdateHub {
 
 /// 设置读写：`app_meta` 单键存 JSON。读不出来就回落默认值，绝不让一条坏记录卡住启动。
 pub fn load_settings(conn: &rusqlite::Connection) -> UpdateSettings {
-    let raw = conn
-        .query_row("SELECT value FROM app_meta WHERE key = ?1", [SETTINGS_KEY], |r| {
-            r.get::<_, String>(0)
-        })
-        .ok();
-    match raw {
+    match crate::db::meta_get(conn, SETTINGS_KEY) {
         Some(text) => serde_json::from_str::<UpdateSettings>(&text).unwrap_or_default(),
         None => UpdateSettings::default(),
     }
 }
 
 pub fn save_settings(conn: &rusqlite::Connection, settings: &UpdateSettings) -> Result<()> {
-    let text = serde_json::to_string(settings)?;
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
-        rusqlite::params![SETTINGS_KEY, text],
-    )?;
-    Ok(())
+    crate::db::meta_set(conn, SETTINGS_KEY, &serde_json::to_string(settings)?)
 }
 
 #[cfg(test)]

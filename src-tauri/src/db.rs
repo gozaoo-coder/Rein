@@ -1109,6 +1109,16 @@ const MIGRATION_0031: &str = r#"
 ALTER TABLE campus_grab_tasks ADD COLUMN mirror_request_id TEXT;
 "#;
 
+/// 0032 · 受理单**属于哪个域**（`mirror` = 镜像域；NULL/其余 = 主域）。
+///
+/// 为什么必须记下来：两个域是两套系统，受理号**不能跨域查询**。主域被拒、
+/// 镜像域受理成功时（`submit_both` 的 `(true, false)` 分支），受理号被当成主域的号
+/// 去轮询 —— 查不到、空转到上限、被当成「结果不明」重投，而真正的结果就在镜像域上
+/// 没人看。这一列把「拿谁的号去问谁」这件事落成数据。
+const MIGRATION_0032: &str = r#"
+ALTER TABLE campus_grab_tasks ADD COLUMN request_domain TEXT;
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1141,7 +1151,26 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0029,
     MIGRATION_0030,
     MIGRATION_0031,
+    MIGRATION_0032,
 ];
+
+/// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。
+/// 各域只给键名与值，不再各自抄一遍 upsert（语义差异 `excluded.value` / `?2` 在这里统一）。
+pub(crate) fn meta_get(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| {
+        r.get::<_, String>(0)
+    })
+    .ok()
+}
+
+pub(crate) fn meta_set(conn: &Connection, key: &str, value: &str) -> crate::error::Result<()> {
+    conn.execute(
+        "INSERT INTO app_meta (key, value) VALUES (?1, ?2) \
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![key, value],
+    )?;
+    Ok(())
+}
 
 /// 测试用：对给定连接跑完整迁移（含知识库的 FTS 表与全部触发器）。
 /// 生产路径是 `init()`，它会额外做种子导入；测试不需要种子。

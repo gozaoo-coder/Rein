@@ -13,8 +13,12 @@ use super::{ensure_found, load_profile, profile_targets};
 #[tauri::command]
 pub fn get_daily_summary(state: State<AppState>, date: String) -> Result<DailySummary> {
     let conn = state.db.lock().unwrap();
+    daily_summary_on(&conn, &date)
+}
 
-    let targets = profile_targets(&conn)?;
+/// 汇总本体：收 `&Connection` 而不是 `State`，测试才能在内存库上直接跑。
+fn daily_summary_on(conn: &rusqlite::Connection, date: &str) -> Result<DailySummary> {
+    let targets = profile_targets(conn)?;
 
     // 当日摄入：记录 × 每100g 值聚合（单日数据量小，Rust 侧累加足够）
     const NUTRIENT_COLS: &str = "f.kcal, f.protein, f.carb, f.fat, f.fiber, f.sugar, \
@@ -26,7 +30,7 @@ pub fn get_daily_summary(state: State<AppState>, date: String) -> Result<DailySu
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut intake = NutrientIntake::default();
-    let rows = stmt.query_map([&date], |r| {
+    let rows = stmt.query_map([date], |r| {
         Ok((
             r.get::<_, f64>(0)?,
             r.get::<_, f64>(1)?,
@@ -94,12 +98,12 @@ pub fn get_daily_summary(state: State<AppState>, date: String) -> Result<DailySu
 
     let exercise_kcal: f64 = conn.query_row(
         "SELECT COALESCE(SUM(kcal), 0) FROM workouts WHERE date = ?1",
-        [&date],
+        [date],
         |r| r.get(0),
     )?;
 
     Ok(DailySummary {
-        date,
+        date: date.to_string(),
         intake,
         targets,
         exercise_kcal,
@@ -299,4 +303,59 @@ pub fn delete_body_metric(state: State<AppState>, id: i64) -> Result<()> {
     let conn = state.db.lock().unwrap();
     conn.execute("DELETE FROM body_metrics WHERE id = ?1", [id])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn daily_summary_scales_by_grams_and_filters_by_day() {
+        let conn = fresh();
+        conn.execute(
+            "INSERT INTO foods (name, kcal, protein, carb, fat, created_at) \
+             VALUES ('燕麦', 380, 12, 66, 7, '2026-09-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let fid = conn.last_insert_rowid();
+
+        // 同一天两笔（50g + 30g）+ 前一天一笔 100g（不该计入）
+        for (date, grams) in [("2026-09-23", 50.0), ("2026-09-23", 30.0), ("2026-09-22", 100.0)] {
+            conn.execute(
+                "INSERT INTO meal_logs (food_id, date, meal_type, quantity_mode, grams, source, created_at) \
+                 VALUES (?1, ?2, 'breakfast', 'grams', ?3, 'manual', '2026-09-23T08:00:00Z')",
+                rusqlite::params![fid, date, grams],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO workouts (name, type, date, duration_min, kcal, created_at) \
+             VALUES ('晨跑', 'run', '2026-09-23', 30, 240, '2026-09-23T09:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let s = daily_summary_on(&conn, "2026-09-23").unwrap();
+        // 80g 燕麦：380/100 × 80 = 304 kcal；蛋白 12 × 0.8 = 9.6g
+        assert!((s.intake.kcal - 304.0).abs() < 0.01, "kcal={}", s.intake.kcal);
+        assert!(
+            (s.intake.protein - 9.6).abs() < 0.01,
+            "protein={}",
+            s.intake.protein
+        );
+        assert!((s.exercise_kcal - 240.0).abs() < 0.01);
+        assert_eq!(s.date, "2026-09-23");
+
+        // 没有任何记录的一天：全 0，而不是报错
+        let empty = daily_summary_on(&conn, "2026-09-01").unwrap();
+        assert_eq!(empty.intake.kcal, 0.0);
+        assert_eq!(empty.exercise_kcal, 0.0);
+    }
 }

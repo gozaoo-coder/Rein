@@ -21,9 +21,13 @@ fn dow_of(d: NaiveDate) -> i64 {
     d.weekday().num_days_from_monday() as i64
 }
 
-fn json_str<T: serde::Serialize>(v: &Option<T>) -> Option<String> {
-    v.as_ref()
-        .map(|x| serde_json::to_string(x).expect("序列化不可失败"))
+/// JSON 列序列化。用 `?` 而不是 `expect`：这些类型序列化失败的概率趋近于零，
+/// 但真失败时也该是一条可解释的错误（`ReinError::Json`），而不是 panic 毒化全局 DB 锁。
+fn json_str<T: serde::Serialize>(v: &Option<T>) -> Result<Option<String>> {
+    match v.as_ref() {
+        Some(x) => Ok(Some(serde_json::to_string(x)?)),
+        None => Ok(None),
+    }
 }
 
 fn rule_matches(rule: &RecRule, template_date: &str, date: &str) -> bool {
@@ -63,11 +67,11 @@ struct RecTemplate {
     date: Option<String>,
 }
 
-fn reset_subtasks(raw: &Option<String>) -> Option<String> {
+fn reset_subtasks(raw: &Option<String>) -> Result<Option<String>> {
     let subs: Vec<TodoSubtask> =
         serde_json::from_str(raw.as_deref().unwrap_or("[]")).unwrap_or_default();
     if subs.is_empty() {
-        return None;
+        return Ok(None);
     }
     let reset: Vec<TodoSubtask> = subs
         .into_iter()
@@ -76,7 +80,7 @@ fn reset_subtasks(raw: &Option<String>) -> Option<String> {
             done: false,
         })
         .collect();
-    Some(serde_json::to_string(&reset).expect("序列化不可失败"))
+    Ok(Some(serde_json::to_string(&reset)?))
 }
 
 fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Todo> {
@@ -268,9 +272,9 @@ pub fn create_todo(
             category,
             priority.unwrap_or(0),
             now,
-            json_str(&rec_rule),
-            json_str(&subtasks),
-            json_str(&attachments),
+            json_str(&rec_rule)?,
+            json_str(&subtasks)?,
+            json_str(&attachments)?,
         ],
     )?;
     let id = conn.last_insert_rowid();
@@ -311,10 +315,10 @@ pub fn update_todo(state: State<AppState>, todo: Todo) -> Result<Todo> {
             todo.priority,
             todo.status,
             todo.completed_at,
-            json_str(&todo.rec_rule),
+            json_str(&todo.rec_rule)?,
             rec_key,
-            json_str(&todo.subtasks),
-            json_str(&todo.attachments),
+            json_str(&todo.subtasks)?,
+            json_str(&todo.attachments)?,
             todo.id
         ],
     )?;
@@ -336,13 +340,20 @@ pub fn delete_todo(state: State<AppState>, id: i64) -> Result<()> {
 /// 返回本次新增实例数。
 pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> {
     let conn = state.db.lock().unwrap();
-    let Some(today_d) = parse_date(&today) else {
+    sync_recurrences_on(&conn, &today)
+}
+
+/// `sync_recurrences` 的本体：收 `&Connection` 而不是 `State`，测试才能在内存库上直接跑
+/// （与 `ai::commands::usage_summary_on` 同一套路）。
+fn sync_recurrences_on(conn: &rusqlite::Connection, today: &str) -> Result<usize> {
+    let Some(today_d) = parse_date(today) else {
         return Err(crate::error::ReinError::Message(
             "日期格式应为 YYYY-MM-DD".into(),
         ));
     };
     let win_start = (today_d - Duration::days(1)).format("%Y-%m-%d").to_string();
-    let win_end = (today_d + Duration::days(7)).format("%Y-%m-%d").to_string();
+    // 窗口末端直接用日期对象：省掉一次字符串解析，也不给 `parse_date(..).unwrap()` 留位置
+    let win_end_d = today_d + Duration::days(7);
 
     // 1) 清理失效的未来未完成实例
     let stale: Vec<(i64, String)> = {
@@ -351,7 +362,7 @@ pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> 
              WHERE rec_key IS NOT NULL AND status != 'done' AND date IS NOT NULL AND date > ?1",
         )?;
         let rows = stmt
-            .query_map([&today], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .query_map([today], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
@@ -419,11 +430,11 @@ pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> 
         };
         let mut d = parse_date(&win_start);
         while let Some(day) = d {
-            let ds = day.format("%Y-%m-%d").to_string();
-            d = Some(day + Duration::days(1));
-            if day > parse_date(&win_end).unwrap() {
+            if day > win_end_d {
                 break;
             }
+            let ds = day.format("%Y-%m-%d").to_string();
+            d = Some(day + Duration::days(1));
             if ds == tdate || !rule_matches(&rule, &tdate, &ds) {
                 continue;
             }
@@ -449,7 +460,7 @@ pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> 
                     t.priority,
                     Utc::now().to_rfc3339(),
                     key,
-                    reset_subtasks(&t.subtasks),
+                    reset_subtasks(&t.subtasks)?,
                 ],
             )?;
             inserted += 1;
@@ -457,4 +468,131 @@ pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> 
     }
     let _ = deleted; // 清理数仅用于调试观察，不进返回值
     Ok(inserted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// 内存库 + 完整迁移（不跑种子）：todos 的 JSON 列、rec_key 部分唯一索引都在。
+    fn fresh() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    fn rule(freq: &str, weekdays: Vec<i64>, interval_days: i64, end_date: Option<&str>) -> RecRule {
+        RecRule {
+            freq: freq.into(),
+            weekdays,
+            interval_days,
+            end_date: end_date.map(|s| s.into()),
+        }
+    }
+
+    #[test]
+    fn rule_matches_covers_freq_end_date_and_boundaries() {
+        let daily = rule("daily", vec![], 1, None);
+        assert!(
+            !rule_matches(&daily, "2026-09-23", "2026-09-22"),
+            "模板日期之前永不物化"
+        );
+        assert!(rule_matches(&daily, "2026-09-23", "2026-09-30"));
+
+        // weekly：周一=0，2026-09-23 是周三
+        let weekly = rule("weekly", vec![2], 1, None);
+        assert!(rule_matches(&weekly, "2026-09-21", "2026-09-23"));
+        assert!(!rule_matches(&weekly, "2026-09-21", "2026-09-24"));
+
+        // interval：距模板日每 3 天
+        let interval = rule("interval", vec![], 3, None);
+        assert!(rule_matches(&interval, "2026-09-21", "2026-09-24"));
+        assert!(!rule_matches(&interval, "2026-09-21", "2026-09-25"));
+
+        // end_date 含当天，之后不再物化
+        let ended = rule("daily", vec![], 1, Some("2026-09-22"));
+        assert!(rule_matches(&ended, "2026-09-21", "2026-09-22"));
+        assert!(!rule_matches(&ended, "2026-09-21", "2026-09-23"));
+    }
+
+    fn insert_template(conn: &Connection, rule_json: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO todos (title, category, priority, status, created_at, date, rec_rule) \
+             VALUES ('晨跑', 'general', 0, 'todo', '2026-09-21T00:00:00Z', '2026-09-21', ?1)",
+            [rule_json],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// 现存的重复实例（日期, 是否完成），按日期升序。
+    fn instances(conn: &Connection) -> Vec<(String, bool)> {
+        let mut stmt = conn
+            .prepare("SELECT date, status FROM todos WHERE rec_key IS NOT NULL ORDER BY date")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)? == "done",
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        rows
+    }
+
+    #[test]
+    fn sync_materializes_window_is_idempotent_and_converges_after_rule_change() {
+        let conn = fresh();
+        let tid = insert_template(&conn, r#"{"freq":"daily","weekdays":[],"intervalDays":1}"#);
+
+        // 窗口 = [今天-1, 今天+7] = 09-22 … 09-30（9 天）；模板日 09-21 不在窗口内
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 9);
+        // 幂等：再跑一遍什么都不补
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 0);
+
+        let mut stmt = conn
+            .prepare("SELECT rec_key FROM todos WHERE rec_key IS NOT NULL")
+            .unwrap();
+        let keys = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(keys.len(), 9);
+        assert!(
+            keys.iter().all(|k| k.starts_with(&format!("{tid}:"))),
+            "实例键必须是「模板id:日期」：{keys:?}"
+        );
+
+        // 把 09-25 标成完成，再把规则改成「每周三」——
+        // 未来不再匹配的未完成实例应被删除，已完成的照旧留住（历史行永不追溯）
+        conn.execute(
+            "UPDATE todos SET status = 'done' WHERE rec_key = ?1",
+            [format!("{tid}:2026-09-25")],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE todos SET rec_rule = ?1 WHERE id = ?2",
+            rusqlite::params![
+                r#"{"freq":"weekly","weekdays":[2],"intervalDays":1}"#,
+                tid
+            ],
+        )
+        .unwrap();
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 0);
+
+        assert_eq!(
+            instances(&conn),
+            vec![
+                ("2026-09-22".to_string(), false), // 昨天：不在清理范围
+                ("2026-09-23".to_string(), false), // 周三
+                ("2026-09-25".to_string(), true),  // 已完成：留着
+                ("2026-09-30".to_string(), false), // 周三
+            ]
+        );
+    }
 }
