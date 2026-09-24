@@ -73,6 +73,16 @@ async function clickButton(text, scope = 'body') {
   })()`)
 }
 
+/** 登记卡里「重量」那一行的数值。卡内重量与次数两行同构（同为 .field > .wval），
+ *  靠标签文案取重量行，别用 querySelector 顺序取 —— 那样加了一行就会静默量错。 */
+async function weightValue() {
+  return evalJS(`(() => {
+    const f = [...document.querySelectorAll('.setcard .field')]
+      .find(x => x.querySelector('.flabel')?.textContent.trim() === '重量')
+    return f?.querySelector('.wval b')?.textContent.trim() ?? null
+  })()`)
+}
+
 async function injectStableCSS() {
   await evalJS(`(() => {
     let s = document.getElementById('__e2e-stable')
@@ -215,39 +225,31 @@ async function main() {
       `[...document.querySelectorAll('.eyebrow')].some(e => e.textContent.includes('当前动作 · 第 1 / 4 组'))`,
     ))
 
-    /* ---------- S5. 重量调节条：上次重量预填 + ±2.5 + 参照 chips ---------- */
-    ok('S5a 上次重量预填（演示数据最近一次 62.5）', await evalJS(
-      `document.querySelector('.weightcard .wval b')?.textContent.trim() === '62.5'`,
-    ))
-    ok('S5b 上次/计划参照 chips 齐全', await evalJS(
+    /* ---------- S5. 重量调节条：上次重量预填 + ±2.5 + 一键填入候选 ---------- */
+    ok('S5a 上次重量预填（演示数据最近一次 62.5）', (await weightValue()) === '62.5')
+    ok('S5b 上次/计划候选齐全', await evalJS(
       `(() => {
-        const chips = [...document.querySelectorAll('.weightcard .wchip')].map(c => c.textContent)
-        return chips.some(t => t.includes('上次 62.5kg × 8')) && chips.some(t => t.includes('计划 60kg'))
+        const segs = [...document.querySelectorAll('.setcard .qseg')].map(s => s.textContent)
+        return segs.some(t => t.includes('上次') && t.includes('62.5 kg × 8')) && segs.some(t => t.includes('计划') && t.includes('60 kg'))
       })()`,
     ))
     // 动作库建议：平均状态（近 3 次 e1RM 基线）× 今日状态（恢复/容量/趋势/自评）
-    ok('S5b2 今日建议 chip 与依据行齐全', await evalJS(
+    ok('S5b2 今日建议候选与依据行齐全', await evalJS(
       `(() => {
-        const chip = [...document.querySelectorAll('.weightcard .wchip.primary')].find(c => c.textContent.includes('建议'))
-        const why = document.querySelector('.whyline')?.textContent ?? ''
-        return !!chip && chip.textContent.includes('62.5kg') && why.includes('上次 62.5kg × 8')
+        const seg = [...document.querySelectorAll('.setcard .qseg.rec')].find(c => c.textContent.includes('建议'))
+        const why = document.querySelector('.whydis')?.textContent ?? ''
+        return !!seg && seg.textContent.includes('62.5') && why.includes('上次 62.5kg × 8')
       })()`,
     ))
-    await evalJS(`[...document.querySelectorAll('.weightcard .wbtn')].find(b => b.textContent.includes('＋'))?.click()`)
+    await evalJS(`document.querySelector('.setcard [aria-label="重量加 2.5kg"]')?.click()`)
     await sleep(300)
-    ok('S5c ＋2.5kg 生效', await evalJS(
-      `document.querySelector('.weightcard .wval b')?.textContent.trim() === '65'`,
-    ))
-    await evalJS(`[...document.querySelectorAll('.weightcard .wchip')].find(c => c.textContent.includes('计划'))?.click()`)
+    ok('S5c ＋2.5kg 生效', (await weightValue()) === '65')
+    await evalJS(`[...document.querySelectorAll('.setcard .qseg')].find(c => c.textContent.includes('计划'))?.click()`)
     await sleep(300)
-    ok('S5d 点「计划」chip 回到 60kg', await evalJS(
-      `document.querySelector('.weightcard .wval b')?.textContent.trim() === '60'`,
-    ))
-    await evalJS(`[...document.querySelectorAll('.weightcard .wchip')].find(c => c.textContent.includes('上次'))?.click()`)
+    ok('S5d 点「计划」候选回到 60kg', (await weightValue()) === '60')
+    await evalJS(`[...document.querySelectorAll('.setcard .qseg')].find(c => c.textContent.includes('上次'))?.click()`)
     await sleep(300)
-    ok('S5e 点「上次」chip 设回 62.5kg', await evalJS(
-      `document.querySelector('.weightcard .wval b')?.textContent.trim() === '62.5'`,
-    ))
+    ok('S5e 点「上次」候选设回 62.5kg', (await weightValue()) === '62.5')
 
     /* ---------- S6. 当前动作详解内嵌重量曲线（演示历史 4 次） ---------- */
     await evalJS(`document.querySelector('.dock .iconbtn[aria-label="更多功能"]')?.click()`)

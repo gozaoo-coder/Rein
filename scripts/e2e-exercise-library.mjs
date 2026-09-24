@@ -351,11 +351,11 @@ async function main() {
     await waitFor(`(() => { const el = document.querySelector('.session-layer'); return !!el && el.getClientRects().length > 0 })()`, 8000, '进入沉浸页')
     await sleep(1200)
     ok('L7a 首次进入有今日状态自评 chips', await evalJS(
-      `[...document.querySelectorAll('.readiness .rchip')].map(b => b.textContent.trim()).join(',') === '很好,不错,一般,疲惫,很差'`,
+      `[...document.querySelectorAll('.rdsec .rchip')].map(b => b.textContent.trim()).join(',') === '很好,不错,一般,疲惫,很差'`,
     ))
-    await clickButton('一般', '.readiness')
+    await clickButton('一般', '.rdsec')
     await sleep(800)
-    ok('L7b 自评后提示消失', await evalJS(`document.querySelectorAll('.readiness').length === 0`))
+    ok('L7b 自评后提示消失', await evalJS(`document.querySelectorAll('.rdsec').length === 0`))
     ok('L7c 自评写入快照', await evalJS(`(async () => {
       const { invoke } = await import('/src/services/transport.ts')
       const rec = await invoke('session_active')
@@ -364,16 +364,18 @@ async function main() {
     // 跳到正式组：完成两组热身
     await clickButton('跳过热身')
     await sleep(2600)
-    ok('L7d 正式组出现「建议」chip 且预填 = 建议值', await evalJS(`(() => {
-      const chip = [...document.querySelectorAll('.weightcard .wchip.primary')]
+    ok('L7d 正式组出现「建议」候选且预填 = 建议值', await evalJS(`(() => {
+      const seg = [...document.querySelectorAll('.setcard .qseg.rec')]
         .find(c => c.textContent.includes('建议'))
-      if (!chip) return false
-      const v = document.querySelector('.weightcard .wval b')?.textContent.trim()
-      const suggested = chip.textContent.replace('建议', '').replace('kg', '').trim()
+      if (!seg) return false
+      const field = [...document.querySelectorAll('.setcard .field')]
+        .find(x => x.querySelector('.flabel')?.textContent.trim() === '重量')
+      const v = field?.querySelector('.wval b')?.textContent.trim()
+      const suggested = seg.textContent.replace('建议', '').replace('kg', '').trim()
       return !!v && v === suggested
     })()`))
     ok('L7e 建议依据行可展开（平均状态 × 今日状态）', await evalJS(`(() => {
-      document.querySelector('.whyline')?.click()
+      document.querySelector('.whydis')?.click()
       return true
     })()`))
     await sleep(400)

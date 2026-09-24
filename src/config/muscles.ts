@@ -154,14 +154,14 @@ export const MUSCLE_DESCS: Record<MuscleKey, string> = {
 const RULES: { match: RegExp; act: ActivationMap | null }[] = [
   // ---- 专项动作先行：名字含泛关键词但主攻不同，必须先于后面的泛规则 ----
   {
-    // 「反向飞鸟」「俯身飞鸟」练后束，不是胸
+    // 「反向飞鸟」「俯身飞鸟」练后束，不是胸；下束参与肩胛后收下压
     match: /反向飞鸟|俯身飞鸟|后束/,
-    act: { 'delt-post': 3, 'traps-mid': 2 },
+    act: { 'delt-post': 3, 'traps-mid': 2, 'traps-low': 1 },
   },
   {
-    // 面拉：后束 + 肩袖外旋肌群
+    // 面拉：后束 + 肩袖外旋肌群 + 斜方中/下束（肩胛后缩下压）
     match: /面拉/,
-    act: { 'delt-post': 3, 'traps-mid': 2 },
+    act: { 'delt-post': 3, 'traps-mid': 2, 'traps-low': 2 },
   },
   {
     match: /耸肩/,
@@ -182,8 +182,14 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
     act: { 'quads-rec': 3, 'quads-med': 2, 'quads-lat': 2 },
   },
   {
-    match: /臀推|臀冲|髋外展|蚌式/,
-    act: { 'glute-max': 3, 'glute-med': 3, hamstrings: 2 },
+    // 髋外展类：臀中肌主导
+    match: /髋外展|蚌式|臀中/,
+    act: { 'glute-med': 3, 'glute-max': 2 },
+  },
+  {
+    // 臀推/臀冲/臀桥：臀主导的髋伸，不是硬拉，别把竖脊肌按主攻标
+    match: /臀推|臀冲|臀桥/,
+    act: { 'glute-max': 3, 'glute-med': 2, hamstrings: 2, abs: 1 },
   },
   {
     match: /内收|夹腿/,
@@ -195,8 +201,23 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
     act: { abs: 3, forearm: 2 },
   },
   {
+    // 屈膝位提踵（坐姿）主要吃比目鱼肌，直膝位才轮到腓肠肌 —— 必须排在通用提踵之前
+    match: /坐姿提踵|屈膝提踵/,
+    act: { soleus: 3, calves: 1 },
+  },
+  {
     match: /提踵|踮/,
     act: { calves: 3, soleus: 2 },
+  },
+  {
+    // 侧平板练的是腹斜肌，别被后面的「平板」规则按腹直肌处理
+    match: /侧平板|侧桥/,
+    act: { obliques: 3, abs: 1 },
+  },
+  {
+    // 脚垫高的俯卧撑（俗称「下斜俯卧撑」）练的是上胸，须先于平推规则
+    match: /脚垫高|下斜俯卧撑/,
+    act: { 'chest-up': 3, 'chest-low': 1, 'delt-ant': 3, triceps: 2 },
   },
   {
     // 上斜推类先把上胸标为主攻
@@ -205,7 +226,7 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
   },
   {
     match: /前平举/,
-    act: { 'delt-ant': 3, 'traps-up': 1 },
+    act: { 'delt-ant': 3, 'chest-up': 1, 'traps-up': 1 },
   },
   {
     match: /侧平举/,
@@ -216,25 +237,47 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
     match: /颈桥|卷颈|颈部/,
     act: { scm: 3, 'traps-up': 2 },
   },
+  // ---- 手臂伸：肩伸参与的双杠/凳上撑体，与纯肘伸的绳索下压分开 ----
+  {
+    match: /双杠|凳上臂屈伸|椅式臂屈伸/,
+    act: { triceps: 3, 'chest-low': 2, 'delt-ant': 2, abs: 1 },
+  },
+  {
+    // 纯肘伸孤立：胸与前束只是稳定，不该按辅助标
+    match: /臂屈伸|下压|三头/,
+    act: { triceps: 3, forearm: 1 },
+  },
   // ---- 推（胸）----
   {
     match: /卧推|俯卧撑|飞鸟|夹胸/,
     act: { 'chest-low': 3, 'chest-up': 2, triceps: 2, 'delt-ant': 2, abs: 1 },
   },
-  // ---- 手臂伸----
-  {
-    match: /双杠|臂屈伸|下压/,
-    act: { triceps: 3, 'chest-low': 2, 'delt-ant': 2 },
-  },
   // ---- 推（肩）----
   {
     match: /肩推|推举|平举|直立划船|阿诺德/,
-    act: { 'delt-ant': 3, 'delt-lat': 2, triceps: 2, 'traps-up': 1, abs: 1 },
+    act: {
+      'delt-ant': 3,
+      'delt-lat': 2,
+      triceps: 2,
+      'traps-up': 1,
+      'traps-low': 1,
+      'delt-post': 1,
+      abs: 1,
+    },
   },
   // ---- 拉（背）----
   {
+    // 拉类都吃后束与斜方中/下束（肩胛后缩下压），握力也是实打实的负荷
     match: /引体|下拉|划船/,
-    act: { lats: 3, biceps: 2, 'traps-mid': 2, 'lower-back': 2, forearm: 1 },
+    act: {
+      lats: 3,
+      'traps-mid': 2,
+      'delt-post': 2,
+      'traps-low': 2,
+      biceps: 2,
+      forearm: 2,
+      'lower-back': 1,
+    },
   },
   // ---- 手臂屈（二头）----
   {
@@ -243,8 +286,13 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
   },
   // ---- 髋铰链（后链）----
   {
-    match: /硬拉|臀桥|挺身|早安/,
-    act: { hamstrings: 3, 'glute-max': 3, 'lower-back': 3, lats: 2, 'traps-up': 2, forearm: 1 },
+    // 挺身/山羊：竖脊肌才是主攻，不套硬拉的模板
+    match: /挺身|山羊|超伸/,
+    act: { 'lower-back': 3, 'glute-max': 2, hamstrings: 2, abs: 1 },
+  },
+  {
+    match: /硬拉|早安/,
+    act: { hamstrings: 3, 'glute-max': 3, 'lower-back': 3, lats: 2, 'traps-up': 2, forearm: 2 },
   },
   // ---- 蹲（膝主导）----
   {
@@ -254,8 +302,10 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
       'quads-lat': 2,
       'quads-med': 2,
       'glute-max': 3,
+      'glute-med': 2,
       hamstrings: 2,
-      adductors: 1,
+      adductors: 2,
+      'lower-back': 1,
       abs: 1,
       calves: 1,
     },
@@ -263,12 +313,12 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
   // ---- 爬坡类（先于泛「跑」）----
   {
     match: /登山|爬楼|爬坡/,
-    act: { 'quads-rec': 3, 'quads-lat': 2, 'glute-max': 2, calves: 2, abs: 2 },
+    act: { 'quads-rec': 3, 'quads-lat': 2, 'glute-max': 2, 'glute-med': 1, calves: 2, tibialis: 1, abs: 2 },
   },
   // ---- 快走（先于泛「跑」，走≠跑）----
   {
     match: /快走|健走|步行|散步/,
-    act: { 'quads-lat': 2, 'glute-max': 2, calves: 3, soleus: 2, abs: 1 },
+    act: { 'quads-lat': 2, 'glute-max': 2, 'glute-med': 2, calves: 3, soleus: 2, tibialis: 2, abs: 1 },
   },
   // ---- 间歇/HIIT（含「间歇跑」，须先于泛「跑」）----
   {
@@ -277,48 +327,58 @@ const RULES: { match: RegExp; act: ActivationMap | null }[] = [
       'quads-rec': 3,
       'quads-lat': 2,
       'glute-max': 3,
+      'glute-med': 2,
       hamstrings: 2,
       calves: 3,
+      soleus: 2,
+      tibialis: 2,
       abs: 2,
     },
   },
-  // ---- 核心----
+  // ---- 核心 ----
   {
-    match: /平板|卷腹|仰卧|死虫|转体|核心|腹|plank|crunch/i,
-    act: { abs: 3, obliques: 2 },
+    // 转体类主攻腹斜肌，与卷腹式的躯干屈曲分开（须先于通用「腹」规则）
+    match: /转体|旋转|俄罗斯/,
+    act: { obliques: 3, abs: 2 },
   },
-  // ---- 跑步----
+  {
+    match: /平板|卷腹|仰卧|死虫|核心|腹|plank|crunch/i,
+    act: { abs: 3, obliques: 1 },
+  },
+  // ---- 跑步：踝背屈（胫骨前肌）与髋外展稳定（臀中肌）都实打实参与 ----
   {
     match: /跑/,
     act: {
       'quads-rec': 2,
       'quads-lat': 2,
       hamstrings: 2,
+      'glute-max': 2,
+      'glute-med': 2,
       calves: 3,
       soleus: 2,
-      'glute-max': 2,
+      tibialis: 2,
       abs: 1,
     },
   },
   // ---- 跳绳----
   {
     match: /跳绳/,
-    act: { 'quads-rec': 2, calves: 3, soleus: 2, abs: 1 },
+    act: { 'quads-rec': 2, calves: 3, soleus: 2, tibialis: 2, abs: 1 },
   },
   // ---- 骑行----
   {
     match: /单车|骑行|自行车/,
-    act: { 'quads-rec': 3, 'quads-lat': 2, 'glute-max': 2, calves: 2, hamstrings: 1 },
+    act: { 'quads-rec': 3, 'quads-lat': 2, 'glute-max': 2, hamstrings: 1, calves: 2, soleus: 2 },
   },
   // ---- 游泳----
   {
     match: /游泳/,
-    act: { lats: 3, 'delt-lat': 2, 'delt-post': 2, abs: 2 },
+    act: { lats: 3, 'delt-lat': 2, 'delt-post': 2, 'traps-low': 1, abs: 2 },
   },
   // ---- 椭圆机----
   {
     match: /椭圆/,
-    act: { 'quads-rec': 2, 'glute-max': 2, calves: 1, abs: 1 },
+    act: { 'quads-rec': 3, 'glute-max': 2, hamstrings: 2, 'glute-med': 1, calves: 1, abs: 1 },
   },
   // ---- 拉伸/放松类：不展示猜测信息----
   { match: /伸展|拉伸|放松|瑜伽|热身|泡沫轴/, act: null },

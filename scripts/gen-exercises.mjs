@@ -50,7 +50,7 @@ const SPEC = [
   { n: '上斜哑铃卧推', id: 'incline-dumbbell-press', c: 'push', eq: 'dumbbell', a: ['上斜卧推'] },
   { n: '坐姿哑铃肩推', id: 'seated-dumbbell-shoulder-press', c: 'push', eq: 'dumbbell', a: ['哑铃肩推', '坐姿推举'] },
   { n: '哑铃侧平举', id: 'dumbbell-lateral-raise', c: 'push', eq: 'dumbbell', a: ['侧平举'] },
-  { n: '蝴蝶机夹胸', id: 'peck-deck-fly', c: 'push', eq: 'machine', a: ['器械夹胸', '龙门架夹胸'] },
+  { n: '蝴蝶机夹胸', id: 'peck-deck-fly', c: 'push', eq: 'machine', a: ['器械夹胸', '龙门架夹胸'], m: { 'chest-low': 3, 'chest-up': 2, 'delt-ant': 1 } },
   { n: '绳索下压', id: 'cable-pushdown', c: 'push', eq: 'cable', a: ['三头下压'] },
   { n: '颈后绳索臂屈伸', id: 'overhead-cable-extension', c: 'push', eq: 'cable', a: ['过顶臂屈伸'] },
   { n: '俯卧撑', id: 'push-up', c: 'push', eq: 'bodyweight' },
@@ -60,7 +60,7 @@ const SPEC = [
   { n: '引体向上', id: 'pull-up', c: 'pull', eq: 'bodyweight', a: ['引体'] },
   { n: '杠铃划船', id: 'barbell-row', c: 'pull', eq: 'barbell' },
   { n: '坐姿绳索划船', id: 'seated-cable-row', c: 'pull', eq: 'cable', a: ['绳索划船'] },
-  { n: '直臂下拉', id: 'straight-arm-pulldown', c: 'pull', eq: 'cable' },
+  { n: '直臂下拉', id: 'straight-arm-pulldown', c: 'pull', eq: 'cable', m: { lats: 3, 'traps-mid': 2, 'delt-post': 2, 'traps-low': 2, abs: 1 } },
   { n: '高位下拉', id: 'lat-pulldown', c: 'pull', eq: 'cable', a: ['下拉'] },
   { n: '杠铃耸肩', id: 'barbell-shrug', c: 'pull', eq: 'barbell', a: ['耸肩'] },
   { n: '面拉', id: 'face-pull', c: 'pull', eq: 'cable' },
@@ -82,19 +82,25 @@ const SPEC = [
   { n: '臀桥', id: 'glute-bridge', c: 'legs', eq: 'bodyweight' },
   { n: '徒手深蹲', id: 'bodyweight-squat', c: 'legs', eq: 'bodyweight', a: ['自重深蹲'] },
   { n: '保加利亚分腿蹲（自重）', id: 'bodyweight-bulgarian-split-squat', c: 'legs', eq: 'bodyweight' },
-  { n: '单腿臀桥', id: 'single-leg-glute-bridge', c: 'legs', eq: 'bodyweight' },
+  { n: '单腿臀桥', id: 'single-leg-glute-bridge', c: 'legs', eq: 'bodyweight', m: { 'glute-max': 3, 'glute-med': 3, hamstrings: 2, abs: 1 } },
   { n: '提踵', id: 'calf-raise', c: 'legs', eq: 'bodyweight' },
-  { n: '靠墙静蹲', id: 'wall-sit', c: 'legs', eq: 'bodyweight' },
-  { n: '深蹲跳', id: 'squat-jump', c: 'legs', eq: 'bodyweight' },
+  { n: '靠墙静蹲', id: 'wall-sit', c: 'legs', eq: 'bodyweight', m: { 'quads-rec': 3, 'quads-lat': 2, 'quads-med': 2, 'glute-max': 1, abs: 1 } },
+  {
+    n: '深蹲跳', id: 'squat-jump', c: 'legs', eq: 'bodyweight',
+    m: { 'quads-rec': 3, 'quads-lat': 2, 'quads-med': 2, 'glute-max': 3, 'glute-med': 2, hamstrings: 2, calves: 3, abs: 1 },
+  },
   // ---- 核心 ----
-  { n: '平板支撑', id: 'plank', c: 'core', eq: 'bodyweight', a: ['平板'] },
-  { n: '死虫式', id: 'dead-bug', c: 'core', eq: 'bodyweight', a: ['死虫'] },
+  { n: '平板支撑', id: 'plank', c: 'core', eq: 'bodyweight', a: ['平板'], m: { abs: 3, obliques: 2 } },
+  { n: '死虫式', id: 'dead-bug', c: 'core', eq: 'bodyweight', a: ['死虫'], m: { abs: 3, obliques: 2 } },
   { n: '悬垂举腿', id: 'hanging-leg-raise', c: 'core', eq: 'bodyweight', a: ['举腿'] },
   // ---- 有氧 / 间歇 ----
   { n: '放松跑', id: 'easy-run', c: 'cardio', eq: 'cardio', a: ['慢跑', '有氧跑'] },
-  { n: '开合跳', id: 'jumping-jack', c: 'cardio', eq: 'bodyweight', m: { calves: 3, soleus: 2, 'quads-rec': 2, 'glute-max': 1, abs: 1 } },
-  { n: '波比跳', id: 'burpee', c: 'cardio', eq: 'bodyweight', m: { 'quads-rec': 3, 'quads-lat': 2, 'glute-max': 2, 'chest-low': 2, abs: 2, calves: 1 } },
-  { n: '高抬腿', id: 'high-knees', c: 'cardio', eq: 'bodyweight', m: { 'quads-rec': 3, 'quads-lat': 2, abs: 2, calves: 2 } },
+  { n: '开合跳', id: 'jumping-jack', c: 'cardio', eq: 'bodyweight', m: { 'glute-med': 3, calves: 3, soleus: 2, 'quads-rec': 2, 'glute-max': 2, abs: 1 } },
+  {
+    n: '波比跳', id: 'burpee', c: 'cardio', eq: 'bodyweight',
+    m: { 'quads-rec': 3, 'quads-lat': 2, 'glute-max': 2, 'glute-med': 1, 'chest-low': 2, 'delt-ant': 2, triceps: 2, abs: 2, calves: 2 },
+  },
+  { n: '高抬腿', id: 'high-knees', c: 'cardio', eq: 'bodyweight', m: { 'quads-rec': 3, 'quads-lat': 2, abs: 2, calves: 2, tibialis: 2, 'glute-med': 1 } },
   { n: '登山跑', id: 'mountain-climber', c: 'cardio', eq: 'bodyweight' },
 
   // ---- 补充动作（不在课程种子里，处方与要点在此手写）----
@@ -124,7 +130,7 @@ const SPEC = [
     tips: '肩部力量基石：核心与臀绷紧不后仰，杠过头顶后落在耳后，轨迹贴身。',
   },
   {
-    n: '卷腹', id: 'crunch', c: 'core', eq: 'bodyweight', a: ['仰卧卷腹'],
+    n: '卷腹', id: 'crunch', c: 'core', eq: 'bodyweight', a: ['仰卧卷腹'], m: { abs: 3, obliques: 1 },
     d: { sets: 3, reps: 15, rest: 45 },
     tips: '胸骨向骨盆卷起而非抬头，下背贴地，顶端呼气收缩 1 秒。',
   },
@@ -145,6 +151,7 @@ const SPEC = [
   },
   {
     n: '划船机', id: 'rowing-machine', c: 'cardio', eq: 'cardio', kindOverride: 'cardio',
+    m: { lats: 3, 'traps-mid': 2, 'delt-post': 2, 'traps-low': 2, biceps: 2, 'quads-rec': 2, 'glute-max': 2, 'lower-back': 1 },
     d: { sets: 1, min: 15, rest: 0 },
     tips: '腿—髋—手臂的顺序发力，回程反向；每 500m 配速稳定优于猛冲。',
   },
