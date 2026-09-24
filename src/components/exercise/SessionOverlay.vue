@@ -80,6 +80,9 @@ const curAdvice = computed(() => (s.currentEx ? s.adviceFor(s.currentEx) : null)
 /** 建议依据默认收起，点一下展开（训练中不打扰，但随时可查） */
 const whyOpen = ref(false)
 
+/** 展开后逐条列出的部分：首条已经当摘要行显示了，展开时不再重复它 */
+const whyRest = computed(() => (curAdvice.value?.rationale ?? []).slice(1))
+
 /** 展示名：库内名优先（动作库改名全端跟随），回落课程条目快照 */
 const displayName = computed(() => (s.currentEx ? lib.resolveName(s.currentEx) : ''))
 
@@ -93,6 +96,55 @@ const curWarmup = computed(() => {
   const ex = s.currentEx
   if (!ex?.warmups?.length) return null
   return ex.warmups[Math.min(s.warmupDone(ex), ex.warmups.length - 1)] ?? null
+})
+
+/** 今日状态自评档位（短文案版；更多菜单里的 READINESS_ACTIONS 是同一套档位的长文案版） */
+const READINESS_CHIPS = [
+  { value: 5, label: '很好' },
+  { value: 4, label: '不错' },
+  { value: 3, label: '一般' },
+  { value: 2, label: '疲惫' },
+  { value: 1, label: '很差' },
+] as const
+
+/** 一键填入的重量候选：同一个重量的三个出处（今日建议 / 上次 / 计划），点一下即填入 */
+interface FillSource {
+  key: string
+  caption: string
+  value: string
+  weight: number
+  /** 主推来源（今日建议 / 热身处方）：在候选里抬起来，其余为备选参照 */
+  recommended: boolean
+}
+
+const fillSources = computed<FillSource[]>(() => {
+  const ex = s.currentEx
+  if (!ex) return []
+  // 热身页给的是这一组的激活重量处方，只有一个出处
+  if (s.phase === 'warmup') {
+    const w = curWarmup.value
+    if (!w) return []
+    return [{ key: 'warmup', caption: '热身组', value: `${fmtKg(w.weightKg)} kg × ${w.reps}`, weight: w.weightKg, recommended: true }]
+  }
+  const list: FillSource[] = []
+  const advised = curAdvice.value?.suggestedWeight
+  if (advised != null) {
+    list.push({ key: 'advice', caption: '建议', value: `${fmtKg(advised)} kg`, weight: advised, recommended: true })
+  }
+  const last = lastRef.value
+  if (last) {
+    list.push({
+      key: 'last',
+      caption: '上次',
+      value: last.reps != null ? `${fmtKg(last.weightKg)} kg × ${last.reps}` : `${fmtKg(last.weightKg)} kg`,
+      weight: last.weightKg,
+      recommended: false,
+    })
+  }
+  if (ex.weightKg != null) {
+    list.push({ key: 'plan', caption: '计划', value: `${fmtKg(ex.weightKg)} kg`, weight: ex.weightKg, recommended: false })
+  }
+  return list
 })
 
 /**
@@ -632,35 +684,57 @@ watch(immersiveOpen, (open) => {
             </span>
           </div>
 
-          <!-- 热身重量同样可现场调整：默认预填该组建议重量，完成即按实际重量登记 -->
-          <div class="weightcard">
-            <SessionBigNumberInput
-              :model-value="s.weight"
-              label="热身重量"
-              unit="kg"
-              :step="WEIGHT_STEP"
-              :precision="1"
-              :max="999"
-              @update:model-value="onWeight"
-            />
-            <div v-if="curWarmup" class="wchips row center">
-              <button class="wchip num" :aria-label="`设为建议重量 ${fmtKg(curWarmup.weightKg)} 公斤`" @click="onWeight(curWarmup.weightKg)">
-                建议 {{ fmtKg(curWarmup.weightKg) }}kg × {{ curWarmup.reps }}
+          <!-- 本组登记：小重量找发力感，重量可现场调整，完成即按实际重量登记 -->
+          <div class="setcard">
+            <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
+                 排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
+            <div v-if="showReadinessPrompt" class="rdsec">
+              <div class="rdhead">
+                <span class="rdlabel">今日状态</span>
+                <span class="rdhint">影响建议重量 · 可跳过</span>
+              </div>
+              <div class="rchips">
+                <button
+                  v-for="opt in READINESS_CHIPS"
+                  :key="opt.value"
+                  type="button"
+                  class="rchip"
+                  @click="s.setReadiness(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <span class="flabel">重量</span>
+              <SessionBigNumberInput
+                :model-value="s.weight"
+                label="热身重量"
+                unit="kg"
+                :step="WEIGHT_STEP"
+                :precision="1"
+                :max="999"
+                @update:model-value="onWeight"
+              />
+            </div>
+
+            <div v-if="fillSources.length" class="qfill">
+              <button
+                v-for="f in fillSources"
+                :key="f.key"
+                type="button"
+                class="qseg"
+                :class="{ rec: f.recommended }"
+                :aria-label="`填入${f.caption}重量 ${f.value}`"
+                @click="onWeight(f.weight)"
+              >
+                <span class="qcap">{{ f.caption }}</span>
+                <span class="qval num">{{ f.value }}</span>
               </button>
             </div>
-            <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
-          </div>
 
-          <!-- 今日状态自评：首次进入力量训练时出现一次，跳过即纯自动推断 -->
-          <div v-if="showReadinessPrompt" class="readiness">
-            <p class="rtitle">今日状态？<span>影响今天的建议重量（可跳过）</span></p>
-            <div class="rchips row">
-              <button class="rchip" @click="s.setReadiness(5)">很好</button>
-              <button class="rchip" @click="s.setReadiness(4)">不错</button>
-              <button class="rchip" @click="s.setReadiness(3)">一般</button>
-              <button class="rchip" @click="s.setReadiness(2)">疲惫</button>
-              <button class="rchip" @click="s.setReadiness(1)">很差</button>
-            </div>
+            <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
           </div>
 
           <div v-if="activation" class="blockcard">
@@ -679,68 +753,88 @@ watch(immersiveOpen, (open) => {
           <p class="eyebrow">当前动作 · 第 {{ s.setIndex }} / {{ s.effSets(s.currentEx) }} 组</p>
           <h1 class="actname">{{ displayName }}</h1>
 
-          <!-- 重量登记：数字可点键入，±2.5kg 微调；完成本组即记录当前重量 -->
-          <div class="weightcard">
-            <SessionBigNumberInput
-              :model-value="s.weight"
-              label="重量"
-              unit="kg"
-              :step="WEIGHT_STEP"
-              :precision="1"
-              :max="999"
-              @update:model-value="onWeight"
-            />
-            <div v-if="curAdvice?.suggestedWeight != null || lastRef || s.currentEx.weightKg != null" class="wchips row center">
+          <!-- 本组登记（重量 ＋ 次数同卡同构）：数字可点键入，± 微调；完成本组即记录当前值。
+               这两行是同一组记录的两个字段，之前分开在两处（重量在卡里、次数裸在卡外当大字），
+               视觉上像两件不相干的事，中间还夹着今日状态那张卡，谁主谁次读不出来 -->
+          <div class="setcard">
+            <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
+                 排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
+            <div v-if="showReadinessPrompt" class="rdsec">
+              <div class="rdhead">
+                <span class="rdlabel">今日状态</span>
+                <span class="rdhint">影响建议重量 · 可跳过</span>
+              </div>
+              <div class="rchips">
+                <button
+                  v-for="opt in READINESS_CHIPS"
+                  :key="opt.value"
+                  type="button"
+                  class="rchip"
+                  @click="s.setReadiness(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <span class="flabel">重量</span>
+              <SessionBigNumberInput
+                :model-value="s.weight"
+                label="重量"
+                unit="kg"
+                :step="WEIGHT_STEP"
+                :precision="1"
+                :max="999"
+                @update:model-value="onWeight"
+              />
+            </div>
+
+            <!-- 一键填入：建议 / 上次 / 计划三个出处等宽并列，点一下即填入。
+                 等宽是为了让「同一个值的三个候选」这层关系读得出来 —— 从前三个
+                 宽度不一的胶囊各自飘着，加上重量本身，五个数字挤在一张卡里没有主次 -->
+            <div v-if="fillSources.length" class="qfill">
               <button
-                v-if="curAdvice?.suggestedWeight != null"
-                class="wchip num primary"
-                :aria-label="`设为今日建议重量 ${fmtKg(curAdvice.suggestedWeight)} 公斤`"
-                @click="onWeight(curAdvice.suggestedWeight)"
+                v-for="f in fillSources"
+                :key="f.key"
+                type="button"
+                class="qseg"
+                :class="{ rec: f.recommended }"
+                :aria-label="`填入${f.caption}重量 ${f.value}`"
+                @click="onWeight(f.weight)"
               >
-                建议 {{ fmtKg(curAdvice.suggestedWeight) }}kg
-              </button>
-              <button v-if="lastRef" class="wchip num" :aria-label="`设为上次重量 ${fmtKg(lastRef.weightKg)} 公斤`" @click="onWeight(lastRef.weightKg)">
-                上次 {{ fmtKg(lastRef.weightKg) }}kg{{ lastRef.reps != null ? ` × ${lastRef.reps}` : '' }}
-              </button>
-              <button v-if="s.currentEx.weightKg != null" class="wchip num" :aria-label="`设为计划重量 ${fmtKg(s.currentEx.weightKg)} 公斤`" @click="onWeight(s.currentEx.weightKg)">
-                计划 {{ fmtKg(s.currentEx.weightKg) }}kg
+                <span class="qcap">{{ f.caption }}</span>
+                <span class="qval num">{{ f.value }}</span>
               </button>
             </div>
 
-            <!-- 建议依据：一行摘要，点开看完整推导（平均状态 × 今日状态） -->
+            <!-- 建议依据：一行摘要，点开看完整推导（平均状态 × 今日状态）。
+                 摘要是推导的首条，展开时从第二条开始列，不在下面重复同一句 -->
             <template v-if="curAdvice?.hasHistory || curAdvice?.rationale.length">
-              <button class="whyline row" :aria-expanded="whyOpen" @click="whyOpen = !whyOpen">
+              <button class="whydis" :aria-expanded="whyOpen" @click="whyOpen = !whyOpen">
                 <span class="whytxt">{{ curAdvice?.rationale[0] }}</span>
-                <ChevronDown :size="13" :class="{ flip: whyOpen }" />
+                <ChevronDown v-if="whyRest.length" :size="14" :class="{ flip: whyOpen }" />
               </button>
-              <ul v-if="whyOpen" class="whylist">
-                <li v-for="(r, i) in curAdvice?.rationale ?? []" :key="i">{{ r }}</li>
+              <ul v-if="whyOpen && whyRest.length" class="whylist">
+                <li v-for="(r, i) in whyRest" :key="i">{{ r }}</li>
               </ul>
             </template>
-          </div>
 
-          <!-- 今日状态自评：首次进入力量训练时出现一次，跳过即纯自动推断 -->
-          <div v-if="showReadinessPrompt" class="readiness">
-            <p class="rtitle">今日状态？<span>影响今天的建议重量（可跳过）</span></p>
-            <div class="rchips row">
-              <button class="rchip" @click="s.setReadiness(5)">很好</button>
-              <button class="rchip" @click="s.setReadiness(4)">不错</button>
-              <button class="rchip" @click="s.setReadiness(3)">一般</button>
-              <button class="rchip" @click="s.setReadiness(2)">疲惫</button>
-              <button class="rchip" @click="s.setReadiness(1)">很差</button>
+            <div class="fsep" />
+
+            <!-- 次数：同样可点键入，登记的是实际完成次数（与计划不同也能如实记录） -->
+            <div class="field">
+              <span class="flabel">次数</span>
+              <SessionBigNumberInput
+                :model-value="s.reps"
+                label="次数"
+                unit="次"
+                :step="1"
+                :max="999"
+                @update:model-value="onReps"
+              />
             </div>
           </div>
-
-          <!-- 次数：同样可点键入，登记的是实际完成次数（与计划不同也能如实记录） -->
-          <SessionBigNumberInput
-            size="lg"
-            :model-value="s.reps"
-            label="次数"
-            unit="次"
-            :step="1"
-            :max="999"
-            @update:model-value="onReps"
-          />
 
           <div v-if="activation" class="blockcard">
             <h3>肌群激活</h3>
@@ -1151,21 +1245,45 @@ watch(immersiveOpen, (open) => {
   line-height: 1.6;
 }
 
-/* 重量 / 次数输入卡：数字与步进由 SessionBigNumberInput 负责，这里只管容器与参照 chips */
-.weightcard {
+/* 本组登记卡：重量与次数同卡同构 —— 标签定宽在左、± 分列两端、数值居中，
+   两行因此左右严格对齐，读起来是一张表，而不是几块拼图。
+   今日状态（首次进入时的一次性自评）也收进这张卡：它是建议重量的输入，
+   单开一张卡夹在重量与次数之间，等于把「一组记录」切成了两半。 */
+.setcard {
   width: min(360px, 100%);
   border-radius: var(--radius-l);
   background: var(--surface);
   box-shadow: var(--shadow-card);
-  padding: 12px 16px 14px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  align-items: center;
+  gap: 12px;
 }
 
-.weightcard > :deep(.biginput) {
-  width: 100%;
+.field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 标签定宽：两行的 ± 与数值因此落在同一条竖线上 */
+.flabel {
+  flex: none;
+  width: 32px;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+.field > :deep(.biginput) {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 重量块与次数之间的分格线 */
+.fsep {
+  height: 0;
+  border-top: 0.5px solid var(--line);
 }
 
 .whint {
@@ -1173,59 +1291,85 @@ watch(immersiveOpen, (open) => {
   color: var(--text-3);
 }
 
-.wchips {
-  gap: 8px;
-  flex-wrap: wrap;
+/* 一键填入：建议 / 上次 / 计划 等宽并列（同一个重量的三个出处） */
+.qfill {
+  display: flex;
+  gap: 6px;
+  padding: 3px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
 }
 
-.wchip {
-  padding: 6px 13px;
-  border-radius: var(--radius-full);
-  background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
-  font-size: var(--fs-caption);
-  font-weight: 600;
+.qseg {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 4px;
+  border-radius: calc(var(--radius-m) - 3px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 
-.wchip:active {
-  transform: scale(0.94);
+.qseg:active {
+  transform: scale(0.96);
 }
 
-/* 今日建议 chip：主推的预填来源（上次重量 / 计划重量 作为备选参考） */
-.wchip.primary {
-  background: var(--c-exercise);
-  color: #fff;
+.qcap {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.qval {
+  font-size: var(--fs-subhead);
   font-weight: 700;
+  color: var(--text-2);
+  white-space: nowrap;
 }
 
-/* 建议依据：一行摘要 + 展开后的逐条推导 */
-.whyline {
+/* 主推来源（今日建议 / 热身处方）在候选里抬起来。刻意不用主色实底：
+   它是「可以填进去」的候选，不是已经生效的状态，实底会与完成态的绿撞语义 */
+.qseg.rec {
+  background: var(--surface);
+  box-shadow: var(--shadow-thumb);
+}
+
+.qseg.rec .qval {
+  color: var(--c-exercise-deep);
+}
+
+/* 建议依据：全宽左对齐的展开行（从前是居中飘着的一行小字，看不出可点） */
+.whydis {
   width: 100%;
-  gap: 6px;
-  margin-top: 10px;
-  justify-content: center;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--text-3);
   font-size: var(--fs-caption);
+  text-align: left;
 }
 
 .whytxt {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.whyline svg {
+.whydis svg {
   flex: none;
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 
-.whyline svg.flip {
+.whydis svg.flip {
   transform: rotate(180deg);
 }
 
 .whylist {
-  margin-top: 8px;
   padding: 10px 12px;
   border-radius: var(--radius-m);
   background: var(--surface-2);
@@ -1239,37 +1383,43 @@ watch(immersiveOpen, (open) => {
   margin-top: 3px;
 }
 
-/* 今日状态自评：首次进入力量训练时出现一次 */
-.readiness {
-  width: 100%;
-  margin-top: 14px;
-  padding: 12px 14px;
-  border-radius: var(--radius-l);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+/* 今日状态自评：卡内的上分段，一条细分隔线与下面的重量行分开 */
+.rdsec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 0.5px solid var(--line);
 }
 
-.rtitle {
+.rdhead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.rdlabel {
   font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-1);
 }
 
-.rtitle span {
-  margin-left: 6px;
-  font-weight: 500;
+.rdhint {
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 
+/* 五档等宽：档位是同一把尺子上的五点，等宽才读得出一条量表 */
 .rchips {
-  margin-top: 9px;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: flex;
+  gap: 6px;
 }
 
 .rchip {
-  padding: 7px 14px;
-  border-radius: var(--radius-full);
+  flex: 1;
+  min-width: 0;
+  padding: 10px 2px;
+  border-radius: var(--radius-s);
   background: var(--surface-2);
   font-size: var(--fs-caption);
   font-weight: 600;
@@ -1279,6 +1429,8 @@ watch(immersiveOpen, (open) => {
 
 .rchip:active {
   transform: scale(0.94);
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
 }
 
 /* 热身清单步骤 chips */

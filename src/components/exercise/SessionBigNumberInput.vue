@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
+import { Minus, Plus } from 'lucide-vue-next'
 
 /**
  * 沉浸模式大数字输入：常态显示大数字，点数字就地变成输入框，可直接用输入法键入。
@@ -11,6 +12,10 @@ import { computed, nextTick, ref } from 'vue'
  *
  * 提交时机：失焦 / 回车（输入法组合中不响应，避免误提交候选词）；Esc 取消。
  * 清空提交 = null（表示「该动作没配次数」），由调用方决定如何展示。
+ *
+ * 版式：整行撑满容器，两侧步进钮落在两端、数值居中（调用方给标签与容器宽度）。
+ * 步进钮是**看得见的圆底**、图标用 svg —— 从前是两枚裸字形（「−」是 U+2212、
+ * 「＋」是全角），落在卡片空白里既不像按钮，两者的字宽也差一档、左右不对称。
  */
 const props = withDefaults(
   defineProps<{
@@ -23,13 +28,11 @@ const props = withDefaults(
     step?: number
     min?: number
     max?: number
-    /** md = 卡片内常规尺寸；lg = 页面主数字（次数） */
-    size?: 'md' | 'lg'
     /** 小数位数：重量 1 位，次数 0 位 */
     precision?: number
     placeholder?: string
   }>(),
-  { step: 1, min: 0, max: 9999, size: 'md', precision: 0, placeholder: '—' },
+  { step: 1, min: 0, max: 9999, precision: 0, placeholder: '—' },
 )
 
 const emit = defineEmits<{ 'update:modelValue': [value: number | null] }>()
@@ -96,7 +99,7 @@ function bump(d: number): void {
 </script>
 
 <template>
-  <div class="biginput row center" :class="`sz-${size}`">
+  <div class="biginput row">
     <button
       v-if="!editing"
       type="button"
@@ -104,7 +107,7 @@ function bump(d: number): void {
       :aria-label="`${label}减 ${step}${unit}`"
       @click="bump(-step)"
     >
-      −
+      <Minus :size="19" :stroke-width="2.6" />
     </button>
 
     <div class="wval row center" :class="{ editing }">
@@ -136,24 +139,24 @@ function bump(d: number): void {
       :aria-label="`${label}加 ${step}${unit}`"
       @click="bump(step)"
     >
-      ＋
+      <Plus :size="19" :stroke-width="2.6" />
     </button>
   </div>
 </template>
 
 <style scoped>
 .biginput {
-  gap: 18px;
+  width: 100%;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .wbtn {
-  width: 52px;
-  height: 52px;
+  width: 44px;
+  height: 44px;
   flex: none;
   border-radius: 50%;
   background: var(--surface-2);
-  font-size: 30px;
-  font-weight: 400;
   color: var(--text-1);
   display: flex;
   align-items: center;
@@ -165,14 +168,15 @@ function bump(d: number): void {
   transform: scale(0.9);
 }
 
+/* 值域吃掉两侧钮之间的全部余量：数值居中、两钮分列卡片两端，步进距离够拇指 */
 .wval {
+  flex: 1;
+  min-width: 0;
   gap: 6px;
-  min-width: 128px;
   justify-content: center;
 }
 
 .wval.editing {
-  min-width: 172px;
   gap: 8px;
 }
 
@@ -190,16 +194,18 @@ function bump(d: number): void {
 }
 
 .wview b {
-  font-size: 44px;
+  font-size: var(--fs-display-l);
   font-weight: 200;
   letter-spacing: -1.5px;
-  line-height: 1;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 .wunit {
   font-size: var(--fs-callout);
   font-weight: 500;
   color: var(--text-3);
+  white-space: nowrap;
 }
 
 /* 输入框：宽度按最长常见值（3 位 + 1 位小数）留够，避免键入时抖动 */
@@ -223,42 +229,5 @@ function bump(d: number): void {
   color: var(--c-exercise-deep);
   font-size: var(--fs-caption);
   font-weight: 700;
-}
-
-/* 主数字档：次数沿用页面最大的视觉层级，步进钮相应收小 */
-.sz-lg .wbtn {
-  width: 40px;
-  height: 40px;
-  font-size: 24px;
-  background: transparent;
-  color: var(--text-3);
-}
-
-.sz-lg .biginput,
-.sz-lg {
-  gap: 10px;
-}
-
-.sz-lg .wview b {
-  font-size: 84px;
-  font-weight: 200;
-  letter-spacing: -4px;
-}
-
-.sz-lg .wunit {
-  font-size: 26px;
-  font-weight: 300;
-  color: var(--text-2);
-}
-
-.sz-lg .wval {
-  min-width: 172px;
-}
-
-.sz-lg .winp {
-  width: 148px;
-  font-size: 56px;
-  font-weight: 200;
-  letter-spacing: -2px;
 }
 </style>
