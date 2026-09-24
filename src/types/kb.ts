@@ -96,6 +96,15 @@ export interface KbStatus {
   enabledSources: KbSourceType[]
 }
 
+/** `kb://index` 事件的载荷（Rust `kb/worker.rs::emit`）：供页面实时更新索引状态条 */
+export interface KbIndexEvent {
+  phase: KbProgress['phase']
+  done: number
+  total: number
+  pending: number
+  indexing: boolean
+}
+
 /** 编目/渲染用的内容类型（docs/ai-workspace.md §2） */
 export type KbKind = 'text' | 'image' | 'file' | 'audio' | 'video' | 'folder'
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   AlertCircle,
@@ -21,7 +21,7 @@ import {
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
-import { kbService } from '@/services/kbService'
+import { kbService, onKbIndexProgress } from '@/services/kbService'
 import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
 import {
@@ -31,6 +31,7 @@ import {
   type KbEmbeddingMode,
   type KbGlobHit,
   type KbHit,
+  type KbIndexEvent,
   type KbMemory,
   type KbMemoryStats,
   type KbSettings,
@@ -46,6 +47,8 @@ const ai = useAiStore()
 const router = useRouter()
 
 const status = ref<KbStatus | null>(null)
+/** kb://index 订阅的退订句柄（卸载时释放，否则重挂载会重复派发） */
+let offIndex: (() => void) | null = null
 const settings = ref<KbSettings | null>(null)
 const busy = ref(false)
 const probing = ref(false)
@@ -156,8 +159,23 @@ async function refreshMemories(): Promise<void> {
   memoryStats.value = stats
 }
 
+/** 索引进度推送：worker 每推进一轮推一条，就地更新状态条（不必等下一次 kb_status 快照） */
+function onIndexProgress(e: KbIndexEvent): void {
+  if (!status.value) return
+  status.value.progress = { phase: e.phase, done: e.done, total: e.total }
+  status.value.pending = e.pending
+  status.value.indexing = e.indexing
+}
+
 onMounted(() => {
   void refresh().catch((e) => toast.toast(e instanceof Error ? e.message : String(e)))
+  void onKbIndexProgress(onIndexProgress).then((off) => {
+    offIndex = off
+  })
+})
+
+onBeforeUnmount(() => {
+  offIndex?.()
 })
 
 /** 逐类开关：只在真正修改时写库，避免每次点击都发一次 IPC */

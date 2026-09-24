@@ -10,6 +10,7 @@ import type {
   KbGlobHit,
   KbHit,
   KbInjection,
+  KbIndexEvent,
   KbMedia,
   KbMediaInput,
   KbMemory,
@@ -24,7 +25,7 @@ import type {
   MemoryCandidate,
   MemoryMaintainResult,
 } from '@/types'
-import { invoke } from './transport'
+import { invoke, isTauri } from './transport'
 
 export const kbService = {
   /** 索引概况：文档/分块/向量数、待处理脏标记、进度、最近错误 */
@@ -137,4 +138,32 @@ export const kbService = {
 
   /** 上报「这些记忆被注入过」，用于后续排序 */
   memoryBump: (ids: number[]) => invoke<void>('kb_memory_bump', { ids }),
+}
+
+/* ---------- 索引进度事件（kb://index，对应 Rust worker.rs::INDEX_EVENT） ---------- */
+
+const indexListeners = new Set<(e: KbIndexEvent) => void>()
+let indexBridged = false
+
+function dispatchIndex(payload: KbIndexEvent): void {
+  for (const l of indexListeners) l(payload)
+}
+
+async function bridgeIndexEvents(): Promise<void> {
+  if (indexBridged) return
+  indexBridged = true
+  // 浏览器 mock 没有索引线程，不产事件 —— 页面靠进入时的一次 kb_status 快照兜底
+  if (!isTauri) return
+  const { listen } = await import('@tauri-apps/api/event')
+  await listen<KbIndexEvent>('kb://index', (e) => dispatchIndex(e.payload))
+}
+
+/**
+ * 订阅索引进度推送（页面必须在卸载时取消订阅，否则重挂载会重复派发）。
+ * 事件与 `kb_status` 的 progress/pending/indexing 同源，直接就地覆盖即可。
+ */
+export async function onKbIndexProgress(cb: (e: KbIndexEvent) => void): Promise<() => void> {
+  await bridgeIndexEvents()
+  indexListeners.add(cb)
+  return () => indexListeners.delete(cb)
 }
