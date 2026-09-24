@@ -403,7 +403,10 @@ onBeforeUnmount(() => {
           @pointerup="endGesture"
           @pointercancel="endGesture"
         >
-          <slot />
+          <!-- 超范围平移层：到边拖动时内容整体位移（system/rubberScroll 只写 transform，不改布局） -->
+          <div class="rubber-layer" data-rubber-content>
+            <slot />
+          </div>
         </div>
       </section>
     </Transition>

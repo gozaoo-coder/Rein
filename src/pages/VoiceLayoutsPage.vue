@@ -142,7 +142,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         <span class="kicker">语音会话 · 版式对照</span>
         <span class="hint">← → 切换 · 每种版式都有独立 URL</span>
       </div>
-      <nav class="pills">
+      <nav class="pills" data-rubber-self>
         <button
           v-for="v in VARIANTS"
           :key="v.id"

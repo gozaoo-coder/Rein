@@ -3,6 +3,7 @@ import { createApp } from 'vue'
 
 import App from './App.vue'
 import { router } from './router'
+import { initRubberScroll } from './system/rubberScroll'
 import { shareInbox } from './system/shareInbox'
 import { workoutRuntime } from './system/workoutRuntime'
 
@@ -17,4 +18,6 @@ app.use(router)
 workoutRuntime.init()
 // 分享收件箱运行时：接收系统分享/打开的文件，路由到 AI 页预填
 shareInbox.init()
+// 超范围回弹：到边拖动改为自绘平移（Android 原生 stretch 已在 MainActivity 关闭）
+initRubberScroll()
 app.mount('#app')

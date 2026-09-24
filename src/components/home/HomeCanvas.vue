@@ -83,7 +83,7 @@ function onMove(t: Todo, startMin: number): void {
     </header>
 
     <!-- 未安排池：点卡片快排（编辑抽屉里落时间） -->
-    <div v-if="pool.length" class="pool">
+    <div v-if="pool.length" class="pool" data-rubber-self>
       <button
         v-for="t in pool"
         :key="t.id"

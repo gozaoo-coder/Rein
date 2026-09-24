@@ -615,7 +615,7 @@ watch(immersiveOpen, (open) => {
         </div>
       </div>
 
-      <main class="scrollbody">
+      <main class="scrollbody" data-rubber-self>
         <!-- 激活热身：小重量找发力感 / 复合动作渐进 ramp-up -->
         <div v-if="s.phase === 'warmup' && s.currentEx" class="pane col center">
           <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ s.currentEx.warmups!.length }} 组</p>

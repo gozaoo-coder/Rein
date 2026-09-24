@@ -378,7 +378,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="ctl" :class="{ compact }" @wheel="onWheel">
     <div ref="scroller" class="scroll" data-testid="canvas-scroll">
-      <div class="inner" :style="{ height: `${totalPx}px` }">
+      <div class="inner" :style="{ height: `${totalPx}px` }" data-rubber-content>
         <template v-for="h in hours" :key="h.min">
           <span v-show="!labelMasked(h.min)" class="hlab num" :style="{ top: `${h.min * pxPerMin}px` }">{{ h.label }}</span>
           <i class="hline" :style="{ top: `${h.min * pxPerMin}px` }" />

@@ -386,7 +386,7 @@ const HHMM = minToHHmm
 
 <template>
   <div class="wk" data-testid="week-timeline" @wheel="onWheel">
-    <div class="hwrap">
+    <div class="hwrap" data-rubber-self>
       <div class="hinner">
     <header class="dhead">
       <button

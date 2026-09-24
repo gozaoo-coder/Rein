@@ -125,7 +125,7 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 </script>
 
 <template>
-  <div ref="scroller" class="wrap">
+  <div ref="scroller" class="wrap" data-rubber-self>
     <div class="grid" :style="{ '--today-col': todayIndex + 1 }">
       <!-- 表头：星期 + 日期；左上角同时冻结两轴 -->
       <div class="cell head corner">时间</div>

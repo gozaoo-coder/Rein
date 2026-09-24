@@ -99,7 +99,7 @@ const emptyText = computed(() =>
         <Search :size="15" class="t-3" />
         <input v-model="kw" type="search" placeholder="搜索备注" aria-label="搜索备注" />
       </label>
-      <div class="chips">
+      <div class="chips" data-rubber-self>
         <button class="chip" :class="{ on: filterCat === null }" @click="filterCat = null">全部</button>
         <button
           v-for="key in usedCats"

@@ -508,7 +508,7 @@ function bumpKm(delta: number): void {
       </div>
 
       <!-- 准备页：目标选择 -->
-      <div v-if="r.phase === 'ready'" class="pane col center">
+      <div v-if="r.phase === 'ready'" class="pane col center" data-rubber-self>
         <p class="eyebrow">设定目标</p>
         <SegmentedControl
           class="seg"
@@ -543,7 +543,7 @@ function bumpKm(delta: number): void {
       </div>
 
       <!-- 进行中 / 暂停：时长 hero ＋ 千卡 ＋ 双配速对照卡 -->
-      <div v-else-if="r.phase === 'running' || r.phase === 'paused'" class="pane col center live">
+      <div v-else-if="r.phase === 'running' || r.phase === 'paused'" class="pane col center live" data-rubber-self>
         <div class="time-row row between">
           <div>
             <b class="num tnum">{{ clockText }}</b>
@@ -580,7 +580,7 @@ function bumpKm(delta: number): void {
       </div>
 
       <!-- 总结页：核对（可修正距离）后保存 -->
-      <div v-else-if="r.phase === 'summary'" class="pane col center">
+      <div v-else-if="r.phase === 'summary'" class="pane col center" data-rubber-self>
         <span class="doneemoji">🏃</span>
         <p class="donetitle">跑步完成</p>
         <p class="num donemeta">

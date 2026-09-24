@@ -85,7 +85,7 @@ function onCreated(e: ExerciseRecord): void {
       </button>
     </div>
 
-    <ul class="list">
+    <ul class="list" data-rubber-self>
       <li v-for="e in list" :key="e.id">
         <button
           type="button"

@@ -179,7 +179,7 @@ onMounted(async () => {
           <Search :size="15" />
           <input v-model="keyword" type="search" placeholder="搜索课程名或代码" />
         </div>
-        <ul class="courses">
+        <ul class="courses" data-rubber-self>
           <li v-for="c in filteredCourses" :key="c.id" class="course">
             <span class="cname">{{ c.nameZh }}</span>
             <span v-if="c.code" class="ccode num">{{ c.code }}</span>

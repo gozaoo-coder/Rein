@@ -520,7 +520,7 @@ async function onMenuSelect(value: string): Promise<void> {
   <div class="page">
     <!-- 消息区是唯一的滚动容器：页头与底栏都粘在它内部（sticky），内容从两端的
          渐进模糊里滚过，而不是被两条硬边裁断（遮罩见 ProgressiveBlur/PageHeader）。 -->
-    <div ref="listEl" class="msgs">
+    <div ref="listEl" class="msgs" data-rubber-self>
       <PageHeader title="AI" compact>
         <template #lead>
           <button class="hdr-btn" aria-label="文件" @click="router.push({ name: 'ai-files' })">

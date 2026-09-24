@@ -66,7 +66,7 @@ function onKey(e: KeyboardEvent, date: string): void {
 </script>
 
 <template>
-  <div class="week">
+  <div class="week" data-rubber-self>
     <div
       v-for="c in columns"
       :key="c.date"

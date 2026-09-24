@@ -406,7 +406,7 @@ async function runConsolidate(): Promise<void> {
   <div class="kb-page">
     <PageHeader title="知识库" subtitle="让 AI 记得住你" back />
 
-    <div class="scroll">
+    <div class="scroll" data-rubber-self>
       <!-- 索引概况 -->
       <section class="card">
         <div class="card-head">

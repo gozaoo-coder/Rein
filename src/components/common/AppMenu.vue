@@ -232,22 +232,25 @@ const flatActions = computed(() => {
           :style="lv.style ?? undefined"
           role="menu"
         >
-          <p v-if="i === 0 && title" class="ptitle">{{ title }}</p>
-          <button
-            v-for="a in lv.items"
-            :key="a.value"
-            type="button"
-            class="item"
-            :class="{ danger: a.danger, disabled: a.disabled }"
-            role="menuitem"
-            :aria-haspopup="a.children?.length ? 'menu' : undefined"
-            :aria-expanded="a.children?.length && levels[i + 1]?.openedFrom === a.value ? 'true' : undefined"
-            @click="onItemClick(a, $event, i)"
-          >
-            <component :is="a.icon" v-if="a.icon" class="ic" :size="18" :stroke-width="2" />
-            <span class="lbl">{{ a.label }}</span>
-            <ChevronRight v-if="a.children?.length" class="chev" :size="14" />
-          </button>
+          <!-- 超范围平移层：面板自身带定位/入场动画，不能自平移，改包一层只写 transform -->
+          <div class="rubber-layer" data-rubber-content>
+            <p v-if="i === 0 && title" class="ptitle">{{ title }}</p>
+            <button
+              v-for="a in lv.items"
+              :key="a.value"
+              type="button"
+              class="item"
+              :class="{ danger: a.danger, disabled: a.disabled }"
+              role="menuitem"
+              :aria-haspopup="a.children?.length ? 'menu' : undefined"
+              :aria-expanded="a.children?.length && levels[i + 1]?.openedFrom === a.value ? 'true' : undefined"
+              @click="onItemClick(a, $event, i)"
+            >
+              <component :is="a.icon" v-if="a.icon" class="ic" :size="18" :stroke-width="2" />
+              <span class="lbl">{{ a.label }}</span>
+              <ChevronRight v-if="a.children?.length" class="chev" :size="14" />
+            </button>
+          </div>
         </div>
       </TransitionGroup>
     </template>

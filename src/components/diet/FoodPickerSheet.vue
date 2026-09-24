@@ -142,7 +142,7 @@ function bump(delta: number): void {
     </div>
 
     <!-- 结果列表 -->
-    <ul v-if="!selected" class="list">
+    <ul v-if="!selected" class="list" data-rubber-self>
       <li v-for="f in results" :key="f.id">
         <button class="row item" @click="pick(f)">
           <span class="flex-1">

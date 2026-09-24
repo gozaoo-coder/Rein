@@ -301,10 +301,13 @@ const titleText = computed(() => {
 
     <!-- 展开内容：思考文字与工具执行结果按到达顺序穿插展示 -->
     <div v-show="!collapsed" ref="bodyRef" class="process-body">
-      <template v-for="(seg, i) in segments" :key="i">
-        <div v-if="seg.kind === 'reasoning'" class="process-reasoning">{{ seg.text }}</div>
-        <ToolCallGroup v-else :calls="[seg.call]" />
-      </template>
+      <!-- 超范围平移层：到边拖动时内容位移；包裹层镜像弹性列布局，只承载 transform -->
+      <div class="rubber-layer" data-rubber-content>
+        <template v-for="(seg, i) in segments" :key="i">
+          <div v-if="seg.kind === 'reasoning'" class="process-reasoning">{{ seg.text }}</div>
+          <ToolCallGroup v-else :calls="[seg.call]" />
+        </template>
+      </div>
     </div>
   </div>
 </template>
@@ -411,8 +414,13 @@ const titleText = computed(() => {
   overflow-x: hidden;
 }
 
-/* 思考文字段：文档流样式，不单独滚动，跟随整体滚动。
-   overflow-wrap:anywhere —— 思考里出现长 URL / 哈希时任意断行，不撑出横向滚动 */
+/* 超范围平移层：镜像 .process-body 的弹性列布局（只承载 transform，不改观感） */
+.rubber-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .process-reasoning {
   padding: 2px 6px 2px 0;
   min-width: 0;

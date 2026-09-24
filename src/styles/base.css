@@ -18,6 +18,14 @@ body {
   height: 100%;
 }
 
+/* 移动端「页面滚动」就是文档滚动。原生 stretch 已在 Android 层关闭
+   （MainActivity：webView.overScrollMode = OVER_SCROLL_NEVER），这里再声明一次，
+   杜绝 WebView / 浏览器残留的文档级 overscroll（下拉刷新、滚动链）；超范围手感由
+   system/rubberScroll 自绘（对数阻尼 + 平移）。 */
+html {
+  overscroll-behavior: none;
+}
+
 body {
   font-family: var(--font);
   font-size: var(--fs-body);

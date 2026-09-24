@@ -58,7 +58,7 @@ function onMask(): void {
           </div>
         </header>
 
-        <ul class="dk-list">
+        <ul class="dk-list" data-rubber-self>
           <li v-for="c in list" :key="c.id">
             <button
               class="dk-item"

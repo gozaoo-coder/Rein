@@ -127,7 +127,7 @@ const capMeta = {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" data-rubber-self>
     <PageHeader title="管理模型" subtitle="添加 AI 模型并测试能力后即可拍照识别" back>
       <template #action>
         <button class="hdr-btn accent" aria-label="添加模型" @click="onAdd">

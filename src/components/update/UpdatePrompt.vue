@@ -92,7 +92,7 @@ async function skip(): Promise<void> {
           <template v-if="mandatory"> · <b class="up-must">此版本为必须更新</b></template>
         </p>
 
-        <p v-if="notes" class="up-notes">{{ notes }}</p>
+        <p v-if="notes" class="up-notes" data-rubber-self>{{ notes }}</p>
 
         <p v-if="unsupported" class="up-warn">
           <AlertTriangle :size="14" /> {{ update.snapshot?.installHint }}

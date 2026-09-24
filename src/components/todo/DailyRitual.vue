@@ -81,7 +81,7 @@ function confirm(mode: 'ai' | 'manual'): void {
       <!-- 2 勾选今天要做 -->
       <div v-else-if="step === 1" class="step">
         <p class="cap">这些还没定时间 — 勾选今天要做的</p>
-        <ul class="cands">
+        <ul class="cands" data-rubber-self>
           <li v-for="t in candidates" :key="t.id">
             <button class="cand" :class="{ on: picked.has(t.id) }" @click="togglePick(t)">
               <span class="box"><Check v-if="picked.has(t.id)" :size="12" :stroke-width="3" /></span>

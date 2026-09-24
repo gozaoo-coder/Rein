@@ -86,11 +86,14 @@ onMounted(() => {
   <div v-if="isDesktop" class="desk-frame">
     <DesktopRail v-if="!fullscreenUI" />
     <main class="desk-main" :class="{ wide: route.name === 'home' || route.name === 'todos' }">
-      <RouterView v-slot="{ Component }">
-        <Transition name="page">
-          <component :is="Component" />
-        </Transition>
-      </RouterView>
+      <!-- 超范围平移层（桌面）：到边拖动时整页位移，只写 transform、不改布局（system/rubberScroll） -->
+      <div data-rubber-content>
+        <RouterView v-slot="{ Component }">
+          <Transition name="page">
+            <component :is="Component" />
+          </Transition>
+        </RouterView>
+      </div>
     </main>
     <!-- 第三窗格 · 今日信息栏：全页面常驻（沉浸页除外），保证桌面构图平衡 -->
     <DesktopInspector v-if="!fullscreenUI" />
@@ -98,11 +101,14 @@ onMounted(() => {
 
   <!-- 移动端（原结构）：内容居中窄栏 + 底部标签导航 -->
   <div v-else class="app-frame">
-    <RouterView v-slot="{ Component }">
-      <Transition name="page">
-        <component :is="Component" />
-      </Transition>
-    </RouterView>
+    <!-- 超范围平移层（移动端）：页面内容整体位移；TabBar 留在层外保持定格 -->
+    <div data-rubber-page>
+      <RouterView v-slot="{ Component }">
+        <Transition name="page">
+          <component :is="Component" />
+        </Transition>
+      </RouterView>
+    </div>
     <TabBar v-if="!fullscreenUI" />
   </div>
   <!-- 悬浮运动条：异常中断恢复提示，桌面/移动共用（沉浸形态下隐藏；收起动画期间提前回归接续） -->

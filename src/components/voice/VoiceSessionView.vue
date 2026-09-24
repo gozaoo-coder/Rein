@@ -334,7 +334,7 @@ onBeforeUnmount(() => {
             <span class="num time">{{ fmtMs(voice.elapsedMs) }}</span>
           </div>
           <!-- 转写正文：时间脊的精读形态（顶部保留按真实比例的定位带） -->
-          <div class="tr">
+          <div class="tr" data-rubber-self>
             <TimeSpine
               size="full"
               mode="read"
@@ -379,7 +379,7 @@ onBeforeUnmount(() => {
 
         <!-- ===== 纪要详情 ===== -->
         <template v-else-if="voice.view === 'memo'">
-          <div class="body">
+          <div class="body" data-rubber-self>
             <p v-if="!memo" class="vs-hint">
               {{ voice.processingCount > 0 || voice.status === 'processing' ? 'AI 正在整理纪要…' : '这段没有产生纪要' }}
             </p>

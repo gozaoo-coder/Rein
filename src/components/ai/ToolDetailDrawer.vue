@@ -65,7 +65,7 @@ const argsText = computed(() => (shown.value ? prettyJson(shown.value.arguments)
       </div>
 
       <p class="sec">输入参数</p>
-      <pre class="pre">{{ argsText }}</pre>
+      <pre class="pre" data-rubber-self>{{ argsText }}</pre>
 
       <p class="sec">
         返回结果
@@ -74,6 +74,7 @@ const argsText = computed(() => (shown.value ? prettyJson(shown.value.arguments)
       <pre
         v-if="shown.result"
         class="pre"
+        data-rubber-self
         :class="{ 'is-error': shown.isError }"
       >{{ shown.result }}</pre>
       <p v-else class="empty">{{ shown.pending ? '等待结果返回…' : '无返回结果' }}</p>

@@ -85,6 +85,16 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  /** Android 12+ 的系统级 overscroll 效果由 glow 改为 stretch（WebView 走 Chromium 的实现，
+   *  只作用在根滚动容器上，表现为滚动到边界时整页 scaleY 拉伸）。它是原生 View 的 EdgeEffect，
+   *  CSS（overscroll-behavior / touch-action）管不到——只有把 WebView 的 overScrollMode 置为
+   *  NEVER 才能关掉。超范围手感改由 Web 层自绘：src/system/rubberScroll.ts（对数阻尼 + 平移，
+   *  f(0)=0 且 f'(0)=1，与原生滚动交接无速度突变）。 */
+  override fun onWebViewCreate(webView: WebView) {
+    super.onWebViewCreate(webView)
+    webView.overScrollMode = View.OVER_SCROLL_NEVER
+  }
+
   /** 运行中被分享唤起（singleTask，不重建）：把新 intent 交给分享接收 */
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
