@@ -56,8 +56,9 @@
 - **命令命名**：动词开头 snake_case（`list_foods` / `log_meal` / `get_daily_summary`）。前端 service 函数同名 camelCase。
 - **参数**：Rust 参数 snake_case ⇄ JS 键 camelCase（Tauri 自动转换）。结构体一律 `#[serde(rename_all = "camelCase")]`。
 - **例外**：运动类型参数统一叫 `workoutType`，不用 `type`（避免原始标识符转换坑）。
-- **错误**：后端 `ReinError` 序列化为字符串；前端在 service 层不吞错，store 决定提示方式。
-- **新增命令三同步**：`modules/x/commands.rs` ↔ `lib.rs generate_handler!` ↔ `src/services/xService.ts`。缺一不可。
+- **错误**：后端 `ReinError` 序列化为结构化对象 `{ code, message }`（`error.rs`；`code` 是机器可读判据，当前唯一语义码是 `session_lost`）。前端在 `services/transport.ts` 归一为 `IpcError`（Error 子类，带 `code`）—— `e.message` / `String(e)` 的老写法照旧，需要分派时看 `code`，**任何一侧都不许解析文案**。store 决定提示方式，service 层不吞错。
+- **新增命令三同步**：`modules/x/commands.rs` ↔ `lib.rs generate_handler!` ↔ `src/services/xService.ts`（mock 同步补同名实现）。这四条现在由 `npm run contract` 机器比对，CI 跑；漏一处即红。
+- **WebView 面**：`tauri.conf.json` 的 `security.csp` 是白名单（`default-src 'self'` + 明确的 asset/data/blob 例外；Tauri 会为自己的注入脚本自动补 nonce），配合 `capabilities/default.json` 只授 `core:default`。**自定义命令不受 capability 约束**，所以 CSP 是这条边界上唯一的硬闸门 —— 改它要上真机确认不白屏（`npm run app:dev`）。
 
 ### AI 域说明（2026-08 起）
 
@@ -112,7 +113,10 @@
 - **页头图标按钮统一规范**：PageHeader 通过 `:slotted(.hdr-btn)` 提供标准样式（38px 圆钮、surface 底、卡片阴影；`.accent` 变体为主操作 CTA），各页 lead/action 插槽内的图标按钮一律挂 `hdr-btn` 类，不再各自写样式。
 - **页头固定与渐进模糊遮罩**：每个非 fullscreen 页面都必须有 PageHeader，它 `position: sticky; top: 0` 顶住**最近滚动容器**——移动端滚文档、桌面工作台滚 `.desk-main`，两种壳同一份 CSS 都成立（`fixed` 在桌面壳里会跑到导航轨与信息栏底下）。滚动状态由 `composables/useScrolled` 沿父链解析出真正的滚动容器后监听，不写死 `window`。页面滚起来后页头背后压一层遮罩：正常档是多层 `backdrop-filter` + `mask` 梯度叠出的渐进模糊（越靠上被模糊的次数越多，向下递减到零，避免硬切边），降级档换成「`--bg` → 透明」的渐变底色遮罩。遮罩向上多铺 `--safe-top` 盖住状态栏、向下多铺 `--ph-tail` 让模糊化开、左右按 `--ph-bleed`（缺省 `--page-pad-x`，页面可覆写）铺满整帧。回归：`node scripts/e2e-page-header.mjs`（sticky 归属、遮罩显隐、层数与模糊量、降级档换底色、逐页标题）。
 - **滚动容器按规范会裁掉溢出**（一个轴不是 `visible` 时另一个轴也变 `auto`）：气泡/卡片的 `--shadow-card` 会被自己的滚动区切出直边。聊天区 `.msgs` 用「负外边距拉满整帧 + 等值内边距推回内容」留出影子扩散位，新增滚动容器同理。
-- **运行时性能降级**：`system/perf.ts` 按 90 帧一个窗口统计掉帧（>32ms）占比，连续 2 个窗口 >30% 判定降级、连续 4 个窗口 <8% 恢复（恢复更保守，避免临界点抖动）；空闲时歇 6 秒不常驻 rAF，路由切换与流式输出用 `kickPerfWatch()` 插队。结论落 `<html data-perf="low">`，`base.css` 据此关掉 `backdrop-filter` 与循环动画（一次性过渡保留），并把 `--surface-translucent` 顶成实底。用户的 `auto|high|low` 档位存 localStorage `rein.perf.v1`，UI 在「设置 › 性能」。
+- **运行时性能降级**：`system/perf.ts` 按 90 帧一个窗口统计掉帧（>32ms）占比，连续 2 个窗口 >30% 判定降级、连续 4 个窗口 <8% 恢复（恢复更保守，避免临界点抖动）；空闲时歇 6 秒不常驻 rAF，路由切换与流式输出用 `kickPerfWatch()` 插队。结论落 `<html data-perf="low">`，`base.css` 据此关掉 `backdrop-filter` 与循环动画（一次性过渡保留），并把 `--surface-translucent` 顶成实底。用户的 `auto|high|ultra|low` 档位存 localStorage `rein.perf.v1`，UI 在「设置 › 性能」（档位清单 `PERF_MODES` 由设置页与画质预览页共用一份）。
+- **超高档与液态玻璃**：`ultra` 在 `high` 之上再开 `components/common/GlassSurface.vue` 的折射表面（移植自 vue-bits 的 GlassSurface：SVG 位移贴图 + R/G/B 三通道分别位移再叠加，经 `backdrop-filter: url(#f)` 作用在元素自身，折射的是**它背后的真实内容**）。三道门缺一不可：用户选了超高档、没被降级、且内核认 `backdrop-filter: url()`（Safari / Firefox 会静默忽略整条声明，故有 `supportsSvgBackdrop()` 探测与「普通毛玻璃」退化分支）。`data-perf` 会写成 `ultra`（`auto|high|low` 的语义不变）。回归：`scripts/e2e-perf-glass.mjs`（预览页逐档 + 真实 Dock：折射层挂载 / 受光边 / 不参与布局 / 页签对比度真图采像素）。
+- **玻璃材质只有一份定义**：`styles/base.css` 的 `.glass-surface`（半透明 fill + 上亮下暗的受光描边 + 内顶高光 + `blur(28) saturate(180%)` + 影；弱档由 `data-perf` 把 fill 顶成实底并全局关掉 blur，「减弱透明度」退化成实底 + 常规描边）。**Dock 与四个悬浮条（运动 / 录音 / 语音 / 抢课）共用它** —— 悬浮的这一族看起来才是同一种材料。
+- **折射只挂在底部 Dock 上**（`layout/TabBar.vue`）：一块 GlassSurface 垫在页签底下，与预览页标本同一个组件、同一组默认参数，只有底的浓度按真实内容调厚（0.5 ≈ 高画质档 `--glass-fill`；标本压在暗场壁上，真实 Dock 背后是任意页面）。折射采样的是元素背后**页面真实内容**，所以它必须在最底层：这一档 nav 自己不再画底、不再模糊，只留 border-box 的受光边（玻璃的「厚度」全在这条边上），折射层 inset 1px 正好让出它。其余档位与弱档/减弱透明度走 `.glass-surface` 的普通毛玻璃分支，观感与改动前一致。
 - 三环语义固定：红=摄入达标，绿=运动消耗（目标 `EXERCISE_KCAL_GOAL`=300kcal），青=营养均衡（三大宏量完成度均值）。
 - 动效默认 `--ease-standard`；弹层用 `--ease-sheet`（Apple sheet 曲线）；进出必须同路径；遵守 `prefers-reduced-motion` / `prefers-reduced-transparency`。
 - 反馈即时性：按压态在 `:active`（pointer-down）生效，不做延迟反馈。
@@ -158,6 +162,7 @@
 | `/settings` | settings | 设置（二级内容页：功能分组入口 + 番茄钟完整配置 + 关于；入口在「我 › 设置」，原设置抽屉已升级为页面） |
 | `/settings/features` | settings-features | 打开或关闭功能（三级页：插件层的逐项开关，列表来自 `src/plugins` 里 `toggleable` 的声明） |
 | `/settings/update` | settings-update | 软件更新（三级页：版本/多源状态/下载进度/安装/更新源与通道设置 + Rein 在线服务探测；入口在「设置 › 关于 › 软件更新」，启动时也会静默检查并在有新版本时 toast 一次） |
+| `/settings/perf` | settings-perf | 画质预览（三级页：超高档的液态玻璃长什么样 —— 仅图标按钮 / 图标+文字按钮 / 视频同款底部栏（圆 + 药丸 + 圆叠压）；可就地切档看折射与退化的差别；入口在「设置 › 性能 › 液态玻璃预览」） |
 | `/focus` | focus | 专注（二级内容页：番茄钟 + 待办 + 日程时间线预览；完整时间线、超量待办收抽屉） |
 | `/todos` | todos | 待办 · 今日画布（二级内容页：未安排池 + 单日时间轴 + 详情联动 + 智能排程；周视图为 7 列时间线（WeekTimeline）含周回顾；清单保留原分组列表；桌面端宽栏三窗格） |
 | `/nutrition` | nutrition | 营养全览（二级内容页：能量/宏量/微量元素详解 + 记饮食、改目标快捷入口） |
@@ -213,6 +218,7 @@
 - **认知注入**：`kb_cognition` 产出一段紧凑文本，由 `stores/ai.ts` 在每轮请求前取（60 秒 TTL 缓存）并经 `chatWithModel(cfg, …, { cognition })` 传进系统提示词的【用户认知】段。做成预注入而非又一个工具，是因为模型每轮都该直接知道自己面对的是谁。
 - **两个必须守住的约束**：① 附件里 image/file/audio 的 `content` 是 base64 data URL，**绝不能进索引正文**，只索引文件名与体积（`source.rs::attachments_digest`，有单测硬断言）；② `kb_fts` 用 external content 指回 `kb_chunks`，一致性靠 `kb_chunks` 上的三触发器，而 SQLite 的外键级联删除**不触发**子表触发器，所以删除文档一律先显式删块（`fts_stays_consistent…` 单测用 FTS5 integrity-check 守着）。
 - 命令：`kb_status` / `kb_search` / `kb_read` / `kb_reindex` / `kb_settings_get` / `kb_settings_set` / `kb_probe_embedder` / `kb_rebuild_vectors` / `kb_memories` / `kb_memory_apply` / `kb_memory_delete` / `kb_cognition` / `kb_memory_bump` / `kb_glob` / `kb_file_write` / `kb_file_rename` / `kb_file_delete` / `kb_file_get` / `kb_media_write` / `kb_media_get` / `kb_fs_move` / `kb_fs_mkdir` / `kb_fs_pin` / `kb_fs_moves` / `kb_fs_undo` / `kb_injection_get`。
+- **索引进度走事件**：worker 每推进一轮 emit `kb://index`（`worker.rs::emit`，载荷 = phase/done/total/pending/indexing，与 `kb_status` 同源）；前端 `services/kbService.ts::onKbIndexProgress` 订阅，知识库页就地更新状态条（浏览器 mock 无索引线程，不产事件，靠进入时的一次快照兜底）。
 - **模态层（2026-09-19，迁移 0024）**：一条数据可以有多种模态，它们是**同一节点**的不同表示——`kb_assets` 存模态表示（modal / mime / storage / ref / 字节 / 时长 / 转写状态），本体三来源：上传进工作区的 `workspace/media/*`、语音纪要的 wav（`voice_memos.audio_path`）、附件里的 data URL。`kb_media_get(docId, modal)` 走**降级链**：有本体返回值（前端可播放，字节不进模型上下文；超 16MB 只回元信息 `tooLarge`），没有就降级为文本并给 `degraded`/`degradeReason`，**永不报错**。一个节点同一模态只有一份表示（`assets::add` 按 (file, modal) 替换）。AI 侧工具是 `read_modal`。
 - **目录治理（2026-09-19）**：`kb_files.kind`（text/multimodal/folder）+ `pinned` + `classify_state`（inbox/filed/manual）；`kb_fs_moves` 是整理审计（谁/何时/从哪到哪/为什么，可按 batchId 整批撤销）。规则：系统区（`规范/`、`系统提示词/`）只读；**保留区**（`附件/` 全树、日期目录、`-数字` 后缀）由 `governance::free_path` 自动让位（加 `-v2`）；AI 自动移动有 24h 防抖（同路径 AI 刚放好就不再挪）且不碰 `pinned`；深度 ≤4、同级 ≤50、单批 ≤200。AI 侧工具是 `classify_move` / `pin_file` / `make_folder`。
 - **全量注入区（2026-09-19）**：`系统提示词/*.md`（代码播种，随版本更新）+ `用户记忆/*.md`（用户可写，模板只在缺失时创建）**每轮全量进系统提示词**，由 `kb_injection_get` 组装（预算 12,000 字符，按「系统提示词 > 角色设定 > 全局规范 > 其他」截断并置 `truncated`）；`stores/ai.ts` 带 60 秒 TTL 缓存取一次，`chat.ts` 拼成【系统提示词】【用户记忆】段。纯 HTML 注释的模板文件不占预算。其余内容一律靠工具按需检索——这是「注入」与「检索」的分界。
@@ -286,6 +292,7 @@
 选课：`campus_course_select_status` / `_lessons` / `_simplest_lessons` / `_query_condition` / `_apply` / `_predicate` / `_result` / `_predicate_result` / `_drop`。
 自动抢课：`campus_grab_state` / `_enqueue` / `_task_action` / `_clear_finished` / `_pause_all` / `_resume_all` / `_settings_get` / `_settings_set`。
 抢课计划：`campus_grab_intent_add` / `_action`（`remove` 移除并收掉它派出去的任务 / `now` 立刻重新解析） / `_preview`（这句查询照当前名单能匹配到哪些班）。
+起飞前自检：`campus_grab_preflight`（登录 / 令牌 / 批次 / 时钟 / 名单 / 每条计划逐项 GO·NO-GO + 证据一句话；按需触发，不自动跑）。
 
 **志愿组没有新命令**：`groupKey` / `groupName` / `priority` 是 `GrabTargetInput` 上的字段（`_enqueue` 原样透传），组名冗余存在任务行上（0027），所以既不新增表也不新增命令 —— 少两处会漂的东西。同理，投递口由引擎自己轮询文件，没有 IPC 命令。
 

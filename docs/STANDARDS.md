@@ -26,7 +26,7 @@
 
 - 页面（pages）只做：装配组件、onMounted 数据加载、弹层开关。业务规则下沉到 store。
 - 组件允许直接读 store；**跨域联动必须走 store action**（如记饮食后刷新营养总览在 `dietStore.add` 内完成），不允许页面手动编排两个 store 的刷新顺序。
-- 组件 ↔ 后端：只能经 `services/*Service.ts`。新增命令时三处同步（见 ARCHITECTURE §3），漏一处 = 不可合并。
+- 组件 ↔ 后端：只能经 `services/*Service.ts`。新增命令时三处同步（见 ARCHITECTURE §3），漏一处 = 不可合并（`npm run contract` 机器比对，CI 跑）。
 - 类型只从 `@/types` barrel 导入：`import type { Food } from '@/types'`。
 
 ## 4. 样式规范
@@ -52,10 +52,16 @@
 ## 7. 质量门槛（合并前全部通过）
 
 ```bash
+npm run contract         # IPC 契约三方同步（Rust ↔ services ↔ mock）
+npm run lint             # ESLint（src/；scripts/ 是测试工装，暂不在闸门内）
 npm run typecheck        # TS
 npm run build            # 前端构建
 cd src-tauri && cargo clippy -- -D warnings && cargo check
 ```
+
+Rust 排版：全仓尚未跑过 rustfmt（历史手工风格，`cargo fmt --check` 会红）。
+要引入格式化闸门，先单独提交一次全量 `cargo fmt`（纯空白 diff，别和业务改动混在一起），
+再往 CI 加 `cargo fmt --check`。
 
 UI 改动需附截图（浅色 + 暗色各一张）；数据流改动需在 mock 与 tauri 两种模式下各验证一遍。
 
