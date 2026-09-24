@@ -209,7 +209,7 @@ function open(): void {
     <!-- 整条浮条**不再是**一个按钮：它压在页头之上横跨大半屏，装在兜里误触一下就跳页。
          现在是「一块会播报的状态条 + 一个明确的『去看』按钮」——
          既让读屏能读到（role=status），也不会再躺着中枪 -->
-    <div v-if="show" class="hud" :class="tone" role="status" :aria-label="`抢课监视：${text}`">
+    <div v-if="show" class="hud glass-surface" :class="tone" role="status" :aria-label="`抢课监视：${text}`">
       <span class="dot" :class="{ pulse: tone === 'run' }" />
       <Zap v-if="tone === 'run'" :size="14" class="ico" />
       <CheckCircle2 v-else-if="tone === 'ok'" :size="14" class="ico" />
@@ -236,10 +236,6 @@ function open(): void {
   max-width: min(calc(var(--frame-max) - 24px), calc(100vw - 24px));
   padding: 8px 12px;
   border-radius: var(--radius-full);
-  background: var(--surface-translucent);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: var(--shadow-float);
   color: var(--text-1);
   transition: transform var(--dur-fast) var(--ease-standard);
 }

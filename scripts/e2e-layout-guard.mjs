@@ -24,7 +24,7 @@ const VIEW = { w: W, h: H }
 const ROUTES = [
   '#/', '#/sports', '#/ai', '#/me', '#/nutrition', '#/nutrition/adjust', '#/nutrition/foods',
   '#/nutrition/recipes', '#/program', '#/ledger', '#/focus', '#/todos', '#/settings',
-  '#/settings/features', '#/settings/update', '#/ai/models', '#/ai/knowledge', '#/ai/files',
+  '#/settings/features', '#/settings/update', '#/settings/perf', '#/ai/models', '#/ai/knowledge', '#/ai/files',
   '#/sports/plans', '#/sports/exercises', '#/sports/records', '#/campus/schedule',
   '#/campus/settings', '#/campus/program', '#/campus/course-select', '#/record',
 ]

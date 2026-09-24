@@ -110,11 +110,16 @@ function length(value: string | number): string {
   return typeof value === 'number' ? `${value}px` : value
 }
 
-/** 位移贴图里的 rx 必须是长度：把 '%' / '999px' 这类圆角解析成像素，并夹到短边的一半 */
+/** 位移贴图里的 rx 必须是长度：优先取**计算值** —— 调用方给 var(--radius-full) / 50% / calc()
+ *  这些「组件解析不了」的形式，浏览器都已经算成像素了；取不到（还没挂载）再按 prop 的写法解析。
+ *  两种来路最后都夹到短边的一半（胶囊 / 正圆都落在这里）。 */
 function radiusPx(w: number, h: number): number {
   const max = Math.min(w, h) / 2
-  const raw = props.borderRadius
-  const px = typeof raw === 'number' ? raw : String(raw).endsWith('%') ? (max * 2 * parseFloat(String(raw))) / 100 : parseFloat(String(raw)) || 0
+  const computed = root.value ? getComputedStyle(root.value).borderRadius : ''
+  const raw =
+    computed.trim().split(/\s+/)[0] ||
+    (typeof props.borderRadius === 'number' ? `${props.borderRadius}px` : String(props.borderRadius))
+  const px = raw.endsWith('%') ? (max * 2 * parseFloat(raw)) / 100 : parseFloat(raw) || 0
   return Math.max(0, Math.min(px, max))
 }
 
@@ -243,7 +248,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <div ref="root" class="glass" :style="rootStyle">
+  <!-- style 同样是上游同名 prop：与内部算出的尺寸 / 背景**合并**，同名以调用方为准。
+       它是「定位 / 层叠 / 命中区」这类几何的出口 —— 组件自己只管材质，不知道调用方
+       是把它当按钮还是当一整层垫底（底部 Dock 就是这么用的）。 -->
+  <div ref="root" class="glass" :style="[rootStyle, props.style]">
     <!-- 滤镜定义（不参与绘制：opacity 0 + 绝对定位；真正生效的是 backdrop-filter 引用它） -->
     <svg v-show="canRefract" class="gdefs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>

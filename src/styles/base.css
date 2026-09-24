@@ -195,6 +195,38 @@ html[data-perf='low'] *::after {
   -webkit-backdrop-filter: none !important;
 }
 
+/* ---------- 玻璃材质（悬浮 Dock / 悬浮条共用的一份定义） ----------
+   四层叠出「一块有厚度的玻璃」：
+     ① 半透明玻璃底（--glass-fill，画在 padding-box）；
+     ② 上亮下暗的受光描边（border-box 渐变，不占额外布局 —— 顶光打在玻璃截面上的边缘亮度）；
+     ③ 内顶高光（--glass-sheen，inset 两道：一道贴边、一道往下化开）；
+     ④ 外投影（--glass-shadow）。
+   blur 写在这里；弱档由上面的 data-perf 块把 fill 顶成实底并全局关掉 blur，
+   「减弱透明度」在这里单独退化成实底 + 常规描边。
+   超高档的**折射**不在这份定义里 —— 只有底部 Dock 开（见 layout/TabBar.vue）。 */
+.glass-surface {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--glass-fill), var(--glass-fill)) padding-box,
+    linear-gradient(to bottom, var(--glass-rim-hi), var(--glass-rim-lo) 70%) border-box;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 10px 18px -12px var(--glass-sheen);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass-surface {
+    background: var(--surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-color: var(--line);
+    box-shadow: var(--shadow-float);
+  }
+}
+
 /* ---------- 徽章/标签不拆行 ----------
    中文标签只有两三个字，窄容器里会被拆成「在 / 线」两行：卡片高度跟着变、看着像
    布局错乱（真机 406px 视口下「火山方舟 · deepseek-v4.1-flash 在线」就会这样）。

@@ -41,7 +41,7 @@ const dockSegs = computed(() =>
     >
       <div ref="posEl" class="dock-pos">
         <div
-          class="dock-body"
+          class="dock-body glass-surface"
           :class="[form === 'blob' ? 'is-blob' : 'is-bar', { pressing, dragging }]"
           role="region"
           aria-label="正在转写"
@@ -109,6 +109,7 @@ const dockSegs = computed(() =>
   will-change: transform;
 }
 
+/* 材质走全局 .glass-surface（与底部 Dock 同一份定义），这里只留几何与手感 */
 .dock-body {
   position: relative;
   display: flex;
@@ -116,11 +117,6 @@ const dockSegs = computed(() =>
   gap: 10px;
   padding: 8px 12px;
   border-radius: var(--radius-l);
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 0.5px solid var(--line);
-  box-shadow: var(--shadow-float);
   pointer-events: auto;
   touch-action: none;
   user-select: none;
@@ -129,14 +125,6 @@ const dockSegs = computed(() =>
   transition:
     transform var(--dur-fast) var(--ease-standard),
     box-shadow var(--dur-fast) var(--ease-standard);
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .dock-body {
-    background: var(--surface);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 }
 
 .dock-body.is-blob {

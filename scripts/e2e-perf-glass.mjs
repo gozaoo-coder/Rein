@@ -281,6 +281,125 @@ async function main() {
     ok('窄屏底栏不出界', narrow.dock.l >= 0 && narrow.dock.r <= narrow.vw, `dock=${narrow.dock.l}..${narrow.dock.r}`)
     ok('窄屏页签触区高度 ≥ 44', narrow.tab.h >= 44, `高=${narrow.tab.h}`)
 
+    // ---------- 6 真实 Dock：液态玻璃落地（超高档开折射、其余档同一套材质） ----------
+    // 站在主页上测：内容滚到 Dock 底下，折射才有得采（背后若是纯背景，看不出差别）。
+    const dockProbe = `(() => {
+      const nav = document.querySelector('.dock')
+      const navCs = getComputedStyle(nav)
+      const layer = nav.querySelector('.refract-layer')
+      const tab = nav.querySelector('.tab:not(.active)')
+      const r = tab.getBoundingClientRect()
+      return {
+        tier: document.documentElement.dataset.perf,
+        sharedMaterial: nav.classList.contains('glass-surface'),
+        hasLayer: !!layer,
+        layerFilter: layer ? layer.style.backdropFilter : null,
+        layerFill: layer ? getComputedStyle(layer).backgroundColor : null,
+        navBg: navCs.backgroundImage,
+        navOrigin: navCs.backgroundOrigin,
+        bgLayers: (navCs.backgroundImage.match(/linear-gradient\\(/g) ?? []).length,
+        navFilter: navCs.backdropFilter,
+        tabColor: getComputedStyle(tab).color,
+        probe: { name: 'Dock 未选中页签玻璃', x: r.left + 3, y: r.top + r.height / 2 },
+      }
+    })()`
+    const scrollContentUnderDock = `window.scrollTo(0, Math.round(document.documentElement.scrollHeight * 0.55))`
+
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 430, height: 930, deviceScaleFactor: 1, mobile: true })
+    await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
+    await setTier('ultra')
+    await cdp('Page.navigate', { url: `${APP}/#/` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
+    await evalJS(scrollContentUnderDock)
+    await sleep(700)
+    const dockUltra = await evalJS(dockProbe)
+    const dockUltraShot = await shot('dock-ultra')
+    const [duPx] = await sampleAt(dockUltraShot, [dockUltra.probe])
+    const dockUltraRatio = contrast(parseColor(dockUltra.tabColor), duPx.bg)
+
+    ok('超高 · Dock 用共用材质类（与悬浮条同一份定义）', dockUltra.sharedMaterial, `class=${dockUltra.sharedMaterial}`)
+    ok(
+      '超高 · Dock 垫了折射层（与预览页同一个 GlassSurface）',
+      dockUltra.hasLayer && String(dockUltra.layerFilter).includes('url(') && String(dockUltra.layerFilter).includes('glass-filter-'),
+      `layer=${dockUltra.hasLayer} filter=${dockUltra.layerFilter}`,
+    )
+    ok('超高 · 折射层的底沿用高画质档的浓度（0.5）', String(dockUltra.layerFill).includes('0.5'), dockUltra.layerFill)
+    ok(
+      '超高 · nav 不画底也不模糊（底与模糊让给折射层，否则它采到的是自己那层膜）',
+      dockUltra.bgLayers === 1 && (dockUltra.navFilter === 'none' || dockUltra.navFilter === ''),
+      `层=${dockUltra.bgLayers} bg=${dockUltra.navBg} backdrop=${dockUltra.navFilter}`,
+    )
+    ok(
+      '超高 · 受光边留着（画在 border-box 的渐变描边，玻璃的厚度靠它）',
+      dockUltra.navOrigin === 'border-box',
+      `origin=${dockUltra.navOrigin}`,
+    )
+    const dockUltraOverflow = await evalJS(`({ doc: document.documentElement.scrollWidth, vw: window.innerWidth })`)
+    ok(
+      '超高 · 折射层不参与布局（固定定位的 Dock 不该把页面撑出横向溢出）',
+      dockUltraOverflow.doc <= dockUltraOverflow.vw + 1,
+      `doc=${dockUltraOverflow.doc} 视口=${dockUltraOverflow.vw}`,
+    )
+
+    await setTier('high')
+    await evalJS(scrollContentUnderDock)
+    await sleep(700)
+    const dockHigh = await evalJS(dockProbe)
+    const dockHighShot = await shot('dock-high')
+    const [dhPx] = await sampleAt(dockHighShot, [dockHigh.probe])
+    const dockHighRatio = contrast(parseColor(dockHigh.tabColor), dhPx.bg)
+
+    ok(
+      '高画质 · Dock 无折射层、走普通毛玻璃',
+      dockHigh.hasLayer === false && String(dockHigh.navFilter).includes('blur(28px)'),
+      `layer=${dockHigh.hasLayer} backdrop=${dockHigh.navFilter}`,
+    )
+    // 未选中页签的前景是 --text-3（既有设计），这里锁的是「折射不该让它更差」：
+    // 折射层的底若调得太薄，这条会立刻红（真图采像素，不是算合成）
+    ok(
+      `超高 Dock 页签对比度不回退（超高 ${dockUltraRatio.toFixed(2)} ≥ 高画质 ${dockHighRatio.toFixed(2)} − 0.2）`,
+      dockUltraRatio >= dockHighRatio - 0.2,
+      `超高=${dockUltraRatio.toFixed(2)}:1 高画质=${dockHighRatio.toFixed(2)}:1`,
+    )
+    ok('高画质 Dock 页签对比度不下滑基线 ≥ 2.0:1', dockHighRatio >= 2.0, `${dockHighRatio.toFixed(2)}:1`)
+
+    await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
+    await setTier('ultra')
+    await evalJS(scrollContentUnderDock)
+    await sleep(700)
+    const dockUltraDark = await evalJS(dockProbe)
+    const dockUltraDarkShot = await shot('dock-ultra-dark')
+    const [dudPx] = await sampleAt(dockUltraDarkShot, [dockUltraDark.probe])
+    const dockUltraDarkRatio = contrast(parseColor(dockUltraDark.tabColor), dudPx.bg)
+
+    await setTier('high')
+    await evalJS(scrollContentUnderDock)
+    await sleep(700)
+    const dockHighDark = await evalJS(dockProbe)
+    const dockHighDarkShot = await shot('dock-high-dark')
+    const [dhdPx] = await sampleAt(dockHighDarkShot, [dockHighDark.probe])
+    const dockHighDarkRatio = contrast(parseColor(dockHighDark.tabColor), dhdPx.bg)
+
+    // 未选中页签走 --text-3（半透明灰）压在玻璃上，亮暗两色都在 2.4 上下 —— 这是既有设计，
+    // 这里锁的是「折射不该让它更差」与「不低于既有基线」
+    ok(
+      `暗色 · 超高 Dock 页签对比度不回退（超高 ${dockUltraDarkRatio.toFixed(2)} ≥ 高画质 ${dockHighDarkRatio.toFixed(2)} − 0.2）`,
+      dockUltraDarkRatio >= dockHighDarkRatio - 0.2,
+      `超高=${dockUltraDarkRatio.toFixed(2)}:1 高画质=${dockHighDarkRatio.toFixed(2)}:1 · 底 rgb(${dudPx.bg.join(',')})`,
+    )
+    ok('暗色 · 高画质 Dock 页签对比度不下滑基线 ≥ 2.0:1', dockHighDarkRatio >= 2.0, `${dockHighDarkRatio.toFixed(2)}:1`)
+
+    await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
+    await setTier('low')
+    const dockLow = await evalJS(dockProbe)
+    await shot('dock-low')
+    ok(
+      '弱档 · Dock 无折射层也不挂模糊（顶成实底）',
+      dockLow.hasLayer === false && (dockLow.navFilter === 'none' || dockLow.navFilter === ''),
+      `layer=${dockLow.hasLayer} backdrop=${dockLow.navFilter}`,
+    )
+
     const errs = await evalJS('window.__errs ?? []')
     ok('末次运行期无未捕获异常', errs.length === 0, errs.join(' | '))
   } catch (e) {

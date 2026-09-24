@@ -145,7 +145,7 @@ async function onEndPick(value: string): Promise<void> {
     >
       <div ref="posEl" class="dock-pos">
         <div
-          class="dock-body"
+          class="dock-body glass-surface"
           :class="[form === 'blob' ? 'is-blob' : 'is-bar', { pressing, dragging }]"
           role="region"
           aria-label="进行中的运动"
@@ -247,7 +247,9 @@ async function onEndPick(value: string): Promise<void> {
   will-change: transform;
 }
 
-/* body：共享视觉外壳；条形态尺寸由内层内容撑开，方块形态定死 64 */
+/* body：共享视觉外壳；条形态尺寸由内层内容撑开，方块形态定死 64。
+   材质（玻璃底 / 受光边 / 内顶高光 / blur / 投影 / 退化）走全局 .glass-surface ——
+   与底部 Dock 同一份定义，悬浮的这一族看起来才是同一种材料 */
 .dock-body {
   position: relative;
   display: flex;
@@ -255,11 +257,6 @@ async function onEndPick(value: string): Promise<void> {
   gap: 10px;
   padding: 10px 12px;
   border-radius: var(--radius-l);
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 0.5px solid var(--line);
-  box-shadow: var(--shadow-float);
   pointer-events: auto;
   /* 整体是拖拽把手：手势期内不让浏览器接管滚动 / 选中 / 长按菜单 */
   touch-action: none;
@@ -269,14 +266,6 @@ async function onEndPick(value: string): Promise<void> {
   transition:
     transform var(--dur-fast) var(--ease-standard),
     box-shadow var(--dur-fast) var(--ease-standard);
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .dock-body {
-    background: var(--surface);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 }
 
 .dock-body.is-blob {
