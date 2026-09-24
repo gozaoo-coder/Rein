@@ -5,6 +5,7 @@ import { AlertTriangle, Download, Sparkles, X } from 'lucide-vue-next'
 
 import { useToast } from '@/composables/useToast'
 import { useUpdateStore } from '@/stores/update'
+import { notesAboveCurrent } from '@/utils/updateNotes'
 
 /**
  * 启动更新提示：检查到新版本时弹一张明确的卡片（而不是一闪而过的 toast）。
@@ -24,7 +25,10 @@ const { toast } = useToast()
 const starting = ref(false)
 
 const version = computed(() => update.check?.latestVersion ?? '')
-const notes = computed(() => update.check?.notes?.trim() ?? '')
+/** 本机版本：清单里的 currentVersion 优先（与本段说明同一次检查取到的），回落 store 快照 */
+const currentVersion = computed(() => update.check?.currentVersion || update.currentVersion)
+/** 只留比本机高的段落：清单里装的是整份 RELEASE_NOTES.md（见 utils/updateNotes） */
+const notes = computed(() => notesAboveCurrent(update.check?.notes, currentVersion.value))
 const sizeText = computed(() => {
   const n = update.check?.sizeBytes
   if (!n) return ''

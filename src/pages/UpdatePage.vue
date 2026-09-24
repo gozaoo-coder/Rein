@@ -8,6 +8,7 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { useToast } from '@/composables/useToast'
 import { useUpdateStore } from '@/stores/update'
+import { notesAboveCurrent } from '@/utils/updateNotes'
 import type { SourceReport, UpdatePhase, UpdateSettingsPatch, UpdateSource } from '@/types'
 
 /**
@@ -72,6 +73,8 @@ const platformLabel = computed(() => {
 
 const download = computed(() => update.downloadState)
 const check = computed(() => update.check)
+/** 说明只显示比本机高的版本段落：清单里装的是整份 RELEASE_NOTES.md（见 utils/updateNotes） */
+const notes = computed(() => notesAboveCurrent(check.value?.notes, check.value?.currentVersion ?? ''))
 
 const downloadedPercent = computed(() => {
   const d = download.value
@@ -225,7 +228,7 @@ onMounted(async () => {
         <template v-if="check?.mandatory"> · 此版本为必须更新</template>
       </p>
 
-      <p v-if="check?.notes" class="notes">{{ check.notes }}</p>
+      <p v-if="notes" class="notes">{{ notes }}</p>
 
       <p v-if="check?.downgradeBlocked" class="warn">
         <ShieldX :size="14" /> 该源给出的版本低于此前见过的最新版，可能被回放旧版本，已阻止自动更新
