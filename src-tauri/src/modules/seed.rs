@@ -421,8 +421,13 @@ const EXERCISES_JSON: &str = include_str!("../../../resources/exercises.json");
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExerciseSeedFile {
-    /// 生成器写出的全部合法肌群键（与 `exercise_lib::muscles::MUSCLE_KEYS` 必须一致）
+    /// 生成器写出的全部合法肌群键（与 `exercise_lib::muscles::MUSCLE_KEYS` 必须一致）。
+    ///
+    /// **只给漂移单测用**（见本文件末尾的 `muscle_keys_match_backend`）——
+    /// 生产代码不读它：写入路径走 `exercise_lib::muscles::sanitize_muscles` 的白名单，
+    /// 那里已经拦住了未知键。clippy 的 `dead_code` 因此要显式放行。
     #[serde(default)]
+    #[allow(dead_code)]
     muscle_keys: Vec<String>,
     exercises: Vec<ExerciseSeed>,
 }
