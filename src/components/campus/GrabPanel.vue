@@ -11,13 +11,15 @@ import {
   RotateCcw,
   ShieldAlert,
   Sparkles,
+  Stethoscope,
   Trash2,
   Zap,
 } from 'lucide-vue-next'
 
 import GrabResult from '@/components/campus/GrabResult.vue'
+import { campusService } from '@/services/campusService'
 import { grabStatusMeta, idOf, useCourseSelectStore } from '@/stores/courseSelect'
-import type { GrabTask } from '@/types'
+import type { GrabPreflight, GrabTask } from '@/types'
 import { askAiForGrabRescue } from '@/utils/campusAi'
 
 /**
@@ -37,6 +39,34 @@ import { askAiForGrabRescue } from '@/utils/campusAi'
 const store = useCourseSelectStore()
 const now = ref(Date.now())
 let tick: ReturnType<typeof setInterval> | null = null
+
+/* ---------------- 起飞前自检 ----------------
+ *
+ * 抢课最贵的一种失败是「**以为在抢，其实早就放弃了**」：名单没拉到、计划一个班都没匹配上、
+ * 时钟没测准、窗口已经过去 —— 这些在任务列表里都长得像「在等待」。
+ * 所以这里给一个按钮，把每一件「行不行」连同证据一次摆出来。
+ *
+ * 它是**按需触发**的（会打几次网络，和预览一个量级），不自动跑：
+ * 自动跑就等于每分钟替用户做一次全量体检，而绝大多数时候他只想看一眼进度。
+ */
+const preflight = ref<GrabPreflight | null>(null)
+const preflightBusy = ref(false)
+
+async function runPreflight(): Promise<void> {
+  if (preflightBusy.value) return
+  preflightBusy.value = true
+  try {
+    preflight.value = await campusService.grabPreflight()
+  } catch (e) {
+    preflight.value = {
+      ok: false,
+      items: [],
+      summary: e instanceof Error ? e.message : '体检失败',
+    }
+  } finally {
+    preflightBusy.value = false
+  }
+}
 
 /**
  * 页面级的几件事实由页面传进来（服务器时钟、上次刷新时刻、对时偏差、账号、当前窗口）。
@@ -182,11 +212,29 @@ function title(t: GrabTask): string {
   return t.courseName || t.lessonName || `教学班 ${idOf(t.lessonId)}`
 }
 
-/** 一行副标题：课程号 · 第几次尝试 · 教务最近说了什么 */
+/**
+ * 「这一秒为什么没在打」——等待中的任务要有这句话。
+ *
+ * 引擎被拒之后会让那个候选先退开一会儿（冷却），把机会交给组里下一个候选
+ * （见 Rust 侧 `REJECT_COOLDOWN_MS` / `group_lead`）。界面上如果只写「待开抢」，
+ * 用户看到的就是「它明明该在抢却一动不动」—— 而真相是「它在按冷却排队」。
+ */
+function waitText(t: GrabTask): string {
+  if (t.status !== 'waiting' && t.status !== 'running') return ''
+  const ms = (t.nextAt ?? 0) - now.value
+  if (ms <= 0) return ''
+  if (ms < 1000) return '马上重试'
+  const s = Math.ceil(ms / 1000)
+  return s < 60 ? `${s} 秒后重试` : `${Math.ceil(s / 60)} 分钟后重试`
+}
+
+/** 一行副标题：课程号 · 第几次尝试 · 什么时候再动 · 教务最近说了什么 */
 function detail(t: GrabTask): string {
   const bits: string[] = []
   if (t.courseCode) bits.push(t.courseCode)
   if (t.attempts > 0) bits.push(`已尝试 ${t.attempts} 次`)
+  const wait = waitText(t)
+  if (wait) bits.push(wait)
   if (t.lastMessage) bits.push(t.lastMessage)
   return bits.join(' · ')
 }
@@ -350,6 +398,27 @@ function handToAi(): void {
         <ShieldAlert :size="12" />
         引擎跑在 App 进程里：App 被划掉或清理后就不再出手
       </p>
+
+      <!-- 起飞前自检：一行按钮 + 逐项结果。它回答的是「现在这套配置真能抢到吗」，
+           而不是「任务跑到哪一步了」—— 那两件事在出问题时长得一样 -->
+      <div class="preflight">
+        <button class="pf-go" type="button" :disabled="preflightBusy" @click="runPreflight">
+          <Stethoscope :size="13" />
+          {{ preflightBusy ? '正在体检…' : '起飞前自检' }}
+        </button>
+        <span v-if="preflight" class="pf-sum" :class="preflight.ok ? 'ok' : 'bad'">
+          {{ preflight.summary }}
+        </span>
+      </div>
+      <ul v-if="preflight?.items.length" class="pf-list">
+        <li v-for="it in preflight.items" :key="it.key + it.label" :class="it.ok ? 'ok' : 'bad'">
+          <span class="pf-mark" aria-hidden="true">{{ it.ok ? '✓' : '✕' }}</span>
+          <span class="col">
+            <b>{{ it.label }}</b>
+            <em class="t-3">{{ it.detail }}</em>
+          </span>
+        </li>
+      </ul>
 
       <p v-if="props.skew" class="warn" role="status">
         <AlertTriangle :size="14" /> {{ props.skew }}
@@ -585,6 +654,88 @@ function handToAi(): void {
 
 .engine {
   gap: 0 4px;
+}
+
+/* 起飞前自检：按钮与逐项结果。刻意做成「一行小字 + 一个按钮」的份量 ——
+   它是出事时才会去看的东西，不该跟倒计时抢注意力 */
+.preflight {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 2px;
+}
+
+.pf-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.pf-go:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.pf-sum {
+  font-size: var(--fs-micro);
+}
+
+.pf-sum.ok {
+  color: var(--ok, var(--accent-strong));
+}
+
+.pf-sum.bad {
+  color: var(--danger, #c0392b);
+}
+
+.pf-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pf-list li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+
+.pf-list li .col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pf-list li em {
+  font-style: normal;
+  word-break: break-word;
+}
+
+.pf-mark {
+  flex: none;
+  width: 1em;
+  text-align: center;
+}
+
+.pf-list li.ok .pf-mark {
+  color: var(--ok, var(--accent-strong));
+}
+
+.pf-list li.bad .pf-mark {
+  color: var(--danger, #c0392b);
 }
 
 /* T-0 前后换形态：整块板染色 + 描边，余光里也能看出「正在出手」 */

@@ -31,14 +31,17 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|e| format!("无法定位应用数据目录：{e}"))?;
-            let hub = std::sync::Arc::new(modules::kb::worker::KbHub::new(data_dir));
+            let hub = std::sync::Arc::new(modules::kb::worker::KbHub::new(data_dir.clone()));
             hub.start(app.handle().clone());
             app.manage(hub);
 
             // 抢课：任务单落 SQLite，后台线程按服务器时钟开火。
             // 与知识库同形 —— 先 manage 好状态（其中已含任务表）再启动线程，
             // 而且它必须在 db::init 之后，因为要读写同一份数据库。
-            let grab = std::sync::Arc::new(modules::campus::grab::GrabHub::new());
+            // 带上数据目录：教务拉不到名单时，它要用同一目录里那份落盘名单兜底。
+            let grab = std::sync::Arc::new(modules::campus::grab::GrabHub::with_data_dir(
+                data_dir.clone(),
+            ));
             grab.start(app.handle().clone());
             app.manage(grab);
             Ok(())
@@ -262,6 +265,7 @@ pub fn run() {
             modules::campus::commands::campus_grab_intent_add,
             modules::campus::commands::campus_grab_intent_action,
             modules::campus::commands::campus_grab_intent_preview,
+            modules::campus::commands::campus_grab_preflight,
             // campus（救援面：AI 的最后补救 —— 现场快照 / 带会话的任意请求 / 导出可重放脚本）
             modules::campus::commands::campus_rescue_state,
             modules::campus::commands::campus_http,

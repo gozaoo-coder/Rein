@@ -401,6 +401,15 @@ pub struct LessonQuery {
     /// 指定教学班 id 集合时按 id 精确查（引擎用它核对单门课是否还有余量）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ids: Option<Vec<serde_json::Value>>,
+    /// **服务端的资格过滤**：只要「这个学生现在选得了」的那些教学班。
+    ///
+    /// 引擎**故意不设它** —— 抢课恰恰要盯「此刻满员、等别人退课」的班，
+    /// 滤掉就永远发不出去。它留给「先看清能选什么」的场景（真机联调、
+    /// 以及将来做「可选课程预览」时）。2026-09-22 实测：某批次 448 个班里，
+    /// 这个学生真正可选的只有 12 个 —— 不筛的话，绝大多数提交都会被
+    /// 「不符合选课条件组要求」拒掉。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_select: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_field: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -408,6 +417,45 @@ pub struct LessonQuery {
 }
 
 /* ─────────────────────────── 自动抢课（grab） ─────────────────────────── */
+/// `std-count` 里一个教学班的人数：教务回的是 `"已选数-重修数"` 这种字符串
+/// （如 `"118-3"`），见 [`StdCount::parse`]。
+///
+/// 为什么需要它单独一个接口：`query-lesson` 在这套部署上**根本不回 `stdCount`**
+/// （2026-09-22 实测：某批次 448 条教学班全缺），于是「满没满」这件事在名单里
+/// 无从判断 —— `matcher` 里那套「有空位的先出手」也就等于没有。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StdCount {
+    /// 已选人数（字符串的第一段）
+    pub taken: i64,
+    /// 其中重修人数（第二段，可能没有）
+    pub retake: i64,
+}
+
+impl StdCount {
+    /// 解析 `"118-3"` / `"118"` / `"118-3-2"`（多余段忽略）这类写法。
+    ///
+    /// 教务的格式没有文档，所以**能解析就解析、解析不了返回 None** ——
+    /// 宁可不显示名额，也不要显示一个错的数（错的空位数会让人做出错误的取舍）。
+    pub fn parse(raw: &str) -> Option<Self> {
+        let text = raw.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let mut parts = text.split('-');
+        let taken = parts.next()?.trim().parse::<i64>().ok()?;
+        let retake = parts
+            .next()
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .unwrap_or(0);
+        Some(StdCount { taken, retake })
+    }
+
+    /// 用这个人数补上「还剩多少」：`上限 - 已选`。
+    pub fn seat_left(self, limit: Option<i64>) -> Option<i64> {
+        limit.map(|lim| lim - self.taken)
+    }
+}
 
 /// 一条抢课任务的终态集合。非终态的任务会被引擎不断推进。
 pub const GRAB_WAITING: &str = "waiting";
@@ -435,6 +483,11 @@ pub fn grab_is_terminal(status: &str) -> bool {
 pub const PHASE_IDLE: &str = "idle";
 pub const PHASE_SUBMIT: &str = "submit";
 pub const PHASE_POLL: &str = "poll";
+
+/// `GrabTask::request_domain` 的取值：这张受理单在**镜像域**上。
+/// 其余值（含 `None`）都按主域处理 —— 老数据没有这一列，而老数据里的受理号
+/// 只能是主域的（镜像受理号是后加的，且当时从没被正确轮询过）。
+pub const REQUEST_DOMAIN_MIRROR: &str = "mirror";
 
 /// 一条抢课任务（落库 + IPC 同一形状）。
 ///
@@ -512,6 +565,13 @@ pub struct GrabTask {
     /// 而它可能恰恰是抢到课的那一条。
     #[serde(default)]
     pub mirror_request_id: Option<String>,
+    /// `request_id` 这张受理单**属于哪个域**：`"mirror"` = 镜像域，其余（含 NULL）= 主域。
+    ///
+    /// 必须有这一列：两个域是两套系统，受理号**不能跨域查询**。主域提交失败、镜像域
+    /// 受理成功时，若把镜像的受理号当成主域的号去轮询，结果永远查不到 —— 一路空转到
+    /// 轮询上限，然后被当成「结果不明」重投，而真正的结果就在镜像域上没人看。
+    #[serde(default)]
+    pub request_domain: Option<String>,
     #[serde(default)]
     pub last_message: Option<String>,
     /// 下一次该动它的时刻（本机 unix **毫秒**）。引擎用它做「谁最急先管谁」的排序，
@@ -579,6 +639,7 @@ impl GrabTask {
             strike_kind: None,
             request_id: None,
             mirror_request_id: None,
+            request_domain: None,
             last_message: None,
             next_at: 0,
             fire_at: None,
@@ -635,6 +696,12 @@ impl GrabTask {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or(&self.turn_id)
+    }
+
+    /// `request_id` 这张受理单在镜像域上吗？轮询必须照着它选客户端 ——
+    /// 受理号不能跨域查询（见 [`GrabTask::request_domain`]）。
+    pub fn request_on_mirror(&self) -> bool {
+        self.request_domain.as_deref() == Some(REQUEST_DOMAIN_MIRROR)
     }
 }
 
@@ -809,6 +876,51 @@ pub struct GrabPreview {
     /// 所以预览里看到的就是解析时会发生的事。
     #[serde(default)]
     pub ambiguous: Vec<GrabCourseRef>,
+    /// **放宽匹配的提示**：严格档一个都没命中、靠丢掉某个词才凑出结果时，这里是那句话。
+    /// 空 = 严格命中（没放宽）。
+    ///
+    /// 为什么必须显示出来：用户写「羽毛球 星期四」，真抢到的可能是**星期一**的班 ——
+    /// 放宽是为了「零结果」时不至于白等一整个窗口，但它改动了用户写的条件，
+    /// 这一点必须让人看见（`dropped_words` 里就是被丢掉的那些词）。
+    #[serde(default)]
+    pub relax_note: Option<String>,
+    /// 为了命中而丢掉的词（原样，未归一化）。空 = 没丢。
+    #[serde(default)]
+    pub dropped_words: Vec<String>,
+    /// 「这份名单是旧的」——教务拉不到时，引擎会用上一次落盘的那份接着干。
+    /// 非空 = 名单和名额都可能已经变了，界面上要说清楚。
+    #[serde(default)]
+    pub lessons_note: Option<String>,
+}
+
+/// 「起飞前自检」的一项。
+///
+/// 每一项都是**能明确回答「行 / 不行」**的检查，`detail` 是给人看的证据
+/// （教务原话、数字、时间）。含糊的话（「似乎正常」）没有价值 ——
+/// 体检的意义就是在窗口开之前把「不行」找出来。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrabPreflightItem {
+    /// 稳定的键（界面按它归类/折叠）
+    pub key: String,
+    /// 给人看的名字
+    pub label: String,
+    /// 这一项过没过
+    pub ok: bool,
+    /// 证据或原因（总是要写）
+    pub detail: String,
+}
+
+/// 一次体检的结果。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrabPreflight {
+    /// 全部通过才为 true
+    pub ok: bool,
+    /// 逐项结果（顺序即体检顺序）
+    pub items: Vec<GrabPreflightItem>,
+    /// 一句话总结（给人看的那句）
+    pub summary: String,
 }
 
 /// 引擎节奏参数。默认值按「一个学生抢 1–4 门课」标定：

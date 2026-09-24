@@ -143,9 +143,10 @@ pub fn parse_semesters(html: &str) -> Result<Vec<RemoteSemester>> {
 
 fn ok_resp(resp: &HttpResponse, what: &str) -> Result<()> {
     if resp.is_redirect() {
-        return Err(ReinError::Message(format!(
-            "{what} 需要登录：会话已过期，请重新登录教务系统"
-        )));
+        return Err(ReinError::coded(
+            "session_lost",
+            format!("{what} 需要登录：会话已过期，请重新登录教务系统"),
+        ));
     }
     if !resp.is_ok() {
         return Err(ReinError::Message(format!(

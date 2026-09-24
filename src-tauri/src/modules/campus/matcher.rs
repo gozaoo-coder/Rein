@@ -17,6 +17,11 @@
 //! - 排序键：没选过的在前 → 有空位的在前 → 匹配分高的在前 → 剩余名额多的在前 → id 稳定兜底。
 //!   前两项是**抢课语义**而不是相关性：已经选上的不该再抢，有名额的一定比满员的值得先出手。
 //!
+//! 在此之上有一条**放宽阶梯**（[`match_lessons_relaxed`]），但它的规矩很硬：
+//! 严格匹配**一个都没命中**时才启用，而且**永远不丢「像教师名」的词** ——
+//! 用户写了「张伟」而教务那儿没有张伟的班，那是「没找到」，不该退成「随便哪位老师的班」。
+//! 抢错老师的课比没抢到更麻烦（还得去退），这条分寸比多命中几个班重要。
+//!
 //! 全是纯函数：没有网络也没有库，所以它说的每一条都能被单测钉死
 //! （`grab.rs` 的解析器与界面预览共用这一个实现，两边永远不会各说各话）。
 
@@ -442,6 +447,18 @@ pub fn teacher_text(l: &CourseSelectLesson) -> Option<String> {
     (!names.is_empty()).then(|| names.join("、"))
 }
 
+/// 补齐名额之后**重排**一遍命中。
+///
+/// 排序键里的「有空位的先出手」依赖 `std_count`，而名单接口（`query-lesson`）
+/// 在这套部署上**不回它** —— 名额是事后用 `std-count` 单独补上来的
+/// （见 `models::StdCount`）。所以补完必须重排，否则那一步白做。
+///
+/// 与 [`match_lessons`] 用同一个 [`rank_key`]：两处要是各排各的，
+/// 「预览里看到的顺序」与「真出手的顺序」就会不一样。
+pub fn rerank(hits: &mut [LessonHit]) {
+    hits.sort_by_key(rank_key);
+}
+
 /// 命中 → 界面形状（计划候选清单里的一行）。
 pub fn to_match(h: &LessonHit) -> GrabMatch {
     let l = &h.lesson;
@@ -457,25 +474,25 @@ pub fn to_match(h: &LessonHit) -> GrabMatch {
     }
 }
 
-/// 把一批教学班按一句查询排序筛出来。
-///
-/// **空查询返回空列表**（而不是全部）：调用方是「计划解析」与「输入预览」，
-/// 两者都只在该有结果的时候要结果；返回全量只会让一个空输入看起来像「匹配到 200 个班」。
-pub fn match_lessons(query: &str, lessons: &[CourseSelectLesson]) -> Vec<LessonHit> {
-    let tokens: Vec<String> = query
+/// 切词（同时归一化）——「高数 张伟」→ `["高数", "张伟"]`。
+fn tokenize(query: &str) -> Vec<String> {
+    query
         .split_whitespace()
-        .map(|t| normalize(t))
+        .map(normalize)
         .filter(|t| !t.is_empty())
-        .collect();
+        .collect()
+}
+
+/// 用指定的词表做一次**严格**匹配：[`hit_of`] 要求每个词都命中。
+fn match_lessons_with(tokens: &[String], lessons: &[CourseSelectLesson]) -> Vec<LessonHit> {
     if tokens.is_empty() {
         return Vec::new();
     }
-
     let mut hits: Vec<LessonHit> = lessons
         .iter()
         .filter_map(|l| {
             let fields = fields_of(l);
-            let (score, used, hard) = hit_of(&fields, &tokens)?;
+            let (score, used, hard) = hit_of(&fields, tokens)?;
             Some(LessonHit {
                 // 命中的字段按权重降序（fields_of 本来就是那个顺序，去重后仍保持）
                 fields: used,
@@ -485,13 +502,258 @@ pub fn match_lessons(query: &str, lessons: &[CourseSelectLesson]) -> Vec<LessonH
             })
         })
         .collect();
-    hits.sort_by(|a, b| rank_key(a).cmp(&rank_key(b)));
+    hits.sort_by_key(rank_key);
     hits
+}
+
+/// 这次结果是**怎么**匹配出来的。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Relax {
+    /// 每个词都命中（默认档，最可信）
+    Strict,
+    /// 丢掉了「一个班都没命中」的死词（打错的代码、顺手写的时间）
+    DropNoise,
+    /// 还有活词但彼此对不上（「羽毛球 周四」——周四落在别的课上），丢掉了最不挑人的那个
+    DropCommon,
+}
+
+impl Relax {
+    /// 给界面/日志用的一句话。`None` 表示没放宽（严格命中）。
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Relax::Strict => None,
+            Relax::DropNoise => Some("已放宽：忽略了名单里查不到的词"),
+            Relax::DropCommon => Some("已放宽：忽略了太笼统的词"),
+        }
+    }
+}
+
+/// 放宽后的匹配结果。
+pub struct RelaxedMatch {
+    /// 命中（已按抢课语义排好序）
+    pub hits: Vec<LessonHit>,
+    /// 为了命中而**丢掉**的词（原样，未归一化）
+    pub dropped: Vec<String>,
+    pub level: Relax,
+}
+
+/// 一个词在整份名单里的落点：命中多少个班、命中在哪类字段上。
+///
+/// 「命中在哪类字段」是放宽时的**红线**：
+///
+/// - 课名 / 课程代码 / 教师 = **身份**，写了就是在指名道姓，一个都不能丢；
+/// - 上课时间地点 = **偏好**，丢了只是「时间随缘」，课还是那门课。
+struct Coverage {
+    lessons: usize,
+    /// 落在**课程名或代码**上 —— 这是「课还是那门课」的判据，见 [`keeps_the_course`]
+    course: bool,
+    identity: bool,
+}
+
+/// 逐个词算落点。`fields_of` 会被重复构造 —— 只在严格匹配扑空时才走这条路
+/// （正常路径一次都不会到这里），所以不为此建索引。
+fn coverage_of(tokens: &[String], lessons: &[CourseSelectLesson]) -> Vec<Coverage> {
+    tokens
+        .iter()
+        .map(|token| {
+            let mut c = Coverage {
+                lessons: 0,
+                course: false,
+                identity: false,
+            };
+            for l in lessons {
+                let fields = fields_of(l);
+                let mut touched = false;
+                for field in &fields {
+                    let Some(h) = field_hit(field, token) else {
+                        continue;
+                    };
+                    touched = true;
+                    if matches!(h.tag, HIT_COURSE | HIT_CODE) {
+                        c.course = true;
+                    }
+                    if matches!(
+                        h.tag,
+                        HIT_COURSE | HIT_CODE | HIT_TEACHER | HIT_TEACHER_EXACT | HIT_TEACHER_NEAR
+                    ) {
+                        c.identity = true;
+                    }
+                }
+                if touched {
+                    c.lessons += 1;
+                }
+            }
+            c
+        })
+        .collect()
+}
+
+/// 丢掉那些词之后，**剩下的词还认不认得是哪门课**。
+///
+/// 这是「别换一门课」的最后一道闸：写「量子力学 张伟」而名单里没有量子力学时，
+/// 丢掉「量子力学」确实能凑出结果 —— 但那个结果是**张伟的别的课**
+/// （本次就是这么发现这条规则少了：端到端测试里它真去匹配了一门高等数学）。
+/// 用户要的是「张伟的量子力学」，不是「张伟的任何一门课」。
+///
+/// 所以放宽的前提是：丢完之后，至少还有一个词落在**课程名或代码**上。
+/// 「高数 无此条件」能放宽（高数还在），「量子力学 张伟」不能（只剩人名）。
+fn keeps_the_course(tokens: &[String], lessons: &[CourseSelectLesson]) -> bool {
+    coverage_of(tokens, lessons).iter().any(|c| c.course)
+}
+
+/// 名单里所有教师名（放宽时判断「这个词像不像人名」要用）。
+fn all_teacher_names(lessons: &[CourseSelectLesson]) -> Vec<String> {
+    lessons
+        .iter()
+        .flat_map(teacher_names)
+        .map(|n| normalize(&n))
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+/// 这个词**看着像不像一条硬约束**（人名 / 课程代码 / 名字长度）—— 像就不许丢。
+///
+/// 三条判据都是踩出来的：
+///
+/// - **课程代码的形状**（数字 + 字母数字）：写错一位就该是零命中。
+///   已经有测试钉着这条（「大学体育1 000049」必须是零命中，不许退回按课名匹配）——
+///   用户写代码就是为了钉死那一门课，丢了它等于换了门课。
+/// - **人名形状**（2~3 个汉字）：教务上没这位老师，那是「没找到」，
+///   不该退成「这门课随便哪位老师都行」。
+/// - **跟某位老师差一个字**（[`looks_like_teacher`]）：「张玮」对不上「张伟」，
+///   一看就是同一个人打错了 —— 这种词最不能丢。
+fn looks_like_constraint(token: &str, names: &[String]) -> bool {
+    let chars: Vec<char> = token.chars().collect();
+    if chars.is_empty() {
+        return true;
+    }
+    let code_shaped = chars.iter().all(|c| c.is_ascii_alphanumeric())
+        && chars.iter().any(|c| c.is_ascii_digit());
+    let name_shaped = chars.iter().all(|c| !c.is_ascii()) && (2..=3).contains(&chars.len());
+    code_shaped || name_shaped || looks_like_teacher(token, names)
+}
+
+/// 这个词是不是「点名了某位老师」：前缀对上，或者跟某位老师只差一个字。
+fn looks_like_teacher(token: &str, names: &[String]) -> bool {
+    let q: Vec<char> = token.chars().collect();
+    if q.is_empty() {
+        return false;
+    }
+    names.iter().any(|n| {
+        let nc: Vec<char> = n.chars().collect();
+        // 前缀：只打姓、或名字打了一半
+        (nc.len() >= q.len() && nc[..q.len()] == q[..]) || near_miss_name(n, token)
+    })
+}
+
+/// 带**放宽阶梯**的匹配：严格命中不了就逐级退，退到哪一档、丢了哪些词都如实带回来。
+///
+/// 三条边界，都是刻意的：
+///
+/// 1. **严格档一旦有命中，永不放宽**。放宽只用来把「零结果」救成「有结果」，
+///    不许把「已经对了的结果」换成更大的一坨。
+/// 2. **不丢像教师名的词**（[`looks_like_teacher`]）。「张伟」查不到张伟的班，
+///    这是「没找到」，不是「随便哪位老师都行」。
+/// 3. 第二档只丢**一个**词，而且是最不挑人的那个（覆盖面最大）。丢掉最有辨识度的词
+///    等于把用户真正指定的东西扔掉，那不叫放宽，那叫换一门课。
+/// 4. **丢完之后必须还认得是哪门课**（[`keeps_the_course`]）：剩下的词里至少要有一个
+///    落在课程名或代码上。写「量子力学 张伟」而名单里没有量子力学时，
+///    丢掉「量子力学」能凑出结果 —— 但那是**张伟的别的课**。
+///    这条是端到端测试逼出来的：它当时真去匹配了一门高等数学。
+///
+/// 丢词这件事必须被用户看见：返回的 `dropped` 会被写进日志与任务说明
+/// （「已放宽：忽略了…」），预览里也会标出来。
+///
+/// **空查询返回空列表**（而不是全部）：调用方是「计划解析」与「输入预览」，
+/// 两者都只在该有结果的时候要结果；返回全量只会让一个空输入看起来像「匹配到 200 个班」。
+pub fn match_lessons_relaxed(query: &str, lessons: &[CourseSelectLesson]) -> RelaxedMatch {
+    let raw = tokenize(query);
+    let strict = match_lessons_with(&raw, lessons);
+    if !strict.is_empty() || raw.len() < 2 {
+        return RelaxedMatch {
+            hits: strict,
+            dropped: Vec::new(),
+            level: Relax::Strict,
+        };
+    }
+
+    let names = all_teacher_names(lessons);
+    let cov = coverage_of(&raw, lessons);
+
+    // 第一档：丢掉**一个班都没命中、又不像硬约束**的词（「第3周」「大学城校区」这类）。
+    // 注意这里丢的都是**已经不成立**的条件：它一个班都没命中，本来就不可能被满足。
+    let mut keep: Vec<String> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
+    for (i, token) in raw.iter().enumerate() {
+        if cov[i].lessons == 0 && !looks_like_constraint(token, &names) {
+            dropped.push(token.clone());
+        } else {
+            keep.push(token.clone());
+        }
+    }
+    if !dropped.is_empty() && !keep.is_empty() && keeps_the_course(&keep, lessons) {
+        let hits = match_lessons_with(&keep, lessons);
+        if !hits.is_empty() {
+            return RelaxedMatch {
+                hits,
+                dropped,
+                level: Relax::DropNoise,
+            };
+        }
+    }
+
+    // 第二档：剩下的词都命中过东西，但彼此对不上（「羽毛球 周四」——
+    // 周四落在**别的**课的时间地点上，两个词的班没有交集）。
+    // 只丢**纯时间地点**的词（身份词一个都不动），而且丢最不挑人的那个：
+    // 它命中的班最多，说明它区分不出什么；真正要抢的那门课一定命中得最少，永远不会被丢。
+    let live: Vec<usize> = (0..raw.len()).filter(|&i| cov[i].lessons > 0).collect();
+    if live.len() >= 2 {
+        let common = live
+            .iter()
+            .copied()
+            .filter(|&i| !cov[i].identity)
+            .max_by_key(|&i| cov[i].lessons);
+        if let Some(i) = common {
+            let keep2: Vec<String> = keep.iter().filter(|t| **t != raw[i]).cloned().collect();
+            if !keep2.is_empty() && keeps_the_course(&keep2, lessons) {
+                let hits = match_lessons_with(&keep2, lessons);
+                if !hits.is_empty() {
+                    let mut dropped = dropped;
+                    dropped.push(raw[i].clone());
+                    return RelaxedMatch {
+                        hits,
+                        dropped,
+                        level: Relax::DropCommon,
+                    };
+                }
+            }
+        }
+    }
+
+    // 放宽不了就老实说放宽不了：宁可让计划卡片上写着「没匹配到」，
+    // 也不要为了凑出一个结果去丢身份词（那等于替你换了一门课 / 换了个老师）。
+    RelaxedMatch {
+        hits: Vec::new(),
+        dropped: Vec::new(),
+        level: Relax::Strict,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 测试用的匹配入口：走**完整**的放宽阶梯（和引擎、预览同一条路）。
+    /// 绝大多数用例都该严格命中；放宽是另一件要单独钉的事
+    /// （见「放宽阶梯」那一组测试，那里用 [`strict_only`] 直接问严格档）。
+    fn matched(query: &str, lessons: &[CourseSelectLesson]) -> Vec<LessonHit> {
+        match_lessons_relaxed(query, lessons).hits
+    }
+
+    /// **只问严格档**（不放宽）：用来钉「严格档命中不了」这类前提。
+    fn strict_only(query: &str, lessons: &[CourseSelectLesson]) -> Vec<LessonHit> {
+        match_lessons_with(&tokenize(query), lessons)
+    }
 
     fn lesson(id: i64, code: &str, name: &str, teacher: Option<&str>, std: i64, limit: i64) -> CourseSelectLesson {
         serde_json::from_value(serde_json::json!({
@@ -530,22 +792,22 @@ mod tests {
     #[test]
     fn a_written_course_code_is_never_loosened() {
         let ls = two_grades();
-        let hit = match_lessons("大学体育1 000004", &ls);
+        let hit = matched("大学体育1 000004", &ls);
         assert_eq!(names(&hit), vec!["11-000004"], "只该命中大一那门");
 
         // 代码写错一个字 → 零命中（不许拿课名去兜底）
-        let none = match_lessons("大学体育1 000049", &ls);
+        let none = matched("大学体育1 000049", &ls);
         assert!(none.is_empty(), "代码错了就该是零命中，不能退回按课名匹配");
 
         // 只写代码，同样只命中那一门
-        assert_eq!(names(&match_lessons("000006", &ls)), vec!["12-000006"]);
+        assert_eq!(names(&matched("000006", &ls)), vec!["12-000006"]);
     }
 
     /// 年级双开：只写项目名会同时命中两个年级 —— 这正是要在排队前拦下来的情况。
     #[test]
     fn name_only_query_spanning_two_grades_is_flagged() {
         let ls = two_grades();
-        let pool = match_lessons("体育", &ls);
+        let pool = matched("体育", &ls);
         assert_eq!(pool.len(), 2, "两个年级的班都会被这句命中");
 
         let amb = ambiguous_courses("体育", &pool);
@@ -562,7 +824,7 @@ mod tests {
         );
 
         // 补上代码 → 不再是歧义（只剩一门课）
-        let pinned = match_lessons("体育 000004", &ls);
+        let pinned = matched("体育 000004", &ls);
         assert!(ambiguous_courses("体育 000004", &pinned).is_empty());
 
         // 同一门课的多个教学班：代码相同，不算跨课程
@@ -570,7 +832,181 @@ mod tests {
             lesson(1, "000001", "高等数学（上）", Some("张伟"), 1, 2),
             lesson(2, "000001", "高等数学（上）", Some("李娜"), 1, 2),
         ];
-        assert!(ambiguous_courses("高数", &match_lessons("高数", &same)).is_empty());
+        assert!(ambiguous_courses("高数", &matched("高数", &same)).is_empty());
+    }
+
+    /// 放宽阶梯：**严格档有命中就绝不放宽**。
+    /// 放宽只用来把「零结果」救成「有结果」，不许把已经对了的结果换成更大的一坨。
+    #[test]
+    fn relaxation_never_widens_a_hit() {
+        let ls = demo();
+        let m = match_lessons_relaxed("英语", &ls);
+        assert_eq!(m.level, Relax::Strict);
+        assert!(m.dropped.is_empty());
+        assert_eq!(m.hits.len(), 1);
+
+        // 严格命中时，旁边的死词也不许丢 —— 放宽只在零命中时才允许发生
+        for q in ["英语", "英语 赵强", "000031", "英语 李娜"] {
+            let m = match_lessons_relaxed(q, &ls);
+            if !strict_only(q, &ls).is_empty() {
+                assert_eq!(m.level, Relax::Strict, "「{q}」严格档有命中，不该放宽");
+                assert!(m.dropped.is_empty(), "「{q}」不该丢词");
+            }
+        }
+    }
+
+    /// 第一档：丢掉**一个班都没命中**的噪声词（它本来就无法被满足）。
+    #[test]
+    fn dead_noise_tokens_are_dropped_to_rescue_a_query() {
+        let ls = demo();
+        let m = match_lessons_relaxed("英语 大学城校区", &ls);
+        assert_eq!(m.level, Relax::DropNoise, "死词该被丢掉");
+        assert_eq!(m.dropped, vec!["大学城校区".to_string()]);
+        assert_eq!(m.hits.len(), 1, "丢掉噪声后应当命中英语那一个班");
+
+        // 丢掉的是「办不到的条件」，所以结果里不能出现别的课
+        assert_eq!(m.hits[0].lesson.id, serde_json::json!(3));
+    }
+
+    /// **红线**：写了老师就是在指定人 —— 教务上没这位老师，那是「没找到」，
+    /// 不该退成「这门课随便哪位老师都行」。
+    #[test]
+    fn a_name_shaped_token_is_never_dropped() {
+        let ls = demo();
+        // 「张伟」在名单里不存在（有的是「赵强」）
+        let m = match_lessons_relaxed("英语 张伟", &ls);
+        assert!(m.hits.is_empty(), "没有张伟的班，就该老实报没匹配到");
+        assert!(m.dropped.is_empty(), "人名形状的词不许丢");
+
+        // 打错一个字的人名：**近似命中**这条路本来就是为它准备的（张玮 → 张伟），
+        // 所以它不该走到放宽那一步 —— 放宽的红线是「别丢掉这个人名」
+        let with_zhang = vec![
+            lesson(1, "000001", "高等数学（上）", Some("张伟"), 1, 2),
+            lesson(2, "000002", "大学英语1", Some("李娜"), 1, 2),
+        ];
+        let m2 = match_lessons_relaxed("高等数学 张玮", &with_zhang);
+        assert!(m2.dropped.is_empty(), "错字人名不许丢");
+        assert_eq!(m2.level, Relax::Strict, "近似命中是严格档自己就能办的事");
+        assert_eq!(m2.hits.len(), 1, "张玮 → 张伟 靠近似命中落到那个班上");
+        assert!(
+            !m2.hits[0].hard,
+            "近似命中只加分、不独占（`hard` 专指「名字打全了」那种指定）"
+        );
+    }
+
+    /// **红线**：放宽不许把「哪门课」丢掉。
+    ///
+    /// 写「量子力学 张伟」而名单里没有量子力学：丢掉课程名确实能凑出结果，
+    /// 但那是**张伟的别的课**。用户要的不是「张伟的任何一门课」。
+    /// （这条是端到端测试逼出来的：当时它真去匹配了一门高等数学。）
+    #[test]
+    fn a_dropped_course_name_must_not_turn_into_another_course() {
+        let ls = vec![
+            lesson(1, "000001", "高等数学（上）", Some("张伟"), 5, 60),
+            lesson(2, "000001", "高等数学（上）", Some("李娜"), 5, 60),
+        ];
+        // 严格档：量子力学不在名单里 → 零命中
+        assert!(strict_only("量子力学 张伟", &ls).is_empty());
+
+        let m = match_lessons_relaxed("量子力学 张伟", &ls);
+        assert!(
+            m.hits.is_empty() && m.dropped.is_empty(),
+            "丢掉课程名就只剩「张伟的任何一门课」了 —— 宁可说没找到"
+        );
+        assert_eq!(m.level, Relax::Strict, "不该放宽");
+
+        // 而「课程在、噪声不在」是另一回事：课程还在，放宽是对的
+        let ok = match_lessons_relaxed("高数 无此条件", &ls);
+        assert_eq!(ok.level, Relax::DropNoise);
+        assert_eq!(ok.dropped, vec!["无此条件".to_string()]);
+        assert_eq!(ok.hits.len(), 2, "两门高等数学都还在候选里");
+    }
+
+    /// **红线**：课程代码写错一位 = 零命中，不许退回按课名匹配
+    /// （既有测试 `wrong_code_is_not_a_fallback` 钉的就是这条分寸）。
+    #[test]
+    fn a_wrong_course_code_is_not_dropped() {
+        let ls = vec![
+            lesson(1, "000004", "大学体育1", Some("王强"), 5, 10),
+            lesson(2, "000006", "大学体育3", Some("刘敏"), 5, 10),
+        ];
+        let m = match_lessons_relaxed("大学体育1 000049", &ls);
+        assert!(m.hits.is_empty(), "代码错了就该是零命中");
+        assert!(m.dropped.is_empty(), "代码形状的词不许丢");
+    }
+
+    /// 第二档：词都活着但彼此对不上时，丢掉**纯时间地点**的那个（它是偏好，不是身份）。
+    #[test]
+    fn a_place_only_token_can_be_dropped_when_nothing_intersects() {
+        let mut a = lesson(1, "000004", "羽毛球（选项）", Some("王强"), 5, 10);
+        let mut b = lesson(2, "000004", "羽毛球（选项）", Some("刘敏"), 5, 10);
+        // 两个羽毛球班都在星期一；「星期四」只出现在另一门课的时间地点里 → 交集为空
+        a.schedule_groups = vec![group("星期一 第3-4节 体育馆")];
+        b.schedule_groups = vec![group("星期一 第7-8节 体育馆")];
+        let c = {
+            let mut c = lesson(3, "000009", "篮球（选项）", Some("赵强"), 5, 10);
+            c.schedule_groups = vec![group("星期四 第3-4节 篮球场")];
+            c
+        };
+        let ls = vec![a, b, c];
+
+        let zero = strict_only("羽毛球 星期四", &ls);
+        assert!(zero.is_empty(), "星期一的羽毛球班配上星期四，严格档应当零命中");
+        // 「星期四」在篮球那个班的时间地点里 —— 它是**活词**（所以走第二档，而不是当死词丢掉）
+        assert_eq!(
+            strict_only("星期四", &ls).len(),
+            1,
+            "夹具本身要对：星期四得能命中篮球班的时间地点"
+        );
+
+        let m = match_lessons_relaxed("羽毛球 星期四", &ls);
+        assert_eq!(m.level, Relax::DropCommon, "丢掉时间偏好后应当能命中");
+        assert_eq!(m.dropped, vec!["星期四".to_string()]);
+        assert_eq!(m.hits.len(), 2, "丢掉时间偏好后，两个羽毛球班都算命中");
+        assert!(
+            m.hits.iter().all(|h| h
+                .lesson
+                .course
+                .as_ref()
+                .unwrap()
+                .code
+                .as_deref()
+                == Some("000004")),
+            "放宽后不许把别的课（篮球）也算进来"
+        );
+    }
+
+    /// 丢词**必须真的有用**才允许丢：救不回来就一个词都别动。
+    #[test]
+    fn dropping_a_token_must_actually_help() {
+        let mut a = lesson(1, "000004", "羽毛球（选项）", Some("王强"), 5, 10);
+        a.schedule_groups = vec![group("星期一 第1-2节 体育馆")];
+        let b = {
+            let mut b = lesson(2, "000009", "篮球（选项）", Some("赵强"), 5, 10);
+            b.schedule_groups = vec![group("星期二 第3-4节 篮球场")];
+            b
+        };
+        let ls = vec![a, b];
+
+        // 羽毛球 + 两个只属于篮球班的时间地点词：丢掉任意一个都对不上羽毛球 → 一个都不许丢
+        let m = match_lessons_relaxed("羽毛球 星期二 篮球场", &ls);
+        assert!(m.dropped.is_empty(), "救不回来就不该丢词");
+        assert!(m.hits.is_empty());
+        assert_eq!(m.level, Relax::Strict, "没放宽就该是严格档");
+
+        // 而丢一个就能命中时，才允许丢（同上一组测试的另一面）
+        let m2 = match_lessons_relaxed("羽毛球 星期二", &ls);
+        assert_eq!(m2.level, Relax::DropCommon);
+        assert_eq!(m2.hits.len(), 1);
+        assert_eq!(m2.dropped, vec!["星期二".to_string()]);
+    }
+
+    fn group(place: &str) -> super::super::models::ScheduleGroup {
+        serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "dateTimePlace": [{ "dateTime": place, "place": place }],
+        }))
+        .unwrap()
     }
 
     fn names(hits: &[LessonHit]) -> Vec<String> {
@@ -581,58 +1017,58 @@ mod tests {
 
     #[test]
     fn finds_by_contiguous_substring_of_any_field() {
-        let hits = match_lessons("英语", &demo());
+        let hits = matched("英语", &demo());
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].lesson.id, serde_json::json!(3));
         assert_eq!(hits[0].fields, vec![HIT_COURSE]);
 
         // 代码与教师也能搜。教师名打全了就是**精确命中**（见下面的「指定老师」那一组测试）
-        assert_eq!(match_lessons("000031", &demo()).len(), 1);
-        let by_teacher = match_lessons("赵强", &demo());
+        assert_eq!(matched("000031", &demo()).len(), 1);
+        let by_teacher = matched("赵强", &demo());
         assert_eq!(by_teacher.len(), 1);
         assert_eq!(by_teacher[0].fields, vec![HIT_TEACHER_EXACT]);
         // 只打一半（姓氏以外的部分）就退化成普通命中：不是指定，只是匹配上了
-        let partial = match_lessons("赵", &demo());
+        let partial = matched("赵", &demo());
         assert_eq!(partial[0].fields, vec![HIT_TEACHER]);
         assert!(!partial[0].hard);
         // 上课时间地点是低权重字段，但「搜周三」这种用法得能命中
-        assert_eq!(match_lessons("周一", &demo()).len(), 4);
+        assert_eq!(matched("周一", &demo()).len(), 4);
     }
 
     /// 「高数」是这套匹配存在的理由：课程全名里没有这两个字连在一起。
     #[test]
     fn scattered_subsequence_is_what_makes_it_fuzzy() {
-        let hits = match_lessons("高数", &demo());
+        let hits = matched("高数", &demo());
         assert_eq!(names(&hits), vec!["1-000001", "2-000001"], "只该匹配到高等数学的两个班");
         assert_eq!(hits[0].fields, vec![HIT_COURSE]);
         // 连名字都不沾边的不能因为「散落命中」被误收
-        assert!(match_lessons("高英", &demo()).is_empty());
+        assert!(matched("高英", &demo()).is_empty());
     }
 
     #[test]
     fn multiple_tokens_are_anded_and_may_land_on_different_fields() {
         // 一个词落在课程名、另一个落在教师名 —— 这正是「高数 张」该有的行为
-        let hits = match_lessons("高数 张", &demo());
+        let hits = matched("高数 张", &demo());
         assert_eq!(names(&hits), vec!["1-000001"]);
         assert!(hits[0].fields.contains(&HIT_COURSE));
         assert!(hits[0].fields.contains(&HIT_TEACHER));
 
         // 全角空格与半角空格一样切词
-        assert_eq!(names(&match_lessons("高数\u{3000}李", &demo())), vec!["2-000001"]);
+        assert_eq!(names(&matched("高数\u{3000}李", &demo())), vec!["2-000001"]);
         // 任一词落空 = 整体不匹配
-        assert!(match_lessons("高数 不存在", &demo()).is_empty());
+        assert!(matched("高数 不存在", &demo()).is_empty());
     }
 
     /// 排序是抢课语义，不是相关性：**有名额的排满员的前面，选过的沉底**。
     #[test]
     fn ranking_prefers_what_can_actually_be_grabbed() {
-        let hits = match_lessons("高等数学", &demo());
+        let hits = matched("高等数学", &demo());
         assert_eq!(names(&hits), vec!["1-000001", "2-000001"], "有余量的教学班必须先出手");
 
         // 已经选上的沉到底：抢课引擎绝不该再对它动手
         let mut picked = demo();
         picked[0].selected_lesson = Some(serde_json::from_value(serde_json::json!({ "status": "已选中" })).unwrap());
-        let hits = match_lessons("高等数学", &picked);
+        let hits = matched("高等数学", &picked);
         assert_eq!(names(&hits), vec!["2-000001", "1-000001"]);
     }
 
@@ -642,19 +1078,19 @@ mod tests {
         let mut ls = demo();
         ls[0].course.as_mut().unwrap().name_zh = Some("大学英语(一)".into());
         ls[1].course.as_mut().unwrap().name_zh = Some("大学英语 一".into());
-        assert_eq!(match_lessons("大学英语（一）", &ls).len(), 3);
+        assert_eq!(matched("大学英语（一）", &ls).len(), 3);
         // 反向也成立：带空格的查询照样命中不带空格的课名
-        assert_eq!(match_lessons("大学 英语", &ls).len(), 3);
+        assert_eq!(matched("大学 英语", &ls).len(), 3);
     }
 
     #[test]
     fn empty_query_matches_nothing_and_missing_fields_do_not_panic() {
-        assert!(match_lessons("", &demo()).is_empty());
-        assert!(match_lessons("   \u{3000} ", &demo()).is_empty());
+        assert!(matched("", &demo()).is_empty());
+        assert!(matched("   \u{3000} ", &demo()).is_empty());
 
         // 教务缺字段时（真机上批次未开就是这样）不能整批挂掉
         let bare: CourseSelectLesson = serde_json::from_value(serde_json::json!({ "id": 7 })).unwrap();
-        assert!(match_lessons("高数", &[bare]).is_empty());
+        assert!(matched("高数", &[bare]).is_empty());
         assert_eq!(id_text(&serde_json::json!(7)), "7");
         assert_eq!(id_text(&serde_json::json!("7")), "7");
     }
@@ -663,7 +1099,7 @@ mod tests {
     /// 界面靠它显示「会抢哪些班」，所以缺字段时宁可少显示，不能整条挂掉。
     #[test]
     fn hit_translates_into_the_shape_the_ui_shows() {
-        let hits = match_lessons("高数 张", &demo());
+        let hits = matched("高数 张", &demo());
         let m = to_match(&hits[0]);
         assert_eq!(m.course_name.as_deref(), Some("高等数学（上）"));
         assert_eq!(m.course_code.as_deref(), Some("000001"));
@@ -700,7 +1136,7 @@ mod tests {
     /// 不该顺手把「张伟明」的班也拖进志愿组（抢到一门老师不对的课比没抢到更麻烦）。
     #[test]
     fn an_exact_teacher_name_is_a_specification_not_a_hint() {
-        let hits = match_lessons("张伟", &named());
+        let hits = matched("张伟", &named());
         assert_eq!(ids(&hits).len(), 2, "两条都算命中：一个全等、一个子串");
         assert!(hits[0].hard, "张伟 是精确命中");
         assert!(!hits[1].hard, "张伟明 只是子串命中，不是指定");
@@ -713,14 +1149,14 @@ mod tests {
         assert_eq!(ids(&pool), vec![1], "指定了老师就只抢他的班");
 
         // 课程名 + 教师名一起给，同样只留指定那位
-        let hits = match_lessons("高数 张伟", &named());
+        let hits = matched("高数 张伟", &named());
         assert_eq!(ids(&preferred(&hits)), vec![1]);
 
         // 只打了姓：没有精确命中 → 两位张老师都算候选（谁来教都行）。
         // 顺序按「余量多的先出手」，所以这里只比集合，不比先后。
-        let pool = preferred(&match_lessons("高数 张", &named()));
+        let pool = preferred(&matched("高数 张", &named()));
         assert_eq!(ids(&pool), vec![1], "另一位是李娜，不该被「张」捞进来");
-        let mut pool_ids = ids(&preferred(&match_lessons("张", &named())));
+        let mut pool_ids = ids(&preferred(&matched("张", &named())));
         pool_ids.sort();
         assert_eq!(pool_ids, vec![1, 3], "只打姓氏时两位张老师都留着");
     }
@@ -730,7 +1166,7 @@ mod tests {
     #[test]
     fn a_mistyped_teacher_name_falls_back_to_fuzzy() {
         // 张玮 → 张伟（姓对、差一个字）
-        let hits = match_lessons("张玮", &named());
+        let hits = matched("张玮", &named());
         assert_eq!(ids(&hits), vec![1, 3], "张伟 与 张伟明 都算「可能打错了」");
         assert!(hits.iter().all(|h| !h.hard), "近似命中**不是**指定");
         assert_eq!(hits[0].fields, vec![HIT_TEACHER_NEAR]);
@@ -739,12 +1175,12 @@ mod tests {
         assert_eq!(ids(&preferred(&hits)), vec![1, 3]);
 
         // 一个字的错字不该把整个查询打死：课程名那部分仍然照常命中
-        let hits = match_lessons("高数 张玮", &named());
+        let hits = matched("高数 张玮", &named());
         assert_eq!(ids(&preferred(&hits)), vec![1], "只有张伟那条同时满足两个词");
 
         // 但姓氏必须对上 —— 否则「张伟」会命中「李伟」，那是两个人
-        assert!(!match_lessons("张芳", &named()).iter().any(|h| h.hard || h.lesson.id == serde_json::json!(4)));
-        assert!(match_lessons("王芳", &named()).iter().any(|h| h.hard), "全等就是全等");
+        assert!(!matched("张芳", &named()).iter().any(|h| h.hard || h.lesson.id == serde_json::json!(4)));
+        assert!(matched("王芳", &named()).iter().any(|h| h.hard), "全等就是全等");
     }
 
     /// **分在空位之前**：查「张玮」时，满员的「张伟」不能被有余量的「张伟明」
@@ -755,8 +1191,29 @@ mod tests {
             lesson(1, "000001", "高等数学（上）", Some("张伟"), 60, 60), // 满员，但名字更接近
             lesson(2, "000003", "线性代数", Some("张伟明"), 20, 60), // 有余量，但差一个字
         ];
-        let hits = match_lessons("张玮", &ls);
+        let hits = matched("张玮", &ls);
         assert_eq!(ids(&hits), vec![1, 2], "更像的那位先出手，哪怕它是满的");
+    }
+
+    /// 补完名额要**重排**：满员的班必须沉到有名额的后面去。
+    ///
+    /// 真机上 `query-lesson` 不回 `stdCount`，名额是事后用 `std-count` 补的
+    /// （见 `grab::fill_seats`）—— 补完不重排，这一步等于白做。
+    #[test]
+    fn seats_arriving_late_trigger_a_rerank() {
+        // 名单里两个班都没带名额（真机上 query-lesson 就是这样）
+        let mut a = lesson(1, "000001", "高等数学（上）", Some("张伟"), 0, 60);
+        let mut b = lesson(2, "000001", "高等数学（上）", Some("李娜"), 0, 60);
+        a.std_count = None;
+        b.std_count = None;
+        let mut hits = matched("高等数学", &[a, b]);
+        assert_eq!(ids(&hits), vec![1, 2], "没有名额信息时按 id 稳定排序");
+
+        // `std-count` 事后补上：1 号满员、2 号还有余量
+        hits[0].lesson.std_count = Some(60);
+        hits[1].lesson.std_count = Some(1);
+        rerank(&mut hits);
+        assert_eq!(ids(&hits), vec![2, 1], "补完名额要重排：有名额的先出手");
     }
 
     #[test]
@@ -778,7 +1235,7 @@ mod tests {
     #[test]
     fn missing_teacher_info_is_not_an_exact_hit() {
         let bare = vec![lesson(1, "000001", "高等数学（上）", None, 10, 20)];
-        let hits = match_lessons("张伟", &bare);
+        let hits = matched("张伟", &bare);
         assert!(hits.is_empty(), "教务没给教师名时无从匹配，也不该给个空命中");
     }
 }

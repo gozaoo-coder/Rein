@@ -537,6 +537,44 @@ export interface GrabPreview {
    * 「中一个就够」时引擎**不会排队**，会等你补上课程代码 —— 判定与解析共用同一条规则。
    */
   ambiguous?: GrabCourseRef[]
+  /**
+   * **放宽匹配的提示**：严格匹到一个都没有、靠丢掉某个词才凑出结果时，这里是那句话。
+   * 空 = 严格命中（没放宽）。放宽是为了「零结果」时不白等一个窗口，
+   * 但它改动了你写的条件 —— 写「羽毛球 星期四」可能抢到星期一的班，所以必须显示出来。
+   */
+  relaxNote?: string | null
+  /** 为了命中而丢掉的词（原样）。空 = 没丢。 */
+  droppedWords?: string[]
+  /**
+   * 「这份名单是旧的」：教务拉不到时引擎用上一次落盘的那份接着干。
+   * 非空 = 名单和名额都可能已经变了。
+   */
+  lessonsNote?: string | null
+}
+
+/** 起飞前自检的一项 —— 每一项都能明确回答「行 / 不行」，`detail` 是证据 */
+export interface GrabPreflightItem {
+  /** 稳定的键（界面按它归类） */
+  key: string
+  label: string
+  ok: boolean
+  /** 证据或原因（总是有内容） */
+  detail: string
+}
+
+/**
+ * 起飞前自检的结果（`campus_grab_preflight` 返回）。
+ *
+ * 为什么要有它：抢课最贵的一种失败是「**以为在抢，其实早就放弃了**」——
+ * 名单没拉到、计划一个班都没匹配上、时钟没测准、窗口已经过去……
+ * 这些在任务列表里都长得像「在等待」。
+ */
+export interface GrabPreflight {
+  /** 全部通过才为 true */
+  ok: boolean
+  items: GrabPreflightItem[]
+  /** 一句话总结（给人看的那句） */
+  summary: string
 }
 
 /** 加入抢课任务单时一门课要带的信息 */

@@ -23,7 +23,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use crate::error::{ReinError, Result};
 
 use super::http::{CookieJar, Session, SELECT_TIMEOUT};
-use super::models::{AddItem, CourseSelectLesson, CourseSelectTurn, LessonQuery};
+use super::models::{AddItem, CourseSelectLesson, CourseSelectTurn, LessonQuery, StdCount};
 
 /// EAMS 门户里发放选课 SSO 令牌的页面
 const TOKEN_PAGE: &str = "/student/for-std/course-select";
@@ -78,8 +78,65 @@ fn request_id_of(v: &serde_json::Value) -> String {
     }
 }
 
-/// 选课请求体。**字段名逐字对齐 SPA 的构造代码**，所以抽成纯函数并加了单测 ——
-/// 提交链路在本校当前无法真机验证（选课批次未开），这是唯一能钉住它的地方。
+/// assoc 类字段（`studentAssoc` / `courseSelectTurnAssoc` / `lessonAssoc`）要发**数字**。
+///
+/// 2026-09-22 真机实测：这些字段在服务端是 Jackson 的强类型对象，传字符串会被直接
+/// 拒成 500，原文是
+/// `JSON parse error: Can not construct instance of …CourseSelectTurnAssoc:
+/// no String-argument constructor/factory method to deserialize from String value ('1921')`。
+///
+/// 而我们的 id 一路上都是文本（SQLite 列是 TEXT、`GrabTask::turn_id` 是 String、
+/// 前端也可能把 id 当字符串传来），所以**在构造请求体的最后一步**统一还原成数字 ——
+/// 教务的 id 本来就是数字，文本只是我们自己的存储形态。
+///
+/// 非数字文本原样保留：真出现不透明 id 时，猜一个数字比发字符串更糟。
+pub fn assoc_number(text: &str) -> serde_json::Value {
+    let t = text.trim();
+    if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) {
+        if let Ok(n) = t.parse::<i64>() {
+            return serde_json::Value::Number(n.into());
+        }
+        // 超出 i64 的纯数字：仍然按「数字」发出去（不发字符串）
+        if let Ok(n) = serde_json::from_str::<serde_json::Number>(t) {
+            return serde_json::Value::Number(n);
+        }
+    }
+    serde_json::Value::String(text.to_string())
+}
+
+/// 同上，输入本来就是 JSON 值（教学班 id 在库里存的是 `Value`）。
+pub fn assoc_value(v: &serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) => assoc_number(s),
+        other => other.clone(),
+    }
+}
+
+/// 一个 `requestMiddleDto` 的请求体形状。
+///
+/// 逐字对齐 SPA 的构造代码：`{ lessonAssoc, virtualCost, scheduleGroupAssoc[, needAttend] }`，
+/// 其中 `virtualCost` **总是存在**（未启用虚拟钱包时是 null），后两个键在缺省时整个消失
+/// （JS 的 undefined 语义）。assoc 类字段统一走 [`assoc_value`] 还原成数字。
+fn request_dto_body(item: &AddItem) -> serde_json::Value {
+    let mut dto = serde_json::Map::new();
+    dto.insert("lessonAssoc".into(), assoc_value(&item.lesson_assoc));
+    dto.insert(
+        "virtualCost".into(),
+        match item.virtual_cost {
+            Some(v) => serde_json::json!(v),
+            None => serde_json::Value::Null,
+        },
+    );
+    if let Some(group) = &item.schedule_group_assoc {
+        dto.insert("scheduleGroupAssoc".into(), assoc_value(group));
+    }
+    if let Some(attend) = item.need_attend {
+        dto.insert("needAttend".into(), serde_json::Value::Bool(attend));
+    }
+    serde_json::Value::Object(dto)
+}
+
+/// 选课/占位请求体。
 pub fn add_request_body(
     student_id: i64,
     turn_id: &str,
@@ -88,8 +145,8 @@ pub fn add_request_body(
 ) -> serde_json::Value {
     serde_json::json!({
         "studentAssoc": student_id,
-        "courseSelectTurnAssoc": turn_id,
-        "requestMiddleDtos": items,
+        "courseSelectTurnAssoc": assoc_number(turn_id),
+        "requestMiddleDtos": items.iter().map(request_dto_body).collect::<Vec<_>>(),
         "coursePackAssoc": course_pack,
     })
 }
@@ -126,8 +183,8 @@ pub fn drop_predicate_body(
 ) -> serde_json::Value {
     serde_json::json!({
         "studentAssoc": student_id,
-        "courseSelectTurnAssoc": turn_id,
-        "lessonAssocSet": lesson_ids,
+        "courseSelectTurnAssoc": assoc_number(turn_id),
+        "lessonAssocSet": lesson_ids.iter().map(assoc_value).collect::<Vec<_>>(),
     })
 }
 
@@ -145,14 +202,33 @@ pub fn drop_request_body(
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
         "studentAssoc": student_id,
-        "courseSelectTurnAssoc": turn_id,
-        "lessonAssocs": lesson_ids,
+        "courseSelectTurnAssoc": assoc_number(turn_id),
+        "lessonAssocs": lesson_ids.iter().map(assoc_value).collect::<Vec<_>>(),
         "coursePackAssoc": course_pack,
     });
     if confirm_midterm_retake {
         body["confirmMidtermRetake"] = serde_json::Value::Bool(true);
     }
     body
+}
+
+/// 一次 `std-count` 请求最多带多少个 id。
+///
+/// 教务把 id 拼在 query 里（`?lessonIds=1,2,3`），太长会被网关拒；200 个 id
+/// 约 1.4KB，实测安全（抢课项目同一接口用的也是这个量级）。
+pub const STD_COUNT_BATCH: usize = 200;
+
+/// 把教学班 id 切成每批 ≤ `size` 个的字符串组（纯函数，URL 长度这件事只在这里定）。
+///
+/// 空 id 会被丢掉：`lessonIds=,,` 只会让教务回一句没人看得懂的错误。
+pub fn std_count_batches(ids: &[serde_json::Value], size: usize) -> Vec<Vec<String>> {
+    let size = size.max(1);
+    let flat: Vec<String> = ids
+        .iter()
+        .filter_map(scalar_text)
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    flat.chunks(size).map(|c| c.to_vec()).collect()
 }
 
 /// 从 `query-lesson` / `simplest-lessons` 的 `data` 里取出教学班数组。
@@ -210,8 +286,9 @@ impl CourseSelectClient {
         let mut session = Session::new(host, jar);
         let resp = session.get(TOKEN_PAGE)?;
         if resp.is_redirect() {
-            return Err(ReinError::Message(
-                "教务会话已过期，无法获取选课令牌，请先在「课表配置」重新登录".into(),
+            return Err(ReinError::coded(
+                "session_lost",
+                "教务会话已过期，无法获取选课令牌，请先在「课表配置」重新登录",
             ));
         }
         if !resp.is_ok() {
@@ -288,7 +365,17 @@ impl CourseSelectClient {
             )));
         }
         if !resp.is_ok() {
-            return Err(ReinError::Message(format!("选课接口失败：HTTP {}", resp.status)));
+            // 把响应体也带上：教务的 5xx 里往往有一句能直接定位问题的话
+            // （参数名不对、批次状态不对…），只报「HTTP 500」等于什么都没说 ——
+            // 真机联调时正是这一点让一次 500 变成了猜谜。
+            let body = resp.text();
+            let brief: String = body.split_whitespace().collect::<Vec<_>>().join(" ");
+            let brief: String = brief.chars().take(200).collect();
+            return Err(ReinError::Message(if brief.is_empty() {
+                format!("选课接口失败：HTTP {}", resp.status)
+            } else {
+                format!("选课接口失败：HTTP {}：{brief}", resp.status)
+            }));
         }
 
         let raw: serde_json::Value = resp
@@ -461,6 +548,40 @@ impl CourseSelectClient {
         self.get(&format!("{API}/add-drop-response/{student_id}/{request_id}"))
     }
 
+    /// 批量查「已选人数」（`std-count`）。返回 `{教学班id: StdCount}`。
+    ///
+    /// 为什么必须有它：`query-lesson` 在这套部署上**不回 `stdCount`**
+    /// （2026-09-22 实测：448 条教学班里 0 条带这个字段），于是「满没满」在名单里
+    /// 根本判断不了 —— 而抢课的第一排序依据就是「先打有空位的」。
+    ///
+    /// 一次请求最多带 [`STD_COUNT_BATCH`] 个 id（教务按 query 长度收），超额自动分批。
+    /// **不设置 `min_interval` 之外的节奏**：这是只读接口，且只在解析计划时调一次。
+    pub fn std_count(
+        &self,
+        lesson_ids: &[serde_json::Value],
+    ) -> Result<std::collections::HashMap<String, StdCount>> {
+        let mut out = std::collections::HashMap::new();
+        for batch in std_count_batches(lesson_ids, STD_COUNT_BATCH) {
+            let joined = batch.join(",");
+            let v = self.get(&format!("{API}/std-count?lessonIds={joined}"))?;
+            let Some(map) = v.as_object() else { continue };
+            for (id, raw) in map {
+                // 值可能是字符串 `"118-3"`，也可能是数字；认不出来就跳过
+                let count = match raw {
+                    serde_json::Value::String(s) => StdCount::parse(s),
+                    serde_json::Value::Number(n) => {
+                        n.as_i64().map(|taken| StdCount { taken, retake: 0 })
+                    }
+                    _ => None,
+                };
+                if let Some(c) = count {
+                    out.insert(id.trim().to_string(), c);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// 退课意向（`drop-predicate`）：先登记「我想退」，拿 `requestId` 去 [`Self::predicate_response`] 盯。
     pub fn drop_predicate(
         &self,
@@ -593,7 +714,9 @@ mod tests {
             None,
         );
         assert_eq!(body["studentAssoc"], 241250);
-        assert_eq!(body["courseSelectTurnAssoc"], "77");
+        // 批次 id 必须发**数字**：真机上发字符串会被 Jackson 直接拒成 500（见 assoc_number）
+        assert_eq!(body["courseSelectTurnAssoc"], 77);
+        assert!(body["courseSelectTurnAssoc"].is_number());
         assert!(body["coursePackAssoc"].is_null());
         let dto = &body["requestMiddleDtos"][0];
         assert_eq!(dto["lessonAssoc"], 317844);
@@ -631,7 +754,7 @@ mod tests {
         // 这是从 SPA 两处独立的构造代码抄下来的，谁都别想「统一」它们。
         let intend = drop_predicate_body(241250, "77", &[serde_json::json!(1), serde_json::json!(2)]);
         assert_eq!(intend["studentAssoc"], 241250);
-        assert_eq!(intend["courseSelectTurnAssoc"], "77");
+        assert_eq!(intend["courseSelectTurnAssoc"], 77);
         assert_eq!(intend["lessonAssocSet"], serde_json::json!([1, 2]));
         assert!(
             !intend.as_object().unwrap().contains_key("lessonAssocs"),
@@ -648,11 +771,123 @@ mod tests {
         assert!(formal["coursePackAssoc"].is_null());
     }
 
+    /// `std-count` 的解析：真机样本就是这种 `"已选-重修"`（2026-09-22 实测
+    /// `{"317465":"6380-8","317761":"71-0"}`）。名单接口不回 `stdCount`，
+    /// 所以「满没满」全靠这一条把它补回来。
+    #[test]
+    fn std_count_parses_the_schools_dash_format() {
+        assert_eq!(
+            StdCount::parse("6380-8"),
+            Some(StdCount {
+                taken: 6380,
+                retake: 8
+            })
+        );
+        assert_eq!(
+            StdCount::parse("71-0"),
+            Some(StdCount {
+                taken: 71,
+                retake: 0
+            })
+        );
+        // 只给一段时重修按 0 算；多余段忽略
+        assert_eq!(
+            StdCount::parse("42"),
+            Some(StdCount {
+                taken: 42,
+                retake: 0
+            })
+        );
+        assert_eq!(
+            StdCount::parse("42-1-9"),
+            Some(StdCount {
+                taken: 42,
+                retake: 1
+            })
+        );
+        // 认不出来就说认不出来 —— 宁可界面上空着，也不要显示一个错的空位数
+        assert_eq!(StdCount::parse(""), None);
+        assert_eq!(StdCount::parse("满"), None);
+        assert_eq!(StdCount::parse("-3"), None);
+        // 「还剩多少」= 上限 - 已选；上限未知时给不出
+        assert_eq!(StdCount::parse("71-0").unwrap().seat_left(Some(80)), Some(9));
+        assert_eq!(StdCount::parse("71-0").unwrap().seat_left(None), None);
+    }
+
+    /// 分批：每批 ≤ N 个，空 id 丢掉（`lessonIds=,,` 只会让教务回一句没人看得懂的错）。
+    ///
+    /// 200 这个批量在真机上是安全的：实测一次带 450 个 id 也就 3.2KB、HTTP 200、72ms
+    /// （2026-09-22），所以 200 只是给未来的网关长度限制留余量。
+    #[test]
+    fn std_count_batches_split_long_id_lists() {
+        let ids: Vec<serde_json::Value> = (0..450).map(|i| serde_json::json!(i)).collect();
+        let batches = std_count_batches(&ids, STD_COUNT_BATCH);
+        assert_eq!(batches.len(), 3, "450 个 id 按 200 分批该是 3 批");
+        assert_eq!(batches[0].len(), 200);
+        assert_eq!(batches[2].len(), 50);
+
+        let messy = vec![
+            serde_json::json!(1),
+            serde_json::json!(""),
+            serde_json::json!(null),
+            serde_json::json!("319505"),
+        ];
+        assert_eq!(
+            std_count_batches(&messy, 10),
+            vec![vec!["1".to_string(), "319505".to_string()]]
+        );
+        // 空输入不产生空批次（否则会白发一次 `lessonIds=`）
+        assert!(std_count_batches(&[], 10).is_empty());
+    }
+
     #[test]
     fn drop_request_omits_midterm_flag_when_not_needed() {
         // 不涉及期中重修时该键应当整个消失（JS undefined 语义），而不是发一个 false
         let body = drop_request_body(1, "2", &[serde_json::json!(3)], None, false);
         assert!(!body.as_object().unwrap().contains_key("confirmMidtermRetake"));
+    }
+
+    /// **assoc 必须发数字**（2026-09-22 真机教训）：教务用 Jackson 的强类型对象接这些
+    /// 字段，收到字符串直接 500 —— `no String-argument constructor/factory method`。
+    /// 我们的 id 一路都是文本（SQLite 存 TEXT、库里/前端都可能是字符串），
+    /// 所以请求体构造的最后一步必须把它们还原成数字。
+    #[test]
+    fn assoc_fields_are_sent_as_numbers_even_when_we_hold_text() {
+        // 文本 → 数字（这是真机上真实发生的那条路径）
+        assert_eq!(assoc_number("1921"), serde_json::json!(1921));
+        assert!(assoc_number("1921").is_number());
+        assert_eq!(assoc_value(&serde_json::json!("319505")), serde_json::json!(319505));
+        // 数字原样
+        assert_eq!(assoc_value(&serde_json::json!(7)), serde_json::json!(7));
+        // 不透明 id 不许硬猜成数字
+        assert_eq!(assoc_number("abc-1"), serde_json::json!("abc-1"));
+        assert_eq!(assoc_number(""), serde_json::json!(""));
+
+        // 三条写路径都要走这一步
+        let add = add_request_body(
+            1,
+            "1921",
+            vec![AddItem {
+                lesson_assoc: serde_json::json!("319505"),
+                virtual_cost: None,
+                schedule_group_assoc: Some(serde_json::json!("321787")),
+                need_attend: None,
+            }],
+            None,
+        );
+        assert!(add["courseSelectTurnAssoc"].is_number());
+        assert!(add["requestMiddleDtos"][0]["lessonAssoc"].is_number());
+        assert!(
+            add["requestMiddleDtos"][0]["scheduleGroupAssoc"].is_number(),
+            "上课小组 id 也是 assoc 类字段"
+        );
+
+        let intend = drop_predicate_body(1, "1921", &[serde_json::json!("319505")]);
+        assert!(intend["courseSelectTurnAssoc"].is_number());
+        assert!(intend["lessonAssocSet"][0].is_number());
+
+        let formal = drop_request_body(1, "1921", &[serde_json::json!("319505")], None, true);
+        assert!(formal["lessonAssocs"][0].is_number());
     }
 
     /// 占位是抢课的第一步，它的形状必须与正式提交**只差 virtualCost**。

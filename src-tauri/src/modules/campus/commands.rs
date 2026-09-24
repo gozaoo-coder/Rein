@@ -48,20 +48,13 @@ fn now_iso() -> String {
     Utc::now().to_rfc3339()
 }
 
+/// `app_meta` 读写走 `db` 的唯一实现（本模块只留短别名，便于阅读）。
 fn meta_get(conn: &Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| {
-        r.get::<_, String>(0)
-    })
-    .ok()
+    crate::db::meta_get(conn, key)
 }
 
 fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2) \
-         ON CONFLICT(key) DO UPDATE SET value = ?2",
-        rusqlite::params![key, value],
-    )?;
-    Ok(())
+    crate::db::meta_set(conn, key, value)
 }
 
 /* ─────────────────────────── 账号读写 ─────────────────────────── */
@@ -190,9 +183,16 @@ fn require_account(conn: &Connection) -> Result<AccountRow> {
  *   3. 作废选课令牌缓存 —— 那张 SSO JWT 是拿旧会话换的，会话一换它就跟着失效。
  */
 
-/// 错误是不是「会话失效」。文案由 `guet.rs` / `course_select.rs` 统一产出，
-/// 这里只认关键词 —— 与 `grab::verdict_of` 是同一套判据，两边必须一致。
+/// 错误是不是「会话失效」。
+///
+/// 判据以 `ReinError::code() == "session_lost"` 为准（文案产出的源头在
+/// `guet.rs::ok_resp` / `course_select.rs::acquire` / `lesson_search.rs::guard` 已打码）；
+/// 关键词只作兜底 —— 错误被 `format!` 二次包装后码会丢，而这里判错就意味着
+/// 「不会自动重登」，是这条链路上代价最大的误判。
 pub(crate) fn is_session_lost(err: &ReinError) -> bool {
+    if err.code() == "session_lost" {
+        return true;
+    }
     let msg = err.to_string();
     msg.contains("会话已过期") || msg.contains("重新登录") || msg.contains("登录已过期")
 }
@@ -203,10 +203,10 @@ pub(crate) fn is_session_lost(err: &ReinError) -> bool {
 /// 先发一次死 Cookie。树维的登录流程本身要先 GET salt 把新会话建起来，空 jar 是安全的。
 fn relogin(account: &AccountRow) -> Result<CookieJar> {
     let Some(password) = account.saved_password() else {
-        return Err(ReinError::Message(
+        return Err(ReinError::coded(
+            "session_lost",
             "登录状态已过期，且该账号没有保存密码 —— 请到「课表配置」重新登录一次，\
-             勾上「保存密码」以后过期就能自动恢复"
-                .into(),
+             勾上「保存密码」以后过期就能自动恢复",
         ));
     };
     let spec = account.spec()?;
@@ -219,9 +219,10 @@ fn relogin(account: &AccountRow) -> Result<CookieJar> {
         let why = outcome
             .message
             .unwrap_or_else(|| "教务系统拒绝了这次登录".into());
-        return Err(ReinError::Message(format!(
-            "登录状态已过期，自动重新登录失败：{why}"
-        )));
+        return Err(ReinError::coded(
+            "session_lost",
+            format!("登录状态已过期，自动重新登录失败：{why}"),
+        ));
     }
     Ok(session.jar().clone())
 }
@@ -1627,12 +1628,15 @@ pub async fn campus_lesson_search_probe() -> Result<Vec<SchoolDomainProbe>> {
 /// 让界面能说清「是哪个域 404、哪个域连不上」，而不是笼统报一句失败。
 #[tauri::command]
 pub async fn campus_lesson_search(
-    state: State<'_ , AppState>,
-    hub: State<'_, CampusHub>,
+    state: State<'_, AppState>,
     semester_id: i64,
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> Result<LessonSearchOutcome> {
+    // 不收 `hub`：这条路上没有需要缓存的东西。探测结论随回执一起交回前端
+    // （每个域两条请求，一次查询多打四条），而开课查询不是每 2 秒跑一次的东西 ——
+    // 它是用户点一下才跑一次，实打实去探反而保证「看到的就是此刻的实情」。
+    // （抢课引擎不一样，它每 2 秒走一步，所以那里必须缓存，见 `dual_fire_plan`。）
     // 短锁读账号：探测与查询都是网络，绝不能持锁（见文件头那条铁律）。
     let account = {
         let conn = state.db.lock().unwrap();
@@ -2135,6 +2139,7 @@ pub fn campus_grab_task_action(
                 conn.execute(
                     "UPDATE campus_grab_tasks SET status = ?2, phase = 'idle', attempts = 0, \
                      polls = 0, strikes = 0, strike_kind = NULL, request_id = NULL, \
+                     mirror_request_id = NULL, request_domain = NULL, \
                      predicate_done = 0, finished_at = NULL, last_message = '已重新排队', \
                      next_at = ?3 WHERE id = ?1",
                     rusqlite::params![task_id, GRAB_WAITING, Utc::now().timestamp_millis()],
@@ -2259,7 +2264,14 @@ pub async fn campus_grab_intent_preview(
 
     // 名单走引擎那份缓存：几分钟内重复预览不该反复打教务
     let (lessons, _) = grab.lessons_cached(&ctx, &brief.id)?;
-    let hits = matcher::match_lessons(&query, &lessons);
+    // 与引擎解析走**同一个**放宽阶梯：预览里看到的就是真抢时会用的那批班
+    let relaxed = matcher::match_lessons_relaxed(&query, &lessons);
+    let dropped_words = relaxed.dropped.clone();
+    let relax_note = relaxed.level.note().map(str::to_string);
+    let mut hits = relaxed.hits;
+    // 名额要单独补（名单接口不回 stdCount）——与引擎解析走**同一个函数**，
+    // 所以界面上看到的余量就是引擎排序时用的那一份，两边不会各说各话。
+    grab::fill_seats(&grab, &ctx, &mut hits);
     // **预览必须和解析看到同一批班**：指定了老师时只列那位老师的班，
     // 否则「预览里有它、计划里没有」会让人以为哪里漏了。
     let pool = matcher::preferred(&hits);
@@ -2281,11 +2293,236 @@ pub async fn campus_grab_intent_preview(
         matched: hits.len(),
         matches,
         ambiguous,
+        relax_note,
+        dropped_words,
+        lessons_note: grab.lessons_fallback_note(),
     })
 }
 
 /// 预览一次最多回多少行。只是给人看一眼「会抢哪些班」，再多也没人读。
 const PREVIEW_CAP: usize = 30;
+
+/// **起飞前自检**：把「抢课这件事现在到底行不行」一次问清楚。
+///
+/// 为什么值得单独做一遍（而不是让用户从任务列表里猜）：抢课失败最贵的一种
+/// 是「**以为在抢，其实早就放弃了**」—— 名单没拉到、计划一个字都没匹配上、
+/// 时钟偏差没测出来、窗口已经过去了……这些在界面上都长得像「在等待」。
+/// 所以体检的每一项都要给**证据**（教务原话、数字、时刻），
+/// 而只要有一项不过，`ok` 就是 false。
+///
+/// 会打几次网络（换令牌 / 学生 / 批次 / 名单），和预览一个量级；
+/// 但它不该拖慢引擎的节奏 —— 时钟那一项用的是「过期才重采」的既有逻辑。
+#[tauri::command]
+pub fn campus_grab_preflight(
+    state: State<'_, AppState>,
+    hub: State<'_, CampusHub>,
+    grab: State<'_, Arc<grab::GrabHub>>,
+) -> Result<GrabPreflight> {
+    let mut items: Vec<GrabPreflightItem> = Vec::new();
+    let mut push = |key: &str, label: &str, ok: bool, detail: String| {
+        items.push(GrabPreflightItem {
+            key: key.into(),
+            label: label.into(),
+            ok,
+            detail,
+        });
+    };
+
+    // ① 登录态 + 选课令牌 + 我是谁 —— 这三件在同一次调用里就有答案
+    let ctx = match select_context(&state.db, &hub) {
+        Ok(ctx) => {
+            let mut detail = format!("会话有效，选课令牌可用（学生 id={}）", ctx.student_id);
+            if !ctx.mirror_note.trim().is_empty() {
+                detail.push_str(&format!("；{}", ctx.mirror_note.trim()));
+            }
+            push("account", "教务登录与选课令牌", true, detail);
+            Some(ctx)
+        }
+        Err(e) => {
+            push("account", "教务登录与选课令牌", false, e.to_string());
+            None
+        }
+    };
+
+    // ② 批次可见 + 窗口
+    let mut brief: Option<GrabTurnBrief> = None;
+    if let Some(ctx) = &ctx {
+        match grab::resolve_turn(&state, ctx, None) {
+            Ok(Some(b)) => {
+                let when = format!(
+                    "{} ~ {}",
+                    b.window_start.clone().unwrap_or_else(|| "未公布".into()),
+                    b.window_end.clone().unwrap_or_else(|| "未公布".into())
+                );
+                // 关门判断不校时钟偏差（差几秒对「今天还抢不抢」没有影响），与引擎一致
+                let closed = b
+                    .window_end
+                    .as_deref()
+                    .and_then(grab::wall_to_ms)
+                    .map(|end| chrono::Utc::now().timestamp_millis() >= end)
+                    .unwrap_or(false);
+                let ok = b.allow_enter && !closed;
+                let why = if closed {
+                    "（窗口已经结束）"
+                } else if !b.allow_enter {
+                    "（教务还没放行这个批次）"
+                } else {
+                    ""
+                };
+                push(
+                    "turn",
+                    "选课批次",
+                    ok,
+                    format!(
+                        "{}「{}」窗口 {when}{why}",
+                        if ok { "可进入：" } else { "不可进入：" },
+                        b.name.clone().unwrap_or_else(|| b.id.clone())
+                    ),
+                );
+                brief = Some(b);
+            }
+            Ok(None) => push(
+                "turn",
+                "选课批次",
+                false,
+                "教务还没公布选课批次（公布后引擎每分钟会自动看到）".into(),
+            ),
+            Err(e) => push("turn", "选课批次", false, e.to_string()),
+        }
+    }
+
+    // ③ 时钟偏差：这个决定「什么时候出手」，偏了就是白等或误杀
+    let (at, est) = grab::refresh_clock_if_stale(&state, &hub);
+    match est {
+        Some(est) => {
+            let ok = est.uncertainty_ms <= CLOCK_OK_MS;
+            push(
+                "clock",
+                "时钟校准",
+                ok,
+                format!(
+                    "教务与本机相差 {}ms（不确定度 ±{}ms，{} 次采样{}）{}",
+                    est.skew_ms,
+                    est.uncertainty_ms,
+                    est.samples,
+                    if est.samples > 1 { "、取交集" } else { "" },
+                    if ok {
+                        ""
+                    } else {
+                        "（测不准，出手时刻会偏；稍后再测一次）"
+                    }
+                ),
+            );
+        }
+        None => push(
+            "clock",
+            "时钟校准",
+            false,
+            format!("测不出偏差（本机时钟 {}，教务时钟没答上来）", at),
+        ),
+    }
+
+    // ④ 名单 + ⑤ 每条计划的匹配结果
+    if let (Some(ctx), Some(brief)) = (&ctx, &brief) {
+        match grab.lessons_cached(ctx, &brief.id) {
+            Ok((lessons, _)) => {
+                let stale = grab.lessons_fallback_note();
+                push(
+                    "lessons",
+                    "教学班名单",
+                    !lessons.is_empty() && stale.is_none(),
+                    match (&stale, lessons.is_empty()) {
+                        (Some(note), _) => format!("{} 个教学班，但**这份名单是旧的**：{note}", lessons.len()),
+                        (None, true) => "教务回了空名单 —— 引擎现在没有可抢的目标".into(),
+                        (None, false) => format!("{} 个教学班（批次 {}）", lessons.len(), brief.id),
+                    },
+                );
+
+                let conn = state.db.lock().unwrap();
+                let intents = grab::load_intents(&conn, ctx.account_id).unwrap_or_default();
+                drop(conn);
+                if intents.is_empty() {
+                    push(
+                        "plans",
+                        "抢课计划",
+                        false,
+                        "还没有任何计划 —— 没有计划就不会有人出手".into(),
+                    );
+                }
+                for it in intents.iter() {
+                    let relaxed = matcher::match_lessons_relaxed(&it.query, &lessons);
+                    let mut hits = relaxed.hits.clone();
+                    grab::fill_seats(&grab, ctx, &mut hits);
+                    let pool = matcher::preferred(&hits);
+                    let groups = grab::plan_groups(&pool, it.spread);
+                    let seats = groups
+                        .first()
+                        .and_then(|g| g.first())
+                        .and_then(|h| {
+                            h.lesson
+                                .std_count
+                                .zip(h.lesson.limit_count)
+                                .map(|(taken, lim)| lim - taken)
+                        });
+                    let amb = matcher::ambiguous_courses(&it.query, &pool);
+                    let ok = !groups.is_empty() && amb.is_empty();
+                    let detail = if groups.is_empty() {
+                        format!(
+                            "「{}」一个教学班都没匹配到（名单 {} 个班）{}",
+                            it.query,
+                            lessons.len(),
+                            if relaxed.dropped.is_empty() {
+                                String::new()
+                            } else {
+                                format!("；放宽后也不行（丢掉的词：{}）", relaxed.dropped.join("、"))
+                            }
+                        )
+                    } else if !amb.is_empty() {
+                        format!(
+                            "「{}」跨了 {} 门课（{}）—— 引擎不会排队，请补课程代码",
+                            it.query,
+                            amb.len(),
+                            amb.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>().join(" / ")
+                        )
+                    } else {
+                        format!(
+                            "「{}」→ {} 个候选、{} 个志愿组{}",
+                            it.query,
+                            pool.len(),
+                            groups.len(),
+                            match seats {
+                                Some(n) if n > 0 => format!("，首选还剩 {n} 个名额"),
+                                Some(_) => "，**首选已满**（会守着等退课）".into(),
+                                None => "，名额未知（教务没给）".into(),
+                            }
+                        )
+                    };
+                    push("plan", &format!("计划「{}」", it.query), ok, detail);
+                }
+            }
+            Err(e) => push("lessons", "教学班名单", false, e.to_string()),
+        }
+    }
+
+    let ok = items.iter().all(|i| i.ok);
+    let bad: Vec<&GrabPreflightItem> = items.iter().filter(|i| !i.ok).collect();
+    let summary = if ok {
+        format!("全部 {} 项通过 —— 到点就会出手", items.len())
+    } else {
+        format!(
+            "{} 项没过：{}",
+            bad.len(),
+            bad.iter()
+                .map(|i| i.label.clone())
+                .collect::<Vec<_>>()
+                .join("、")
+        )
+    };
+    Ok(GrabPreflight { ok, items, summary })
+}
+
+/// 时钟「测得准」的阈值（毫秒）。超过它就别指望踩准开窗那一秒。
+const CLOCK_OK_MS: i64 = 1_000;
 
 /// 暂停全部 / 恢复全部。抢课途中学生常要临时收手（比如换了网络），
 /// 逐个点太慢，所以给一对批量动作。
@@ -2423,10 +2660,13 @@ fn send_request(
     }
 
     let url = crate::modules::web::commands::validate_url(&p.spec.url)?;
+    // 不跟随重定向：① 这条命令是探针，3xx 本身就是要看到的结论（原样交给模型，
+    // 与同源分支「靠 302 判会话过期」的口径一致）；② 自动跟随会带着白名单外的
+    // 内网地址回来 —— 那是 SSRF 的口子（`validate_url` 只挡得住第一跳）。
     let agent = ureq::AgentBuilder::new()
         .timeout(timeout)
         .user_agent(super::http::USER_AGENT)
-        .redirects(4)
+        .redirects(0)
         .build();
     let mut req = agent.request(&p.spec.method, &url);
     for (k, v) in &p.spec.headers {
@@ -2635,29 +2875,30 @@ pub async fn campus_http(
     // 这正是救援面最常遇到的现场 —— 用户之所以来找 AI，十有八九就是会话怎么都救不回来。
     let lost = resp.status == 302 || (with_token && resp.status == 401);
     let mut healed = false;
-    if same_origin && lost && account.is_some() {
-        let acc = account.as_ref().unwrap();
-        recover_session(&state.db, &hub, acc)?;
-        let fresh = {
-            let conn = state.db.lock().unwrap();
-            require_account(&conn)?
-        };
-        if with_token {
-            token = Some(select_context(&state.db, &hub)?.client.token().to_string());
+    if same_origin && lost {
+        if let Some(acc) = account.as_ref() {
+            recover_session(&state.db, &hub, acc)?;
+            let fresh = {
+                let conn = state.db.lock().unwrap();
+                require_account(&conn)?
+            };
+            if with_token {
+                token = Some(select_context(&state.db, &hub)?.client.token().to_string());
+            }
+            let retried = {
+                let p = prepared.clone();
+                let b = fresh.base_url.clone();
+                let j = CookieJar::from_json(fresh.cookies.as_deref());
+                let t = token.clone();
+                tauri::async_runtime::spawn_blocking(move || send_request(&p, &b, j, t))
+                    .await
+                    .map_err(|e| ReinError::Message(format!("救援请求任务失败：{e}")))??
+            };
+            resp = retried.0;
+            jar_after = retried.1;
+            elapsed_ms = retried.2;
+            healed = true;
         }
-        let retried = {
-            let p = prepared.clone();
-            let b = fresh.base_url.clone();
-            let j = CookieJar::from_json(fresh.cookies.as_deref());
-            let t = token.clone();
-            tauri::async_runtime::spawn_blocking(move || send_request(&p, &b, j, t))
-                .await
-                .map_err(|e| ReinError::Message(format!("救援请求任务失败：{e}")))??
-        };
-        resp = retried.0;
-        jar_after = retried.1;
-        elapsed_ms = retried.2;
-        healed = true;
     }
 
     // 会话可能在响应里被换掉了（`Set-Cookie`）：立刻落库，否则下一次又拿旧的去撞

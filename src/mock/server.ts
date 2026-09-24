@@ -325,7 +325,7 @@ function loadPlans(): void {
 
 /** 种子升级状态（模拟 Rust plan_seed_status）：已应用版本 = 决策版本 */
 function planSeedStatus(): PlanSeedStatus {
-  let applied = 0
+  let applied: number
   try {
     applied = Number(localStorage.getItem(PLAN_SEED_APPLIED_KEY) ?? '0')
   } catch {
@@ -1338,7 +1338,11 @@ export function parseFoodText(text: string): ParsedFoodItem[] {
     if (gramMatch) {
       grams = Number(gramMatch[1])
     } else if (unitMatch && unitMatch[2]) {
-      const count = CN_NUM[unitMatch[1]] ?? Number(unitMatch[1]) ?? 1
+      // CN_NUM 里没有这个词：退回数字解析；都不是数字就按「一份」算
+      // （`Number(x) ?? 1` 是错的 —— Number 只会给 NaN，不会给 null）
+      const cn = CN_NUM[unitMatch[1]] as number | undefined
+      const parsed = Number(unitMatch[1])
+      const count = cn ?? (Number.isFinite(parsed) ? parsed : 1)
       const u = f.units.find((x) => x.name === unitMatch[2])
       grams = Math.round((u?.grams ?? defaultGrams(f)) * count)
     }
@@ -1699,7 +1703,7 @@ interface MockKbFsMove {
 
 /** 路径净化：与 Rust source::sanitize 同一条规则（docs/kb-vfs.md §2） */
 function kbSanitize(raw: string, max: number): string {
-  const bad = /[\/\\:*?"<>|\n\r\t]/
+  const bad = /[/\\:*?"<>|\n\r\t]/
   let out = ''
   for (const ch of raw.trim()) {
     if (out.length >= max) break
@@ -1745,7 +1749,7 @@ function kbNormalizeMediaPath(raw: string, name: string): string {
   if (p.split('/').some((seg) => seg === '..')) throw new Error(`路径不允许包含 ..：${p}`)
   const safeName = kbSanitize(name, 60)
   const last = p.split('/').pop() ?? ''
-  let dir = ''
+  let dir: string
   let base = safeName
   if (last.includes('.')) {
     const cut = p.lastIndexOf('/')
@@ -2494,10 +2498,8 @@ function kbGlobMatch(pattern: string, path: string): boolean {
       '^' +
         pat
           .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .replace(/\*\*/g, '\u0000')
-          .replace(/\*/g, '[^/]*')
-          .replace(/\?/g, '[^/]')
-          .replace(/\u0000/g, '.*') +
+          // 一趟替换：`**` 必须在 `*` 之前判，否则 `.*` 里那个 `*` 会被再替换一次
+          .replace(/\*\*|\*|\?/g, (m) => (m === '**' ? '.*' : m === '*' ? '[^/]*' : '[^/]')) +
         '$',
     )
   if (toRe(pattern).test(path)) return true
@@ -3088,6 +3090,15 @@ interface MockGrabTask {
   awaitWindow: boolean
   /** 占位是否已经交过。不能用 attempts===0 反推 —— 占位落定到正式提交之间它还是 0 */
   predicateDone: boolean
+  /**
+   * mock 内部：手里这张受理单是**占位单**（问 predicate-response）还是正式单。
+   *
+   * 真引擎对应的判据是 `polls_predicate()`：`predicateDone && attempts === 0`。
+   * 这里显式记一位，是为了让 e2e 看到的**状态序列**与真引擎一致 ——
+   * 少这一次「占位受理 → 转正式确认」，就等于把「占位优先」这个模式测成了「直接提交」。
+   * （真机上的时间尺度不压缩，但节奏快慢不是这里要验的东西，见文件头。）
+   */
+  pollingPredicate?: boolean
   status: string
   phase: 'idle' | 'submit' | 'poll'
   attempts: number
@@ -3356,6 +3367,87 @@ interface GrabHit {
 
 const grabRemaining = (l: Record<string, any>): number | null =>
   l.stdCount != null && l.limitCount != null ? l.limitCount - l.stdCount : null
+
+/**
+ * 放宽阶梯（与 Rust 侧 `matcher::match_lessons_relaxed` 同规矩）。
+ *
+ * 三条边界照搬：严格档有命中就不放宽；像人名的词永不丢；第二档只丢一个、
+ * 而且丢的是**只落在时间地点上**的最笼统那个。mock 存在的意义就是「照 Rust 走」——
+ * 两边不一致的 mock 比没有 mock 更坏：它会让界面测试全绿而真机全红。
+ */
+function grabRelaxedMatch(
+  query: string,
+  lessons: Record<string, any>[],
+): { hits: GrabHit[]; dropped: string[]; relaxNote: string | null } {
+  const strictHits = grabMatchLessons(query, lessons)
+  const raw = query
+    .split(/\s+/)
+    .map(grabNormalize)
+    .filter(Boolean)
+  if (strictHits.length || raw.length < 2) {
+    return { hits: strictHits, dropped: [], relaxNote: null }
+  }
+
+  const names = lessons.flatMap((l) =>
+    (grabLessonFields(l).find((f) => f.tag === 'teacher')?.names ?? []).map(grabNormalize),
+  )
+  const looksLikeTeacher = (t: string): boolean => {
+    const q = [...t]
+    return names.some((n) => {
+      const nc = [...n]
+      return (nc.length >= q.length && nc.slice(0, q.length).join('') === q.join('')) || grabNearName(n, t)
+    })
+  }
+  const looksLikeConstraint = (t: string): boolean => {
+    const cs = [...t]
+    const codeShaped = cs.every((c) => /[0-9a-zA-Z]/.test(c)) && cs.some((c) => /[0-9]/.test(c))
+    const nameShaped = cs.every((c) => c.charCodeAt(0) > 0x7f) && cs.length >= 2 && cs.length <= 3
+    return codeShaped || nameShaped || looksLikeTeacher(t)
+  }
+  const coverage = raw.map((token) => {
+    let count = 0
+    let identity = false
+    let course = false
+    for (const l of lessons) {
+      for (const f of grabLessonFields(l)) {
+        const h = grabFieldHit(f, token)
+        if (!h) continue
+        count += 1
+        if (h.tag === 'course' || h.tag === 'code') course = true
+        if (['course', 'code', 'teacher', 'teacherExact', 'teacherNear'].includes(h.tag)) identity = true
+        break
+      }
+    }
+    return { count, identity, course }
+  })
+  /** 丢完之后还认不认得是哪门课（与 Rust 的 `keeps_the_course` 同规矩） */
+  const keepsTheCourse = (tokens: string[]): boolean =>
+    tokens.some((token) =>
+      lessons.some((l) => grabLessonFields(l).some((f) => (f.tag === 'course' || f.tag === 'code') && grabFieldHit(f, token))),
+    )
+
+  // 第一档：丢掉一个班都没命中、又不像硬约束的词
+  const keep = raw.filter((t, i) => !(coverage[i]!.count === 0 && !looksLikeConstraint(t)))
+  const dropped = raw.filter((t, i) => coverage[i]!.count === 0 && !looksLikeConstraint(t))
+  if (dropped.length && keep.length && keepsTheCourse(keep)) {
+    const hits = grabMatchLessons(keep.join(' '), lessons)
+    if (hits.length) return { hits, dropped, relaxNote: '已放宽：忽略了名单里查不到的词' }
+  }
+
+  // 第二档：只剩纯时间地点词彼此对不上时，丢最不挑人的那个
+  const live = raw.map((_, i) => i).filter((i) => coverage[i]!.count > 0)
+  if (live.length >= 2) {
+    const common = live.filter((i) => !coverage[i]!.identity).sort((a, b) => coverage[b]!.count - coverage[a]!.count)[0]
+    if (common != null) {
+      const keep2 = keep.filter((t) => t !== raw[common])
+      const hits = keep2.length && keepsTheCourse(keep2) ? grabMatchLessons(keep2.join(' '), lessons) : []
+      if (hits.length) {
+        return { hits, dropped: [...dropped, raw[common]!], relaxNote: '已放宽：忽略了太笼统的词' }
+      }
+    }
+  }
+  return { hits: [], dropped: [], relaxNote: null }
+}
 
 function grabMatchLessons(query: string, lessons: Record<string, any>[]): GrabHit[] {
   const tokens = query
@@ -3769,8 +3861,13 @@ function grabTick(): void {
         worked = true
         continue
       }
-      // 占位落定 → 转正式确认（这一步不留间隔）
-      if (t.mode === 'predicate' && !t.predicateDone) {
+      // 占位落定 → 转正式确认（这一步不留间隔）。
+      // **判据是「手里这张是占位单」**，与真引擎的 `polls_predicate()` 同义。
+      // 写成 `mode==='predicate' && !predicateDone` 就会永远不成立（占位交上时
+      // predicateDone 已经是 true），于是占位单被当成最终结果、正式的确认请求
+      // 一辈子发不出去 —— 真引擎那边正好也踩过这个坑。
+      if (t.pollingPredicate) {
+        t.pollingPredicate = false
         t.phase = 'submit'
         t.requestId = null
         t.polls = 0
@@ -3850,8 +3947,10 @@ function grabTick(): void {
 
     // ③ 提交一步
     if (t.mode === 'predicate' && !t.predicateDone) {
+      // 占位：只是占住队列位次，**不是**最终提交（正式确认在下一轮）
       t.phase = 'poll'
       t.predicateDone = true
+      t.pollingPredicate = true
       t.requestId = `gp${++grabProbeSeq}`
       t.polls = 0
       t.lastMessage = '已占位，等待教务受理'
@@ -4119,6 +4218,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       } catch (e) {
         throw new Error(
           `浏览器开发环境无法抓取网页（CORS 限制：${e instanceof Error ? e.message : String(e)}），请在 Tauri 桌面端使用 web 工具`,
+          { cause: e },
         )
       }
     }
@@ -6821,7 +6921,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       //    只对非终态生效的话这个场景会随机落空；
       // ② 顺带按在「等窗口公布」上（`probeAt` 推到一小时外），否则引擎下一拍就把它抢走，
       //    「救一个卡住的任务」根本无从演练。
-      if (!!(globalThis as { __REIN_MOCK_CAMPUS_STUCK__?: boolean }).__REIN_MOCK_CAMPUS_STUCK__) {
+      if ((globalThis as { __REIN_MOCK_CAMPUS_STUCK__?: boolean }).__REIN_MOCK_CAMPUS_STUCK__) {
         for (const t of grabTasks) {
           if (t.status === 'paused') continue
           if (GRAB_TERMINAL.has(t.status)) {
@@ -7064,7 +7164,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         throw new Error('教务还没公布选课批次，等它出现后预览会自动可用')
       }
       const lessons = campusDemoLessons()
-      const hits = grabMatchLessons(query, lessons)
+      // 与 Rust 一致：走放宽阶梯（严格匹不到时才丢词），并把丢了什么带回去给界面
+      const relaxed = grabRelaxedMatch(query, lessons)
+      const hits = relaxed.hits
       const pool = grabPreferred(hits)
       return delay({
         turnId: brief.id,
@@ -7075,6 +7177,67 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         matches: pool.slice(0, 30).map(grabMatchDto),
         // 跨课程告警：与解析共用同一条规则（grabAmbiguousCourses）
         ambiguous: grabAmbiguousCourses(query, pool),
+        relaxNote: relaxed.relaxNote,
+        droppedWords: relaxed.dropped,
+        lessonsNote: null,
+      } as T)
+    }
+
+    /**
+     * 起飞前自检（与 Rust 侧 `campus_grab_preflight` 同形）。
+     *
+     * mock 里没有网络与令牌，所以它给的是**结构正确、内容取自当前 mock 状态**的结果：
+     * 界面靠它验证「逐项 + 证据 + 总结」这套呈现，而不是验证教务。
+     */
+    case 'campus_grab_preflight': {
+      const briefs = grabIntentBriefs()
+      const brief = briefs.find((b) => b.allowEnter) ?? briefs[0]
+      const lessons = campusDemoLessons()
+      const items = [
+        {
+          key: 'account',
+          label: '教务登录与选课令牌',
+          ok: !!campusAccount,
+          detail: campusAccount ? '会话有效，选课令牌可用（学生 id=1）' : '还没有绑定教务账号',
+        },
+        {
+          key: 'turn',
+          label: '选课批次',
+          ok: !!brief?.allowEnter,
+          detail: brief
+            ? `可进入：「${brief.name ?? brief.id}」窗口 ${brief.windowStart ?? '未公布'} ~ ${brief.windowEnd ?? '未公布'}`
+            : '教务还没公布选课批次',
+        },
+        {
+          key: 'clock',
+          label: '时钟校准',
+          ok: true,
+          detail: '教务与本机相差 120ms（不确定度 ±200ms，4 次采样、取交集）',
+        },
+        {
+          key: 'lessons',
+          label: '教学班名单',
+          ok: lessons.length > 0,
+          detail: `${lessons.length} 个教学班`,
+        },
+        ...grabIntents.map((it) => {
+          const relaxed = grabRelaxedMatch(String(it.query ?? ''), lessons)
+          const groups = grabPreferred(relaxed.hits)
+          return {
+            key: 'plan',
+            label: `计划「${it.query}」`,
+            ok: groups.length > 0,
+            detail: groups.length
+              ? `「${it.query}」→ ${groups.length} 个候选`
+              : `「${it.query}」一个教学班都没匹配到`,
+          }
+        }),
+      ]
+      const bad = items.filter((x) => !x.ok)
+      return delay({
+        ok: bad.length === 0,
+        items,
+        summary: bad.length ? `${bad.length} 项没过：${bad.map((b) => b.label).join('、')}` : `全部 ${items.length} 项通过 —— 到点就会出手`,
       } as T)
     }
 
@@ -7163,7 +7326,8 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         fullRetryMs: Math.min(120000, Math.max(100, Number(incoming.fullRetryMs) || 5000)),
         backoffMs: Math.min(60000, Math.max(50, Number(incoming.backoffMs) || 1500)),
         maxBackoffMs: Math.min(300000, Math.max(1000, Number(incoming.maxBackoffMs) || 30000)),
-        leadMs: Math.min(5000, Math.max(0, Number(incoming.leadMs) ?? 800)),
+        // 0 是有意义的值（贴着开窗出手），所以不能写成 `|| 800`；坏值/缺省才回落 800
+        leadMs: Math.min(5000, Math.max(0, Number.isFinite(incoming.leadMs) ? incoming.leadMs : 800)),
         maxAttempts: Math.min(100000, Math.max(0, Number(incoming.maxAttempts) || 0)),
         maxPolls: Math.min(200, Math.max(1, Number(incoming.maxPolls) || 15)),
         // 0 是有意义的值（死守），不能用 `|| 0` 兜底写法把它换掉

@@ -308,6 +308,23 @@ async function onReparse(i: GrabIntent): Promise<void> {
       <p v-else-if="hasNearTeacher(preview.matches)" class="note warn">
         教师名没完全对上 —— 这是按「姓相同、最多差一个字」<b>猜</b>的，核对一下上面列出的老师姓名。
       </p>
+
+      <!-- 放宽：严格匹不到、靠丢词才凑出结果。**必须让人看见** ——
+           写的是「羽毛球 星期四」，真抢的可能是星期一的班 -->
+      <p v-if="preview.relaxNote" class="note warn">
+        <AlertTriangle :size="12" />
+        <span>
+          {{ preview.relaxNote }}<template v-if="preview.droppedWords?.length">
+            ：<b>{{ preview.droppedWords.join('、') }}</b></template
+          >。上面是按放宽后的条件匹配的 —— 想按原条件抢，就把那个词改对（或去掉）。
+        </span>
+      </p>
+
+      <!-- 名单是旧的：教务拉不到时引擎会用上一次落盘的那份 —— 名额一定已经变了 -->
+      <p v-if="preview.lessonsNote" class="note warn">
+        <AlertTriangle :size="12" />
+        <span>{{ preview.lessonsNote }}</span>
+      </p>
     </div>
     <p v-else-if="previewError" class="err">{{ previewError }}</p>
 

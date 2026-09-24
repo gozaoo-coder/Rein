@@ -10,6 +10,7 @@ import type {
   CurlExport,
   GrabAction,
   GrabIntent,
+  GrabPreflight,
   GrabPreview,
   GrabSettings,
   GrabState,
@@ -242,6 +243,12 @@ export const campusService = {
   /** 输入预览：这句查询照**教务现在的名单**能匹配到哪些班（顺序就是志愿序） */
   grabIntentPreview: (query: string, turnId?: string | null) =>
     invoke<GrabPreview>('campus_grab_intent_preview', { query, turnId: turnId ?? null }),
+
+  /**
+   * 起飞前自检：登录/令牌/批次/时钟/名单/计划逐项给「行不行」+ 证据。
+   * 会打几次网络（和预览一个量级），所以是**用户按需触发**的动作。
+   */
+  grabPreflight: () => invoke<GrabPreflight>('campus_grab_preflight'),
 
   /* ---------------- 救援面（AI 的最后补救） ----------------
    * 引擎管「一切照常」，这几个命令管「不照常」：教务改了接口、会话怎么都救不回来、

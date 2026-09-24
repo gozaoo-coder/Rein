@@ -112,9 +112,10 @@ impl<'a> LessonSearchClient<'a> {
 /// 非 2xx / 302 都要说人话：302 基本就是会话过期（见 http::Session 不跟随重定向的理由）。
 fn guard(resp: &super::http::HttpResponse, what: &str) -> Result<()> {
     if resp.is_redirect() {
-        return Err(ReinError::Message(format!(
-            "{what}时被重定向到登录页：EAMS 会话已过期，请重新登录"
-        )));
+        return Err(ReinError::coded(
+            "session_lost",
+            format!("{what}时被重定向到登录页：EAMS 会话已过期，请重新登录"),
+        ));
     }
     if !resp.is_ok() {
         return Err(ReinError::Message(format!(

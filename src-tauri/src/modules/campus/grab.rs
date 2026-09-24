@@ -55,6 +55,7 @@ use std::time::Duration;
 
 use chrono::{Local, NaiveDate, NaiveDateTime, TimeZone};
 use rusqlite::{Connection, Row};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -96,6 +97,15 @@ const UNKNOWN_STRIKE_LIMIT: i64 = 8;
 /// 把任务立刻放回队首，真正的节奏交给引擎那唯一的节流闸门（`min_interval_ms`）去管。
 /// 反过来做（连败退避）在抢课里最贵：窗口只有几分钟，退避一次就少几十次机会。
 const BACKPRESSURE_RETRY_MS: i64 = 0;
+/// 被教务拒了一次（满员）之后，这个候选**先退开多久**。
+///
+/// 取 1 秒是搬的抢课项目那份调参（他们对被拒的候选做 1 秒冷却再重匹配）：
+/// 冷却期间出手机会交给组里下一个候选 —— 退课可能发生在任何一个班，
+/// 而死守第一个班时，别的班空出来我们是看不见的。
+///
+/// **必须长于节流间隔**（默认 700ms），否则下一次心跳它就又到点了，等于没退开；
+/// 所以实际用的是 `max(1s, 节流间隔 × 2)`，见 [`absorb_error`]。
+const REJECT_COOLDOWN_MS: i64 = 1_000;
 /// 去 `open-turns` 问「窗口公布了没有」的间隔。分钟级足够 ——
 /// 窗口是教务处按分钟公布的，不是按毫秒。
 const TURN_PROBE_MS: i64 = 60_000;
@@ -196,6 +206,28 @@ pub fn verdict_of(message: &str) -> Verdict {
         return Verdict::SessionLost;
     }
 
+    // ⓪ **服务端说「你的 JSON 我读不懂」**：那是**我们的**写法问题（字段类型/名字不对），
+    //    不是教务崩了。它长得像 5xx（响应码常常就是 500，正文里还带 `Internal Server Error`），
+    //    但重试一万次也是同一个结果 —— 所以必须判在下面那两类「继续打」之前。
+    //
+    //    真出过（2026-09-22 联调）：`courseSelectTurnAssoc` 发成了字符串，Jackson 直接 500，
+    //    引擎把它记成「教务服务器出错（继续重试）」，于是**每一枪都注定失败却永远不停手**，
+    //    而且把责任安在了教务头上。原文：
+    //    `JSON parse error: Can not construct instance of …CourseSelectTurnAssoc:
+    //     no String-argument constructor/factory method to deserialize from String value ('1921')`
+    for kw in [
+        "json parse error",
+        "httpmessagenotreadable",
+        "cannot construct instance",
+        "no string-argument constructor",
+        "cannot deserialize",
+        "notreadable",
+    ] {
+        if m.contains(kw) || m.to_ascii_lowercase().contains(kw) {
+            return Verdict::BadRequest;
+        }
+    }
+
     // ⓪ 先认「对方的毛病」：限流与 5xx 都要**继续打**，而它们的文案里常常带别的词
     //    （「请求过于频繁，请稍后再试」里有「请稍后」；「服务器繁忙」里有「繁忙」），
     //    所以这两类必须判在满员/可重试之前，否则会被兜底吞掉、走上退避那条路。
@@ -277,6 +309,14 @@ pub fn verdict_of(message: &str) -> Verdict {
         "已选中",
         "重复提交",
         "请不要重复",
+        // 「相同教学班只能选一次」是占位回执里的判词（真机实测）：这门课已经在名下，
+        // 再投多少次都是同一句话，必须停 —— 而它在 2026-09-22 之前一直落在「可重试」里，
+        // 白白烧掉 8 次出手机会才判死（那是窗口里最贵的东西）。
+        "只能选一次",
+        // 「不符合选课条件组要求」（真机实测）＝这门课不为本年级/院系/专业开放。
+        // 它是**硬条件**，不会因为多试几次而变，和「无权限」是同一族。
+        "不符合选课条件",
+        "条件组",
         "不在选课时间",
         "选课时间已",
         "选课已结束",
@@ -415,6 +455,21 @@ pub fn window_closed(task: &GrabTask, skew_ms: i64) -> bool {
     }
 }
 
+/// 窗口**正在开放中**吗（开了、且还没关）？
+///
+/// 抢课只在「窗口开着」这段时间里是短兵相接：名额随时可能被人退出来，
+/// 而谁在盯着、盯得多密，决定了那一秒是谁的。窗口外（还没开、已经关）则相反 ——
+/// 打得再快也没有东西可抢，慢一点没有任何代价。
+///
+/// 起点未知（`window_wall` 为空）算**没开**：那正是「还不知道什么时候开」，
+/// 按慢节奏守着的代价最小（`probe_windows` 会去把时刻问出来）。
+pub fn window_open(task: &GrabTask, skew_ms: i64) -> bool {
+    match task.window_wall.as_deref().and_then(wall_to_ms) {
+        Some(start) => now_ms() >= start - skew_ms && !window_closed(task, skew_ms),
+        None => false,
+    }
+}
+
 /* ─────────────────────────── 引擎 ─────────────────────────── */
 
 /// 抢课引擎的把手：挂在 Tauri state 上，命令层通过它叫醒线程 / 读上次的故障。
@@ -430,6 +485,38 @@ pub struct GrabHub {
     last_request: AtomicI64,
     /// 教学班名单缓存（解析计划用）。见 [`GrabHub::lessons_cached`]。
     lessons: Mutex<Option<LessonCache>>,
+    /// 「已选人数」的小缓存：`教学班id -> (取样时刻, 人数)`。见 [`fill_seats`]。
+    ///
+    /// 为什么连这个都要缓存：界面的**预览是逐键触发的**，而名额要单独打一次
+    /// `std-count` —— 不缓存的话，敲一个「高」字就是一次教务请求。
+    seats: Mutex<HashMap<String, (i64, StdCount)>>,
+    /// 名单落盘的位置（`None` = 只缓存在内存里，见 [`GrabHub::with_data_dir`]）。
+    dump_path: Option<std::path::PathBuf>,
+    /// 「现在用的名单是旧的」——只在教务拉不到、改用落盘名单时非空。
+    lessons_stale: Mutex<Option<String>>,
+}
+
+/// 名单落盘的文件名。
+///
+/// 一个文件就够：里面记着**是哪个批次**的（`turn_id`），换批次时整体覆盖 ——
+/// 抢课只看当前批次，旧批次的名单没有留着的价值。
+fn lessons_dump_path(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("campus_lessons.json")
+}
+
+/// 落盘的那份名单（`saved_at` 用来告诉人「这是多久以前的」）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonsDump {
+    /// 哪个批次
+    pub turn_id: String,
+    /// 什么时候拉的（本机 ms）
+    pub saved_at: i64,
+    /// 提交体要用的批次 id（兜底时 `turn_assoc` 也多半打不通，所以一并存下来）
+    #[serde(default)]
+    pub assoc: Option<String>,
+    /// 教学班（原样存教务给的形状，读回来就是 `CourseSelectLesson`）
+    pub lessons: Vec<CourseSelectLesson>,
 }
 
 /// 一份缓存下来的教学班名单。
@@ -442,8 +529,15 @@ struct LessonCache {
 }
 
 impl GrabHub {
-    pub fn new() -> Self {
-        Self::default()
+    /// 名单缓存的落盘目录（应用数据目录）。
+    ///
+    /// 引擎在 `setup` 里拿到它再 manage 进来；不设就是「只缓存在内存里」——
+    /// 行为与落盘版一致，只是重启后不认旧名单。
+    pub fn with_data_dir(dir: std::path::PathBuf) -> Self {
+        Self {
+            dump_path: Some(lessons_dump_path(&dir)),
+            ..Self::default()
+        }
     }
 
     /// 叫醒引擎立刻重算（入队/取消/改设置后调它，界面因此是「即时」的）。
@@ -499,21 +593,52 @@ impl GrabHub {
             has_count: Some(true),
             ..Default::default()
         };
-        let lessons = match ctx.client.query_lesson(ctx.student_id, turn_id, &query) {
-            Ok(l) => l,
-            // 教务若在这个轮次的表单里没有 `hasCount`，整条查询可能被拒。
-            // 名额只是排序的加分项 —— **宁可没有名额，也不能拿不到名单**。
-            Err(e)
-                if !matches!(
+        let fresh = ctx
+            .client
+            .query_lesson(ctx.student_id, turn_id, &query)
+            .or_else(|e| {
+                // 教务若在这个轮次的表单里没有 `hasCount`，整条查询可能被拒。
+                // 名额只是排序的加分项 —— **宁可没有名额，也不能拿不到名单**。
+                if matches!(
                     verdict_of(&e.to_string()),
                     Verdict::TokenRefresh | Verdict::SessionLost
-                ) =>
-            {
-                ctx.client
-                    .query_lesson(ctx.student_id, turn_id, &LessonQuery::default())?
+                ) {
+                    Err(e)
+                } else {
+                    ctx.client
+                        .query_lesson(ctx.student_id, turn_id, &LessonQuery::default())
+                }
+            });
+
+        let lessons = match fresh {
+            Ok(l) => l,
+            Err(e) => {
+                // **兜底**：教务答不上来时，用上一次落盘的名单接着干。
+                // 这不是「优先读缓存」—— 新鲜名单永远优先；只有拉不到时才用它，
+                // 而且要在界面上说清这是旧的（名额一定变了，见 `lessons_fallback_note`）。
+                let Some(dump) = self.load_lessons_dump(turn_id) else {
+                    return Err(e);
+                };
+                let age_min = (now_ms() - dump.saved_at).max(0) / 60_000;
+                let note = format!(
+                    "教务拉不到名单（{e}），正在用 {age_min} 分钟前落盘的那份（名额可能已变）"
+                );
+                println!("[名单] {note}");
+                if let Ok(mut slot) = self.lessons_stale.lock() {
+                    *slot = Some(note);
+                }
+                // 用旧名单里的批次 id：这条路上 `turn_assoc` 多半也打不通，
+                // 而它正是提交体要用的那个值（拿不到就退化成 turn_id）。
+                let assoc = dump
+                    .assoc
+                    .clone()
+                    .unwrap_or_else(|| ctx.client.turn_assoc(ctx.student_id, turn_id));
+                return Ok((dump.lessons, Some(assoc)));
             }
-            Err(e) => return Err(e),
         };
+        if let Ok(mut slot) = self.lessons_stale.lock() {
+            *slot = None;
+        }
         let assoc = ctx.client.turn_assoc(ctx.student_id, turn_id);
 
         if let Ok(mut guard) = self.lessons.lock() {
@@ -524,7 +649,58 @@ impl GrabHub {
                 assoc: Some(assoc.clone()),
             });
         }
+        self.save_lessons_dump(turn_id, &lessons, Some(&assoc));
         Ok((lessons, Some(assoc)))
+    }
+
+    /// 「现在用的名单是不是旧的」——给界面与体检用。`None` = 用的是新鲜名单。
+    pub fn lessons_fallback_note(&self) -> Option<String> {
+        self.lessons_stale.lock().ok().and_then(|n| n.clone())
+    }
+
+    /// 把这份名单**落盘**（原子写：先写临时文件再改名）。
+    ///
+    /// 为什么要落盘：教务的名单接口在开窗前后最忙，502/超时都见过；
+    /// 而「上一次拉到的名单」能让引擎在那一刻**照样解析出该抢哪些班**，
+    /// 只是名额数字要当作过期的（见 [`Self::load_lessons_dump`] 的说明）。
+    ///
+    /// 写失败**只记不报**：落盘是加固措施，不能因为它没写成而挡住解析。
+    fn save_lessons_dump(&self, turn_id: &str, lessons: &[CourseSelectLesson], assoc: Option<&str>) {
+        let Some(path) = self.dump_path.as_ref() else {
+            return;
+        };
+        let dump = LessonsDump {
+            turn_id: turn_id.to_string(),
+            saved_at: now_ms(),
+            assoc: assoc.map(str::to_string),
+            lessons: lessons.to_vec(),
+        };
+        let Ok(text) = serde_json::to_string(&dump) else {
+            return;
+        };
+        let tmp = path.with_extension("json.tmp");
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&tmp, text).is_ok() {
+            // 改名是原子的：不会留下一个「写了一半的名单」
+            if let Err(e) = std::fs::rename(&tmp, path) {
+                println!("[名单] 落盘失败（不影响抢课）：{e}");
+            }
+        }
+    }
+
+    /// 读回上一次落盘的名单（**只认同一个批次**）。
+    ///
+    /// 什么时候用它：**只是拉不到新名单时的兜底**，绝不优先于新鲜名单 ——
+    /// 预先抄下来的 `lessonAssoc` 赌的是「名单没变过」，而抢课偏偏就是
+    /// 拿这个去赌，所以这里只在教务答不上来时用，并且调用方要把
+    /// 「这是几分钟前的名单」说出来（名额尤其会变）。
+    pub fn load_lessons_dump(&self, turn_id: &str) -> Option<LessonsDump> {
+        let path = self.dump_path.as_ref()?;
+        let text = std::fs::read_to_string(path).ok()?;
+        let dump: LessonsDump = serde_json::from_str(&text).ok()?;
+        (dump.turn_id == turn_id && !dump.lessons.is_empty()).then_some(dump)
     }
 
     /// 启动后台线程。与 `KbHub::start` 同形：先 manage 好状态再调它。
@@ -703,13 +879,12 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
         return Ok(Duration::from_millis(IDLE_WAIT_MS as u64));
     }
 
-    // ── 服务器时钟偏差（缓变量，30 秒一次；网络失败就沿用旧值）
-    let (skew_ms, _) = sample_clock(app, &state, &campus);
-
     // ── 挑一个「已经到点」的任务：谁最急先管谁
     let now = now_ms();
     let mut best: Option<(i64, usize)> = None;
     let mut soonest = i64::MAX;
+    // 判断「到点」要用偏差，所以这里先读缓存里那份（不采样）—— 采样的位置见下面那条分支
+    let (skew_ms, _) = cached_clock(&state);
     for (i, t) in tasks.iter().enumerate() {
         // 志愿组里还没轮到它：不出手，**也不参与「谁最急」** ——
         // 否则它会把自己算成 soonest，让引擎一直为它空醒。
@@ -731,6 +906,10 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     }
 
     let Some((_, idx)) = best else {
+        // ── 没有任务等着出手：**这才是采样时钟的时机**。
+        //    有任务等着出手时（上面那条分支）一次采样要白占半秒，而那半秒正是
+        //    开窗那一瞬间的出手时机 —— 所以偏差只在等待期更新，出手时读缓存。
+        refresh_clock_if_stale(&state, &campus);
         // 都还没到点：睡到最近的那个时刻，但别超过 MAX_WAIT_MS
         let delta = (soonest - now).max(0);
         let wait = if delta <= APPROACH_MS {
@@ -803,6 +982,34 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     ))
 }
 
+/// 哪些任务该因为「批次被撤下」收手。
+///
+/// 判据是**两次探测之间的差**，而不是一次结果：
+///
+/// - 上一轮列表里有这个批次，这一轮没有了 → 真的撤下了；
+/// - 上一轮也没有 → 那是「还没公布」，继续等（提前一晚排的课就是这样）；
+/// - 这一轮列表是空的 → 只是「没见过的批次都不算撤下」，避免教务偶发空列表
+///   把用户所有的任务一次性判死。
+///
+/// 另外**只收手上没有受理单的**：已经投出去的那些要先把结果核对完
+/// （见模块头第 2 条）—— 把一张可能已经中了的单子当失败丢掉，是最亏的一种错。
+fn withdrawn_tasks<'a>(
+    tasks: &'a [GrabTask],
+    previous: &[GrabTurnBrief],
+    briefs: &[GrabTurnBrief],
+) -> Vec<&'a GrabTask> {
+    tasks
+        .iter()
+        .filter(|t| {
+            !grab_is_terminal(&t.status)
+                && t.status != GRAB_PAUSED
+                && t.request_id.is_none()
+                && previous.iter().any(|b| b.id == t.turn_id)
+                && !briefs.iter().any(|b| b.id == t.turn_id)
+        })
+        .collect()
+}
+
 /// 去 `open-turns` 把「窗口什么时候开」问出来，填进那些还在等的任务。
 ///
 /// 这一步是「提前预设」能成立的关键：教务处很少一次就把窗口时间给全，
@@ -813,10 +1020,33 @@ fn probe_windows(
     ctx: &super::commands::SelectContext,
     tasks: &[GrabTask],
 ) -> Result<()> {
+    // 上一轮探测到的批次列表：**用来分辨「还没公布」与「被撤下了」**。
+    // 只靠一次「列表里没有它」判死太险 —— 教务偶尔会回一份空列表，
+    // 那不该被读成「你的课被撤了」。上架过、现在不在，才是真的撤下。
+    let previous = {
+        let conn = state.db.lock().unwrap();
+        read_turns(&conn)
+    };
     // 强制拉一次：这个调用点本来就是「到点了，去问一次」。
     // 计划解析走的是 [`turn_briefs`]，同一个一分钟内不会再打一遍教务。
     let briefs = fetch_turn_briefs(state, ctx)?;
     let conn = state.db.lock().unwrap();
+
+    // **收手条件**：批次上架过、现在从 `open-turns` 里消失了 —— 教务处把它撤下 / 提前关了。
+    // 这时窗口的墙上时间已经不能作数（它是撤下前的说法），继续守着只会白等。
+    for t in withdrawn_tasks(tasks, &previous, &briefs) {
+        let who = t
+            .turn_name
+            .clone()
+            .unwrap_or_else(|| t.turn_id.clone());
+        let mut row = t.clone();
+        finish(
+            &mut row,
+            GRAB_FAILED,
+            &format!("批次「{who}」已从教务的选课列表里消失（多半被提前关闭或撤下），已停止"),
+        );
+        save_task(&conn, &row)?;
+    }
 
     for t in tasks
         .iter()
@@ -950,9 +1180,9 @@ fn act(
     task.queued_at.get_or_insert_with(now_ms);
 
     if task.phase == PHASE_POLL && task.request_id.is_some() {
-        poll(ctx, settings, task);
+        poll(ctx, settings, task, skew_ms);
     } else {
-        submit(ctx, settings, task);
+        submit(ctx, settings, task, skew_ms);
     }
 }
 
@@ -964,6 +1194,70 @@ fn act(
 /// （真出过这个 bug，是 `scripts/e2e-auto-grab.mjs` 逮到的。）
 fn needs_predicate(task: &GrabTask) -> bool {
     task.mode == "predicate" && !task.predicate_done
+}
+
+/// 手上这张受理单是**占位单**（该问 `predicate-response`）还是正式单（`add-drop-response`）？
+///
+/// 两个条件缺一不可：占位交过（`predicate_done`）**且**正式提交还没发生（`attempts == 0`）。
+///
+/// 这里和 [`needs_predicate`] 是**互补判断**，曾经写反成「`needs_predicate` 为真时才是占位单」——
+/// 而占位交完 `predicate_done` 就为真了，于是占位单被拿去问 `add-drop-response`：
+/// 那个接口不认识占位号，永远回空，任务一路空转到轮询上限才重投。
+/// 后果不是少一次请求，而是**占位优先模式整整慢半分钟**（`max_polls` 次 × 轮询间隔），
+/// 中间那句「占位成功，正在正式确认」成了永远走不到的死分支。
+fn polls_predicate(task: &GrabTask) -> bool {
+    task.mode == "predicate" && task.predicate_done && task.attempts == 0
+}
+
+/// 受理单落在哪个域上。见 [`GrabTask::request_domain`]：**受理号不能跨域查询**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RidDomain {
+    Primary,
+    Mirror,
+}
+
+/// 一次提交的收成：跟踪哪张受理号、它在哪个域、另一条单子（如果有）。
+#[derive(Debug, Clone)]
+struct SubmitReceipt {
+    rid: String,
+    domain: RidDomain,
+    /// 另一条单子的受理号，必定在**对面**那个域上（镜像域或主域）。
+    other: Option<String>,
+}
+
+/// 两张受理号里**该跟踪哪一张**。
+///
+/// 主域优先：那是账号自己的域，Cookie 与令牌都是为它准备的。主域没有受理号时
+/// 才轮到镜像域 —— 但那时必须把「它在镜像域」一起交出去（[`RidDomain::Mirror`]），
+/// 否则轮询会拿镜像的号去问主域，而那个号在主域上不存在。
+///
+/// 抽成纯函数是因为这是「受理号不能跨域查询」的唯一裁决点：挑错域的代价是
+/// **一路空转到轮询上限、把已经到手的名额当失败重投**，而那个场景（主域被拒、
+/// 镜像域受理成功）恰恰只在真机上才出现，不抽出来就没有能钉住它的测试。
+fn pick_receipt(primary: &str, mirror: &str) -> Option<SubmitReceipt> {
+    match (primary.is_empty(), mirror.is_empty()) {
+        (false, _) => Some(SubmitReceipt {
+            rid: primary.to_string(),
+            domain: RidDomain::Primary,
+            other: (!mirror.is_empty()).then(|| mirror.to_string()),
+        }),
+        (true, false) => Some(SubmitReceipt {
+            rid: mirror.to_string(),
+            domain: RidDomain::Mirror,
+            other: None,
+        }),
+        (true, true) => None,
+    }
+}
+
+/// 把一张受理单记到任务上（两个调用点：占位与正式提交）。
+fn record_receipt(task: &mut GrabTask, receipt: &SubmitReceipt) {
+    task.request_id = Some(receipt.rid.clone());
+    task.mirror_request_id = receipt.other.clone();
+    task.request_domain = match receipt.domain {
+        RidDomain::Mirror => Some(REQUEST_DOMAIN_MIRROR.to_string()),
+        RidDomain::Primary => None,
+    };
 }
 
 /// **两个域都发**：把同一份提交同时打向主域与镜像域，取先成功的那个。
@@ -981,7 +1275,7 @@ fn submit_both(
     items: &[AddItem],
     turn: &str,
     predicate: bool,
-) -> Result<(String, Option<String>)> {
+) -> Result<SubmitReceipt> {
     let call = |client: &CourseSelectClient| -> Result<String> {
         if predicate {
             client.add_predicate(ctx.student_id, turn, items.to_vec(), None)
@@ -999,10 +1293,9 @@ fn submit_both(
         .and_then(|r| r.as_ref().ok().cloned())
         .unwrap_or_default();
 
-    match (rid.is_empty(), rid2.is_empty()) {
-        (false, _) => Ok((rid, (!rid2.is_empty()).then_some(rid2))),
-        (true, false) => Ok((rid2, None)),
-        (true, true) => {
+    match pick_receipt(&rid, &rid2) {
+        Some(receipt) => Ok(receipt),
+        None => {
             // 两边都没成：把两边的原话合起来，别只报一边
             let mut msgs = Vec::new();
             if let Err(e) = &primary {
@@ -1044,7 +1337,12 @@ fn dual_suffix(has_mirror: bool, sent_both: bool, mirror_note: &str) -> String {
 }
 
 /// 提交一步：按模式决定先占位还是直接投。
-fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mut GrabTask) {
+fn submit(
+    ctx: &super::commands::SelectContext,
+    settings: &GrabSettings,
+    task: &mut GrabTask,
+    skew_ms: i64,
+) {
     let items = vec![AddItem {
         lesson_assoc: task.lesson_id.clone(),
         virtual_cost: task.virtual_cost,
@@ -1061,9 +1359,8 @@ fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &
     if needs_predicate(task) {
         // **两个域都发**：占位也一样两边都占 —— 谁先给受理号就用谁的去轮询。
         match submit_both(ctx, &items, &turn, true) {
-            Ok((rid, mirror_rid)) => {
-                task.request_id = Some(rid);
-                task.mirror_request_id = mirror_rid;
+            Ok(receipt) => {
+                record_receipt(task, &receipt);
                 task.predicate_done = true;
                 task.phase = PHASE_POLL.into();
                 task.polls = 0;
@@ -1079,16 +1376,15 @@ fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &
                 task.strike_kind = None;
                 return;
             }
-            Err(e) => return absorb_error(task, settings, e.to_string()),
+            Err(e) => return absorb_error(task, settings, e.to_string(), skew_ms),
         }
     }
 
     // ② 正式提交 —— 同样**两个域都发**
     task.attempts += 1;
     match submit_both(ctx, &items, &turn, false) {
-        Ok((rid, mirror_rid)) => {
-            task.request_id = Some(rid);
-            task.mirror_request_id = mirror_rid;
+        Ok(receipt) => {
+            record_receipt(task, &receipt);
             task.phase = PHASE_POLL.into();
             task.polls = 0;
             task.status = GRAB_RUNNING.into();
@@ -1107,12 +1403,20 @@ fn submit(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &
             task.strikes = 0;
             task.strike_kind = None;
         }
-        Err(e) => absorb_error(task, settings, e.to_string()),
+        Err(e) => absorb_error(task, settings, e.to_string(), skew_ms),
     }
 }
 
 /// 轮询一步。占位阶段盯 `predicate-response`，正式提交盯 `add-drop-response`。
-fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mut GrabTask) {
+///
+/// **问哪个域由受理号决定**：两个域是两套系统，受理号不能跨域查询
+/// （见 [`GrabTask::request_domain`]）。
+fn poll(
+    ctx: &super::commands::SelectContext,
+    settings: &GrabSettings,
+    task: &mut GrabTask,
+    skew_ms: i64,
+) {
     let rid = task.request_id.clone().unwrap_or_default();
     if rid.is_empty() {
         // 受理号丢了：回到提交那一步
@@ -1120,8 +1424,9 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
         task.next_at = now_ms();
         return;
     }
-    // 手上这张是占位单还是正式单，取决于占位交没交过
-    let is_predicate = needs_predicate(task);
+    // 手上这张是占位单还是正式单，取决于**正式提交发生过没有** —— 不是「占位交没交过」，
+    // 占位交完那一刻手里正握着占位单（见 [`polls_predicate`]）。
+    let is_predicate = polls_predicate(task);
 
     let ask = |client: &CourseSelectClient, rid: &str| -> Result<serde_json::Value> {
         if is_predicate {
@@ -1131,14 +1436,26 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
         }
     };
 
-    let raw = match ask(&ctx.client, &rid) {
+    // 受理号属于哪个域，就问哪个域。镜像域已经不可用时（探测结论变了 / 账号换域）
+    // 直接走「先核对再重投」—— 拿镜像的号去问主域只会得到永远的空。
+    let owner = if task.request_on_mirror() {
+        match ctx.mirror.as_ref() {
+            Some(m) => m,
+            None => return reconcile_lost_request(ctx, task),
+        }
+    } else {
+        &ctx.client
+    };
+
+    let raw = match ask(owner, &rid) {
         Ok(v) => v,
-        Err(e) => return absorb_error(task, settings, e.to_string()),
+        Err(e) => return absorb_error(task, settings, e.to_string(), skew_ms),
     };
 
     // **另一条单子也要看**：两个域是两套系统，各自有自己的受理号。
     // 主域这条还在处理时，镜像域那条可能已经出结果了 —— 只盯主域的话，
     // 抢到课的那一条会被当成「还在处理」一直轮询到超时，然后被当成失败重投。
+    // （`mirror_request_id` 恒属镜像域；镜像域自己那条被跟踪时不走这里，见 `pick_receipt`。）
     if raw.is_null() {
         if let (Some(mirror), Some(rid2)) = (ctx.mirror.as_ref(), task.mirror_request_id.clone()) {
             if !rid2.is_empty() {
@@ -1147,7 +1464,7 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
                         // 镜像域先出结果：把它当作本轮的结果来判（下面的逻辑完全一致）
                         task.mirror_request_id = None;
                         task.last_message = Some("另一条提交先返回了结果".into());
-                        return judge(settings, task, v2, is_predicate);
+                        return judge(settings, task, v2, is_predicate, skew_ms);
                     }
                 }
             }
@@ -1165,7 +1482,37 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
         return;
     }
 
-    judge(settings, task, raw, is_predicate);
+    judge(settings, task, raw, is_predicate, skew_ms);
+}
+
+/// 占位回执里这一门课的判词；**通过**（`ATTEND` / 无判词）返回 `None`。
+///
+/// 占位（`add-predicate`）的 `data` 长这样（2026-09-22 真机实测）：
+///
+/// ```json
+/// {"success": true, "result": {"319505": {"textZh": "相同教学班只能选一次", "textEn": "…"}}}
+/// ```
+///
+/// `success` 只说明「这条占位单处理完了」，**每个教学班各有一条判词** —— 只有
+/// `ATTEND`（或干脆没有判词）才算真的通过。判死的那些若还去发正式请求，
+/// 就是拿一次注定失败的出手去换一句一定会来的拒绝，而出手机会是窗口里最贵的东西。
+/// （同一套判据写在前端 `funRredicateResult` 里，见 `选课系统接口分析.md`。）
+fn predicate_reject_note(raw: &serde_json::Value, lesson_id: &serde_json::Value) -> Option<String> {
+    let want = matcher::id_text(lesson_id);
+    let map = raw.get("result")?.as_object()?;
+    let entry = map
+        .get(&want)
+        .or_else(|| map.iter().find(|(k, _)| k.trim() == want).map(|(_, v)| v))?;
+    let text = entry
+        .get("textZh")
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if text.is_empty() || text.eq_ignore_ascii_case("ATTEND") {
+        return None;
+    }
+    Some(text)
 }
 
 /// 判定一条**已经拿到结果**的受理单。
@@ -1173,7 +1520,21 @@ fn poll(ctx: &super::commands::SelectContext, settings: &GrabSettings, task: &mu
 /// 抽成函数是因为它现在有**两个调用点**：主域那条，以及「两个域都发」时
 /// 镜像域那条先出结果的情况。两处必须走同一套判定 —— 抄一份的话，
 /// 迟早出现「主域认成功、镜像域认失败」这种自相矛盾的行为。
-fn judge(settings: &GrabSettings, task: &mut GrabTask, raw: serde_json::Value, is_predicate: bool) {
+fn judge(
+    settings: &GrabSettings,
+    task: &mut GrabTask,
+    raw: serde_json::Value,
+    is_predicate: bool,
+    skew_ms: i64,
+) {
+    // 占位先看**逐条判词**：判死了就当场收手，别再发正式请求（见 [`predicate_reject_note`]）。
+    if is_predicate {
+        if let Some(note) = predicate_reject_note(&raw, &task.lesson_id) {
+            println!("[抢课] 占位被拒（lessonId={}）：{note}", matcher::id_text(&task.lesson_id));
+            return absorb_error(task, settings, note, skew_ms);
+        }
+    }
+
     let r: CourseSelectResult = serde_json::from_value(raw).unwrap_or(CourseSelectResult {
         success: false,
         error_message: None,
@@ -1187,6 +1548,7 @@ fn judge(settings: &GrabSettings, task: &mut GrabTask, raw: serde_json::Value, i
         // 占位这条已经用完了，镜像域那条同样是占位单，一并清掉：
         // 正式确认会重新两边都发一遍（见 submit_both）。
         task.mirror_request_id = None;
+        task.request_domain = None;
         task.polls = 0;
         task.next_at = now_ms();
         task.last_message = Some("占位成功，正在正式确认".into());
@@ -1199,6 +1561,7 @@ fn judge(settings: &GrabSettings, task: &mut GrabTask, raw: serde_json::Value, i
         finish(task, GRAB_SUCCESS, "已抢到");
         task.request_id = None;
         task.mirror_request_id = None;
+        task.request_domain = None;
         return;
     }
 
@@ -1216,7 +1579,7 @@ fn judge(settings: &GrabSettings, task: &mut GrabTask, raw: serde_json::Value, i
         .error_message
         .and_then(|m| m.text)
         .unwrap_or_else(|| "教务未说明原因".into());
-    absorb_error(task, settings, msg);
+    absorb_error(task, settings, msg, skew_ms);
 }
 
 /// 「结果不明」的兜底：**先核对，再重投**。
@@ -1242,9 +1605,13 @@ fn reconcile_lost_request(ctx: &super::commands::SelectContext, task: &mut GrabT
 
 /// 这门课现在是不是已经在自己名下？用最轻的接口问，出错就当「不知道」。
 ///
-/// 两个来源，**只在拿到正面证据时返回 true**：这个函数的结果决定「要不要重投」，
-/// 把「不确定」说成「没选上」只是回到老路（重投一次），说成「选上了」却会漏掉一门课。
-/// 所以宁可返回 false（= 不知道）也不要猜。
+/// 两个来源、**两个域都要问**，且只在拿到正面证据时返回 true：这个函数的结果决定
+/// 「要不要重投」，把「不确定」说成「没选上」只是回到老路（重投一次），说成「选上了」
+/// 却会漏掉一门课。所以宁可返回 false（= 不知道）也不要猜。
+///
+/// 为什么必须问两个域：受理号可能落在镜像域上（见 [`GrabTask::request_domain`]），
+/// 只问主域会把「镜像域已经选中」当成没选中 —— 于是引擎一边重复提交，一边把已经
+/// 到手的课报成失败。
 fn verify_picked(ctx: &super::commands::SelectContext, task: &GrabTask) -> Result<bool> {
     let want = task.lesson_id.to_string();
     let hits = |v: &serde_json::Value| {
@@ -1253,19 +1620,32 @@ fn verify_picked(ctx: &super::commands::SelectContext, task: &GrabTask) -> Resul
             .filter_map(|k| v.get(*k))
             .any(|x| x.to_string().trim_matches('"') == want)
     };
+    // 主域在前，镜像域（如果有）在后。
+    let clients: Vec<&CourseSelectClient> = std::iter::once(&ctx.client)
+        .chain(ctx.mirror.as_ref())
+        .collect();
 
     // ① 首选 `selected-lessons` —— 它就是「我已选上的课」这份名单本身，最准也最便宜
-    if let Ok(list) = ctx.client.selected_lessons(&task.turn_id, ctx.student_id) {
-        if list.iter().any(hits) {
-            return Ok(true);
+    for client in &clients {
+        if let Ok(list) = client.selected_lessons(&task.turn_id, ctx.student_id) {
+            if list.iter().any(hits) {
+                return Ok(true);
+            }
         }
     }
 
     // ② 退一步：拉一遍教学班，看见 `selectedLesson` 非空也算数
-    let lessons = ctx.client.simplest_lessons(&task.turn_id)?;
-    Ok(lessons
-        .iter()
-        .any(|l| l.id == want && l.selected_lesson.is_some()))
+    for client in &clients {
+        if let Ok(lessons) = client.simplest_lessons(&task.turn_id) {
+            if lessons
+                .iter()
+                .any(|l| l.id == want && l.selected_lesson.is_some())
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// 收尾：写终态、定时间戳。
@@ -1313,7 +1693,22 @@ fn has_ceded(t: &GrabTask, settings: &GrabSettings, now: i64) -> bool {
         .is_some_and(|since| now - since >= settings.cede_after_ms)
 }
 
-/// 组里的**当前志愿**：还没结束的成员里 `(priority, id)` 最小的那个。
+/// 组里的**当前志愿**：还没结束、且**现在轮得到**的成员里 `(priority, id)` 最小的那个。
+///
+/// 「轮得到」= `next_at <= now`。被教务拒过一次的成员会退到 `next_at` 之后
+/// （见 [`absorb_error`] 的满员分支），于是组里**其余候选立刻顶上** ——
+/// 这就是「被拒了就换人」：一次拒绝不该变成整组的空等。
+///
+/// 为什么值得换人（而不是死守第一志愿）：开窗那几分钟里名额是**流动**的 ——
+/// 我们排在第一的那个班可能刚被手快的人占满，而排第四的班刚好有人退课。
+/// 死守一个班，第四个人退了课我们也看不见；而全局节流本来就限制成
+/// 「一轮只发一个请求」，轮着打**不会**多花请求，只是把这一份火力铺到更多候选上。
+///
+/// 一个成员都没到点时（全组都在冷却里），退回最早到点的那个：调用方
+/// （`step` 的「谁最急」）需要算出正确的醒来时刻，而不是僵在那里不动。
+///
+/// 让贤（`cede_after_ms`）仍然照旧：它是「**长期**满员就别再等了」，
+/// 与这里的「这一秒让别人试试」是两件事，互不替代。
 fn group_lead<'a>(
     group: &str,
     tasks: &'a [GrabTask],
@@ -1328,13 +1723,31 @@ fn group_lead<'a>(
     if alive.is_empty() {
         return None;
     }
-    // 先挑没让贤的；整组都让贤了（罕见）就退回纯志愿序 —— 否则整组会僵住，谁都不出手
-    alive
+    // 冷却中的成员让位；**全组都在冷却**时才退回全体（否则整组会僵住，谁都不出手）
+    let cooling = !alive.iter().any(|t| t.next_at <= now);
+    let pool: Vec<&GrabTask> = if cooling {
+        alive
+    } else {
+        alive.iter().copied().filter(|t| t.next_at <= now).collect()
+    };
+
+    // 先挑没让贤的；整组都让贤了（罕见）就退回纯志愿序
+    let mut pick: Vec<&GrabTask> = pool
         .iter()
         .copied()
         .filter(|t| !has_ceded(t, settings, now))
-        .min_by_key(|t| (t.priority, t.id))
-        .or_else(|| alive.iter().copied().min_by_key(|t| (t.priority, t.id)))
+        .collect();
+    if pick.is_empty() {
+        pick = pool;
+    }
+    if cooling {
+        // 全组都在冷却：按「谁先到点」排 —— 调用方按当前志愿的 `next_at` 决定睡多久，
+        // 挑最早的那个才能让引擎在「第一个候选重新可用」的时刻准时醒来。
+        pick.sort_by_key(|t| (t.next_at, t.priority, t.id));
+    } else {
+        pick.sort_by_key(|t| (t.priority, t.id));
+    }
+    pick.first().copied()
 }
 
 /// 这个任务现在轮得到出手吗？不在组里的一律轮得到。
@@ -1456,6 +1869,79 @@ fn pick_turn(want: Option<&str>, briefs: &[GrabTurnBrief]) -> Option<GrabTurnBri
     }
 }
 
+/// 名额缓存时长（毫秒）。名额是分钟级才变的东西，而预览是逐键触发的。
+const SEAT_CACHE_MS: i64 = 30_000;
+
+/// 给一批命中**补上「已选人数」**，返回补成功的条数。
+///
+/// 名单接口（`query-lesson`）在这套部署上不回 `stdCount`（2026-09-22 实测 448/448 缺失），
+/// 所以「满没满」只能事后用 `std-count` 单独问一次 —— 少了这一步，
+/// `matcher` 里「有空位的先出手」等于没有，用户界面上那个名额也是空的。
+///
+/// 只问传进来的那些（命中的、通常十几条），且命中 [`SEAT_CACHE_MS`] 内缓存的直接复用 ——
+/// 引擎的解析与界面的预览走的是同一个函数，两边的名额必须同源。
+/// 问不到就原样返回 0：名额是**排序的加分项**，拿不到不该拖垮整条解析链。
+pub(crate) fn fill_seats(
+    hub: &GrabHub,
+    ctx: &super::commands::SelectContext,
+    hits: &mut [matcher::LessonHit],
+) -> usize {
+    if hits.is_empty() {
+        return 0;
+    }
+    let now = now_ms();
+    let mut known: HashMap<String, StdCount> = HashMap::new();
+    let mut missing: Vec<serde_json::Value> = Vec::new();
+    if let Ok(cache) = hub.seats.lock() {
+        for h in hits.iter() {
+            let key = matcher::id_text(&h.lesson.id);
+            match cache.get(&key) {
+                Some((at, c)) if now - at < SEAT_CACHE_MS => {
+                    known.insert(key, *c);
+                }
+                _ => missing.push(h.lesson.id.clone()),
+            }
+        }
+    } else {
+        missing = hits.iter().map(|h| h.lesson.id.clone()).collect();
+    }
+
+    if !missing.is_empty() {
+        if let Ok(fresh) = ctx.client.std_count(&missing) {
+            if let Ok(mut cache) = hub.seats.lock() {
+                for (id, c) in &fresh {
+                    cache.insert(id.clone(), (now, *c));
+                }
+            }
+            known.extend(fresh);
+        }
+    }
+
+    let mut filled = 0usize;
+    for h in hits.iter_mut() {
+        let key = matcher::id_text(&h.lesson.id);
+        if let Some(c) = known.get(&key) {
+            h.lesson.std_count = Some(c.taken);
+            filled += 1;
+        }
+    }
+    if filled > 0 {
+        matcher::rerank(hits);
+        // 名额是这一轮的排序依据，值得留痕：首选还剩多少，一眼就能看出值不值得抢
+        if let Some(h) = hits.first() {
+            let left = known
+                .get(&matcher::id_text(&h.lesson.id))
+                .and_then(|c| c.seat_left(h.lesson.limit_count));
+            println!(
+                "[名额] 已补 {filled} 个教学班（首选{}）",
+                left.map(|n| format!("余 {n}"))
+                    .unwrap_or_else(|| "余量未知".into())
+            );
+        }
+    }
+    filled
+}
+
 /// 目标批次（缓存优先）。计划解析与界面上的「预览」都从这一步起步 ——
 /// 两边必须挑到同一个批次，否则预览里看到的班和真抢的班不是一回事。
 pub(crate) fn resolve_turn(
@@ -1506,7 +1992,22 @@ fn resolve_intent(
     }
 
     let (lessons, assoc) = hub.lessons_cached(ctx, &brief.id)?;
-    let hits = matcher::match_lessons(&intent.query, &lessons);
+    // **放宽阶梯**：严格档零命中时，才允许丢掉「办不到的条件」（见 `matcher::match_lessons_relaxed`）。
+    // 放宽了什么必须说出来 —— 用户写的是「羽毛球 星期四」，真抢的可能是星期一的班。
+    let relaxed = matcher::match_lessons_relaxed(&intent.query, &lessons);
+    let mut hits = relaxed.hits;
+    if let Some(note) = relaxed.level.note() {
+        if !relaxed.dropped.is_empty() {
+            println!("[计划] {note}：{}", relaxed.dropped.join("、"));
+        }
+    }
+
+    // **补名额**：名单接口不回 `stdCount`（见 `models::StdCount`），所以
+    // 「有空位的先出手」这件事得靠 `std-count` 单独问一次。
+    // 只问命中的那些（通常十几条，一次请求就够），补完立刻重排；
+    // 补不上也不影响解析 —— 排序里那一项退化成「一视同仁」，其余照旧。
+    fill_seats(hub, ctx, &mut hits);
+
     // 打全了老师名字 → 那是指定，只抢他的班；只打姓 / 打错字 → 模糊匹配照旧（见 `preferred`）
     let pool = matcher::preferred(&hits);
     let picked_off = hits.len().saturating_sub(pool.len());
@@ -1705,7 +2206,7 @@ fn park_intent(
 }
 
 /// 把一次错误吸收进任务状态：分级 → 定下一次动作 → 必要时判死。
-fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
+fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String, skew_ms: i64) {
     let verdict = verdict_of(&message);
     // 原始文案要留着：下面几档都会把它包进一句「怎么应对」里，光留下包裹后的那句话
     // 会让事后排查看不到教务的原话。
@@ -1764,8 +2265,30 @@ fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
             return;
         }
         Verdict::Full => {
+            // **窗口开着**的满员是短兵相接：有人退课，名额就在那一秒回到池子里，
+            // 而能不能接住取决于我们盯得多密。所以这里不按 `full_retry_ms`（5000）等，
+            // 而是按下面这个冷却走 —— 它同时管着两件事：
+            //
+            // 1. **自己被拒之后先退开**：把 `next_at` 推到冷却之后，让 [`group_lead`]
+            //    把出手机会交给组里下一个候选（有人退课的可能不止一个班）。
+            // 2. **冷却必须长于节流间隔**：否则下一次心跳时它又「已经到点」，
+            //    于是永远轮不到别人 —— 这条是这段代码唯一的坑，别把冷却调成
+            //    `<= min_interval_ms`（默认 700ms 的节奏配 1400ms 冷却，
+            //    效果是「第一志愿隔一轮回来一次，其余每次换一个新候选」）。
+            //
+            // 窗口外（还没开 / 已经关）维持 `full_retry_ms`：没有东西可抢时，
+            // 慢一点没有任何代价，却省下大量无谓请求。
+            let hot = window_open(task, skew_ms);
+            let cooldown = if hot {
+                REJECT_COOLDOWN_MS.max(settings.min_interval_ms.saturating_mul(2))
+            } else {
+                settings.full_retry_ms
+            };
+            if hot {
+                task.last_message = Some(format!("{raw}（窗口开放中，冷却后继续）"));
+            }
             task.status = GRAB_WAITING.into();
-            task.next_at = now_ms() + settings.full_retry_ms;
+            task.next_at = now_ms() + cooldown;
         }
         Verdict::Conflict => finish(
             task,
@@ -1812,41 +2335,226 @@ fn absorb_error(task: &mut GrabTask, settings: &GrabSettings, message: String) {
     }
 }
 
-/// 采样「教务墙上时间 − 本机时钟」，返回 `(偏差毫秒, 服务器时间文本)`。
+/* ─────────────────────── 时钟偏差（多采样区间交集） ───────────────────────
+ *
+ * 开火时刻 = 教务开窗时刻 − 偏差 − 提前量（[`fire_at_ms`]），所以**偏差的精度
+ * 直接就是出手的精度**。而 `getCurrentDateTime` 只精确到秒（`10:00:04` 实际是
+ * 那一秒里的某一刻），单次采样只能把偏差限定在约 1 秒宽的区间内 —— 更糟的是
+ * 这个误差是**单向**的：把整秒起点当成本刻，算出来的偏差系统性偏小 0~1 秒，
+ * 于是开火也系统性偏晚同样多，`lead_ms` 那 800 毫秒提前量等于白设。
+ *
+ * 多次采样取区间交集能把误差收到**往返时延**的量级（实测 ±0.03~0.08s）。
+ * 采样是廉价的只读请求，五次共约半秒，只在偏差过期（30 秒）时才做一次。
+ */
+
+/// 一次采样：`(请求发出时刻, 响应到达时刻, 服务器时间原文)`，都是本机毫秒。
+type ClockSample = (i64, i64, String);
+
+/// 偏差估计的目标精度（毫秒）。够用即停，不必把固定次数采满。
+const SKEW_TARGET_UNCERTAINTY_MS: i64 = 60;
+/// 一次估计最多采样几次、样本间隔、总预算。
+const SKEW_SAMPLES: usize = 5;
+const SKEW_SAMPLE_GAP_MS: i64 = 120;
+const SKEW_BUDGET_MS: i64 = 1500;
+
+/// 「教务墙钟 − 本机钟」的一次估计。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkewEstimate {
+    /// 偏差（毫秒）。取区间中点 —— 宁可靠中点误差对称，也不要单向偏。
+    pub skew_ms: i64,
+    /// 不确定度（毫秒，半宽）。`intersection` 模式下是区间半宽。
+    pub uncertainty_ms: i64,
+    /// 有效样本数
+    pub samples: usize,
+    /// 估计方式：`intersection`（区间交集）/ `min-rtt`（交集为空时的退化）/ `legacy`（旧缓存）
+    pub mode: &'static str,
+    /// 最后一次采样的服务器时间原文（界面要显示「教务时间」）
+    pub text: String,
+}
+
+/// 从若干次采样估计偏差（纯函数，全部边界都能被单测钉住）。
 ///
-/// 偏差缓变，所以 30 秒才问一次；问不到就沿用上次的值（首次问不到则为 0，
-/// 退化成「按本机时钟开火」——不理想，但比不开火强）。
+/// 设采样 i 在 `t0` 发出、`t1` 收到，服务器报的整秒起点为 `s`。服务器处理这条
+/// 请求的真实时刻 τ 必在 `[t0, t1]` 内，而它报出的秒是**向下取整**的，于是：
 ///
-/// **不返回 Result**：时钟采样失败绝不该让整轮心跳失败。
-fn sample_clock(
-    _app: &AppHandle,
-    state: &tauri::State<'_, AppState>,
-    campus: &tauri::State<'_, CampusHub>,
-) -> (i64, Option<String>) {
-    let cached: Option<(i64, String)> = {
-        let conn = state.db.lock().unwrap();
-        read_meta(&conn, CLOCK_KEY).and_then(|s| serde_json::from_str(&s).ok())
-    };
-    if let Some((at, text)) = cached.as_ref() {
-        if let Some(skew) = compute_skew(text, *at) {
-            if now_ms() - at < TIME_RESAMPLE_MS {
-                return (skew, Some(text.clone()));
-            }
-            // 过期了：重采一次，失败也还能用这个旧值兜底
-            return match resample(state, campus) {
-                Some((fresh, fresh_text)) => (fresh, Some(fresh_text)),
-                None => (skew, Some(text.clone())),
-            };
+/// ```text
+/// s ≤ τ + skew < s + 1000
+/// ⇒  s - t1 ≤ skew < s + 1000 - t0          （用 τ ≤ t1 与 τ ≥ t0 夹逼）
+/// ```
+///
+/// 每条样本给出一个区间，取**交集**即得偏差的可用范围。交集为空（网络抖动大，
+/// 或采样期间本机时钟被 NTP 校正过）时退化为「最低 RTT 那条的中点估计」——
+/// 精度回到单次采样水平，但方向仍然无偏。
+pub fn skew_from_samples(samples: &[ClockSample]) -> Option<SkewEstimate> {
+    let mut lo = i64::MIN;
+    let mut hi = i64::MAX;
+    let mut best: Option<(i64, i64)> = None; // (rtt, 中点估计)
+    let mut text = String::new();
+    let mut n = 0usize;
+
+    for (t0, t1, raw) in samples {
+        let Some(server_ms) = wall_to_ms(raw) else { continue };
+        // 响应早于请求（本机钟在采样期间被校正过）：这条样本本身不可信
+        if t1 < t0 {
+            continue;
+        }
+        n += 1;
+        text = raw.clone();
+        lo = lo.max(server_ms - t1);
+        hi = hi.min(server_ms + 1000 - t0);
+        let rtt = t1 - t0;
+        // 整秒起点 + 半秒 = 该秒中点；再减去往返中点，即「本机钟此刻」的对应值
+        let mid = server_ms + 500 - (t0 + t1) / 2;
+        if best.map(|(b, _)| rtt < b).unwrap_or(true) {
+            best = Some((rtt, mid));
         }
     }
-    match resample(state, campus) {
-        Some((fresh, text)) => (fresh, Some(text)),
+    if n == 0 {
+        return None;
+    }
+
+    if lo <= hi {
+        Some(SkewEstimate {
+            skew_ms: (lo + hi) / 2,
+            uncertainty_ms: (hi - lo) / 2,
+            samples: n,
+            mode: "intersection",
+            text,
+        })
+    } else {
+        let (rtt, mid) = best?;
+        Some(SkewEstimate {
+            skew_ms: mid,
+            uncertainty_ms: rtt / 2 + 500,
+            samples: n,
+            mode: "min-rtt",
+            text,
+        })
+    }
+}
+
+/// 采样若干次并估计偏差。`get` 每次取回服务器时间原文（网络动作由调用方安排，
+/// 这样同一条算法既能被引擎用，也能被真机联调用）。
+///
+/// 够准就提前收工：交集宽度随样本数迅速收窄，通常两三次就到位。
+pub fn sample_skew<F>(mut get: F) -> Option<SkewEstimate>
+where
+    F: FnMut() -> Result<String>,
+{
+    let started = now_ms();
+    let mut out: Vec<ClockSample> = Vec::new();
+    for i in 0..SKEW_SAMPLES {
+        if i > 0 {
+            if now_ms() - started >= SKEW_BUDGET_MS {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(SKEW_SAMPLE_GAP_MS.max(0) as u64));
+        }
+        let t0 = now_ms();
+        let got = get();
+        let t1 = now_ms();
+        if let Ok(text) = got {
+            out.push((t0, t1, text));
+        }
+        if out.len() >= 2 {
+            if let Some(est) = skew_from_samples(&out) {
+                if est.uncertainty_ms <= SKEW_TARGET_UNCERTAINTY_MS {
+                    return Some(est);
+                }
+            }
+        }
+    }
+    skew_from_samples(&out)
+}
+
+/// 读缓存里那份偏差，**不采样**（供「马上要出手」的路径用）。
+fn cached_clock(state: &tauri::State<'_, AppState>) -> (i64, Option<SkewEstimate>) {
+    let conn = state.db.lock().unwrap();
+    match read_meta(&conn, CLOCK_KEY).and_then(|s| read_clock(&s)) {
+        Some((at, est)) => (at, Some(est)),
         None => (0, None),
     }
 }
 
+/// 偏差过期就重采一次，否则直接用缓存。
+///
+/// **只在「没有任务等着出手」的那条路径上调用**：采样要打几次网络（约半秒），
+/// 而半秒正是开窗那一瞬间的出手时机。偏差是缓变量（本机钟漂移是 ppm 级，
+/// 几分钟不到 1 毫秒），窗口内一直用等待期采好的那份完全够用。
+///
+/// 体检（`campus_grab_preflight`）也走它：那里正是「没有任务在等着出手」的时刻，
+/// 而且用户问的就是「现在测出来的偏差是多少」。
+pub(crate) fn refresh_clock_if_stale(
+    state: &tauri::State<'_, AppState>,
+    campus: &tauri::State<'_, CampusHub>,
+) -> (i64, Option<SkewEstimate>) {
+    let (at, cached) = cached_clock(state);
+    if cached.is_some() && now_ms() - at < TIME_RESAMPLE_MS {
+        return (at, cached);
+    }
+    // 采样失败也还能用这个旧值兜底（首次没有旧值时返回 (0, None)，
+    // 退化成「按本机时钟开火」——不理想，但比不开火强）
+    match resample(state, campus) {
+        Some((at, est)) => (at, Some(est)),
+        None => (at, cached),
+    }
+}
+
+/// 读时钟缓存：新形状（对象）与旧形状（`[at, text]`）都要认。
+///
+/// 旧形状没有交集信息，只能按「单次采样」的精度对待：不确定度给足一秒 ——
+/// 宁可让界面显示得更保守，也不要把一次粗略估计说成精确值。
+fn read_clock(raw: &str) -> Option<(i64, SkewEstimate)> {
+    if let Ok(v) = serde_json::from_str::<Value>(raw) {
+        if let Some(obj) = v.as_object() {
+            let at = obj.get("at_ms").and_then(|x| x.as_i64())?;
+            let skew_ms = obj.get("skew_ms").and_then(|x| x.as_i64())?;
+            return Some((
+                at,
+                SkewEstimate {
+                    skew_ms,
+                    uncertainty_ms: obj
+                        .get("uncertainty_ms")
+                        .and_then(|x| x.as_i64())
+                        .unwrap_or(1000),
+                    samples: obj
+                        .get("samples")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(1) as usize,
+                    mode: "intersection",
+                    text: obj
+                        .get("text")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                },
+            ));
+        }
+        // 旧形状：`[at, text]`
+        if let Some(arr) = v.as_array() {
+            let at = arr.first()?.as_i64()?;
+            let text = arr.get(1)?.as_str()?.to_string();
+            let skew = compute_skew(&text, at)?;
+            return Some((
+                at,
+                SkewEstimate {
+                    skew_ms: skew,
+                    uncertainty_ms: 1000,
+                    samples: 1,
+                    mode: "legacy",
+                    text,
+                },
+            ));
+        }
+    }
+    None
+}
+
 /// 偏差 = 把服务器时间文本当成**本机墙上时间**，与本机此刻的差。
 /// 这样两边在同一个参照系里做差，时区差被自动吸收。
+///
+/// 只留给旧缓存解析用；新的估计走 [`skew_from_samples`]（它额外利用「响应到达时刻」，
+/// 把整秒截断带来的那一秒误差也收掉了）。
 fn compute_skew(server_text: &str, sampled_at_ms: i64) -> Option<i64> {
     wall_to_ms(server_text).map(|wall| wall - sampled_at_ms)
 }
@@ -1854,20 +2562,23 @@ fn compute_skew(server_text: &str, sampled_at_ms: i64) -> Option<i64> {
 fn resample(
     state: &tauri::State<'_, AppState>,
     campus: &tauri::State<'_, CampusHub>,
-) -> Option<(i64, String)> {
-    let at = now_ms();
+) -> Option<(i64, SkewEstimate)> {
     // `select_context` 自己安排锁的边界：换令牌 / 必要时重登的网络全在锁外
     let ctx = super::commands::select_context(&state.db, campus).ok()?;
-    let text = ctx.client.server_time().ok()?;
-    let skew = compute_skew(&text, at).unwrap_or(0);
+    let est = sample_skew(|| ctx.client.server_time())?;
+    let at = now_ms();
     if let Ok(conn) = state.db.lock() {
-        let _ = write_meta(
-            &conn,
-            CLOCK_KEY,
-            &serde_json::to_string(&(at, &text)).unwrap_or_default(),
-        );
+        let payload = serde_json::json!({
+            "at_ms": at,
+            "skew_ms": est.skew_ms,
+            "uncertainty_ms": est.uncertainty_ms,
+            "samples": est.samples,
+            "mode": est.mode,
+            "text": est.text,
+        });
+        let _ = write_meta(&conn, CLOCK_KEY, &payload.to_string());
     }
-    Some((skew, text))
+    Some((at, est))
 }
 
 /* ─────────────────────────── 持久化 ─────────────────────────── */
@@ -1883,7 +2594,7 @@ const TASK_COLS: &str = "id, turn_id, turn_name, lesson_id, lesson_name, course_
      teacher, credits, mode, virtual_cost, schedule_group_id, window_wall, window_end_wall, \
      await_window, predicate_done, status, phase, attempts, polls, strikes, strike_kind, request_id, \
      last_message, next_at, queued_at, finished_at, turn_assoc, \
-     group_key, group_name, priority, stuck_since, mirror_request_id";
+     group_key, group_name, priority, stuck_since, mirror_request_id, request_domain";
 
 fn json_to_col(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "null".into())
@@ -1935,6 +2646,8 @@ fn task_row(r: &Row<'_>) -> rusqlite::Result<GrabTask> {
         stuck_since: r.get(31)?,
         // 抢课「两个域都发」的第二条受理号（第 32 列）
         mirror_request_id: r.get(32)?,
+        // 第 33 列：受理单属于哪个域（NULL/其余 = 主域）
+        request_domain: r.get(33)?,
         // 派生值，不落库 —— 由 `snapshot` 按同组的志愿序算出来后填上
         held_by: None,
     })
@@ -1998,7 +2711,8 @@ pub fn save_task(conn: &Connection, t: &GrabTask) -> Result<()> {
          predicate_done = ?14, status = ?15, phase = ?16, attempts = ?17, polls = ?18, \
          strikes = ?19, strike_kind = ?20, request_id = ?21, last_message = ?22, next_at = ?23, \
          queued_at = ?24, finished_at = ?25, turn_assoc = ?26, group_key = ?27, group_name = ?28, \
-         priority = ?29, stuck_since = ?30, mirror_request_id = ?31 WHERE id = ?1",
+         priority = ?29, stuck_since = ?30, mirror_request_id = ?31, request_domain = ?32 \
+         WHERE id = ?1",
         rusqlite::params![
             t.id,
             t.turn_name,
@@ -2031,6 +2745,7 @@ pub fn save_task(conn: &Connection, t: &GrabTask) -> Result<()> {
             t.priority,
             t.stuck_since,
             t.mirror_request_id,
+            t.request_domain,
         ],
     )?;
     Ok(())
@@ -2434,20 +3149,13 @@ pub fn reset_intent(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
+/// `app_meta` 读写走 `db` 的唯一实现（本模块只留短别名，便于阅读）。
 fn read_meta(conn: &Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM app_meta WHERE key = ?1", [key], |r| {
-        r.get::<_, String>(0)
-    })
-    .ok()
+    crate::db::meta_get(conn, key)
 }
 
 fn write_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2) \
-         ON CONFLICT(key) DO UPDATE SET value = ?2",
-        rusqlite::params![key, value],
-    )?;
-    Ok(())
+    crate::db::meta_set(conn, key, value)
 }
 
 /// 读节奏参数。库里存的是 JSON；解析不出来就用默认值
@@ -2508,11 +3216,9 @@ pub fn snapshot(conn: &Connection, hub: &GrabHub) -> Result<GrabState> {
         None => Vec::new(),
     };
     let settings = load_settings(conn)?;
-    let clock: Option<(i64, String)> =
-        read_meta(conn, CLOCK_KEY).and_then(|s| serde_json::from_str(&s).ok());
-    let skew_ms = clock
-        .as_ref()
-        .and_then(|(at, text)| compute_skew(text, *at));
+    let clock: Option<(i64, SkewEstimate)> =
+        read_meta(conn, CLOCK_KEY).and_then(|s| read_clock(&s));
+    let skew_ms = clock.as_ref().map(|(_, est)| est.skew_ms);
 
     // 开火时刻是**派生值**，只有这里算得对（它要用实测偏差与提前量），
     // 所以在这一层填给界面，而不是让前端自己再实现一遍墙上时间换算。
@@ -2567,7 +3273,7 @@ pub fn snapshot(conn: &Connection, hub: &GrabHub) -> Result<GrabState> {
         // 界面上的「教务时间」此刻该显示什么：把最近一次采样按偏差推到现在
         server_time: skew_ms
             .map(|skew| format_now(now_ms() + skew))
-            .or_else(|| clock.map(|(_, text)| text)),
+            .or_else(|| clock.as_ref().map(|(_, est)| est.text.clone())),
         skew_sec: skew_ms.map(skew_secs),
         next_at,
         next_fire_at,
@@ -2638,6 +3344,127 @@ mod tests {
         conn.last_insert_rowid()
     }
 
+    fn turn_brief_fixture(id: &str) -> GrabTurnBrief {
+        GrabTurnBrief {
+            id: id.into(),
+            name: Some(format!("批次 {id}")),
+            window_start: Some("2026-09-21 10:00:00".into()),
+            window_end: Some("2026-09-30 23:00:00".into()),
+            allow_enter: true,
+            select_text: None,
+        }
+    }
+
+    /// **批次被撤下就收手**：上架过、现在不在列表里 = 教务处提前关了。
+    /// 光看墙上时间会一直等到原定结束时刻，白守一整天。
+    #[test]
+    fn a_withdrawn_turn_makes_the_engine_stop() {
+        let conn = db();
+        let acct = account(&conn);
+        let mut t = grouped(&conn, acct, "g1", 1); // turn_id 固定是 "77"
+        let mut other = grouped(&conn, acct, "g2", 1);
+        other.turn_id = "88".into(); // 另一门课排在另一个批次上
+        let all = vec![t.clone(), other.clone()];
+
+        let prev = vec![turn_brief_fixture("77"), turn_brief_fixture("88")];
+
+        // 都还在列表里 → 谁都不收手
+        let briefs = vec![turn_brief_fixture("77"), turn_brief_fixture("88")];
+        assert!(withdrawn_tasks(&all, &prev, &briefs).is_empty());
+
+        // 77 从列表里消失（88 还在）→ 只收 77 的那个任务
+        let briefs = vec![turn_brief_fixture("88")];
+        let hit = withdrawn_tasks(&all, &prev, &briefs);
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].turn_id, "77");
+
+        // **上一轮也没有它** = 还没公布，不许判死（提前一晚排的课就是这样）
+        assert!(withdrawn_tasks(
+            &all,
+            &[turn_brief_fixture("88")],
+            &[turn_brief_fixture("88")]
+        )
+        .is_empty());
+
+        // 教务回了一份空列表：上架过的两个都按「撤下」处理
+        assert_eq!(withdrawn_tasks(&all, &prev, &[]).len(), 2);
+
+        // **手上有受理单的不收**：那张单子可能已经中了，要先核对结果
+        t.request_id = Some("req-1".into());
+        let with_receipt = vec![t, other.clone()];
+        assert_eq!(
+            withdrawn_tasks(&with_receipt, &prev, &[]).len(),
+            1,
+            "只有手上没单子的那个才收"
+        );
+
+        // 已终态的不再动它
+        let mut done = other;
+        done.status = GRAB_SUCCESS.into();
+        assert!(withdrawn_tasks(&[done], &prev, &[]).is_empty());
+    }
+
+    /// 造一个教学班（落盘/匹配类测试用）。
+    fn lesson_fixture(
+        id: i64,
+        code: &str,
+        name: &str,
+        teacher: Option<&str>,
+        std: i64,
+        limit: i64,
+    ) -> CourseSelectLesson {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "course": { "id": id * 10, "code": code, "nameZh": name, "credits": 2 },
+            "stdCount": std,
+            "limitCount": limit,
+            "teachers": teacher.map(|t| serde_json::json!({ "nameZh": t })).into_iter().collect::<Vec<_>>(),
+        }))
+        .unwrap()
+    }
+
+    /// 名单落盘：写进去、读回来，形状要对得上 —— 它是「教务拉不到名单」时的唯一退路，
+    /// 存错一个字段就等于没有。
+    #[test]
+    fn lessons_dump_round_trips_and_is_per_turn() {
+        let dir = std::env::temp_dir().join(format!("rein-dump-test-{}", now_ms()));
+        let hub = GrabHub::with_data_dir(dir.clone());
+        let ls = vec![
+            lesson_fixture(317844, "000109", "新生入学教育", Some("张伟"), 10, 60),
+            lesson_fixture(319847, "000198", "中华民族共同体概论", Some("杨帆"), 40, 60),
+        ];
+
+        // 还没写过 → 读不到
+        assert!(hub.load_lessons_dump("1921").is_none());
+
+        hub.save_lessons_dump("1921", &ls, Some("1921-turn"));
+        let dump = hub.load_lessons_dump("1921").expect("同批次的名单要能读回来");
+        assert_eq!(dump.lessons.len(), 2);
+        assert_eq!(dump.assoc.as_deref(), Some("1921-turn"));
+        assert_eq!(
+            dump.lessons[1].course.as_ref().unwrap().name_zh.as_deref(),
+            Some("中华民族共同体概论")
+        );
+        assert_eq!(dump.lessons[0].std_count, Some(10));
+
+        // **换批次就读不到**：名单是按批次算的，拿 A 轮的班去 B 轮抢是纯粹的错
+        assert!(
+            hub.load_lessons_dump("9999").is_none(),
+            "别的批次不该认这份名单"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 落盘是加固措施：**没配目录时不许影响正常拉名单**（引擎照旧走网络）。
+    #[test]
+    fn lessons_dump_is_optional() {
+        let hub = GrabHub::default();
+        hub.save_lessons_dump("1921", &[lesson_fixture(1, "000001", "课", None, 1, 2)], None);
+        assert!(hub.load_lessons_dump("1921").is_none(), "没配目录就不落盘");
+        assert!(hub.lessons_fallback_note().is_none(), "没兜底过就不该有提示");
+    }
+
     fn input(id: Value) -> GrabTargetInput {
         GrabTargetInput {
             lesson_id: id,
@@ -2662,6 +3489,96 @@ mod tests {
         inp.priority = priority;
         let id = insert_task(conn, account_id, "77", None, &inp, "predicate", None, None).unwrap();
         load_task(conn, id).unwrap().unwrap()
+    }
+
+    /// **被拒了就换人**：满员冷却期间，出手机会交给组里下一个候选。
+    ///
+    /// 这条是搬的抢课行为：他们对被拒的候选做 1 秒冷却、立刻重匹配下一个。
+    /// 死守第一志愿的问题是「别的班有人退课我们看不见」—— 而全局节流本来就
+    /// 一轮只发一个请求，轮着打不多花请求，只是把火力铺到更多候选上。
+    #[test]
+    fn a_cooling_candidate_steps_aside_for_the_next_one() {
+        let conn = db();
+        let acct = account(&conn);
+        let settings = GrabSettings::default();
+        let mut a = grouped(&conn, acct, "g1", 1);
+        let b = grouped(&conn, acct, "g1", 2);
+        let c = grouped(&conn, acct, "g1", 3);
+        let now = now_ms();
+
+        // 都到点：第一志愿说了算
+        a.next_at = 0;
+        let tasks = vec![a.clone(), b.clone(), c.clone()];
+        assert_eq!(group_lead("g1", &tasks, &settings, now).unwrap().id, a.id);
+        assert!(armed(&a, &tasks, &settings, now));
+
+        // 第一志愿刚被拒（冷却中）→ 第二志愿顶上，第一志愿这一轮不许出手
+        let mut a_cool = a.clone();
+        a_cool.next_at = now + REJECT_COOLDOWN_MS;
+        let tasks = vec![a_cool.clone(), b.clone(), c.clone()];
+        assert_eq!(
+            group_lead("g1", &tasks, &settings, now).unwrap().id,
+            b.id,
+            "冷却中的第一志愿该把机会让给第二志愿"
+        );
+        assert!(!armed(&a_cool, &tasks, &settings, now), "冷却期间不再出手");
+        assert!(armed(&b, &tasks, &settings, now));
+
+        // 前两个都在冷却 → 第三志愿顶上
+        let mut b_cool = b.clone();
+        b_cool.next_at = now + REJECT_COOLDOWN_MS;
+        let tasks = vec![a_cool.clone(), b_cool.clone(), c.clone()];
+        assert_eq!(
+            group_lead("g1", &tasks, &settings, now).unwrap().id,
+            c.id,
+            "第一个能出手的候选才是当前志愿"
+        );
+
+        // **全组都在冷却** → 退回「谁先到点谁上」（引擎要按它算醒来时刻），
+        // 而且谁都不许出手（都还没到点）
+        let mut c_cool = c.clone();
+        c_cool.next_at = now + REJECT_COOLDOWN_MS * 2;
+        let mut a_earlier = a_cool.clone();
+        a_earlier.next_at = now + REJECT_COOLDOWN_MS / 2;
+        let tasks = vec![a_earlier.clone(), b_cool.clone(), c_cool.clone()];
+        let lead = group_lead("g1", &tasks, &settings, now).unwrap();
+        assert_eq!(lead.id, a_earlier.id, "全组冷却时按最早到点选，好让引擎准时醒");
+        assert!(armed(&a_earlier, &tasks, &settings, now), "轮到它了");
+        assert!(
+            !armed(&b_cool, &tasks, &settings, now),
+            "还没轮到的候选不出手"
+        );
+    }
+
+    /// 只有一个候选时，冷却照旧**只影响它自己** —— 它仍然每轮都在抢，
+    /// 只是比节流间隔慢一点（见 `REJECT_COOLDOWN_MS` 的注释）。
+    #[test]
+    fn a_solo_candidate_cools_down_but_keeps_trying() {
+        let conn = db();
+        let acct = account(&conn);
+        let settings = GrabSettings::default();
+        let mut solo = grouped(&conn, acct, "solo", 1);
+        let now = now_ms();
+        solo.next_at = now + REJECT_COOLDOWN_MS;
+        let tasks = vec![solo.clone()];
+        assert_eq!(
+            group_lead("solo", &tasks, &settings, now).unwrap().id,
+            solo.id,
+            "就它一个候选，退开到哪儿都还是它"
+        );
+        assert!(armed(&solo, &tasks, &settings, now), "被选中就仍然由它出手");
+    }
+
+    /// 冷却必须**长于节流间隔**，否则下一次心跳它就又到点了、组里永远轮不到别人。
+    #[test]
+    fn the_reject_cooldown_outlasts_the_pace_gate() {
+        let settings = GrabSettings::default();
+        let cooldown = REJECT_COOLDOWN_MS.max(settings.min_interval_ms.saturating_mul(2));
+        assert!(
+            cooldown > settings.min_interval_ms,
+            "冷却 {cooldown}ms 必须长于节流间隔 {}ms，否则轮换是假的",
+            settings.min_interval_ms
+        );
     }
 
     /// 满员的文案里带「已选」二字 —— 先判「已选过」会把满员误判成终态，
@@ -2731,6 +3648,116 @@ mod tests {
         assert_eq!(verdict_of("服务器繁忙，请稍后再试"), Verdict::ServerDown);
     }
 
+    /// 「服务端读不懂我们的 JSON」必须判成**我们的**问题（参数错误 → 停下来），
+    /// 而不是「教务崩了继续打」。
+    ///
+    /// 真出过（2026-09-22 联调）：`courseSelectTurnAssoc` 发成了字符串，教务回 500
+    /// 并附一段 Jackson 的 JSON 解析错误。判定表当时先命中 5xx 分支，于是引擎把
+    /// 「每一枪都注定失败」记成了「教务服务器出错（继续重试）」——
+    /// 不但永远打不中，还把责任安在了教务头上，现场也因此被藏了整整一轮联调。
+    #[test]
+    fn unserializable_payload_is_our_fault_not_the_server_being_down() {
+        let real = "选课接口失败：HTTP 500：{\"timestamp\":\"2026-09-22 12:24:47\",\
+                    \"status\":500,\"error\":\"Internal Server Error\",\
+                    \"exception\":\"org.springframework.http.converter.HttpMessageNotReadableException\",\
+                    \"message\":\"JSON parse error: Can not construct instance of \
+                    com.supwisdom.eams.course.selection.turn.domain.model.CourseSelectTurnAssoc: \
+                    no String-argument constructor/factory method to deserialize from String value ('1921')\"}";
+        assert_eq!(verdict_of(real), Verdict::BadRequest);
+
+        // 教务**自己**崩了的文案仍要按「继续重试」处理 —— 这条不能被我这次改动带偏
+        assert_eq!(
+            verdict_of("选课接口失败：HTTP 500：{\"error\":\"Internal Server Error\"}"),
+            Verdict::ServerDown
+        );
+        assert_eq!(verdict_of("HTTP 503 Service Unavailable"), Verdict::ServerDown);
+        // 参数错误与这条新规则落在同一档，语义一致
+        assert_eq!(verdict_of("Cannot deserialize value of type `int`"), Verdict::BadRequest);
+    }
+
+    /// 「不符合选课条件组要求」与「相同教学班只能选一次」都是**硬条件**（真机实测原话）：
+    /// 试多少次都是同一句话，必须判终态 —— 否则会白烧掉八次出手机会才放弃。
+    #[test]
+    fn hard_eligibility_rejections_are_fatal_not_retryable() {
+        assert_eq!(verdict_of("不符合选课条件组要求"), Verdict::Fatal);
+        assert_eq!(verdict_of("相同教学班只能选一次"), Verdict::Fatal);
+        // 「不符合」这个词本身不该把别的失败也判死
+        assert_ne!(verdict_of("不符合预期"), Verdict::Fatal);
+    }
+
+    /// 占位回执的**逐条判词**：`success` 只说明「这条单子处理完了」，
+    /// 每个教学班各有一条判词，只有 `ATTEND`（或没有判词）才算真的通过。
+    ///
+    /// 样本是 2026-09-22 的真机回执（对一门已在名下的课发占位）。
+    #[test]
+    fn a_predicate_verdict_is_read_per_lesson() {
+        let raw = serde_json::json!({
+            "success": true,
+            "result": {"319505": {"textZh": "相同教学班只能选一次", "textEn": "Duplicate lessons are not allowed"}}
+        });
+        assert_eq!(
+            predicate_reject_note(&raw, &serde_json::json!(319505)).as_deref(),
+            Some("相同教学班只能选一次")
+        );
+        // 同一个 id 在别的接口里是字符串形态，也要认得出来
+        assert!(predicate_reject_note(&raw, &serde_json::json!("319505")).is_some());
+        // 别的教学班不受影响
+        assert!(predicate_reject_note(&raw, &serde_json::json!(999)).is_none());
+
+        // 通过：ATTEND 与「没有判词」都算过
+        let pass = serde_json::json!({"success": true, "result": {"319505": {"textZh": "ATTEND"}}});
+        assert!(predicate_reject_note(&pass, &serde_json::json!(319505)).is_none());
+        let silent = serde_json::json!({"success": true});
+        assert!(predicate_reject_note(&silent, &serde_json::json!(319505)).is_none());
+        // 形状变了（result 不是对象、正文不是 JSON）不许崩，也不许误判成拒绝
+        assert!(predicate_reject_note(&serde_json::json!({"result": [1, 2]}), &serde_json::json!(1)).is_none());
+        assert!(predicate_reject_note(&serde_json::json!(""), &serde_json::json!(1)).is_none());
+    }
+
+    /// 占位被判死时**不再发正式请求**：这一枪已经被否了，正式请求只是白费一次出手机会。
+    #[test]
+    fn a_rejected_predicate_stops_before_the_formal_request() {
+        let s = GrabSettings::default();
+        let mut t = task(None, 0);
+        t.mode = "predicate".into();
+        t.predicate_done = true; // 占位已交 → 这一步本该去轮询占位单
+        t.phase = PHASE_POLL.into();
+        t.request_id = Some("gp1".into());
+        assert!(polls_predicate(&t));
+
+        judge(
+            &s,
+            &mut t,
+            serde_json::json!({"success": true, "result": {"1": {"textZh": "相同教学班只能选一次"}}}),
+            true,
+            0,
+        );
+        assert_ne!(t.phase, PHASE_SUBMIT, "被拒的占位不该转正式确认");
+        assert_eq!(t.status, GRAB_FAILED, "「只能选一次」是终态");
+        assert_eq!(t.attempts, 0, "一次正式请求都不该发出去");
+        assert!(t
+            .last_message
+            .clone()
+            .unwrap_or_default()
+            .contains("只能选一次"));
+
+        // 占位**通过**时仍要走原来那条路：转正式确认
+        let mut ok = task(None, 0);
+        ok.mode = "predicate".into();
+        ok.predicate_done = true;
+        ok.phase = PHASE_POLL.into();
+        ok.request_id = Some("gp2".into());
+        judge(
+            &s,
+            &mut ok,
+            serde_json::json!({"success": true, "result": {"1": {"textZh": "ATTEND"}}}),
+            true,
+            0,
+        );
+        assert_eq!(ok.phase, PHASE_SUBMIT, "ATTEND 才该转正式确认");
+        assert!(ok.request_id.is_none(), "占位单用完了要清掉");
+    }
+
     #[test]
     fn throttled_and_server_errors_keep_hammering_without_backoff() {
         // 提交上限设成 1：被限流/5xx 消耗掉的话，窗口一开就正好没额度了
@@ -2745,7 +3772,7 @@ mod tests {
         ] {
             let mut t = task(None, 1);
             let before = now_ms();
-            absorb_error(&mut t, &s, msg.into());
+            absorb_error(&mut t, &s, msg.into(), 0);
             assert_eq!(t.status, GRAB_WAITING, "{msg}");
             assert_eq!(t.strikes, 0, "对方的状态不该记在这条任务账上：{msg}");
             assert!(t.next_at <= now_ms() + 5, "不许退避：{msg}");
@@ -2768,7 +3795,7 @@ mod tests {
             ..Default::default()
         };
         let mut t = task(None, 1);
-        absorb_error(&mut t, &s, "请求参数错误：缺少 assoc".into());
+        absorb_error(&mut t, &s, "请求参数错误：缺少 assoc".into(), 0);
 
         assert_eq!(t.status, GRAB_NEEDS_AI);
         assert!(grab_is_terminal(&t.status), "引擎不许再碰它");
@@ -2821,6 +3848,7 @@ mod tests {
             strike_kind: None,
             request_id: None,
             mirror_request_id: None,
+            request_domain: None,
             last_message: None,
             next_at: 0,
             fire_at: None,
@@ -3050,7 +4078,7 @@ mod tests {
 
         // 满员：一直守着，但节奏放慢
         let mut t = task(None, 1);
-        absorb_error(&mut t, &s, "教学班人数已满".into());
+        absorb_error(&mut t, &s, "教学班人数已满".into(), 0);
         assert_eq!(t.status, GRAB_WAITING);
         assert_eq!(t.strike_kind.as_deref(), Some("full"));
         assert!(t.next_at > now_ms());
@@ -3058,25 +4086,25 @@ mod tests {
         // 未知错误：退避重试，连败到上限才停
         let mut t = task(None, 1);
         for _ in 0..UNKNOWN_STRIKE_LIMIT - 1 {
-            absorb_error(&mut t, &s, "没人见过的话".into());
+            absorb_error(&mut t, &s, "没人见过的话".into(), 0);
             assert_eq!(t.status, GRAB_WAITING);
         }
-        absorb_error(&mut t, &s, "没人见过的话".into());
+        absorb_error(&mut t, &s, "没人见过的话".into(), 0);
         assert_eq!(t.status, GRAB_FAILED);
         assert!(t.last_message.unwrap().contains("连续"));
 
         // 换令牌不算这个任务的失败：连败清零、重新排队
         let mut t = task(None, 1);
-        absorb_error(&mut t, &s, format!("{TOKEN_EXPIRED}，请重新打开选课页重试"));
+        absorb_error(&mut t, &s, format!("{TOKEN_EXPIRED}，请重新打开选课页重试"), 0);
         assert_eq!(t.status, GRAB_WAITING);
         assert_eq!(t.strikes, 0);
 
         // 终态错误 / 冲突：立即停，不再浪费对方带宽
         let mut t = task(None, 1);
-        absorb_error(&mut t, &s, "不在选课时间内".into());
+        absorb_error(&mut t, &s, "不在选课时间内".into(), 0);
         assert_eq!(t.status, GRAB_FAILED);
         let mut t = task(None, 1);
-        absorb_error(&mut t, &s, "请办理免听".into());
+        absorb_error(&mut t, &s, "请办理免听".into(), 0);
         assert_eq!(t.status, GRAB_CONFLICT);
     }
 
@@ -3085,11 +4113,11 @@ mod tests {
         let s = GrabSettings::default();
         let mut t = task(None, 1);
         for _ in 0..5 {
-            absorb_error(&mut t, &s, "没人见过的话".into());
+            absorb_error(&mut t, &s, "没人见过的话".into(), 0);
         }
         assert_eq!(t.strikes, 5);
         // 局面变了：重新给耐心，否则「先未知几次、再满员」会被误判成耗尽
-        absorb_error(&mut t, &s, "教学班人数已满".into());
+        absorb_error(&mut t, &s, "教学班人数已满".into(), 0);
         assert_eq!(t.strikes, 1);
         assert_eq!(t.strike_kind.as_deref(), Some("full"));
     }
@@ -3101,7 +4129,7 @@ mod tests {
             ..Default::default()
         };
         let mut t = task(None, 3);
-        absorb_error(&mut t, &s, "教学班人数已满".into());
+        absorb_error(&mut t, &s, "教学班人数已满".into(), 0);
         assert_eq!(t.status, GRAB_FAILED);
         assert!(t.last_message.unwrap().contains("已达提交上限"));
     }
@@ -3368,7 +4396,7 @@ mod tests {
     /// 全局节流闸门：两次请求之间必须真的隔开，这是防封的主要旋钮。
     #[test]
     fn pacer_enforces_a_global_minimum_interval() {
-        let hub = GrabHub::new();
+        let hub = GrabHub::default();
         // 从未发过请求 → 立刻可发
         assert_eq!(hub.pace_gap_ms(700), 0);
         hub.mark_request();
@@ -3381,7 +4409,7 @@ mod tests {
     #[test]
     fn snapshot_is_empty_and_calm_without_tasks() {
         let conn = db();
-        let hub = GrabHub::new();
+        let hub = GrabHub::default();
         let s = snapshot(&conn, &hub).unwrap();
         assert!(!s.active);
         assert!(s.tasks.is_empty());
@@ -3393,7 +4421,7 @@ mod tests {
     fn snapshot_reports_activity_and_skew() {
         let conn = db();
         let acct = account(&conn);
-        let hub = GrabHub::new();
+        let hub = GrabHub::default();
         // 采样发生在 10 秒前（对齐到整秒，让偏差是精确的 12 秒），服务器比本机快 12 秒
         let at = (now_ms() / 1000) * 1000 - 10_000;
         let server_text = format_now(at + 12_000);
@@ -3589,7 +4617,7 @@ mod tests {
     fn held_by_skips_tasks_that_are_out_of_play() {
         let conn = db();
         let acc = account(&conn);
-        let hub = GrabHub::new();
+        let hub = GrabHub::default();
         let mut loser = grouped(&conn, acc, "g1", 1);
         let winner = grouped(&conn, acc, "g1", 2);
         // 第 1 志愿已经出局（时间冲突），第 2 志愿接手
@@ -3613,13 +4641,13 @@ mod tests {
         let mut t = task(None, 0);
         assert!(t.stuck_since.is_none());
 
-        absorb_error(&mut t, &s, "教学班人数已满".into());
+        absorb_error(&mut t, &s, "教学班人数已满".into(), 0);
         let started = t.stuck_since.expect("满员要记下起点");
 
-        absorb_error(&mut t, &s, "剩余名额不足".into());
+        absorb_error(&mut t, &s, "剩余名额不足".into(), 0);
         assert_eq!(t.stuck_since, Some(started), "持续满员不许把起点往后挪");
 
-        absorb_error(&mut t, &s, "选课接口失败：HTTP 503".into());
+        absorb_error(&mut t, &s, "选课接口失败：HTTP 503".into(), 0);
         assert!(t.stuck_since.is_none(), "换了失败种类就不再是「一直满员」");
     }
 
@@ -3684,7 +4712,7 @@ mod tests {
             lesson(2, "000001", "高等数学（上）"),
             lesson(3, "000002", "大学英语（一）"),
         ];
-        let hits = matcher::match_lessons("学", &ls);
+        let hits = matcher::match_lessons_relaxed("学", &ls).hits;
         assert_eq!(hits.len(), 3, "三个班都该被这句查询命中");
 
         // 默认：合成一组，它们互为备选
@@ -3709,7 +4737,7 @@ mod tests {
         let mut picked = ls.clone();
         picked[0].selected_lesson =
             Some(serde_json::from_value(serde_json::json!({ "status": "已选中" })).unwrap());
-        let hits = matcher::match_lessons("学", &picked);
+        let hits = matcher::match_lessons_relaxed("学", &picked).hits;
         let g = plan_groups(&hits, false);
         assert_eq!(g[0].len(), 2, "已选过的教学班必须排除");
     }
@@ -3816,7 +4844,7 @@ mod tests {
             [id],
         )
         .unwrap();
-        let hub = GrabHub::new();
+        let hub = GrabHub::default();
         let s = snapshot(&conn, &hub).unwrap();
         assert_eq!(s.intents.len(), 1);
         assert!(s.intents[0].candidates.is_empty());
@@ -3854,5 +4882,907 @@ mod tests {
     #[test]
     fn a_single_domain_without_a_note_stays_quiet() {
         assert!(dual_suffix(false, false, "").is_empty());
+    }
+
+    /* ───── 受理单：占位单问 predicate-response，跨域单问对侧的域 ───── */
+
+    /// 占位单必须问 `predicate-response`。
+    ///
+    /// 这是**真出过的 bug**：判据写成了「`needs_predicate` 为真时才是占位单」，
+    /// 而占位一交 `predicate_done` 就为真、`needs_predicate` 随即变假 —— 于是手里
+    /// 握着占位单却去问 `add-drop-response`。那个接口不认识占位号，永远回空，
+    /// 任务空转到轮询上限才重投（默认 15 次 × 2 秒 = 半分钟），
+    /// 而 `judge` 里那句「占位成功，正在正式确认」成了永远走不到的死分支。
+    #[test]
+    fn the_predicate_receipt_is_polled_on_the_predicate_endpoint() {
+        let mut t = task(None, 0);
+        // 入队：还没占位 → 这一步该去**交**占位，手里没有受理单
+        assert!(needs_predicate(&t));
+        assert!(!polls_predicate(&t), "还没交占位时手里没有单子");
+
+        // 占位刚交上：**这就是那个 bug 的窗口期** —— attempts 仍是 0
+        t.predicate_done = true;
+        t.phase = PHASE_POLL.into();
+        t.request_id = Some("gp1".into());
+        assert!(!needs_predicate(&t), "占位交过之后不再补占位");
+        assert!(
+            polls_predicate(&t),
+            "手里握着的是占位单，该问 predicate-response"
+        );
+
+        // 占位落定 → 正式提交：此后手里换成正式单
+        t.attempts = 1;
+        t.request_id = Some("gr1".into());
+        assert!(!polls_predicate(&t), "正式提交过就该问 add-drop-response");
+
+        // 直接模式从不占位，也就永远没有占位单
+        let mut d = task(None, 0);
+        d.mode = "direct".into();
+        d.predicate_done = true;
+        assert!(!polls_predicate(&d));
+
+        // 用户点「重新排队」后占位标记归零：下一轮又该先交占位
+        let mut again = task(None, 0);
+        again.predicate_done = false;
+        again.attempts = 0;
+        assert!(needs_predicate(&again) && !polls_predicate(&again));
+    }
+
+    /// 主域被拒、镜像域受理成功时，必须跟踪**镜像域那条**，并且记住它在镜像域上。
+    #[test]
+    fn a_mirror_receipt_remembers_which_domain_it_belongs_to() {
+        // 主域有号 → 跟踪主域；镜像那条记在 other 上
+        let r = pick_receipt("p1", "m1").unwrap();
+        assert_eq!(r.rid, "p1");
+        assert_eq!(r.domain, RidDomain::Primary);
+        assert_eq!(r.other.as_deref(), Some("m1"));
+
+        // 主域没有号（被拒）→ 跟踪镜像域的，且**必须标记成镜像域**
+        let r = pick_receipt("", "m1").unwrap();
+        assert_eq!(r.rid, "m1");
+        assert_eq!(r.domain, RidDomain::Mirror, "拿镜像的号去问主域永远问不到");
+        assert!(r.other.is_none());
+
+        // 两边都没号 → 没有可跟踪的受理单
+        assert!(pick_receipt("", "").is_none());
+    }
+
+    /// 记到任务上的三件事：受理号、另一条单子、**它属于哪个域**。
+    #[test]
+    fn recording_a_receipt_writes_the_domain_down() {
+        let mut t = task(None, 0);
+        let r = pick_receipt("", "m1").unwrap();
+        record_receipt(&mut t, &r);
+        assert_eq!(t.request_id.as_deref(), Some("m1"));
+        assert!(t.request_on_mirror(), "镜像域的受理单必须被标出来");
+
+        // 换成主域的受理单：标记要跟着清掉，否则下一次轮询还去问镜像域
+        let r = pick_receipt("p1", "").unwrap();
+        record_receipt(&mut t, &r);
+        assert!(!t.request_on_mirror());
+        assert!(t.mirror_request_id.is_none());
+    }
+
+    /// 这一列要真的落库：引擎重启后仍得知道该拿哪张号去问哪个域。
+    #[test]
+    fn request_domain_round_trips_through_sqlite() {
+        let conn = db();
+        let acct = account(&conn);
+        let id = insert_task(
+            &conn,
+            acct,
+            "77",
+            None,
+            &input(serde_json::json!(1)),
+            "predicate",
+            None,
+            None,
+        )
+        .unwrap();
+        let mut t = load_task(&conn, id).unwrap().unwrap();
+        assert!(!t.request_on_mirror(), "老数据没有这一列，一律按主域处理");
+
+        t.request_id = Some("m9".into());
+        t.request_domain = Some(REQUEST_DOMAIN_MIRROR.into());
+        save_task(&conn, &t).unwrap();
+        assert!(load_task(&conn, id).unwrap().unwrap().request_on_mirror());
+    }
+
+    /* ───── 时钟偏差：区间交集把「整秒截断」那一秒收掉 ───── */
+
+    /// 一次采样在测试里的参照系：`skew` 为真实偏差，`p` 为服务器处理点（往返中的位置）。
+    fn clock_sample(t0: i64, skew: i64, p: i64, rtt: i64) -> (i64, i64, String) {
+        let server_true = t0 + p + skew;
+        let text_ms = server_true.div_euclid(1000) * 1000; // 教务只报到整秒
+        (t0, t0 + rtt, format_now(text_ms))
+    }
+
+    /// 多次采样取交集：偏差必须被夹在区间里，且比单次采样宽达一秒的区间明显更窄。
+    #[test]
+    fn skew_intersection_beats_the_one_second_truncation() {
+        const BASE: i64 = 1_800_000_000_000;
+        const TRUE_SKEW: i64 = 250;
+        // 五次采样：步长与往返都有抖动（真机如此），相位因此散开
+        let samples: Vec<_> = (0..5i64)
+            .map(|i| clock_sample(BASE + i * 137, TRUE_SKEW, 20 + i * 11, 60 + i * 23))
+            .collect();
+
+        let est = skew_from_samples(&samples).unwrap();
+        assert_eq!(est.mode, "intersection");
+        assert_eq!(est.samples, 5);
+        assert!(
+            TRUE_SKEW >= est.skew_ms - est.uncertainty_ms
+                && TRUE_SKEW <= est.skew_ms + est.uncertainty_ms,
+            "真值必须落在区间里：估计 {}±{}，真值 {TRUE_SKEW}",
+            est.skew_ms,
+            est.uncertainty_ms
+        );
+        assert!(
+            est.uncertainty_ms < 500,
+            "交集应当明显窄于单次采样的「一秒截断」：±{}ms",
+            est.uncertainty_ms
+        );
+
+        // 单次采样的区间宽度≈1000+往返；样本越多只会更窄，不会更宽
+        let one = skew_from_samples(&samples[..1]).unwrap();
+        assert!(
+            est.uncertainty_ms <= one.uncertainty_ms,
+            "多采样不该比单采样更差：{} vs {}",
+            est.uncertainty_ms,
+            one.uncertainty_ms
+        );
+    }
+
+    /// 单次采样（旧口径）**系统性偏小** —— 这才是必须换算法的理由：
+    /// 偏差偏小 ⇒ `fire_at` 偏大 ⇒ 开火偏晚 ⇒ `lead_ms` 的提前量被吃掉一段。
+    #[test]
+    fn the_old_single_sample_clock_was_biased_late() {
+        const BASE: i64 = 1_800_000_000_000;
+        let (t0, _t1, text) = clock_sample(BASE, 900, 30, 60);
+        let legacy = compute_skew(&text, t0).unwrap();
+        assert!(legacy <= 900, "旧口径只会低估偏差：{legacy} ≤ 900");
+        assert!(
+            legacy < 900,
+            "而且通常严格小 —— 低估多少完全取决于采样落在秒里的哪一刻"
+        );
+    }
+
+    /// 交集为空（网络抖动太大 / 本机钟在采样期间被校正）时退化为最低 RTT 的中点估计，
+    /// 但**不许返回 None**：抢课只求一个方向无偏的近似值，好过没有。
+    #[test]
+    fn a_broken_intersection_degrades_to_the_best_sample() {
+        // 两条样本互相矛盾：服务器时间「往回走了」，交集必空
+        let a = clock_sample(1_800_000_000_000, 5_000, 10, 40);
+        let b = clock_sample(1_800_000_001_000, -5_000, 10, 40);
+        let est = skew_from_samples(&[a, b]).unwrap();
+        assert_eq!(est.mode, "min-rtt");
+        assert!(est.uncertainty_ms >= 500, "退化后的精度不该被说成精确");
+    }
+
+    #[test]
+    fn clock_estimates_never_panic_on_garbage() {
+        assert!(skew_from_samples(&[]).is_none());
+        assert!(skew_from_samples(&[(0, 0, "待定".into())]).is_none());
+        // 响应早于请求（本机钟被校正过）：这条样本作废
+        assert!(skew_from_samples(&[(10_000, 9_000, format_now(20_000))]).is_none());
+    }
+
+    /// 旧缓存（`[at, text]` 形状）必须还能读出来 —— 升级不该把已有的偏差丢掉。
+    #[test]
+    fn the_legacy_clock_cache_still_reads() {
+        let at = 1_800_000_000_000i64;
+        let legacy = serde_json::to_string(&(at, format_now(at + 5000))).unwrap();
+        let (got_at, est) = read_clock(&legacy).expect("旧形状要认");
+        assert_eq!(got_at, at);
+        assert_eq!(est.skew_ms, 5000);
+        assert_eq!(est.mode, "legacy");
+        assert_eq!(est.uncertainty_ms, 1000, "旧估计只有单次采样的精度");
+
+        // 新形状（引擎现在写的）
+        let fresh = serde_json::json!({
+            "at_ms": at, "skew_ms": -320, "uncertainty_ms": 25, "samples": 4,
+            "mode": "intersection", "text": format_now(at)
+        });
+        let (got_at, est) = read_clock(&fresh.to_string()).unwrap();
+        assert_eq!(got_at, at);
+        assert_eq!(est.skew_ms, -320);
+        assert_eq!(est.uncertainty_ms, 25);
+        assert_eq!(est.samples, 4);
+
+        assert!(read_clock("不是 JSON").is_none());
+        assert!(read_clock("{}").is_none());
+    }
+
+    /* ───── 满员重投：窗口内按节流节奏，窗口外维持慢节奏 ───── */
+
+    /// 窗开着 / 没开 / 已关的三种任务。
+    fn window_task(open_offset_min: i64, close_offset_min: i64) -> GrabTask {
+        let wall = |min: i64| {
+            (Local::now() + chrono::Duration::minutes(min))
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        };
+        let mut t = task(None, 1);
+        t.window_wall = Some(wall(open_offset_min));
+        t.window_end_wall = Some(wall(close_offset_min));
+        t
+    }
+
+    /// 窗口**开着**时满员：冷却按「节流间隔的两倍」走（默认 1400ms），而不是 5 秒一次 ——
+    /// 后者等于每 5 秒才看一眼名额池，退课后最容易被别人先接走。
+    ///
+    /// **冷却必须长于节流间隔**：一样长的话，下一次心跳它又到点了，
+    /// 组里永远轮不到别的候选（见 `REJECT_COOLDOWN_MS`）。
+    #[test]
+    fn full_retry_is_hot_while_the_window_is_open() {
+        let s = GrabSettings::default();
+        let mut t = window_task(-1, 120);
+        assert!(window_open(&t, 0));
+        absorb_error(&mut t, &s, "教学班人数已满".into(), 0);
+        assert_eq!(t.status, GRAB_WAITING);
+        let gap = t.next_at - now_ms();
+        assert!(
+            gap > s.min_interval_ms,
+            "冷却（{gap}ms）必须长于节流间隔（{}ms），否则留不出换人的空档",
+            s.min_interval_ms
+        );
+        assert!(
+            gap <= REJECT_COOLDOWN_MS.max(s.min_interval_ms * 2) + 50,
+            "窗口内的冷却该是「节流间隔的两倍」这一档，实际 {gap}ms"
+        );
+        let msg = t.last_message.clone().unwrap_or_default();
+        assert!(msg.contains("已满"), "教务原话要留着：{msg}");
+        assert!(msg.contains("窗口开放中"), "应对方式要说给用户听：{msg}");
+    }
+
+    /// 窗口还没开：维持 `full_retry_ms`。没有东西可抢时快打只是白费请求。
+    #[test]
+    fn full_retry_stays_slow_before_the_window_opens() {
+        let s = GrabSettings::default();
+        let mut t = window_task(10, 120);
+        assert!(!window_open(&t, 0));
+        absorb_error(&mut t, &s, "教学班人数已满".into(), 0);
+        let gap = t.next_at - now_ms();
+        assert!(
+            gap >= s.full_retry_ms - 50,
+            "窗口外不该提速，实际 {gap}ms"
+        );
+        assert!(!t
+            .last_message
+            .clone()
+            .unwrap_or_default()
+            .contains("窗口开放中"));
+    }
+
+    /// 窗口已经关了 / 压根不知道窗口：都不算「开着」，按慢节奏。
+    #[test]
+    fn a_closed_or_unknown_window_is_not_open() {
+        let closed = window_task(-120, -5);
+        assert!(!window_open(&closed, 0), "已关闭的窗口不算开放");
+
+        let unknown = task(None, 1);
+        assert!(!window_open(&unknown, 0), "不知道窗口时按没开处理");
+        assert!(
+            !window_open(&unknown, 60_000),
+            "时钟偏差再大也不该把「未知」变成「开放」"
+        );
+    }
+
+    /* ───── 真机联调（默认忽略） ───── */
+
+    /// 用真实教务核对**区间交集偏差估计**到底能收到多准。
+    ///
+    /// 这是唯一必须打真服务器才能验证的东西：单测只能验算法，验不了
+    /// 「教务的秒到底怎么截断、往返抖成什么样」—— 而那两件事决定了开火时刻的精度。
+    ///
+    /// ```text
+    /// $env:REIN_GUET_USER='2600xxxxxx'; $env:REIN_GUET_PASS='...'
+    /// cargo test --lib campus::grab::tests::live -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "打真实教务系统，需要 REIN_GUET_USER / REIN_GUET_PASS"]
+    fn live_clock_skew_estimate() {
+        use crate::modules::campus::guet::GuetAdapter;
+        use crate::modules::campus::http::{CookieJar, Session};
+
+        let (Ok(user), Ok(pass)) = (
+            std::env::var("REIN_GUET_USER"),
+            std::env::var("REIN_GUET_PASS"),
+        ) else {
+            println!("缺少 REIN_GUET_USER / REIN_GUET_PASS，跳过");
+            return;
+        };
+        let spec = crate::modules::campus::provider::spec("guet-supwisdom-eams5").unwrap();
+        let host = spec.default_base_url;
+        let mut session = Session::new(host, CookieJar::default());
+        {
+            let mut adapter = GuetAdapter::new(spec, &mut session);
+            let outcome = adapter.login(&user, &pass, "").expect("登录请求要能发出");
+            assert!(outcome.ok, "EAMS 登录被拒：{:?}", outcome.message);
+        }
+        let client = CourseSelectClient::acquire(host, session.jar().clone()).expect("换取选课令牌");
+        println!("✓ 选课令牌就绪");
+
+        // 旧口径（单次采样、把整秒起点当本刻）作对照
+        let one_at = now_ms();
+        let one_text = client.server_time().expect("服务器时间");
+        let one = compute_skew(&one_text, one_at).expect("解析服务器时间");
+
+        let est = sample_skew(|| client.server_time()).expect("区间交集采样");
+        println!("✓ 教务时间原文：{}", est.text);
+        println!("  旧口径（单次采样）：{one}ms —— 系统性偏小，开火会偏晚");
+        println!(
+            "  区间交集：{}ms ±{}ms（{} 个样本，{}）",
+            est.skew_ms, est.uncertainty_ms, est.samples, est.mode
+        );
+
+        assert!(est.samples >= 2, "至少要取到两个样本");
+        assert_eq!(est.mode, "intersection", "真机上不该退化成最低 RTT 估计");
+        assert!(
+            est.uncertainty_ms <= 600,
+            "交集精度应当明显优于「一秒截断」：±{}ms",
+            est.uncertainty_ms
+        );
+        // 两种口径不该互相矛盾（差得离谱说明采样或解析哪里错了）
+        assert!(
+            (est.skew_ms - one).abs() <= 1500,
+            "两种口径相差 {}ms，超出合理范围",
+            (est.skew_ms - one).abs()
+        );
+    }
+
+    /// 真机联调（默认忽略）：拿**当前真实开放批次**把「批次 → 教学班 → 模糊匹配 →
+    /// 志愿组 → 开火时刻」这条解析链整条走一遍。
+    ///
+    /// 全是只读请求，**不发任何提交**。为什么值得单独一条：单测用的是合成名单，
+    /// 验不了「教务此刻返回的字段我们认不认得、模糊匹配在**真实课名**上会挑出什么」——
+    /// 真机上最容易坏的就是这一层（字段改名、课名写法变化）。
+    ///
+    /// ```text
+    /// $env:REIN_GUET_USER='2600xxxxxx'; $env:REIN_GUET_PASS='...'
+    /// cargo test --lib campus::grab::tests::live_grab -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "打真实教务系统，需要 REIN_GUET_USER / REIN_GUET_PASS"]
+    fn live_grab_pipeline_resolves_real_lessons() {
+        use crate::modules::campus::guet::GuetAdapter;
+        use crate::modules::campus::http::{CookieJar, Session};
+
+        let (Ok(user), Ok(pass)) = (
+            std::env::var("REIN_GUET_USER"),
+            std::env::var("REIN_GUET_PASS"),
+        ) else {
+            println!("缺少 REIN_GUET_USER / REIN_GUET_PASS，跳过");
+            return;
+        };
+        let spec = crate::modules::campus::provider::spec("guet-supwisdom-eams5").unwrap();
+        let host = spec.default_base_url;
+        let mut session = Session::new(host, CookieJar::default());
+        {
+            let mut adapter = GuetAdapter::new(spec, &mut session);
+            let outcome = adapter.login(&user, &pass, "").expect("登录请求要能发出");
+            assert!(outcome.ok, "EAMS 登录被拒：{:?}", outcome.message);
+        }
+        let client = CourseSelectClient::acquire(host, session.jar().clone()).expect("换取选课令牌");
+        let students = client.students().expect("学生档案");
+        let sid = students
+            .first()
+            .and_then(|s| s.get("id"))
+            .and_then(|v| v.as_i64())
+            .expect("学生 id");
+        println!("✓ 选课令牌 + 学生 id={sid}");
+
+        let turns = client.open_turns(sid).expect("开放批次");
+        let briefs: Vec<GrabTurnBrief> = turns.iter().map(turn_brief).collect();
+        println!("✓ 开放批次 {} 个", briefs.len());
+        let Some(brief) = pick_turn(None, &briefs) else {
+            println!("（当前没有可进入的批次 —— 窗口未开是常态，解析链跳过）");
+            return;
+        };
+        println!(
+            "  目标批次 {}「{}」窗口 {:?} ~ {:?}，allowEnter={}",
+            brief.id,
+            brief.name.clone().unwrap_or_default(),
+            brief.window_start,
+            brief.window_end,
+            brief.allow_enter
+        );
+
+        // 教学班名单：与 `GrabHub::lessons_cached` 同一条查询（带 hasCount 才拿得到名额）
+        let query = LessonQuery {
+            has_count: Some(true),
+            ..Default::default()
+        };
+        let lessons = client
+            .query_lesson(sid, &brief.id, &query)
+            .expect("教学班名单");
+        println!("✓ 教学班 {} 个", lessons.len());
+        assert!(!lessons.is_empty(), "可进入的批次里应当有教学班");
+
+        // 用名单里第一门课的课程名走一遍模糊匹配与志愿组
+        let first = lessons.first().unwrap();
+        let name = matcher::course_name_of(first).expect("课程名");
+        let hits = matcher::match_lessons_relaxed(&name, &lessons).hits;
+        println!("  以「{name}」查询：命中 {} 个教学班", hits.len());
+        assert!(!hits.is_empty(), "教务自己给的课名必须能命中它自己");
+
+        // 名额：名单接口不回 `stdCount`，得单独问 `std-count`（补名额那条路）
+        let ids: Vec<serde_json::Value> = hits.iter().map(|h| h.lesson.id.clone()).collect();
+        let counts = client.std_count(&ids).expect("std-count 批量查人数");
+        println!("  std-count 回执 {} 条（请求 {} 个 id）", counts.len(), ids.len());
+        assert!(!counts.is_empty(), "std-count 应当能查到至少一个班的人数");
+        for h in hits.iter().take(3) {
+            let key = matcher::id_text(&h.lesson.id);
+            let seat = counts
+                .get(&key)
+                .and_then(|c| c.seat_left(h.lesson.limit_count))
+                .map(|n| format!("余 {n}"))
+                .unwrap_or_else(|| "名额未知".into());
+            println!(
+                "    · {} / {} / id={key} —— {seat}",
+                matcher::course_name_of(&h.lesson).unwrap_or_default(),
+                matcher::teacher_text(&h.lesson).unwrap_or_default()
+            );
+        }
+
+        // **放宽阶梯**（真机）：教务名单里查不到的词该被丢掉，而不是让整句查询白等一个窗口。
+        // 用「无此条件」这种必然不存在的四字词 —— 两三个字会被人名形状保护起来（见 matcher 的红线）。
+        let relaxed = matcher::match_lessons_relaxed(&format!("{name} 无此条件"), &lessons);
+        println!(
+            "  放宽阶梯：「{name} 无此条件」→ {:?}，丢掉 {:?}，命中 {}",
+            relaxed.level,
+            relaxed.dropped,
+            relaxed.hits.len()
+        );
+        assert_eq!(
+            relaxed.level,
+            matcher::Relax::DropNoise,
+            "查不到的词该被丢掉才对"
+        );
+        assert_eq!(relaxed.dropped, vec!["无此条件".to_string()]);
+        assert!(!relaxed.hits.is_empty(), "丢掉噪声后应当仍然命中原课程");
+
+        let groups = plan_groups(&matcher::preferred(&hits), false);
+        let head = groups
+            .first()
+            .and_then(|g| g.first())
+            .map(|h| {
+                format!(
+                    "{} / {} / id={}",
+                    matcher::course_name_of(&h.lesson).unwrap_or_default(),
+                    matcher::teacher_text(&h.lesson).unwrap_or_default(),
+                    matcher::id_text(&h.lesson.id)
+                )
+            })
+            .unwrap_or_default();
+        println!("  志愿组 {} 组；首选：{head}", groups.len());
+        assert_eq!(groups.len(), 1, "「中一个就够」的语义下只该有一组");
+
+        // 开火时刻：窗口已公布时，闸门必须算得出来并落在窗口内
+        if let Some(start) = brief.window_start.as_deref().filter(|s| !s.trim().is_empty()) {
+            let skew = sample_skew(|| client.server_time())
+                .map(|e| e.skew_ms)
+                .unwrap_or(0);
+            let mut t = GrabTask::blank();
+            t.turn_id = brief.id.clone();
+            t.window_wall = Some(start.to_string());
+            t.window_end_wall = brief.window_end.clone();
+            let at = fire_at_ms(&t, skew, GrabSettings::default().lead_ms).expect("有窗口就该有闸门");
+            println!(
+                "  开火时刻 {}（教务墙钟 {start}，偏差 {}ms，误差 ±{}ms）",
+                format_now(at),
+                skew,
+                sample_skew(|| client.server_time())
+                    .map(|e| e.uncertainty_ms)
+                    .unwrap_or(0)
+            );
+            assert_ne!(at, GATE_UNKNOWN, "窗口已公布，闸门不该未知");
+            if !window_closed(&t, skew) {
+                assert!(
+                    at <= now_ms() + 60_000,
+                    "窗口已开放时开火时刻不该还在遥远未来：{}",
+                    format_now(at)
+                );
+            }
+        }
+        println!("✓ 解析链联调通过（全程只读，未发送任何提交）");
+    }
+
+    /* ───── 真机写链路（默认忽略，**会真的选上一门课再退掉**） ───── */
+
+    /// 一条教学班身上的 id（教务给 `id`，别处也见过 `lessonId` 等写法）。
+    fn id_of(v: &serde_json::Value) -> Option<String> {
+        ["id", "lessonId", "lessonAssoc", "lesson_id"]
+            .iter()
+            .filter_map(|k| v.get(*k))
+            .map(matcher::id_text)
+            .next()
+    }
+
+    /// 把引擎的一步一步推完（测试内部用）：`submit` 与 `poll` 交替，直到终态、
+    /// 或已经正式提交过两次（满员的课没必要在这里守着）。
+    ///
+    /// 用的是**引擎自己的函数**（`submit`/`poll`/`judge`/`absorb_error`），
+    /// 所以这条测试验的是真引擎的状态机，不是另写一遍的近似品。
+    fn drive_to_rest(
+        ctx: &super::super::commands::SelectContext,
+        settings: &GrabSettings,
+        task: &mut GrabTask,
+        skew_ms: i64,
+        max_steps: usize,
+    ) {
+        for _ in 0..max_steps {
+            if grab_is_terminal(&task.status) {
+                return;
+            }
+            if task.status == GRAB_WAITING && task.attempts >= 2 {
+                return;
+            }
+            let now = now_ms();
+            if task.next_at > now {
+                std::thread::sleep(Duration::from_millis((task.next_at - now).min(1500) as u64));
+            }
+            if task.phase == PHASE_POLL && task.request_id.is_some() {
+                poll(ctx, settings, task, skew_ms);
+            } else {
+                submit(ctx, settings, task, skew_ms);
+            }
+        }
+    }
+
+    /// 把这门课退掉，返回一句人话结果。**以 `selected-lessons` 为准**。
+    ///
+    /// 退课三步与选课对称：`drop-predicate` → 轮询 `predicate-response` →
+    /// `drop-request` → 轮询 `add-drop-response`。
+    ///
+    /// **只退传进来的这一个教学班**（调用方只会传自己刚选上的那个）：
+    /// 两个 body 里都只有这一个 id，绝不会有第二条 —— 用户原有的课一门都不许动。
+    fn drop_now(
+        ctx: &super::super::commands::SelectContext,
+        turn: &str,
+        lesson: &serde_json::Value,
+    ) -> String {
+        let ids = vec![lesson.clone()];
+        let Some(want) = id_of(lesson) else {
+            return "拿不到教学班 id，未退课".into();
+        };
+        let still_there = |note: String| -> String {
+            let left = ctx
+                .client
+                .selected_lessons(turn, ctx.student_id)
+                .map(|list| list.iter().filter_map(id_of).any(|id| id == want))
+                .unwrap_or(true);
+            if left {
+                format!("{note}；这门课**仍在已选名单**里")
+            } else {
+                format!("{note}；已不在名单（退课成功）")
+            }
+        };
+
+        let rid = match ctx.client.drop_predicate(ctx.student_id, turn, &ids) {
+            Ok(r) => r,
+            Err(e) => return still_there(format!("drop-predicate 失败：{e}")),
+        };
+        for _ in 0..5 {
+            match ctx.client.predicate_response(ctx.student_id, &rid) {
+                Ok(v) if !v.is_null() => break,
+                Ok(_) => std::thread::sleep(Duration::from_millis(400)),
+                Err(e) => {
+                    println!("  （退课占位轮询失败：{e}）");
+                    break;
+                }
+            }
+        }
+        let rid2 = match ctx
+            .client
+            .drop_request(ctx.student_id, turn, &ids, None, true)
+        {
+            Ok(r) => r,
+            Err(e) => return still_there(format!("drop-request 失败：{e}")),
+        };
+        let mut last = serde_json::Value::Null;
+        for _ in 0..8 {
+            match ctx.client.add_drop_response(ctx.student_id, &rid2) {
+                Ok(v) => {
+                    last = v.clone();
+                    if !v.is_null() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    println!("  （退课结果轮询失败：{e}）");
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let brief: String = last.to_string().chars().take(160).collect();
+        still_there(format!("drop 受理结果 {brief}"))
+    }
+
+    /// 「免听重发」：对应前端免听弹窗里的**「免听」按钮**。
+    ///
+    /// **`needAttend` 是反的**（2026-09-22 从前端 i18n 逐字核对，别再凭直觉猜）：
+    /// 弹窗两个按钮是 `resend:"免听"` → `resendOpeation(false)`、
+    /// `noResend:"不免听"` → `resendOpeation(true)`，而 `resendOpeation(t)` 里做的是
+    /// `e.needAttend = t` —— 也就是说：
+    ///
+    /// - 办免听（不需要出席）→ **`needAttend: false`**
+    /// - 不免听（照常出席）  → `needAttend: true`
+    ///
+    /// 抢课项目里那份 `--auto-resend 带 needAttend=true` 正好写反了（它以为 true 是免听）。
+    /// 真机上也能看出来：发 `true` 被回「时间冲突」—— 那正是「你要出席，可你冲堂」的意思。
+    ///
+    /// 引擎自己**不做**这一步（免听是「明知冲堂仍然要上」，该由人决定），
+    /// 这条测试显式走一遍：课表排满的账号只有这一条路能选上课，
+    /// 而「免听能不能被受理」本身也是写链路上值得验证的真实分支。
+    fn resend_with_attend(
+        ctx: &super::super::commands::SelectContext,
+        task: &mut GrabTask,
+        skew_ms: i64,
+    ) -> bool {
+        let items = vec![AddItem {
+            lesson_assoc: task.lesson_id.clone(),
+            virtual_cost: task.virtual_cost,
+            schedule_group_assoc: task.schedule_group_id.clone(),
+            need_attend: Some(false), // ← 「免听」（见上面那段：false 才是免听）
+        }];
+        let rid = match ctx
+            .client
+            .add_request(ctx.student_id, task.turn_assoc(), items, None)
+        {
+            Ok(r) => r,
+            Err(e) => {
+                println!("  （免听重发失败：{e}）");
+                return false;
+            }
+        };
+        for _ in 0..10 {
+            match ctx.client.add_drop_response(ctx.student_id, &rid) {
+                Ok(v) if !v.is_null() => {
+                    let ok = v.get("success").and_then(|b| b.as_bool()).unwrap_or(false);
+                    let msg = v
+                        .get("errorMessage")
+                        .and_then(|m| m.get("text"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    println!("  免听回执：success={ok} {msg}");
+                    if ok {
+                        task.status = GRAB_SUCCESS.into();
+                        task.last_message = Some("免听选上".into());
+                    }
+                    return ok;
+                }
+                Ok(_) => std::thread::sleep(Duration::from_millis(600)),
+                Err(e) => {
+                    println!("  （免听结果轮询失败：{e}）");
+                    return false;
+                }
+            }
+        }
+        println!("  （免听受理结果超时未回）");
+        let _ = skew_ms;
+        false
+    }
+
+    /// 真机联调（默认忽略）：**完整走一次真实提交**，确认选上后立刻退课。
+    ///
+    /// 这是唯一会写真实数据的测试：它会把这门课真的选上，再退掉。因此顺序刻意写成
+    /// 「**先把课退掉，再做断言**」—— 中途 panic 不该把课留在名下。
+    ///
+    /// 目标课从教务自己的名单里挑：有余额、不在已选名单里、课程代码与已选不重复
+    /// （同代码会直接被判「已选过」）。挑到的候选若被服务端按规则拒了（满员/冲突/额度），
+    /// 就换下一个并如实打印教务的原话 —— 那是正常拒绝，不算失败；
+    /// 但**参数错误**（`needs_ai`）说明请求写法有问题，那种必须报错。
+    ///
+    /// ```text
+    /// $env:REIN_GUET_USER='2600xxxxxx'; $env:REIN_GUET_PASS='...'
+    /// cargo test --lib campus::grab::tests::live_grab_submit -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "会真的选上一门课再退掉，只在明确要求时跑"]
+    fn live_grab_submit_then_drop() {
+        use crate::modules::campus::commands::SelectContext;
+        use crate::modules::campus::guet::GuetAdapter;
+        use crate::modules::campus::http::{CookieJar, Session};
+
+        let (Ok(user), Ok(pass)) = (
+            std::env::var("REIN_GUET_USER"),
+            std::env::var("REIN_GUET_PASS"),
+        ) else {
+            println!("缺少 REIN_GUET_USER / REIN_GUET_PASS，跳过");
+            return;
+        };
+        let spec = crate::modules::campus::provider::spec("guet-supwisdom-eams5").unwrap();
+        let host = spec.default_base_url;
+        let mut session = Session::new(host, CookieJar::default());
+        {
+            let mut adapter = GuetAdapter::new(spec, &mut session);
+            let outcome = adapter.login(&user, &pass, "").expect("登录请求要能发出");
+            assert!(outcome.ok, "EAMS 登录被拒：{:?}", outcome.message);
+        }
+        let client = CourseSelectClient::acquire(host, session.jar().clone()).expect("换取选课令牌");
+        let sid = client
+            .students()
+            .expect("学生档案")
+            .first()
+            .and_then(|s| s.get("id"))
+            .and_then(|v| v.as_i64())
+            .expect("学生 id");
+
+        let turns = client.open_turns(sid).expect("开放批次");
+        let briefs: Vec<GrabTurnBrief> = turns.iter().map(turn_brief).collect();
+        let Some(brief) = pick_turn(None, &briefs) else {
+            println!("（当前没有可进入的批次 —— 窗口未开时不该跑这条测试，跳过）");
+            return;
+        };
+        println!("✓ 目标批次 {}「{}」", brief.id, brief.name.clone().unwrap_or_default());
+
+        // 已选名单：挑候选时要避开（同代码会被判「已选过」，那是白跑）
+        let selected = client
+            .selected_lessons(&brief.id, sid)
+            .unwrap_or_default();
+        let selected_ids: Vec<String> = selected.iter().filter_map(id_of).collect();
+        let selected_codes: Vec<String> = selected
+            .iter()
+            .filter_map(|v| {
+                v.get("course")
+                    .and_then(|c| c.get("code"))
+                    .and_then(|c| c.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        println!("✓ 已选 {} 门（候选要避开这些课程代码）", selected.len());
+
+        // 候选：先用服务端的资格过滤（`canSelect`）取出「这个学生现在选得了」的班，
+        // 再排掉已经选上的。引擎自己**不**用这个过滤（它要盯满员等退课），
+        // 但这条测试要的是「一次能成功的提交」—— 不筛的话 448 个班里只有 12 个
+        // 对本学生开放，绝大多数提交都会撞上「不符合选课条件组要求」。
+        let eligible = client
+            .query_lesson(
+                sid,
+                &brief.id,
+                &LessonQuery {
+                    has_count: Some(true),
+                    can_select: Some(true),
+                    ..Default::default()
+                },
+            )
+            .expect("可选教学班名单");
+        println!("✓ 教务说「这个学生现在选得了」的班：{} 个", eligible.len());
+        let mut candidates: Vec<CourseSelectLesson> = eligible
+            .iter()
+            .filter(|l| !selected_ids.contains(&matcher::id_text(&l.id)))
+            .filter(|l| {
+                let code = l
+                    .course
+                    .as_ref()
+                    .and_then(|c| c.code.clone())
+                    .unwrap_or_default();
+                !selected_codes.contains(&code)
+            })
+            .cloned()
+            .collect();
+        candidates.sort_by_key(|l| match (l.std_count, l.limit_count) {
+            (Some(s), Some(lim)) => (0i64, -(lim - s)),
+            _ => (1, 0),
+        });
+        let candidates: Vec<CourseSelectLesson> = candidates.into_iter().take(6).collect();
+        println!(
+            "✓ 候选 {} 个（可选、不在已选里、课程代码不重复）",
+            candidates.len()
+        );
+        assert!(!candidates.is_empty(), "应至少挑得出一门可尝试的课");
+
+        let ctx = SelectContext {
+            client,
+            student_id: sid,
+            account_id: 0,
+            mirror: None,
+            mirror_note: String::new(),
+        };
+        // 轮询间隔按测试压缩（真机节奏不是这条测试要验的东西）
+        let settings = GrabSettings {
+            poll_interval_ms: 400,
+            ..Default::default()
+        };
+        let skew = sample_skew(|| ctx.client.server_time())
+            .map(|e| e.skew_ms)
+            .unwrap_or(0);
+
+        let mut rejected: Vec<String> = Vec::new();
+        for cand in &candidates {
+            let label = format!(
+                "{} / {} / id={}",
+                matcher::course_name_of(cand).unwrap_or_default(),
+                matcher::teacher_text(cand).unwrap_or_default(),
+                matcher::id_text(&cand.id)
+            );
+            let mut task = GrabTask::blank();
+            task.turn_id = brief.id.clone();
+            task.lesson_id = cand.id.clone();
+            task.course_name = matcher::course_name_of(cand);
+            task.teacher = matcher::teacher_text(cand);
+
+            // **安全闸**：绝不碰用户原有的课。候选在挑选阶段已经排掉已选的，
+            // 这里再钉一道 —— 这条测试会真选真退，搞错对象是不可接受的。
+            assert!(
+                !selected_ids.contains(&matcher::id_text(&cand.id)),
+                "候选里混进了用户已经选上的课，拒绝继续：{label}"
+            );
+
+            drive_to_rest(&ctx, &settings, &mut task, skew, 24);
+            let msg = task.last_message.clone().unwrap_or_default();
+            println!(
+                "  · {label} → {}（提交 {} 次）：{msg}",
+                task.status, task.attempts
+            );
+
+            if task.status == GRAB_NEEDS_AI {
+                panic!("提交被教务按**参数错误**拒绝，这是引擎（或请求体）的问题：{msg}");
+            }
+            // 时间冲突 = 免听分支（前端会弹「免听 / 不免听」）。课表排满的账号只有
+            // 这一条路能选上课，所以这里显式走一遍「免听」，随后立刻退掉。
+            if task.status == GRAB_CONFLICT {
+                println!("  · 时间冲突 → 走免听重发（对应前端免听弹窗的「免听」）");
+                if !resend_with_attend(&ctx, &mut task, skew) {
+                    rejected.push(format!("{label}：免听未被受理（{msg}）"));
+                    continue;
+                }
+            }
+            if task.status != GRAB_SUCCESS {
+                rejected.push(format!("{label}：{msg}"));
+                continue;
+            }
+
+            // —— 抢到了。**先把课退掉，再做断言** ——
+            let picked = verify_picked(&ctx, &task).unwrap_or(false);
+            println!(
+                "  ✓ 引擎判成功，复核 selected-lessons：{}",
+                if picked { "在名单里" } else { "不在名单里" }
+            );
+            let drop_log = drop_now(&ctx, &brief.id, &task.lesson_id);
+            println!("  · 退课：{drop_log}");
+
+            // 收尾对账：**这门课必须回到原样，原有课程一门都不许少**。
+            // 退课请求里从头到尾只有「刚选上那一个教学班」的 id（见 `drop_now`），
+            // 这条断言就是把那个不变量钉在真机上。
+            let after: Vec<String> = ctx
+                .client
+                .selected_lessons(&brief.id, sid)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(id_of)
+                .collect();
+            let missing: Vec<&String> = selected_ids
+                .iter()
+                .filter(|id| !after.contains(id))
+                .collect();
+
+            assert!(picked, "引擎判成功但 selected-lessons 里没有它（复核这一层要查）");
+            assert!(
+                drop_log.contains("退课成功"),
+                "这门课可能还留在名下，请手动退课：{drop_log}"
+            );
+            assert!(
+                missing.is_empty(),
+                "原有课程不该被动过，但这些不见了：{missing:?}"
+            );
+            println!(
+                "✓ 真机写链路联调通过：占位 → 逐条判词 → 正式提交 → 免听 → 复核 → 退课；\
+                 原有 {} 门课完好",
+                selected_ids.len()
+            );
+            return;
+        }
+
+        println!("（所有候选都被服务端按规则拒了，教务原话如下）");
+        for line in &rejected {
+            println!("  - {line}");
+        }
+        println!("这属于满员/冲突/额度一类的正常拒绝，不是引擎故障。");
+        if rejected.is_empty() {
+            panic!("一个候选都没试到 —— 候选筛选逻辑有问题");
+        }
     }
 }

@@ -329,6 +329,40 @@ async function main() {
     )
     await shot('2c-ambiguous')
 
+    /* ---- 3c. 放宽匹配：严格匹不到才丢词，而且丢什么必须说出来 ---- */
+    // 「无此条件」教务名单里没有（四个汉字，不像人名也不像课程代码）——
+    // 严格档零命中，引擎该丢掉它、继续按「高数」匹配，并在界面上交代清楚。
+    await writeQuery('高数 无此条件')
+    await preview()
+    const relaxText = await evalJS(
+      `document.querySelector('.plan .preview')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`,
+    )
+    const relaxHits = await evalJS(
+      `[...document.querySelectorAll('.plan .preview .matches li')].map((li) => li.textContent.replace(/\\s+/g, ' ').trim())`,
+    )
+    ok('放宽提示出现了：说清「忽略了名单里查不到的词」', relaxText.includes('已放宽'), relaxText.slice(0, 160))
+    ok('被丢掉的词被点出来', relaxText.includes('无此条件'), relaxText.slice(0, 160))
+    // 这门课有两个班（李娜的、张伟的）—— 放宽是按「高数」匹配的，两个都该在
+    ok(
+      '放宽之后仍然按原课程匹配（不是随便抓一个班）',
+      relaxHits.length === 2 && relaxHits.every((t) => t.includes('高等数学')),
+      JSON.stringify(relaxHits),
+    )
+
+    // 反过来：像人名的词**不许丢** —— 写了「张伟」却没有他的班，那就是没找到，
+    // 绝不能退成「这门课随便哪位老师都行」。
+    await writeQuery('量子力学 张伟')
+    await preview()
+    const noRelax = await evalJS(
+      `document.querySelector('.plan .preview, .plan .err')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`,
+    )
+    ok(
+      '人名形状的词不参与放宽：查不到就是查不到',
+      !noRelax.includes('已放宽') && /没匹配到/.test(noRelax),
+      noRelax.slice(0, 160),
+    )
+    await shot('2d-relax')
+
     /* ---- 4. 加入计划 → 引擎自己解析成志愿任务 → 自己抢到 ---- */
     await writeQuery('高数 张')
     await preview()
@@ -349,6 +383,29 @@ async function main() {
     await waitFor(`(${planChipExpr('高数 张')}) === '已抢到'`, 20000, '计划自动抢到')
     ok('全程没有再操作：计划自己走到了「已抢到」', true, await planChipExpr('高数 张'))
     await shot('3-grabbed')
+
+    /* ---- 4b. 起飞前自检：把「以为在抢、其实早就放弃了」那类问题摆出来 ---- */
+    await waitFor(`!!document.querySelector('.grab .pf-go')`, 8000, '体检按钮出现')
+    await evalJS(`document.querySelector('.grab .pf-go').click()`)
+    await waitFor(`!!document.querySelector('.grab .pf-list')`, 8000, '体检结果落下来')
+    const pf = await evalJS(`(() => {
+      const items = [...document.querySelectorAll('.grab .pf-list li')]
+      return {
+        n: items.length,
+        labels: items.map((e) => e.querySelector('b')?.textContent.trim() ?? ''),
+        details: items.map((e) => e.querySelector('em')?.textContent.trim() ?? ''),
+        summary: document.querySelector('.grab .pf-sum')?.textContent.trim() ?? '',
+      }
+    })()`)
+    ok('体检逐项列出（账号 / 批次 / 时钟 / 名单 / 计划）', pf.n >= 4, JSON.stringify(pf.labels))
+    ok('每项都带证据（不是一句「正常」）', pf.details.every((d) => d.length > 4), JSON.stringify(pf.details).slice(0, 160))
+    ok('体检给出一句话总结', pf.summary.length > 4, pf.summary)
+    ok(
+      '计划那项对着计划说「能匹配到几个候选」',
+      pf.labels.some((l) => l.includes('计划')) && pf.details.some((d) => d.includes('候选')),
+      JSON.stringify(pf.labels),
+    )
+    await shot('4-preflight')
 
     /* ---- 5. 重新解析 & 移除（移除要连任务一起收） ---- */
     await evalJS(`(${planRowExpr('高数 张')}).querySelector('[aria-label="重新解析"]').click()`)
