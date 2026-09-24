@@ -334,14 +334,17 @@ onBeforeUnmount(() => {
             <span class="num time">{{ fmtMs(voice.elapsedMs) }}</span>
           </div>
           <!-- 转写正文：时间脊的精读形态（顶部保留按真实比例的定位带） -->
-          <div class="tr" data-rubber-self>
-            <TimeSpine
-              size="full"
-              mode="read"
-              :segments="liveSpineSegs"
-              :head-ms="voice.elapsedMs"
-              :fold-silence-over="12"
-            />
+          <div class="tr">
+            <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 滚动框站住，只有内容位移（system/rubberScroll） -->
+            <div class="rubber-layer" data-rubber-content>
+              <TimeSpine
+                size="full"
+                mode="read"
+                :segments="liveSpineSegs"
+                :head-ms="voice.elapsedMs"
+                :fold-silence-over="12"
+              />
+            </div>
           </div>
           <footer class="foot">
             <button class="mode-chip" :class="{ on: voice.autoSettle }" @click="setAutoSettle(!voice.autoSettle)">
@@ -379,146 +382,149 @@ onBeforeUnmount(() => {
 
         <!-- ===== 纪要详情 ===== -->
         <template v-else-if="voice.view === 'memo'">
-          <div class="body" data-rubber-self>
-            <p v-if="!memo" class="vs-hint">
-              {{ voice.processingCount > 0 || voice.status === 'processing' ? 'AI 正在整理纪要…' : '这段没有产生纪要' }}
-            </p>
-            <template v-else>
-              <!-- 纪要头（平铺） -->
-              <div class="vm-head">
-                <span class="vm-ic"><FileText :size="17" /></span>
-                <span class="vm-t">
-                  <b>{{ memo.title }}</b>
-                  <em>
-                    {{ new Date(memo.createdAt).toTimeString().slice(0, 5) }} ·
-                    {{ fmtMs(memo.durationMs) }} · {{ memo.words }} 字 ·
-                    {{ memo.sentences.length }} 句
-                  </em>
-                </span>
-              </div>
-
-              <!-- 重放条 -->
-              <div v-if="memo.audioPath" class="player">
-                <button class="pl-btn" :aria-label="playing ? '暂停' : '播放'" @click="togglePlay">
-                  <Play v-if="!playing" :size="15" />
-                  <Pause v-else :size="15" />
-                </button>
-                <span class="pl-cur num">{{ fmtMs(curMs) }}</span>
-                <div class="pl-bar" @click="seekBar">
-                  <i :style="{ width: `${Math.min(100, (curMs / Math.max(1, memo.durationMs)) * 100)}%` }" />
-                  <b :style="{ left: `${Math.min(100, (curMs / Math.max(1, memo.durationMs)) * 100)}%` }" />
-                </div>
-                <span class="pl-dur num">{{ fmtMs(memo.durationMs) }}</span>
-              </div>
-
-              <!-- 分段 -->
-              <div class="seg" :class="{ right: tab === 'tr' }">
-                <span class="sthumb" />
-                <button :class="{ on: tab === 'ov' }" @click="switchTab('ov')">全览</button>
-                <button :class="{ on: tab === 'tr' }" @click="switchTab('tr')">转文字</button>
-              </div>
-
-              <!-- 会话结构：整场压成一屏，块宽 = 说话时长，纪要是钉在轴上的锚点 -->
-              <section class="ov-sec spine-sec">
-                <h5>
-                  会话结构
-                  <em class="num">{{ memo.sentences.length }} 句 · {{ fmtMs(memo.durationMs) }}</em>
-                </h5>
-                <TimeSpine
-                  size="full"
-                  mode="structure"
-                  :segments="memoSpineSegs"
-                  :total-ms="memo.durationMs"
-                  :pins="memoPins"
-                  :head-ms="playing ? curMs : undefined"
-                  :active-idx="spineActive"
-                  @seek="onSpineSeek"
-                  @pick="focusAt"
-                />
-              </section>
-
-              <!-- 整理中（轻提示行） -->
-              <div v-if="voice.status === 'processing' || voice.processingCount > 0" class="proc">
-                <span class="spin" />
-                <span>
-                  <b>AI 正在整理纪要…</b>
-                  <em>转写已保存，整理不会丢内容</em>
-                </span>
-              </div>
-
-              <!-- 全览 -->
-              <template v-else-if="tab === 'ov'">
-                <p v-if="memo.summary.length === 0" class="vs-hint">
-                  这段没有提取出结构化条目，转写内容见「转文字」。
-                </p>
-                <section v-if="memo.summary.length > 0" class="ov-sec">
-                  <h5>总结</h5>
-                  <div v-for="(it, i) in memo.summary" :key="i" class="sum-li">
-                <i class="ic" :class="`i-${it.kind}`">
-                  <Utensils v-if="it.kind === 'food'" :size="13" />
-                  <ListTodo v-else-if="it.kind === 'todo'" :size="13" />
-                  <MessageCircle v-else :size="13" />
-                </i>
-                    <span class="sum-body">
-                      <span class="md-line"><MdText :text="it.text" /><button
-                        v-if="it.refs.length"
-                        class="cite"
-                        :aria-label="`跳到第 ${it.refs.map((r) => r + 1).join('、')} 句`"
-                        @click="onCite(it.refs)"
-                      >{{ it.refs.map((r) => r + 1).join('') }}</button></span>
-                      <em v-if="it.note" class="sub">{{ it.note }}</em>
-                    </span>
-                  </div>
-                </section>
-                <section v-if="memo.summary.some((it) => it.kind === 'todo' && it.todo)" class="ov-sec">
-                  <h5>待办事项</h5>
-                  <div
-                    v-for="(it, i) in memo.summary.filter((x) => x.kind === 'todo' && x.todo)"
-                    :key="i"
-                    class="todo-li"
-                  >
-                    <span class="cb" :class="{ done: it.written }" />
-                    <span class="tt">
-                      {{ it.todo!.title }}
-                      <em v-if="it.todo!.startMin != null">
-                        {{ String(Math.floor(it.todo!.startMin! / 60)).padStart(2, '0') }}:{{ String(it.todo!.startMin! % 60).padStart(2, '0') }}
-                      </em>
-                    </span>
-                    <button v-if="!it.written" class="wbtn" @click="onWriteItem(memo, it)">写入</button>
-                    <span v-else class="done-mark"><Check :size="14" /></span>
-                  </div>
-                </section>
-                <div class="acts-flat">
-                  <button class="commit" :disabled="writing" @click="onWriteAll(memo)">
-                    <Check :size="15" /> 全部写入
-                  </button>
-                  <button class="ghost" @click="onSpeak(memo)">
-                    <span v-if="voice.speaking" class="mini-wave"><i /><i /><i /></span>
-                    <Play v-else :size="15" />
-                    {{ voice.speaking ? '停止朗读' : '朗读纪要' }}
-                  </button>
-                </div>
-              </template>
-
-              <!-- 转文字：脊的精读形态（顶带定位 + 句表 + 句尾锚点角标） -->
+          <div class="body">
+            <!-- 超范围平移层：同上（item 超伸） -->
+            <div class="rubber-layer" data-rubber-content>
+              <p v-if="!memo" class="vs-hint">
+                {{ voice.processingCount > 0 || voice.status === 'processing' ? 'AI 正在整理纪要…' : '这段没有产生纪要' }}
+              </p>
               <template v-else>
-                <section class="ov-sec tr-sec">
+                <!-- 纪要头（平铺） -->
+                <div class="vm-head">
+                  <span class="vm-ic"><FileText :size="17" /></span>
+                  <span class="vm-t">
+                    <b>{{ memo.title }}</b>
+                    <em>
+                      {{ new Date(memo.createdAt).toTimeString().slice(0, 5) }} ·
+                      {{ fmtMs(memo.durationMs) }} · {{ memo.words }} 字 ·
+                      {{ memo.sentences.length }} 句
+                    </em>
+                  </span>
+                </div>
+
+                <!-- 重放条 -->
+                <div v-if="memo.audioPath" class="player">
+                  <button class="pl-btn" :aria-label="playing ? '暂停' : '播放'" @click="togglePlay">
+                    <Play v-if="!playing" :size="15" />
+                    <Pause v-else :size="15" />
+                  </button>
+                  <span class="pl-cur num">{{ fmtMs(curMs) }}</span>
+                  <div class="pl-bar" @click="seekBar">
+                    <i :style="{ width: `${Math.min(100, (curMs / Math.max(1, memo.durationMs)) * 100)}%` }" />
+                    <b :style="{ left: `${Math.min(100, (curMs / Math.max(1, memo.durationMs)) * 100)}%` }" />
+                  </div>
+                  <span class="pl-dur num">{{ fmtMs(memo.durationMs) }}</span>
+                </div>
+
+                <!-- 分段 -->
+                <div class="seg" :class="{ right: tab === 'tr' }">
+                  <span class="sthumb" />
+                  <button :class="{ on: tab === 'ov' }" @click="switchTab('ov')">全览</button>
+                  <button :class="{ on: tab === 'tr' }" @click="switchTab('tr')">转文字</button>
+                </div>
+
+                <!-- 会话结构：整场压成一屏，块宽 = 说话时长，纪要是钉在轴上的锚点 -->
+                <section class="ov-sec spine-sec">
+                  <h5>
+                    会话结构
+                    <em class="num">{{ memo.sentences.length }} 句 · {{ fmtMs(memo.durationMs) }}</em>
+                  </h5>
                   <TimeSpine
                     size="full"
-                    mode="read"
+                    mode="structure"
                     :segments="memoSpineSegs"
                     :total-ms="memo.durationMs"
                     :pins="memoPins"
                     :head-ms="playing ? curMs : undefined"
                     :active-idx="spineActive"
-                    :fold-silence-over="12"
                     @seek="onSpineSeek"
                     @pick="focusAt"
                   />
-                  <p class="vs-hint">点句子跳到音频该句 · 点句尾角标对照总结</p>
                 </section>
+
+                <!-- 整理中（轻提示行） -->
+                <div v-if="voice.status === 'processing' || voice.processingCount > 0" class="proc">
+                  <span class="spin" />
+                  <span>
+                    <b>AI 正在整理纪要…</b>
+                    <em>转写已保存，整理不会丢内容</em>
+                  </span>
+                </div>
+
+                <!-- 全览 -->
+                <template v-else-if="tab === 'ov'">
+                  <p v-if="memo.summary.length === 0" class="vs-hint">
+                    这段没有提取出结构化条目，转写内容见「转文字」。
+                  </p>
+                  <section v-if="memo.summary.length > 0" class="ov-sec">
+                    <h5>总结</h5>
+                    <div v-for="(it, i) in memo.summary" :key="i" class="sum-li">
+                  <i class="ic" :class="`i-${it.kind}`">
+                    <Utensils v-if="it.kind === 'food'" :size="13" />
+                    <ListTodo v-else-if="it.kind === 'todo'" :size="13" />
+                    <MessageCircle v-else :size="13" />
+                  </i>
+                      <span class="sum-body">
+                        <span class="md-line"><MdText :text="it.text" /><button
+                          v-if="it.refs.length"
+                          class="cite"
+                          :aria-label="`跳到第 ${it.refs.map((r) => r + 1).join('、')} 句`"
+                          @click="onCite(it.refs)"
+                        >{{ it.refs.map((r) => r + 1).join('') }}</button></span>
+                        <em v-if="it.note" class="sub">{{ it.note }}</em>
+                      </span>
+                    </div>
+                  </section>
+                  <section v-if="memo.summary.some((it) => it.kind === 'todo' && it.todo)" class="ov-sec">
+                    <h5>待办事项</h5>
+                    <div
+                      v-for="(it, i) in memo.summary.filter((x) => x.kind === 'todo' && x.todo)"
+                      :key="i"
+                      class="todo-li"
+                    >
+                      <span class="cb" :class="{ done: it.written }" />
+                      <span class="tt">
+                        {{ it.todo!.title }}
+                        <em v-if="it.todo!.startMin != null">
+                          {{ String(Math.floor(it.todo!.startMin! / 60)).padStart(2, '0') }}:{{ String(it.todo!.startMin! % 60).padStart(2, '0') }}
+                        </em>
+                      </span>
+                      <button v-if="!it.written" class="wbtn" @click="onWriteItem(memo, it)">写入</button>
+                      <span v-else class="done-mark"><Check :size="14" /></span>
+                    </div>
+                  </section>
+                  <div class="acts-flat">
+                    <button class="commit" :disabled="writing" @click="onWriteAll(memo)">
+                      <Check :size="15" /> 全部写入
+                    </button>
+                    <button class="ghost" @click="onSpeak(memo)">
+                      <span v-if="voice.speaking" class="mini-wave"><i /><i /><i /></span>
+                      <Play v-else :size="15" />
+                      {{ voice.speaking ? '停止朗读' : '朗读纪要' }}
+                    </button>
+                  </div>
+                </template>
+
+                <!-- 转文字：脊的精读形态（顶带定位 + 句表 + 句尾锚点角标） -->
+                <template v-else>
+                  <section class="ov-sec tr-sec">
+                    <TimeSpine
+                      size="full"
+                      mode="read"
+                      :segments="memoSpineSegs"
+                      :total-ms="memo.durationMs"
+                      :pins="memoPins"
+                      :head-ms="playing ? curMs : undefined"
+                      :active-idx="spineActive"
+                      :fold-silence-over="12"
+                      @seek="onSpineSeek"
+                      @pick="focusAt"
+                    />
+                    <p class="vs-hint">点句子跳到音频该句 · 点句尾角标对照总结</p>
+                  </section>
+                </template>
               </template>
-            </template>
+            </div>
           </div>
           <!-- 底部控制：继续说（新一段，独立纪要） -->
           <footer class="foot">

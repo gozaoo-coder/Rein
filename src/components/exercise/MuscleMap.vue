@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
-import { MUSCLE_DESCS, MUSCLE_LABELS } from '@/config/muscles'
+import { MUSCLE_DESCS, MUSCLE_LABELS, isMuscleKey } from '@/config/muscles'
 import type { ActivationMap, MuscleKey } from '@/config/muscles'
 
 import frontSvg from '@/assets/muscles/rein/front.svg?raw'
@@ -18,9 +18,13 @@ import sideSvg from '@/assets/muscles/rein/side.svg?raw'
  * 近的上，深层肌群同样被画出来，只是被浅层盖住。
  *
  * 分区属性：
- *   data-m      肌群键（26 键，与 src/config/muscles.ts 一一对应）
+ *   data-m      肌群键（与 src/config/muscles.ts 的 MUSCLE_KEYS 一一对应，含 13 个深层键）
  *   data-layer  1 = 浅层肌、2 = 深层肌（「深层」开关控制是否显示）
- *   data-kind   class="m" 可高亮；class="a" 只是把深层结构画出来，不参与高亮
+ *   data-kind   构建脚本写出的 class（"m"/"a"）；**高亮与否只看键**，
+ *               键在 MUSCLE_KEYS 内就是肌群，不在就只是解剖底衬
+ *
+ * 深层键在文档顺序里画在浅层之下，激活后会再叠画一层（.overlay），
+ * 否则会出现「标了大圆肌/菱形肌却看不见」。
  *
  * 着色走 CSS 继承：3 主攻 = --c-exercise，2 辅助 = --heat-mid，
  * 1 稳定 = --c-exercise-soft；未激活走中性赭红，深层解剖走冷灰。
@@ -79,10 +83,27 @@ const VIEWS: { label: string; view: View }[] = [
 /** 深层开关：关掉只留浅层肌（被激活的深层肌仍会显示，否则点了没反应） */
 const showDeep = ref(false)
 
+/** 可高亮分区：键在 MUSCLE_KEYS 内即算肌群（不依赖 SVG 里的 class） */
+function isMuscle(r: Region): boolean {
+  return isMuscleKey(r.key)
+}
+
+function isActive(r: Region): boolean {
+  return isMuscle(r) && props.activation[r.key as MuscleKey] !== undefined
+}
+
 function isVisible(r: Region): boolean {
   if (r.layer <= 1) return true
   if (showDeep.value) return true
-  return r.kind === 'm' && props.activation[r.key as MuscleKey] !== undefined
+  return isActive(r)
+}
+
+/**
+ * 深层分区在文档顺序里画在浅层之下，会被浅层盖住而「标了看不见」。
+ * 已激活的深层分区在全部浅层之后再叠画一遍（半透明），保证可见。
+ */
+function overlayRegions(view: View): Region[] {
+  return view.regions.filter((r) => r.layer > 1 && isActive(r))
 }
 
 function lv(key: MuscleKey): string {
@@ -115,7 +136,8 @@ interface MuscleRow {
 
 const sortedMuscles = computed<MuscleRow[]>(() => {
   const rows: MuscleRow[] = []
-  for (const key of Object.keys(props.activation) as MuscleKey[]) {
+  for (const key of Object.keys(props.activation)) {
+    if (!isMuscleKey(key)) continue
     const v = props.activation[key]
     if (!v) continue
     rows.push({
@@ -162,14 +184,23 @@ function toggleDeep(): void {
               <g
                 v-show="isVisible(r)"
                 class="layer"
-                :class="r.kind === 'a' ? 'anat' : ['muscle', cls(r.key as MuscleKey)]"
+                :class="isMuscle(r) ? ['muscle', cls(r.key as MuscleKey)] : 'anat'"
                 :data-m="r.key"
                 :data-layer="r.layer"
               >
-                <title v-if="r.kind === 'm'">{{ title(r.key as MuscleKey) }}</title>
+                <title v-if="isMuscle(r)">{{ title(r.key as MuscleKey) }}</title>
                 <g v-html="r.markup" />
               </g>
             </template>
+            <!-- 深层已激活分区：叠画在浅层之上，否则被盖住看不见 -->
+            <g
+              v-for="r in overlayRegions(item.view)"
+              :key="`${item.label}-overlay-${r.key}`"
+              class="layer muscle overlay"
+              :class="cls(r.key as MuscleKey)"
+              aria-hidden="true"
+              v-html="r.markup"
+            />
           </svg>
         </div>
         <figcaption>{{ item.label }}</figcaption>
@@ -314,6 +345,11 @@ figure {
 
 .layer.l3 {
   fill: var(--c-exercise);
+}
+
+/* 深层已激活分区：在浅层之上半透明重描一遍，保证「标了就看得见」 */
+.layer.overlay {
+  opacity: 0.72;
 }
 
 figcaption {

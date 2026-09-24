@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import ExerciseHistoryPanel from '@/components/exercise/ExerciseHistoryPanel.vue'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import WeightCurve from '@/components/exercise/WeightCurve.vue'
@@ -10,6 +11,7 @@ import { sessionService } from '@/services/sessionService'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useToast } from '@/composables/useToast'
 import { fmtDateCn, todayStr } from '@/utils/date'
+import { libraryMuscles } from '@/utils/libraryMuscles'
 import { aggregateStrengthDays, fmtKg, type StrengthDay } from '@/utils/strength'
 import { computeTrainingAdvice, type ExerciseAdvice } from '@/utils/trainingAdvice'
 import type { ExerciseRecord, PlanExercise } from '@/types'
@@ -37,6 +39,9 @@ const curveDays = ref<StrengthDay[]>([])
 const advice = ref<ExerciseAdvice | null>(null)
 const loading = ref(false)
 const confirmDelete = ref(false)
+
+/** 展示用肌群：显式数据优先，空表按动作名兜底（与课程侧口径一致） */
+const shownMuscles = computed(() => libraryMuscles(props.exercise))
 
 /** 库内动作 → 建议引擎的输入形状（组数/次数/重量取库内默认处方） */
 function asPlanExercise(e: ExerciseRecord): PlanExercise {
@@ -158,6 +163,17 @@ async function restoreToLibrary(): Promise<void> {
   }
 }
 
+/** 收藏 / 取消收藏（乐观更新在 store 内，失败回滚并提示） */
+async function toggleFavorite(): Promise<void> {
+  const e = props.exercise
+  if (!e) return
+  try {
+    await lib.setFavorite(e.id, !e.favorite)
+  } catch (err) {
+    toast(err instanceof Error ? err.message : '收藏失败')
+  }
+}
+
 async function removeCustom(): Promise<void> {
   const e = props.exercise
   if (!e) return
@@ -183,10 +199,10 @@ async function removeCustom(): Promise<void> {
       </div>
       <p class="sub">{{ metaLine }}</p>
 
-      <template v-if="Object.keys(exercise.muscles ?? {}).length">
+      <template v-if="Object.keys(shownMuscles).length">
         <p class="sec">激活肌群</p>
         <div class="mapcard">
-          <MuscleMap :activation="exercise.muscles" />
+          <MuscleMap :activation="shownMuscles" />
         </div>
       </template>
 
@@ -204,6 +220,9 @@ async function removeCustom(): Promise<void> {
         </div>
       </template>
 
+      <p class="sec">历史与 PR<span class="secsub">正式组口径，热身不计容量</span></p>
+      <ExerciseHistoryPanel :exercise-id="exercise.id" />
+
       <p class="sec">训练参数</p>
       <div class="stats">
         <div v-for="s in stats" :key="s.k" class="cell">
@@ -217,7 +236,17 @@ async function removeCustom(): Promise<void> {
         <p class="tips">{{ exercise.tips }}</p>
       </template>
 
+      <template v-if="exercise.steps.length">
+        <p class="sec">动作要领<span class="secsub">按顺序一步步做</span></p>
+        <ol class="steps">
+          <li v-for="(s, i) in exercise.steps" :key="i">{{ s }}</li>
+        </ol>
+      </template>
+
       <div class="ops col">
+        <button class="op" @click="void toggleFavorite()">
+          {{ exercise.favorite ? '取消收藏' : '收藏这个动作' }}
+        </button>
         <template v-if="exercise.isCustom">
           <button class="op" @click="emit('edit', exercise)">编辑动作</button>
           <button class="op danger" @click="confirmDelete = true">删除动作</button>
@@ -279,6 +308,41 @@ async function removeCustom(): Promise<void> {
   font-weight: 700;
   letter-spacing: 0.4px;
   color: var(--text-3);
+}
+
+/* 动作要领：分步说明（有序列表 + 序号圆点） */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  position: relative;
+  padding-left: 26px;
+  font-size: var(--fs-footnote);
+  line-height: 1.65;
+  color: var(--text-1);
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 
 .secsub {

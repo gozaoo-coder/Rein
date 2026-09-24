@@ -131,6 +131,10 @@ async function layout(): Promise<void> {
       left: `${Math.round(Math.max(EDGE, Math.min(left, vw - EDGE - w)))}px`,
       zIndex: `${115 + i}`,
       transformOrigin: `${originX} ${originY}`,
+      // 丰富档的透镜式展开（clip-path 圆心）就落在被贴住的那个角上 ——
+      // 与 transformOrigin 是同一个判定，不必再量一遍像素
+      '--ox': originX === 'left' ? '0%' : '100%',
+      '--oy': originY === 'top' ? '0%' : '100%',
     }
   })
 }
@@ -429,6 +433,37 @@ const flatActions = computed(() => {
   opacity: 0;
 }
 
+/* ---------- 丰富档 · bind 面板：透镜式展开 ----------
+   苹果那条「菜单从触发它的按钮位置气泡般展开」：从贴住的那个角**扩一个圆**，
+   而不是整体缩放 + 淡入。缩放会把面板里的文字一起压扁（读起来像"糊了一下"），
+   圆形揭示只换"看得见多少"，内容从头到尾都是清的。
+
+   用 clip-path 而不是动画化 mask-image：后者在 Chromium 里是**离散**属性，
+   只能硬切；clip-path 是同形状之间插值，走的是合成器。
+   ⚠️ clip-path + overflow 会让它成为后代的 backdrop root —— 面板本身是不透明的
+   `--surface`，里面没有 backdrop-filter，所以这条在这里不构成问题。
+
+   160% 的分母是「参考半径」= 对角线/√2，这里给 200% 是因为**投影也在裁剪范围内**：
+   圆必须盖过面板本体 + 那一圈 --shadow-float 的扩散，否则展开到一半会看到投影被削掉。 */
+html[data-motion='rich'] .panel {
+  clip-path: circle(200% at var(--ox, 0%) var(--oy, 0%));
+}
+
+html[data-motion='rich'] .am-pop-enter-active {
+  transition: clip-path var(--dur-base) var(--ease-liquid);
+}
+
+html[data-motion='rich'] .am-pop-leave-active {
+  transition: clip-path var(--dur-fast) var(--ease-standard);
+}
+
+html[data-motion='rich'] .am-pop-enter-from,
+html[data-motion='rich'] .am-pop-leave-to {
+  transform: none;
+  opacity: 1;
+  clip-path: circle(0px at var(--ox, 0%) var(--oy, 0%));
+}
+
 .am-mask-enter-active,
 .am-mask-leave-active {
   transition: opacity var(--dur-base) var(--ease-standard);
@@ -436,6 +471,25 @@ const flatActions = computed(() => {
 .am-mask-enter-from,
 .am-mask-leave-to {
   opacity: 0;
+}
+
+/* 丰富档：dialog 模式的遮罩改成透镜式显现（与 SheetModal / ActionSheet 同一套） */
+html[data-motion='rich'] .mask {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+html[data-motion='rich'] .am-mask-enter-active,
+html[data-motion='rich'] .am-mask-leave-active {
+  transition:
+    opacity var(--dur-base) var(--ease-standard),
+    backdrop-filter var(--dur-base) var(--ease-out);
+}
+
+html[data-motion='rich'] .am-mask-enter-from,
+html[data-motion='rich'] .am-mask-leave-to {
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
 }
 
 .am-card-enter-active {

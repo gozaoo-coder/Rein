@@ -1,6 +1,6 @@
 /** 运动域类型 · 与 Rust `modules/exercise` / `modules/exercise_lib` 对应 */
 
-import type { ActivationMap } from '@/config/muscles'
+import type { ActivationMap, MuscleKey } from '@/config/muscles'
 
 export const WORKOUT_TYPES = [
   'walk',
@@ -47,6 +47,10 @@ export interface ExerciseRecord {
   /** 肌群激活表（显式数据；自建动作缺省时前端按名称规则兜底展示） */
   muscles: ActivationMap
   tips: string
+  /** 动作要领：分步说明（空数组 = 未收录） */
+  steps: string[]
+  /** 用户收藏（置顶展示；种子刷新不覆盖） */
+  favorite: boolean
   defaultSets: number
   defaultReps: number | null
   defaultWeightKg: number | null
@@ -73,6 +77,8 @@ export interface ExerciseInput {
   equipment?: ExerciseEquipment | null
   muscles?: ActivationMap
   tips?: string
+  /** 动作要领：分步说明（清洗：最多 12 条、单条 200 字） */
+  steps?: string[]
   defaultSets?: number
   defaultReps?: number | null
   defaultWeightKg?: number | null
@@ -106,4 +112,39 @@ export interface WorkoutInput {
   intensity: Intensity
   kcal: number
   note?: string | null
+}
+
+/* ---------------- 动作库筛选（动作库页与动作选择器共用） ---------------- */
+
+/** 排序口径：最近使用 / 名称 / 训练次数（收藏永远置顶） */
+export type ExerciseSort = 'recent' | 'name' | 'sessions'
+
+export interface ExerciseFilterState {
+  kind: ExerciseKind | ''
+  category: ExerciseCategory | ''
+  equipment: ExerciseEquipment | ''
+  /** 肌群多选：命中任一即算（按展示用肌群表判断） */
+  muscles: MuscleKey[]
+  onlyFavorite: boolean
+  sort: ExerciseSort
+}
+
+export const EMPTY_EXERCISE_FILTER: ExerciseFilterState = {
+  kind: '',
+  category: '',
+  equipment: '',
+  muscles: [],
+  onlyFavorite: false,
+  sort: 'recent',
+}
+
+/** 除分类外的筛选条件个数（角标用；分类在页面上是主浏览轴，单独一行） */
+export function filterBadgeCount(f: ExerciseFilterState): number {
+  return (
+    (f.kind ? 1 : 0) +
+    (f.equipment ? 1 : 0) +
+    (f.muscles.length ? 1 : 0) +
+    (f.onlyFavorite ? 1 : 0) +
+    (f.sort !== 'recent' ? 1 : 0)
+  )
 }

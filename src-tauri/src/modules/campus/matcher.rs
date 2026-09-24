@@ -34,6 +34,12 @@ pub const HIT_COURSE: &str = "course";
 pub const HIT_CODE: &str = "code";
 pub const HIT_TEACHER: &str = "teacher";
 pub const HIT_PLACE: &str = "place";
+/// 命中**项目名**（`minorCourse`，体育课的「羽毛球」这类）。
+/// 与 [`HIT_COURSE`] 分开报：学生要知道他是靠「项目名」命中的，
+/// 而不是靠那门共用课程名（所有项目都叫「大学体育1」）。
+pub const HIT_MINOR: &str = "minor";
+/// 命中**教学班名称**（`lessonName`）—— 也就是「3院」「花江校区」「26级」这类限定词。
+pub const HIT_LESSON: &str = "lesson";
 /// 教师名**精确命中**（全名全等）。这不是「相关」而是「指定」——
 /// 解析计划时只抢这位老师的班，见 [`preferred`]。
 pub const HIT_TEACHER_EXACT: &str = "teacherExact";
@@ -136,6 +142,20 @@ const W_CODE: i32 = 85;
 const W_TEACHER: i32 = 75;
 const W_PLACE: i32 = 50;
 
+/// **项目名**（`minorCourse`）与课程名同档。
+///
+/// 体育课是唯一必须这么做的例子，也是用户真实名单的写法：所有项目的课程名
+/// 都叫「大学体育1」，学生嘴里的课名是「羽毛球」——那才是他要抢的东西。
+/// 按弱字段给分，会让「羽毛球 3院」排不过随便一个沾边的班。
+const W_MINOR: i32 = 100;
+
+/// **教学班名称**（`lessonName`，如「大学体育1-花江校区-26级（3院、7院…）」）。
+///
+/// 院系 / 校区 / 年级这些**限定条件只写在这里**。给得比教师低一档：
+/// 它是用来「收窄」而不是用来「指认」的 —— 写「3院」是为了别把发射浪费在
+/// 选不了的班上，而不是因为「3院」是那门课的名字。
+const W_LESSON: i32 = 70;
+
 /// 教师名全等的得分。**压过任何子串/子序列命中** —— 用户把名字打全了，那是在「指定」，
 /// 不是在「找相关的课」。
 const TEACHER_EXACT_SCORE: i32 = 1_000;
@@ -148,9 +168,14 @@ const TEACHER_NEAR_SCORE: i32 = 240;
 /// 一个教学班身上可匹配的字段。
 enum Field {
     Course(String),
+    /// 项目名（体育课的「羽毛球」这类）。**与课程名分开一个字段而不是并进去**：
+    /// 命中标签要能分辨出来，界面上才说得清「你这是靠项目名命中的」。
+    Minor(String),
     Code(String),
     /// 教师：既留逐个人名（精确/近似要靠它），也留拼接文本（通用打分要用）
     Teacher { names: Vec<String>, joined: String },
+    /// 教学班名称：院系 / 校区 / 年级的唯一出处
+    Lesson(String),
     Place(String),
 }
 
@@ -180,6 +205,20 @@ fn fields_of(l: &CourseSelectLesson) -> Vec<Field> {
             out.push(Field::Code(code));
         }
     }
+    // 项目名（体育课的「羽毛球」）：**与课程名同档**（W_MINOR = W_COURSE）。
+    // 它才是学生嘴里的课名 —— 所有项目的课程名都是「大学体育1」。
+    // （摆在代码之后纯粹是字段列举顺序，打分只看各自的权重）
+    for name in [
+        l.minor_course.as_ref().and_then(|c| c.name_zh.clone()),
+        l.minor_course.as_ref().and_then(|c| c.name_en.clone()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !name.trim().is_empty() {
+            out.push(Field::Minor(name));
+        }
+    }
     // 教师：教务给的是对象数组，形状见过两种（`nameZh` 与 `person.nameZh`）
     let names = teacher_names(l);
     if !names.is_empty() {
@@ -187,6 +226,12 @@ fn fields_of(l: &CourseSelectLesson) -> Vec<Field> {
             joined: names.join("、"),
             names,
         });
+    }
+    // 教学班名称：院系 / 校区 / 年级的唯一出处（「3院」「花江校区」「26级」）
+    if let Some(name) = l.lesson_name.as_ref() {
+        if !name.trim().is_empty() {
+            out.push(Field::Lesson(name.clone()));
+        }
     }
     // 上课时间地点：形状没样本（教务可能给字符串，也可能给对象），
     // 所以把所有能读出来的字符串叶子拼起来 —— 只为「搜周三」这类用法，权重最低。
@@ -252,7 +297,9 @@ fn lcs_len(a: &[char], b: &[char]) -> usize {
 fn field_hit(field: &Field, token: &str) -> Option<FieldHit> {
     let (text, tag, weight) = match field {
         Field::Course(t) => (t.clone(), HIT_COURSE, W_COURSE),
+        Field::Minor(t) => (t.clone(), HIT_MINOR, W_MINOR),
         Field::Code(t) => (t.clone(), HIT_CODE, W_CODE),
+        Field::Lesson(t) => (t.clone(), HIT_LESSON, W_LESSON),
         Field::Place(t) => (t.clone(), HIT_PLACE, W_PLACE),
         Field::Teacher { names, joined } => {
             // ① 全名全等 = 「指定」，直接定论
@@ -459,6 +506,28 @@ pub fn rerank(hits: &mut [LessonHit]) {
     hits.sort_by_key(rank_key);
 }
 
+/// 这个班**怎么和同门课的其他班区分开** —— 任务行上那一小段能分辨它的文字。
+///
+/// 体育课是必须这么做的例子：8 个项目的课程名**全都叫「大学体育1」**，
+/// 任务行只写课程名的话，用户看着自己排的 8 条任务，认不出哪条是羽毛球。
+///
+/// 顺序是「项目名 → 教学班名称」：项目名最短最有辨识度（「羽毛球」）；
+/// 没有项目名时退到教学班名称 —— 长，带院系/校区，但至少能把两个班分开。
+pub fn distinct_label(l: &CourseSelectLesson) -> Option<String> {
+    if let Some(m) = l.minor_course.as_ref() {
+        for n in [m.name_zh.as_ref(), m.name_en.as_ref()].into_iter().flatten() {
+            let t = n.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    l.lesson_name
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// 命中 → 界面形状（计划候选清单里的一行）。
 pub fn to_match(h: &LessonHit) -> GrabMatch {
     let l = &h.lesson;
@@ -471,6 +540,15 @@ pub fn to_match(h: &LessonHit) -> GrabMatch {
         limit_count: l.limit_count,
         picked: l.selected_lesson.is_some(),
         fields: h.fields.iter().map(|f| f.to_string()).collect(),
+        // 同门课的几个班**必须能被区分**：体育课 8 个班的课程名一模一样，
+        // 预览里不写项目名，用户看到的是一列一样的「大学体育1」
+        lesson_name: l.lesson_name.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        minor_name: l
+            .minor_course
+            .as_ref()
+            .and_then(|c| c.name_zh.clone().or_else(|| c.name_en.clone()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
     }
 }
 
@@ -569,12 +647,24 @@ fn coverage_of(tokens: &[String], lessons: &[CourseSelectLesson]) -> Vec<Coverag
                         continue;
                     };
                     touched = true;
-                    if matches!(h.tag, HIT_COURSE | HIT_CODE) {
+                    // 「认得出是哪门课」：课名、代码、**项目名**都算。
+                    // 项目名必须算 —— 体育课里「羽毛球」就是那门课的名字，
+                    // 不把它当身份，放宽时就会把「羽毛球」丢掉，去抢一门别的项目。
+                    if matches!(h.tag, HIT_COURSE | HIT_CODE | HIT_MINOR) {
                         c.course = true;
                     }
+                    // 「指名道姓」：课名 / 代码 / 教师 / 项目名 —— 放宽时一个都不动。
+                    // 教学班名称（院系、校区）**刻意不在这一档**：
+                    // 本院系的班用尽之后，本来就该放宽到别的院系
+                    // （那些班服务端不一定让选，但总比一枪不发强）。
                     if matches!(
                         h.tag,
-                        HIT_COURSE | HIT_CODE | HIT_TEACHER | HIT_TEACHER_EXACT | HIT_TEACHER_NEAR
+                        HIT_COURSE
+                            | HIT_CODE
+                            | HIT_MINOR
+                            | HIT_TEACHER
+                            | HIT_TEACHER_EXACT
+                            | HIT_TEACHER_NEAR
                     ) {
                         c.identity = true;
                     }
@@ -782,6 +872,56 @@ mod tests {
             lesson(11, "000004", "大学体育1", Some("徐永峰"), 10, 40),
             lesson(12, "000006", "大学体育3", Some("徐永峰"), 5, 40),
         ]
+    }
+
+    /// **真实的体育课形状**（2026-09-20 实测，3 院大一）。
+    ///
+    /// 学生嘴里说的那门课，和教务字段里的那门课**不是同一个字符串**：
+    ///   · 课程名 = 「大学体育1」（所有项目共用一个课程名）
+    ///   · 项目名 = 「羽毛球」   → 在 `minorCourse.nameZh`（选课表格正是拿它当上标渲染）
+    ///   · 班次名 = 「大学体育1-花江校区-26级（3院、7院、建交院）」→ 院系/校区只在这里
+    ///
+    /// 所以「写项目名即可命中」这件事，要求这两个字段**能进匹配**。
+    fn pe_lessons() -> Vec<CourseSelectLesson> {
+        let mk = |id: i64, lesson_name: &str, project: &str, teacher: &str| -> CourseSelectLesson {
+            let mut l = lesson(id, "000004", "大学体育1", Some(teacher), 20, 41);
+            l.lesson_name = Some(lesson_name.to_string());
+            l.minor_course = Some(serde_json::from_value(serde_json::json!({ "nameZh": project })).unwrap());
+            l
+        };
+        vec![
+            mk(101, "大学体育1-花江校区-26级（3院、7院、建交院）", "羽毛球", "王秦丹青"),
+            mk(102, "大学体育1-花江校区-26级（3院、7院、建交院）", "匹克球", "秦小鹏"),
+            mk(103, "大学体育1-花江校区-26级（4院、5院）", "羽毛球", "周之昊"),
+        ]
+    }
+
+    /// **体育课要按项目名抢，而不是按课程名** —— 这是用户真实名单的写法。
+    ///
+    /// 「羽毛球」在教务字段里既不是课程名（那是「大学体育1」）也不是教师，
+    /// 它在 `minorCourse.nameZh`。这个字段不进匹配，写「羽毛球」就是零命中 ——
+    /// 而用户真实的抢课目标恰恰是「大学体育1 的 8 个项目里挑一个」。
+    #[test]
+    fn pe_project_name_matches_via_minor_course() {
+        let ls = pe_lessons();
+        let hit = matched("羽毛球", &ls);
+        assert_eq!(hit.len(), 2, "两个院系各有一个羽毛球班：{:?}", names(&hit));
+        assert!(
+            hit.iter().all(|h| h.fields.contains(&HIT_MINOR)),
+            "它该如实报成「项目名」命中 —— 界面上要能看出是靠哪一项命中的：{:?}",
+            hit.iter().map(|h| h.fields.clone()).collect::<Vec<_>>(),
+        );
+    }
+
+    /// **院系/校区只写教学班名称里** —— 带上它是为了别把发射浪费在选不了的班上。
+    #[test]
+    fn pe_campus_keyword_matches_via_lesson_name() {
+        let ls = pe_lessons();
+        let hit = matched("羽毛球 3院", &ls);
+        assert_eq!(names(&hit), vec!["101-000004"], "3 院那个羽毛球班：{:?}", names(&hit));
+
+        let campus = matched("花江校区", &ls);
+        assert_eq!(campus.len(), 3, "三个班都在花江校区：{:?}", names(&campus));
     }
 
     /// **写下的课程代码绝不放宽**。
@@ -1107,10 +1247,37 @@ mod tests {
         assert_eq!((m.std_count, m.limit_count), (Some(118), Some(120)));
         assert!(!m.picked);
         assert_eq!(m.fields, vec![HIT_COURSE, HIT_TEACHER]);
+        // 普通课没有项目名/教学班名 —— 界面该拿到的是 None 而不是空串
+        assert_eq!(m.minor_name, None);
+        assert_eq!(m.lesson_name, None);
 
         let bare: CourseSelectLesson = serde_json::from_value(serde_json::json!({ "id": 7 })).unwrap();
         assert!(course_name_of(&bare).is_none());
         assert!(teacher_text(&bare).is_none());
+        assert!(distinct_label(&bare).is_none());
+    }
+
+    /// **同门课的班要能被区分开**：体育课 8 个项目的课程名一模一样，
+    /// 只给课程名的话，预览与任务行都是一列认不出来的「大学体育1」。
+    #[test]
+    fn a_minor_project_name_reaches_the_ui() {
+        let ls = pe_lessons();
+        let hit = matched("羽毛球 3院", &ls);
+        let m = to_match(&hit[0]);
+        assert_eq!(m.course_name.as_deref(), Some("大学体育1"), "课程名还是教务那个");
+        assert_eq!(m.minor_name.as_deref(), Some("羽毛球"), "项目名要单独带出去");
+        assert!(
+            m.lesson_name.as_deref().unwrap_or("").contains("3院"),
+            "教学班名要带出去（院系在里面）：{:?}",
+            m.lesson_name,
+        );
+
+        // 任务行那一小段：项目名优先
+        assert_eq!(distinct_label(&ls[0]).as_deref(), Some("羽毛球"));
+        // 没有项目名时退到教学班名称（至少能区分）
+        let mut plain = lesson(9, "000001", "高等数学（上）", Some("张伟"), 1, 2);
+        plain.lesson_name = Some("高等数学（上）-01班".into());
+        assert_eq!(distinct_label(&plain).as_deref(), Some("高等数学（上）-01班"));
     }
 
     /* ─────────────── 指定老师：精确是「指定」，打错才是「模糊」 ─────────────── */

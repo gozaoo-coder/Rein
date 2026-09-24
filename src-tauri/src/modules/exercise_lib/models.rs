@@ -20,6 +20,10 @@ pub struct ExerciseRecord {
     /// 肌群激活表（ActivationMap：MuscleKey → 1~3）
     pub muscles: Value,
     pub tips: String,
+    /// 动作要领（分步说明；空数组 = 未收录）
+    pub steps: Vec<String>,
+    /// 用户收藏（置顶展示；种子刷新不覆盖）
+    pub favorite: bool,
     pub default_sets: i64,
     pub default_reps: Option<i64>,
     pub default_weight_kg: Option<f64>,
@@ -57,6 +61,8 @@ pub struct ExerciseInput {
     pub muscles: Value,
     #[serde(default)]
     pub tips: String,
+    #[serde(default)]
+    pub steps: Vec<String>,
     #[serde(default = "default_sets")]
     pub default_sets: i64,
     #[serde(default)]

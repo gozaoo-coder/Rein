@@ -265,7 +265,7 @@ async function main() {
 
     /* ---- 5. 进入批次 → 教学班列表 ---- */
     await clickText('.turn .primary', '进入选课')
-    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 8000, '教学班列表')
+    await waitFor(`document.querySelectorAll('.lesson').length >= 7`, 8000, '教学班列表')
     ok('进入批次后列出教学班', true, await evalJS(`document.querySelectorAll('.lesson').length`) + ' 个')
 
     const full = await rowState('大学物理')
@@ -289,9 +289,36 @@ async function main() {
 
     await setInput('.search input', '')
     await evalJS(`document.querySelector('.go').click()`)
-    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 8000, '清空搜索')
+    await waitFor(`document.querySelectorAll('.lesson').length >= 7`, 8000, '清空搜索')
     ok('清空搜索回到全部', true)
     await shot('3-lessons')
+
+    /* ---- 6b. 搜「羽毛球」：教务的查询字段里根本没有它 ---- */
+    // 体育课的课程名是「大学体育1」，项目名（羽毛球）在 `minorCourse` ——
+    // 学生的第一反应一定是打「羽毛球」，而服务器只会回一段空列表。
+    // 这条验的是：界面自己退一步、把全量拉回来在本地按项目名过滤。
+    await setInput('.search input', '羽毛球')
+    await evalJS(`document.querySelector('.go').click()`)
+    await waitFor(`document.querySelectorAll('.lesson').length === 2`, 8000, '按项目名搜出两个班')
+    ok('按项目名搜索能命中（教务查不到，靠本地兜底）', true, await evalJS(`document.querySelectorAll('.lesson').length`) + ' 个')
+    const peNames = await evalJS(`[...document.querySelectorAll('.lesson .l-name')].map((e) => e.textContent.trim())`)
+    ok(
+      '行标题显示项目名而不是那门共用的课程名',
+      peNames.length === 2 && peNames.every((n) => n === '羽毛球'),
+      JSON.stringify(peNames),
+    )
+    const peMeta = await evalJS(`[...document.querySelectorAll('.lesson')].map((e) => e.textContent.replace(/\\s+/g,' ').trim())`)
+    ok(
+      '副信息里带出课程名与教学班名，两个班的院系也分得开',
+      peMeta.every((t) => t.includes('大学体育1-花江校区-26级')) &&
+        peMeta.some((t) => t.includes('3院')) &&
+        peMeta.some((t) => t.includes('4院')),
+      JSON.stringify(peMeta).slice(0, 240),
+    )
+
+    await setInput('.search input', '')
+    await evalJS(`document.querySelector('.go').click()`)
+    await waitFor(`document.querySelectorAll('.lesson').length >= 7`, 8000, '再次清空搜索')
 
     /* ---- 7. 一键选课：提交 → 轮询 → 落定 ---- */
     // 防连点的守卫现在在抽屉里（提交要等结果，期间不能让人再按一次）

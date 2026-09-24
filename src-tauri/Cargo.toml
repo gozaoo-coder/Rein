@@ -1,6 +1,6 @@
 [package]
 name = "rein"
-version = "0.2.13"
+version = "0.3.0"
 description = "Rein · 健康生活运动管理"
 edition = "2021"
 rust-version = "1.77"
@@ -48,6 +48,7 @@ tokenizers = { version = "0.23", default-features = false, features = ["fancy-re
 minisign-verify = "0.2"
 sha2 = "0.10"
 semver = "1"
+tauri-plugin-notification = "2"
 
 [profile.release]
 codegen-units = 1

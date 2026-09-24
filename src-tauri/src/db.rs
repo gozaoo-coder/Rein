@@ -1119,6 +1119,16 @@ const MIGRATION_0032: &str = r#"
 ALTER TABLE campus_grab_tasks ADD COLUMN request_domain TEXT;
 "#;
 
+/// 0033 · 动作库两件用户态/内容列：
+///
+/// 1. `favorite`：用户收藏（动作库置顶与筛选）。它是**用户态**，与 `hidden` 一样
+///    不能被启动时的种子刷新覆盖 —— 见 `seed::seed_exercises` 的 ON CONFLICT 列表。
+/// 2. `steps`：动作要领（分步说明，JSON 字符串数组）。它是**内容列**，随种子刷新。
+const MIGRATION_0033: &str = r#"
+ALTER TABLE exercises ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE exercises ADD COLUMN steps TEXT NOT NULL DEFAULT '[]';
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1152,6 +1162,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0030,
     MIGRATION_0031,
     MIGRATION_0032,
+    MIGRATION_0033,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

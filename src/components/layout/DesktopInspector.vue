@@ -99,7 +99,7 @@ function hhmm(startMin: number): string {
     </section>
 
     <!-- AI 问句 -->
-    <form class="ask row" @submit.prevent="sendAsk">
+    <form class="ask row glass-surface" @submit.prevent="sendAsk">
       <input v-model="ask" placeholder="问点什么，比如「今天的蛋白质够吗？」" />
       <button class="send" aria-label="发送" type="submit">
         <ArrowRight :size="17" :stroke-width="2.4" />
@@ -109,6 +109,11 @@ function hhmm(startMin: number): string {
 </template>
 
 <style scoped>
+/* 信息栏本体刻意**不是** .glass-surface：它是一整条可滚动的大面板，而 .glass-surface
+   带 backdrop-filter —— 带 backdrop-filter 的元素会成为后代的 backdrop root，里面
+   那个 .ask 的模糊就会退化成「只采到信息栏自己的内容」，而不是页面。所以这里保留
+   原来那份更薄的 24% 表面（它本来就是"内容面板"而不是悬浮玻璃层），
+   **玻璃交给 .ask**（控制层，与 Dock / 悬浮条同一套材质与档位升级）。 */
 .inspector {
   width: 298px;
   flex: none;
@@ -217,15 +222,12 @@ function hhmm(startMin: number): string {
   font-size: var(--fs-footnote);
 }
 
+/* 材质（底 / 受光边 / 高光 / 投影 / 模糊）全在 .glass-surface 里 —— 这里只给排版。
+   再写一遍 background 或 backdrop-filter 会与它抢同一条声明，胜负取决于样式表顺序。 */
 .ask {
   gap: 10px;
   padding: 11px 11px 11px 16px;
   border-radius: var(--radius-full);
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 0.5px solid var(--line);
-  box-shadow: var(--shadow-card);
 }
 
 .ask input {

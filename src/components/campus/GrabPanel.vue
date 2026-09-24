@@ -264,8 +264,22 @@ function formatCountdown(ms: number): string {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`
 }
 
+/**
+ * 任务行的标题。
+ *
+ * `lessonName` 里存的是**这个班怎么和同门课其他班区分**（引擎写进去的，
+ * 项目名优先）—— 体育课 8 个项目的课程名全都叫「大学体育1」，
+ * 只写课程名，用户看着自己排的 8 条任务认不出哪条是羽毛球。
+ *
+ * 但它**只在真有新信息时才拼上去**：教学班名常常以课程名开头
+ * （「大学体育1-花江校区-26级（3院…）」），那种情况下再拼一遍只是把标题撑长。
+ */
 function title(t: GrabTask): string {
-  return t.courseName || t.lessonName || `教学班 ${idOf(t.lessonId)}`
+  const course = t.courseName?.trim()
+  const label = t.lessonName?.trim()
+  if (!course) return label || `教学班 ${idOf(t.lessonId)}`
+  if (!label || label === course || label.startsWith(course)) return course
+  return `${course} · ${label}`
 }
 
 /**

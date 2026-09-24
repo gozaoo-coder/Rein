@@ -287,6 +287,20 @@ export interface CourseSelectLesson {
   stdCount?: number | null
   limitCount?: number | null
   teachers?: unknown[]
+  /**
+   * 教学班名称（如「大学体育1-花江校区-26级（3院、7院、建交院）」）。
+   *
+   * **院系 / 校区 / 年级只写在这里** —— 课程名是「大学体育1」，
+   * 而「3院」在别处一个字段都没有。丢掉它就没法表达「只抢本院系那个班」。
+   */
+  lessonName?: string | null
+  /**
+   * 副课程 / 项目名（体育课的「羽毛球」「中华射艺」）。
+   *
+   * 教务的选课表格正是拿它当上标渲染的：学生嘴里的「我抢羽毛球」，
+   * 在字段层面既不是课程名也不是教师 —— 只有这里有。
+   */
+  minorCourse?: LessonCourse | null
   scheduleGroups?: ScheduleGroup[]
   canSelect?: boolean | null
 }
@@ -482,11 +496,20 @@ export interface GrabMatch {
   /** 这门课已经在你名下了（解析时会跳过） */
   picked?: boolean
   /**
-   * 命中的字段：`course` / `code` / `teacher` / `place`，
+   * 命中的字段：`course` / `code` / `teacher` / `place` / `minor`（项目名）/ `lesson`（教学班名），
    * 以及教师的两种强信号：`teacherExact`（**打全了名字 = 指定**）与
    * `teacherNear`（姓对了、其余最多差一个字 = 可能打错了）。
    */
   fields?: string[]
+  /**
+   * 教学班名称（院系 / 校区 / 年级在里面）。
+   *
+   * 同门课的几个班**必须能被区分**：体育课 8 个项目的课程名全都叫「大学体育1」，
+   * 预览里不写项目名/教学班名，用户看到的是一列认不出来的同一个名字。
+   */
+  lessonName?: string | null
+  /** 项目名（体育课的「羽毛球」这类）—— 候选行优先拿它当标题 */
+  minorName?: string | null
 }
 
 export type GrabIntentStatus = 'pending' | 'empty' | 'ready' | 'ambiguous'

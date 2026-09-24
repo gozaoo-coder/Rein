@@ -3,11 +3,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   Clock,
   ExternalLink,
   Hourglass,
   Info,
+  ListChecks,
   RefreshCw,
   Search,
   Settings2,
@@ -64,6 +67,23 @@ const sheetLesson = computed<CourseSelectLesson | null>(() => {
 
 const status = computed(() => store.status)
 const skew = computed(() => store.clockSkewSec)
+
+/**
+ * 页头那个入口上的角标：**没抢到的条数**。
+ *
+ * 它回答的是「有没有事等着我处理」—— 抢到了不必催（课已经是你的了），
+ * 没抢到才需要决定「重排还是放弃」。
+ */
+const failedCount = computed(
+  () =>
+    store.grabTasks.filter(
+      (t) =>
+        t.status === 'failed' ||
+        t.status === 'conflict' ||
+        t.status === 'needs_ai' ||
+        t.status === 'cancelled',
+    ).length,
+)
 
 /** 偏差超过 30 秒才提示：小偏差是网络往返造成的，不必惊动用户 */
 const skewWarning = computed(() => {
@@ -145,6 +165,32 @@ function lessonName(l: CourseSelectLesson): string {
   return l.course?.nameZh || l.course?.nameEn || '（教务未给课程名）'
 }
 
+/** 项目名（体育课的「羽毛球」）—— 没有就是 null */
+function minorOf(l: CourseSelectLesson): string {
+  const m = l.minorCourse?.nameZh ?? l.minorCourse?.nameEn
+  return m && m.trim() ? m.trim() : ''
+}
+
+/**
+ * 列表行的标题：**项目名优先**，否则课程名。
+ *
+ * 体育课 3 个项目的课程名全都叫「大学体育1」——拿课程名当标题，
+ * 一列行长得一模一样，用户根本认不出自己点的是羽毛球还是匹克球。
+ * 项目名才是他嘴里的那门课（与计划预览的 `matchTitle` 同一条规矩）。
+ */
+function lessonTitle(l: CourseSelectLesson): string {
+  return minorOf(l) || lessonName(l)
+}
+
+/** 副信息里把「哪门课 / 哪个班」补全 —— 同门课的几个班才分得开 */
+function lessonSubtitle(l: CourseSelectLesson): string {
+  const bits: string[] = []
+  if (minorOf(l)) bits.push(lessonName(l))
+  const section = l.lessonName?.trim()
+  if (section && section !== lessonName(l)) bits.push(section)
+  return bits.join(' · ')
+}
+
 function lessonCode(l: CourseSelectLesson): string {
   return l.course?.code ?? ''
 }
@@ -175,6 +221,15 @@ function scheduleTextOf(l: CourseSelectLesson): string {
 
 function picked(l: CourseSelectLesson): boolean {
   return l.selectedLesson != null
+}
+
+/** 这门课在多选里的志愿序（1 起；没选中是 0） */
+function ordOf(l: CourseSelectLesson): number {
+  return store.selectedIds.indexOf(idOf(l.id)) + 1
+}
+
+function isSelected(l: CourseSelectLesson): boolean {
+  return store.selectedIds.includes(idOf(l.id))
 }
 
 function seatText(l: CourseSelectLesson): string {
@@ -246,6 +301,69 @@ function openSheet(l: CourseSelectLesson): void {
   sheetLessonId.value = idOf(l.id)
 }
 
+/* ---------------- 长按直接入队（加速器） ----------------
+ * 行上的胶囊打开的是「怎么抢」的设置抽屉，而设置对绝大多数课并不需要改：
+ * 默认就是占位优先 + 意愿值 0 + 教务默认组。要抢 5 门课时，那 5 次
+ * 「打开抽屉 → 再点一下加入」是纯税 —— 可它又不能省掉，因为抢错组是要付代价的。
+ *
+ * 所以留一条**加速器**：长按整行 = 按上面那套默认值直接排进任务单。
+ * 它刻意不占任何视觉、也不做提示 —— 加速器本来就该对新手隐形（启发式 #7），
+ * 而结果由 toast 和行上的状态徽标回执。设置入口仍然在胶囊上，一步就到。
+ */
+const DEFAULT_GRAB = {
+  mode: 'predicate' as const,
+  virtualCost: null,
+  scheduleGroupId: null,
+  groupKey: null,
+  groupName: null,
+  priority: 0,
+}
+/** 500ms：短到不觉得在等，长到不会在滚动/误触时被触发 */
+const LONG_PRESS_MS = 500
+
+let pressTimer: number | null = null
+let longPressed = false
+
+async function quickGrab(l: CourseSelectLesson): Promise<void> {
+  try {
+    const n = await store.enqueue([l], DEFAULT_GRAB)
+    toast.toast(
+      n
+        ? `已加入（默认设置：占位优先 · 意愿值 0）—— 要改就点行上的「配置抢课」`
+        : '没有加入任何课程',
+    )
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : '加入抢课失败')
+  }
+}
+
+function onRowDown(l: CourseSelectLesson): void {
+  if (store.selectMode || picked(l)) return
+  longPressed = false
+  pressTimer = window.setTimeout(() => {
+    pressTimer = null
+    longPressed = true
+    void quickGrab(l)
+  }, LONG_PRESS_MS)
+}
+
+function onRowUp(): void {
+  if (pressTimer != null) {
+    window.clearTimeout(pressTimer)
+    pressTimer = null
+  }
+}
+
+/** 长按之后浏览器还会补一次 click，那一下不能再当成「打开设置」 */
+function onRowClick(l: CourseSelectLesson): void {
+  if (longPressed) {
+    longPressed = false
+    return
+  }
+  if (store.selectMode) store.toggleSelect(l)
+  else openSheet(l)
+}
+
 /* ---------------- 名单新鲜度 ----------------
  * 座位数是会变的，而「已选 118 / 120」看起来永远是当下的数字。抢课当天
  * 一份 90 秒前的名单和一份 3 秒前的名单，看到的是同一行字，但前者可能已经没位了。
@@ -272,42 +390,24 @@ const lessonsAge = computed(() => {
  * 一门课挂着 5 个教学班时，逐个点开抽屉加 5 遍，还得自己记住谁排第几。
  *
  * 勾选顺序**就是**志愿顺序 —— 所以这里用数组而不是 Set。
+ *
+ * 状态本身住在 store 里（`selectMode` / `selectedIds`）：这套顺序是页面上唯一
+ * 不可恢复的东西，不能跟着页面一起被卸载掉（见 store 里的说明）。
  */
-const selectMode = ref(false)
-const selectedIds = ref<string[]>([])
 const batchOpen = ref(false)
 const batchSquad = ref(false)
 const batchPriority = ref(1)
 
-const selectedLessons = computed(() =>
-  selectedIds.value
-    .map((id) => store.lessons.find((l) => idOf(l.id) === id))
-    .filter((l): l is CourseSelectLesson => !!l),
-)
-
-function toggleSelect(l: CourseSelectLesson): void {
-  const id = idOf(l.id)
-  const i = selectedIds.value.indexOf(id)
-  if (i >= 0) selectedIds.value.splice(i, 1)
-  else selectedIds.value.push(id)
-}
-
-function exitSelect(): void {
-  selectMode.value = false
-  selectedIds.value = []
-  batchOpen.value = false
-}
-
 function openBatch(): void {
-  if (!selectedLessons.value.length) return
+  if (!store.selectedLessons.length) return
   // 选了两门以上，多半就是「同一门课的备选」或「时间冲突的几门」—— 默认按志愿组排
-  batchSquad.value = selectedLessons.value.length > 1
+  batchSquad.value = store.selectedLessons.length > 1
   batchPriority.value = 1
   batchOpen.value = true
 }
 
 async function confirmBatch(): Promise<void> {
-  const lessons = selectedLessons.value
+  const lessons = store.selectedLessons
   if (!lessons.length) return
   const squad = batchSquad.value
   try {
@@ -322,7 +422,10 @@ async function confirmBatch(): Promise<void> {
       groupName: name,
       priority: batchPriority.value,
     })
-    exitSelect()
+    // 抽屉归页面自己关：`store.exitSelect()` 只管「选中了什么」，
+    // 它不该知道这一页有没有开着抽屉（原先靠它顺手关掉，搬进 store 之后就漏了）
+    batchOpen.value = false
+    store.exitSelect()
     toast.toast(
       n
         ? squad
@@ -476,7 +579,8 @@ onBeforeUnmount(() => {
   if (clockTicker != null) window.clearInterval(clockTicker)
   document.removeEventListener('visibilitychange', onVisible)
   window.removeEventListener('focus', onFocus)
-  exitSelect()
+  // **不在这里清多选状态**：它住在 store 里，正是为了扛过「切出去看一眼再回来」。
+  // 清掉它等于把用户按顺序排出来的志愿序当成垃圾一起收了。
   store.detachGrab()
 })
 </script>
@@ -489,11 +593,17 @@ onBeforeUnmount(() => {
       back
     >
       <template #action>
+        <!-- 任务管理入口：**常驻**（多选模式下也在）。抢完之后「哪些没抢到」
+             正是最需要它的时刻，不能因为处在别的模式里就找不到 -->
+        <RouterLink class="hdr-btn" :to="{ name: 'campus-grab-tasks' }" aria-label="抢课任务">
+          <ListChecks :size="19" />
+          <span v-if="failedCount" class="badge num" aria-hidden="true">{{ failedCount }}</span>
+        </RouterLink>
         <!-- 多选是个**模式**：开着的时候点整行不再是「打开设置」而是「追加一个志愿」。
            一旦这个模式滚出视野，用户就没有任何线索知道自己处在哪种解释里了 ——
            所以它的状态与出口交给**页头**（本来就吸顶），而不是列表顶上那条会滚走的工具条 -->
-        <button v-if="selectMode" class="exit-sel" @click="exitSelect()">
-          退出多选<template v-if="selectedIds.length"> · {{ selectedIds.length }}</template>
+        <button v-if="store.selectMode" class="exit-sel" @click="store.exitSelect()">
+          退出多选<template v-if="store.selectedLessons.length"> · {{ store.selectedLessons.length }}</template>
         </button>
         <template v-else>
           <button class="hdr-btn" aria-label="抢课节奏设置" @click="settingsOpen = true">
@@ -590,7 +700,7 @@ onBeforeUnmount(() => {
 
       <!-- 教学班列表 -->
       <template v-else>
-        <button class="back-row" @click="store.leaveTurn(); exitSelect()">
+        <button class="back-row" @click="store.leaveTurn(); store.exitSelect()">
           <ChevronLeft :size="16" /> 返回批次列表
         </button>
 
@@ -615,14 +725,23 @@ onBeforeUnmount(() => {
           名单更新于 {{ lessonsAge }}
         </p>
 
-        <!-- 多选工具条**钉住**：它一滚出视野，「退出多选」和已排好的志愿序就都没了入口，
-             而这时点整行已经不再是「打开设置」而是「追加一个志愿」—— 模式必须一直可见 -->
+        <!-- 多选工具条：模式的**状态与出口**在吸顶的页头里（见上面那个分支），
+             这里放的是「进入多选」和「批量下单」这两个动作本身 -->
         <div class="pick-bar">
-          <button class="mini" :class="{ on: selectMode }" @click="selectMode ? exitSelect() : (selectMode = true)">
-            {{ selectMode ? '退出多选' : '多选预定' }}
+          <button
+            class="mini"
+            :class="{ on: store.selectMode }"
+            @click="store.selectMode ? store.exitSelect() : (store.selectMode = true)"
+          >
+            {{ store.selectMode ? '退出多选' : '多选预定' }}
           </button>
-          <span v-if="selectMode" class="count">已选 {{ selectedIds.length }}</span>
-          <button v-if="selectMode" class="mini primary-mini" :disabled="!selectedIds.length" @click="openBatch">
+          <span v-if="store.selectMode" class="count">已选 {{ store.selectedLessons.length }}</span>
+          <button
+            v-if="store.selectMode"
+            class="mini primary-mini"
+            :disabled="!store.selectedLessons.length"
+            @click="openBatch"
+          >
             加入抢课
           </button>
         </div>
@@ -636,22 +755,28 @@ onBeforeUnmount(() => {
           hint="换个关键字试试，或清空搜索看全部"
         />
 
-        <ul v-else class="lessons" :class="{ picking: selectMode }">
+        <ul v-else class="lessons" :class="{ picking: store.selectMode }">
           <li
             v-for="l in store.lessons"
             :key="idOf(l.id)"
             class="lesson"
-            :class="{ sel: selectMode && selectedIds.includes(idOf(l.id)) }"
+            :class="{ sel: isSelected(l) }"
           >
-            <!-- 点整行开抽屉（选「上课小组 / 意愿值 / 志愿组」的地方）；多选模式下改成勾选。
+            <!-- 点整行开抽屉（选「上课小组 / 意愿值 / 志愿组」的地方）；多选模式下改成勾选；
+                 长按 = 按默认值直接入队（加速器，见脚本里的说明）。
                  已选中的课同样可以点开 —— 那是核对「我当时怎么排的」的唯一入口 -->
             <button
               class="l-main"
-              @click="selectMode ? toggleSelect(l) : openSheet(l)"
+              title="点开设置；长按 = 按默认设置直接加入抢课"
+              @click="onRowClick(l)"
+              @pointerdown="onRowDown(l)"
+              @pointerup="onRowUp"
+              @pointerleave="onRowUp"
+              @pointercancel="onRowUp"
             >
               <span class="l-top">
-                <span v-if="selectMode" class="tick" :class="{ on: selectedIds.includes(idOf(l.id)) }" />
-                <span class="l-name">{{ lessonName(l) }}</span>
+                <span v-if="store.selectMode" class="tick" :class="{ on: isSelected(l) }" />
+                <span class="l-name">{{ lessonTitle(l) }}</span>
                 <span v-if="picked(l)" class="chip ok">已选</span>
                 <span v-else-if="full(l)" class="chip bad">已满</span>
                 <!-- 余量挨着课名：抢课当天最稀缺的就是座位，它该在视线落点上 -->
@@ -664,30 +789,54 @@ onBeforeUnmount(() => {
                 <span v-if="teacherText(l)">{{ teacherText(l) }}</span>
                 <span v-if="l.course?.credits != null">{{ l.course.credits }} 学分</span>
                 <span v-if="l.scheduleGroups?.length">{{ l.scheduleGroups.length }} 个小组</span>
-                <span v-if="selectMode && selectedIds.includes(idOf(l.id))" class="num ord">
-                  第 {{ selectedIds.indexOf(idOf(l.id)) + 1 }} 志愿
-                </span>
+                <span v-if="isSelected(l)" class="num ord">第 {{ ordOf(l) }} 志愿</span>
               </span>
+              <!-- 同门课的班分得开：项目名当标题时，课程名与教学班名（院系在里面）落到这里 -->
+              <span v-if="lessonSubtitle(l)" class="l-meta dim l-sched">{{ lessonSubtitle(l) }}</span>
               <span v-if="scheduleTextOf(l)" class="l-meta dim l-sched">{{ scheduleTextOf(l) }}</span>
             </button>
 
+            <!-- 多选模式下右槽让给「调顺序」：顺序**就是**志愿序，而它原先只能靠点按的
+                 先后排出来 —— 点错一步的唯一补救是取消重排，等于把顺序写成了只读。
+                 这两个钮是唯一能改它的地方，所以它们得在行上、就在序号的旁边 -->
+            <span v-if="store.selectMode && isSelected(l)" class="ord-ops">
+              <button
+                class="ord-op"
+                :disabled="ordOf(l) === 1"
+                aria-label="上移一位"
+                @click.stop="store.moveSelected(idOf(l.id), -1)"
+              >
+                <ChevronUp :size="15" />
+              </button>
+              <button
+                class="ord-op"
+                :disabled="ordOf(l) === store.selectedLessons.length"
+                aria-label="下移一位"
+                @click.stop="store.moveSelected(idOf(l.id), 1)"
+              >
+                <ChevronDown :size="15" />
+              </button>
+            </span>
+
             <!-- 已在任务单里：显示引擎给的状态，而不是再给一个按钮 -->
             <span
-              v-if="grabChip(l) && !selectMode"
+              v-else-if="grabChip(l) && !store.selectMode"
               class="chip grab"
               :class="grabChip(l)!.tone"
             >{{ grabChip(l)!.label }}</span>
             <!-- 已选中的课不该变成一块点不动的砖：这颗按钮改成「查看」的语义，
-                 点开是对这门课当前设置的只读回执 -->
+                 点开是对这门课当前设置的只读回执。
+                 标签也说实话 —— 它打开的是**设置**，不是「立刻出手」；
+                 真正的「立刻出手」是长按整行（加速器） -->
             <button
-              v-else-if="!selectMode"
+              v-else-if="!store.selectMode"
               class="pick"
               :class="{ picked: picked(l) }"
               :disabled="store.grabBusy"
               @click="openSheet(l)"
             >
               <template v-if="picked(l)"><Check :size="14" /> 已选</template>
-              <template v-else><Zap :size="14" /> 抢课</template>
+              <template v-else><Settings2 :size="14" /> 配置抢课</template>
             </button>
           </li>
         </ul>
@@ -714,8 +863,8 @@ onBeforeUnmount(() => {
     <!-- 批量预定：一次把多个教学班排好次序交给引擎 -->
     <SheetModal :open="batchOpen" title="批量预定" initial-snap="medium" @close="batchOpen = false">
       <p class="lead t-2">
-        选中 <b>{{ selectedLessons.length }}</b> 个教学班。<b>勾选顺序就是志愿顺序</b>，
-        可以直接在列表里再点几下调整。
+        选中 <b>{{ store.selectedLessons.length }}</b> 个教学班。<b>勾选顺序就是志愿顺序</b>，
+        可以直接在列表里用行上的 ↑↓ 调整。
       </p>
 
       <SegmentedControl
@@ -748,7 +897,7 @@ onBeforeUnmount(() => {
       />
 
       <ol class="batch-list">
-        <li v-for="(l, i) in selectedLessons" :key="idOf(l.id)">
+        <li v-for="(l, i) in store.selectedLessons" :key="idOf(l.id)">
           <span class="tag-mini">{{ batchSquad ? `第 ${batchPriority + i}` : '独立' }}</span>
           <span class="flex-1">{{ lessonName(l) }}</span>
           <span v-if="lessonCode(l)" class="t-3 num">{{ lessonCode(l) }}</span>
@@ -756,9 +905,13 @@ onBeforeUnmount(() => {
       </ol>
 
       <div class="acts">
-        <button class="primary" :disabled="store.grabBusy || !selectedLessons.length" @click="confirmBatch">
+        <button
+          class="primary"
+          :disabled="store.grabBusy || !store.selectedLessons.length"
+          @click="confirmBatch"
+        >
           <Zap :size="16" />
-          加入抢课（{{ selectedLessons.length }}）
+          加入抢课（{{ store.selectedLessons.length }}）
         </button>
       </div>
     </SheetModal>
@@ -1100,6 +1253,45 @@ onBeforeUnmount(() => {
   color: var(--accent-strong);
 }
 
+/* 调序的两个圆钮：占的是「抢课」胶囊在多选模式下本来就不显示的那个位置，
+   所以不会挤掉任务行里的任何信息 */
+.ord-ops {
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* 14px：两颗各把命中区外扩 7px 之后正好相接，谁也不偷谁的边缘 */
+  gap: 14px;
+}
+
+.ord-op {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  color: var(--accent-strong);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* 命中区撑到 44（视觉尺寸不动）：这是改志愿序唯一的一双手 */
+.ord-op::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+
+.ord-op:active {
+  transform: scale(0.9);
+}
+
+.ord-op:disabled {
+  opacity: 0.35;
+  color: var(--text-3);
+}
+
 .spin {
   animation: spin 0.9s linear infinite;
 }
@@ -1150,6 +1342,26 @@ onBeforeUnmount(() => {
 .count {
   font-size: var(--fs-caption);
   color: var(--text-2);
+}
+
+/* 页头那个入口上的角标：没抢到的条数。
+   白边（用 surface 描一圈）是为了让它从圆钮的边上「浮」起来，
+   而不是长在按钮里 —— 它标的是**别的地方**（任务页）有事。 */
+.badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--surface);
 }
 
 /* 多选的退出键：材质与页头那两颗圆钮一致（surface + 卡片阴影 + 同高），

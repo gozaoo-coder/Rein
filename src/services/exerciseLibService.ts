@@ -27,4 +27,8 @@ export const exerciseLibService = {
   remove: (id: string) => invoke<void>('delete_exercise', { id }),
 
   restore: (id: string) => invoke<void>('restore_exercise', { id }),
+
+  /** 收藏 / 取消收藏（内置与自建都可；用户态，种子刷新不覆盖） */
+  setFavorite: (id: string, favorite: boolean) =>
+    invoke<void>('set_exercise_favorite', { id, favorite }),
 }

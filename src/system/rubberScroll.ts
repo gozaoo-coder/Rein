@@ -13,11 +13,25 @@
      ——「overOffset=0 时平移速率与拖动速率一致」，与原生滚动交接无速度突变；
      x ≫ k 后渐近 log_B(x)，即需求里的 log(x)/log(衰减指数)，越拖越拖不动。
 
-   接入（全应用只挂一份 window 监听，容器增删 / 弹层动态挂载自动适配）：
-     data-rubber-page    文档滚动页层（App.vue，唯一）
-     data-rubber-content 容器内容层（解析规则 scroller > [data-rubber-content]，
-                         或给现成的单一内容子节点直接打标）
-     data-rubber-self    把滚动容器自身当层（横向条 / 纯文本盒）
+   两类层（超范围位移落在谁身上）—— 接入时先选类型，再选标记：
+     A · item 超伸：容器框不动，内部内容层位移（iOS 观感；吸顶页头、圆角、
+         背景都留在原地）。凡「容器本身就是一块视觉框架」都用它：
+       data-rubber-page    文档滚动页层（App.vue，唯一）
+       data-rubber-content 容器内容层（解析规则 scroller > [data-rubber-content]，
+                           或给现成的单一内容子节点直接打标）
+     B · 容器自身超伸：滚动框整体位移。只给「位移的就是它本身」的小容器：
+       data-rubber-self    横向条 / 纯文本盒 / 列表块这类自身即主体的滚动体
+     **页面级滚动区一律走 A**（整页框内自滚动的那些：ModelsPage .page、
+     KnowledgePage .scroll、AIPage .msgs、RunPage .pane、SessionOverlay
+     .scrollbody、VoiceSessionView .body/.tr）：页面框与吸顶页头必须站住，
+     动的只能是 item。带 transform 动画 / 定位的元素同样不能当层（会与动画
+     抢同一个 transform 属性），包一层镜像布局的 .rubber-layer 承载位移。
+
+   抢占（谁的手势）：本模块挂的是 window **冒泡**监听，所以组件想先接管，
+   自己的 touchmove 也必须在 window **捕获阶段** preventDefault —— 捕获先于
+   冒泡跑，本模块随后读到 e.defaultPrevented 就整场让位（见 onTouchMove）。
+   冒泡阶段的 preventDefault 已经晚了一步：同一事件上本模块先跑，位移会被
+   两边各吃一份（抽屉「容器下移 + item 又超伸」的 2× 位移就是这么来的）。
 
    判定（逐 move 增量累加，链式语义与原生一致）：
      1) 从触摸目标向上收集「可滚动祖先」；任一节点 touch-action:none → 整个手势
@@ -29,8 +43,10 @@
      5) band 中反向拖回 overOffset=0 → 立即清层交还原生（f'(0)=1 保证交接无跳变）。
 
    约定：只监听 touch（pointer 事件无法在滚动手势中途 preventDefault，先例
-   SheetModal）；prefers-reduced-motion 下整体不接管（原生硬停）。
+   SheetModal）；动效关掉时整体不接管（原生硬停）。
    ============================================================ */
+
+import { motionOn } from '@/system/motion'
 
 type Axis = 'x' | 'y'
 
@@ -276,7 +292,7 @@ function releaseBand(): void {
   if (b.peak >= CLICK_SWALLOW_PX) swallowNextClick()
   const pos = offset(b.over)
   const v = releaseVelocity(b)
-  if (reducedMotion() || (pos < SETTLE_PX && Math.abs(v) < SETTLE_V)) {
+  if (!motionOn.value || (pos < SETTLE_PX && Math.abs(v) < SETTLE_V)) {
     clearLayer(b.layer)
     return
   }
@@ -289,10 +305,6 @@ function cancelGesture(): void {
   samples = []
 }
 
-function reducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
 function onTouchStart(e: TouchEvent): void {
   stopSpring() // 打断上一轮回弹（残留只有几 px，直接归零）
   tracking = false
@@ -300,7 +312,7 @@ function onTouchStart(e: TouchEvent): void {
   band = null
   samples = []
   if (e.touches.length !== 1) return
-  if (reducedMotion()) return
+  if (!motionOn.value) return
   const found = collectCandidates(e.target)
   if (!found || !found.length) return
   candidates = found
@@ -317,7 +329,9 @@ function onTouchMove(e: TouchEvent): void {
     return
   }
   if (e.defaultPrevented) {
-    cancelGesture() // 别人（弹层拖拽 / 地图 / 芯片）已经接管
+    // 别人（弹层拖拽 / 地图 / 芯片）已经接管。想在这里读到 true，对方必须挂在
+    // 窗口捕获阶段：同一事件上本监听排在所有冒泡监听之前（见文件头「抢占」）。
+    cancelGesture()
     return
   }
   const t = e.touches[0]!
@@ -390,6 +404,7 @@ export function initRubberScroll(): void {
   if (started) return
   started = true
   window.addEventListener('touchstart', onTouchStart, { passive: true })
+  // 保持冒泡：捕获阶段会让本模块跑在「想抢手势的组件」之前，它们就再也拦不住了
   window.addEventListener('touchmove', onTouchMove, { passive: false })
   window.addEventListener('touchend', onTouchEnd)
   window.addEventListener('touchcancel', onTouchEnd)

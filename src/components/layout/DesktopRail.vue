@@ -21,7 +21,7 @@ const route = useRoute()
 </script>
 
 <template>
-  <nav class="rail" aria-label="主导航">
+  <nav class="rail glass-surface glass-edge-r" aria-label="主导航">
     <button class="logo" aria-label="Rein 主页" title="总览" @click="$router.push({ name: 'home' })" />
     <div class="navs col">
       <RouterLink
@@ -49,6 +49,10 @@ const route = useRoute()
 </template>
 
 <style scoped>
+/* 材质走全局那一份 .glass-surface（受光边 + 内顶高光 + 投影 + 超高的光学层），
+   这里只给几何。原先是一份手写的 --surface-translucent + blur(20px)：与其余玻璃
+   各写一套的代价是**档位升级要改两遍**，而超高档正是靠改令牌整套升级的。
+   glass-edge-r：只保留靠内那一条描边 —— 左边贴着屏幕边缘，画框就是在边上多一条亮线。 */
 .rail {
   width: 64px;
   flex: none;
@@ -57,10 +61,6 @@ const route = useRoute()
   flex-direction: column;
   align-items: center;
   padding: 18px 0 20px;
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-right: 0.5px solid var(--line);
   z-index: 50;
 }
 

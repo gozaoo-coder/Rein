@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Plus, Search } from 'lucide-vue-next'
+import { Plus, Search, SlidersHorizontal } from 'lucide-vue-next'
 
+import ExerciseFilterSheet from '@/components/exercise/ExerciseFilterSheet.vue'
 import ExerciseFormSheet from '@/components/exercise/ExerciseFormSheet.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { EXERCISE_CATEGORY_LABELS, EXERCISE_CATEGORY_META } from '@/config/domain'
 import { MUSCLE_LABELS, type MuscleKey } from '@/config/muscles'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
-import type { ExerciseCategory, ExerciseKind, ExerciseRecord } from '@/types'
+import { libraryMuscles } from '@/utils/libraryMuscles'
+import { EMPTY_EXERCISE_FILTER, filterBadgeCount } from '@/types'
+import type { ExerciseCategory, ExerciseFilterState, ExerciseKind, ExerciseRecord } from '@/types'
 
 /**
- * 动作库选择器（课程编辑用）：搜索 + 分类筛选 + 点选。
+ * 动作库选择器（课程编辑用）：搜索 + 分类 + 筛选（类型/器材/肌群/收藏/排序）+ 点选。
  * 库内没有合适动作时可当场「新建动作」——建完直接把新动作返回给调用方。
  */
 const props = defineProps<{
@@ -28,7 +31,8 @@ const emit = defineEmits<{
 
 const lib = useExerciseLibStore()
 const kw = ref('')
-const category = ref<ExerciseCategory | ''>('')
+const filter = ref<ExerciseFilterState>({ ...EMPTY_EXERCISE_FILTER })
+const filterOpen = ref(false)
 const formOpen = ref(false)
 
 watch(
@@ -36,15 +40,30 @@ watch(
   (open) => {
     if (!open) return
     kw.value = ''
-    category.value = ''
+    filter.value = { ...EMPTY_EXERCISE_FILTER }
     void lib.ensureLoaded()
   },
 )
 
-/** 同类型优先排序（换类型会清空该条目的参数，放在后面以减少误触） */
+const category = computed<ExerciseCategory | ''>(() => filter.value.category)
+const badge = computed(() => filterBadgeCount(filter.value))
+
+function setCategory(c: ExerciseCategory | ''): void {
+  filter.value = { ...filter.value, category: c }
+}
+
+/** 同类型优先排序（换类型会清空该条目的参数，放在后面以减少误触）；收藏仍置顶 */
 const list = computed(() => {
-  const rows = lib.search(kw.value, { category: category.value || undefined })
+  const rows = lib.search(kw.value, {
+    category: filter.value.category || undefined,
+    kind: filter.value.kind || undefined,
+    equipment: filter.value.equipment || undefined,
+    muscles: filter.value.muscles,
+    onlyFavorite: filter.value.onlyFavorite,
+    sort: filter.value.sort,
+  })
   return [...rows].sort((a, b) => {
+    if (a.favorite !== b.favorite) return a.favorite ? -1 : 1
     const ak = a.kind === props.kind ? 0 : 1
     const bk = b.kind === props.kind ? 0 : 1
     if (ak !== bk) return ak - bk
@@ -53,7 +72,8 @@ const list = computed(() => {
 })
 
 function muscleLine(e: ExerciseRecord): string {
-  const mains = (Object.entries(e.muscles ?? {}) as [MuscleKey, number][])
+  const map = libraryMuscles(e)
+  const mains = (Object.entries(map) as [MuscleKey, number][])
     .filter(([, lv]) => lv === 3)
     .map(([m]) => MUSCLE_LABELS[m])
   return mains.length ? mains.join(' · ') : EXERCISE_CATEGORY_LABELS[e.category]
@@ -70,16 +90,20 @@ function onCreated(e: ExerciseRecord): void {
     <div class="searchrow row">
       <Search :size="15" />
       <input v-model="kw" class="search" type="search" placeholder="搜索动作名或别名" aria-label="搜索动作" />
+      <button class="filterbtn row" type="button" @click="filterOpen = true">
+        <SlidersHorizontal :size="14" />
+        <b v-if="badge" class="fcount">{{ badge }}</b>
+      </button>
     </div>
 
     <div class="chips row">
-      <button class="chip" :class="{ on: category === '' }" @click="category = ''">全部</button>
+      <button class="chip" :class="{ on: category === '' }" @click="setCategory('')">全部</button>
       <button
         v-for="c in EXERCISE_CATEGORY_META"
         :key="c.key"
         class="chip"
         :class="{ on: category === c.key }"
-        @click="category = c.key"
+        @click="setCategory(c.key)"
       >
         {{ c.label }}
       </button>
@@ -106,6 +130,13 @@ function onCreated(e: ExerciseRecord): void {
     </button>
 
     <ExerciseFormSheet :open="formOpen" :exercise="null" @close="formOpen = false" @saved="onCreated" />
+
+    <ExerciseFilterSheet
+      v-model="filter"
+      :open="filterOpen"
+      :result-count="list.length"
+      @close="filterOpen = false"
+    />
   </SheetModal>
 </template>
 
@@ -124,6 +155,27 @@ function onCreated(e: ExerciseRecord): void {
   min-width: 0;
   font-size: var(--fs-subhead);
   color: var(--text-1);
+}
+
+.filterbtn {
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  color: var(--text-2);
+  flex: none;
+}
+
+.fcount {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--c-exercise);
+  color: #fff;
+  font-size: var(--fs-micro);
+  line-height: 15px;
+  text-align: center;
 }
 
 .chips {

@@ -37,6 +37,7 @@ import type {
 } from '@/types'
 import type { MemoGenResult } from '@/ai/memoGen'
 import { useToast } from '@/composables/useToast'
+import { motionOn } from '@/system/motion'
 import { perfDegraded } from '@/system/perf'
 
 let seq = 0
@@ -189,11 +190,6 @@ function legacyCallToProcess(t: ToolCallRecord, i: number, msgId: string): Proce
       ? { zoomId: t.zoomId, zoomW: t.zoomW, zoomH: t.zoomH, ...(t.zoomRect ? { zoomRect: t.zoomRect } : {}) }
       : {}),
   }
-}
-
-/** 无障碍：reduce 下不做入场位移动画 */
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
 export const useAiStore = defineStore('ai', () => {
@@ -647,8 +643,10 @@ export const useAiStore = defineStore('ai', () => {
     streamCreated.push(msg)
     streamSeq.value++
     // 入场动画仅 opacity + scale，不动 height（思考/工具占位气泡跳过；
-    // 掉帧降级期同样跳过——每个气泡一次合成在弱机上是纯负担）
-    if (withAnim && !prefersReducedMotion() && !perfDegraded.value) {
+    // 掉帧降级期同样跳过——每个气泡一次合成在弱机上是纯负担。
+    // 「要不要动」统一读 system/motion 的生效档位：它把用户选的「关闭」与
+    // 系统 prefers-reduced-motion 合成一个答案，这里不再各自 matchMedia）
+    if (withAnim && motionOn.value && !perfDegraded.value) {
       void nextTick(() => {
         const el = document.getElementById('msg-' + id)
         if (!el) return

@@ -5,8 +5,11 @@ import { House, Sparkles, User } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import GlassSurface from '@/components/common/GlassSurface.vue'
+import GlassThumb from '@/components/common/GlassThumb.vue'
 import { useDockStore } from '@/stores/dock'
 import { useFeaturesStore } from '@/stores/features'
+import { motionRich } from '@/system/motion'
+import { usePressGlow } from '@/composables/usePressGlow'
 import type { NavContribution } from '@/plugins'
 
 /**
@@ -58,6 +61,20 @@ const leftTab = computed(
   () => candidates.value.find((c) => c.route === dock.leftRoute) ?? candidates.value[0] ?? null,
 )
 
+/** 药丸里当前选中的那一格（-1 = 这一页不在 Dock 上，此时不画任何活动底） */
+const tabIndex = computed(() => tabs.value.findIndex((t) => route.name === t.route))
+
+/**
+ * 液态活动底（丰富档）：挂上之后原来那层纯色活动底让位（见 base.css 的 .goo 规则）。
+ * 用 `v-if="goo"` 而不是让 thumb 自己判断 —— 没有选中项时（比如停在二级页）
+ * 两块实现都不该画，这个条件只此一处。
+ */
+const goo = computed(() => motionRich.value && tabIndex.value >= 0)
+
+/** 按压定向光晕（丰富档）：一份监听挂在整个 Dock 上，按 selector 就近点亮被按的那一格 */
+const dockEl = ref<HTMLElement | null>(null)
+usePressGlow(dockEl, '.dock-tab, .dock-slot')
+
 /* ---------- 左钮：短按直达 / 长按换落点 ---------- */
 const pickerOpen = ref(false)
 let pressTimer: ReturnType<typeof setTimeout> | null = null
@@ -100,7 +117,7 @@ onBeforeUnmount(cancelPress)
 </script>
 
 <template>
-  <nav class="dock" aria-label="主导航">
+  <nav ref="dockEl" class="dock" aria-label="主导航">
     <!-- 左 · 独立圆钮（自定义落点）：短按直达，长按换一个模块主页面 -->
     <GlassSurface
       v-if="leftTab"
@@ -113,7 +130,7 @@ onBeforeUnmount(cancelPress)
     >
       <button
         type="button"
-        class="dock-slot"
+        class="dock-slot glow-layer"
         :class="{ active: route.name === leftTab.route }"
         :aria-label="`${leftTab.label}（长按更换）`"
         @pointerdown="startPress"
@@ -131,15 +148,19 @@ onBeforeUnmount(cancelPress)
     <!-- 中 · 药丸：内核 + 插件页签 -->
     <GlassSurface
       class="dock-block pill"
+      :class="{ goo }"
       :height="BLOCK"
       border-radius="var(--radius-full)"
       fill="var(--glass-fill)"
     >
+      <!-- 丰富档的液态活动底：**放在玻璃 slot 里面**，包在外面会让折射整段失效
+           （带 filter 的元素是后代 backdrop-filter 的 backdrop root） -->
+      <GlassThumb v-if="goo" :index="tabIndex" :count="tabs.length" />
       <RouterLink
         v-for="it in tabs"
         :key="it.route"
         :to="{ name: it.route }"
-        class="dock-tab"
+        class="dock-tab glow-layer"
         :class="{ active: route.name === it.route }"
       >
         <component :is="it.icon" :size="22" :stroke-width="route.name === it.route ? 2.4 : 1.9" />
@@ -158,7 +179,7 @@ onBeforeUnmount(cancelPress)
     >
       <RouterLink
         :to="{ name: AI_TAB.route }"
-        class="dock-slot"
+        class="dock-slot glow-layer"
         :class="{ active: route.name === AI_TAB.route }"
       >
         <component

@@ -1,5 +1,46 @@
 {
   "version": 1,
+  "muscleKeys": [
+    "scm",
+    "delt-ant",
+    "delt-lat",
+    "delt-post",
+    "traps-up",
+    "traps-mid",
+    "traps-low",
+    "lats",
+    "lower-back",
+    "chest-up",
+    "chest-low",
+    "abs",
+    "obliques",
+    "biceps",
+    "triceps",
+    "forearm",
+    "glute-max",
+    "glute-med",
+    "quads-lat",
+    "quads-rec",
+    "quads-med",
+    "adductors",
+    "hamstrings",
+    "calves",
+    "soleus",
+    "tibialis",
+    "teres-major",
+    "rhomboids",
+    "rotator-cuff",
+    "serratus-ant",
+    "iliopsoas",
+    "glute-min",
+    "vastus-intermedius",
+    "levator-scapulae",
+    "tibialis-post",
+    "fibularis",
+    "plantaris",
+    "popliteus",
+    "quadratus-femoris"
+  ],
   "exercises": [
     {
       "id": "barbell-bench-press",
@@ -19,6 +60,7 @@
         "abs": 1
       },
       "tips": "主攻胸大肌整体，前束与三头辅助；肩胛后收下沉，杆触胸不弹震，离心 2 秒。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 8,
       "defaultWeightKg": 60,
@@ -39,10 +81,11 @@
       "muscles": {
         "chest-up": 3,
         "chest-low": 1,
-        "delt-ant": 3,
+        "delt-ant": 2,
         "triceps": 2
       },
       "tips": "主攻胸大肌上束与三角肌前束；上斜约 30°，哑铃落至上胸沿再推起。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": 22,
@@ -65,12 +108,14 @@
         "delt-ant": 3,
         "delt-lat": 2,
         "triceps": 2,
+        "serratus-ant": 2,
         "traps-up": 1,
         "traps-low": 1,
         "delt-post": 1,
         "abs": 1
       },
       "tips": "主攻三角肌前中束、三头辅助；核心收紧不挺腰，下放至耳侧高度。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 10,
       "defaultWeightKg": 14,
@@ -93,6 +138,7 @@
         "traps-up": 1
       },
       "tips": "孤立三角肌中束，撑起肩宽；肘微屈锁住角度，举至与肩平、不耸肩。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": 8,
@@ -117,6 +163,7 @@
         "delt-ant": 1
       },
       "tips": "孤立胸大肌、刻画中缝；肘微屈固定，顶峰并拢停 1 秒（可用龙门架十字夹胸替代）。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 25,
@@ -139,6 +186,7 @@
         "forearm": 1
       },
       "tips": "主攻肱三头外侧头；大臂夹紧躯干，下压到底挤压 1 秒再缓慢回放。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 20,
@@ -161,6 +209,7 @@
         "forearm": 1
       },
       "tips": "主攻肱三头长头（拉伸位）；肘朝上固定，下放至三头充分拉长。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 15,
@@ -181,9 +230,11 @@
         "chest-up": 2,
         "triceps": 2,
         "delt-ant": 2,
-        "abs": 1
+        "abs": 2,
+        "glute-max": 1
       },
       "tips": "身体成一条直线，胸部贴近地面再推起；做不动就跪姿完成。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 12,
       "defaultWeightKg": null,
@@ -204,10 +255,12 @@
       "muscles": {
         "chest-up": 3,
         "chest-low": 1,
-        "delt-ant": 3,
-        "triceps": 2
+        "delt-ant": 2,
+        "triceps": 2,
+        "abs": 1
       },
       "tips": "脚垫高增加上胸与肩前束负荷，核心收紧防塌腰。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": null,
@@ -232,6 +285,7 @@
         "abs": 1
       },
       "tips": "手撑稳固椅沿，肘向后弯曲到底再撑起。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": null,
@@ -251,14 +305,17 @@
       "equipment": "bodyweight",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
         "biceps": 2,
         "forearm": 2,
-        "lower-back": 1
+        "lower-back": 1,
+        "abs": 1
       },
       "tips": "主攻背阔肌与大圆肌，撑起背部宽度；做不满 8 次时用高位下拉补足组数。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 8,
       "defaultWeightKg": null,
@@ -276,6 +333,8 @@
       "equipment": "barbell",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
+        "rhomboids": 2,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
@@ -284,6 +343,7 @@
         "lower-back": 1
       },
       "tips": "厚度的来源：背阔肌、斜方肌中下束、大圆肌协同；俯身约 45°，杆沿大腿拉向小腹。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 10,
       "defaultWeightKg": 40,
@@ -303,6 +363,8 @@
       "equipment": "cable",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
+        "rhomboids": 2,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
@@ -311,6 +373,7 @@
         "lower-back": 1
       },
       "tips": "背阔肌与菱形肌、斜方肌中束；躯干不前后晃，肩胛先收再屈肘。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 35,
@@ -328,12 +391,14 @@
       "equipment": "cable",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
         "abs": 1
       },
       "tips": "背阔肌孤立动作，几乎不借二头；肘微屈锁死角度，用背把杆压到大腿。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 15,
@@ -353,6 +418,7 @@
       "equipment": "cable",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
@@ -361,6 +427,7 @@
         "lower-back": 1
       },
       "tips": "肘朝下拉向口袋方向，用背发力而不是手臂硬拽。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 35,
@@ -380,9 +447,11 @@
       "equipment": "barbell",
       "muscles": {
         "traps-up": 3,
+        "levator-scapulae": 2,
         "forearm": 2
       },
       "tips": "主攻斜方肌上束；垂直上提下放，顶峰停 1 秒，不做绕环。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": 50,
@@ -400,10 +469,12 @@
       "equipment": "cable",
       "muscles": {
         "delt-post": 3,
+        "rotator-cuff": 3,
         "traps-mid": 2,
         "traps-low": 2
       },
       "tips": "主攻三角肌后束与肩袖外旋肌（冈下肌/小圆肌），护肩必练；绳索拉向额头，肘高于腕并向外旋开。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": 15,
@@ -424,9 +495,12 @@
       "muscles": {
         "delt-post": 3,
         "traps-mid": 2,
+        "rhomboids": 2,
+        "rotator-cuff": 1,
         "traps-low": 1
       },
       "tips": "主攻三角肌后束与上背；俯身 45° 固定躯干，轻重量找后束发力感即可。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": 6,
@@ -449,6 +523,7 @@
         "forearm": 2
       },
       "tips": "主攻肱二头整体；大臂贴身固定，离心 2 秒不甩腰借力。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": 20,
@@ -469,6 +544,7 @@
         "forearm": 2
       },
       "tips": "中立握主攻肱桡肌与肱肌，加粗手臂外侧；腕保持中立不屈伸。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 12,
@@ -488,6 +564,7 @@
         "forearm": 3
       },
       "tips": "主攻前臂屈肌群（腕屈肌与指屈肌），抓握力的来源；前臂贴凳固定，只动腕、幅度做完整。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 20,
       "defaultWeightKg": 10,
@@ -507,6 +584,7 @@
         "forearm": 3
       },
       "tips": "主攻前臂伸肌群（桡侧腕伸肌与指伸肌），与屈腕平衡防肘痛；轻重量、慢速全程控制。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 20,
       "defaultWeightKg": 6,
@@ -526,6 +604,8 @@
       "equipment": "bodyweight",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
+        "rhomboids": 1,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
@@ -534,6 +614,7 @@
         "lower-back": 1
       },
       "tips": "仰卧抓稳固桌沿，身体拉向桌面，肩胛先收。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": null,
@@ -556,15 +637,18 @@
         "quads-rec": 3,
         "quads-lat": 2,
         "quads-med": 2,
+        "vastus-intermedius": 2,
         "glute-max": 3,
         "glute-med": 2,
         "hamstrings": 2,
         "adductors": 2,
+        "quadratus-femoris": 1,
         "lower-back": 1,
         "abs": 1,
         "calves": 1
       },
       "tips": "全腿基石：股四头与臀大肌主攻，腘绳肌、核心稳定；髋膝同时启动，蹲到大腿平行以下。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 8,
       "defaultWeightKg": 70,
@@ -586,11 +670,14 @@
         "hamstrings": 3,
         "glute-max": 3,
         "lower-back": 3,
+        "glute-med": 1,
+        "abs": 1,
         "lats": 2,
         "traps-up": 2,
         "forearm": 2
       },
       "tips": "主攻腘绳肌与臀大肌，竖脊肌等长受力；膝微屈固定，髋往后坐、杠贴腿下滑。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": 60,
@@ -612,15 +699,18 @@
         "quads-rec": 3,
         "quads-lat": 2,
         "quads-med": 2,
+        "vastus-intermedius": 2,
         "glute-max": 3,
         "glute-med": 2,
         "hamstrings": 2,
         "adductors": 2,
+        "quadratus-femoris": 1,
         "lower-back": 1,
         "abs": 1,
         "calves": 1
       },
       "tips": "单侧动作修正左右差，股四头与臀都吃重；步距足够、重心压前脚跟，每边各 10 次。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": 16,
@@ -640,9 +730,11 @@
       "equipment": "machine",
       "muscles": {
         "hamstrings": 3,
+        "popliteus": 1,
         "calves": 1
       },
       "tips": "腘绳肌屈膝功能的孤立补充；回放要慢，不让配重砸落。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": 30,
@@ -662,10 +754,12 @@
       "equipment": "machine",
       "muscles": {
         "quads-rec": 3,
+        "quads-lat": 2,
         "quads-med": 2,
-        "quads-lat": 2
+        "vastus-intermedius": 2
       },
       "tips": "股四头孤立，尤其刺激股直肌；顶峰挤压 1 秒，缓慢回落。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": 35,
@@ -685,9 +779,12 @@
       "equipment": "machine",
       "muscles": {
         "calves": 3,
-        "soleus": 2
+        "soleus": 2,
+        "tibialis-post": 1,
+        "fibularis": 1
       },
       "tips": "主攻腓肠肌（直膝才吃得到）；底部充分拉伸 1 秒、顶部踮到最高停 1 秒。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 15,
       "defaultWeightKg": 40,
@@ -705,9 +802,12 @@
       "equipment": "machine",
       "muscles": {
         "soleus": 3,
-        "calves": 1
+        "calves": 1,
+        "tibialis-post": 1,
+        "fibularis": 1
       },
       "tips": "主攻比目鱼肌（屈膝 90° 时主导）；节奏放慢，次数做满。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": 25,
@@ -729,15 +829,18 @@
         "quads-rec": 3,
         "quads-lat": 2,
         "quads-med": 2,
+        "vastus-intermedius": 2,
         "glute-max": 3,
         "glute-med": 2,
         "hamstrings": 2,
         "adductors": 2,
+        "quadratus-femoris": 1,
         "lower-back": 1,
         "abs": 1,
         "calves": 1
       },
       "tips": "每边各 10 次；后腿膝盖轻落地，重心压前脚跟。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": null,
@@ -756,10 +859,12 @@
       "muscles": {
         "glute-max": 3,
         "glute-med": 2,
+        "glute-min": 1,
         "hamstrings": 2,
         "abs": 1
       },
       "tips": "顶峰收紧臀部停 1 秒，不要用腰顶起来。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": null,
@@ -781,15 +886,18 @@
         "quads-rec": 3,
         "quads-lat": 2,
         "quads-med": 2,
+        "vastus-intermedius": 2,
         "glute-max": 3,
         "glute-med": 2,
         "hamstrings": 2,
         "adductors": 2,
+        "quadratus-femoris": 1,
         "lower-back": 1,
         "abs": 1,
         "calves": 1
       },
       "tips": "脚与肩同宽，蹲到大腿平行，膝盖对准脚尖方向。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 15,
       "defaultWeightKg": null,
@@ -809,15 +917,18 @@
         "quads-rec": 3,
         "quads-lat": 2,
         "quads-med": 2,
+        "vastus-intermedius": 2,
         "glute-max": 3,
         "glute-med": 2,
         "hamstrings": 2,
         "adductors": 2,
+        "quadratus-femoris": 1,
         "lower-back": 1,
         "abs": 1,
         "calves": 1
       },
       "tips": "后脚搭在凳上，每边各 10 次，重心压前脚跟。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": null,
@@ -836,10 +947,12 @@
       "muscles": {
         "glute-max": 3,
         "glute-med": 3,
+        "glute-min": 1,
         "hamstrings": 2,
         "abs": 1
       },
       "tips": "每边各 12 次；骨盆保持水平不歪斜。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": null,
@@ -857,9 +970,12 @@
       "equipment": "bodyweight",
       "muscles": {
         "calves": 3,
-        "soleus": 2
+        "soleus": 2,
+        "tibialis-post": 1,
+        "fibularis": 1
       },
       "tips": "扶墙稳定，底部拉伸顶部踮满，节奏均匀。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 20,
       "defaultWeightKg": null,
@@ -879,10 +995,12 @@
         "quads-rec": 3,
         "quads-lat": 2,
         "quads-med": 2,
+        "vastus-intermedius": 2,
         "glute-max": 1,
         "abs": 1
       },
       "tips": "大腿平行地面，膝盖不超过脚尖太多。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -902,13 +1020,18 @@
         "quads-rec": 3,
         "quads-lat": 2,
         "quads-med": 2,
+        "vastus-intermedius": 2,
         "glute-max": 3,
         "glute-med": 2,
         "hamstrings": 2,
         "calves": 3,
+        "soleus": 2,
+        "tibialis": 1,
+        "plantaris": 1,
         "abs": 1
       },
       "tips": "蹲到平行再轻跳起，落地屈膝缓冲。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": null,
@@ -928,9 +1051,12 @@
       "equipment": "bodyweight",
       "muscles": {
         "abs": 3,
-        "obliques": 2
+        "obliques": 2,
+        "serratus-ant": 2,
+        "glute-max": 1
       },
       "tips": "推日收尾补核心：骨盆微后倾，腹臀绷紧成一条直线。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -950,9 +1076,11 @@
       "equipment": "bodyweight",
       "muscles": {
         "abs": 3,
-        "obliques": 2
+        "obliques": 2,
+        "iliopsoas": 1
       },
       "tips": "对侧手脚缓慢伸展，腰部始终贴地。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -972,9 +1100,12 @@
       "equipment": "bodyweight",
       "muscles": {
         "abs": 3,
-        "forearm": 2
+        "iliopsoas": 2,
+        "forearm": 2,
+        "lats": 1
       },
       "tips": "下腹与髂腰肌，兼练握力；骨盆微微上卷带动腿部，不靠惯性甩腿。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": null,
@@ -999,12 +1130,14 @@
         "hamstrings": 2,
         "glute-max": 2,
         "glute-med": 2,
+        "iliopsoas": 2,
         "calves": 3,
         "soleus": 2,
         "tibialis": 2,
         "abs": 1
       },
       "tips": "轻松对话强度，心率约 130 bpm，结束后拉伸 5 分钟。",
+      "steps": [],
       "defaultSets": 1,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1021,14 +1154,18 @@
       "category": "cardio",
       "equipment": "bodyweight",
       "muscles": {
+        "delt-lat": 3,
         "glute-med": 3,
         "calves": 3,
         "soleus": 2,
         "quads-rec": 2,
         "glute-max": 2,
+        "traps-up": 1,
+        "tibialis": 1,
         "abs": 1
       },
       "tips": "热身兼燃脂，落地轻盈护膝踝。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1053,9 +1190,12 @@
         "delt-ant": 2,
         "triceps": 2,
         "abs": 2,
-        "calves": 2
+        "calves": 2,
+        "soleus": 2,
+        "tibialis": 1
       },
       "tips": "动作质量优先：撑地—蹬跳—起身连贯但不含胸。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 10,
       "defaultWeightKg": null,
@@ -1074,12 +1214,15 @@
       "muscles": {
         "quads-rec": 3,
         "quads-lat": 2,
+        "iliopsoas": 2,
         "abs": 2,
         "calves": 2,
+        "soleus": 1,
         "tibialis": 2,
         "glute-med": 1
       },
       "tips": "膝盖抬至髋高，核心收紧节奏快。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1100,11 +1243,16 @@
         "quads-lat": 2,
         "glute-max": 2,
         "glute-med": 1,
+        "iliopsoas": 2,
+        "serratus-ant": 2,
+        "delt-ant": 1,
+        "triceps": 1,
         "calves": 2,
         "tibialis": 1,
         "abs": 2
       },
       "tips": "肩在腕正上方，膝盖快速交替拉向胸口。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1126,11 +1274,16 @@
         "hamstrings": 3,
         "glute-max": 3,
         "lower-back": 3,
+        "quads-lat": 2,
+        "adductors": 2,
+        "glute-med": 1,
+        "abs": 1,
         "lats": 2,
         "traps-up": 2,
         "forearm": 2
       },
       "tips": "全身力量基石：杠贴腿起、髋膝同时伸展，腰背中立不弓不塌，起不来就减重。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 5,
       "defaultWeightKg": 80,
@@ -1149,10 +1302,11 @@
       "muscles": {
         "chest-up": 3,
         "chest-low": 1,
-        "delt-ant": 3,
+        "delt-ant": 2,
         "triceps": 2
       },
       "tips": "主攻上胸；上斜约 30°，肩胛后收，杆触上胸沿再推起。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 8,
       "defaultWeightKg": 45,
@@ -1175,6 +1329,7 @@
         "abs": 1
       },
       "tips": "躯干微前倾练胸，直立练三头；沉肩不塌肩，下放到大臂与地面平行。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 8,
       "defaultWeightKg": null,
@@ -1192,14 +1347,18 @@
       "equipment": "dumbbell",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
+        "rhomboids": 2,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
         "biceps": 2,
         "forearm": 2,
-        "lower-back": 1
+        "lower-back": 1,
+        "obliques": 1
       },
       "tips": "单侧背部厚度：躯干固定不旋转，肘沿髋方向拉，肩胛先收再屈肘。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 10,
       "defaultWeightKg": 20,
@@ -1222,12 +1381,14 @@
         "delt-ant": 3,
         "delt-lat": 2,
         "triceps": 2,
+        "serratus-ant": 2,
         "traps-up": 1,
         "traps-low": 1,
         "delt-post": 1,
         "abs": 1
       },
       "tips": "肩部力量基石：核心与臀绷紧不后仰，杠过头顶后落在耳后，轨迹贴身。",
+      "steps": [],
       "defaultSets": 4,
       "defaultReps": 6,
       "defaultWeightKg": 30,
@@ -1250,6 +1411,7 @@
         "obliques": 1
       },
       "tips": "胸骨向骨盆卷起而非抬头，下背贴地，顶端呼气收缩 1 秒。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 15,
       "defaultWeightKg": null,
@@ -1267,9 +1429,11 @@
       "equipment": "bodyweight",
       "muscles": {
         "obliques": 3,
+        "glute-med": 2,
         "abs": 1
       },
       "tips": "侧链稳定：肘在肩正下方，髋部顶高成一条直线，两侧各做同样组数。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1294,6 +1458,7 @@
         "abs": 1
       },
       "tips": "后链与竖脊肌：髋铰链起落，脊柱保持中立，顶端不要过度后仰。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": 12,
       "defaultWeightKg": null,
@@ -1318,6 +1483,7 @@
         "abs": 1
       },
       "tips": "低冲击有氧：阻力调到能对话但微喘，脚跟压实踏板。",
+      "steps": [],
       "defaultSets": 1,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1335,15 +1501,20 @@
       "equipment": "cardio",
       "muscles": {
         "lats": 3,
+        "teres-major": 2,
+        "rhomboids": 2,
         "traps-mid": 2,
         "delt-post": 2,
         "traps-low": 2,
         "biceps": 2,
         "quads-rec": 2,
         "glute-max": 2,
-        "lower-back": 1
+        "hamstrings": 1,
+        "lower-back": 1,
+        "abs": 1
       },
       "tips": "腿—髋—手臂的顺序发力，回程反向；每 500m 配速稳定优于猛冲。",
+      "steps": [],
       "defaultSets": 1,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1368,6 +1539,7 @@
         "soleus": 2
       },
       "tips": "坐垫调到髋高，踏频 80-100 rpm，膝盖始终对准脚尖方向。",
+      "steps": [],
       "defaultSets": 1,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1388,9 +1560,12 @@
         "calves": 3,
         "soleus": 2,
         "tibialis": 2,
+        "forearm": 2,
+        "glute-med": 1,
         "abs": 1
       },
       "tips": "前脚掌落地、手腕摇绳，落地轻盈；膝踝不适换成原地小跳。",
+      "steps": [],
       "defaultSets": 5,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1408,6 +1583,7 @@
       "equipment": "other",
       "muscles": {},
       "tips": "每个酸痛点半分钟慢速滚动，不滚腰椎与关节，呼吸放松不憋气。",
+      "steps": [],
       "defaultSets": 1,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1425,6 +1601,7 @@
       "equipment": "other",
       "muscles": {},
       "tips": "训练后拉伸：每个部位 30 秒，拉到轻微紧绷即可，不弹震不疼痛。",
+      "steps": [],
       "defaultSets": 3,
       "defaultReps": null,
       "defaultWeightKg": null,
@@ -1432,6 +1609,677 @@
       "defaultDurationMin": null,
       "defaultRestSec": 90,
       "weightStep": 1
+    },
+    {
+      "id": "chin-up",
+      "name": "反握引体向上",
+      "aliases": [
+        "引体向上（反握）",
+        "下巴过杠"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "bodyweight",
+      "muscles": {
+        "lats": 3,
+        "biceps": 3,
+        "teres-major": 2,
+        "traps-mid": 2,
+        "delt-post": 2,
+        "forearm": 2,
+        "abs": 1
+      },
+      "tips": "反握让二头参与更多；肩胛先下沉再拉，胸口找杠，下放到底不完全松肩。",
+      "steps": [
+        "悬挂在引体向上杆上，手掌朝向自己，双手与肩同宽。",
+        "启动核心肌群，将身体拉向杠铃杆，以胸部为主导。",
+        "继续拉，直到下巴位于杠铃上方。",
+        "在顶部停顿片刻，然后慢慢将身体放回起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "barbell-glute-bridge",
+      "name": "杠铃臀推",
+      "aliases": [
+        "杠铃臀桥",
+        "臀冲"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "glute-max": 3,
+        "glute-med": 2,
+        "glute-min": 1,
+        "hamstrings": 2,
+        "abs": 1
+      },
+      "tips": "臀大肌的大重量孤立：下颌微收、肋骨下压，顶点夹臀 1 秒，别用腰顶。",
+      "steps": [
+        "首先平躺在地上，膝盖弯曲，双脚平放在地板上。",
+        "将杠铃放在臀部上，用双手牢牢握住它。",
+        "锻炼臀部和核心肌肉，然后将臀部抬离地面，直到身体从膝盖到肩膀形成一条直线。",
+        "在顶部暂停片刻，挤压臀部。",
+        "慢慢地将臀部放回起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "walking-lunge",
+      "name": "行走箭步蹲",
+      "aliases": [
+        "走路弓步"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "bodyweight",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "vastus-intermedius": 2,
+        "glute-max": 3,
+        "glute-med": 2,
+        "hamstrings": 2,
+        "adductors": 2,
+        "lower-back": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "每步落稳再换腿：前脚全掌踩实，后膝轻触地，躯干保持直立。",
+      "steps": [
+        "双脚分开与肩同宽站立。",
+        "右腿向前迈出一步，将身体降低至弓步位置。",
+        "保持躯干直立，前膝与脚踝对齐。",
+        "右脚蹬地，左脚向前，左腿呈弓步姿势。",
+        "继续交替双腿向前行走，保持受控且稳定的步伐。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "dumbbell-goblet-squat",
+      "name": "高脚杯深蹲",
+      "aliases": [
+        "哑铃高脚杯深蹲"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "dumbbell",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "vastus-intermedius": 2,
+        "glute-max": 2,
+        "glute-med": 2,
+        "hamstrings": 1,
+        "adductors": 2,
+        "lower-back": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "哑铃抱于胸前，躯干自然直立；学蹲姿与热身激活都合适。",
+      "steps": [
+        "双脚分开与肩同宽站立，双手握住哑铃垂直放在胸前。",
+        "保持胸部挺直，核心收紧，通过向后推臀部并弯曲膝盖，将身体降低至蹲姿。",
+        "继续降低，直到大腿与地面平行，或者尽可能低。",
+        "在底部停顿片刻，然后推动脚后跟回到起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "farmers-walk",
+      "name": "农夫行走",
+      "aliases": [
+        "农夫走路"
+      ],
+      "kind": "strength",
+      "category": "other",
+      "equipment": "dumbbell",
+      "muscles": {
+        "forearm": 3,
+        "traps-up": 2,
+        "abs": 2,
+        "glute-med": 1,
+        "lower-back": 1
+      },
+      "tips": "握力与躯干抗侧屈：肩胛下沉、步幅小而稳，别耸肩别晃。",
+      "steps": [
+        "站直，双手各握一个哑铃，手掌朝向身体两侧。",
+        "保持背部挺直，肩膀向后。",
+        "向前迈出小步，控制住，保持直立姿势。",
+        "继续步行所需的距离或时间。",
+        "最后，停止行走并小心地将哑铃降低到身体两侧。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "dumbbell-arnold-press",
+      "name": "阿诺德推举",
+      "aliases": [
+        "哑铃阿诺德推举"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "dumbbell",
+      "muscles": {
+        "delt-ant": 3,
+        "delt-lat": 2,
+        "triceps": 2,
+        "serratus-ant": 1,
+        "traps-up": 1,
+        "delt-post": 1
+      },
+      "tips": "前中束兼顾的推举：掌心由朝向自己旋外推起，下放回到下巴前方。",
+      "steps": [
+        "坐在有背部支撑的长凳上，双手各握一个哑铃，与肩同高，手掌朝向身体，肘部弯曲。",
+        "向上推哑铃，直到手臂完全伸展，手掌朝前。",
+        "抬起时旋转手腕，使手掌在动作的最高点朝前。",
+        "在最高点暂停片刻，然后慢慢将哑铃放回起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "barbell-pendlay-row",
+      "name": "潘德雷划船",
+      "aliases": [
+        "触地划船"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "barbell",
+      "muscles": {
+        "lats": 3,
+        "teres-major": 2,
+        "rhomboids": 2,
+        "traps-mid": 2,
+        "delt-post": 2,
+        "traps-low": 2,
+        "biceps": 2,
+        "forearm": 2,
+        "lower-back": 1,
+        "abs": 1
+      },
+      "tips": "每次从地面起拉：爆发上提、控制下放，躯干接近水平不靠腰借力。",
+      "steps": [
+        "双脚分开与肩同宽站立，膝盖稍微弯曲。",
+        "臀部向前弯曲，保持背部挺直，挺胸。",
+        "正手握住杠铃，握距略宽于肩宽。",
+        "将杠铃拉向上腹部，将肩胛骨挤压在一起。",
+        "将杠铃降低回到起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "dumbbell-bench-press",
+      "name": "哑铃卧推",
+      "aliases": [
+        "哑铃平板卧推"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "dumbbell",
+      "muscles": {
+        "chest-low": 3,
+        "chest-up": 2,
+        "triceps": 2,
+        "delt-ant": 2,
+        "abs": 1
+      },
+      "tips": "哑铃行程更长、对肩更友好；肩胛后收下沉，下放到胸侧再推起，肘约 75°。",
+      "steps": [
+        "平躺在长凳上，双脚平放在地上，背部紧贴长凳。",
+        "双手各握一个哑铃，手掌朝前，双臂伸至胸部上方。",
+        "慢慢地将哑铃降低到胸部两侧，保持肘部呈 90 度角。",
+        "暂停片刻，然后将哑铃推回起始位置，完全伸展双臂。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "dumbbell-fly",
+      "name": "哑铃飞鸟",
+      "aliases": [
+        "平板哑铃飞鸟"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "dumbbell",
+      "muscles": {
+        "chest-low": 3,
+        "chest-up": 2,
+        "delt-ant": 1
+      },
+      "tips": "孤立胸大肌、刻画外沿；肘微屈锁死角度，像抱树一样画弧，不耸肩不合肘。",
+      "steps": [
+        "平躺在长凳上，双手各握一个哑铃，手掌相对。",
+        "将手臂伸直越过胸部，肘部稍微弯曲。",
+        "保持肘部轻微弯曲，将手臂以宽弧线向两侧放低，直到感觉到胸部有拉伸感。",
+        "暂停片刻，然后反转动作，将哑铃拉回到起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 2
+    },
+    {
+      "id": "barbell-upright-row",
+      "name": "直立划船",
+      "aliases": [
+        "杠铃直立划船"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "barbell",
+      "muscles": {
+        "delt-lat": 3,
+        "traps-up": 2,
+        "delt-ant": 1,
+        "forearm": 1
+      },
+      "tips": "中束与斜方肌上束：宽握、拉到胸口中部即可，拉太高容易夹肩。",
+      "steps": [
+        "双脚分开与肩同宽站立，正手握住杠铃，双手分开略宽于肩宽。",
+        "让杠铃悬挂在大腿前面，双臂完全伸展。",
+        "保持背部挺直，核心收紧，呼气，将杠铃笔直向上举向下巴，用肘部引导。",
+        "在顶部停顿片刻，然后吸气，慢慢将杠铃放回起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "diamond-push-up",
+      "name": "钻石俯卧撑",
+      "aliases": [
+        "窄距俯卧撑"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "bodyweight",
+      "muscles": {
+        "triceps": 3,
+        "chest-low": 2,
+        "chest-up": 1,
+        "delt-ant": 1,
+        "abs": 1
+      },
+      "tips": "三头主导的窄距俯卧撑：双手成菱形置于胸下，肘贴近身体不外翻。",
+      "steps": [
+        "从高位平板支撑开始，双手并拢，拇指和食指形成菱形。",
+        "让你的身体从头到脚保持一条直线，锻炼你的核心和臀部。",
+        "将胸部降低至双手形成的菱形，保持肘部靠近身体。",
+        "在底部暂停片刻，然后将自己推回到起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "lever-chest-press",
+      "name": "器械推胸",
+      "aliases": [
+        "坐姿推胸"
+      ],
+      "kind": "strength",
+      "category": "push",
+      "equipment": "machine",
+      "muscles": {
+        "chest-low": 3,
+        "chest-up": 2,
+        "triceps": 2,
+        "delt-ant": 2
+      },
+      "tips": "固定轨迹适合新手与力竭组；握把与胸中线齐平，肩胛后收再推。",
+      "steps": [
+        "调整座椅高度，将自己放在机器上，背部平放在垫子上。",
+        "正手握住手柄，肘部呈 90 度角。",
+        "向前推动手柄，直到手臂完全伸展，运动过程中呼气。",
+        "动作结束时短暂暂停，然后慢慢回到起始位置，同时吸气。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 2.5
+    },
+    {
+      "id": "barbell-preacher-curl",
+      "name": "牧师凳弯举",
+      "aliases": [
+        "斜托弯举"
+      ],
+      "kind": "strength",
+      "category": "pull",
+      "equipment": "barbell",
+      "muscles": {
+        "biceps": 3,
+        "forearm": 2
+      },
+      "tips": "牧师凳固定大臂、杜绝借力；下放到底充分拉伸，离心 2 秒。",
+      "steps": [
+        "坐在牧师凳上，上臂放在垫子上，胸部靠在支撑物上。",
+        "反手握住杠铃，握距略宽于肩宽。",
+        "保持上臂静止，呼气并将杠铃向上弯向肩膀。",
+        "在顶部暂停片刻，挤压你的二头肌。",
+        "吸气并慢慢将杠铃放回起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "kettlebell-swing",
+      "name": "壶铃摇摆",
+      "aliases": [
+        "壶铃摆荡"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "other",
+      "muscles": {
+        "glute-max": 3,
+        "hamstrings": 2,
+        "lower-back": 2,
+        "glute-med": 1,
+        "quads-lat": 1,
+        "abs": 1,
+        "forearm": 2,
+        "traps-up": 1
+      },
+      "tips": "髋铰链爆发：髋往前顶让壶铃自己飞起来，手臂只是绳子，不靠深蹲起。",
+      "steps": [
+        "双脚分开与肩同宽站立，脚趾稍微向外。",
+        "双手握住壶铃放在身体前方，双臂伸展。",
+        "稍微弯曲膝盖并铰接臀部，将臀部向后推。",
+        "将壶铃在两腿之间向后摆动，保持手臂伸直并保持背部平坦。",
+        "利用臀部产生的动量，向前推动臀部并将壶铃摆动到肩膀高度。",
+        "让壶铃在双腿之间向下摆动，然后重复该动作达到所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 1
+    },
+    {
+      "id": "barbell-step-up",
+      "name": "杠铃登阶",
+      "aliases": [
+        "登阶",
+        "台阶登阶"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "quads-rec": 3,
+        "glute-max": 3,
+        "glute-med": 2,
+        "hamstrings": 1,
+        "calves": 1,
+        "abs": 1
+      },
+      "tips": "登到约膝高的箱面：全脚掌踩实，靠前腿站直，下放控制不砸。",
+      "steps": [
+        "站在长凳或台阶前，将杠铃放在上背部。",
+        "将一只脚放在长凳或台阶上，确保整个脚与表面接触。",
+        "穿过你的脚后跟，走上长凳或台阶，充分伸展你的臀部和膝盖。",
+        "在顶部短暂停顿，然后放低自己回到起始位置。",
+        "用另一条腿重复上述步骤。",
+        "继续交替双腿达到所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "barbell-front-squat",
+      "name": "前蹲",
+      "aliases": [
+        "杠铃前蹲"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "vastus-intermedius": 2,
+        "glute-max": 2,
+        "glute-med": 2,
+        "hamstrings": 1,
+        "adductors": 2,
+        "lower-back": 1,
+        "abs": 2,
+        "calves": 1
+      },
+      "tips": "躯干更直立、股四头吃重更多；肘抬高、杠搁前肩，蹲到底不塌腰。",
+      "steps": [
+        "首先站立，双脚分开与肩同宽，脚趾稍微向外。",
+        "将杠铃放在肩膀前面，将其放在锁骨和肩膀上。",
+        "当你将身体降低到蹲姿时，收紧核心并保持挺胸，将臀部向后推并弯曲膝盖。",
+        "降低直到大腿与地面平行，或者尽可能降低到您能舒服的高度。",
+        "在底部停顿片刻，然后推动脚后跟回到起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "barbell-sumo-deadlift",
+      "name": "相扑硬拉",
+      "aliases": [
+        "宽距硬拉"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "hamstrings": 3,
+        "glute-max": 3,
+        "lower-back": 3,
+        "adductors": 3,
+        "quads-lat": 2,
+        "glute-med": 1,
+        "abs": 1,
+        "lats": 2,
+        "traps-up": 2,
+        "forearm": 2
+      },
+      "tips": "宽站距、脚尖外展，内收肌参与更多；起杠时膝往外顶、杠贴腿直上。",
+      "steps": [
+        "站立，双脚分开比肩宽，脚趾朝外。",
+        "将杠铃放在您面前的地面上，位于双脚之间的中心。",
+        "弯曲膝盖，降低臀部，保持背部挺直，挺胸，用正手握法抓住杠铃。",
+        "启动你的核心并通过你的脚后跟发力，将杠铃抬离地面，同时伸展你的臀部和膝盖。",
+        "当你举起时，保持胸部挺直，背部挺直，向前推动臀部以充分锻炼臀部。",
+        "在顶部停顿片刻，然后慢慢将杠铃放回起始位置，在整个动作过程中保持控制。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "lever-seated-hip-abduction",
+      "name": "坐姿髋外展",
+      "aliases": [
+        "髋外展机"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "machine",
+      "muscles": {
+        "glute-med": 3,
+        "glute-min": 2,
+        "glute-max": 2
+      },
+      "tips": "臀中/臀小肌孤立：躯干稳定不后仰，向外打开到最大停 1 秒。",
+      "steps": [
+        "调整座椅高度，使膝盖成 90 度角。",
+        "坐在机器上，背部靠在靠背上，双脚放在脚踏板上。",
+        "将手放在侧手柄上以保持稳定性。",
+        "启动外展肌并慢慢将双腿分开，远离身体中线。",
+        "动作结束时暂停片刻，然后慢慢将双腿放回到起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 90,
+      "weightStep": 2.5
+    },
+    {
+      "id": "barbell-hack-squat",
+      "name": "杠铃哈克深蹲",
+      "aliases": [
+        "哈克深蹲（杠铃）"
+      ],
+      "kind": "strength",
+      "category": "legs",
+      "equipment": "barbell",
+      "muscles": {
+        "quads-rec": 3,
+        "quads-lat": 2,
+        "quads-med": 2,
+        "vastus-intermedius": 2,
+        "glute-max": 2,
+        "hamstrings": 1,
+        "adductors": 1,
+        "abs": 1,
+        "calves": 1
+      },
+      "tips": "杠在腿后拉起：重心更靠后、股四头吃重；全程保持背部中立。",
+      "steps": [
+        "首先站立，双脚分开与肩同宽，脚趾稍微向外。",
+        "将杠铃放在腿后面，将其放在大腿上部。",
+        "弯曲膝盖和臀部，降低身体，保持背部挺直，挺胸。",
+        "继续降低，直到大腿与地面平行，或者尽可能低。",
+        "暂停片刻，然后用力推动脚后跟，回到起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 120,
+      "weightStep": 2.5
+    },
+    {
+      "id": "russian-twist",
+      "name": "俄罗斯转体",
+      "aliases": [
+        "俄罗斯旋转"
+      ],
+      "kind": "strength",
+      "category": "core",
+      "equipment": "bodyweight",
+      "muscles": {
+        "obliques": 3,
+        "abs": 2
+      },
+      "tips": "躯干旋转练腹斜肌：先稳住骨盆再转动胸腔，慢速控制优于甩手。",
+      "steps": [
+        "坐在地上，膝盖弯曲，双脚平放在地板上。",
+        "稍微向后倾斜，同时保持背部挺直并且核心参与。",
+        "如果需要，双手合拢放在胸前或举重物。",
+        "将脚抬离地面，在坐骨上保持平衡。",
+        "将你的躯干向右扭转，将你的手或重量移向身体的右侧。",
+        "暂停片刻，然后将躯干向左扭转，将手或体重移向身体的左侧。",
+        "继续交替进行所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
+    },
+    {
+      "id": "reverse-crunch",
+      "name": "反向卷腹",
+      "aliases": [
+        "卷骨盆"
+      ],
+      "kind": "strength",
+      "category": "core",
+      "equipment": "bodyweight",
+      "muscles": {
+        "abs": 3,
+        "iliopsoas": 1,
+        "obliques": 1
+      },
+      "tips": "下腹主导：骨盆向上卷起而非抬腿，回落时腰不离地。",
+      "steps": [
+        "平躺，双臂沿着身体两侧伸展。",
+        "弯曲膝盖，将脚抬离地面，使大腿垂直于地板。",
+        "收缩腹肌，将臀部卷离地板，使膝盖靠近胸部。",
+        "在顶部暂停片刻，然后慢慢将臀部放回起始位置。",
+        "重复所需的重复次数。"
+      ],
+      "defaultSets": 3,
+      "defaultReps": 10,
+      "defaultWeightKg": null,
+      "defaultRestSec": 60,
+      "weightStep": 0
     }
   ]
 }

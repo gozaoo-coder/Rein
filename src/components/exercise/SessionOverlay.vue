@@ -13,6 +13,7 @@ import SessionBigNumberInput from '@/components/exercise/SessionBigNumberInput.v
 import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
+import { motionOn } from '@/system/motion'
 import { workoutRuntime } from '@/system/workoutRuntime'
 import { useToast } from '@/composables/useToast'
 import {
@@ -390,10 +391,6 @@ const fadeEl = ref<HTMLElement | null>(null)
 const EXPAND_MS = 480
 const COLLAPSE_MS = 400
 
-function reducedMotion(): boolean {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
 /** 形变锚点：无浮窗几何（课程页直接开课等）时兜底为屏幕中央卡片 */
 function anchorFrom(s: ImmersiveOriginSnapshot | null): { rect: DOMRect; radius: number } {
   if (s) return s
@@ -523,12 +520,12 @@ function stepMorph(now: number): void {
   morphRaf = requestAnimationFrame(stepMorph)
 }
 
-/** 从 from 向 to 逐帧插值；reducedMotion 时直接落到 to */
+/** 从 from 向 to 逐帧插值；动效关掉时直接落到 to */
 function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => void): void {
   stopMorph()
   const brief = (m: MorphState) => ({ sx: +m.sx.toFixed(4), sy: +m.sy.toFixed(4), tx: +m.tx.toFixed(1), ty: +m.ty.toFixed(1), r: +m.r.toFixed(1), fade: +m.fade.toFixed(3) })
   debugMorph('run', { from: brief(from), to: brief(to), dur })
-  if (reducedMotion()) {
+  if (!motionOn.value) {
     writeMorph(to)
     done?.()
     return
@@ -667,237 +664,242 @@ watch(immersiveOpen, (open) => {
         </div>
       </div>
 
-      <main class="scrollbody" data-rubber-self>
-        <!-- 激活热身：小重量找发力感 / 复合动作渐进 ramp-up -->
-        <div v-if="s.phase === 'warmup' && s.currentEx" class="pane col center">
-          <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ s.currentEx.warmups!.length }} 组</p>
-          <h1 class="actname">{{ displayName }}</h1>
-          <p class="meta">先用小重量激活目标肌群与动作模式，找发力感后再上正式重量</p>
-          <div class="wlist">
-            <span
-              v-for="(wd, i) in s.currentEx.warmups"
-              :key="i"
-              class="wstep num"
-              :class="{ done: i < s.warmupDone(s.currentEx!), cur: i === s.warmupDone(s.currentEx!) }"
-            >
-              {{ i < s.warmupDone(s.currentEx!) ? '✓' : '' }} {{ fmtKg(wd.weightKg) }} kg × {{ wd.reps }}
-            </span>
-          </div>
+      <main class="scrollbody">
+        <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 滚动框站住，只有 item 位移
+             （system/rubberScroll）。各态的 .pane 都留在层内：它们带 fadeUp 入场动画，
+             自己不能当层（会与动画抢同一个 transform）。 -->
+        <div class="rubber-layer" data-rubber-content>
+          <!-- 激活热身：小重量找发力感 / 复合动作渐进 ramp-up -->
+          <div v-if="s.phase === 'warmup' && s.currentEx" class="pane col center">
+            <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ s.currentEx.warmups!.length }} 组</p>
+            <h1 class="actname">{{ displayName }}</h1>
+            <p class="meta">先用小重量激活目标肌群与动作模式，找发力感后再上正式重量</p>
+            <div class="wlist">
+              <span
+                v-for="(wd, i) in s.currentEx.warmups"
+                :key="i"
+                class="wstep num"
+                :class="{ done: i < s.warmupDone(s.currentEx!), cur: i === s.warmupDone(s.currentEx!) }"
+              >
+                {{ i < s.warmupDone(s.currentEx!) ? '✓' : '' }} {{ fmtKg(wd.weightKg) }} kg × {{ wd.reps }}
+              </span>
+            </div>
 
-          <!-- 本组登记：小重量找发力感，重量可现场调整，完成即按实际重量登记 -->
-          <div class="setcard">
-            <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
-                 排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
-            <div v-if="showReadinessPrompt" class="rdsec">
-              <div class="rdhead">
-                <span class="rdlabel">今日状态</span>
-                <span class="rdhint">影响建议重量 · 可跳过</span>
+            <!-- 本组登记：小重量找发力感，重量可现场调整，完成即按实际重量登记 -->
+            <div class="setcard">
+              <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
+                   排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
+              <div v-if="showReadinessPrompt" class="rdsec">
+                <div class="rdhead">
+                  <span class="rdlabel">今日状态</span>
+                  <span class="rdhint">影响建议重量 · 可跳过</span>
+                </div>
+                <div class="rchips">
+                  <button
+                    v-for="opt in READINESS_CHIPS"
+                    :key="opt.value"
+                    type="button"
+                    class="rchip"
+                    @click="s.setReadiness(opt.value)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
               </div>
-              <div class="rchips">
+
+              <div class="field">
+                <span class="flabel">重量</span>
+                <SessionBigNumberInput
+                  :model-value="s.weight"
+                  label="热身重量"
+                  unit="kg"
+                  :step="WEIGHT_STEP"
+                  :precision="1"
+                  :max="999"
+                  @update:model-value="onWeight"
+                />
+              </div>
+
+              <div v-if="fillSources.length" class="qfill">
                 <button
-                  v-for="opt in READINESS_CHIPS"
-                  :key="opt.value"
+                  v-for="f in fillSources"
+                  :key="f.key"
                   type="button"
-                  class="rchip"
-                  @click="s.setReadiness(opt.value)"
+                  class="qseg"
+                  :class="{ rec: f.recommended }"
+                  :aria-label="`填入${f.caption}重量 ${f.value}`"
+                  @click="onWeight(f.weight)"
                 >
-                  {{ opt.label }}
+                  <span class="qcap">{{ f.caption }}</span>
+                  <span class="qval num">{{ f.value }}</span>
                 </button>
               </div>
+
+              <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
             </div>
 
-            <div class="field">
-              <span class="flabel">重量</span>
-              <SessionBigNumberInput
-                :model-value="s.weight"
-                label="热身重量"
-                unit="kg"
-                :step="WEIGHT_STEP"
-                :precision="1"
-                :max="999"
-                @update:model-value="onWeight"
-              />
+            <div v-if="activation" class="blockcard">
+              <h3>肌群激活</h3>
+              <MuscleMap :activation="activation" interactive />
             </div>
 
-            <div v-if="fillSources.length" class="qfill">
-              <button
-                v-for="f in fillSources"
-                :key="f.key"
-                type="button"
-                class="qseg"
-                :class="{ rec: f.recommended }"
-                :aria-label="`填入${f.caption}重量 ${f.value}`"
-                @click="onWeight(f.weight)"
-              >
-                <span class="qcap">{{ f.caption }}</span>
-                <span class="qval num">{{ f.value }}</span>
-              </button>
+            <div v-if="exTips" class="blockcard">
+              <h3>动作要点</h3>
+              <p>{{ exTips }}</p>
             </div>
-
-            <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
           </div>
 
-          <div v-if="activation" class="blockcard">
-            <h3>肌群激活</h3>
-            <MuscleMap :activation="activation" interactive />
-          </div>
+          <!-- 动作中：名称 hero ＋ 重量输入 ＋ 次数输入 ＋ 要点 ＋ 接下来 -->
+          <div v-else-if="s.phase === 'exercise' && s.currentEx" class="pane col center">
+            <p class="eyebrow">当前动作 · 第 {{ s.setIndex }} / {{ s.effSets(s.currentEx) }} 组</p>
+            <h1 class="actname">{{ displayName }}</h1>
 
-          <div v-if="exTips" class="blockcard">
-            <h3>动作要点</h3>
-            <p>{{ exTips }}</p>
-          </div>
-        </div>
-
-        <!-- 动作中：名称 hero ＋ 重量输入 ＋ 次数输入 ＋ 要点 ＋ 接下来 -->
-        <div v-else-if="s.phase === 'exercise' && s.currentEx" class="pane col center">
-          <p class="eyebrow">当前动作 · 第 {{ s.setIndex }} / {{ s.effSets(s.currentEx) }} 组</p>
-          <h1 class="actname">{{ displayName }}</h1>
-
-          <!-- 本组登记（重量 ＋ 次数同卡同构）：数字可点键入，± 微调；完成本组即记录当前值。
-               这两行是同一组记录的两个字段，之前分开在两处（重量在卡里、次数裸在卡外当大字），
-               视觉上像两件不相干的事，中间还夹着今日状态那张卡，谁主谁次读不出来 -->
-          <div class="setcard">
-            <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
-                 排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
-            <div v-if="showReadinessPrompt" class="rdsec">
-              <div class="rdhead">
-                <span class="rdlabel">今日状态</span>
-                <span class="rdhint">影响建议重量 · 可跳过</span>
+            <!-- 本组登记（重量 ＋ 次数同卡同构）：数字可点键入，± 微调；完成本组即记录当前值。
+                 这两行是同一组记录的两个字段，之前分开在两处（重量在卡里、次数裸在卡外当大字），
+                 视觉上像两件不相干的事，中间还夹着今日状态那张卡，谁主谁次读不出来 -->
+            <div class="setcard">
+              <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
+                   排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
+              <div v-if="showReadinessPrompt" class="rdsec">
+                <div class="rdhead">
+                  <span class="rdlabel">今日状态</span>
+                  <span class="rdhint">影响建议重量 · 可跳过</span>
+                </div>
+                <div class="rchips">
+                  <button
+                    v-for="opt in READINESS_CHIPS"
+                    :key="opt.value"
+                    type="button"
+                    class="rchip"
+                    @click="s.setReadiness(opt.value)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
               </div>
-              <div class="rchips">
+
+              <div class="field">
+                <span class="flabel">重量</span>
+                <SessionBigNumberInput
+                  :model-value="s.weight"
+                  label="重量"
+                  unit="kg"
+                  :step="WEIGHT_STEP"
+                  :precision="1"
+                  :max="999"
+                  @update:model-value="onWeight"
+                />
+              </div>
+
+              <!-- 一键填入：建议 / 上次 / 计划三个出处等宽并列，点一下即填入。
+                   等宽是为了让「同一个值的三个候选」这层关系读得出来 —— 从前三个
+                   宽度不一的胶囊各自飘着，加上重量本身，五个数字挤在一张卡里没有主次 -->
+              <div v-if="fillSources.length" class="qfill">
                 <button
-                  v-for="opt in READINESS_CHIPS"
-                  :key="opt.value"
+                  v-for="f in fillSources"
+                  :key="f.key"
                   type="button"
-                  class="rchip"
-                  @click="s.setReadiness(opt.value)"
+                  class="qseg"
+                  :class="{ rec: f.recommended }"
+                  :aria-label="`填入${f.caption}重量 ${f.value}`"
+                  @click="onWeight(f.weight)"
                 >
-                  {{ opt.label }}
+                  <span class="qcap">{{ f.caption }}</span>
+                  <span class="qval num">{{ f.value }}</span>
                 </button>
               </div>
+
+              <!-- 建议依据：一行摘要，点开看完整推导（平均状态 × 今日状态）。
+                   摘要是推导的首条，展开时从第二条开始列，不在下面重复同一句 -->
+              <template v-if="curAdvice?.hasHistory || curAdvice?.rationale.length">
+                <button class="whydis" :aria-expanded="whyOpen" @click="whyOpen = !whyOpen">
+                  <span class="whytxt">{{ curAdvice?.rationale[0] }}</span>
+                  <ChevronDown v-if="whyRest.length" :size="14" :class="{ flip: whyOpen }" />
+                </button>
+                <ul v-if="whyOpen && whyRest.length" class="whylist">
+                  <li v-for="(r, i) in whyRest" :key="i">{{ r }}</li>
+                </ul>
+              </template>
+
+              <div class="fsep" />
+
+              <!-- 次数：同样可点键入，登记的是实际完成次数（与计划不同也能如实记录） -->
+              <div class="field">
+                <span class="flabel">次数</span>
+                <SessionBigNumberInput
+                  :model-value="s.reps"
+                  label="次数"
+                  unit="次"
+                  :step="1"
+                  :max="999"
+                  @update:model-value="onReps"
+                />
+              </div>
             </div>
 
-            <div class="field">
-              <span class="flabel">重量</span>
-              <SessionBigNumberInput
-                :model-value="s.weight"
-                label="重量"
-                unit="kg"
-                :step="WEIGHT_STEP"
-                :precision="1"
-                :max="999"
-                @update:model-value="onWeight"
-              />
+            <div v-if="activation" class="blockcard">
+              <h3>肌群激活</h3>
+              <MuscleMap :activation="activation" interactive />
             </div>
 
-            <!-- 一键填入：建议 / 上次 / 计划三个出处等宽并列，点一下即填入。
-                 等宽是为了让「同一个值的三个候选」这层关系读得出来 —— 从前三个
-                 宽度不一的胶囊各自飘着，加上重量本身，五个数字挤在一张卡里没有主次 -->
-            <div v-if="fillSources.length" class="qfill">
-              <button
-                v-for="f in fillSources"
-                :key="f.key"
-                type="button"
-                class="qseg"
-                :class="{ rec: f.recommended }"
-                :aria-label="`填入${f.caption}重量 ${f.value}`"
-                @click="onWeight(f.weight)"
-              >
-                <span class="qcap">{{ f.caption }}</span>
-                <span class="qval num">{{ f.value }}</span>
-              </button>
+            <div v-if="exTips" class="blockcard">
+              <h3>动作要点</h3>
+              <p>{{ exTips }}</p>
             </div>
 
-            <!-- 建议依据：一行摘要，点开看完整推导（平均状态 × 今日状态）。
-                 摘要是推导的首条，展开时从第二条开始列，不在下面重复同一句 -->
-            <template v-if="curAdvice?.hasHistory || curAdvice?.rationale.length">
-              <button class="whydis" :aria-expanded="whyOpen" @click="whyOpen = !whyOpen">
-                <span class="whytxt">{{ curAdvice?.rationale[0] }}</span>
-                <ChevronDown v-if="whyRest.length" :size="14" :class="{ flip: whyOpen }" />
-              </button>
-              <ul v-if="whyOpen && whyRest.length" class="whylist">
-                <li v-for="(r, i) in whyRest" :key="i">{{ r }}</li>
-              </ul>
-            </template>
-
-            <div class="fsep" />
-
-            <!-- 次数：同样可点键入，登记的是实际完成次数（与计划不同也能如实记录） -->
-            <div class="field">
-              <span class="flabel">次数</span>
-              <SessionBigNumberInput
-                :model-value="s.reps"
-                label="次数"
-                unit="次"
-                :step="1"
-                :max="999"
-                @update:model-value="onReps"
-              />
+            <div v-if="nextEx" class="blockcard">
+              <h3>接下来</h3>
+              <p class="nextrow">▸ 下一动作 · <b>{{ nextExName }}</b> · {{ nextExDesc }}</p>
             </div>
           </div>
 
-          <div v-if="activation" class="blockcard">
-            <h3>肌群激活</h3>
-            <MuscleMap :activation="activation" interactive />
+          <!-- 组间休息：青环倒数（临时休息/热身组间同视图，结束后回到对应流程） -->
+          <div v-else-if="s.phase === 'rest'" class="pane col center">
+            <p class="eyebrow">{{ s.restIsTemp ? '临时休息' : s.restWarmup ? '热身组间' : '组间休息' }}</p>
+            <RingProgress :value="restProgress" color-var="--c-balance" :size="216" :stroke="13">
+              <b class="num restnum">{{ s.restLeft }}</b>
+              <span class="restsec">秒</span>
+            </RingProgress>
+            <p class="meta">{{ restMetaText }}</p>
           </div>
 
-          <div v-if="exTips" class="blockcard">
-            <h3>动作要点</h3>
-            <p>{{ exTips }}</p>
+          <!-- 计时动作准备 -->
+          <div v-else-if="s.phase === 'timed-ready' && s.currentEx" class="pane col center">
+            <p class="eyebrow">{{ s.currentEx.kind === 'cardio' ? '有氧计时' : '计时动作' }}</p>
+            <h1 class="actname">{{ displayName }}</h1>
+            <p class="meta">
+              目标
+              {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.currentEx.sets} 组` : `${s.currentEx.durationMin} 分钟` }}
+              <template v-if="s.currentEx.kind === 'timed'"> · 组间休息 {{ s.currentEx.restSec }}s</template>
+            </p>
+            <div v-if="activation" class="blockcard">
+              <h3>肌群激活</h3>
+              <MuscleMap :activation="activation" interactive />
+            </div>
+            <button class="readybtn" @click="s.prepareTimed()">我准备好了</button>
+            <p class="hint">准备好后点击开始倒数</p>
           </div>
 
-          <div v-if="nextEx" class="blockcard">
-            <h3>接下来</h3>
-            <p class="nextrow">▸ 下一动作 · <b>{{ nextExName }}</b> · {{ nextExDesc }}</p>
+          <!-- 计时进行中 -->
+          <div v-else-if="s.phase === 'timed-run'" class="pane col center">
+            <RingProgress :value="timedProgress" color-var="--c-intake" :size="248" :stroke="15">
+              <b class="num timernum">{{ timedText }}</b>
+              <span class="hint">目标 {{ timedTargetText }}</span>
+            </RingProgress>
           </div>
-        </div>
 
-        <!-- 组间休息：青环倒数（临时休息/热身组间同视图，结束后回到对应流程） -->
-        <div v-else-if="s.phase === 'rest'" class="pane col center">
-          <p class="eyebrow">{{ s.restIsTemp ? '临时休息' : s.restWarmup ? '热身组间' : '组间休息' }}</p>
-          <RingProgress :value="restProgress" color-var="--c-balance" :size="216" :stroke="13">
-            <b class="num restnum">{{ s.restLeft }}</b>
-            <span class="restsec">秒</span>
-          </RingProgress>
-          <p class="meta">{{ restMetaText }}</p>
-        </div>
-
-        <!-- 计时动作准备 -->
-        <div v-else-if="s.phase === 'timed-ready' && s.currentEx" class="pane col center">
-          <p class="eyebrow">{{ s.currentEx.kind === 'cardio' ? '有氧计时' : '计时动作' }}</p>
-          <h1 class="actname">{{ displayName }}</h1>
-          <p class="meta">
-            目标
-            {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.currentEx.sets} 组` : `${s.currentEx.durationMin} 分钟` }}
-            <template v-if="s.currentEx.kind === 'timed'"> · 组间休息 {{ s.currentEx.restSec }}s</template>
-          </p>
-          <div v-if="activation" class="blockcard">
-            <h3>肌群激活</h3>
-            <MuscleMap :activation="activation" interactive />
+          <!-- 总结 -->
+          <div v-else-if="s.phase === 'summary'" class="pane col center">
+            <span class="doneemoji">🎉</span>
+            <p class="donetitle">{{ s.plan?.name }}完成</p>
+            <p class="num donemeta">
+              {{ s.doneCount }}/{{ s.totalCount }} 组
+              <template v-if="s.totalVolume > 0"> · 总容量约 {{ s.totalVolume }} kg</template>
+              · 用时约 {{ s.durationMin }} 分钟 · 约 {{ s.estimateKcalValue }} 大卡
+            </p>
+            <button class="primary" @click="saveNow">保存训练</button>
+            <button class="ghost danger" @click="endOpen = true">放弃不保存</button>
           </div>
-          <button class="readybtn" @click="s.prepareTimed()">我准备好了</button>
-          <p class="hint">准备好后点击开始倒数</p>
-        </div>
-
-        <!-- 计时进行中 -->
-        <div v-else-if="s.phase === 'timed-run'" class="pane col center">
-          <RingProgress :value="timedProgress" color-var="--c-intake" :size="248" :stroke="15">
-            <b class="num timernum">{{ timedText }}</b>
-            <span class="hint">目标 {{ timedTargetText }}</span>
-          </RingProgress>
-        </div>
-
-        <!-- 总结 -->
-        <div v-else-if="s.phase === 'summary'" class="pane col center">
-          <span class="doneemoji">🎉</span>
-          <p class="donetitle">{{ s.plan?.name }}完成</p>
-          <p class="num donemeta">
-            {{ s.doneCount }}/{{ s.totalCount }} 组
-            <template v-if="s.totalVolume > 0"> · 总容量约 {{ s.totalVolume }} kg</template>
-            · 用时约 {{ s.durationMin }} 分钟 · 约 {{ s.estimateKcalValue }} 大卡
-          </p>
-          <button class="primary" @click="saveNow">保存训练</button>
-          <button class="ghost danger" @click="endOpen = true">放弃不保存</button>
         </div>
       </main>
 
@@ -1208,8 +1210,18 @@ watch(immersiveOpen, (open) => {
   overflow-y: auto;
 }
 
-.pane {
+/* 超范围平移层：撑满滚动框（min-height:100%），让内容不足一屏时 .pane 仍能居中；
+   内容超一屏时按内容撑高，滚动与原来一致。只承载 transform，不改观感。 */
+.rubber-layer {
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
+}
+
+.pane {
+  /* 原来是 min-height:100%（百分比落在 auto 高的包裹层上会失效），改用 flex:1：
+     在包裹层里等价地撑满，且内容超一屏时按内容撑高 */
+  flex: 1;
   gap: 12px;
   padding: 24px 26px;
   animation: fadeUp var(--dur-sheet) var(--ease-standard);

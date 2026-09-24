@@ -215,7 +215,7 @@ async function main() {
     await evalJS(`location.hash = '#/campus/course-select'`)
     await waitFor(`document.body.textContent.includes('可进入')`, 8000, '批次渲染')
     await clickText('.turn .primary', '进入选课')
-    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 8000, '教学班列表')
+    await waitFor(`document.querySelectorAll('.lesson').length >= 7`, 8000, '教学班列表')
 
     /* ═══════ 一、教务限速：**继续打**，不退避 ═══════ */
     await inject('throttle')

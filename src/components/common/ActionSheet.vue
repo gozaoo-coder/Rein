@@ -115,6 +115,25 @@ function pick(value: string): void {
   opacity: 0;
 }
 
+/* 丰富档：遮罩改成透镜式显现（与 SheetModal 同一套，理由与代价见那里的注释） */
+html[data-motion='rich'] .mask {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+html[data-motion='rich'] .as-mask-enter-active,
+html[data-motion='rich'] .as-mask-leave-active {
+  transition:
+    opacity var(--dur-base) var(--ease-standard),
+    backdrop-filter var(--dur-base) var(--ease-out);
+}
+
+html[data-motion='rich'] .as-mask-enter-from,
+html[data-motion='rich'] .as-mask-leave-to {
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
+}
+
 /* 进出同路径：自底弹起；退出更快（取消操作要干脆） */
 .as-card-enter-active {
   transition:

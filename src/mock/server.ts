@@ -61,6 +61,7 @@ import type {
   WorkoutPlanInput,
   WorkoutPlanRecord,
 } from '@/types'
+import { normalizeActivation } from '@/config/muscles'
 import { addDays, startOfMonth, startOfWeek, todayStr } from '@/utils/date'
 import { ruleMatchesDate } from '@/utils/recurrence'
 import { COURSE_CATEGORY } from '@/types/todo'
@@ -436,6 +437,7 @@ interface SeedExercise {
   equipment?: string | null
   muscles?: Record<string, number>
   tips?: string
+  steps?: string[]
   defaultSets: number
   defaultReps?: number | null
   defaultWeightKg?: number | null
@@ -445,22 +447,38 @@ interface SeedExercise {
   weightStep: number
 }
 
+/** 要领清洗（与 Rust steps::sanitize_steps 同语义）：最多 12 条、单条 200 字 */
+function sanitizeSteps(steps: unknown): string[] {
+  if (!Array.isArray(steps)) return []
+  return steps
+    .filter((s): s is string => typeof s === 'string')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 12)
+    .map((s) => s.slice(0, 200))
+}
+
 const exercises: ExerciseRecord[] = []
 /** 只持久化自建动作：内置动作每次启动按种子覆盖式刷新（与 Rust seed_exercises 同语义） */
 const EXERCISE_STORE_KEY = 'rein.mock.exercises.v1'
 /** 用户隐藏的内置动作 id */
 const EXERCISE_HIDDEN_KEY = 'rein.mock.exercises.hidden.v1'
+/** 用户收藏的内置动作 id（用户态：种子刷新不覆盖，与 Rust favorite 列同语义） */
+const EXERCISE_FAVORITE_KEY = 'rein.mock.exercises.favorite.v1'
 
 function loadExercises(): void {
   let custom: ExerciseRecord[] = []
   let hidden: string[] = []
+  let favorite: string[] = []
   try {
     custom = JSON.parse(localStorage.getItem(EXERCISE_STORE_KEY) ?? '[]') as ExerciseRecord[]
     hidden = JSON.parse(localStorage.getItem(EXERCISE_HIDDEN_KEY) ?? '[]') as string[]
+    favorite = JSON.parse(localStorage.getItem(EXERCISE_FAVORITE_KEY) ?? '[]') as string[]
   } catch {
     /* 损坏数据按空处理 */
   }
   const hiddenSet = new Set(hidden)
+  const favoriteSet = new Set(favorite)
   const seed = seedExercisesJson as unknown as { exercises: SeedExercise[] }
   for (const e of seed.exercises) {
     exercises.push({
@@ -470,8 +488,10 @@ function loadExercises(): void {
       kind: e.kind as ExerciseKind,
       category: e.category as ExerciseCategory,
       equipment: (e.equipment ?? null) as ExerciseEquipment | null,
-      muscles: (e.muscles ?? {}) as ExerciseRecord['muscles'],
+      muscles: normalizeActivation(e.muscles) as ExerciseRecord['muscles'],
       tips: e.tips ?? '',
+      steps: sanitizeSteps(e.steps),
+      favorite: favoriteSet.has(e.id),
       defaultSets: e.defaultSets,
       defaultReps: e.defaultReps ?? null,
       defaultWeightKg: e.defaultWeightKg ?? null,
@@ -510,6 +530,17 @@ function saveExerciseHidden(): void {
   }
 }
 
+function saveExerciseFavorite(): void {
+  try {
+    localStorage.setItem(
+      EXERCISE_FAVORITE_KEY,
+      JSON.stringify(exercises.filter((e) => !e.isCustom && e.favorite).map((e) => e.id)),
+    )
+  } catch {
+    /* 同上 */
+  }
+}
+
 /** 名称（或别名）精确匹配；名字已被 trim/规范化 */
 function findExerciseByName(name: string): ExerciseRecord | undefined {
   const key = name.trim()
@@ -525,6 +556,7 @@ interface ExerciseHint {
   durationMin?: number | null
   restSec?: number | null
   tips?: string | null
+  muscles?: unknown
 }
 
 /** 按名解析库 id；未命中则新建自建动作（与 Rust resolve::ensure_for_name 同语义） */
@@ -541,8 +573,10 @@ function ensureExerciseForName(name: string, hint: ExerciseHint = {}): string {
     kind,
     category: 'other',
     equipment: null,
-    muscles: {},
+    muscles: normalizeActivation(hint.muscles),
     tips: hint.tips ?? '',
+    steps: [],
+    favorite: false,
     defaultSets: hint.sets ?? 3,
     defaultReps: hint.reps ?? null,
     defaultWeightKg: hint.weightKg ?? null,
@@ -575,6 +609,7 @@ function resolvePlanExerciseIds(list: unknown[]): unknown[] {
       durationMin: typeof item.durationMin === 'number' ? item.durationMin : null,
       restSec: typeof item.restSec === 'number' ? item.restSec : null,
       tips: typeof item.tips === 'string' ? item.tips : null,
+      muscles: item.muscles,
     })
     return { ...item, exerciseId: id }
   })
@@ -3024,6 +3059,10 @@ function campusDemoLessons() {
     limitCount: number,
     groups: number,
     teachers: string[] = [],
+    /** 教学班名称：院系 / 校区 / 年级**只写在这里**（真机实测形状） */
+    lessonName: string | null = null,
+    /** 项目名：体育课靠它区分「羽毛球」与「匹克球」（`minorCourse.nameZh`） */
+    minorName: string | null = null,
   ) => ({
     id,
     course: { id: id * 10, code, nameZh, nameEn: null, credits },
@@ -3033,6 +3072,8 @@ function campusDemoLessons() {
     stdCount,
     limitCount,
     teachers: teachers.map((nameZh) => ({ nameZh })),
+    lessonName,
+    minorCourse: minorName ? { id: id * 10 + 1, nameZh: minorName, nameEn: null, code } : null,
     scheduleGroups: Array.from({ length: groups }, (_, i) => ({
       id: id * 100 + i,
       no: i + 1,
@@ -3056,6 +3097,46 @@ function campusDemoLessons() {
     mk(9004, '000021', '计算机科学导论', 2, 42, 80, 1, ['陈静']),
     // 9005 固定「先满员两次再放名额」，用来演示守着一个满员班的完整过程
     mk(9005, '000031', '体育（一）', 1, 30, 30, 4, ['赵强']),
+    // ── 体育课的真实形状（用户实际要抢的就是这个）─────────────────────────
+    // 所有项目的**课程名都一样**（「大学体育1」），学生嘴里的课名是**项目名**；
+    // 院系只写教学班名称里。这两段文字缺一个，8 个项目的班就无法区分、
+    // 也无法表达「只抢本院系那个班」——所以 fixture 必须长成这样。
+    mk(
+      9010,
+      '000004',
+      '大学体育1',
+      1,
+      20,
+      41,
+      1,
+      ['王秦丹青'],
+      '大学体育1-花江校区-26级（3院、7院、建交院）',
+      '羽毛球',
+    ),
+    mk(
+      9011,
+      '000004',
+      '大学体育1',
+      1,
+      20,
+      41,
+      1,
+      ['周之昊'],
+      '大学体育1-花江校区-26级（4院、5院）',
+      '羽毛球',
+    ),
+    mk(
+      9012,
+      '000004',
+      '大学体育1',
+      1,
+      18,
+      41,
+      1,
+      ['秦小鹏'],
+      '大学体育1-花江校区-26级（3院、7院、建交院）',
+      '匹克球',
+    ),
   ]
 }
 
@@ -3128,6 +3209,42 @@ interface MockGrabTask {
 
 const grabTasks: MockGrabTask[] = []
 let grabSeq = 0
+
+/* ---------- 任务单落盘 ----------
+ * 真引擎把任务单写在 SQLite 里：**重启不丢**，开机会 `reconcile_on_start` 接着跑。
+ * mock 不落盘的话，「重启之后界面别把旧结果当成新闻再报一遍」这条就永远测不到 ——
+ * 而那正是用户实际报上来的那个毛病（每次启动都弹一次「XXX未选到」）。 */
+const GRAB_TASKS_KEY = 'rein.mock.grabTasks'
+/** 只有「id + 状态」变了才写盘：每次轮询都写太重，而重启后要复原的正是这份状态 */
+let grabPersistKey = ''
+
+function grabPersist(): void {
+  const key = grabTasks.map((t) => `${t.id}:${t.status}`).join(',')
+  if (key === grabPersistKey) return
+  grabPersistKey = key
+  try {
+    localStorage.setItem(GRAB_TASKS_KEY, JSON.stringify(grabTasks))
+  } catch {
+    /* 存不下就算了：这份持久化是给「重启别重播」那条测试用的，不该反过来弄坏界面 */
+  }
+}
+
+function grabHydrate(): void {
+  try {
+    const raw = localStorage.getItem(GRAB_TASKS_KEY)
+    if (!raw) return
+    const rows = JSON.parse(raw) as MockGrabTask[]
+    if (!Array.isArray(rows) || !rows.length) return
+    grabTasks.push(...rows)
+    grabSeq = rows.reduce((m, t) => Math.max(m, Number(t.id) || 0), 0)
+    grabPersistKey = rows.map((t) => `${t.id}:${t.status}`).join(',')
+  } catch {
+    /* 坏数据当没有：mock 不该因为一段脏 JSON 起不来 */
+  }
+}
+
+grabHydrate()
+
 let grabProbeSeq = 0
 let grabLastEmit = ''
 
@@ -3236,8 +3353,12 @@ function grabWallOf(ms: number): string {
 
 const GRAB_FIELD_WEIGHT: Record<string, number> = {
   course: 1,
+  // 项目名与课程名同档：体育课所有项目的课程名都一样，学生嘴里的课名是项目名
+  minor: 1,
   code: 0.85,
   teacher: 0.75,
+  // 教学班名称（院系 / 校区 / 年级）：用来收窄，不是用来指认
+  lesson: 0.7,
   place: 0.5,
 }
 
@@ -3283,10 +3404,19 @@ function grabLessonFields(l: Record<string, any>): {
     if (typeof name === 'string' && name.trim()) out.push({ tag: 'course', text: name })
   }
   if (typeof course.code === 'string' && course.code.trim()) out.push({ tag: 'code', text: course.code })
+  // 项目名（体育课的「羽毛球」）：与课程名同档 —— 它才是学生嘴里的课名
+  const minor = l.minorCourse ?? {}
+  for (const name of [minor.nameZh, minor.nameEn]) {
+    if (typeof name === 'string' && name.trim()) out.push({ tag: 'minor', text: name })
+  }
   const teachers = (l.teachers ?? [])
     .map((t: any) => t?.nameZh ?? t?.person?.nameZh)
     .filter(Boolean)
   if (teachers.length) out.push({ tag: 'teacher', text: teachers.join('、'), names: teachers })
+  // 教学班名称：院系 / 校区 / 年级的唯一出处
+  if (typeof l.lessonName === 'string' && l.lessonName.trim()) {
+    out.push({ tag: 'lesson', text: l.lessonName })
+  }
   const place: string[] = []
   const walk = (v: any): void => {
     if (typeof v === 'string') place.push(v)
@@ -3413,17 +3543,24 @@ function grabRelaxedMatch(
         const h = grabFieldHit(f, token)
         if (!h) continue
         count += 1
-        if (h.tag === 'course' || h.tag === 'code') course = true
-        if (['course', 'code', 'teacher', 'teacherExact', 'teacherNear'].includes(h.tag)) identity = true
+        if (h.tag === 'course' || h.tag === 'code' || h.tag === 'minor') course = true
+        if (['course', 'code', 'minor', 'teacher', 'teacherExact', 'teacherNear'].includes(h.tag)) {
+          identity = true
+        }
         break
       }
     }
     return { count, identity, course }
   })
-  /** 丢完之后还认不认得是哪门课（与 Rust 的 `keeps_the_course` 同规矩） */
+  /** 丢完之后还认不认得是哪门课（与 Rust 的 `keeps_the_course` 同规矩）。
+   *  项目名算「认得」—— 体育课里「羽毛球」就是那门课的名字。 */
   const keepsTheCourse = (tokens: string[]): boolean =>
     tokens.some((token) =>
-      lessons.some((l) => grabLessonFields(l).some((f) => (f.tag === 'course' || f.tag === 'code') && grabFieldHit(f, token))),
+      lessons.some((l) =>
+        grabLessonFields(l).some(
+          (f) => (f.tag === 'course' || f.tag === 'code' || f.tag === 'minor') && grabFieldHit(f, token),
+        ),
+      ),
     )
 
   // 第一档：丢掉一个班都没命中、又不像硬约束的词
@@ -3512,6 +3649,18 @@ function grabPreferred(hits: GrabHit[]): GrabHit[] {
   return hits.some((h) => h.hard) ? hits.filter((h) => h.hard) : hits
 }
 
+/**
+ * 这个班**怎么和同门课的其他班区分开**（与 Rust `matcher::distinct_label` 同规矩）。
+ *
+ * 项目名优先：体育课 8 个项目的课程名全都叫「大学体育1」，
+ * 任务行只写课程名，用户认不出哪条是羽毛球。没有项目名时退到教学班名称。
+ */
+function grabDistinctLabel(l: Record<string, any>): string | null {
+  const minor = l.minorCourse?.nameZh ?? l.minorCourse?.nameEn
+  if (typeof minor === 'string' && minor.trim()) return minor.trim()
+  return typeof l.lessonName === 'string' && l.lessonName.trim() ? l.lessonName.trim() : null
+}
+
 /** 命中 → 界面形状（与 Rust `matcher::to_match` 同形） */
 function grabMatchDto(h: GrabHit): GrabMatch {
   const l = h.lesson
@@ -3525,6 +3674,12 @@ function grabMatchDto(h: GrabHit): GrabMatch {
     limitCount: l.limitCount ?? null,
     picked: l.selectedLesson != null,
     fields: h.fields,
+    // 同门课的班必须能被区分：体育课 8 个项目的课程名一模一样
+    lessonName: typeof l.lessonName === 'string' && l.lessonName.trim() ? l.lessonName.trim() : null,
+    minorName:
+      typeof l.minorCourse?.nameZh === 'string' && l.minorCourse.nameZh.trim()
+        ? l.minorCourse.nameZh.trim()
+        : null,
   }
 }
 
@@ -3662,6 +3817,10 @@ function grabResolveIntents(): boolean {
         turnId: brief.id,
         turnName: brief.name,
         lessonId: h.lesson.id,
+        // 任务行上那一小段能分辨它的文字：**项目名优先**。
+        // 体育课所有项目的课程名都叫「大学体育1」，只写课程名的话，
+        // 用户看着自己排的 8 条任务认不出哪条是羽毛球（与 Rust `distinct_label` 同规矩）。
+        lessonName: grabDistinctLabel(h.lesson),
         courseName: h.lesson.course?.nameZh ?? null,
         courseCode: h.lesson.course?.code ?? null,
         teacher: grabMatchDto(h).teacher,
@@ -3805,6 +3964,9 @@ function grabSnapshot(): GrabState {
 }
 
 function grabEmit(): void {
+  // 落盘放在去重**之前**：去重管的是「要不要推给界面」，而落盘管的是
+  // 「重启之后还认不认得这份任务单」—— 后者不该因为界面恰好不需要更新就漏掉
+  grabPersist()
   const snap = grabSnapshot()
   const json = JSON.stringify(snap)
   if (json === grabLastEmit) return
@@ -4876,8 +5038,10 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         kind: input.kind,
         category: input.category,
         equipment: input.equipment ?? null,
-        muscles: input.muscles ?? {},
+        muscles: normalizeActivation(input.muscles),
         tips: input.tips ?? '',
+        steps: sanitizeSteps(input.steps),
+        favorite: existing?.favorite ?? false,
         defaultSets: input.defaultSets ?? 3,
         defaultReps: input.defaultReps ?? null,
         defaultWeightKg: input.defaultWeightKg ?? null,
@@ -4916,6 +5080,15 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         e.hidden = false
         saveExerciseHidden()
       }
+      return delay(undefined as T)
+    }
+
+    case 'set_exercise_favorite': {
+      const e = exercises.find((x) => x.id === args.id)
+      if (!e) throw new Error(`动作不存在：${String(args.id)}`)
+      e.favorite = Boolean(args.favorite)
+      if (!e.isCustom) saveExerciseFavorite()
+      else saveExercises()
       return delay(undefined as T)
     }
 
@@ -6834,20 +7007,30 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     case 'campus_course_select_lessons': {
       // 课程名 / 教学班名 / 教师是三个独立字段，界面那个搜索框三个都发
-      // （与 Rust 侧和 SPA 一致），所以这里任意一个命中即可
+      // （与 Rust 侧和 SPA 一致），所以这里任意一个命中即可。
+      //
+      // **刻意不匹配项目名（`minorCourse`）**：教务的查询里没有这个字段 ——
+      // 真实服务器搜「羽毛球」就是一段空列表（课程名是「大学体育1」）。
+      // mock 在这里放水，界面那条「本地兜底过滤」就永远测不到、
+      // 真机上也就永远不知道自己漏了它。
       const q = (args.query ?? {}) as Record<string, unknown>
       const kws = [q.courseNameOrCode, q.lessonNameOrCode, q.teacherNameOrCode]
         .map((v) => String(v ?? '').trim().toLowerCase())
         .filter(Boolean)
       const all = campusDemoLessons()
       const list = kws.length
-        ? all.filter((l) =>
-            kws.some(
-              (kw) =>
-                l.course.nameZh.toLowerCase().includes(kw) ||
-                l.course.code.toLowerCase().includes(kw),
-            ),
-          )
+        ? all.filter((l) => {
+            const hay = [
+              l.course.nameZh,
+              l.course.nameEn ?? '',
+              l.course.code,
+              l.lessonName ?? '',
+              ...(l.teachers ?? []).map((t: { nameZh?: string }) => t?.nameZh ?? ''),
+            ]
+              .join(' ')
+              .toLowerCase()
+            return kws.some((kw) => hay.includes(kw))
+          })
         : all
       return delay(list as T)
     }

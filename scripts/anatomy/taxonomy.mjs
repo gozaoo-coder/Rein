@@ -42,16 +42,7 @@ export const MUSCLE_MESHES = {
   calves: ['FJ1394', 'FJ1397'],
   soleus: ['FJ1437'],
   tibialis: ['FJ1439'],
-}
-
-/** 深层键：切换「深层」时才显示 */
-export const DEEP_KEYS = new Set(['lower-back', 'glute-med', 'soleus'])
-
-/**
- * 解剖填充：真实存在但不参与高亮的肌群，用于把深层结构画出来，
- * 隐去浅层后才看得到（臀小肌、肩袖、股中间肌、髂腰肌等）。
- */
-export const FILLER_MESHES = {
+  // ---- 深层结构与补充肌束：与 src/config/muscles.ts 的深层键一一对应 ----
   'glute-min': ['FJ1420'],
   'rotator-cuff': ['FJ1500', 'FJ1506', 'FJ1504', 'FJ1508'],
   'teres-major': ['FJ1507'],
@@ -59,13 +50,33 @@ export const FILLER_MESHES = {
   rhomboids: ['FJ1536', 'FJ1537'],
   'levator-scapulae': ['FJ1532'],
   'vastus-intermedius': ['FJ1441'],
-  'iliopsoas': ['FJ1422', 'FJ1431'],
+  iliopsoas: ['FJ1422', 'FJ1431'],
   plantaris: ['FJ1429'],
   popliteus: ['FJ1430'],
   'tibialis-post': ['FJ1440'],
   fibularis: ['FJ1409', 'FJ1410', 'FJ1411'],
   'quadratus-femoris': ['FJ1445'],
 }
+
+/** 深层键：切换「深层」时才显示；激活时会叠加绘制在浅层之上 */
+export const DEEP_KEYS = new Set([
+  'lower-back',
+  'glute-med',
+  'soleus',
+  'glute-min',
+  'rotator-cuff',
+  'teres-major',
+  'serratus-ant',
+  'rhomboids',
+  'levator-scapulae',
+  'vastus-intermedius',
+  'iliopsoas',
+  'plantaris',
+  'popliteus',
+  'tibialis-post',
+  'fibularis',
+  'quadratus-femoris',
+])
 
 /** 体表轮廓与参考结构 */
 export const BASE_MESHES = {
@@ -76,7 +87,7 @@ export const BASE_MESHES = {
 /** 全部需要下载的右侧网格 id（自动补 M 变体） */
 export function allMeshIds() {
   const ids = new Set()
-  for (const list of [MUSCLE_MESHES, FILLER_MESHES, BASE_MESHES]) {
+  for (const list of [MUSCLE_MESHES, BASE_MESHES]) {
     for (const arr of Object.values(list)) {
       for (const id of arr) {
         ids.add(id)

@@ -127,7 +127,7 @@ const capMeta = {
 </script>
 
 <template>
-  <div class="page" data-rubber-self>
+  <div class="page">
     <PageHeader title="管理模型" subtitle="添加 AI 模型并测试能力后即可拍照识别" back>
       <template #action>
         <button class="hdr-btn accent" aria-label="添加模型" @click="onAdd">
@@ -136,96 +136,100 @@ const capMeta = {
       </template>
     </PageHeader>
 
-    <div class="intro t-2">
-      <p>每条模型保存后会自动发送 <b>max_tokens=1</b> 的测试包，探测「视觉（图片上传）、thinking 开关、effort 档位」三项能力，结果以徽章展示。</p>
-    </div>
+    <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 页面框与吸顶页头站住，只有 item 位移
+         （system/rubberScroll）。页头留在层外，拖动时不跟着漂 -->
+    <div class="rubber-layer" data-rubber-content>
+      <div class="intro t-2">
+        <p>每条模型保存后会自动发送 <b>max_tokens=1</b> 的测试包，探测「视觉（图片上传）、thinking 开关、effort 档位」三项能力，结果以徽章展示。</p>
+      </div>
 
-    <!-- 在线服务：服务端下发模型 + 服务密钥 + 双端成本 -->
-    <OnlineServiceCard @synced="onOnlineSynced" />
+      <!-- 在线服务：服务端下发模型 + 服务密钥 + 双端成本 -->
+      <OnlineServiceCard @synced="onOnlineSynced" />
 
-    <ul v-if="store.models.length > 0" class="cards">
-      <li v-for="m in store.models" :key="m.id" class="card m-card">
-        <div class="row between top">
-          <div class="flex-1 min0">
-            <p class="m-name">
-              {{ m.name }}
-              <span v-if="m.source === 'online'" class="chip-onl">在线</span>
-              <span v-if="m.isDefault" class="chip-def">默认</span>
-            </p>
-            <p class="m-id t-2">{{ m.provider }} · {{ m.modelId }}</p>
-            <p v-if="formatUnitPrice(m) || costText(m)" class="m-cost t-3">
-              <span v-if="formatUnitPrice(m)">{{ formatUnitPrice(m) }}</span>
-              <span v-if="costText(m)" class="spent">{{ costText(m) }}</span>
-            </p>
+      <ul v-if="store.models.length > 0" class="cards">
+        <li v-for="m in store.models" :key="m.id" class="card m-card">
+          <div class="row between top">
+            <div class="flex-1 min0">
+              <p class="m-name">
+                {{ m.name }}
+                <span v-if="m.source === 'online'" class="chip-onl">在线</span>
+                <span v-if="m.isDefault" class="chip-def">默认</span>
+              </p>
+              <p class="m-id t-2">{{ m.provider }} · {{ m.modelId }}</p>
+              <p v-if="formatUnitPrice(m) || costText(m)" class="m-cost t-3">
+                <span v-if="formatUnitPrice(m)">{{ formatUnitPrice(m) }}</span>
+                <span v-if="costText(m)" class="spent">{{ costText(m) }}</span>
+              </p>
+            </div>
+            <div class="acts">
+              <button
+                v-if="!m.isDefault"
+                class="act"
+                aria-label="设为默认"
+                @click="setDefault(m)"
+              >
+                <Star :size="16" />
+              </button>
+              <button class="act" aria-label="编辑模型" @click="onEdit(m)">
+                <Pencil :size="16" />
+              </button>
+              <button class="act" aria-label="删除模型" @click="deleting = m">
+                <Trash2 :size="16" class="danger" />
+              </button>
+            </div>
           </div>
-          <div class="acts">
+
+          <div class="caps row">
+            <template v-for="(meta, key) in capMeta" :key="key">
+              <span class="cap" :class="`cap-${m[key] === true ? 'ok' : m[key] === false ? 'no' : 'unk'}`">
+                <component :is="meta.icon" :size="13" />
+                {{ meta.label }}
+                <span v-if="store.probing[m.id]" class="probe"><RefreshCw :size="11" class="spin" /></span>
+              </span>
+            </template>
             <button
-              v-if="!m.isDefault"
-              class="act"
-              aria-label="设为默认"
-              @click="setDefault(m)"
+              class="cap retest"
+              :disabled="store.probing[m.id]"
+              @click="probe(m)"
             >
-              <Star :size="16" />
-            </button>
-            <button class="act" aria-label="编辑模型" @click="onEdit(m)">
-              <Pencil :size="16" />
-            </button>
-            <button class="act" aria-label="删除模型" @click="deleting = m">
-              <Trash2 :size="16" class="danger" />
+              <RefreshCw :size="13" :class="{ spin: store.probing[m.id] }" />
+              重新测试
             </button>
           </div>
-        </div>
 
-        <div class="caps row">
-          <template v-for="(meta, key) in capMeta" :key="key">
-            <span class="cap" :class="`cap-${m[key] === true ? 'ok' : m[key] === false ? 'no' : 'unk'}`">
-              <component :is="meta.icon" :size="13" />
-              {{ meta.label }}
-              <span v-if="store.probing[m.id]" class="probe"><RefreshCw :size="11" class="spin" /></span>
-            </span>
-          </template>
-          <button
-            class="cap retest"
-            :disabled="store.probing[m.id]"
-            @click="probe(m)"
-          >
-            <RefreshCw :size="13" :class="{ spin: store.probing[m.id] }" />
-            重新测试
-          </button>
-        </div>
+          <p v-if="m.lastError" class="err t-3">{{ m.lastError }}</p>
+        </li>
+      </ul>
 
-        <p v-if="m.lastError" class="err t-3">{{ m.lastError }}</p>
-      </li>
-    </ul>
+      <section v-else class="empty card">
+        <EmptyState
+          :icon="BrainCircuit"
+          title="还没有 AI 模型"
+          hint="点右上角或下方按钮添加模型，DeepSeek 视觉模型 deepseek-v4-flash-vision-exp 可直接拍照识别食物"
+        />
+      </section>
 
-    <section v-else class="empty card">
-      <EmptyState
-        :icon="BrainCircuit"
-        title="还没有 AI 模型"
-        hint="点右上角或下方按钮添加模型，DeepSeek 视觉模型 deepseek-v4-flash-vision-exp 可直接拍照识别食物"
-      />
-    </section>
-
-    <!-- 语音服务（语音对话功能的凭据与音色，豆包/Qwen 识别 + 豆包朗读） -->
-    <button class="card vcfg" @click="voiceOpen = true">
-      <span class="v-ic"><Mic :size="15" /></span>
-      <span class="vt">
-        <b>语音服务
-          <i v-if="voiceConfigured(voiceConfig)" class="v-ok">已连接</i>
-          <i v-else class="v-no">未配置</i>
-        </b>
-        <em>语音对话 · 实时转写与纪要朗读</em>
-      </span>
-      <span class="v-go">›</span>
-    </button>
-    <button class="card ai-setup" @click="askAiSetupVoice">
-      <span class="v-ic ic-spark"><Sparkles :size="15" /></span>
-      <span class="vt">
-        <b>让 AI 帮我配置语音</b>
-        <em>聊天里直接诊断问题、填凭据、试听音色</em>
-      </span>
-      <span class="v-go">›</span>
-    </button>
+      <!-- 语音服务（语音对话功能的凭据与音色，豆包/Qwen 识别 + 豆包朗读） -->
+      <button class="card vcfg" @click="voiceOpen = true">
+        <span class="v-ic"><Mic :size="15" /></span>
+        <span class="vt">
+          <b>语音服务
+            <i v-if="voiceConfigured(voiceConfig)" class="v-ok">已连接</i>
+            <i v-else class="v-no">未配置</i>
+          </b>
+          <em>语音对话 · 实时转写与纪要朗读</em>
+        </span>
+        <span class="v-go">›</span>
+      </button>
+      <button class="card ai-setup" @click="askAiSetupVoice">
+        <span class="v-ic ic-spark"><Sparkles :size="15" /></span>
+        <span class="vt">
+          <b>让 AI 帮我配置语音</b>
+          <em>聊天里直接诊断问题、填凭据、试听音色</em>
+        </span>
+        <span class="v-go">›</span>
+      </button>
+    </div>
 
     <!-- 悬浮按钮移出页面层（Teleport）：页面层 translate 会改 fixed 后代的包含块，留在层内拖动时会跑位 -->
     <Teleport to="body">

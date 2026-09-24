@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { campusService, onGrabState } from '@/services/campusService'
+import { ensureNotifyPermission } from '@/services/notifyService'
 import type {
   CourseSelectLesson,
   CourseSelectStatus,
@@ -57,11 +58,55 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
   /** 最近一次提交的进度文案（「已提交，等待教务处理…」这类） */
   const progress = ref('')
 
+  /* ---------------- 多选预定 ----------------
+   * 这两个状态原先住在选课页里，页面一卸载就归零。而「勾选顺序就是志愿序」
+   * 是这套交互里**唯一不可恢复**的东西：用户按着顺序点了 5 门课，中途切出去看一眼
+   * 课表、或者被一个电话打断，回来排好的志愿序就没了，只能从头再点一遍。
+   *
+   * 所以它跟任务单同一个生命周期，活在 store 里。
+   */
+  const selectMode = ref(false)
+  const selectedIds = ref<string[]>([])
+
+  /** 选中的教学班（按志愿序）。从 `lessons` 现取 —— 名单刷新后不会拿着一份孤儿数据 */
+  const selectedLessons = computed(() =>
+    selectedIds.value
+      .map((id) => lessons.value.find((l) => idOf(l.id) === id))
+      .filter((l): l is CourseSelectLesson => !!l),
+  )
+
+  function toggleSelect(l: CourseSelectLesson): void {
+    const id = idOf(l.id)
+    const i = selectedIds.value.indexOf(id)
+    if (i >= 0) selectedIds.value.splice(i, 1)
+    else selectedIds.value.push(id)
+  }
+
+  /**
+   * 上移 / 下移一个志愿。
+   *
+   * 顺序就是志愿序 —— 那它就必须是**可改**的。原先只能靠点按的先后排出来，
+   * 点错一步的唯一补救是取消重排，等于把顺序写成了只读。
+   */
+  function moveSelected(id: string, dir: -1 | 1): void {
+    const i = selectedIds.value.indexOf(id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= selectedIds.value.length) return
+    const [moved] = selectedIds.value.splice(i, 1)
+    if (moved != null) selectedIds.value.splice(j, 0, moved)
+  }
+
+  /** 退出多选并清空选择（返回批次列表、批量预定提交之后调用） */
+  function exitSelect(): void {
+    selectMode.value = false
+    selectedIds.value = []
+  }
+
   /* ---------------- 抢课任务单 ---------------- */
   const grab = ref<GrabState | null>(null)
   const grabSettings = ref<GrabSettings | null>(null)
   const grabBusy = ref(false)
-  /** 订阅取消函数。页面卸载时必须调用，否则事件会重复派发 */
+  /** 订阅取消函数。**由 `subscribers` 计数决定何时真的调用**（见 attachGrab） */
   let unlisten: (() => void) | null = null
 
   const turns = computed(() => status.value?.turns ?? [])
@@ -142,6 +187,8 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
     activeTurn.value = turn
     lessons.value = []
     keyword.value = ''
+    // 换一个批次 = 换一批教学班，上一批的勾选不可能再被排进任务单
+    exitSelect()
   }
 
   function leaveTurn(): void {
@@ -174,7 +221,24 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
             sortType: 'ASC',
           }
         : {}
-      lessons.value = await campusService.courseSelectLessons(idOf(turn.id), query)
+      const turnId = idOf(turn.id)
+      lessons.value = await campusService.courseSelectLessons(turnId, query)
+
+      // 服务器回空了 → 退一步：把全量拉回来，在**本地**按那几个「教务查询里
+      // 根本没有的字段」过滤一遍。这是引擎那条拉取阶梯的同一条教条（空了就上升），
+      // 只是这里上升的终点是「全量 + 本地过滤」。
+      //
+      // 为什么非做不可：**项目名与教学班名不在教务的查询字段里**。
+      // 体育课的课程名是「大学体育1」、项目名是「羽毛球」，而学生一定会打「羽毛球」——
+      // 服务器只会回一段空列表，界面说一句「没查到」，他根本不知道下一步该干什么。
+      if (kw && lessons.value.length === 0) {
+        const all = await campusService.courseSelectLessons(turnId, {})
+        const tokens = kw.toLowerCase().split(/\s+/).filter(Boolean)
+        lessons.value = all.filter((l) => {
+          const hay = haystackOf(l)
+          return tokens.every((t) => hay.includes(t))
+        })
+      }
     } finally {
       lessonsLoading.value = false
     }
@@ -227,13 +291,35 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
 
   /* ---------------- 抢课 ---------------- */
 
-  /** 进页面拉一次任务单，然后订阅引擎推送。 */
+  /**
+   * 订阅抢课状态推送。
+   *
+   * **必须引用计数**：看这份状态的有两个人 —— 选课页和全应用常驻的抢课浮条。
+   * 早先这里只有一个 `unlisten` 槽位，于是「进过选课页再离开」会把浮条也在用的
+   * 那条订阅一起拆掉：监视器从此再不更新，屏幕上永远停在最后一帧
+   * （而它显示的是「还在抢」这种**会骗人的**状态）。
+   */
+  let subscribers = 0
+  /** 正在建立订阅的 Promise：两个调用者同时进来时只建一条 */
+  let attaching: Promise<void> | null = null
+
   async function attachGrab(): Promise<void> {
+    subscribers += 1
     await refreshGrab()
-    if (!unlisten) unlisten = await onGrabState((s) => { grab.value = s })
+    if (unlisten) return
+    attaching ??= onGrabState((s) => {
+      grab.value = s
+    }).then((fn) => {
+      unlisten = fn
+      attaching = null
+    })
+    await attaching
   }
 
   function detachGrab(): void {
+    subscribers = Math.max(0, subscribers - 1)
+    // 还有人在看就别拆 —— 谁先走都不能把别人的订阅带走
+    if (subscribers > 0) return
     unlisten?.()
     unlisten = null
   }
@@ -273,17 +359,28 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
       groupKey?: string | null
       groupName?: string | null
       priority?: number
+      /**
+       * 目标批次。默认用「当前进入的那个」，但**任务管理页手上没有 activeTurn** ——
+       * 它是从任务自己身上读出 turnId 再重排的，所以这里要能显式指定。
+       */
+      turnId?: string | null
     },
   ): Promise<number> {
-    const turn = activeTurn.value
-    if (!turn) throw new Error('请先进入选课批次')
+    const turn =
+      opts?.turnId != null
+        ? (turns.value.find((t) => idOf(t.id) === opts.turnId) ?? null)
+        : activeTurn.value
+    const turnId = opts?.turnId ?? (turn ? idOf(turn.id) : '')
+    if (!turnId) throw new Error('请先进入选课批次')
     if (!lessonsToGrab.length) return 0
 
     const inSquad = !!opts?.groupKey
     const base = opts?.priority ?? 1
     const targets: GrabTargetInput[] = lessonsToGrab.map((l, i) => ({
       lessonId: l.id,
-      lessonName: null,
+      // 任务行上那一小段能分辨它的文字（项目名优先）—— 不能是 null：
+      // 体育课所有项目的课程名一样，任务行只写课程名就认不出哪个是羽毛球
+      lessonName: distinctLabel(l),
       courseName: l.course?.nameZh ?? l.course?.nameEn ?? null,
       courseCode: l.course?.code ?? null,
       teacher: teacherText(l),
@@ -298,15 +395,22 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
 
     grabBusy.value = true
     try {
+      // 窗口时刻从批次对象里取；任务管理页重排时手上只有 turnId，
+      // 查不到就传 null —— 引擎会进「等窗口公布」，**不会盲撞**（与既有语义一致）
+      const win = turn ? turnWindow(turn) : { start: null, end: null }
       const ids = await campusService.grabEnqueue({
-        turnId: idOf(turn.id),
-        turnName: turn.name ?? null,
+        turnId,
+        turnName: turn?.name ?? null,
         targets,
         mode: opts?.mode ?? 'predicate',
-        windowWall: turnWindow(turn).start,
-        windowEndWall: turnWindow(turn).end,
+        windowWall: win.start,
+        windowEndWall: win.end,
       })
       await refreshGrab()
+      // 用户刚刚说了「替我抢这门课」—— 这就是问通知权限最自然的时刻：
+      // 抢课是唯一一件「你不在场才需要它」的事，而结果得能追到锁屏上。
+      // 不 await：权限弹窗不该拖慢入队，浏览器里它直接返回 false。
+      void ensureNotifyPermission()
       return ids.length
     } finally {
       grabBusy.value = false
@@ -394,6 +498,12 @@ export const useCourseSelectStore = defineStore('courseSelect', () => {
     keyword,
     submitting,
     progress,
+    selectMode,
+    selectedIds,
+    selectedLessons,
+    toggleSelect,
+    moveSelected,
+    exitSelect,
     grab,
     grabSettings,
     grabBusy,
@@ -442,6 +552,52 @@ export function teacherText(l: CourseSelectLesson): string | null {
     })
     .filter(Boolean)
   return names.length ? names.join('、') : null
+}
+
+/**
+ * 这个班**怎么和同门课的其他班区分开** —— 任务行上那一小段能分辨它的文字。
+ *
+ * 体育课是必须这么做的例子：8 个项目的课程名**全都叫「大学体育1」**，
+ * 任务行只写课程名，用户看着自己排的 8 条任务认不出哪条是羽毛球。
+ *
+ * 顺序「项目名 → 教学班名称」与 Rust `matcher::distinct_label` 一致 ——
+ * 两边不一致会让「界面显示的」和「引擎记下的」变成两个东西。
+ */
+export function distinctLabel(l: CourseSelectLesson): string | null {
+  const minor = l.minorCourse?.nameZh ?? l.minorCourse?.nameEn
+  if (minor && minor.trim()) return minor.trim()
+  const name = l.lessonName
+  return name && name.trim() ? name.trim() : null
+}
+
+/**
+ * 一个教学班所有**能用来搜的文本**拼成一行（小写）。
+ *
+ * 与教务那三个查询字段（课程名 / 教学班名 / 教师）的差别正是重点：
+ * 这里还包含 **项目名**（体育课的「羽毛球」）与**上课时间地点** ——
+ * 它们在服务器的查询里根本不存在，只在本地兜底过滤时用得上。
+ */
+function haystackOf(l: CourseSelectLesson): string {
+  const minor = l.minorCourse?.nameZh ?? l.minorCourse?.nameEn ?? ''
+  const place: string[] = []
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') place.push(v)
+    else if (Array.isArray(v)) v.forEach(walk)
+    else if (v && typeof v === 'object') Object.values(v as Record<string, unknown>).forEach(walk)
+  }
+  ;(l.scheduleGroups ?? []).forEach((g) => walk(g.dateTimePlace))
+  return [
+    minor,
+    l.lessonName ?? '',
+    l.course?.nameZh ?? '',
+    l.course?.nameEn ?? '',
+    l.course?.code ?? '',
+    teacherText(l) ?? '',
+    place.join(' '),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
 }
 
 /**

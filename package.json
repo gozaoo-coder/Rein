@@ -1,7 +1,7 @@
 {
   "name": "rein",
   "private": true,
-  "version": "0.2.13",
+  "version": "0.3.0",
   "description": "Rein · 健康生活运动管理（Tauri + Vue + Rust）",
   "type": "module",
   "scripts": {
@@ -20,6 +20,7 @@
     "@earendil-works/pi-agent-core": "0.84.2",
     "@earendil-works/pi-ai": "0.84.2",
     "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-notification": "^2.4.0",
     "animejs": "^4.5.0",
     "jszip": "^3.10.1",
     "lucide-vue-next": "0.x",

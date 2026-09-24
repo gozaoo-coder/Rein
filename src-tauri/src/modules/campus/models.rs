@@ -816,6 +816,12 @@ pub struct GrabMatch {
     /// 命中的字段（`course` / `code` / `teacher` / `place`，见 `matcher`）：界面据此解释「为什么是它」
     #[serde(default)]
     pub fields: Vec<String>,
+    /// 教学班名称（院系 / 校区 / 年级在这里）
+    #[serde(default)]
+    pub lesson_name: Option<String>,
+    /// 项目名（体育课的「羽毛球」这类）
+    #[serde(default)]
+    pub minor_name: Option<String>,
 }
 
 /// 一条抢课计划。
@@ -1108,6 +1114,19 @@ pub struct CourseSelectLesson {
     pub limit_count: Option<i64>,
     #[serde(default)]
     pub teachers: Vec<serde_json::Value>,
+    /// **教学班名称**（如「大学体育1-花江校区-26级（3院、7院、建交院）」）。
+    ///
+    /// 院系、校区、年级这些限定条件**只写在这里**：课程名是「大学体育1」，
+    /// 而「3院」这个信息在别处一个字段都没有。丢掉它，用户就没法表达
+    /// 「我只抢本院系那个班」—— 而选不了外院系的班，打过去也是白费发射次数。
+    #[serde(default)]
+    pub lesson_name: Option<String>,
+    /// **副课程 / 项目名**（如体育课的「羽毛球」「中华射艺」）。
+    ///
+    /// 教务的选课表格正是拿它当上标渲染的：学生嘴里的「我抢羽毛球」，
+    /// 在字段层面既不是课程名（那是「大学体育1」）也不是教师 —— 只有这里有。
+    #[serde(default)]
+    pub minor_course: Option<LessonCourse>,
     #[serde(default)]
     pub schedule_groups: Vec<ScheduleGroup>,
     #[serde(default)]

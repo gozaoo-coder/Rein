@@ -321,7 +321,7 @@ async function main() {
     await writeQuery('量子力学')
     await preview()
     const emptyText = await evalJS(`document.querySelector('.plan .preview, .plan .err')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`)
-    ok('没匹配到时会说清「教务有几个班、你的词没中」', /7\s*个教学班/.test(emptyText) && emptyText.includes('没匹配到'), emptyText)
+    ok('没匹配到时会说清「教务有几个班、你的词没中」', /\d+\s*个教学班/.test(emptyText) && emptyText.includes('没匹配到'), emptyText)
 
     /* ---- 3b. 跨课程：一句查询命中两门课 → 拦下来，不排队 ---- */
     // 「大学」同时命中 大学英语（一）/000002 与 大学物理（含实验）/000011 ——
@@ -395,6 +395,35 @@ async function main() {
       noRelax.slice(0, 160),
     )
     await shot('2d-relax')
+
+    /* ---- 3d. 体育课：按**项目名 + 院系**抢（这是用户真实名单的写法）----
+     *
+     * 用户真实要抢的是「大学体育1」（000004）里 8 个项目中的一个，
+     * 而项目名（羽毛球）在 `minorCourse`、院系（3院）在教学班名里 ——
+     * 两样都不是课程名，也不是教师。它们不进匹配，写「羽毛球」就是零命中。
+     * 这条链路上每一环都得长对：教务返回 → 模型 → 匹配器 → 预览显示。 */
+    await writeQuery('羽毛球')
+    await preview()
+    const pe = await evalJS(
+      `[...document.querySelectorAll('.plan .preview .matches li')].map((li) => li.textContent.replace(/\\s+/g, ' ').trim())`,
+    )
+    ok('按项目名「羽毛球」能命中（课程名其实是「大学体育1」）', pe.length === 2, JSON.stringify(pe))
+    ok(
+      '候选行的标题显示项目名，课程名落到副标题里',
+      pe.every((t) => t.includes('羽毛球') && t.includes('大学体育1 ·')),
+      JSON.stringify(pe).slice(0, 200),
+    )
+    ok('命中字段如实报成「项目名」', pe.every((t) => t.includes('项目名')), JSON.stringify(pe).slice(0, 200))
+
+    // 院系只写教学班名里：带上「3院」之后，只剩本院系那个班
+    await writeQuery('羽毛球 3院')
+    await preview()
+    const peCampus = await evalJS(
+      `[...document.querySelectorAll('.plan .preview .matches li')].map((li) => li.textContent.replace(/\\s+/g, ' ').trim())`,
+    )
+    ok('带上院系「3院」之后只剩本院系那个班', peCampus.length === 1, JSON.stringify(peCampus))
+    ok('院系落在「教学班名」这一栏上（不是课程名）', peCampus[0]?.includes('教学班名') === true, peCampus[0] ?? '')
+    await shot('2e-pe')
 
     /* ---- 4. 加入计划 → 引擎自己解析成志愿任务 → 自己抢到 ---- */
     await writeQuery('高数 张')
@@ -471,19 +500,22 @@ async function main() {
       (await evalJS(`!!document.querySelector('.plan .entry input')`)) === true,
     )
 
-    await writeQuery('体育')
+    // 查询词要**只落在一门课上**：名单里现在既有「体育（一）」又有「大学体育1」，
+    // 光写「体育」会同时命中两门课 → 引擎按设计停下来要课程代码（年级双开那条闸门），
+    // 那就验不到「批次一出现自己接上」这条路了。
+    await writeQuery('体育（一）')
     await evalJS(`document.querySelector('.plan .primary').click()`)
-    await waitFor(`${planRowExpr('体育')} != null`, 6000, '计划先存下来')
+    await waitFor(`${planRowExpr('体育（一）')} != null`, 6000, '计划先存下来')
     await waitFor(
-      `((${planRowExpr('体育')})?.textContent ?? '').includes('还没看到这个选课批次')`,
+      `((${planRowExpr('体育（一）')})?.textContent ?? '').includes('还没看到这个选课批次')`,
       8000,
       '说明「等批次」而不是报错',
     )
-    ok('批次未公布：计划先存着并说明原因，不报错也不丢', true, await evalJS(`(${planRowExpr('体育')})?.textContent.replace(/\\s+/g,' ').trim()`))
+    ok('批次未公布：计划先存着并说明原因，不报错也不丢', true, await evalJS(`(${planRowExpr('体育（一）')})?.textContent.replace(/\\s+/g,' ').trim()`))
     ok(
       '此时预览也会如实说「还没公布」',
       await (async () => {
-        await writeQuery('体育')
+        await writeQuery('体育（一）')
         await preview()
         const t = await evalJS(`document.querySelector('.plan .err, .plan .preview')?.textContent ?? ''`)
         return /还没公布选课批次/.test(t)
@@ -494,8 +526,8 @@ async function main() {
     // 批次一出现，引擎自己接上
     await evalJS(`window.__REIN_MOCK_NO_SELECT_TURN__ = false`)
     await evalJS(`document.querySelector('[aria-label="立即刷新"]').click()`)
-    await waitFor(`(${planChipExpr('体育')}) === '已抢到'`, 25000, '批次出现后自动抢到')
-    ok('批次一出现就自动接上并抢到（提前输入的价值就在这一步）', true, await planChipExpr('体育'))
+    await waitFor(`(${planChipExpr('体育（一）')}) === '已抢到'`, 25000, '批次出现后自动抢到')
+    ok('批次一出现就自动接上并抢到（提前输入的价值就在这一步）', true, await planChipExpr('体育（一）'))
     await shot('5-late-turn')
 
     /* ---- 7. 多选：每门课都要 vs 只中一个 ---- */

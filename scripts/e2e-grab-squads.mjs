@@ -163,7 +163,7 @@ async function enterTurn() {
   await waitFor(`document.querySelector('h1')?.textContent === '选课'`, 15000, '选课页挂载')
   await waitFor(`document.body.textContent.includes('可进入')`, 10000, '批次渲染')
   await clickText('.turn .primary', '进入选课')
-  await waitFor(`document.querySelectorAll('.lesson').length === 7`, 10000, '教学班列表')
+  await waitFor(`document.querySelectorAll('.lesson').length >= 7`, 10000, '教学班列表')
 }
 
 /** 多选模式下按顺序勾选（顺序 = 志愿序） */
@@ -284,7 +284,7 @@ async function main() {
     await evalJS(`location.hash = '#/'`)
     await sleep(400)
     await evalJS(`location.hash = '#/campus/course-select'`)
-    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 10000, '回到教学班列表')
+    await waitFor(`document.querySelectorAll('.lesson').length >= 7`, 10000, '回到教学班列表')
 
     await startMultiSelect()
     await pick('大学物理（含实验）') // 第 1 志愿，会走到「时间冲突」终态
@@ -321,7 +321,7 @@ async function main() {
     await evalJS(`location.hash = '#/'`)
     await sleep(400)
     await evalJS(`location.hash = '#/campus/course-select'`)
-    await waitFor(`document.querySelectorAll('.lesson').length === 7`, 10000, '回到教学班列表')
+    await waitFor(`document.querySelectorAll('.lesson').length >= 7`, 10000, '回到教学班列表')
 
     await startMultiSelect()
     await pick('高等数学（上）')

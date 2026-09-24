@@ -7,7 +7,7 @@ use crate::error::{ReinError, Result};
 use crate::state::AppState;
 
 use super::models::{ExerciseInput, ExerciseRecord};
-use super::{exercise_from_row, EXERCISE_SELECT};
+use super::{exercise_from_row, muscles, steps, EXERCISE_SELECT};
 
 const KINDS: [&str; 3] = ["strength", "timed", "cardio"];
 const CATEGORIES: [&str; 7] = ["push", "pull", "legs", "core", "cardio", "mobility", "other"];
@@ -120,17 +120,18 @@ pub fn upsert_exercise(state: State<AppState>, input: ExerciseInput) -> Result<E
     }
 
     let aliases = serde_json::to_string(&input.aliases)?;
+    let steps = serde_json::to_string(&steps::sanitize_steps(&input.steps))?;
     conn.execute(
         "INSERT INTO exercises \
-         (id, name, aliases, kind, category, equipment, muscles, tips, default_sets, default_reps, \
+         (id, name, aliases, kind, category, equipment, muscles, tips, steps, default_sets, default_reps, \
           default_weight_kg, default_target_sec, default_duration_min, default_rest_sec, weight_step, \
           is_custom, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1, \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1, \
                  datetime('now'), datetime('now')) \
          ON CONFLICT(id) DO UPDATE SET \
            name = excluded.name, aliases = excluded.aliases, kind = excluded.kind, \
            category = excluded.category, equipment = excluded.equipment, muscles = excluded.muscles, \
-           tips = excluded.tips, default_sets = excluded.default_sets, \
+           tips = excluded.tips, steps = excluded.steps, default_sets = excluded.default_sets, \
            default_reps = excluded.default_reps, default_weight_kg = excluded.default_weight_kg, \
            default_target_sec = excluded.default_target_sec, \
            default_duration_min = excluded.default_duration_min, \
@@ -144,8 +145,9 @@ pub fn upsert_exercise(state: State<AppState>, input: ExerciseInput) -> Result<E
             input.kind,
             input.category,
             input.equipment.filter(|s| !s.is_empty()),
-            input.muscles.to_string(),
+            muscles::sanitize_muscles(&input.muscles).to_string(),
             input.tips.trim(),
+            steps,
             input.default_sets.max(1),
             input.default_reps.filter(|v| *v > 0),
             input.default_weight_kg.filter(|v| *v >= 0.0),
@@ -194,6 +196,24 @@ pub fn restore_exercise(state: State<AppState>, id: String) -> Result<()> {
     conn.execute(
         "UPDATE exercises SET hidden = 0, updated_at = datetime('now') WHERE id = ?1",
         [&id],
+    )?;
+    Ok(())
+}
+
+/// 收藏 / 取消收藏动作（内置与自建都可收藏）。
+/// 与 `hidden` 同属用户态：种子的覆盖式刷新不会碰这一列。
+#[tauri::command]
+pub fn set_exercise_favorite(state: State<AppState>, id: String, favorite: bool) -> Result<()> {
+    let conn = state.db.lock().unwrap();
+    let exists: Option<i64> = conn
+        .query_row("SELECT 1 FROM exercises WHERE id = ?1", [&id], |r| r.get(0))
+        .optional()?;
+    if exists.is_none() {
+        return Err(ReinError::Message(format!("动作不存在：{id}")));
+    }
+    conn.execute(
+        "UPDATE exercises SET favorite = ?2, updated_at = datetime('now') WHERE id = ?1",
+        params![id, i64::from(favorite)],
     )?;
     Ok(())
 }

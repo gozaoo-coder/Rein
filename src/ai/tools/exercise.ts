@@ -1,12 +1,16 @@
-/** 运动域工具：记录 CRUD + MET 热量估算 · 对应 exerciseService */
+/** 运动域工具：记录 CRUD + MET 热量估算 · 对应 exerciseService；动作库的增改见下方 */
 
 import { Type } from '@earendil-works/pi-ai'
 
+import { normalizeActivation } from '@/config/muscles'
 import { estimateKcal, WORKOUT_META } from '@/config/domain'
 import { exerciseService } from '@/services/exerciseService'
+import { exerciseLibService } from '@/services/exerciseLibService'
 import { nutritionService } from '@/services/nutritionService'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
 import type { Intensity, WorkoutType } from '@/types'
 import { endOfMonth, startOfMonth, todayStr } from '@/utils/date'
+import { MUSCLES } from './muscleSchema'
 import { defineTool, hhmmToMin, resolveDate, type AppTool } from './types'
 
 const TYPE_KEYS = Object.keys(WORKOUT_META) as WorkoutType[]
@@ -19,6 +23,38 @@ const WORKOUT_TYPE = Type.Union(
 const INTENSITY = Type.Union(
   [Type.Literal('low'), Type.Literal('moderate'), Type.Literal('high')],
   { description: '强度：low=低 / moderate=中 / high=高' },
+)
+
+/* ---- 动作库（0025）的写入 schema：与 src/types/exercise.ts 的枚举一一对应 ---- */
+
+const EXERCISE_KIND = Type.Union(
+  [Type.Literal('strength'), Type.Literal('timed'), Type.Literal('cardio')],
+  { description: '动作类型：strength=力量(按组次计重) / timed=计时(平板支撑等) / cardio=有氧(按时长计)' },
+)
+const EXERCISE_CATEGORY = Type.Union(
+  [
+    Type.Literal('push'),
+    Type.Literal('pull'),
+    Type.Literal('legs'),
+    Type.Literal('core'),
+    Type.Literal('cardio'),
+    Type.Literal('mobility'),
+    Type.Literal('other'),
+  ],
+  { description: '浏览分类：push 推 / pull 拉 / legs 腿 / core 核心 / cardio 有氧 / mobility 柔韧 / other 其他' },
+)
+const EXERCISE_EQUIPMENT = Type.Union(
+  [
+    Type.Literal('barbell'),
+    Type.Literal('dumbbell'),
+    Type.Literal('machine'),
+    Type.Literal('cable'),
+    Type.Literal('bodyweight'),
+    Type.Literal('band'),
+    Type.Literal('cardio'),
+    Type.Literal('other'),
+  ],
+  { description: '器材：决定建议重量的取整步进（杠铃 2.5 / 哑铃 2 / 自重不加重量）' },
 )
 
 /** 最新体重：先看体重记录，缺省回落到个人资料 */
@@ -128,6 +164,91 @@ export const exerciseTools: AppTool[] = [
     async execute(args) {
       await exerciseService.deleteWorkout(args.id)
       return { ok: true }
+    },
+  }),
+
+  defineTool({
+    name: 'upsert_exercise',
+    group: 'exercise',
+    label: '新建/修改自建动作',
+    description:
+      '在动作库（全部动作的唯一真源）里新建或修改一个**自建**动作：名称、别名、类型/分类/器材、肌群激活表、要点与默认处方。内置动作只读——提交内置动作的 id 会被中文报错拒绝（那种情况改说「隐藏它」或「另建自建动作」）。用户要「加一个动作 / 自定义动作 / 给某个动作标肌群」时用它。',
+    parameters: Type.Object({
+      id: Type.Optional(
+        Type.String({ description: '动作 id（list_exercises 返回）；缺省 = 新建。只能改自建动作（custom=true）' }),
+      ),
+      name: Type.String({ description: '动作名（用户口语，如「器械推胸」）' }),
+      aliases: Type.Optional(
+        Type.Array(Type.String(), { description: '别名：旧数据/口语按名匹配时的补充命中词' }),
+      ),
+      kind: EXERCISE_KIND,
+      category: EXERCISE_CATEGORY,
+      equipment: Type.Optional(EXERCISE_EQUIPMENT),
+      muscles: Type.Optional(MUSCLES),
+      tips: Type.Optional(Type.String({ description: '动作要点（≤120 字，训练中展示）' })),
+      defaultSets: Type.Optional(Type.Number({ description: '默认组数，缺省 3' })),
+      defaultReps: Type.Optional(Type.Number({ description: '默认次数（strength 用）' })),
+      defaultWeightKg: Type.Optional(Type.Number({ description: '建议重量 kg（strength 用）' })),
+      defaultTargetSec: Type.Optional(Type.Number({ description: '每组目标秒数（timed 用）' })),
+      defaultDurationMin: Type.Optional(Type.Number({ description: '时长分钟（cardio 用）' })),
+      defaultRestSec: Type.Optional(Type.Number({ description: '组间休息秒，缺省 90' })),
+    }),
+    async execute(args) {
+      const rec = await exerciseLibService.upsert({
+        id: args.id,
+        name: args.name.trim(),
+        aliases: args.aliases?.map((a) => a.trim()).filter(Boolean),
+        kind: args.kind,
+        category: args.category,
+        equipment: args.equipment ?? null,
+        muscles: normalizeActivation(args.muscles),
+        tips: args.tips?.trim(),
+        defaultSets: args.defaultSets,
+        defaultReps: args.defaultReps,
+        defaultWeightKg: args.defaultWeightKg,
+        defaultTargetSec: args.defaultTargetSec,
+        defaultDurationMin: args.defaultDurationMin,
+        defaultRestSec: args.defaultRestSec,
+      })
+      // 动作库缓存立即刷新：用户切回动作库就能看到新动作与肌群图
+      await useExerciseLibStore().load(true)
+      return { ok: true, id: rec.id, name: rec.name, muscles: rec.muscles, custom: rec.isCustom }
+    },
+  }),
+
+  defineTool({
+    name: 'set_exercise_muscles',
+    group: 'exercise',
+    label: '修改动作肌群',
+    description:
+      '只改某个动作的肌群激活表（主攻/辅助/稳定档位），不动其它字段。内置动作只读：会返回中文错误（此时向用户说明「要么隐藏它，要么另建自建动作」）。',
+    parameters: Type.Object({
+      exerciseId: Type.String({ description: '动作库 id（list_exercises 返回）' }),
+      muscles: MUSCLES,
+    }),
+    async execute(args) {
+      const rec = await exerciseLibService.get(args.exerciseId)
+      if (!rec.isCustom) {
+        throw new Error(`内置动作「${rec.name}」的肌群表不可改：可以隐藏它，或另建一个自建动作`)
+      }
+      const updated = await exerciseLibService.upsert({
+        id: rec.id,
+        name: rec.name,
+        aliases: rec.aliases,
+        kind: rec.kind,
+        category: rec.category,
+        equipment: rec.equipment,
+        muscles: normalizeActivation(args.muscles),
+        tips: rec.tips,
+        defaultSets: rec.defaultSets,
+        defaultReps: rec.defaultReps,
+        defaultWeightKg: rec.defaultWeightKg,
+        defaultTargetSec: rec.defaultTargetSec,
+        defaultDurationMin: rec.defaultDurationMin,
+        defaultRestSec: rec.defaultRestSec,
+      })
+      await useExerciseLibStore().load(true)
+      return { ok: true, id: updated.id, name: updated.name, muscles: updated.muscles }
     },
   }),
 ]

@@ -55,6 +55,19 @@ export const MUSCLE_VOLUME_TARGETS: Record<MuscleKey, { mev: number; mav: number
   abs: { mev: 4, mav: 12, mrv: 20 },
   obliques: { mev: 2, mav: 8, mrv: 14 },
   scm: { mev: 2, mav: 6, mrv: 10 },
+  'teres-major': { mev: 2, mav: 8, mrv: 14 },
+  rhomboids: { mev: 2, mav: 8, mrv: 14 },
+  'rotator-cuff': { mev: 2, mav: 6, mrv: 12 },
+  'serratus-ant': { mev: 1, mav: 4, mrv: 8 },
+  iliopsoas: { mev: 1, mav: 4, mrv: 8 },
+  'glute-min': { mev: 1, mav: 4, mrv: 10 },
+  'vastus-intermedius': { mev: 2, mav: 8, mrv: 14 },
+  'levator-scapulae': { mev: 1, mav: 4, mrv: 8 },
+  'tibialis-post': { mev: 1, mav: 4, mrv: 8 },
+  fibularis: { mev: 1, mav: 4, mrv: 8 },
+  plantaris: { mev: 0, mav: 2, mrv: 6 },
+  popliteus: { mev: 0, mav: 2, mrv: 6 },
+  'quadratus-femoris': { mev: 0, mav: 2, mrv: 6 },
 }
 
 /** 肌群激活档位 → 计组权重（辅助/稳定肌群的间接刺激按比例折算） */

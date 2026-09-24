@@ -169,6 +169,21 @@ button:active,
   }
 }
 
+/* ---------- 关闭动效（system/motion.ts 写入 data-motion="off"） ----------
+   与上面那块媒体查询**同一套做法**，区别只是来源：上面是系统要求（随时可能生效，
+   JS 还没跑起来时它是唯一兜底，所以留着），这里是用户自己选的档位。
+
+   刻意只关补间、不关状态：`:active` 的颜色与缩放、弹层的显隐**终值照常生效**，
+   只是瞬时到位。关掉终值会让界面读成"失灵"（见下面性能降级块里那句话），
+   而关掉补间正是用户要的「不要动画」。 */
+html[data-motion='off'] *,
+html[data-motion='off'] *::before,
+html[data-motion='off'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
 /* ---------- 性能降级（system/perf.ts 判定掉帧后写入 data-perf="low"） ----------
    只关最费合成器的两类：毛玻璃（每帧都要重算背后的内容，渐进模糊页头更是多层叠加）
    与循环动画（常驻合成层）。一次性过渡刻意保留——按压反馈、弹层进出没有这些会显得
@@ -177,12 +192,13 @@ button:active,
 html[data-perf='low'] {
   --surface-translucent: var(--surface);
   /* 玻璃表面（--glass-*，悬浮 Dock 等）顶成实底：没有 blur 的半透明底会成灰膜；
-     受光环收成普通描边、高光与亮斑归零，投影退回悬浮条常规值 */
+     受光环收成普通描边、高光归零，投影退回悬浮条常规值；活动底换成实心的次级灰
+     （实底之上再叠半透明白等于没有 —— 顶掉半透明，选中态就只剩前景那点色差） */
   --glass-fill: var(--surface);
   --glass-rim-hi: var(--line-strong);
   --glass-rim-lo: var(--line-strong);
   --glass-sheen: transparent;
-  --glass-tab-hi: transparent;
+  --glass-tab-fill: var(--surface-2);
   --glass-shadow: var(--shadow-float);
 }
 
@@ -195,26 +211,134 @@ html[data-perf='low'] *::after {
   -webkit-backdrop-filter: none !important;
 }
 
-/* ---------- 玻璃材质（悬浮 Dock / 悬浮条共用的一份定义） ----------
-   四层叠出「一块有厚度的玻璃」：
+/* ---------- 玻璃材质（悬浮 Dock / 悬浮条 / 导航轨 / 提示条共用的一份定义） ----------
+   叠出「一块有厚度的玻璃」：
      ① 半透明玻璃底（--glass-fill，画在 padding-box）；
      ② 上亮下暗的受光描边（border-box 渐变，不占额外布局 —— 顶光打在玻璃截面上的边缘亮度）；
      ③ 内顶高光（--glass-sheen，inset 两道：一道贴边、一道往下化开）；
-     ④ 外投影（--glass-shadow）。
-   blur 写在这里；弱档由上面的 data-perf 块把 fill 顶成实底并全局关掉 blur，
-   「减弱透明度」在这里单独退化成实底 + 常规描边。
-   超高档的**折射**不在这份定义里 —— 只有底部 Dock 开（见 layout/TabBar.vue）。 */
+     ④ 外投影（--glass-shadow）；
+     ⑤ 内圈细描边（--glass-rim-2）与上缘内晕（--glass-caustic）—— **超高专属**，
+        其余档位这两个令牌是透明的，所以层数一致、观感不同；
+     ⑥ 外缘层（--glass-halo）—— 同样只在超高有值：亮色下是更深的落影（玻璃更厚 =
+        浮得更高），暗色下是玻璃溢到背后内容上的一点微光。
+   blur / 饱和度走 --glass-blur / --glass-sat 令牌（值由档位决定，见 tokens.css）。
+
+   为什么超高**不加大 blur 半径**：模糊半径是这条链上单个最贵的旋钮，大面板上成本随
+   半径线性涨，而观感只是"更糊"。超高的差异因此全部来自上面的光学层 —— 那些是纯渐变
+   与阴影，合成成本为零。**每一档都画同样多的层**：分层会让「标本」与真实界面各自
+   漂移，而这个项目已经因为两份定义漂过一次（见 .dock-block 那段注释）。
+
+   退化：「减弱透明度」在这里单独退化成实底 + 常规描边（整条 box-shadow 被替换掉，
+   上面的光学层随之消失）；弱档由 data-perf 块把 fill 顶成实底并全局关掉 blur。
+   超高档的**折射**不在这份定义里 —— 折射只给离散小控件，名单与理由见 docs/ARCHITECTURE.md。 */
 .glass-surface {
   border: 1px solid transparent;
   background:
     linear-gradient(var(--glass-fill), var(--glass-fill)) padding-box,
     linear-gradient(to bottom, var(--glass-rim-hi), var(--glass-rim-lo) 70%) border-box;
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   box-shadow:
     var(--glass-shadow),
+    var(--glass-halo),
     inset 0 1px 0 var(--glass-sheen),
-    inset 0 10px 18px -12px var(--glass-sheen);
+    inset 0 10px 18px -12px var(--glass-sheen),
+    inset 0 0 0 1px var(--glass-rim-2),
+    inset 0 1px 10px -2px var(--glass-caustic);
+}
+
+/* ---------- 贴边修饰：只保留靠内的那一条描边 ----------
+   .glass-surface 的受光边是**背景**画出来的（border-box 那一层渐变），不是 border-color ——
+   所以把其余三边的 border-width 收成 0，留下那条边照样拿到「上亮下暗」的渐变。
+   给贴边的导航层用：导航轨贴屏幕左缘、信息栏贴右缘、吸顶表头贴上缘，
+   那三面本来就不该画框（画了就是在屏幕边缘多一条亮线）。 */
+.glass-edge-b {
+  border-width: 0 0 1px 0;
+}
+
+.glass-edge-t {
+  border-width: 1px 0 0 0;
+}
+
+.glass-edge-r {
+  border-width: 0 1px 0 0;
+}
+
+.glass-edge-l {
+  border-width: 0 0 0 1px;
+}
+
+/* 内核完全不认 backdrop-filter 时的退化（Safari / Firefox 的**普通模糊**也认，
+   所以这条路极少走到 —— 但不探测的话表现是"一层发灰的半透明膜"：模糊没生效，
+   半透明的底却还在，背后内容糊成一片脏色）。
+   用 @supports 而不是 JS 探测：这是**渲染期**才知道答案的问题，交给样式层判定
+   不会有一帧的闪烁，也不需要为此在 perf 层多一个能力缓存。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-surface {
+    background: var(--surface);
+    box-shadow: var(--shadow-float);
+    border-color: var(--line);
+  }
+}
+
+/* ---------- 超高材质（system/perf.ts 写入 data-perf="ultra"） ----------
+   与下面的弱档块同一套机制：整份覆盖 --glass-* 令牌，于是**所有**用这套令牌的表面
+   一起升级，不需要逐个组件去改。弱档不需要额外处理这些光学层 —— 它们只在
+   [data-perf='ultra'] 下才有非透明值，切回 high / low 时自动落回 tokens.css 里的透明。 */
+html[data-perf='ultra'] {
+  /* 底再薄一档：底越薄，背后的内容越透 —— 折射层后面就是页面本身 */
+  --glass-fill: rgba(255, 255, 255, 0.42);
+  --glass-rim-hi: #ffffff;
+  --glass-rim-lo: rgba(255, 255, 255, 0.45);
+  --glass-sheen: rgba(255, 255, 255, 0.78);
+  --glass-rim-2: rgba(255, 255, 255, 0.55);
+  --glass-caustic: rgba(255, 255, 255, 0.5);
+  --glass-halo: 0 18px 46px -16px rgba(0, 0, 0, 0.24);
+  /* 还没收编进 .glass-surface 的那几处手写毛玻璃（导航/工具层语义）跟着薄一档，
+     否则超高档里它们会比周围的玻璃"厚"一截，一眼就看出是两套材质。 */
+  --surface-translucent: rgba(255, 255, 255, 0.58);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-perf='ultra'] {
+    --glass-fill: rgba(40, 40, 46, 0.4);
+    --glass-rim-hi: rgba(255, 255, 255, 0.6);
+    --glass-rim-lo: rgba(255, 255, 255, 0.16);
+    --glass-sheen: rgba(255, 255, 255, 0.26);
+    --glass-rim-2: rgba(255, 255, 255, 0.3);
+    --glass-caustic: rgba(255, 255, 255, 0.22);
+    /* 暗底的「外缘层」是溢光而不是落影：暗色下没有比底色更深的影子可用 */
+    --glass-halo: 0 -1px 20px -8px rgba(255, 255, 255, 0.3);
+    --surface-translucent: rgba(28, 28, 30, 0.6);
+  }
+}
+
+/* ---------- 暗场材质上下文 ----------
+   压在深色内容上的玻璃（画质预览台的标本、参数面板的预览、跑步页的 HUD 芯片）：
+   底换成暗场芯片材质、受光边换中性白 —— 于是**前景永远是浅色**（--hero-text*），
+   与当前主题无关，对比度不再"看运气"。
+
+   为什么收成一份：这三处原本各抄了一遍同样的覆盖，而"两份定义必然漂"是这个项目
+   已经付过代价的教训（标本曾经用暗场令牌 + 自己的一版页签，与真实 Dock 长得不像）。
+   光学层（rim-2 / caustic）**刻意不在这里给值**：它们是档位属性，标本要能与真实
+   界面在同一档下逐条对上。 */
+.stage-dark {
+  --glass-fill: var(--hero-chip-bg);
+  --glass-rim-hi: var(--hero-chip-line);
+  --glass-rim-lo: var(--hero-chip-line);
+  --glass-sheen: color-mix(in srgb, var(--hero-text) 8%, transparent);
+  --glass-tab-fill: color-mix(in srgb, var(--hero-text) 16%, transparent);
+}
+
+/* 弱档：暗场上下文要**再压一次** —— 上面那条弱档规则把 --glass-fill 顶成 --surface
+   （亮色下是白的），而这里的表面按契约是"压在暗底上、前景为浅色"，会撞成白字白底。
+   选择器比弱档块多一节，所以它赢。 */
+html[data-perf='low'] .stage-dark {
+  --glass-fill: var(--hero-bg);
+  --glass-rim-hi: var(--hero-chip-line);
+  --glass-rim-lo: var(--hero-chip-line);
+  --glass-sheen: transparent;
+  --glass-tab-fill: var(--hero-chip-bg);
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -235,9 +359,12 @@ html[data-perf='low'] *::after {
 
      · 两侧正圆定宽、药丸吃掉余量（.dock-block / .pill）；
      · 页签与独立圆钮共用一套前景：图标在上、微标签在下，未选中 --text-3、
-       选中 --accent；
-     · **受光亮斑**（选中态的「微微打光」）是顶光在玻璃面留下的柔亮区 ——
-       --glass-tab-hi 自上而下淡出（不是一块平色），z-index 压到内容下面；
+       选中 --accent-strong（活动底是浅白 / 淡灰的中性底，文字蓝取「压在 soft 或
+       白底上」那一档，不拿实底档的 --accent 直接当文字）；
+     · **活动底是一块纯色**（--glass-tab-fill，亮色浅白 / 暗色淡灰，由主题决定）——
+       此前是 accent 的顶光渐变，压在玻璃上读成「这一格盖了一块蓝色色板」；这里要的
+       只是「这一格被选中」，中性提亮就够。z-index 压到内容下面（.gbody 是
+       GlassSurface 的层叠上下文，-1 恰落在玻璃底之上）；
      · 按下一拍快速挤压（volume-preserving squash），松手沿弹簧曲线回弹过冲。 */
 .dock-block {
   flex: none;
@@ -261,9 +388,11 @@ html[data-perf='low'] *::after {
   font-size: var(--fs-micro);
   font-weight: 600;
   text-decoration: none;
-  /* 松手后的回弹段：弹簧曲线冲过 1 再收回（压扁 → 拉长 → 回正） */
+  /* 松手后的回弹段：弹簧曲线冲过 1 再收回（压扁 → 拉长 → 回正）。
+     时长走令牌而不是写死的 480ms —— 它与丰富档的 blob 位移（GlassThumb 读的就是
+     同一个 --dur-slow）必须同长，否则一次点击会看到两块东西用两个节奏动 */
   transition:
-    transform 480ms var(--ease-spring),
+    transform var(--dur-slow) var(--ease-spring),
     color var(--dur-fast) var(--ease-standard);
 }
 
@@ -288,8 +417,8 @@ html[data-perf='low'] *::after {
     color var(--dur-fast) var(--ease-standard);
 }
 
-/* 活动落点的受光亮斑：z-index 压到内容下面（.gbody 是 GlassSurface 的层叠上下文，
-   -1 恰落在玻璃底之上） */
+/* 活动落点的底：一块**纯色**（--glass-tab-fill）—— 不带渐变，也不带色相。
+   z-index 压到内容下面（.gbody 是 GlassSurface 的层叠上下文，-1 恰落在玻璃底之上） */
 .dock-tab::before,
 .dock-slot::before {
   content: '';
@@ -297,7 +426,7 @@ html[data-perf='low'] *::after {
   z-index: -1;
   inset: 4px 5px;
   border-radius: var(--radius-full);
-  background: linear-gradient(to bottom, var(--glass-tab-hi), transparent 78%);
+  background: var(--glass-tab-fill);
   opacity: 0;
   transition: opacity var(--dur-base) var(--ease-standard);
 }
@@ -306,13 +435,62 @@ html[data-perf='low'] *::after {
   inset: 4px;
 }
 
+/* 选中态前景：活动底现在是中性底（浅白 / 淡灰），文字蓝走 --accent-strong ——
+   它正是「压在 soft 或白底上的文字」那一档；--accent 是实底档，压在浅底上偏淡 */
 .dock-tab.active,
 .dock-slot.active {
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
 .dock-tab.active::before,
 .dock-slot.active::before {
+  opacity: 1;
+}
+
+/* ---------- 丰富档：液态活动底接管药丸 ----------
+   `.goo` 由调用处（TabBar / 画质预览页的标本）在 motionRich 时加上，同时挂进
+   GlassThumb；那一份活动底自己会融合、形变，纯色底必须让位，否则两块叠在一起
+   会读成"选中格比别的格亮两档"。写在这里而不是各自的组件里：`.dock-tab` 与
+   `.dock-block` 本来就定义在这一份里，视线不用跨文件。
+   **只让 `.dock-block.pill` 里的让位** —— 两侧圆钮（.dock-slot）没有 blob，
+   它们的纯色底照旧。 */
+html[data-motion='rich'] .dock-block.pill.goo .dock-tab::before {
+  opacity: 0;
+}
+
+/* ---------- 丰富档：按压定向光晕 ----------
+   位置由 composables/usePressGlow 写进 `--gx` / `--gy`（按下时一次、按住拖动时按帧更新）；
+   **显隐交给 :active**，不做过渡 —— 苹果对这条反馈的要求就是"即时"，而 `:active` 是
+   pointer-down 当帧生效的；反过来让 JS 管开关，就会多一段"等一个事件回来才亮"的延迟。
+   没有 JS 参与时 `--gx/--gy` 缺失，光晕落在正中心：照样出现，只是不跟随。
+
+   两种挂法，因为这两类控件的 background 各有用途：
+     · `.press-glow`  —— 背景只是一层纯色，光晕直接再叠一层 background-image；
+     · `.glow-layer`  —— 背景要用在别处（活动底、轨道色），光晕走 ::after。
+   `::after` 在这两类控件上都是空的（它们只占了 ::before）。 */
+html[data-motion='rich'] .press-glow:active {
+  background-image: radial-gradient(
+    circle 120px at var(--gx, 50%) var(--gy, 50%),
+    var(--glass-specular),
+    transparent 70%
+  );
+}
+
+html[data-motion='rich'] .glow-layer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background-image: radial-gradient(
+    circle 90px at var(--gx, 50%) var(--gy, 50%),
+    var(--glass-specular),
+    transparent 70%
+  );
+}
+
+html[data-motion='rich'] .glow-layer:active::after {
   opacity: 1;
 }
 

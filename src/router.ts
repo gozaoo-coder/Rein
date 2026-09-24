@@ -211,6 +211,15 @@ export const routes = [
     meta: { title: '选课' },
   },
   {
+    path: '/campus/grab-tasks',
+    name: 'campus-grab-tasks',
+    component: () => import('@/pages/GrabTasksPage.vue'),
+    // 三级内容页：抢课任务的**管理**面（入口在选课页页头）。
+    // 为什么要有这一页：任务单在选课页只是仪表盘的一部分，抢完之后
+    // 「哪些没抢到、为什么、要不要重排」需要一屏看全 + 能编辑能删。
+    meta: { title: '抢课任务' },
+  },
+  {
     path: '/record',
     name: 'record',
     component: () => import('@/pages/RecordPage.vue'),

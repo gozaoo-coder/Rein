@@ -1,5 +1,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 
+import { motionOn } from '@/system/motion'
+
 /**
  * 悬浮条拖拽停靠 · 手势与弹簧物理（组件无关，可单测）。
  *
@@ -142,10 +144,6 @@ export function useDragDock(posEl: Ref<HTMLElement | null>, options?: { storageK
   let curH = 0
   let placed = false
 
-  function reducedMotion(): boolean {
-    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  }
-
   function barWidth(m: Metrics = M): number {
     return Math.min(m.vw - 24, numToken('--frame-max', 480) - 24)
   }
@@ -280,7 +278,7 @@ export function useDragDock(posEl: Ref<HTMLElement | null>, options?: { storageK
     refreshMetrics()
     syncSize()
     const t = slotCenter(next)
-    if (reducedMotion()) {
+    if (!motionOn.value) {
       cx = t.x
       cy = t.y
       writePos()

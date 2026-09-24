@@ -13,7 +13,7 @@ import {
   type GlassParamKey,
   type GlassParamSpec,
 } from '@/system/glassParams'
-import { liquidGlass, setPerfMode } from '@/system/perf'
+import { glassPipeline, liquidGlass, setPerfMode } from '@/system/perf'
 
 /**
  * 液态玻璃参数调节面板（画质预览页的入口拉开）。
@@ -78,7 +78,9 @@ function onSlide(spec: GlassParamSpec, e: Event): void {
 }
 
 const stateText = computed(() =>
-  liquidGlass.value ? '超高 · 折射已开启，下面的拖动即时生效' : '当前档位没有折射，参数只在「超高」档生效',
+  liquidGlass.value
+    ? `折射已开启（${glassPipeline.value === 'collapsed' ? '塌缩管线' : '完整管线'}），下面的拖动即时生效`
+    : '当前档位没有折射，参数只在「超高」两档生效',
 )
 </script>
 
@@ -89,7 +91,7 @@ const stateText = computed(() =>
     </template>
 
     <!-- 暗场预览：细格给位移当量尺，光晕给边缘当色散源（纯装饰，读屏不必知道） -->
-    <div class="stage" aria-hidden="true">
+    <div class="stage stage-dark" aria-hidden="true">
       <span class="glow" />
       <span class="grid" />
       <div class="stage-row">
@@ -113,7 +115,7 @@ const stateText = computed(() =>
     <p class="state" :class="liquidGlass ? 'on' : 'warn'">
       <span class="sdot" />
       <span class="stxt">{{ stateText }}</span>
-      <button v-if="!liquidGlass" type="button" class="jump" @click="setPerfMode('ultra')">切到超高</button>
+      <button v-if="!liquidGlass" type="button" class="jump" @click="setPerfMode('ultra-opt')">切到超高（优化）</button>
     </p>
 
     <div class="params">
@@ -181,6 +183,10 @@ const stateText = computed(() =>
 }
 
 /* ---------- 暗场预览 ---------- */
+/* 台内换一套玻璃材质：class 上的 .stage-dark（base.css）—— 暗底上的玻璃按应用在
+   暗场的做法压暗（HUD 芯片材质），受光边换中性白，前景因此永远是浅色。
+   与画质预览页的标本台**共用那一份**（两处原本各抄了一遍，正是"两份定义必然漂"
+   那类事故的温床）；弱档的实底退化也在那份里。 */
 .stage {
   position: relative;
   overflow: hidden;
@@ -191,20 +197,6 @@ const stateText = computed(() =>
   padding: 22px 12px;
   border-radius: var(--radius-l);
   background: var(--hero-bg);
-  /* 台内换一套玻璃材质（与标本台同一份「调用处的材质上下文」）：暗底上的玻璃按
-     应用在暗场的做法压暗（HUD 芯片材质），受光边换中性白，前景因此永远是浅色 */
-  --glass-fill: var(--hero-chip-bg);
-  --glass-rim-hi: var(--hero-chip-line);
-  --glass-rim-lo: var(--hero-chip-line);
-  --glass-sheen: color-mix(in srgb, var(--hero-text) 8%, transparent);
-  --glass-tab-hi: color-mix(in srgb, var(--hero-text) 16%, transparent);
-}
-
-/* 弱档：玻璃顶成实底、高光归零（与 base.css 同一套退化语义，实底取暗场底色） */
-html[data-perf='low'] .stage {
-  --glass-fill: var(--hero-bg);
-  --glass-sheen: transparent;
-  --glass-tab-hi: transparent;
 }
 
 /* 「减弱透明度」：折射与白雾底都是内联样式，媒体查询在组件里够不着，靠调用处压住 */

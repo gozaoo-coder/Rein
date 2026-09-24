@@ -5,7 +5,7 @@ import NumberStepper from '@/components/common/NumberStepper.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { EXERCISE_CATEGORY_META, EXERCISE_EQUIPMENT_LABELS, EXERCISE_KIND_LABELS } from '@/config/domain'
-import { MUSCLE_KEYS, MUSCLE_LABELS, type ActivationMap, type Level, type MuscleKey } from '@/config/muscles'
+import { MUSCLE_GROUPS, MUSCLE_LABELS, normalizeActivation, type ActivationMap, type Level, type MuscleKey } from '@/config/muscles'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useToast } from '@/composables/useToast'
 import type { ExerciseCategory, ExerciseEquipment, ExerciseKind, ExerciseRecord } from '@/types'
@@ -33,6 +33,7 @@ const kind = ref<ExerciseKind>('strength')
 const category = ref<ExerciseCategory>('other')
 const equipment = ref<ExerciseEquipment | null>(null)
 const tips = ref('')
+const stepsText = ref('')
 const muscles = ref<ActivationMap>({})
 const sets = ref(3)
 const reps = ref(10)
@@ -52,7 +53,8 @@ watch(
     category.value = e?.category ?? 'other'
     equipment.value = e?.equipment ?? null
     tips.value = e?.tips ?? ''
-    muscles.value = e?.muscles ? { ...e.muscles } : {}
+    stepsText.value = (e?.steps ?? []).join('\n')
+    muscles.value = normalizeActivation(e?.muscles)
     sets.value = e?.defaultSets ?? 3
     reps.value = e?.defaultReps ?? 10
     weightKg.value = e?.defaultWeightKg ?? 20
@@ -95,8 +97,12 @@ async function save(): Promise<void> {
       kind: kind.value,
       category: category.value,
       equipment: equipment.value,
-      muscles: { ...muscles.value },
+      muscles: normalizeActivation(muscles.value),
       tips: tips.value.trim(),
+      steps: stepsText.value
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
       defaultSets: sets.value,
       defaultReps: kind.value === 'strength' ? reps.value : null,
       defaultWeightKg: kind.value === 'strength' ? weightKg.value : null,
@@ -164,16 +170,19 @@ async function save(): Promise<void> {
 
     <div class="field">
       <span class="flabel">肌群<span class="fsub">点按切换：主攻 → 辅助 → 稳定 → 无</span></span>
-      <div class="chips row">
-        <button
-          v-for="m in MUSCLE_KEYS"
-          :key="m"
-          class="chip"
-          :class="[`lv${levelOf(m)}`, { on: levelOf(m) > 0 }]"
-          @click="cycleMuscle(m)"
-        >
-          {{ MUSCLE_LABELS[m] }}<b v-if="levelOf(m)">{{ LEVEL_LABEL[levelOf(m)] }}</b>
-        </button>
+      <div v-for="g in MUSCLE_GROUPS" :key="g.label" class="mgroup">
+        <span class="ghead">{{ g.label }}</span>
+        <div class="chips row">
+          <button
+            v-for="m in g.keys"
+            :key="m"
+            class="chip"
+            :class="[`lv${levelOf(m)}`, { on: levelOf(m) > 0 }]"
+            @click="cycleMuscle(m)"
+          >
+            {{ MUSCLE_LABELS[m] }}<b v-if="levelOf(m)">{{ LEVEL_LABEL[levelOf(m)] }}</b>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -193,7 +202,17 @@ async function save(): Promise<void> {
 
     <label class="field">
       <span class="flabel">动作要点</span>
-      <textarea v-model="tips" rows="2" maxlength="120" placeholder="发力细节、注意事项（训练中展示）" />
+      <textarea v-model="tips" rows="2" maxlength="120" placeholder="发力细节、注意事项（训练中展示，一句话）" />
+    </label>
+
+    <label class="field">
+      <span class="flabel">动作要领<span class="fsub">每行一步（最多 12 步，可在详情页分步查看）</span></span>
+      <textarea
+        v-model="stepsText"
+        rows="4"
+        maxlength="1200"
+        placeholder="如：&#10;肩胛后收下沉，双脚踩实&#10;杠铃下放至触胸，不弹震&#10;沿斜上方推起，肘不完全锁死"
+      />
     </label>
 
     <button class="save row center" :disabled="saving" @click="void save()">
@@ -223,6 +242,19 @@ async function save(): Promise<void> {
 .fsub {
   margin-left: 8px;
   font-weight: 500;
+  color: var(--text-3);
+}
+
+/* 肌群芯片按部位分组（39 键平铺太长） */
+.mgroup + .mgroup {
+  margin-top: 8px;
+}
+
+.ghead {
+  display: block;
+  margin-bottom: 5px;
+  font-size: var(--fs-micro);
+  letter-spacing: 1px;
   color: var(--text-3);
 }
 

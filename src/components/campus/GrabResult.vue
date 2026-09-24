@@ -76,8 +76,20 @@ const rows = computed(() => {
   return [...props.tasks].sort((a, b) => rank(a) - rank(b))
 })
 
+/**
+ * 结果行的标题 —— 与任务行同一条规矩。
+ *
+ * `lessonName` 里存的是「这个班怎么和同门课其他班区分」（项目名优先）：
+ * 体育课 8 个项目的课程名全都叫「大学体育1」，只写课程名，
+ * 用户看着结果里那几行认不出抢到的到底是羽毛球还是匹克球。
+ * 只在真有新信息时才拼上去（教学班名常以课程名开头，那种就不重复）。
+ */
 function title(t: GrabTask): string {
-  return t.courseName || t.lessonName || `教学班 ${String(t.lessonId)}`
+  const course = t.courseName?.trim()
+  const label = t.lessonName?.trim()
+  if (!course) return label || `教学班 ${String(t.lessonId)}`
+  if (!label || label === course || label.startsWith(course)) return course
+  return `${course} · ${label}`
 }
 
 function detail(t: GrabTask): string {

@@ -66,6 +66,9 @@ pub struct ExerciseHint {
     pub duration_min: Option<i64>,
     pub rest_sec: Option<i64>,
     pub tips: Option<String>,
+    /// 课程条目上的显式肌群表（AI 写入）：按名建库时带进库记录，
+    /// 否则同一动作在课程里显示肌群、在动作库里却空白。
+    pub muscles: Value,
 }
 
 impl ExerciseHint {
@@ -80,6 +83,7 @@ impl ExerciseHint {
             duration_min: int_field(item, "durationMin"),
             rest_sec: int_field(item, "restSec"),
             tips: str_field(item, "tips"),
+            muscles: item.get("muscles").cloned().unwrap_or(Value::Null),
         }
     }
 }
@@ -110,12 +114,14 @@ pub fn ensure_for_name(
     let kind = hint.kind.clone().unwrap_or_else(|| "strength".into());
     // 自重 / 计时 / 有氧动作不按杠铃片步进取整
     let weight_step = if kind == "strength" { 2.5 } else { 0.0 };
+    // 课程条目上标好的肌群直接带进库（清洗过才落库）：动作库与课程展示口径一致
+    let muscles = super::muscles::sanitize_muscles(&hint.muscles).to_string();
     conn.execute(
         "INSERT INTO exercises \
          (id, name, aliases, kind, category, equipment, muscles, tips, default_sets, default_reps, \
           default_weight_kg, default_target_sec, default_duration_min, default_rest_sec, weight_step, \
           is_custom, created_at, updated_at) \
-         VALUES (?1, ?2, '[]', ?3, 'other', NULL, '{}', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, \
+         VALUES (?1, ?2, '[]', ?3, 'other', NULL, ?12, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, \
                  datetime('now'), datetime('now'))",
         rusqlite::params![
             id,
@@ -129,6 +135,7 @@ pub fn ensure_for_name(
             hint.duration_min,
             hint.rest_sec.unwrap_or(90),
             weight_step,
+            muscles,
         ],
     )?;
     index.insert(name, &id);
@@ -280,6 +287,27 @@ mod tests {
         assert_eq!(is_custom, 1);
         assert_eq!(sets, 4);
         assert_eq!(weight, 42.5);
+    }
+
+    /// 课程条目上的显式肌群必须带进自动建的自建动作（否则动作库里同一动作没有肌群图）
+    #[test]
+    fn custom_exercise_carries_plan_item_muscles() {
+        let conn = conn_with_seed();
+        let mut index = NameIndex::load(&conn).unwrap();
+        let item = serde_json::json!({
+            "id": "e9",
+            "name": "我的推日动作",
+            "kind": "strength",
+            "sets": 3,
+            "muscles": { "chest-low": 3, "triceps": 2, "not-a-muscle": 3, "abs": 9 }
+        });
+        let id = ensure_for_name(&conn, &mut index, "我的推日动作", &ExerciseHint::from_plan_item(&item)).unwrap();
+        let raw: String = conn
+            .query_row("SELECT muscles FROM exercises WHERE id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        let map: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        // 合法键保留，未知键与非法档位被清洗掉
+        assert_eq!(map, serde_json::json!({ "chest-low": 3, "triceps": 2 }));
     }
 
     /// 回填：课程条目与做组记录都挂上库 id，且重复执行不改变结果

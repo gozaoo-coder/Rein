@@ -177,10 +177,15 @@ function full(m: GrabMatch): boolean {
 /** 命中字段 → 中文名。用户有权知道「为什么这条匹配上了」。 */
 const FIELD_LABEL: Record<string, string> = {
   course: '课程名',
+  /** 项目名（体育课的「羽毛球」）—— 与课程名分开说：
+   *  所有项目的课程名都叫「大学体育1」，不点明的话用户以为自己是按课名命中的 */
+  minor: '项目名',
   code: '代码',
   teacher: '教师',
   teacherExact: '教师精确',
   teacherNear: '教师近似',
+  /** 教学班名 —— 「3院」「花江校区」这类限定词落在这里 */
+  lesson: '教学班名',
   place: '时间地点',
 }
 
@@ -198,8 +203,27 @@ function hasNearTeacher(list: GrabMatch[]): boolean {
   return list.some((m) => (m.fields ?? []).includes('teacherNear'))
 }
 
+/**
+ * 候选行的标题。
+ *
+ * **项目名优先**：体育课 8 个项目的课程名全都是「大学体育1」，
+ * 拿课程名当标题，用户看到的是一列一模一样的名字，根本认不出哪个是羽毛球。
+ * 项目名才是他嘴里的那门课；没有项目名时（绝大多数课）就是课程名。
+ */
 function matchTitle(m: GrabMatch): string {
+  const minor = m.minorName?.trim()
+  if (minor) return minor
   return m.courseName?.trim() || `教学班 ${idOf(m.lessonId)}`
+}
+
+/** 候选行的副标题：把「哪门课 / 哪个班」补全，同门课的几个班才分得开 */
+function matchSubtitle(m: GrabMatch): string {
+  const bits: string[] = []
+  const minor = m.minorName?.trim()
+  if (minor && m.courseName?.trim()) bits.push(m.courseName.trim())
+  const name = m.lessonName?.trim()
+  if (name && name !== m.courseName?.trim()) bits.push(name)
+  return bits.join(' · ')
 }
 
 async function onRemove(i: GrabIntent): Promise<void> {
@@ -277,6 +301,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
           <span class="ord num">{{ i + 1 }}</span>
           <span class="col flex-1">
             <b>{{ matchTitle(m) }}</b>
+            <em v-if="matchSubtitle(m)" class="sub-line">{{ matchSubtitle(m) }}</em>
             <em>
               <span v-if="m.courseCode" class="num">{{ m.courseCode }}</span>
               <span v-if="m.teacher">{{ m.teacher }}</span>
@@ -406,6 +431,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
             <span class="ord num">{{ k + 1 }}</span>
             <span class="col flex-1">
               <b>{{ matchTitle(m) }}</b>
+              <em v-if="matchSubtitle(m)" class="sub-line">{{ matchSubtitle(m) }}</em>
               <em>
                 <span v-if="m.teacher">{{ m.teacher }}</span>
                 <span v-if="seat(m)" class="num">{{ seat(m) }}</span>
@@ -579,6 +605,15 @@ async function onReparse(i: GrabIntent): Promise<void> {
   font-size: var(--fs-micro);
   /* 教师与余量：确认「这条命中的到底是不是我想抢的那个班」，得读得出来 */
   color: var(--text-2);
+}
+
+/* 「哪门课 · 哪个班」那一行：教学班名可能很长（带院系、校区、年级），限两行 */
+.matches .sub-line {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .ord {

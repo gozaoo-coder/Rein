@@ -197,8 +197,15 @@ function onHandleKey(e: KeyboardEvent): void {
    上拖：未到最大档且内容溢出 → 跟随手指扩高，到顶后剩余位移转为内容滚动；
    下拖：内容已在顶部 → 先缩高；否则交还原生滚动。
    触摸手势在首个 move 决策并 preventDefault 锁定接管；判定为原生滚动的
-   手势立即移除监听，保证合成器滚动与动量不受影响。 */
+   手势立即移除监听，保证合成器滚动与动量不受影响。
+
+   监听挂**窗口捕获阶段**：system/rubberScroll 挂的是窗口冒泡，同一事件上它排在
+   冒泡之后才跑 —— 捕获阶段先 preventDefault，它读到 defaultPrevented 就整场让位。
+   若退回冒泡（曾经如此），扩高/缩高与内容超伸展会在同一事件上各吃一份位移：
+   抽屉自己下移 offsetY 的同时，item 又相对抽屉容器多叠一份 offsetY（2× 位移）。 */
 const bodyEl = ref<HTMLElement>()
+/** 窗口捕获阶段的 touchmove 注册项：add 与 remove 必须用同一份，否则摘不掉 */
+const CAPTURE_MOVE: AddEventListenerOptions = { passive: false, capture: true }
 type GestureMode = 'undecided' | 'resize' | 'native'
 let gestureActive = false
 let mode: GestureMode = 'undecided'
@@ -274,7 +281,7 @@ function endGesture(): void {
 function onTouchStart(e: TouchEvent): void {
   if (!props.open || gestureActive || e.touches.length !== 1) return
   beginGesture(e.touches[0].clientX, e.touches[0].clientY)
-  window.addEventListener('touchmove', onTouchMove, { passive: false })
+  window.addEventListener('touchmove', onTouchMove, CAPTURE_MOVE)
   window.addEventListener('touchend', onTouchEnd)
   window.addEventListener('touchcancel', onTouchEnd)
 }
@@ -286,7 +293,7 @@ function onTouchMove(e: TouchEvent): void {
   const dy = t.clientY - startY
   if (decideMode(dx, dy) !== 'resize') {
     // 原生滚动：摘掉监听，滚动完全交还浏览器（保住动量）
-    window.removeEventListener('touchmove', onTouchMove)
+    window.removeEventListener('touchmove', onTouchMove, CAPTURE_MOVE)
     return
   }
   trackVelocity(t.clientY)
@@ -295,7 +302,7 @@ function onTouchMove(e: TouchEvent): void {
 }
 
 function onTouchEnd(): void {
-  window.removeEventListener('touchmove', onTouchMove)
+  window.removeEventListener('touchmove', onTouchMove, CAPTURE_MOVE)
   window.removeEventListener('touchend', onTouchEnd)
   window.removeEventListener('touchcancel', onTouchEnd)
   endGesture()
@@ -324,7 +331,7 @@ function onBodyPointerMove(e: PointerEvent): void {
 }
 
 function teardownGesture(): void {
-  window.removeEventListener('touchmove', onTouchMove)
+  window.removeEventListener('touchmove', onTouchMove, CAPTURE_MOVE)
   window.removeEventListener('touchend', onTouchEnd)
   window.removeEventListener('touchcancel', onTouchEnd)
   gestureActive = false
@@ -557,6 +564,32 @@ onBeforeUnmount(() => {
 .backdrop-enter-from,
 .backdrop-leave-to {
   opacity: 0;
+}
+
+/* ---------- 丰富档：遮罩改成透镜式显现 ----------
+   苹果那条「基于透镜效应的显现/消失」——抽屉不是"从一层黑影里升起来"，而是
+   背景整片退到焦点之外（玻璃被抬起来，注意力被光学地聚拢）。
+   用 backdrop-filter 的**可插值**做这件事（Chromium 支持在两个函数列表之间补间）；
+   mask-image 那类离散属性做不到，只能硬切。
+   代价说清：这是丰富档唯一一处**全视口**级别的 backdrop-filter。约束有三条 ——
+   半径只给 6px、只在遮罩存在期间挂着、掉帧时 motion 层已经把档位压回「默认」
+   （见 system/motion 的 effective）。 */
+html[data-motion='rich'] .backdrop {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+html[data-motion='rich'] .backdrop-enter-active,
+html[data-motion='rich'] .backdrop-leave-active {
+  transition:
+    opacity var(--dur-base) var(--ease-standard),
+    backdrop-filter var(--dur-base) var(--ease-out);
+}
+
+html[data-motion='rich'] .backdrop-enter-from,
+html[data-motion='rich'] .backdrop-leave-to {
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
 }
 
 .sheet-enter-active {

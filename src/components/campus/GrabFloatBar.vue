@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CheckCircle2, ChevronRight, Loader2, TriangleAlert, Zap } from 'lucide-vue-next'
 
+import { notifyGrabResult } from '@/services/notifyService'
 import { grabStatusMeta, useCourseSelectStore } from '@/stores/courseSelect'
 
 /**
@@ -39,33 +40,76 @@ onBeforeUnmount(() => {
 
 /** 已经在选课页就没必要再浮一条（那里的面板信息更全） */
 const onSelectPage = computed(() => route.name === 'campus-course-select')
+/** 任务管理页：结果的正主就在那儿（能重排、能删）—— 到了那里也算「看过了」 */
+const onTasksPage = computed(() => route.name === 'campus-grab-tasks')
+
+/**
+ * 进了这两页 = 他看到了结果 —— 浮条该收的收、该忘的忘。
+ *
+ * 任务页必须算在内：那正是现在「看结果 / 动手处理」的地方，
+ * 只认选课页的话，用户明明已经把它看完了，浮条还在那儿挂着。
+ */
+watch([onSelectPage, onTasksPage], ([a, b]) => {
+  if (a || b) justFinished.value = null
+})
 
 const actives = computed(() => store.activeTasks)
 
 /** 有结果但还没被用户看到 —— 停一会儿再收，别让「抢到了」悄悄溜走 */
-const justFinished = ref<{ label: string; ok: boolean; at: number } | null>(null)
+const justFinished = ref<{ label: string; ok: boolean; at: number; sticky: boolean } | null>(null)
 const SEEN_MS = 12_000
 
-/** 盯住任务状态变化：刚变成终态的那一条值得单独报一次 */
+/**
+ * 第一次拿到的快照只用来**建立基线**。
+ *
+ * 否则每次打开 App，任务单里那些早就结束的记录都会被当成「刚刚发生的」：
+ * 浮条会报一遍，系统通知也会跟着响一遍 —— 那是每天早上被自己的历史记录叫醒。
+ */
+let sawFirstSnapshot = false
 let lastTerminal = new Set<number>()
+
+/**
+ * 把结果送出 App：能发系统通知就发，发不出去就把这条浮条**钉住**。
+ *
+ * 只对「他没在看结果」的结果调用（见 `watchTerminal`）。反过来，没看着就必须送达：
+ * 要么通知到锁屏上，要么留一条不会自己消失的浮条，二者必居其一。
+ */
+async function deliver(item: { label: string; sticky: boolean }, ok: boolean): Promise<void> {
+  const sent = await notifyGrabResult(ok ? '抢课完成' : '抢课有结果', item.label)
+  if (!sent) item.sticky = true
+}
+
+/** 此刻是不是正看着**能显示结果**的那两页（选课页的面板 / 任务管理页） */
+function lookingAtResults(): boolean {
+  return (onSelectPage.value || onTasksPage.value) && !document.hidden
+}
+
+/** 盯住任务状态变化：刚变成终态的那一条值得单独报一次 */
 function watchTerminal(): void {
   const terminal = store.grabTasks.filter(
     (t) => t.status === 'success' || t.status === 'failed' || t.status === 'conflict',
   )
+  if (!sawFirstSnapshot) {
+    if (store.grab == null) return
+    sawFirstSnapshot = true
+    lastTerminal = new Set(terminal.map((t) => t.id))
+    return
+  }
   for (const t of terminal) {
     if (lastTerminal.has(t.id)) continue
     lastTerminal.add(t.id)
     const name = t.courseName || t.lessonName || `教学班 ${t.id}`
-    justFinished.value = {
-      label:
-        t.status === 'success'
-          ? `已抢到《${name}》`
-          : t.status === 'conflict'
-            ? `《${name}》时间冲突，需办免听`
-            : `《${name}》未能抢到`,
-      ok: t.status === 'success',
-      at: Date.now(),
-    }
+    const label =
+      t.status === 'success'
+        ? `已抢到《${name}》`
+        : t.status === 'conflict'
+          ? `《${name}》时间冲突，需办免听`
+          : `《${name}》未能抢到`
+    const item = { label, ok: t.status === 'success', at: Date.now(), sticky: false }
+    justFinished.value = item
+    // 他正看着结果页时不必推送（`show` 会让浮条在这两页上不出现），
+    // 但仍要记下来：这样「结果就在那儿」这件事与他此刻在看什么无关。
+    if (!lookingAtResults()) void deliver(item, item.ok)
   }
   // 任务被清掉后，id 集合也要跟着收，否则重新加入同 id 的任务不会再报
   if (terminal.length < lastTerminal.size) {
@@ -157,7 +201,10 @@ const imminent = computed(() => {
 const finishedFresh = computed(() => {
   const f = justFinished.value
   if (!f) return null
-  return Date.now() - f.at < SEEN_MS ? f : null
+  // 系统通知没发出去时**不许自己消失**：那条通知没到，这条就是唯一的告知。
+  // 用 now 而不是 Date.now()：后者不是响应式依赖，计时到了也不会重算。
+  if (f.sticky) return f
+  return now.value - f.at < SEEN_MS ? f : null
 })
 
 /** 依赖 `now` 才会每秒重算 —— 否则这条提示出来就不会自己消失了 */
@@ -168,7 +215,8 @@ const windowFresh = computed(() => {
 })
 
 const show = computed(() => {
-  if (onSelectPage.value) return false
+  // 这两页本身就是看结果/看任务的地方 —— 再浮一条只会压在它们的标题上
+  if (onSelectPage.value || onTasksPage.value) return false
   if (windowFresh.value) return true
   if (finishedFresh.value) return true
   return actives.value.length > 0 || !!store.grabError
@@ -176,16 +224,19 @@ const show = computed(() => {
 
 const tone = computed(() => {
   if (store.grabError) return 'bad'
-  if (windowFresh.value) return 'ok'
   if (finishedFresh.value) return finishedFresh.value.ok ? 'ok' : 'bad'
+  if (windowFresh.value) return 'ok'
   return 'run'
 })
 
 const text = computed(() => {
   if (store.grabError) return '抢课引擎已暂停'
-  // 窗口开放优先于任务播报：那一刻用户最该做的是进去排课
-  if (windowFresh.value) return windowFresh.value.label
+  // **结果优先于窗口播报**：窗口开着这件事是**持续为真**的（结果说完它还会再显示），
+  // 而结果是一次性的事件 —— 被它压住就等于没播。（真踩过：任务页上重排之后
+  // 那条「需办免听」被「窗口已开放」顶掉，用户什么都看不到。）
   if (finishedFresh.value) return finishedFresh.value.label
+  // 窗口开放：那一刻用户最该做的是进去排课
+  if (windowFresh.value) return windowFresh.value.label
   const n = actives.value.length
   const t = lead.value
   if (!t) return ''
@@ -200,7 +251,10 @@ const text = computed(() => {
 })
 
 function open(): void {
-  void router.push({ name: 'campus-course-select' })
+  // 「去看」的终点按**此刻要做什么**分：结果是「重排还是放弃」的决定，
+  // 任务管理页才是能动手的地方；进行中是「还有多久出手」，回选课页看倒计时。
+  const toTasks = !!finishedFresh.value && actives.value.length === 0
+  void router.push({ name: toTasks ? 'campus-grab-tasks' : 'campus-course-select' })
 }
 
 /**

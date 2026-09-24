@@ -421,6 +421,9 @@ const EXERCISES_JSON: &str = include_str!("../../../resources/exercises.json");
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExerciseSeedFile {
+    /// 生成器写出的全部合法肌群键（与 `exercise_lib::muscles::MUSCLE_KEYS` 必须一致）
+    #[serde(default)]
+    muscle_keys: Vec<String>,
     exercises: Vec<ExerciseSeed>,
 }
 
@@ -439,6 +442,8 @@ struct ExerciseSeed {
     muscles: Value,
     #[serde(default)]
     tips: String,
+    #[serde(default)]
+    steps: Value,
     default_sets: i64,
     #[serde(default)]
     default_reps: Option<i64>,
@@ -463,14 +468,14 @@ pub fn seed_exercises(conn: &Connection) -> Result<()> {
     let result = (|| {
         let mut stmt = conn.prepare(
             "INSERT INTO exercises \
-             (id, name, aliases, kind, category, equipment, muscles, tips, default_sets, default_reps, \
+             (id, name, aliases, kind, category, equipment, muscles, tips, steps, default_sets, default_reps, \
               default_weight_kg, default_target_sec, default_duration_min, default_rest_sec, weight_step, \
               is_custom, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0, ?16, ?16) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 0, ?17, ?17) \
              ON CONFLICT(id) DO UPDATE SET \
                name = excluded.name, aliases = excluded.aliases, kind = excluded.kind, \
                category = excluded.category, equipment = excluded.equipment, muscles = excluded.muscles, \
-               tips = excluded.tips, default_sets = excluded.default_sets, \
+               tips = excluded.tips, steps = excluded.steps, default_sets = excluded.default_sets, \
                default_reps = excluded.default_reps, default_weight_kg = excluded.default_weight_kg, \
                default_target_sec = excluded.default_target_sec, \
                default_duration_min = excluded.default_duration_min, \
@@ -486,8 +491,11 @@ pub fn seed_exercises(conn: &Connection) -> Result<()> {
                 e.kind,
                 e.category,
                 e.equipment,
-                e.muscles.to_string(),
+                crate::modules::exercise_lib::muscles::sanitize_muscles(&e.muscles).to_string(),
                 e.tips,
+                serde_json::to_string(&crate::modules::exercise_lib::steps::sanitize_steps_value(
+                    &e.steps
+                ))?,
                 e.default_sets,
                 e.default_reps,
                 e.default_weight_kg,
@@ -554,5 +562,84 @@ mod tests {
         for e in &lib.exercises {
             assert!(seen.insert(e.id.as_str()), "重复的动作 id：{}", e.id);
         }
+    }
+
+    /// 肌群键白名单不漂移：种子里的 `muscleKeys` 必须与 Rust 常量完全一致
+    /// （前端 `MUSCLE_KEYS` 就是生成 `muscleKeys` 的来源）。
+    #[test]
+    fn exercise_seed_muscle_keys_match_const() {
+        use crate::modules::exercise_lib::muscles::MUSCLE_KEYS;
+        let lib: ExerciseSeedFile = serde_json::from_str(EXERCISES_JSON).unwrap();
+        assert_eq!(
+            lib.muscle_keys, MUSCLE_KEYS,
+            "resources/exercises.json 的 muscleKeys 与 Rust MUSCLE_KEYS 不一致：请重跑 scripts/gen-exercises.mjs 并同步 muscles.rs"
+        );
+    }
+
+    /// 每条内置动作的肌群表都必须是合法键 + 1~3 档（清洗后不得丢内容）。
+    #[test]
+    fn exercise_seed_muscles_are_valid() {
+        use crate::modules::exercise_lib::muscles::{is_muscle_key, sanitize_muscles};
+        let lib: ExerciseSeedFile = serde_json::from_str(EXERCISES_JSON).unwrap();
+        for e in &lib.exercises {
+            let Some(map) = e.muscles.as_object() else {
+                panic!("动作「{}」的肌群表不是对象：{}", e.name, e.muscles);
+            };
+            for (key, level) in map {
+                assert!(
+                    is_muscle_key(key),
+                    "动作「{}」含未知肌群键：{key}",
+                    e.name
+                );
+                assert!(
+                    matches!(level.as_i64(), Some(1..=3)),
+                    "动作「{}」的「{key}」档位非法：{level}",
+                    e.name
+                );
+            }
+            assert_eq!(
+                sanitize_muscles(&e.muscles),
+                e.muscles.clone(),
+                "动作「{}」的肌群表被清洗后发生了变化（生成器写入了非法值）",
+                e.name
+            );
+        }
+    }
+
+    /// 种子刷新不能覆盖用户态列（favorite / hidden），只刷新内容列。
+    #[test]
+    fn seed_refresh_preserves_user_state_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        seed_exercises(&conn).unwrap();
+        conn.execute("UPDATE exercises SET favorite = 1 WHERE id = 'plank'", [])
+            .unwrap();
+        conn.execute("UPDATE exercises SET hidden = 1 WHERE id = 'crunch'", [])
+            .unwrap();
+        conn.execute("UPDATE exercises SET steps = '[\"用户改过的要领\"]' WHERE id = 'pull-up'", [])
+            .unwrap();
+        seed_exercises(&conn).unwrap();
+        let (fav, hid): (i64, i64) = conn
+            .query_row(
+                "SELECT favorite, hidden FROM exercises WHERE id = 'plank'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(fav, 1, "favorite 被种子刷新覆盖了");
+        let hidden: i64 = conn
+            .query_row("SELECT hidden FROM exercises WHERE id = 'crunch'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(hid, 0, "plank 的 hidden 不应受影响");
+        assert_eq!(hidden, 1, "hidden 被种子刷新覆盖了");
+        // steps 是内容列：内置动作的修改会被种子覆盖回去
+        let steps: String = conn
+            .query_row("SELECT steps FROM exercises WHERE id = 'pull-up'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_ne!(steps, "[\"用户改过的要领\"]", "内置动作的 steps 应随种子刷新");
     }
 }

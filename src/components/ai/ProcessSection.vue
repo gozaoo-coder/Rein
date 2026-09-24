@@ -17,6 +17,7 @@ import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 import { animate } from 'animejs'
 import { Brain, ChevronDown } from 'lucide-vue-next'
 import ToolCallGroup from './ToolCallGroup.vue'
+import { motionOn } from '@/system/motion'
 import { perfDegraded } from '@/system/perf'
 import type { ProcessSegment } from '@/types'
 
@@ -113,14 +114,11 @@ let collapseTimer: ReturnType<typeof setTimeout> | null = null
 // 伸开/闭合动画的统一引用：快速 toggle、自动展开打断残留折叠动画时 pause
 let bodyAnim: ReturnType<typeof animate> | null = null
 
-// 无障碍：reduce 下不做位移/高度动画，直接瞬时切换
-const reducedMotion =
-  typeof window !== 'undefined' &&
-  window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
-// 免动画档：系统减弱动效，或运行时性能降级（system/perf）。
-// 伸开/闭合补的是 maxHeight——每帧都要重排，是这里最贵的一段。
-const skipAnim = computed(() => reducedMotion || perfDegraded.value)
+// 免动画档：动效关掉（用户档位或系统减弱动效 —— 由 system/motion 合成一个答案），
+// 或运行时性能降级（system/perf）。
+// 伸开/闭合补的是 maxHeight——每帧都要重排，是这里最贵的一段。降级判定必须**单独留着**：
+// motion 层在掉帧时只是把档位退回「默认」，而默认档照样补 maxHeight。
+const skipAnim = computed(() => !motionOn.value || perfDegraded.value)
 
 /** 打断残留动画并释放内联 maxHeight（恢复 CSS 自然高度） */
 function stopBodyAnim(): void {

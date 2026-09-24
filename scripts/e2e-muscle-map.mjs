@@ -159,7 +159,7 @@ async function main() {
     const picked = await evalJS(`(() => {
       const rows = [...document.querySelectorAll('.exrow')]
       const hit = rows.find((r) => /卧推|俯卧撑|飞鸟|夹胸/.test(r.textContent)) || rows[0]
-      hit.click()
+      hit.querySelector('.main').click()
       return hit.textContent.trim().slice(0, 20)
     })()`)
     console.log(`     选中动作：${picked}`)
@@ -222,9 +222,23 @@ async function main() {
       'soleus',
       'tibialis',
       'scm',
+      // 深层结构与补充肌束（激活时以叠加层绘制在浅层之上）
+      'teres-major',
+      'rhomboids',
+      'rotator-cuff',
+      'serratus-ant',
+      'iliopsoas',
+      'glute-min',
+      'vastus-intermedius',
+      'levator-scapulae',
+      'tibialis-post',
+      'fibularis',
+      'plantaris',
+      'popliteus',
+      'quadratus-femoris',
     ]
     const missing = expected.filter((k) => !all.has(k))
-    ok('肌束级分区齐备（26 键）', missing.length === 0, missing.length ? `缺 ${missing.join(',')}` : '')
+    ok('肌束级分区齐备（39 键）', missing.length === 0, missing.length ? `缺 ${missing.join(',')}` : '')
     ok(
       '三角肌前/中/后束为独立分区',
       all.has('delt-ant') && all.has('delt-lat') && all.has('delt-post'),
@@ -277,6 +291,59 @@ async function main() {
       return { before, after, self, unchanged: before.every((c, i) => c === after[i]) }
     })()`)
     ok('单独高亮三角肌前束不影响中束/后束', isolated.unchanged, `前束 fill=${isolated.self[0]}`)
+
+    // 深层键：激活后必须真的看得见（叠画在浅层之上），否则「标了等于没标」
+    await cdp('Page.navigate', { url: `${APP}/#/sports/exercises` })
+    await waitFor(`document.querySelector('.exrow')`, 15000, '动作库列表（深层键用例）')
+    const pickedDeep = await evalJS(`(() => {
+      const rows = [...document.querySelectorAll('.exrow')]
+      const hit = rows.find((r) => /面拉/.test(r.textContent))
+      if (!hit) return null
+      hit.querySelector('.main').click()
+      return hit.textContent.trim().slice(0, 20)
+    })()`)
+    ok('动作库含面拉（肩袖深层键用例）', !!pickedDeep, pickedDeep ?? '未找到')
+    if (pickedDeep) {
+      await waitFor(`document.querySelector('.mapcard .mmap svg')`, 10000, '肌群图渲染（面拉）')
+      await sleep(300)
+      const deepInfo = await evalJS(`(() => {
+        const svgs = [...document.querySelectorAll('.mapcard .mmap .figwrap svg')]
+        const cls = (el) => el.getAttribute('class') || ''
+        const lv = (el) => /(^|\\s)l[123](\\s|$)/.test(cls(el))
+        return {
+          regions: svgs.map((s) => s.querySelectorAll('g[data-m="rotator-cuff"]').length),
+          colored: svgs.map((s) => [...s.querySelectorAll('g[data-m="rotator-cuff"]')].filter(lv).length),
+          overlays: svgs.map((s) => s.querySelectorAll('g.overlay').length),
+          overlayColored: svgs.map((s) => [...s.querySelectorAll('g.overlay')].filter(lv).length),
+        }
+      })()`)
+      ok(
+        '深层键（肩袖）有独立可高亮分区',
+        deepInfo.regions.every((n) => n >= 1),
+        JSON.stringify(deepInfo.regions),
+      )
+      ok(
+        '深层键激活后按档位着色',
+        deepInfo.colored.every((n) => n >= 1),
+        JSON.stringify(deepInfo.colored),
+      )
+      ok(
+        '深层键激活后出现叠加层（不被浅层盖住）',
+        deepInfo.overlays.every((n) => n >= 1) && deepInfo.overlayColored.every((n) => n >= 1),
+        JSON.stringify({ overlays: deepInfo.overlays, colored: deepInfo.overlayColored }),
+      )
+    }
+
+    await cdp('Page.navigate', { url: `${APP}/#/sports/exercises` })
+    await waitFor(`document.querySelector('.exrow')`, 15000, '动作库列表（截图用）')
+    await evalJS(`(() => {
+      const rows = [...document.querySelectorAll('.exrow')]
+      const hit = rows.find((r) => /卧推|俯卧撑|飞鸟|夹胸/.test(r.textContent)) || rows[0]
+      hit.querySelector('.main').click()
+      return true
+    })()`)
+    await waitFor(`document.querySelector('.mapcard .mmap svg')`, 10000, '肌群图渲染（截图用）')
+    await sleep(250)
 
     await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
     await shot('muscle-map-light')

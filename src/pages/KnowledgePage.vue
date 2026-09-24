@@ -424,305 +424,308 @@ async function runConsolidate(): Promise<void> {
   <div class="kb-page">
     <PageHeader title="知识库" subtitle="让 AI 记得住你" back />
 
-    <div class="scroll" data-rubber-self>
-      <!-- 索引概况 -->
-      <section class="card">
-        <div class="card-head">
-          <Database :size="16" />
-          <h2>索引概况</h2>
-          <span v-if="status" class="chip" :class="{ on: status.indexing }">
-            {{ status.indexing ? '索引中' : '空闲' }}
-          </span>
-        </div>
-        <div v-if="status" class="stats">
-          <div><b>{{ status.docs }}</b><span>条目</span></div>
-          <div><b>{{ status.chunks }}</b><span>分块</span></div>
-          <div><b>{{ status.vectors }}</b><span>向量</span></div>
-          <div><b>{{ status.pending }}</b><span>待处理</span></div>
-        </div>
-        <div v-if="status?.indexing" class="bar"><i :style="{ width: `${progressPct}%` }" /></div>
-        <p v-if="status?.lastError" class="err">
-          <AlertCircle :size="14" /> {{ status.lastError }}
-        </p>
-        <p v-if="status && !status.embedderReady" class="hint">
-          当前模式的嵌入后端未就绪，检索会自动降级为关键词匹配。
-        </p>
-      </section>
+    <div class="scroll">
+      <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 页面框站住，只有 item 位移（system/rubberScroll） -->
+      <div class="rubber-layer" data-rubber-content>
+        <!-- 索引概况 -->
+        <section class="card">
+          <div class="card-head">
+            <Database :size="16" />
+            <h2>索引概况</h2>
+            <span v-if="status" class="chip" :class="{ on: status.indexing }">
+              {{ status.indexing ? '索引中' : '空闲' }}
+            </span>
+          </div>
+          <div v-if="status" class="stats">
+            <div><b>{{ status.docs }}</b><span>条目</span></div>
+            <div><b>{{ status.chunks }}</b><span>分块</span></div>
+            <div><b>{{ status.vectors }}</b><span>向量</span></div>
+            <div><b>{{ status.pending }}</b><span>待处理</span></div>
+          </div>
+          <div v-if="status?.indexing" class="bar"><i :style="{ width: `${progressPct}%` }" /></div>
+          <p v-if="status?.lastError" class="err">
+            <AlertCircle :size="14" /> {{ status.lastError }}
+          </p>
+          <p v-if="status && !status.embedderReady" class="hint">
+            当前模式的嵌入后端未就绪，检索会自动降级为关键词匹配。
+          </p>
+        </section>
 
-      <!-- 检索模式 -->
-      <section class="card">
-        <div class="card-head"><Search :size="16" /><h2>检索模式</h2></div>
-        <SegmentedControl v-model="mode" :options="modeOptions" />
-        <p class="hint">
-          <template v-if="mode === 'keyword'">
-            纯关键词匹配（内置 trigram 全文索引）。零依赖、全部设备可用、瞬时生效。
-          </template>
-          <template v-else-if="mode === 'local'">
-            进程内运行内置的 bge-small-zh 模型，语义检索、数据不出设备。首次启用会有一段时间的后台建索引。
-          </template>
-          <template v-else>
-            调用 OpenAI 兼容的 <code>/v1/embeddings</code> 端点。速度快，但索引文本会发送到该服务商。
-          </template>
-        </p>
+        <!-- 检索模式 -->
+        <section class="card">
+          <div class="card-head"><Search :size="16" /><h2>检索模式</h2></div>
+          <SegmentedControl v-model="mode" :options="modeOptions" />
+          <p class="hint">
+            <template v-if="mode === 'keyword'">
+              纯关键词匹配（内置 trigram 全文索引）。零依赖、全部设备可用、瞬时生效。
+            </template>
+            <template v-else-if="mode === 'local'">
+              进程内运行内置的 bge-small-zh 模型，语义检索、数据不出设备。首次启用会有一段时间的后台建索引。
+            </template>
+            <template v-else>
+              调用 OpenAI 兼容的 <code>/v1/embeddings</code> 端点。速度快，但索引文本会发送到该服务商。
+            </template>
+          </p>
 
-        <div v-if="mode === 'cloud'" class="fields">
-          <label>
-            <span>Base URL</span>
-            <input v-model="cloudBaseUrl" type="url" placeholder="https://api.example.com/v1" />
-          </label>
-          <label>
-            <span>API Key</span>
-            <input
-              v-model="cloudApiKey"
-              type="password"
-              :placeholder="settings?.cloudApiKeyTail ? `已保存 ${settings.cloudApiKeyTail}（留空不改）` : 'sk-...'"
-            />
-          </label>
-          <label>
-            <span>模型名</span>
-            <input v-model="cloudModel" type="text" placeholder="bge-m3" />
-          </label>
-        </div>
+          <div v-if="mode === 'cloud'" class="fields">
+            <label>
+              <span>Base URL</span>
+              <input v-model="cloudBaseUrl" type="url" placeholder="https://api.example.com/v1" />
+            </label>
+            <label>
+              <span>API Key</span>
+              <input
+                v-model="cloudApiKey"
+                type="password"
+                :placeholder="settings?.cloudApiKeyTail ? `已保存 ${settings.cloudApiKeyTail}（留空不改）` : 'sk-...'"
+              />
+            </label>
+            <label>
+              <span>模型名</span>
+              <input v-model="cloudModel" type="text" placeholder="bge-m3" />
+            </label>
+          </div>
 
-        <div class="row">
-          <button class="btn" :disabled="busy" @click="saveSettings">保存</button>
-          <button v-if="mode !== 'keyword'" class="btn ghost" :disabled="probing" @click="probe">
-            {{ probing ? '测试中…' : '测试嵌入' }}
-          </button>
-          <button class="btn ghost" :disabled="busy" @click="rebuild">
-            <RefreshCw :size="14" /> 重建索引
-          </button>
-        </div>
-      </section>
-
-      <!-- 索引范围 -->
-      <section class="card">
-        <div class="card-head"><h2>索引范围</h2></div>
-        <div class="toggles">
-          <button
-            v-for="t in allSources"
-            :key="t"
-            type="button"
-            class="toggle"
-            :class="{ on: sourceEnabled[t] ?? true }"
-            @click="toggleSource(t)"
-          >
-            {{ KB_SOURCE_LABELS[t] }}
-          </button>
-        </div>
-        <label class="switch">
-          <input v-model="autoMemory" type="checkbox" @change="saveSettings" />
-          <span>会话结束时自动提炼长期记忆</span>
-        </label>
-        <label class="switch">
-          <input v-model="autoConsolidate" type="checkbox" @change="saveSettings" />
-          <span>定期整理记忆库（合并重复、统一分类、归档噪声，每天最多一次）</span>
-        </label>
-      </section>
-
-      <!-- 检索试跑 -->
-      <section class="card">
-        <div class="card-head"><Search :size="16" /><h2>检索试跑</h2></div>
-        <div class="searchbar">
-          <input
-            v-model="query"
-            type="search"
-            placeholder="如「膝盖」「腿部训练」（留空看最近内容）"
-            @keyup.enter="runSearch"
-          />
-          <button class="btn" :disabled="searching" @click="runSearch">
-            {{ searching ? '…' : '搜索' }}
-          </button>
-        </div>
-        <ul v-if="hits?.length" class="hits">
-          <li v-for="h in hits" :key="`${h.sourceType}-${h.id}`" class="clickable" @click="openReader(h.id)">
-            <div class="hit-head">
-              <span class="src">{{ KB_SOURCE_LABELS[h.sourceType] ?? h.sourceType }}</span>
-              <span v-if="h.path" class="hpath">{{ h.path }}</span>
-              <span class="date">{{ h.occurredOn ?? '' }}</span>
-              <span class="matched">{{ h.matched }}</span>
-            </div>
-            <p class="hit-title">{{ h.title }}</p>
-            <p class="hit-snippet">{{ h.snippet }}</p>
-          </li>
-        </ul>
-        <EmptyState
-          v-else-if="hits"
-          :icon="Search"
-          title="没有命中"
-          hint="换个更短的关键词，或去掉日期限制再试"
-        />
-      </section>
-
-      <!-- 阅读器：L1/L2 切换 + 分页 -->
-      <section v-if="reader" class="card">
-        <div class="card-head">
-          <h2 class="rt">{{ reader.title }}</h2>
-          <button class="x" aria-label="关闭阅读器" @click="reader = null">✕</button>
-        </div>
-        <p v-if="reader.path" class="hpath big">{{ reader.path }}</p>
-        <div class="seg-mini">
-          <button
-            type="button"
-            :class="{ on: reader.level === 'l1' }"
-            @click="openReader(reader.docId, 'l1')"
-          >概览</button>
-          <button
-            type="button"
-            :class="{ on: reader.level === 'l2' }"
-            @click="openReader(reader.docId, 'l2', 0)"
-          >全文</button>
-          <span v-if="reader.level === 'l2'" class="pager">
-            <button :disabled="reader.offset <= 0 || reading" @click="readerPage(-1)">上一页</button>
-            <em>{{ reader.totalChunks ? reader.offset + 1 : 0 }}–{{ reader.offset + reader.chunks.length }} / {{ reader.totalChunks }} 块</em>
-            <button :disabled="!reader.hasMore || reading" @click="readerPage(1)">下一页</button>
-          </span>
-        </div>
-        <div v-if="reader.level === 'l2'" class="doc-body">
-          <p v-for="c in reader.chunks" :key="c.id">{{ c.text }}</p>
-        </div>
-        <p v-else class="doc-body sum">{{ reader.chunks[0]?.text }}</p>
-      </section>
-
-      <!-- 文件区：glob 浏览 + 笔记编辑 -->
-      <section class="card">
-        <div class="card-head">
-          <FolderTree :size="16" />
-          <h2>文件</h2>
-          <button class="mini" @click="router.push('/ai/knowledge/files')">
-            <FolderOpen :size="13" /> 文件库
-          </button>
-          <button class="mini" @click="openNewNote"><FilePlus2 :size="13" /> 新建笔记</button>
-        </div>
-        <div class="searchbar">
-          <input
-            v-model="globPattern"
-            type="text"
-            placeholder="路径模式：笔记/*.md、对话/**、附件/**、日程/2026-09-10/*.md"
-            @keyup.enter="runGlob"
-          />
-          <button class="btn" :disabled="globbing" @click="runGlob">
-            {{ globbing ? '…' : '浏览' }}
-          </button>
-        </div>
-        <p class="hint">星号不跨目录、双星跨目录；只读目录（日程/运动/…）来自应用数据，改内容请去对应功能。</p>
-        <ul v-if="globHits?.length" class="files">
-          <li v-for="f in globHits" :key="`${f.sourceType}-${f.id}`" class="clickable" @click="openNote(f)">
-            <component :is="f.system ? Lock : Pencil" :size="13" class="fic" :class="{ ro: !f.editable }" />
-            <span class="fpath">{{ f.path }}</span>
-            <span class="ftag">{{ f.editable ? (f.system ? '系统' : '可编辑') : '只读' }}</span>
-          </li>
-        </ul>
-        <p v-else-if="globHits" class="hint">没有匹配的路径。</p>
-
-        <!-- 编辑器 -->
-        <div v-if="editor" class="editor">
-          <label class="epath">
-            <span>路径</span>
-            <input v-model="editor.path" type="text" :disabled="editor.system" />
-          </label>
-          <textarea
-            v-model="editor.content"
-            rows="10"
-            placeholder="markdown 正文"
-            :disabled="editor.system"
-          />
           <div class="row">
-            <button class="btn" :disabled="saving || editor.system" @click="saveNote">
-              {{ saving ? '保存中…' : editor.isNew ? '创建' : '保存' }}
+            <button class="btn" :disabled="busy" @click="saveSettings">保存</button>
+            <button v-if="mode !== 'keyword'" class="btn ghost" :disabled="probing" @click="probe">
+              {{ probing ? '测试中…' : '测试嵌入' }}
             </button>
+            <button class="btn ghost" :disabled="busy" @click="rebuild">
+              <RefreshCw :size="14" /> 重建索引
+            </button>
+          </div>
+        </section>
+
+        <!-- 索引范围 -->
+        <section class="card">
+          <div class="card-head"><h2>索引范围</h2></div>
+          <div class="toggles">
             <button
-              v-if="!editor.isNew && !editor.system"
-              class="btn ghost"
-              :disabled="saving"
-              @click="removeNote"
+              v-for="t in allSources"
+              :key="t"
+              type="button"
+              class="toggle"
+              :class="{ on: sourceEnabled[t] ?? true }"
+              @click="toggleSource(t)"
             >
-              <Trash2 :size="14" /> 删除
-            </button>
-            <button class="btn ghost" @click="editor = null">关闭</button>
-          </div>
-          <p v-if="editor.system" class="hint">系统文件随应用版本更新，内容只读。</p>
-        </div>
-      </section>
-
-      <!-- 长期记忆 -->
-      <section class="card">
-        <div class="card-head">
-          <Brain :size="16" />
-          <h2>长期记忆</h2>
-          <span class="chip">{{ visibleMemories.length }}</span>
-        </div>
-
-        <!-- 信噪比面板：注入覆盖率 / 低信号占比 / 两种整理入口 -->
-        <div v-if="memoryStats" class="snr">
-          <div class="snr-grid">
-            <div><b>{{ memoryStats.active }}</b><span>活跃</span></div>
-            <div><b>{{ memoryStats.injected }}</b><span>注入（上限 {{ memoryStats.limit }}）</span></div>
-            <div><b>{{ Math.round(memoryStats.signalRatio * 100) }}%</b><span>注入覆盖率</span></div>
-            <div>
-              <b :class="{ bad: memoryStats.noiseRatio > 0.3 }">{{ Math.round(memoryStats.noiseRatio * 100) }}%</b>
-              <span>低信号占比</span>
-            </div>
-          </div>
-          <p class="snr-line">
-            注入 {{ memoryStats.injectedChars }} / {{ memoryStats.maxChars }} 字符 · 平均置信度
-            {{ memoryStats.avgConfidence.toFixed(2) }} · 平均显著性 {{ memoryStats.avgSalience.toFixed(2) }}
-            <template v-if="memoryStats.archived"> · 已归档 {{ memoryStats.archived }}</template>
-          </p>
-          <div class="mem-actions">
-            <button class="btn" :disabled="maintaining" @click="runMaintain">
-              <RefreshCw :size="14" /> {{ maintaining ? '维护中…' : '衰减维护' }}
-            </button>
-            <button class="btn" :disabled="consolidating" @click="runConsolidate">
-              <Sparkles :size="14" /> {{ consolidating ? 'AI 整理中…' : 'AI 整理' }}
-            </button>
-            <button class="link" @click="showArchived = !showArchived">
-              {{ showArchived ? '隐藏归档' : `显示归档${archivedCount ? `（${archivedCount}）` : ''}` }}
+              {{ KB_SOURCE_LABELS[t] }}
             </button>
           </div>
-          <p class="snr-line">
-            最近维护：{{ memoryStats.lastMaintainAt ?? '从未' }} · 最近 AI 整理：{{ memoryStats.lastConsolidateAt ?? '从未' }}
-          </p>
-        </div>
+          <label class="switch">
+            <input v-model="autoMemory" type="checkbox" @change="saveSettings" />
+            <span>会话结束时自动提炼长期记忆</span>
+          </label>
+          <label class="switch">
+            <input v-model="autoConsolidate" type="checkbox" @change="saveSettings" />
+            <span>定期整理记忆库（合并重复、统一分类、归档噪声，每天最多一次）</span>
+          </label>
+        </section>
 
-        <ul v-if="visibleMemories.length" class="mems">
-          <li v-for="m in visibleMemories" :key="m.id" :class="{ 'is-archived': m.archivedAt }">
-            <div class="mem-head">
-              <span class="type">{{ KB_MEMORY_LABELS[m.memType] ?? m.memType }}</span>
-              <span v-if="m.topic" class="topic">{{ m.topic }}</span>
-              <span v-if="m.category" class="cat">{{ m.category }}</span>
-              <span v-if="m.archivedAt" class="badge arch">已归档 · {{ m.archivedReason ?? '手动' }}</span>
-              <span v-else-if="m.salience < STALE_SALIENCE" class="badge stale">低信号</span>
-            </div>
-            <p class="mem-text">{{ m.content }}</p>
-            <div class="mem-ops">
+        <!-- 检索试跑 -->
+        <section class="card">
+          <div class="card-head"><Search :size="16" /><h2>检索试跑</h2></div>
+          <div class="searchbar">
+            <input
+              v-model="query"
+              type="search"
+              placeholder="如「膝盖」「腿部训练」（留空看最近内容）"
+              @keyup.enter="runSearch"
+            />
+            <button class="btn" :disabled="searching" @click="runSearch">
+              {{ searching ? '…' : '搜索' }}
+            </button>
+          </div>
+          <ul v-if="hits?.length" class="hits">
+            <li v-for="h in hits" :key="`${h.sourceType}-${h.id}`" class="clickable" @click="openReader(h.id)">
+              <div class="hit-head">
+                <span class="src">{{ KB_SOURCE_LABELS[h.sourceType] ?? h.sourceType }}</span>
+                <span v-if="h.path" class="hpath">{{ h.path }}</span>
+                <span class="date">{{ h.occurredOn ?? '' }}</span>
+                <span class="matched">{{ h.matched }}</span>
+              </div>
+              <p class="hit-title">{{ h.title }}</p>
+              <p class="hit-snippet">{{ h.snippet }}</p>
+            </li>
+          </ul>
+          <EmptyState
+            v-else-if="hits"
+            :icon="Search"
+            title="没有命中"
+            hint="换个更短的关键词，或去掉日期限制再试"
+          />
+        </section>
+
+        <!-- 阅读器：L1/L2 切换 + 分页 -->
+        <section v-if="reader" class="card">
+          <div class="card-head">
+            <h2 class="rt">{{ reader.title }}</h2>
+            <button class="x" aria-label="关闭阅读器" @click="reader = null">✕</button>
+          </div>
+          <p v-if="reader.path" class="hpath big">{{ reader.path }}</p>
+          <div class="seg-mini">
+            <button
+              type="button"
+              :class="{ on: reader.level === 'l1' }"
+              @click="openReader(reader.docId, 'l1')"
+            >概览</button>
+            <button
+              type="button"
+              :class="{ on: reader.level === 'l2' }"
+              @click="openReader(reader.docId, 'l2', 0)"
+            >全文</button>
+            <span v-if="reader.level === 'l2'" class="pager">
+              <button :disabled="reader.offset <= 0 || reading" @click="readerPage(-1)">上一页</button>
+              <em>{{ reader.totalChunks ? reader.offset + 1 : 0 }}–{{ reader.offset + reader.chunks.length }} / {{ reader.totalChunks }} 块</em>
+              <button :disabled="!reader.hasMore || reading" @click="readerPage(1)">下一页</button>
+            </span>
+          </div>
+          <div v-if="reader.level === 'l2'" class="doc-body">
+            <p v-for="c in reader.chunks" :key="c.id">{{ c.text }}</p>
+          </div>
+          <p v-else class="doc-body sum">{{ reader.chunks[0]?.text }}</p>
+        </section>
+
+        <!-- 文件区：glob 浏览 + 笔记编辑 -->
+        <section class="card">
+          <div class="card-head">
+            <FolderTree :size="16" />
+            <h2>文件</h2>
+            <button class="mini" @click="router.push('/ai/knowledge/files')">
+              <FolderOpen :size="13" /> 文件库
+            </button>
+            <button class="mini" @click="openNewNote"><FilePlus2 :size="13" /> 新建笔记</button>
+          </div>
+          <div class="searchbar">
+            <input
+              v-model="globPattern"
+              type="text"
+              placeholder="路径模式：笔记/*.md、对话/**、附件/**、日程/2026-09-10/*.md"
+              @keyup.enter="runGlob"
+            />
+            <button class="btn" :disabled="globbing" @click="runGlob">
+              {{ globbing ? '…' : '浏览' }}
+            </button>
+          </div>
+          <p class="hint">星号不跨目录、双星跨目录；只读目录（日程/运动/…）来自应用数据，改内容请去对应功能。</p>
+          <ul v-if="globHits?.length" class="files">
+            <li v-for="f in globHits" :key="`${f.sourceType}-${f.id}`" class="clickable" @click="openNote(f)">
+              <component :is="f.system ? Lock : Pencil" :size="13" class="fic" :class="{ ro: !f.editable }" />
+              <span class="fpath">{{ f.path }}</span>
+              <span class="ftag">{{ f.editable ? (f.system ? '系统' : '可编辑') : '只读' }}</span>
+            </li>
+          </ul>
+          <p v-else-if="globHits" class="hint">没有匹配的路径。</p>
+
+          <!-- 编辑器 -->
+          <div v-if="editor" class="editor">
+            <label class="epath">
+              <span>路径</span>
+              <input v-model="editor.path" type="text" :disabled="editor.system" />
+            </label>
+            <textarea
+              v-model="editor.content"
+              rows="10"
+              placeholder="markdown 正文"
+              :disabled="editor.system"
+            />
+            <div class="row">
+              <button class="btn" :disabled="saving || editor.system" @click="saveNote">
+                {{ saving ? '保存中…' : editor.isNew ? '创建' : '保存' }}
+              </button>
               <button
-                v-if="m.archivedAt"
-                class="op"
-                aria-label="恢复该条记忆"
-                @click="restoreMemory(m.id)"
+                v-if="!editor.isNew && !editor.system"
+                class="btn ghost"
+                :disabled="saving"
+                @click="removeNote"
               >
-                <RotateCcw :size="14" />
+                <Trash2 :size="14" /> 删除
               </button>
-              <button v-else class="op" aria-label="归档该条记忆" @click="archiveMemory(m.id)">
-                <Archive :size="14" />
+              <button class="btn ghost" @click="editor = null">关闭</button>
+            </div>
+            <p v-if="editor.system" class="hint">系统文件随应用版本更新，内容只读。</p>
+          </div>
+        </section>
+
+        <!-- 长期记忆 -->
+        <section class="card">
+          <div class="card-head">
+            <Brain :size="16" />
+            <h2>长期记忆</h2>
+            <span class="chip">{{ visibleMemories.length }}</span>
+          </div>
+
+          <!-- 信噪比面板：注入覆盖率 / 低信号占比 / 两种整理入口 -->
+          <div v-if="memoryStats" class="snr">
+            <div class="snr-grid">
+              <div><b>{{ memoryStats.active }}</b><span>活跃</span></div>
+              <div><b>{{ memoryStats.injected }}</b><span>注入（上限 {{ memoryStats.limit }}）</span></div>
+              <div><b>{{ Math.round(memoryStats.signalRatio * 100) }}%</b><span>注入覆盖率</span></div>
+              <div>
+                <b :class="{ bad: memoryStats.noiseRatio > 0.3 }">{{ Math.round(memoryStats.noiseRatio * 100) }}%</b>
+                <span>低信号占比</span>
+              </div>
+            </div>
+            <p class="snr-line">
+              注入 {{ memoryStats.injectedChars }} / {{ memoryStats.maxChars }} 字符 · 平均置信度
+              {{ memoryStats.avgConfidence.toFixed(2) }} · 平均显著性 {{ memoryStats.avgSalience.toFixed(2) }}
+              <template v-if="memoryStats.archived"> · 已归档 {{ memoryStats.archived }}</template>
+            </p>
+            <div class="mem-actions">
+              <button class="btn" :disabled="maintaining" @click="runMaintain">
+                <RefreshCw :size="14" /> {{ maintaining ? '维护中…' : '衰减维护' }}
               </button>
-              <button class="op del" aria-label="删除该条记忆" @click="removeMemory(m.id)">
-                <Trash2 :size="14" />
+              <button class="btn" :disabled="consolidating" @click="runConsolidate">
+                <Sparkles :size="14" /> {{ consolidating ? 'AI 整理中…' : 'AI 整理' }}
+              </button>
+              <button class="link" @click="showArchived = !showArchived">
+                {{ showArchived ? '隐藏归档' : `显示归档${archivedCount ? `（${archivedCount}）` : ''}` }}
               </button>
             </div>
-          </li>
-        </ul>
-        <EmptyState
-          v-else
-          :icon="Brain"
-          title="还没有长期记忆"
-          hint="默认会在每次会话结束时自动提炼。也可以直接对 AI 说「记住……」"
-        />
-        <p v-if="visibleMemories.length" class="snr-line foot">
-          记忆会随时间自然衰减：长期没被用到且显著性变低的条目会被自动归档（可在上方恢复）。
-        </p>
-      </section>
+            <p class="snr-line">
+              最近维护：{{ memoryStats.lastMaintainAt ?? '从未' }} · 最近 AI 整理：{{ memoryStats.lastConsolidateAt ?? '从未' }}
+            </p>
+          </div>
+
+          <ul v-if="visibleMemories.length" class="mems">
+            <li v-for="m in visibleMemories" :key="m.id" :class="{ 'is-archived': m.archivedAt }">
+              <div class="mem-head">
+                <span class="type">{{ KB_MEMORY_LABELS[m.memType] ?? m.memType }}</span>
+                <span v-if="m.topic" class="topic">{{ m.topic }}</span>
+                <span v-if="m.category" class="cat">{{ m.category }}</span>
+                <span v-if="m.archivedAt" class="badge arch">已归档 · {{ m.archivedReason ?? '手动' }}</span>
+                <span v-else-if="m.salience < STALE_SALIENCE" class="badge stale">低信号</span>
+              </div>
+              <p class="mem-text">{{ m.content }}</p>
+              <div class="mem-ops">
+                <button
+                  v-if="m.archivedAt"
+                  class="op"
+                  aria-label="恢复该条记忆"
+                  @click="restoreMemory(m.id)"
+                >
+                  <RotateCcw :size="14" />
+                </button>
+                <button v-else class="op" aria-label="归档该条记忆" @click="archiveMemory(m.id)">
+                  <Archive :size="14" />
+                </button>
+                <button class="op del" aria-label="删除该条记忆" @click="removeMemory(m.id)">
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+            </li>
+          </ul>
+          <EmptyState
+            v-else
+            :icon="Brain"
+            title="还没有长期记忆"
+            hint="默认会在每次会话结束时自动提炼。也可以直接对 AI 说「记住……」"
+          />
+          <p v-if="visibleMemories.length" class="snr-line foot">
+            记忆会随时间自然衰减：长期没被用到且显著性变低的条目会被自动归档（可在上方恢复）。
+          </p>
+        </section>
+      </div>
     </div>
   </div>
 </template>
@@ -885,6 +888,13 @@ textarea {
   flex: 1;
   overflow-y: auto;
   padding: 0 16px calc(24px + var(--wbar-reserve, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 超范围平移层：镜像 .scroll 的弹性列布局（只承载 transform，不改观感） */
+.rubber-layer {
   display: flex;
   flex-direction: column;
   gap: 12px;

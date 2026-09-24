@@ -1,8 +1,8 @@
 /** 训练课程域工具：课程 CRUD · 对应 planService */
 
-import { Type, type TSchema } from '@earendil-works/pi-ai'
+import { Type } from '@earendil-works/pi-ai'
 
-import { MUSCLE_KEYS, MUSCLE_LABELS, type ActivationMap, type MuscleKey } from '@/config/muscles'
+import { normalizeActivation, type ActivationMap } from '@/config/muscles'
 import { WORKOUT_META } from '@/config/domain'
 import { exerciseLibService } from '@/services/exerciseLibService'
 import { planService } from '@/services/planService'
@@ -11,6 +11,7 @@ import { todayStr } from '@/utils/date'
 import { aggregateStrengthDays, fmtKg } from '@/utils/strength'
 import { computeTrainingAdvice } from '@/utils/trainingAdvice'
 import type { PlanExercise, PlanExerciseKind, WorkoutType } from '@/types'
+import { MUSCLES } from './muscleSchema'
 import { defineTool, type AppTool } from './types'
 
 const TYPE_KEYS = Object.keys(WORKOUT_META) as WorkoutType[]
@@ -22,19 +23,6 @@ const PLAN_TYPE = Type.Union(
 const EXERCISE_KIND = Type.Union(
   [Type.Literal('strength'), Type.Literal('timed'), Type.Literal('cardio')],
   { description: '动作类型：strength=力量(按组次计重) / timed=计时(平板支撑等) / cardio=有氧(按时长计)' },
-)
-
-const MUSCLE_LEVEL = Type.Union(
-  [Type.Literal(1), Type.Literal(2), Type.Literal(3)],
-  { description: '档位：1=稳定 2=辅助 3=主攻' },
-)
-
-/** 动作显式肌群：键为全部 13 个肌群，值 1~3 档，只给练到的键即可 */
-const MUSCLES = Type.Object(
-  Object.fromEntries(MUSCLE_KEYS.map((k) => [k, Type.Optional(MUSCLE_LEVEL)])) as Record<string, TSchema>,
-  {
-    description: `动作训练到的肌群与档位（可选）：${MUSCLE_KEYS.map((k) => `${k}=${MUSCLE_LABELS[k]}`).join(' / ')}。不填则按动作名自动识别（卧推/深蹲等常见名可识别）。`,
-  },
 )
 
 /** 激活热身组：正式组前的小重量激活（不计入正式组数） */
@@ -99,7 +87,7 @@ function normalizeExercise(e: { [k: string]: unknown }): {
     durationMin: typeof e.durationMin === 'number' ? e.durationMin : null,
     restSec: typeof e.restSec === 'number' && e.restSec >= 0 ? Math.round(e.restSec) : 90,
     tips: typeof e.tips === 'string' ? e.tips : '',
-    ...normalizeMuscles(e.muscles),
+    ...musclesField(e.muscles),
   }
   // 热身重量必须小于正式组重量，否则整组丢弃（宁可没有热身也不要假热身）
   if (out.warmups && out.weightKg != null) {
@@ -125,15 +113,9 @@ function normalizeWarmups(w: unknown): { warmups?: { weightKg: number; reps: num
   return list.length ? { warmups: list } : {}
 }
 
-/** 白名单校验显式肌群：只保留合法键与 1~3 档，全非法时返回空对象（不落库） */
-function normalizeMuscles(m: unknown): { muscles?: ActivationMap } {
-  if (!m || typeof m !== 'object') return {}
-  const out: ActivationMap = {}
-  for (const [k, v] of Object.entries(m as Record<string, unknown>)) {
-    if (MUSCLE_KEYS.includes(k as MuscleKey) && (v === 1 || v === 2 || v === 3)) {
-      out[k as MuscleKey] = v
-    }
-  }
+/** 白名单校验显式肌群（与 Rust / mock 共用同一套规则）；全非法时不落库 */
+function musclesField(m: unknown): { muscles?: ActivationMap } {
+  const out = normalizeActivation(m)
   return Object.keys(out).length ? { muscles: out } : {}
 }
 
@@ -269,7 +251,8 @@ export const planTools: AppTool[] = [
         kind: e.kind,
         category: e.category,
         equipment: e.equipment,
-        muscles: Object.keys(e.muscles ?? {}),
+        // 完整档位表（不只是键名）：AI 据此与自己的标注对齐/纠错
+        muscles: e.muscles ?? {},
         sessions: e.sessions,
         custom: e.isCustom,
       }))

@@ -17,7 +17,7 @@ import {readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs'
 import {dirname, join} from 'node:path'
 import {fileURLToPath} from 'node:url'
 
-import {MUSCLE_MESHES, FILLER_MESHES, BASE_MESHES, DEEP_KEYS} from './anatomy/taxonomy.mjs'
+import {MUSCLE_MESHES, BASE_MESHES, DEEP_KEYS} from './anatomy/taxonomy.mjs'
 import {
   parseObj,
   projectMesh,
@@ -53,7 +53,7 @@ const RECTUS_SPAN = 0.33
 
 function loadMeshes() {
   const need = new Set()
-  for (const list of [MUSCLE_MESHES, FILLER_MESHES, BASE_MESHES]) {
+  for (const list of [MUSCLE_MESHES, BASE_MESHES]) {
     for (const arr of Object.values(list)) for (const id of arr) for (const s of ['', 'M']) need.add(id + s)
   }
   const meshes = new Map()
@@ -363,9 +363,6 @@ function buildView(name, view, meshes) {
   for (const [key, ids] of Object.entries(MUSCLE_MESHES)) {
     push(key, ids, 'm', DEEP_KEYS.has(key) ? 2 : 1)
   }
-  for (const [key, ids] of Object.entries(FILLER_MESHES)) {
-    push(key, ids, 'a', 2)
-  }
 
   const skin = buildRegion(meshIdsFor(BASE_MESHES.skin, meshes), meshes, view, proj)
 
@@ -374,10 +371,10 @@ function buildView(name, view, meshes) {
   const masks = {}
   masks.skin = gridMask(BASE_MESHES.skin, meshes, view, grid)
   for (const k of need) {
-    const ids = MUSCLE_MESHES[k] || FILLER_MESHES[k]
+    const ids = MUSCLE_MESHES[k]
     if (ids) masks[k] = gridMask(ids, meshes, view, grid)
   }
-  masks.teres = gridMask(FILLER_MESHES['teres-major'], meshes, view, grid)
+  masks.teres = gridMask(MUSCLE_MESHES['teres-major'], meshes, view, grid)
 
   const derived = deriveMissing(masks, grid, proj)
   for (const [key, mask] of Object.entries(derived)) {

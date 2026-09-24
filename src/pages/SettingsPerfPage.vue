@@ -5,8 +5,11 @@ import { CalendarDays, ChevronRight, Dumbbell, House, Plus, SlidersHorizontal, S
 import GlassSurface from '@/components/common/GlassSurface.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import GlassThumb from '@/components/common/GlassThumb.vue'
 import GlassTunerSheet from '@/components/perf/GlassTunerSheet.vue'
-import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
+import { usePressGlow } from '@/composables/usePressGlow'
+import { motionEffective, motionLevel, motionRich, setMotionLevel, MOTION_LEVELS, type MotionLevel } from '@/system/motion'
+import { PERF_MODES, glassPipeline, liquidGlass, perfDegraded, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
 
 /**
  * 画质预览（三级页，入口在「设置 › 性能」）：**超高档的液态玻璃长什么样**。
@@ -15,7 +18,7 @@ import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, supportsS
  *   1. 这一档在我这台设备上到底生效了吗（能力探测 + 当前档位，如实说）
  *   2. 两块基本件好不好看：仅图标按钮（正圆）与图标 + 文字按钮（胶囊）
  *   3. 一整套底部栏装起来是什么样（左圆钮 + 中间药丸 + 右圆钮，三块玻璃各留缝并列）
- *   4. 不满意就**就地调**：台下的入口拉开参数面板 —— 管线上的 11 个数字摊开成
+ *   4. 不满意就**就地调**：台下的入口拉开参数面板 —— 管线上的 12 个数字摊开成
  *      滑杆 + 可点输入的数值（system/glassParams，改的是全局那份，定稿写回 GLASS_DEFAULTS）
  *
  * 为什么不摆在一张白卡上：液态玻璃折射的是**它背后的东西**，背后越热闹它才越有得看。
@@ -41,14 +44,20 @@ const mode = computed({
   },
 })
 
-const PERF_OPTIONS = PERF_MODES.map(({ value, label }) => ({ value, label }))
+const PERF_OPTIONS = PERF_MODES.map(({ value, label, short }) => ({ value, label: short ?? label }))
 
 /** 当前档位下这块玻璃的真实状态：能力不足就明说，别让人对着退化结果猜 */
 const glassState = computed(() => {
-  if (liquidGlass.value) return { tone: 'on', text: '超高 · 折射已开启' }
-  if (!supportsSvgBackdrop()) return { tone: 'warn', text: '本机内核不支持折射，已退化为普通毛玻璃' }
-  if (perfDegraded.value) return { tone: 'warn', text: '已降级到流畅优先（玻璃顶成实底）' }
-  return { tone: 'idle', text: '当前档位用普通毛玻璃 · 切到「超高」即开折射' }
+  if (!liquidGlass.value) {
+    if (!supportsSvgBackdrop()) return { tone: 'warn', text: '本机内核不支持折射，已退化为普通毛玻璃' }
+    if (perfDegraded.value) return { tone: 'warn', text: '已降级到流畅优先（玻璃顶成实底）' }
+    return { tone: 'idle', text: '当前档位用普通毛玻璃 · 切到「超高」即开折射' }
+  }
+  // 折射开着时，把**实际走的链**报出来：这一页要能验证「优化档」到底换了什么，
+  // 而不是只看档位标签。塌缩链与完整链逐像素等价，只有原语数不同。
+  return glassPipeline.value === 'collapsed'
+    ? { tone: 'on', text: '超高（优化）· 折射已开启 · 塌缩管线（3 个原语）' }
+    : { tone: 'on', text: '超高 · 折射已开启 · 完整管线（10 个原语）' }
 })
 
 /** 底部栏的三项（与应用里的 Dock 同名同图标，方便对照观感） */
@@ -58,9 +67,45 @@ const TABS = [
   { id: 'me', label: '我', icon: User },
 ]
 const active = ref('sports')
+/** 标本台里的活动底也要跟着丰富档走：标本的意义就是「所见即应用里的那一块」 */
+const specIndex = computed(() => Math.max(0, TABS.findIndex((t) => t.id === active.value)))
+const specGoo = computed(() => motionRich.value)
 
-/** 参数调节面板（液态玻璃管线上的 11 个数字）：入口在标本台正下方 */
+/** 参数调节面板（液态玻璃管线上的 12 个数字）：入口在标本台正下方 */
 const tunerOpen = ref(false)
+
+/** 标本台的按压定向光晕：与真实 Dock 同一套（丰富档下按页签会跟着手指亮） */
+const dockRowEl = ref<HTMLElement | null>(null)
+usePressGlow(dockRowEl, '.dock-tab, .dock-slot')
+
+/* ---------- 动效档位（与设置页共用一份清单） ---------- */
+const MOTION_OPTIONS = MOTION_LEVELS.map(({ value, label }) => ({ value, label }))
+
+const motionMode = computed({
+  get: () => motionLevel.value as string,
+  set: (v: string) => {
+    if (MOTION_LEVELS.some((m) => m.value === v)) setMotionLevel(v as MotionLevel)
+  },
+})
+
+/** 如实报**实际生效**的那一档：被系统减弱动效、或被掉帧压回默认时，
+ *  用户选的那一档并没有生效 —— 与 glassState 同一条原则 */
+const motionNote = computed(() => {
+  if (motionEffective.value !== motionLevel.value) {
+    return motionEffective.value === 'off'
+      ? '系统已要求「减弱动效」，当前按「关闭」执行'
+      : '掉帧降级中，已退回「默认」'
+  }
+  return MOTION_LEVELS.find((m) => m.value === motionLevel.value)?.hint ?? ''
+})
+
+/** 让台上的底栏标本走一格：换索引就是一次「活动底平移 + 形变」，
+ *  丰富档下还带一次融合（按下页签同样会触发）。 */
+function replaySpecimen(): void {
+  const i = Math.max(0, TABS.findIndex((t) => t.id === active.value))
+  const next = TABS[(i + 1) % TABS.length]
+  if (next) active.value = next.id
+}
 
 /** 仅图标按钮的边长（与应用里主按钮的 54 一致），正圆取半高 */
 const ICON_BTN = 54
@@ -92,7 +137,7 @@ const DOCK_BTN = 58
 
         <!-- ② 基本件：仅图标按钮（高 == 宽、正圆）与图标 + 文字按钮（同高的胶囊）。
                 圆角从高度推出来（正圆取 50%，胶囊取半高），不再各写一遍魔数 -->
-        <div class="parts">
+        <div class="parts stage-dark">
           <GlassSurface :width="ICON_BTN" :height="ICON_BTN" border-radius="50%" tint="dark">
             <button type="button" class="ibtn" aria-label="仅图标按钮示例">
               <Plus :size="22" :stroke-width="2.2" />
@@ -112,20 +157,29 @@ const DOCK_BTN = 58
               这一行**不另画一遍**：结构与前景类（.dock-block / .dock-tab / .dock-slot）
               与真实 Dock 共用 base.css 里的那一份，材质也走同一份令牌（不套暗场那套，
               否则标本会比真实 Dock 暗一档）—— 所见即应用里的那一块 -->
-        <div class="dockrow">
+        <div ref="dockRowEl" class="dockrow">
           <GlassSurface class="dock-block" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" fill="var(--glass-fill)">
-            <button type="button" class="dock-slot" aria-label="课表（自定义落点示例）">
+            <button type="button" class="dock-slot glow-layer" aria-label="课表（自定义落点示例）">
               <CalendarDays :size="21" />
               <span>课表</span>
             </button>
           </GlassSurface>
 
-          <GlassSurface class="dock-block pill" :height="DOCK_BTN" border-radius="var(--radius-full)" fill="var(--glass-fill)">
+          <GlassSurface
+            class="dock-block pill"
+            :class="{ goo: specGoo }"
+            :height="DOCK_BTN"
+            border-radius="var(--radius-full)"
+            fill="var(--glass-fill)"
+          >
+            <!-- 与真实 Dock 同一份液态活动底（丰富档）：标本不另画一遍，
+                 否则「所见即应用里的那一块」这条就断了 -->
+            <GlassThumb v-if="specGoo" :index="specIndex" :count="TABS.length" />
             <button
               v-for="t in TABS"
               :key="t.id"
               type="button"
-              class="dock-tab"
+              class="dock-tab glow-layer"
               :class="{ active: active === t.id }"
               :aria-pressed="active === t.id"
               @click="active = t.id"
@@ -136,7 +190,7 @@ const DOCK_BTN = 58
           </GlassSurface>
 
           <GlassSurface class="dock-block" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" fill="var(--glass-fill)">
-            <button type="button" class="dock-slot" aria-label="AI">
+            <button type="button" class="dock-slot glow-layer" aria-label="AI">
               <Sparkles :size="21" />
               <span>AI</span>
             </button>
@@ -151,7 +205,7 @@ const DOCK_BTN = 58
       <SlidersHorizontal :size="18" />
       <span class="tuner-txt">
         <b>液态玻璃参数调节</b>
-        <small class="t-3">折射位移 · 边缘厚度 · 底色浓度…共 11 项，拖动即时生效</small>
+        <small class="t-3">折射位移 · 边缘厚度 · 底色浓度…共 12 项，拖动即时生效</small>
       </span>
       <ChevronRight :size="18" class="chev" />
     </button>
@@ -178,8 +232,32 @@ const DOCK_BTN = 58
         不会留下空白。
       </p>
       <p class="pnote t-3">
-        「超高」是手动钉死的档：选了就一直开折射，不参与掉帧自动判定（与「高画质」同理）。
+        两个「超高」都是手动钉死的档：选了就一直开折射，不参与掉帧自动判定（与「高画质」同理）。
+        「超高（优化）」与「超高」观感相同 —— 它把三通道位移合成换成了等价的单次位移
+        （出厂参数下那套合成是恒等变换），台上读数会报出实际走的是哪条链。
         手机上若觉得发烫或掉帧，切回「自动」即可。
+      </p>
+    </section>
+
+    <!-- 动效：与画质正交的另一档。上面的标本跟着它变 —— 差别在台上直接看得见 -->
+    <section class="card">
+      <h2 class="ctitle">动效</h2>
+
+      <SegmentedControl v-model="motionMode" class="perfseg" :options="MOTION_OPTIONS" />
+
+      <p class="spec t-3">{{ motionNote }}</p>
+
+      <button type="button" class="replay" @click="replaySpecimen">试一下 · 让上面的底栏走一格</button>
+
+      <p class="pnote t-3">
+        「默认」就是现在这一套，不加任何装饰。「丰富」在它之上再加液态玻璃的动作：活动底会从
+        按下的那一点长出一颗小球与它融合（抬手分裂），位移途中拉宽压扁、收窄拉高 ——
+        苹果那条「由力而非速度决定的形变」；抽屉与菜单改成透镜式进出；页头随滚动收缩与还原。
+        台上直接点页签就能看见，不必来回切档。
+      </p>
+      <p class="pnote t-3">
+        动效与画质互不影响：这一页管的是「玻璃画不画得出来」，动效管的是「界面要不要动」。
+        掉帧降级时丰富档会自动退回默认，不会一边掉帧一边加合成。
       </p>
     </section>
 
@@ -201,28 +279,13 @@ const DOCK_BTN = 58
   background: var(--hero-bg);
 }
 
-/* 台内换一套玻璃材质（**调用处的材质上下文**，组件自己的令牌默认值不动）：
-   暗底上的玻璃按应用在暗场的做法压暗（HUD 芯片材质），受光边换中性白 ——
-   前景因此永远是浅色（--hero-text*），与当前主题无关。
+/* 台内换一套玻璃材质：class 上的 .stage-dark（base.css）—— 暗底上的玻璃按应用在
+   暗场的做法压暗（HUD 芯片材质），受光边换中性白，前景因此永远是浅色（--hero-text*），
+   与当前主题无关。**参数面板的预览台用的是同一份**，两处不再各抄一遍；
+   弱档的实底退化也在那份里（html[data-perf='low'] .stage-dark）。
    **只加在「基本件」这一行上**（读数胶囊直接用 --hero-chip-*，不走玻璃令牌）：
    底下的底栏标本要与真实 Dock 一模一样，套上这套暗场令牌就比真实 Dock 暗一档 ——
    它走应用自己的 --glass-* 与前景令牌（见 base.css 的 .dock-* 一份定义）。 */
-.parts {
-  --glass-fill: var(--hero-chip-bg);
-  --glass-rim-hi: var(--hero-chip-line);
-  --glass-rim-lo: var(--hero-chip-line);
-  --glass-sheen: color-mix(in srgb, var(--hero-text) 8%, transparent);
-  --glass-tab-hi: color-mix(in srgb, var(--hero-text) 16%, transparent);
-}
-
-/* 弱档：玻璃顶成实底、受光亮斑归零（与 base.css 同一套退化语义，实底取暗场底色） */
-html[data-perf='low'] .parts {
-  --glass-fill: var(--hero-bg);
-  --glass-rim-hi: var(--hero-chip-line);
-  --glass-rim-lo: var(--hero-chip-line);
-  --glass-sheen: transparent;
-  --glass-tab-hi: transparent;
-}
 
 /* 「减弱透明度」档：组件的退化分支会把玻璃顶成 --surface（亮色下是白的），
    而台上这一行的前景是浅色 —— 会撞成白字白底。台内把「表面」这个词换成暗场底色，
@@ -466,6 +529,25 @@ html[data-perf='low'] .parts {
   margin-top: 10px;
 }
 
+/* 「试一下」：让台上那台底栏走一格 —— 「丰富」这一档有没有生效，
+   看一眼比读说明快。样式与 .tuner 同族（一块次级实底、无影子） */
+.replay {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  text-align: center;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.replay:active {
+  background: var(--line-strong);
+}
+
 .spec {
   margin-top: 10px;
   font-size: var(--fs-caption);
@@ -488,7 +570,9 @@ html[data-perf='low'] .parts {
 
 .modes li b {
   flex: none;
-  width: 62px;
+  /* 要放得下最长的那档「超高（优化）」（6 个全角字 × 14px）：列宽固定，
+     右边的说明才对得齐；窄了它就会折成「超高（优 / 化）」 */
+  width: 84px;
   font-size: var(--fs-subhead);
   font-weight: 600;
   color: var(--text-2);

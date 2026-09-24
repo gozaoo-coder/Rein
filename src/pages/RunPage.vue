@@ -508,103 +508,112 @@ function bumpKm(delta: number): void {
       </div>
 
       <!-- 准备页：目标选择 -->
-      <div v-if="r.phase === 'ready'" class="pane col center" data-rubber-self>
-        <p class="eyebrow">设定目标</p>
-        <SegmentedControl
-          class="seg"
-          :options="[
-            { value: 'open', label: '自由跑' },
-            { value: 'time', label: '时长' },
-            { value: 'distance', label: '距离' },
-          ]"
-          :model-value="r.goalKind"
-          @update:model-value="r.goalKind = $event as typeof r.goalKind"
-        />
+      <div v-if="r.phase === 'ready'" class="pane col center">
+        <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 页面框站住，只有 item 位移（system/rubberScroll） -->
+        <div class="rubber-layer" data-rubber-content>
+          <p class="eyebrow">设定目标</p>
+          <SegmentedControl
+            class="seg"
+            :options="[
+              { value: 'open', label: '自由跑' },
+              { value: 'time', label: '时长' },
+              { value: 'distance', label: '距离' },
+            ]"
+            :model-value="r.goalKind"
+            @update:model-value="r.goalKind = $event as typeof r.goalKind"
+          />
 
-        <div v-if="r.goalKind === 'time'" class="goalbox row">
-          <button class="gbtn" :disabled="r.goalTimeMin <= 5" @click="r.goalTimeMin -= 5">− 5</button>
-          <b class="num gval">{{ r.goalTimeMin }}</b>
-          <small class="gunit">分钟</small>
-          <button class="gbtn" :disabled="r.goalTimeMin >= 180" @click="r.goalTimeMin += 5">+ 5</button>
-        </div>
-        <div v-else-if="r.goalKind === 'distance'" class="goalbox row">
-          <button class="gbtn" @click="bumpKm(-0.5)">− 0.5</button>
-          <b class="num gval">{{ r.goalDistanceKm }}</b>
-          <small class="gunit">公里</small>
-          <button class="gbtn" @click="bumpKm(0.5)">+ 0.5</button>
-        </div>
-        <p v-else class="meta">不限时长与距离，随时结束并保存</p>
+          <div v-if="r.goalKind === 'time'" class="goalbox row">
+            <button class="gbtn" :disabled="r.goalTimeMin <= 5" @click="r.goalTimeMin -= 5">− 5</button>
+            <b class="num gval">{{ r.goalTimeMin }}</b>
+            <small class="gunit">分钟</small>
+            <button class="gbtn" :disabled="r.goalTimeMin >= 180" @click="r.goalTimeMin += 5">+ 5</button>
+          </div>
+          <div v-else-if="r.goalKind === 'distance'" class="goalbox row">
+            <button class="gbtn" @click="bumpKm(-0.5)">− 0.5</button>
+            <b class="num gval">{{ r.goalDistanceKm }}</b>
+            <small class="gunit">公里</small>
+            <button class="gbtn" @click="bumpKm(0.5)">+ 0.5</button>
+          </div>
+          <p v-else class="meta">不限时长与距离，随时结束并保存</p>
 
-        <button class="gobtn" @click="onGo">
-          <Play :size="30" :stroke-width="2.6" />
-          <span>开始跑步</span>
-        </button>
-        <p class="hint">点击后倒数 3 秒开跑 · 中途暂停不计时</p>
+          <button class="gobtn" @click="onGo">
+            <Play :size="30" :stroke-width="2.6" />
+            <span>开始跑步</span>
+          </button>
+          <p class="hint">点击后倒数 3 秒开跑 · 中途暂停不计时</p>
+        </div>
       </div>
 
       <!-- 进行中 / 暂停：时长 hero ＋ 千卡 ＋ 双配速对照卡 -->
-      <div v-else-if="r.phase === 'running' || r.phase === 'paused'" class="pane col center live" data-rubber-self>
-        <div class="time-row row between">
-          <div>
-            <b class="num tnum">{{ clockText }}</b>
-            <p class="tcap">{{ r.phase === 'paused' ? '已暂停' : '运动时长' }}</p>
+      <div v-else-if="r.phase === 'running' || r.phase === 'paused'" class="pane col center live">
+        <!-- 超范围平移层：同上（item 超伸） -->
+        <div class="rubber-layer" data-rubber-content>
+          <div class="time-row row between">
+            <div>
+              <b class="num tnum">{{ clockText }}</b>
+              <p class="tcap">{{ r.phase === 'paused' ? '已暂停' : '运动时长' }}</p>
+            </div>
+            <div class="kcal">
+              <b class="num">{{ r.kcal }}</b>
+              <span>千卡</span>
+            </div>
           </div>
-          <div class="kcal">
-            <b class="num">{{ r.kcal }}</b>
-            <span>千卡</span>
-          </div>
-        </div>
 
-        <div class="pace row">
-          <div class="col center">
-            <span class="lab"><i class="live-dot" />瞬时配速</span>
-            <b class="num pv">{{ instPaceText }}</b>
-            <span class="pu">/km</span>
+          <div class="pace row">
+            <div class="col center">
+              <span class="lab"><i class="live-dot" />瞬时配速</span>
+              <b class="num pv">{{ instPaceText }}</b>
+              <span class="pu">/km</span>
+            </div>
+            <div class="col center">
+              <span class="lab">平均配速</span>
+              <b class="num pv avg">{{ paceText }}</b>
+              <span class="pu">/km</span>
+            </div>
           </div>
-          <div class="col center">
-            <span class="lab">平均配速</span>
-            <b class="num pv avg">{{ paceText }}</b>
-            <span class="pu">/km</span>
-          </div>
-        </div>
 
-        <div class="ctl row">
-          <template v-if="r.phase === 'running'">
-            <button class="primary" @click="r.pause()">暂停</button>
-          </template>
-          <template v-else>
-            <button class="ghost danger" @click="endOpen = true">结束</button>
-            <button class="primary" @click="r.resume()">继续</button>
-          </template>
+          <div class="ctl row">
+            <template v-if="r.phase === 'running'">
+              <button class="primary" @click="r.pause()">暂停</button>
+            </template>
+            <template v-else>
+              <button class="ghost danger" @click="endOpen = true">结束</button>
+              <button class="primary" @click="r.resume()">继续</button>
+            </template>
+          </div>
         </div>
       </div>
 
       <!-- 总结页：核对（可修正距离）后保存 -->
-      <div v-else-if="r.phase === 'summary'" class="pane col center" data-rubber-self>
-        <span class="doneemoji">🏃</span>
-        <p class="donetitle">跑步完成</p>
-        <p class="num donemeta">
-          {{ clockText }}<template v-if="kmText !== '—'"> · {{ kmText }} km · {{ paceText }}/km</template>
-          · 约 {{ r.kcal }} 大卡
-        </p>
+      <div v-else-if="r.phase === 'summary'" class="pane col center">
+        <!-- 超范围平移层：同上（item 超伸） -->
+        <div class="rubber-layer" data-rubber-content>
+          <span class="doneemoji">🏃</span>
+          <p class="donetitle">跑步完成</p>
+          <p class="num donemeta">
+            {{ clockText }}<template v-if="kmText !== '—'"> · {{ kmText }} km · {{ paceText }}/km</template>
+            · 约 {{ r.kcal }} 大卡
+          </p>
 
-        <label class="distfield row between">
-          <span>距离（公里）</span>
-          <input
-            v-model="manualKmText"
-            class="num"
-            type="number"
-            inputmode="decimal"
-            step="0.01"
-            min="0"
-            max="999"
-            placeholder="未测得，可补填"
-          />
-        </label>
-        <p class="hint left">{{ kmText === '—' ? '未获取到定位：跑步机跑完可手动填距离' : 'GPS 距离已预填，可按实际修正' }}</p>
+          <label class="distfield row between">
+            <span>距离（公里）</span>
+            <input
+              v-model="manualKmText"
+              class="num"
+              type="number"
+              inputmode="decimal"
+              step="0.01"
+              min="0"
+              max="999"
+              placeholder="未测得，可补填"
+            />
+          </label>
+          <p class="hint left">{{ kmText === '—' ? '未获取到定位：跑步机跑完可手动填距离' : 'GPS 距离已预填，可按实际修正' }}</p>
 
-        <button class="primary" @click="doSave">保存训练</button>
-        <button class="ghost danger" @click="endOpen = true">放弃不保存</button>
+          <button class="primary" @click="doSave">保存训练</button>
+          <button class="ghost danger" @click="endOpen = true">放弃不保存</button>
+        </div>
       </div>
     </main>
 
@@ -988,6 +997,18 @@ function bumpKm(delta: number): void {
   gap: 14px;
   padding: 18px 28px calc(30px + var(--safe-bottom));
   overflow-y: auto;
+}
+
+/* 超范围平移层：镜像 .pane 的弹性列布局（只承载 transform，不改观感）。
+   flex:1 让内容不足一屏时由它占满容器、居中与原来一致；内容超一屏时按内容撑高，
+   滚动照常，且不会再出现「居中把顶部一截顶出可滚范围」的老问题。 */
+.rubber-layer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
 }
 
 .eyebrow {

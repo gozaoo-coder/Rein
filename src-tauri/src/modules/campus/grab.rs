@@ -2111,7 +2111,9 @@ fn resolve_intent(
                 }
                 let input = GrabTargetInput {
                     lesson_id: h.lesson.id.clone(),
-                    lesson_name: None,
+                    // 任务行上那一小段能分辨它的文字：项目名优先（体育课 8 个班
+                    // 的课程名一模一样，只写课程名认不出哪个是羽毛球）
+                    lesson_name: matcher::distinct_label(&h.lesson),
                     course_name: matcher::course_name_of(&h.lesson),
                     course_code: h.lesson.course.as_ref().and_then(|c| c.code.clone()),
                     teacher: matcher::teacher_text(&h.lesson),
@@ -4806,6 +4808,8 @@ mod tests {
             limit_count: Some(20),
             picked: false,
             fields: vec!["course".into()],
+            lesson_name: None,
+            minor_name: None,
         }];
         i.resolved_at = Some(now_ms());
         save_intent(&conn, &i).unwrap();

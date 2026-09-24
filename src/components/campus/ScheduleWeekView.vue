@@ -128,11 +128,11 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   <div ref="scroller" class="wrap" data-rubber-self>
     <div class="grid" :style="{ '--today-col': todayIndex + 1 }">
       <!-- 表头：星期 + 日期；左上角同时冻结两轴 -->
-      <div class="cell head corner">时间</div>
+      <div class="cell head corner glass-surface glass-edge-b">时间</div>
       <div
         v-for="(d, i) in days"
         :key="d"
-        class="cell head day"
+        class="cell head day glass-surface glass-edge-b"
         :class="{ today: i === todayIndex }"
       >
         <span class="dow">{{ dayLabel(d) }}</span>
@@ -235,14 +235,16 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 }
 
 /* ---------- 冻结三件套 ---------- */
+/* 表头格子：材质走全局那一份 .glass-surface（受光边 + 内顶高光 + 超高的光学层），
+   但**模糊半径自己压小**（14px）：这一行是 8 个各自带 backdrop-filter 的格子，
+   按令牌默认的 28px 走，冻结行的每帧合成成本要翻几倍 —— 令牌化之后，
+   「同一套材质、不同成本预算」只需要覆盖一个变量，不必再抄一份材质出来。
+   glass-edge-b：8 个格子只画各自的下缘，拼起来就是原来那条分隔线（四边都画会竖着切出格线）。 */
 .head {
+  --glass-blur: 14px;
   position: sticky;
   top: 0;
   z-index: 3;
-  background: var(--surface-translucent);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
-  border-bottom: 0.5px solid var(--line-strong);
 }
 
 .time {

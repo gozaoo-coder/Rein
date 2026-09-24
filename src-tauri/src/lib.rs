@@ -15,6 +15,10 @@ use crate::state::AppState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 系统通知：抢课结果的**最后一块**。引擎的前提是「用户不在场」，
+        // 而在此之前结果只存在于 App 内部（一条 12 秒的浮条 + 一个要主动点进去的面板）——
+        // 手机在兜里的时候，那等于没有结果。
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let conn = db::init(app.handle())?;
             app.manage(AppState::new(conn));
@@ -123,6 +127,7 @@ pub fn run() {
             modules::exercise_lib::commands::upsert_exercise,
             modules::exercise_lib::commands::delete_exercise,
             modules::exercise_lib::commands::restore_exercise,
+            modules::exercise_lib::commands::set_exercise_favorite,
             // program（健康方案：持久化 + 单激活 + 日程重排；计算在前端引擎）
             modules::program::commands::program_list,
             modules::program::commands::program_get_active,

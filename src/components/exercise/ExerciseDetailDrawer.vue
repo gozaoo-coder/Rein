@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import ExerciseHistoryPanel from '@/components/exercise/ExerciseHistoryPanel.vue'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
 import WeightCurve from '@/components/exercise/WeightCurve.vue'
 import { sessionService } from '@/services/sessionService'
@@ -28,6 +29,11 @@ const displayName = computed(() => (props.exercise ? lib.resolveName(props.exerc
 
 /** 激活肌群：库内显式数据优先，其次课程条目，最后按名关键词识别 */
 const activation = computed(() => (props.exercise ? lib.musclesOf(props.exercise) : null))
+
+/** 动作要领：来自动作库（课程条目不存要领） */
+const steps = computed(() =>
+  props.exercise ? (lib.get(props.exercise.exerciseId)?.steps ?? []) : [],
+)
 
 /* ---------- 重量曲线：打开且动作有力量记录时加载 ---------- */
 
@@ -123,9 +129,21 @@ const stats = computed<{ k: string; v: string }[]>(() => {
         </div>
       </template>
 
+      <template v-if="exercise.exerciseId">
+        <p class="sec">历史与 PR<span class="secsub">正式组口径，热身不计容量</span></p>
+        <ExerciseHistoryPanel :exercise-id="exercise.exerciseId" />
+      </template>
+
       <template v-if="exercise.tips">
         <p class="sec">动作要点</p>
         <p class="tips">{{ exercise.tips }}</p>
+      </template>
+
+      <template v-if="steps.length">
+        <p class="sec">动作要领<span class="secsub">按顺序一步步做</span></p>
+        <ol class="steps">
+          <li v-for="(s, i) in steps" :key="i">{{ s }}</li>
+        </ol>
       </template>
     </template>
   </SheetModal>
@@ -171,6 +189,41 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   font-weight: 700;
   letter-spacing: 0.4px;
   color: var(--text-3);
+}
+
+/* 动作要领：分步说明 */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-left: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  position: relative;
+  padding-left: 26px;
+  font-size: var(--fs-footnote);
+  line-height: 1.65;
+  color: var(--text-1);
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 
 .secsub {

@@ -8,13 +8,16 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
-import { resolveActivation } from '@/config/muscles'
+import { normalizeActivation, resolveActivation, type MuscleKey } from '@/config/muscles'
 import { exerciseLibService } from '@/services/exerciseLibService'
+import { libraryMuscles } from '@/utils/libraryMuscles'
 import type {
   ExerciseCategory,
+  ExerciseEquipment,
   ExerciseInput,
   ExerciseKind,
   ExerciseRecord,
+  ExerciseSort,
   PlanExercise,
 } from '@/types'
 
@@ -60,6 +63,20 @@ export const useExerciseLibStore = defineStore('exerciseLib', () => {
     await load(true)
   }
 
+  /** 收藏 / 取消收藏：先乐观更新（列表立即置顶），失败再回滚 */
+  async function setFavorite(id: string, favorite: boolean): Promise<void> {
+    const rec = get(id)
+    if (!rec) return
+    const prev = rec.favorite
+    rec.favorite = favorite
+    try {
+      await exerciseLibService.setFavorite(id, favorite)
+    } catch (e) {
+      rec.favorite = prev
+      throw e
+    }
+  }
+
   function get(id: string): ExerciseRecord | null {
     return byId.value.get(id) ?? null
   }
@@ -72,11 +89,14 @@ export const useExerciseLibStore = defineStore('exerciseLib', () => {
   /**
    * 展示用肌群激活表：库内显式数据优先，其次课程条目自带（AI 写入），
    * 最后按动作名关键词识别（自建动作没填肌群时的兜底）。
+   * 两条显式来源都过一遍白名单（防止历史脏数据带出未知键）。
    */
   function musclesOf(item: PlanExercise): ReturnType<typeof resolveActivation> {
     const lib = get(item.exerciseId)
-    if (lib && Object.keys(lib.muscles ?? {}).length) return lib.muscles
-    if (item.muscles && Object.keys(item.muscles).length) return item.muscles
+    const explicit = normalizeActivation(
+      Object.keys(lib?.muscles ?? {}).length ? lib?.muscles : item.muscles,
+    )
+    if (Object.keys(explicit).length) return explicit
     return resolveActivation(resolveName(item))
   }
 
@@ -90,22 +110,51 @@ export const useExerciseLibStore = defineStore('exerciseLib', () => {
     return list.value.filter((e) => e.kind === kind && !e.hidden && e.id !== excludeId)
   }
 
-  /** 本地检索：picker 实时过滤（名称/别名/分类）；隐藏的内置动作默认不出现在结果里 */
+  /**
+   * 本地检索 / 筛选（picker 与动作库页共用，纯内存）。
+   * - 关键词命中名称或别名；`muscles` 多选 = 命中任一（按**展示用**肌群表判断，
+   *   与图上看到的一致：显式数据优先，空表按名称规则兜底）；
+   * - 排序：收藏永远置顶，其余按所选口径（最近使用 / 名称 / 训练次数）。
+   */
   function search(
     query: string,
-    opts?: { kind?: ExerciseKind; category?: ExerciseCategory; includeHidden?: boolean },
+    opts?: {
+      kind?: ExerciseKind
+      category?: ExerciseCategory
+      equipment?: ExerciseEquipment
+      muscles?: MuscleKey[]
+      onlyFavorite?: boolean
+      includeHidden?: boolean
+      sort?: ExerciseSort
+    },
   ): ExerciseRecord[] {
     const q = query.trim().toLowerCase()
-    return list.value.filter((e) => {
+    const wantMuscles = opts?.muscles?.length ? new Set(opts.muscles) : null
+    const rows = list.value.filter((e) => {
       if (e.hidden && !opts?.includeHidden) return false
       if (opts?.kind && e.kind !== opts.kind) return false
       if (opts?.category && e.category !== opts.category) return false
+      if (opts?.equipment && e.equipment !== opts.equipment) return false
+      if (opts?.onlyFavorite && !e.favorite) return false
+      if (wantMuscles) {
+        const map = libraryMuscles(e)
+        if (!Object.keys(map).some((k) => wantMuscles.has(k as MuscleKey))) return false
+      }
       if (!q) return true
-      return (
-        e.name.toLowerCase().includes(q) ||
-        e.aliases.some((a) => a.toLowerCase().includes(q))
-      )
+      return e.name.toLowerCase().includes(q) || e.aliases.some((a) => a.toLowerCase().includes(q))
     })
+    const sort = opts?.sort ?? 'recent'
+    if (sort !== 'recent') {
+      // 稳定排序：收藏置顶优先，再按所选口径
+      const cmp =
+        sort === 'name'
+          ? (a: ExerciseRecord, b: ExerciseRecord) => a.name.localeCompare(b.name, 'zh-Hans-CN')
+          : (a: ExerciseRecord, b: ExerciseRecord) => b.sessions - a.sessions
+      rows.sort((a, b) => Number(b.favorite) - Number(a.favorite) || cmp(a, b))
+      return rows
+    }
+    // 「最近使用」= 后端顺序；只把收藏稳提到最前
+    return [...rows].sort((a, b) => Number(b.favorite) - Number(a.favorite))
   }
 
   return {
@@ -118,6 +167,7 @@ export const useExerciseLibStore = defineStore('exerciseLib', () => {
     upsert,
     remove,
     restore,
+    setFavorite,
     get,
     resolveName,
     musclesOf,

@@ -13,25 +13,52 @@ import { computed, ref, watch } from 'vue'
  * 把半透明表面换成实底；PageHeader 读降级态把渐进模糊换成底色遮罩。
  * 后台挂起（窗口最小化 / 系统休眠）造成的长间隔不是掉帧，直接丢弃。
  *
- * 四个档位（data-perf 的取值与之一致）：
- *   auto  按掉帧判定自动在 high / low 之间切
- *   high  始终高画质（毛玻璃 + 渐进模糊 + 动效）
- *   ultra 超高：在 high 之上再开**液态玻璃**（GlassSurface 的折射表面）——
- *         只有它认 `backdrop-filter: url(#svg-filter)` 的内核画得出来，
- *         所以能力不足时这一档退化回 high 的观感（见 liquidGlass）。
- *   low   流畅优先（玻璃顶成实底、关模糊与循环动画）
+ * 五个档位（data-perf 的取值与之一致）：
+ *   auto      按掉帧判定自动在 high / low 之间切
+ *   high      始终高画质（毛玻璃 + 渐进模糊 + 动效）
+ *   ultra     超高：在 high 之上再开**液态玻璃**（GlassSurface 的折射表面）——
+ *             只有它认 `backdrop-filter: url(#svg-filter)` 的内核画得出来，
+ *             所以能力不足时这一档退化回 high 的观感（见 liquidGlass）。
+ *   ultra-opt 超高（优化）：与 ultra **同一套观感**，换一条更省的滤镜管线。
+ *             现行管线用三个 feDisplacementMap 按 R/G/B 分通道位移再 screen 复合回来，
+ *             但当三个通道偏移相等（出厂值 0/0/0）时那套复合在数学上是**恒等变换** ——
+ *             实测 0/399900 像素差。这一档因此只留一次位移（10 个原语 → 3 个），
+ *             并顺带去掉无效重烘（见 glassPipeline 与 GlassSurface 的头注释）。
+ *             data-perf 仍写 ultra（观感档位没变），实际管线走 data-glass。
+ *   low       流畅优先（玻璃顶成实底、关模糊与循环动画）
  */
 
-export type PerfMode = 'auto' | 'high' | 'ultra' | 'low'
+export type PerfMode = 'auto' | 'high' | 'ultra' | 'ultra-opt' | 'low'
+
+/**
+ * 折射表面的滤镜管线：
+ *   full      feImage + 3×feDisplacementMap + 3×feColorMatrix + 2×feBlend + feGaussianBlur
+ *   collapsed feImage + 1×feDisplacementMap + feGaussianBlur（三通道偏移相等时与 full 逐像素等价）
+ *   off       不画折射
+ */
+export type GlassPipeline = 'full' | 'collapsed' | 'off'
 
 /**
  * 档位清单：设置页与画质预览页共用这一份（标签、说明都不在页面里另抄一遍）。
  * hint 说的是这一档**做了什么**，与页面上「此刻生效的是哪一档」是两件事。
+ *
+ * short 是分段控件里的写法：5 档 × 4 个汉字在 320px 宽的分段控件里放不下，
+ * 完整名字在下面的清单与副标里给足。
  */
-export const PERF_MODES: { value: PerfMode; label: string; hint: string }[] = [
+export const PERF_MODES: { value: PerfMode; label: string; short?: string; hint: string }[] = [
   { value: 'auto', label: '自动', hint: '按掉帧判定在 高画质 / 流畅优先 之间自动切' },
-  { value: 'high', label: '高画质', hint: '毛玻璃、渐进模糊与动效全开' },
-  { value: 'ultra', label: '超高', hint: '高画质之上再开液态玻璃（折射表面，最耗性能）' },
+  { value: 'high', label: '高画质', hint: '毛玻璃（四层材质）、渐进模糊与动效全开' },
+  {
+    value: 'ultra',
+    label: '超高',
+    hint: '高画质之上再加液态玻璃：六层材质（内圈描边 / 上缘焦散 / 外缘层）+ 离散控件的折射表面',
+  },
+  {
+    value: 'ultra-opt',
+    label: '超高（优化）',
+    short: '超高＋',
+    hint: '与「超高」同一套观感，换成塌缩管线（三通道合成在出厂参数下是恒等变换）',
+  },
   { value: 'low', label: '流畅优先', hint: '玻璃顶成实底、关模糊与循环动画' },
 ]
 
@@ -61,14 +88,14 @@ const RECOVER_WINDOWS = 4
 function loadMode(): PerfMode {
   try {
     const raw = localStorage.getItem(STORE_KEY)
-    if (raw === 'auto' || raw === 'high' || raw === 'ultra' || raw === 'low') return raw
+    if (raw === 'auto' || raw === 'high' || raw === 'ultra' || raw === 'ultra-opt' || raw === 'low') return raw
   } catch {
     /* 本地存储不可用时用默认档 */
   }
   return 'auto'
 }
 
-/** 用户档位：auto 按判定自动切换，high / ultra / low 手动钉死 */
+/** 用户档位：auto 按判定自动切换，high / ultra / ultra-opt / low 手动钉死 */
 export const perfMode = ref<PerfMode>(loadMode())
 
 /** auto 档下的判定结果（手动档不参与） */
@@ -102,13 +129,30 @@ export function supportsSvgBackdrop(): boolean {
 }
 
 /**
- * 液态玻璃开关（超高档专属）：用户选了超高、没被降级、且这台设备画得出来。
+ * 液态玻璃开关（两个超高档共用）：用户选了超高（任一版）、没被降级、且这台设备画得出来。
  * 判定放在 perf 层而不是组件里 —— 档位是应用级状态，「哪些表面用得起玻璃」
  * 应当由状态说了算，组件不该各自去猜。
  */
 export const liquidGlass = computed(
-  () => perfMode.value === 'ultra' && !perfDegraded.value && supportsSvgBackdrop(),
+  () => (perfMode.value === 'ultra' || perfMode.value === 'ultra-opt') && !perfDegraded.value && supportsSvgBackdrop(),
 )
+
+/**
+ * 实际生效的折射管线 —— GlassSurface 按它决定烘哪条滤镜链。
+ *
+ * 为什么「优化」能是**同一套观感**：现行链把背景位移三次（R/G/B 各一次）再 screen 复合。
+ * 三次的 scale 是 `distortionScale + 各通道 offset`；三个 offset 相等时三次位移的结果
+ * 完全相同，而三张「只剩单通道」的图 screen 起来正好还原成原色（screen 在通道互斥时
+ * 就是相加）—— 整段复合是恒等变换。出厂值三个 offset 都是 0，所以出厂观感走塌缩链
+ * 逐像素一致（台架实测 0/399900 像素差），而原语数从 10 降到 3。
+ *
+ * 通道偏移一旦被调开（调参面板能把它们拉开成色散），恒等就不成立了 ——
+ * 那时这一档也**老实退回 full 链**：GlassSurface 会自己判断（见 useCollapsed）。
+ */
+export const glassPipeline = computed<GlassPipeline>(() => {
+  if (!liquidGlass.value) return 'off'
+  return perfMode.value === 'ultra-opt' ? 'collapsed' : 'full'
+})
 
 export function setPerfMode(mode: PerfMode): void {
   perfMode.value = mode
@@ -211,12 +255,19 @@ export function kickPerfWatch(): void {
 }
 
 watch(
-  [perfDegraded, perfMode],
-  ([degraded, mode]) => {
+  [perfDegraded, perfMode, glassPipeline],
+  ([degraded, mode, pipeline]) => {
     // 档位原样写进 DOM：base.css 与各处断言都读它。
-    // 与 high 一样，ultra 是手动钉死的档，不参与掉帧判定 ——
+    // 与 high 一样，两个超高都是手动钉死的档，不参与掉帧判定 ——
     // 所以不会出现「选了超高又被悄悄降级」这种前后不一致的状态。
-    document.documentElement.dataset.perf = degraded ? 'low' : mode === 'ultra' ? 'ultra' : 'high'
+    // ultra-opt 写 ultra：**观感档位**没变（同一套折射），换的是实现。
+    // 实现单独写 data-glass，像素比对与性能台架读它。
+    document.documentElement.dataset.perf = degraded
+      ? 'low'
+      : mode === 'ultra' || mode === 'ultra-opt'
+        ? 'ultra'
+        : 'high'
+    document.documentElement.dataset.glass = pipeline
   },
   { immediate: true },
 )

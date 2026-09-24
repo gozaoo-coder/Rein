@@ -8,7 +8,9 @@
 
 pub mod commands;
 pub mod models;
+pub mod muscles;
 pub mod resolve;
+pub mod steps;
 
 use rusqlite::Row;
 
@@ -20,7 +22,7 @@ pub(crate) const EXERCISE_SELECT: &str = "\
     SELECT e.id, e.name, e.aliases, e.kind, e.category, e.equipment, e.muscles, e.tips, \
            e.default_sets, e.default_reps, e.default_weight_kg, e.default_target_sec, \
            e.default_duration_min, e.default_rest_sec, e.weight_step, e.is_custom, e.hidden, \
-           COALESCE(u.sessions, 0), u.last_date \
+           COALESCE(u.sessions, 0), u.last_date, e.steps, e.favorite \
     FROM exercises e \
     LEFT JOIN ( \
       SELECT s.exercise_id, COUNT(DISTINCT s.workout_id) AS sessions, MAX(w.date) AS last_date \
@@ -32,6 +34,7 @@ pub(crate) const EXERCISE_SELECT: &str = "\
 pub(crate) fn exercise_from_row(row: &Row<'_>) -> rusqlite::Result<ExerciseRecord> {
     let aliases: String = row.get(2)?;
     let muscles: String = row.get(6)?;
+    let steps: String = row.get(19)?;
     Ok(ExerciseRecord {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -52,5 +55,7 @@ pub(crate) fn exercise_from_row(row: &Row<'_>) -> rusqlite::Result<ExerciseRecor
         hidden: row.get::<_, i64>(16)? != 0,
         sessions: row.get(17)?,
         last_used_at: row.get(18)?,
+        steps: serde_json::from_str(&steps).unwrap_or_default(),
+        favorite: row.get::<_, i64>(20)? != 0,
     })
 }

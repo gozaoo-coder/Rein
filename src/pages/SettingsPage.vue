@@ -9,6 +9,7 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { toggleablePlugins } from '@/plugins'
 import { usePomodoroStore } from '@/stores/pomodoro'
 import { useUpdateStore } from '@/stores/update'
+import { MOTION_LEVELS, motionEffective, motionLevel, setMotionLevel, type MotionLevel } from '@/system/motion'
 import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, type PerfMode } from '@/system/perf'
 
 /**
@@ -29,8 +30,8 @@ const updateHint = computed(() => {
   return `当前 v${update.currentVersion || '—'}`
 })
 
-/** 性能档位：auto 按掉帧判定自动切换，high / ultra / low 手动钉死（判定逻辑见 system/perf） */
-const PERF_OPTIONS = PERF_MODES.map(({ value, label }) => ({ value, label }))
+/** 性能档位：auto 按掉帧判定自动切换，high / ultra / ultra-opt / low 手动钉死（判定逻辑见 system/perf） */
+const PERF_OPTIONS = PERF_MODES.map(({ value, label, short }) => ({ value, label: short ?? label }))
 
 const perfChoice = computed({
   get: () => perfMode.value as string,
@@ -43,8 +44,31 @@ const perfChoice = computed({
 const perfHint = computed(() => {
   if (perfMode.value === 'low') return '始终流畅优先'
   if (perfMode.value === 'ultra') return liquidGlass.value ? '超高 · 液态玻璃已开' : '超高（本机不支持折射）'
+  if (perfMode.value === 'ultra-opt') {
+    return liquidGlass.value ? '超高（优化）· 折射已开，走塌缩管线' : '超高（优化）（本机不支持折射）'
+  }
   if (perfMode.value === 'high') return '始终高画质'
   return perfDegraded.value ? '已自动降级' : '当前高画质'
+})
+
+/** 动效档位：关闭 / 默认 / 丰富（三档在分段控件里放得下完整名字，不必再给 short） */
+const MOTION_OPTIONS = MOTION_LEVELS.map(({ value, label }) => ({ value, label }))
+
+const motionChoice = computed({
+  get: () => motionLevel.value as string,
+  set: (v: string) => {
+    if (MOTION_LEVELS.some((m) => m.value === v)) setMotionLevel(v as MotionLevel)
+  },
+})
+
+/** 副标要报**实际生效**的那一档：被系统减弱动效、或被掉帧压回默认时，
+ *  用户选的那一档并没有生效 —— 与 perfHint 同一条原则（如实说，别让人对着假象猜） */
+const motionHint = computed(() => {
+  if (motionLevel.value === 'off') return '不做补间'
+  if (motionEffective.value !== motionLevel.value) {
+    return motionEffective.value === 'off' ? '系统已要求减弱动效' : '已随掉帧退回默认'
+  }
+  return `当前${MOTION_LEVELS.find((m) => m.value === motionLevel.value)?.label ?? ''}`
 })
 
 onMounted(() => {
@@ -96,7 +120,8 @@ onMounted(() => {
       <p class="pnote t-3">
         连续掉帧时自动降级：页头的渐进模糊换成底色遮罩，并关掉毛玻璃与循环动画。
         低端机可手动固定「流畅优先」，画面更好的机器可固定「高画质」省去判定；
-        「超高」在高画质之上再开液态玻璃（折射表面），是本机最耗性能的一档。
+        「超高」在高画质之上再开液态玻璃（折射表面），是本机最耗性能的一档；
+        「超高（优化）」与它同一套观感，只是换成塌缩管线（省掉恒等的三通道复合）。
       </p>
       <button class="frow row" @click="router.push({ name: 'settings-perf' })">
         <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
@@ -108,6 +133,24 @@ onMounted(() => {
         </span>
         <ChevronRight :size="16" class="t-3" />
       </button>
+    </section>
+
+    <!-- 动效：与画质档位正交的另一档（判定与落地见 system/motion） -->
+    <section class="card">
+      <header class="row between ghead">
+        <h2 class="gtitle">动效</h2>
+        <span class="t-3">{{ motionHint }}</span>
+      </header>
+      <SegmentedControl v-model="motionChoice" class="perfseg" :options="MOTION_OPTIONS" />
+      <p class="pnote t-3">
+        「默认」就是现在这一套，不加任何装饰；「丰富」在它之上再加液态玻璃的动作 ——
+        底栏与分段控件的液态融合与形变、跟随按压点的定向光晕、抽屉与菜单的透镜式进出、
+        页头随滚动收缩与还原。「关闭」不做任何补间：状态直接切换，循环动画也停住。
+      </p>
+      <p class="pnote t-3">
+        动效与画质互不影响：画质档位管的是「这块玻璃画不画得出来」，这里管的是
+        「界面要不要动」。掉帧降级时丰富档会自动退回默认，不会一边掉帧一边加合成。
+      </p>
     </section>
 
     <!-- 关于 -->

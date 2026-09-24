@@ -119,12 +119,13 @@ async function connect(pageTargetUrl) {
 /** 抽屉/弹层里某个面板的可见文本 */
 const PANEL_TEXT = `[...document.querySelectorAll('.panel')].map(p => p.textContent).join(' | ')`
 
-/** 动作库列表里按「准确名称」找行（避免「杠铃卧推」被「上斜杠铃卧推」子串命中） */
+/** 动作库列表里按「准确名称」找行（避免「杠铃卧推」被「上斜杠铃卧推」子串命中）
+ *  返回行内的主按钮（行本身是容器，右侧还有收藏星标按钮） */
 function rowNamed(name) {
   return `[...document.querySelectorAll('.exrow')].find(r => {
     const t = r.querySelector('.ename')?.textContent ?? ''
     return t.replace(/自建|已隐藏/g, '').trim() === ${JSON.stringify(name)}
-  })`
+  })?.querySelector('.main')`
 }
 
 async function main() {
@@ -165,7 +166,7 @@ async function main() {
         legacyUnlinked: lib.filter(e => e.isCustom && e.name.includes('卧推')).map(e => e.name),
       }
     })()`)
-    ok('L1a 内置动作库已上架（60 条）', contract.count === 60, String(contract.count))
+    ok('L1a 内置动作库已上架（60 内置 + 21 数据集导入 = 81 条）', contract.count === 81, String(contract.count))
     ok(
       'L1b 内置动作带显式肌群表（含胸大肌上/下束细分）',
       contract.benchMuscles?.['chest-low'] === 3 && contract.benchMuscles?.['chest-up'] === 2,
@@ -407,6 +408,107 @@ async function main() {
     ok('L8a 本周容量卡渲染肌群行', !!volume && volume.rows.length > 0, JSON.stringify(volume?.rows?.slice(0, 3)))
     ok('L8b 容量行含「已完成/建议」组数', !!volume && /\d+(\.\d+)?\/\d+/.test(volume.rows[0] ?? ''), volume?.rows?.[0])
     ok('L8c 脚注写明折算与依据', !!volume && volume.foot.includes('辅助') && volume.foot.includes('组/周'))
+
+    /* ---------- L9. 筛选 / 收藏 / 要领 / 历史（补齐 wger 短板的四项） ---------- */
+    await evalJS(`location.hash = '#/sports/exercises'`)
+    await sleep(1200)
+
+    // L9a 筛选面板：器材 = 哑铃
+    await clickButton('筛选')
+    await sleep(700)
+    ok('L9a 筛选面板打开（含排序与器材）', await evalJS(
+      `${PANEL_TEXT}.includes('筛选与排序') && ${PANEL_TEXT}.includes('器材')`,
+    ))
+    await evalJS(`(() => {
+      const chip = [...document.querySelectorAll('.panel .chip')].find(c => c.textContent.trim() === '哑铃')
+      chip?.click()
+    })()`)
+    await sleep(400)
+    await evalJS(`[...document.querySelectorAll('.panel button')].find(b => b.textContent.includes('完成'))?.click()`)
+    await sleep(500)
+    ok('L9b 器材筛选生效（只剩哑铃动作）', await evalJS(`(() => {
+      const rows = [...document.querySelectorAll('.exrow')].map(r => r.textContent)
+      return rows.length > 0 && rows.some(t => t.includes('哑铃卧推')) && !rows.some(t => t.includes('杠铃深蹲'))
+    })()`))
+    // 复位筛选
+    await clickButton('筛选')
+    await sleep(600)
+    await evalJS(`[...document.querySelectorAll('.panel button')].find(b => b.textContent.trim() === '重置')?.click()`)
+    await sleep(300)
+    await evalJS(`[...document.querySelectorAll('.panel button')].find(b => b.textContent.includes('完成'))?.click()`)
+    await sleep(500)
+
+    // L9c 肌群筛选：菱形肌（深层键）
+    await clickButton('筛选')
+    await sleep(700)
+    await evalJS(`(() => {
+      const chip = [...document.querySelectorAll('.panel .chip')].find(c => c.textContent.trim() === '菱形肌')
+      chip?.click()
+    })()`)
+    await sleep(300)
+    await evalJS(`[...document.querySelectorAll('.panel button')].find(b => b.textContent.includes('完成'))?.click()`)
+    await sleep(500)
+    ok('L9c 按深层肌群筛选（菱形肌 → 划船/引体）', await evalJS(`(() => {
+      const rows = [...document.querySelectorAll('.exrow')].map(r => r.textContent)
+      return rows.length > 0 &&
+        rows.some(t => t.includes('划船') || t.includes('引体')) &&
+        !rows.some(t => t.includes('深蹲'))
+    })()`))
+    await clickButton('筛选')
+    await sleep(600)
+    await evalJS(`[...document.querySelectorAll('.panel button')].find(b => b.textContent.trim() === '重置')?.click()`)
+    await sleep(300)
+    await evalJS(`[...document.querySelectorAll('.panel button')].find(b => b.textContent.includes('完成'))?.click()`)
+    await sleep(500)
+
+    // L9d 收藏：星标置顶 + 落库（命令契约）
+    await evalJS(`(() => {
+      const row = ${rowNamed('杠铃卧推')}
+      row?.parentElement?.querySelector('.starbtn')?.click()
+    })()`)
+    await sleep(500)
+    ok('L9d 收藏后置顶并高亮星标', await evalJS(`(() => {
+      const first = document.querySelector('.exrow')
+      return first?.textContent.includes('杠铃卧推') &&
+        first?.querySelector('.starbtn')?.classList.contains('on')
+    })()`))
+    ok('L9e 收藏落库（set_exercise_favorite 契约）', await evalJS(`(async () => {
+      const { invoke } = await import('/src/services/transport.ts')
+      const lib = await invoke('list_exercises', { includeHidden: true })
+      return lib.find(e => e.id === 'barbell-bench-press')?.favorite === true
+    })()`))
+    // 取消收藏，避免影响后续断言
+    await evalJS(`(() => {
+      const row = ${rowNamed('杠铃卧推')}
+      row?.parentElement?.querySelector('.starbtn')?.click()
+    })()`)
+    await sleep(400)
+
+    // L9f 动作要领：数据集导入的动作带中文分步说明
+    await evalJS(`(${rowNamed('反握引体向上')})?.click()`)
+    await sleep(900)
+    ok('L9f 导入动作带动作要领（分步列表）', await evalJS(
+      `document.querySelectorAll('.panel .steps li').length >= 3`,
+    ))
+    ok('L9g 导入动作的肌群表已评审（含大圆肌/二头主攻）', await evalJS(`(async () => {
+      const { invoke } = await import('/src/services/transport.ts')
+      const lib = await invoke('list_exercises', { includeHidden: true })
+      const e = lib.find(x => x.name === '反握引体向上')
+      return e?.muscles?.lats === 3 && e?.muscles?.['teres-major'] === 2 && e?.muscles?.biceps === 3
+    })()`))
+
+    // L9h 历史与 PR 面板（演示数据 4 次）
+    await evalJS(`document.querySelector('.panel .sheet-close')?.click()`)
+    await sleep(400)
+    await evalJS(`(${rowNamed('杠铃卧推')})?.click()`)
+    await sleep(1000)
+    ok('L9h 详情含历史与 PR 面板', await evalJS(
+      `${PANEL_TEXT}.includes('历史与 PR') && ${PANEL_TEXT}.includes('最佳估算 1RM')`,
+    ))
+    ok('L9i 历史行按场次聚合（组数/最重/容量）', await evalJS(`(() => {
+      const rows = [...document.querySelectorAll('.panel .hrow')].map(r => r.textContent.replace(/\\s+/g, ' ').trim())
+      return rows.length >= 1 && rows.every(t => /\\d+ 组/.test(t) && /kg/.test(t))
+    })()`))
 
     /* ---------- 汇总 ---------- */
     const failed = results.filter((r) => !r.pass)

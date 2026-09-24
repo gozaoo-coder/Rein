@@ -23,15 +23,22 @@
   正面视线 +Y、背面 −Y、侧面 −X（从受试者左侧看，面朝左），三视图均为等大正投影。
 - **层叠**：画家算法 —— 每个分区按观察深度排序，远的下、近的上。
   深层肌群同样被画出来，只是被浅层盖住，因此「隐去浅层」即可看到真实深层结构。
-- **分区粒度**：26 个肌束级分区，与 `src/config/muscles.ts` 的 `MuscleKey` 一一对应。
+- **分区粒度**：39 个肌束级分区，与 `src/config/muscles.ts` 的 `MuscleKey` 一一对应：
+  26 个浅/深层主分区 + 13 个深层结构与补充肌束（大圆肌、菱形肌、肩袖、前锯肌、髂腰肌、
+  臀小肌、股中间肌、肩胛提肌、胫骨后肌、腓骨肌群、跖肌、腘肌、股方肌）。
   其中三角肌前/中/后束直接对应 FMA 的 **clavicular / acromial / spinal part of deltoid**，
   胸大肌上/下束对应 **clavicular part / sternocostal + abdominal part of pectoralis major**，
   斜方肌上/中/下束对应 **descending / transverse / ascending part of trapezius** ——
   细分来自解剖本体而非人为切分。
-- **额外**：另绘制 15 组真实深层结构（肩袖、臀小肌、髂腰肌、股中间肌等），
-  以 `class="a"` 标记，只作解剖填充、不参与高亮，隐去浅层后可见。
-- **校验**：`node scripts/e2e-muscle-map.mjs`（无头浏览器，断言三视图分区齐备、
-  分区路径无内联 fill、浅层/深层标注与开关、单束高亮不影响相邻束）。
+- **深层结构的绘制方式**：13 个深层键以 `data-layer="2"` 输出（与浅层同构），只是位置在画家
+  顺序里更靠里、平时折叠；**激活时由 `MuscleMap.vue` 再叠画一层（`.overlay`）**，因此
+  「菱形肌/股中间肌被浅层盖住导致标了看不见」不会再出现。
+  `scripts/anatomy/taxonomy.mjs` 已把这 13 组并入 `MUSCLE_MESHES`：**下次跑
+  `fetch-anatomy` + `build-anatomy` 重建时会输出 `class="m"`**；当前仓库里的 SVG 还是上一版
+  构建的 `class="a"` —— 组件按「键是否属于 MUSCLE_KEYS」判定可高亮（不看 class），
+  两条路径渲染完全一致。
+- **校验**：`node scripts/e2e-muscle-map.mjs`（无头浏览器，断言三视图 39 个分区齐备、
+  分区路径无内联 fill、浅层/深层标注与开关、深层激活后的叠加层、单束高亮不影响相邻束）。
 
 ### 两个数据缺口：背阔肌与腹直肌
 
