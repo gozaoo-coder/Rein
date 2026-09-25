@@ -216,6 +216,9 @@ html[data-perf='low'] {
   --glass-sheen: transparent;
   --glass-tab-fill: var(--surface-2);
   --glass-shadow: var(--shadow-float);
+  /* 浮起档的影子也没有意义了：弱档的玻璃已经是实底，再压一层更重的落影只会
+     让实底看起来像浮起来的贴纸。 */
+  --glass-shadow-lifted: var(--shadow-float);
 }
 
 html[data-perf='low'] *,

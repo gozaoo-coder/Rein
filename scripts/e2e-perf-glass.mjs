@@ -1010,19 +1010,16 @@ async function main() {
     )
     await evalJS(`localStorage.removeItem('rein.motion.v1')`)
 
-    // ---------- 9 运动沉浸页：材质铺到训练与跑步两套沉浸界面 ----------
+    // ---------- 9 运动沉浸页：分层契约（控制层玻璃 / 内容层实底 / 不许玻璃套玻璃） ----------
     //
-    // 契约：沉浸界面不吃第二份材质定义 —— 顶栏 / 进度条 / 底坞 / 内容卡 /
-    // 离散控件全部挂 **同一个** .glass-surface 类，靠 data-perf 的令牌分档。
-    // 断言查的是「这条类真的解析到同一份材质」而不是「长得像玻璃」：
-    // 背景取自 --glass-fill、模糊取自 --glass-blur、两端描边取自 rim 令牌。
-    // 另有一条硬约束：跑步页的抽屉**不该**是玻璃 —— 它是大面积可滚动载体，
-    // 自己带 backdrop-filter 会把里面每块玻璃的采样范围锁死。
+    // 契约（按苹果 Liquid Glass 的三层模型）：玻璃只属于**控制层** —— 顶簇 / 组格轨 /
+    // 图标钮 / 次按钮挂同一个 .glass-surface 类，靠 data-perf 的令牌分档；
+    // 而 .setcard / .blockcard 是**内容层**，必须是实底：把内容做成玻璃会跟控件抢
+    // 注意力、把层级搅浑，而且它们要从底簇玻璃下面滚过去，自己再是玻璃就成了
+    // 玻璃套玻璃（苹果明令避免，上层只许用 fills / transparency / vibrancy）。
     //
     // 作用域必须锁在 .session-layer 里：**底栏 Dock 也叫 .dock**，而它是 App.vue
     // 全局常驻的（沉浸层打开时它只是被移开视线，DOM 里还在）。
-    // 用 document.querySelector 会先命中底栏那条 —— 量到的是「底栏没有玻璃」
-    // （底栏的玻璃在它内部三块上），而不是沉浸层坞的材质。
     const IMMERSIVE_PROBE = `(() => {
       const scope = document.querySelector('.session-layer') || document
       const read = (sel) => {
@@ -1039,15 +1036,18 @@ async function main() {
         }
       }
       const token = (k) => getComputedStyle(document.documentElement).getPropertyValue(k).trim()
+      const glassEls = [...scope.querySelectorAll('.glass-surface')]
       return {
         perf: document.documentElement.dataset.perf,
         motion: document.documentElement.dataset.motion,
         fill: token('--glass-fill'),
         blurToken: token('--glass-blur'),
         rimHi: token('--glass-rim-hi'),
-        sels: ['.shead', '.progwrap', '.dock', '.setcard', '.blockcard', '.ghost', '.iconbtn']
-          .map(read)
-          .filter(Boolean),
+        glass: ['.ctrl-top', '.track', '.ghost', '.iconbtn'].map(read).filter(Boolean),
+        content: ['.setcard', '.blockcard', '.wbtn'].map(read).filter(Boolean),
+        glassTotal: glassEls.length,
+        // 玻璃块里还套着玻璃块的个数。契约上是 0。
+        nested: glassEls.filter((el) => el.parentElement?.closest('.glass-surface')).length,
       }
     })()`
 
@@ -1102,34 +1102,47 @@ async function main() {
       morphing === false,
       `is-morphing=${morphing}`,
     )
-    if (session.sels.length >= 4) {
+    if (session.glass.length >= 2) {
       await shot('immersive-session-ultra')
       ok(
-        '超高 · 训练沉浸层的 chrome 与内容卡都接上同一份 .glass-surface 材质',
-        session.sels.every((r) => isGlassSurface(r, session)),
-        `blurToken=${JSON.stringify(session.blurToken)} · 不合格：${session.sels.filter((r) => !isGlassSurface(r, session)).map((r) => `${r.sel}[grad=${r.bgImage.split('linear-gradient').length - 1} border-box=${r.bgImage.includes('border-box')} padding-box=${r.bgImage.includes('padding-box')} blurMatch=${r.blur.includes(session.blurToken)}]`).join(' ') || '无'}`,
+        '超高 · 沉浸层控制层的玻璃块都接上同一份 .glass-surface 材质',
+        session.glass.every((r) => isGlassSurface(r, session)),
+        `blurToken=${JSON.stringify(session.blurToken)} · 不合格：${session.glass.filter((r) => !isGlassSurface(r, session)).map((r) => `${r.sel}[grad=${r.bgImage.split('linear-gradient').length - 1} blurMatch=${r.blur.includes(session.blurToken)}]`).join(' ') || '无'}`,
       )
       ok(
-        '超高 · 沉浸层的光学层（内圈描边 / 焦散）都已就位',
-        session.sels.every((r) => r.shadow.includes('inset')),
-        `缺 inset 的：${session.sels.filter((r) => !r.shadow.includes('inset')).map((r) => r.sel).join(' ') || '无'} · 首块 ${session.sels[0]?.shadow?.slice(0, 100)}`,
+        '超高 · 沉浸层控制层的光学层（内圈描边 / 焦散）都已就位',
+        session.glass.every((r) => r.shadow.includes('inset')),
+        `缺 inset 的：${session.glass.filter((r) => !r.shadow.includes('inset')).map((r) => r.sel).join(' ') || '无'}`,
+      )
+      // 内容层必须是实底：苹果那条「把表格做成玻璃会让它跟别的元素抢注意力、
+      // 把层级搅浑，所以留在内容层」。模糊一旦出现在这里就是分层被写反了。
+      ok(
+        '超高 · 内容卡留在内容层（不是玻璃：无模糊、无玻璃底）',
+        session.content.length > 0 && session.content.every((r) => r.blur === 'none'),
+        `${session.content.length} 块 · 仍是玻璃的：${session.content.filter((r) => r.blur !== 'none').map((r) => r.sel).join(' ') || '无'}`,
+      )
+      // 这条是本次重做的核心回归：玻璃块之间的嵌套必须恒为 0。
+      ok(
+        '超高 · 沉浸层没有玻璃套玻璃',
+        session.nested === 0,
+        `共 ${session.glassTotal} 块玻璃，其中嵌套的 ${session.nested} 块`,
       )
     } else {
-      ok('训练沉浸层可被探针触及（真实入口可达）', false, `入口=${opened} · 只量到 ${session.sels.length} 块：${session.sels.map((r) => r.sel).join(' ')}`)
+      ok('训练沉浸层可被探针触及（真实入口可达）', false, `入口=${opened} · 只量到 ${session.glass.length} 块：${session.glass.map((r) => r.sel).join(' ')}`)
     }
 
-    // 弱档：同一批表面必须整体顶成实底且不挂模糊（退化语义不能只覆盖 Dock）。
+    // 弱档：同一批**控制层玻璃**必须整体顶成实底且不挂模糊（退化语义不能只覆盖 Dock）。
     // 判「实底」不能看 background-color —— 玻璃的底是 background 里那条渐变，
     // background-color 恒为 transparent（这是设计，不是漏洞）。要看渐变里那层
     // padding-box 的颜色是不是已经被 --glass-fill 顶成了不透明的那个值。
     await setTier('low')
     const sessionLow = await evalJS(IMMERSIVE_PROBE)
     ok(
-      '流畅档 · 沉浸层同一批表面顶成实底、模糊被全局关掉',
-      sessionLow.sels.length > 0 &&
-        sessionLow.sels.every((r) => r.blur === 'none') &&
-        sessionLow.sels.every((r) => !r.bgImage.includes('border-box') || r.bgImage.includes(sessionLow.fill)),
-      `${sessionLow.sels.length} 块 · blur=${sessionLow.sels[0]?.blur} · --glass-fill=${sessionLow.fill}`,
+      '流畅档 · 沉浸层控制层顶成实底、模糊被全局关掉',
+      sessionLow.glass.length > 0 &&
+        sessionLow.glass.every((r) => r.blur === 'none') &&
+        sessionLow.glass.every((r) => !r.bgImage.includes('border-box') || r.bgImage.includes(sessionLow.fill)),
+      `${sessionLow.glass.length} 块 · blur=${sessionLow.glass[0]?.blur} · --glass-fill=${sessionLow.fill}`,
     )
 
     await setTier('ultra')

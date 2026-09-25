@@ -202,8 +202,8 @@ async function main() {
       })()`,
     ))
     ok('S3c 热身坞有完成与跳过两键', await evalJS(
-      `[...document.querySelectorAll('.dock button')].some(b => b.textContent.includes('完成热身组')) &&
-       [...document.querySelectorAll('.dock button')].some(b => b.textContent.includes('跳过热身'))`,
+      `[...document.querySelectorAll('.ctrl-dock button')].some(b => b.textContent.includes('完成热身组')) &&
+       [...document.querySelectorAll('.ctrl-dock button')].some(b => b.textContent.includes('跳过热身'))`,
     ))
 
     /* ---------- S4. 完成两组热身 → 进入正式组 ---------- */
@@ -252,7 +252,7 @@ async function main() {
     ok('S5e 点「上次」候选设回 62.5kg', (await weightValue()) === '62.5')
 
     /* ---------- S6. 当前动作详解内嵌重量曲线（演示历史 4 次） ---------- */
-    await evalJS(`document.querySelector('.dock .iconbtn[aria-label="更多功能"]')?.click()`)
+    await evalJS(`document.querySelector('.ctrl-dock .iconbtn[aria-label="更多功能"]')?.click()`)
     await sleep(500)
     await clickButton('当前动作详解')
     await sleep(900)
@@ -269,10 +269,10 @@ async function main() {
     await sleep(500)
 
     /* ---------- S7. 完成一组（登记 62.5kg）→ 结束并保存 ---------- */
-    await clickButton('完成第 1 组', '.dock')
+    await clickButton('完成第 1 组', '.ctrl-dock')
     await sleep(600)
     ok('S7a 顶栏组数 +1（不含热身）', await evalJS(
-      `/^1\\//.test(document.querySelector('.shead .pcapsule .num')?.textContent.trim() ?? '')`,
+      `/^1\\//.test(document.querySelector('.ctrl-top .pcapsule .num')?.textContent.trim() ?? '')`,
     ))
     ok('S7b 休息页显示下一组重量', await evalJS(
       `(() => {
@@ -280,7 +280,7 @@ async function main() {
         return !!meta && meta.textContent.includes('62.5 kg')
       })()`,
     ))
-    await clickButton('结束', '.shead')
+    await clickButton('结束', '.ctrl-top')
     await sleep(500)
     await clickButton('结束并保存')
     await waitFor(`location.hash.includes('/sports')`, 8000, '保存后回运动页')

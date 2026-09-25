@@ -125,7 +125,7 @@ try {
       requestAnimationFrame(sample)
     }
     requestAnimationFrame(sample)
-    document.querySelector('.shead .min')?.click()
+    document.querySelector('.ctrl-top .min')?.click()
   })()`)
   await sleep(120)
   const t2mid = await evalJS(`(() => {
@@ -197,7 +197,7 @@ try {
   ok('T3 悬浮条恢复沉浸层', true)
 
   /* ---------- T4. 收起动画进行中再展开（重入）→ 沉浸层保持可见 ---------- */
-  await evalJS(`document.querySelector('.shead .min')?.click()`)
+  await evalJS(`document.querySelector('.ctrl-top .min')?.click()`)
   await sleep(120) // 动画中途
   await evalJS(`document.querySelector('.wdock-root [aria-label="恢复沉浸模式"]')?.click()`)
   await sleep(700)
@@ -205,7 +205,7 @@ try {
   ok('T4 收起途中再展开，沉浸层最终可见', t4)
 
   /* ---------- T5. 结束放弃 → 沉浸层关闭，悬浮条消失（会话已关） ---------- */
-  await evalJS(`document.querySelector('.shead .end')?.click()`)
+  await evalJS(`document.querySelector('.ctrl-top .end')?.click()`)
   await sleep(500)
   await evalJS(`[...document.querySelectorAll('.card-wrap .opt')].find(b => b.textContent.includes('放弃本次训练'))?.click()`)
   await sleep(1200)

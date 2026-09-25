@@ -385,7 +385,7 @@ async function main() {
       return items.length >= 2 && items.some(t => t.includes('今日状态')) && items.some(t => t.includes('建议'))
     })()`))
     // 收尾：放弃本次训练，避免污染后续断言
-    await evalJS(`document.querySelector('.shead .end')?.click()`)
+    await evalJS(`document.querySelector('.ctrl-top .end')?.click()`)
     await sleep(500)
     await clickButton('放弃本次训练')
     await sleep(900)

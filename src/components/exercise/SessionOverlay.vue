@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
 
@@ -200,14 +200,68 @@ const cells = computed<ProgressCell[]>(() =>
   })),
 )
 
+/**
+ * 顶簇占位高度：内容区据此留出顶部内边距。
+ * 常量与 .ctrl-top 的版式一一对应（簇内控件行 32 ＋ 进度轨 24 ＋ 上下内边距 12），
+ * 两侧引用同一组数值，改版式时不会只剩一边更新。
+ */
+const TOP_OFFSET = 10
+const TOP_ROW_H = 32
+const TOP_RAIL_H = 24
+const TOP_PAD = 12
+
+const topHeight = computed(
+  () => TOP_OFFSET + TOP_PAD + TOP_ROW_H + (cells.value.length ? TOP_RAIL_H : 0) + 16,
+)
+
+/**
+ * 同步失败警示的高度（没有警示时为 0）：顶簇是绝对定位的，得知道这一段被警示占了
+ * 多高才能整块下移、不被它盖住。**必须量而不是写死**：那条信息里嵌着底层错误原文，
+ * 窄屏上会折成两三行，任何"一行 26px"的常量都会在真机上错位。
+ * ResizeObserver 在布局后、绘制前回调，所以纠正落在**同一帧**里，看不到跳动。
+ */
+const warnEl = ref<HTMLElement | null>(null)
+const warnH = ref(0)
+let warnRO: ResizeObserver | null = null
+
+watch(warnEl, (el) => {
+  warnRO?.disconnect()
+  warnRO = null
+  warnH.value = el ? el.offsetHeight : 0
+  if (!el) return
+  warnRO = new ResizeObserver(() => {
+    warnH.value = el.offsetHeight
+  })
+  warnRO.observe(el)
+})
+
+onBeforeUnmount(() => warnRO?.disconnect())
+
 /* ---------- 坞与内容派生 ---------- */
 
-const dockMode = computed<'warmup' | 'exercise' | 'rest' | 'timed' | 'none'>(() => {
+const dockMode = computed<'warmup' | 'exercise' | 'rest' | 'timed-ready' | 'timed' | 'summary' | 'none'>(() => {
   if (s.phase === 'warmup' && s.currentEx) return 'warmup'
   if (s.phase === 'exercise' && s.currentEx) return 'exercise'
   if (s.phase === 'rest') return 'rest'
+  if (s.phase === 'timed-ready' && s.currentEx) return 'timed-ready'
   if (s.phase === 'timed-run') return 'timed'
+  if (s.phase === 'summary') return 'summary'
   return 'none'
+})
+
+/**
+ * 底簇占位高度：内容区据此留出底部内边距，让内容**从玻璃下面滚过去**
+ * 而不是被玻璃挡住。数值必须与 .ctrl-dock 的实际高度一致，所以两条
+ * 行高写成常量，样式里也只引用这两个常量。
+ */
+const DOCK_ROW_H = 54
+const DOCK_TRACK_H = 64
+const DOCK_GAP = 12
+
+const dockHeight = computed(() => {
+  if (dockMode.value === 'warmup' || dockMode.value === 'exercise') return DOCK_TRACK_H + DOCK_GAP + DOCK_ROW_H
+  if (dockMode.value === 'none') return 0
+  return DOCK_ROW_H
 })
 
 /** 坞内组格的当前序号：exercise 用 setIndex；rest 中下一组 = 已完成 + 1 */
@@ -666,36 +720,23 @@ watch(immersiveOpen, (open) => {
 <template>
   <!-- 沉浸层根：形变壳（transform/border-radius 由 container transform 动画驱动，静止恒为全屏） -->
   <div ref="layerEl" class="session-layer">
-    <div ref="fadeEl" class="session-page" :class="{ 'is-scrolled': bodyScrolled }">
-      <!-- 顶部：收起 / 进度 / 结束键。玻璃为**贴上缘**的一份（glass-edge-t）：
-           受光边只保留下沿那条贴边渐变，屏幕顶缘本身不该多画一条亮线。 -->
-      <header class="shead row between glass-surface glass-edge-t">
-        <button class="min" aria-label="收起运动模式" @click="minimize">
-          <ChevronDown :size="20" /> 收起
-        </button>
-        <!-- 组数胶囊：点击唤起全课浏览抽屉（逐组进度 / 跳至该组 / 换动作） -->
-        <button class="pcapsule" aria-label="查看全课程进度" @click="courseOpen = true">
-          <span class="num">{{ s.doneCount }}/{{ s.totalCount }}</span>
-          <span class="punit">组</span>
-          <ChevronRight :size="13" class="chev" />
-        </button>
-        <button class="end" @click="endOpen = true">结束</button>
-      </header>
+    <!-- 内容画布 + 浮起的控制层。派生的 --dock-h 让内容区知道底簇占了多高，
+         内容因此从玻璃**下面**滚过（玻璃才有东西可采样），而不是被玻璃切掉。 -->
+    <div
+      ref="fadeEl"
+      class="session-page"
+      :class="{ 'is-scrolled': bodyScrolled }"
+      :style="{ '--dock-h': `${dockHeight}px`, '--top-h': `${topHeight}px`, '--warn-h': `${warnH}px` }"
+    >
+      <!-- 同步失败警示：留在页面流首位（**不是**滚动区里），所以永远不会被浮起的顶簇
+           盖住；它占的高度由 ResizeObserver 量成 --warn-h，顶簇据此整体下移同样的距离，
+           内容区（在它之后的流里）自然也让出这一段。 -->
+      <p v-if="s.persistError" ref="warnEl" class="warn">⚠ 进度同步失败：{{ s.persistError }}</p>
 
-      <p v-if="s.persistError" class="warn">⚠ 进度同步失败：{{ s.persistError }}</p>
-
-      <!-- 全课进度格条：每格一组，动作分组留缝，下一组呼吸。贴上缘玻璃（glass-edge-t） -->
-      <div v-if="cells.length" class="progwrap glass-surface glass-edge-t">
-        <div class="obar">
-          <i
-            v-for="(c, i) in cells"
-            :key="i"
-            :class="{ grp: c.grp, on: c.on, skip: c.skip, cur: c.cur }"
-          />
-        </div>
-      </div>
-
-      <!-- 内容区 -->
+      <!-- 内容区（内容层：全程不透明，不参与玻璃）。上下缘用遮罩渐隐而不是硬边：
+           滚到玻璃底下的内容「溶解」进背景，而不是被一条横线切断。
+           两簇玻璃是它的绝对定位兄弟 —— 内容因此从玻璃**下面**滚过（玻璃才有东西
+           可采样），而不是被夹在两条不透明玻璃条之间。 -->
       <main ref="scrollEl" class="scrollbody">
         <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 滚动框站住，只有 item 位移
              （system/rubberScroll）。各态的 .pane 都留在层内：它们带 fadeUp 入场动画，
@@ -718,7 +759,7 @@ watch(immersiveOpen, (open) => {
             </div>
 
             <!-- 本组登记：小重量找发力感，重量可现场调整，完成即按实际重量登记 -->
-            <div class="setcard glass-surface">
+            <div class="setcard">
               <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
                    排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
               <div v-if="showReadinessPrompt" class="rdsec">
@@ -770,12 +811,12 @@ watch(immersiveOpen, (open) => {
               <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
             </div>
 
-            <div v-if="activation" class="blockcard glass-surface">
+            <div v-if="activation" class="blockcard">
               <h3>肌群激活</h3>
               <MuscleMap :activation="activation" interactive />
             </div>
 
-            <div v-if="exTips" class="blockcard glass-surface">
+            <div v-if="exTips" class="blockcard">
               <h3>动作要点</h3>
               <p>{{ exTips }}</p>
             </div>
@@ -789,7 +830,7 @@ watch(immersiveOpen, (open) => {
             <!-- 本组登记（重量 ＋ 次数同卡同构）：数字可点键入，± 微调；完成本组即记录当前值。
                  这两行是同一组记录的两个字段，之前分开在两处（重量在卡里、次数裸在卡外当大字），
                  视觉上像两件不相干的事，中间还夹着今日状态那张卡，谁主谁次读不出来 -->
-            <div class="setcard glass-surface">
+            <div class="setcard">
               <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
                    排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
               <div v-if="showReadinessPrompt" class="rdsec">
@@ -869,17 +910,17 @@ watch(immersiveOpen, (open) => {
               </div>
             </div>
 
-            <div v-if="activation" class="blockcard glass-surface">
+            <div v-if="activation" class="blockcard">
               <h3>肌群激活</h3>
               <MuscleMap :activation="activation" interactive />
             </div>
 
-            <div v-if="exTips" class="blockcard glass-surface">
+            <div v-if="exTips" class="blockcard">
               <h3>动作要点</h3>
               <p>{{ exTips }}</p>
             </div>
 
-            <div v-if="nextEx" class="blockcard glass-surface">
+            <div v-if="nextEx" class="blockcard">
               <h3>接下来</h3>
               <p class="nextrow">▸ 下一动作 · <b>{{ nextExName }}</b> · {{ nextExDesc }}</p>
             </div>
@@ -904,12 +945,11 @@ watch(immersiveOpen, (open) => {
               {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.currentEx.sets} 组` : `${s.currentEx.durationMin} 分钟` }}
               <template v-if="s.currentEx.kind === 'timed'"> · 组间休息 {{ s.currentEx.restSec }}s</template>
             </p>
-            <div v-if="activation" class="blockcard glass-surface">
+            <div v-if="activation" class="blockcard">
               <h3>肌群激活</h3>
               <MuscleMap :activation="activation" interactive />
             </div>
-            <button class="readybtn glass-surface glow-layer" @click="s.prepareTimed()">我准备好了</button>
-            <p class="hint">准备好后点击开始倒数</p>
+            <p class="hint">准备好后，点下方「我准备好了」开始倒数</p>
           </div>
 
           <!-- 计时进行中 -->
@@ -920,7 +960,7 @@ watch(immersiveOpen, (open) => {
             </RingProgress>
           </div>
 
-          <!-- 总结 -->
+          <!-- 总结：只剩庆祝与成绩，动作交给底簇（与其它阶段同槽同位） -->
           <div v-else-if="s.phase === 'summary'" class="pane col center">
             <span class="doneemoji">🎉</span>
             <p class="donetitle">{{ s.plan?.name }}完成</p>
@@ -929,65 +969,89 @@ watch(immersiveOpen, (open) => {
               <template v-if="s.totalVolume > 0"> · 总容量约 {{ s.totalVolume }} kg</template>
               · 用时约 {{ s.durationMin }} 分钟 · 约 {{ s.estimateKcalValue }} 大卡
             </p>
-            <button class="primary" @click="saveNow">保存训练</button>
-            <button class="ghost glass-surface glow-layer danger" @click="endOpen = true">放弃不保存</button>
           </div>
         </div>
       </main>
 
-      <!-- 底部操作坞：热身态=激活格；组格即完成控件；休息态 = 时长抽屉 ＋ 跳过。
-           贴下缘玻璃（glass-edge-b）。 -->
-      <div v-if="dockMode !== 'none'" class="dock col glass-surface glass-edge-b">
-        <template v-if="dockMode === 'warmup'">
-          <div class="tiles row">
-            <button
-              v-for="(wd, i) in s.currentEx!.warmups"
-              :key="i"
-              type="button"
-              class="dtile wtile num"
-              :class="{ done: i < s.warmupDone(s.currentEx!), cur: i === s.warmupDone(s.currentEx!) }"
-              :disabled="i !== s.warmupDone(s.currentEx!)"
-              @click="s.completeWarmup()"
-            >
-              <template v-if="i < s.warmupDone(s.currentEx!)">✓</template>
-              <!-- 当前组显示实时重量，调整后立刻可见 -->
-              <template v-else>{{ i === s.warmupDone(s.currentEx!) ? fmtKg(s.weight) : fmtKg(wd.weightKg) }}</template>
-            </button>
-          </div>
-          <div class="drow row">
+      <!-- 顶簇：收起 / 组数胶囊 / 结束 ＋ 全课进度轨，**一簇一块玻璃**。
+           进度轨从前是自己一条贴上缘的玻璃条、再叠在顶栏那条玻璃下面（玻璃叠玻璃），
+           现在收进同一块玻璃的第二行，用一条内缩细分隔线分开。
+           同心：内圈半径 = 外圈 22 − 内边距 6 = 16，簇内所有控件同值。 -->
+      <header class="ctrl-top glass-surface">
+        <div class="crow">
+          <button class="min" aria-label="收起运动模式" @click="minimize">
+            <ChevronDown :size="20" /> 收起
+          </button>
+          <!-- 组数胶囊：点击唤起全课浏览抽屉（逐组进度 / 跳至该组 / 换动作） -->
+          <button class="pcapsule" aria-label="查看全课程进度" @click="courseOpen = true">
+            <span class="num">{{ s.doneCount }}/{{ s.totalCount }}</span>
+            <span class="punit">组</span>
+            <ChevronRight :size="13" class="chev" />
+          </button>
+          <!-- 结束是本簇唯一的「主行动」：按苹果规矩单独着色（tinted），其余留中性 -->
+          <button class="end" @click="endOpen = true">结束</button>
+        </div>
+        <div v-if="cells.length" class="rail">
+          <i
+            v-for="(c, i) in cells"
+            :key="i"
+            :class="{ grp: c.grp, on: c.on, skip: c.skip, cur: c.cur }"
+          />
+        </div>
+      </header>
+
+      <!-- 底簇：组格轨（热身态=重量格，做组态=组矩阵）＋ 一行并排的独立控件。
+           两行各自都是**并排的独立块**，不是嵌套 —— 轨内的组格是填充（fill），
+           不再是第二层玻璃（苹果明令禁止 glass on glass）。
+           主行动是实底、独立于玻璃之外：这是这一步唯一的主行动，不能被半透明削弱。 -->
+      <div v-if="dockMode !== 'none'" class="ctrl-dock col">
+        <div v-if="dockMode === 'warmup'" class="track glass-surface">
+          <button
+            v-for="(wd, i) in s.currentEx!.warmups"
+            :key="i"
+            type="button"
+            class="dtile wtile num"
+            :class="{ done: i < s.warmupDone(s.currentEx!), cur: i === s.warmupDone(s.currentEx!) }"
+            :disabled="i !== s.warmupDone(s.currentEx!)"
+            @click="s.completeWarmup()"
+          >
+            <template v-if="i < s.warmupDone(s.currentEx!)">✓</template>
+            <!-- 当前组显示实时重量，调整后立刻可见 -->
+            <template v-else>{{ i === s.warmupDone(s.currentEx!) ? fmtKg(s.weight) : fmtKg(wd.weightKg) }}</template>
+          </button>
+        </div>
+        <div v-else-if="dockMode === 'exercise'" class="track glass-surface">
+          <button
+            v-for="i in s.effSets(s.currentEx!)"
+            :key="i"
+            type="button"
+            class="dtile num"
+            :class="{ done: i <= workingDone, cur: i === curTile }"
+            :disabled="i !== curTile"
+            @click="s.completeSet()"
+          >
+            <template v-if="i <= workingDone">✓</template>
+            <template v-else>{{ i }}</template>
+          </button>
+        </div>
+
+        <div class="drow row">
+          <template v-if="dockMode === 'warmup'">
             <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
-            <button class="ghost glass-surface glow-layer flex-1" @click="s.skipWarmup()">跳过热身</button>
-            <button class="primary" @click="s.completeWarmup()">完成热身组</button>
-          </div>
-        </template>
+            <button class="ghost glass-surface glow-layer" @click="s.skipWarmup()">跳过热身</button>
+            <button class="primary flex-1" @click="s.completeWarmup()">完成热身组</button>
+          </template>
 
-        <template v-else-if="dockMode === 'exercise'">
-          <div class="tiles row">
-            <button
-              v-for="i in s.effSets(s.currentEx!)"
-              :key="i"
-              type="button"
-              class="dtile num glass-surface glow-layer"
-              :class="{ done: i <= workingDone, cur: i === curTile }"
-              :disabled="i !== curTile"
-              @click="s.completeSet()"
-            >
-              <template v-if="i <= workingDone">✓</template>
-              <template v-else>{{ i }}</template>
-            </button>
-          </div>
-          <div class="drow row">
+          <template v-else-if="dockMode === 'exercise'">
             <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="primary flex-1" @click="s.completeSet()">完成第 {{ s.setIndex }} 组</button>
-          </div>
-        </template>
+          </template>
 
-        <template v-else-if="dockMode === 'rest'">
-          <div class="drow row">
+          <template v-else-if="dockMode === 'rest'">
             <button class="iconbtn glass-surface glow-layer" aria-label="调整休息时长" @click="openRestAdd($event)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="11" cy="13.5" r="7.5" />
@@ -1003,18 +1067,33 @@ watch(immersiveOpen, (open) => {
             <button class="primary flex-1" @click="s.skipRest()">
               {{ s.restIsTemp ? '继续训练' : s.restTargetIsNextSet ? '跳过休息' : '开始下一动作' }}
             </button>
-          </div>
-        </template>
+          </template>
 
-        <template v-else-if="dockMode === 'timed'">
-          <div class="drow row">
+          <!-- 计时准备：主行动与其它阶段同槽同位（从前它是内容区里一颗 216px 的玻璃大圆，
+               既占掉最多的玻璃面积、又让它随内容一起滚走） -->
+          <template v-else-if="dockMode === 'timed-ready'">
+            <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
+              <Ellipsis :size="24" />
+            </button>
+            <button class="primary flex-1 glow-layer" @click="s.prepareTimed()">我准备好了</button>
+          </template>
+
+          <template v-else-if="dockMode === 'timed'">
             <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="ghost glass-surface glow-layer danger" @click="s.abortTimed()">放弃</button>
             <button class="primary flex-1" @click="s.finishTimed()">完成</button>
-          </div>
-        </template>
+          </template>
+
+          <!-- 总结：保存是本阶段唯一的主行动，与「放弃不保存」并排（同 timed 的
+               放弃 + 完成）。从前它俩在内容区居中飘着 —— 全页只有这一阶段的动作
+               不在底簇里，既够不着拇指，也和别的阶段不是一个地方 -->
+          <template v-else-if="dockMode === 'summary'">
+            <button class="ghost glass-surface glow-layer danger" @click="endOpen = true">放弃不保存</button>
+            <button class="primary flex-1" @click="saveNow">保存训练</button>
+          </template>
+        </div>
       </div>
 
       <!-- 覆盖层：闪现提示 / 3·2·1 倒数 -->
@@ -1069,12 +1148,12 @@ watch(immersiveOpen, (open) => {
 
 <style scoped>
 /* 沉浸层根（形变壳）：transform/border-radius 由 container transform 动画驱动，
-   静止时恒为全屏恒等。背景与毛玻璃与悬浮条同材质，形变首尾帧视觉连续；
-   投影也取浮窗同款——全屏稳态时出屏不可见，形变中让块有悬浮体的分量。
-   刻意不写 will-change：常驻合成层提升 + backdrop-filter 在 Android
-   WebView 上会把层冻在动画中途（真机实测：半透明残影叠在真实 UI 上，
-   浮窗/TabBar 状态已切换而层画面不再提交），手写 rAF 每帧写 transform
-   自带提升，无需常驻提示。 */
+   静止时恒为全屏恒等。**壳不是玻璃** —— 静止时它整块被 .session-page 盖住，
+   形变期又是逐帧缩放（blur + 逐帧 transform 正是 Android WebView 合成器最易
+   冻结的组合，原先这里那条全屏 backdrop-filter 既拿不到任何折射、又白付一次
+   全视口采样）。壳只留一个不透明表面色给形变首帧用，投影让块在生长中仍有分量。
+   刻意不写 will-change：常驻合成层提升会把层冻在动画中途（真机实测：半透明
+   残影叠在真实 UI 上），手写 rAF 每帧写 transform 自带提升，无需常驻提示。 */
 .session-layer {
   position: fixed;
   inset: 0;
@@ -1085,64 +1164,37 @@ watch(immersiveOpen, (open) => {
   opacity: 0;
   pointer-events: none;
   box-shadow: var(--shadow-float);
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: var(--surface);
 }
 
-/* 形变进行中：摘掉 backdrop-filter、壳换不透明表面色——blur 采样 +
-   transform 逐帧更新是 Android WebView 合成器最易冻结的组合；层内
-   毛玻璃条（顶栏/底坞）随层缩放时同样在重采样，一并禁用。动画期以
-   近似材质换稳定性，结束帧恢复毛玻璃与浮窗接续 */
 .session-layer.is-open {
   opacity: 1;
   pointer-events: auto;
 }
 
-.session-layer.is-morphing {
-  background: var(--surface);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-/* 形变中：玻璃条要退成**近材质**而不是纯透明——令牌换成实底 + 常规描边，
-   这样即使 blur 被摘掉，顶栏/进度条/底坞仍是可读的一层，而不是空掉。
-   内容里的玻璃控件（登记卡/要点卡/次按钮）一并退成实底：形变期整个层在逐帧
-   缩放，每多一块 backdrop-filter 就多一处重采样。 */
-.session-layer.is-morphing :deep(.shead),
-.session-layer.is-morphing :deep(.progwrap),
-.session-layer.is-morphing :deep(.dock) {
+/* 形变进行中：两簇玻璃退成**近材质**而不是纯透明——令牌换成实底 + 常规描边，
+   这样即使 blur 被摘掉，顶簇/底簇仍是可读的一层，而不是空掉。形变期整个层在
+   逐帧缩放，每多一块 backdrop-filter 就多一处重采样。 */
+.session-layer.is-morphing :deep(.ctrl-top),
+.session-layer.is-morphing :deep(.ctrl-dock .track),
+.session-layer.is-morphing :deep(.iconbtn),
+.session-layer.is-morphing :deep(.ghost) {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   transition: none !important;
-  background: var(--surface-translucent);
-  border-color: var(--line);
-  box-shadow: none;
-}
-
-.session-layer.is-morphing :deep(.glass-surface) {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
   background: var(--surface);
   border-color: var(--line);
   box-shadow: none;
 }
 
-.session-layer.is-morphing :deep(.obar i.cur),
+.session-layer.is-morphing :deep(.rail i.cur),
 .session-layer.is-morphing :deep(.wstep.cur) {
   animation: none !important;
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  .session-layer {
-    background: var(--bg);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-}
-
 /* 淡入层：不透明底 + 全部内容的统一 opacity 载体——形变初期只见材质壳
-   长大，内容随后浮现；收起时先淡出内容再缩回，压扁过程不可见 */
+   长大，内容随后浮现；收起时先淡出内容再缩回，压扁过程不可见。
+   底部安全区在这里处理：底簇按它上浮，内容区也据它留出末段内边距。 */
 .session-page {
   position: absolute;
   inset: 0;
@@ -1150,48 +1202,83 @@ watch(immersiveOpen, (open) => {
   flex-direction: column;
   background: var(--bg);
   overflow: hidden;
-  /* 层定位不随 .app-frame 偏移，顶部安全区自行处理 */
+  /* 层定位不随 .app-frame 偏移，顶部/底部安全区自行处理 */
   padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
 }
 
-/* 顶部栏 —— 材质来自 .glass-surface（全仓一份定义，令牌按档位变）。
-   这里只补几何；不要再手写 backdrop-filter：那是 .glass-surface 的活，
-   手写会在超高档下错过整份令牌（rim-2 / caustic / halo 三层光学），
-   也会在弱档下顶不掉 blur。
-   丰富档的滚动边缘暗带挂在上缘（::before），内容从底下滚进顶栏时把它抬起来。 */
-.shead {
-  position: relative;
-  flex: none;
-  height: 54px;
-  padding: 0 18px;
+/* ---------- 控制层 · 顶簇 ----------
+   苹果对控制层的要求是**浮起、内缩、圆角、内容从底下滚过去**：所以它不再是贴在
+   屏幕上缘的一整条，而是一块四边都留余量的浮起玻璃（手机端用大圆角 + 额外留白，
+   别贴着屏幕边缘画框）。
+
+   材质来自 .glass-surface（全仓一份定义，令牌按档位变）——这里只补几何，不再手写
+   backdrop-filter：手写在超高档下会错过整份光学令牌（rim-2 / caustic / halo），
+   在弱档下也顶不掉 blur。
+
+   同心（苹果三种形状里的 concentric：内圈半径 = 外圈 − 内边距）：外圈取
+   --radius-l 22、内边距 6 → 内圈 16，簇内三枚控件与进度轨全都落在 16 这条线上。 */
+.ctrl-top {
+  position: absolute;
+  /* 绝对定位的包含块是 .session-page 的 padding box，而 padding 不会把 padding box
+     边界推下来 —— 安全区因此得在这里自己加上，不能指望父层的 padding-top。
+     `--warn-h` 是同步失败警示实占的高度（无警示时 0）：整簇让开它，否则会被盖住。 */
+  top: calc(var(--safe-top) + 10px + var(--warn-h));
+  /* 左右各留余量：Android 手势导航在屏幕两缘留返回手势带，停靠元素要整体收进带外
+     （--safe-left 已含 20px 兜底），这里再叠 6px 呼吸空间。 */
+  inset-inline: calc(var(--safe-left) + 6px);
+  z-index: 2;
+  max-width: var(--frame-max);
+  margin-inline: auto;
+  padding: 6px;
+  border-radius: var(--radius-l);
   transition: box-shadow var(--dur-base) var(--ease-standard);
+}
+
+/* 行内三格：左右两枚各占等宽的边格、中间胶囊居中 —— 用 grid 而不是 space-between，
+   中间那颗才是**数学居中**的（两侧宽度不等时 space-between 会让它偏，而苹果对这种
+   情况的态度是「能居中就居中，不能才轻微偏移」）。 */
+.crow {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 4px;
 }
 
 .min {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 2px;
+  height: 32px;
+  border-radius: 16px;
   font-size: var(--fs-subhead);
   font-weight: 600;
   color: var(--text-1);
 }
 
+/* 结束是本簇唯一的「主行动」：苹果的规矩是它单独着色（tinted）当焦点，而不是把整条栏
+   里的东西都染上色。用全仓「soft 底 + strong 前景」那一对，于是它压在玻璃上也读得清。 */
 .end {
+  justify-self: end;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
   font-size: var(--fs-subhead);
   font-weight: 700;
-  color: var(--danger);
-  padding: 8px 4px;
+  color: var(--danger-strong);
+  background: var(--danger-soft);
 }
 
-/* 组数胶囊：点开全课抽屉。它坐在玻璃顶栏里，自身不再叠一层玻璃 ——
-   嵌套玻璃会变成背景根，把外层顶栏的折射也一起废掉。 */
+/* 组数胶囊：点开全课抽屉。它坐在玻璃顶簇里，自身用**填充**而不是再叠一层玻璃——
+   嵌套玻璃会变成背景根，把外层顶簇的折射一起废掉（苹果：glass on glass 一律避免）。 */
 .pcapsule {
   display: flex;
   align-items: center;
   gap: 1px;
-  height: 30px;
+  height: 32px;
   padding: 0 8px 0 12px;
-  border-radius: var(--radius-full);
+  border-radius: 16px;
   background: var(--glass-tab-fill);
   font-size: var(--fs-footnote);
   font-weight: 700;
@@ -1210,27 +1297,35 @@ watch(immersiveOpen, (open) => {
   color: var(--text-3);
 }
 
+/* 同步失败警示：它是页面 flex 列的第一行，而顶簇是绝对定位的 —— 从前两者互不知情，
+   一有同步失败，警示就被那块玻璃整个盖住（审查实测：警示在 y=0..24，顶簇在 10..78）。
+   现在顶簇的 top 加上 `--warn-h`（见脚本里的 ResizeObserver），整块让开这一段；
+   内容区在它之后的流里，自然也让出同样的高度，于是"警示 → 顶簇 → 内容"的次序
+   在任何高度下都成立，不需要写死任何一行的像素数。
+   底是**不透明**的：它压着页面画布，半透明底在暗色下会糊成一片看不出是警示。 */
 .warn {
   flex: none;
+  margin: 0 26px;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
   text-align: center;
-  padding: 4px;
   font-size: var(--fs-micro);
-  color: var(--warn);
-  background: rgba(255, 149, 0, 0.14);
+  color: var(--warn-strong);
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
 }
 
-/* 全课进度格条 —— 材质同顶部栏（.glass-surface glass-edge-t），只补几何 */
-.progwrap {
-  flex: none;
-  padding: 12px 18px 11px;
-}
-
-.obar {
+/* 全课进度轨：顶簇的第二行。它从前是自己一条贴上缘的玻璃条、再叠在顶栏那条玻璃下面，
+   现在收进同一块玻璃里、用一条内缩细分隔线分开 —— 苹果的做法是「层级靠版式与分组表达，
+   而不是靠再叠一层背景」。格条本身是**填充**，不是玻璃。 */
+.rail {
   display: flex;
   gap: 2.5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--line);
 }
 
-.obar i {
+.rail i {
   flex: 1;
   height: 8px;
   border-radius: 3px;
@@ -1238,20 +1333,20 @@ watch(immersiveOpen, (open) => {
   transition: background var(--dur-base) var(--ease-standard);
 }
 
-.obar i.grp {
+.rail i.grp {
   margin-left: 6px; /* 动作分组之间的缝 */
 }
 
-.obar i.on {
+.rail i.on {
   background: var(--c-exercise);
 }
 
 /* 跳过的组：压暗留在原位，一眼看出「这组没做」且不计入统计 */
-.obar i.skip {
+.rail i.skip {
   background: var(--line-strong);
 }
 
-.obar i.cur {
+.rail i.cur {
   background: var(--c-exercise-soft);
   animation: cellbreath 1.6s infinite;
 }
@@ -1266,11 +1361,44 @@ watch(immersiveOpen, (open) => {
   }
 }
 
-/* 内容区 */
+/* ---------- 内容层 ----------
+   内容铺满整块舞台并**从两簇玻璃底下滚过去**（这是玻璃能采样到东西、而不是当装饰
+   的前提）。上下留出两簇的占位高度，于是静止时首屏内容正好落在玻璃下缘之外。
+
+   上下缘用一条**遮罩渐隐**而不是硬边：滚到玻璃底下的内容在进入玻璃之前就溶解进背景，
+   而不是被玻璃的边缘切成一条横线（苹果的 Scroll Edge Effect —— 「把内容溶解进背景」，
+   它不遮挡、也不压暗；从前这里是一条压暗的暗带，方向正好是反的）。
+   遮罩是纯合成器操作，代价约等于零，且不产生背景根。
+
+   渐隐段的长度**取自浮层实际盖住的区域**（这是苹果对这条效果的定度：效果铺满
+   固定控件与它下面那块 accessory view 的高度）：
+     · 下缘 = 底簇占位 + 26（那 26 正是内容末段的内边距，见 padding-bottom）——
+       于是滚到底时最后一屏正文正好落在**完全不透明**的那条线上，不会被自己的渐隐吃掉；
+       而滚过底簇的内容全程处在渐隐里，组格上的数字因此始终读得清。
+     · 上缘只需抹掉视口顶缘那条硬边（顶簇里没有需要压在内容上读的字），34 就够。 */
 .scrollbody {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding-top: var(--top-h);
+  /* 与下面的渐隐同值：正文的终点 = 完全不透明的那条线 */
+  padding-bottom: calc(var(--dock-h) + 26px);
+  --edge-fade-top: 34px;
+  --edge-fade-bottom: calc(var(--dock-h) + 26px);
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--edge-fade-top),
+    #000 calc(100% - var(--edge-fade-bottom)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--edge-fade-top),
+    #000 calc(100% - var(--edge-fade-bottom)),
+    transparent 100%
+  );
 }
 
 /* 超范围平移层：撑满滚动框（min-height:100%），让内容不足一屏时 .pane 仍能居中；
@@ -1325,9 +1453,12 @@ watch(immersiveOpen, (open) => {
    今日状态（首次进入时的一次性自评）也收进这张卡：它是建议重量的输入，
    单开一张卡夹在重量与次数之间，等于把「一组记录」切成了两半。
 
-   材质是模板上的 .glass-surface 类（材质只有那一份定义，不在这里重写）：
-   大面积内容卡**不折射** —— 成本随面积与半径线性涨，而这里几乎贴满内容区；
-   但它吃玻璃的全部光学层，超高下半透出后面的滚动内容。 */
+   材质：**内容层，不是玻璃**。苹果的分层是内容层 —— 导航层 —— 覆盖层三层，
+   玻璃只属于中间那层；把表格这类内容做成玻璃，它会和别的元素抢注意力、把层级
+   搅浑（原话：making it Liquid Glass would make it compete with other elements
+   and muddy the hierarchy）。这里还有两个本地理由：① 它宽 min(360px) 几乎贴满
+   内容区，玻璃面积与成本都最大；② 它要从底簇玻璃**下面**滚过去，自己再是玻璃
+   就成了玻璃叠玻璃。所以内容层用的是「实底 + 轻投影」这套全仓通用的 .card 语汇。 */
 .setcard {
   width: min(360px, 100%);
   border-radius: var(--radius-l);
@@ -1335,6 +1466,8 @@ watch(immersiveOpen, (open) => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 
 .field {
@@ -1523,8 +1656,7 @@ watch(immersiveOpen, (open) => {
 .wstep {
   padding: 7px 14px;
   border-radius: var(--radius-full);
-  background: var(--glass-fill);
-  border: 1px solid transparent;
+  background: var(--surface-2);
   font-size: var(--fs-callout);
   font-weight: 600;
   color: var(--text-2);
@@ -1539,12 +1671,10 @@ watch(immersiveOpen, (open) => {
 .wstep.done {
   background: var(--c-exercise-soft);
   color: var(--c-exercise-deep);
-  box-shadow: none;
 }
 
 /* 热身组格：重量标注，小一号 */
 .dtile.wtile {
-  height: 52px;
   font-size: var(--fs-body);
 }
 
@@ -1554,7 +1684,7 @@ watch(immersiveOpen, (open) => {
   margin-top: 8px;
 }
 
-/* 要点 / 接下来 卡片 —— 材质同 .setcard（模板上的 .glass-surface），只补几何 */
+/* 要点 / 接下来 卡片 —— 与 .setcard 同材质（内容层实底），只补几何 */
 .blockcard {
   width: min(360px, 100%);
   border-radius: var(--radius-l);
@@ -1562,6 +1692,8 @@ watch(immersiveOpen, (open) => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
 }
 
 .blockcard h3 {
@@ -1602,29 +1734,6 @@ watch(immersiveOpen, (open) => {
   font-weight: 500;
 }
 
-/* 计时准备：全屏那颗最大的离散控件 —— 走玻璃材质（模板上的 .glass-surface）。
-   3px 描边收成 1px 透明边框（玻璃的受光边就是背景渐变画出来的，硬描边会盖掉它），
-   悬停仍翻成实底反色：那一下是"我要按下去了"的确认，不该被半透明削弱。 */
-.readybtn {
-  width: 216px;
-  height: 216px;
-  margin-top: 14px;
-  border-radius: 50%;
-  font-size: var(--fs-title2);
-  font-weight: 600;
-  color: var(--text-1);
-  transition: all var(--dur-base) var(--ease-standard);
-}
-
-.readybtn:hover {
-  background: var(--text-1);
-  color: var(--bg);
-}
-
-.readybtn:active {
-  transform: scale(0.95);
-}
-
 /* 计时中 */
 .timernum {
   font-size: 64px;
@@ -1633,96 +1742,106 @@ watch(immersiveOpen, (open) => {
   line-height: 1;
 }
 
-/* 底部操作坞 ---------- */
-/* 材质同顶部栏（.glass-surface glass-edge-b），这里只补几何。
-   丰富档的滚动边缘暗带挂在这里（::before）——内容从坞下滚过时抬起这块玻璃，
-   与 PageHeader 的做法同一套；默认档不画这条，多一道渐变只是多一次合成。 */
-.dock {
-  position: relative;
-  flex: none;
-  gap: 12px;
-  padding: 12px 18px calc(14px + var(--safe-bottom));
-}
+/* ---------- 控制层 · 底簇 ----------
+   两行并排的独立块：组格轨（一块玻璃，轨内组格是填充）＋ 一行独立控件
+   （图标钮/次按钮用玻璃，主行动用实底）。没有任何一层玻璃套在另一层玻璃里。
 
-html[data-motion='rich'] .dock::before,
-html[data-motion='rich'] .progwrap::before,
-html[data-motion='rich'] .shead::before {
-  content: '';
+   底簇本身**不是**玻璃 —— 它是这两行的定位容器，行内的每块各自是浮起的玻璃体。
+   这样它们与悬浮 Dock（圆形钮 + 药丸 + 圆形钮）是同一套语言：并排的独立玻璃块，
+   而不是一大块玻璃里塞满小玻璃。 */
+.ctrl-dock {
   position: absolute;
-  left: 0;
-  right: 0;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--dur-base) var(--ease-standard);
+  /* 同顶簇：安全区要在这里自己加（包含块是 padding box） */
+  bottom: calc(var(--safe-bottom) + 14px);
+  inset-inline: calc(var(--safe-left) + 6px);
+  z-index: 2;
+  max-width: var(--frame-max);
+  margin-inline: auto;
+  gap: 12px;
 }
 
-/* 底坞的暗带在**上缘**：内容从底下滚进坞下方时抬起它 */
-html[data-motion='rich'] .dock::before {
-  top: -18px;
-  height: 26px;
-  background: linear-gradient(to top, var(--glass-scroll-edge), transparent);
+/* 组格矩阵：点当前格 = 完成该组。
+   外圈 22、内边距 6 → 内圈 16，与顶簇同一组同心值（组格因此既不被挤扁、
+   也不比外面的圆角更圆）。 */
+.track {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: var(--radius-l);
 }
 
-/* 顶栏 / 进度条的暗带在**下缘**：内容从底下滚上来时压暗底边，抬起玻璃 */
-html[data-motion='rich'] .progwrap::before,
-html[data-motion='rich'] .shead::before {
-  bottom: -18px;
-  height: 22px;
-  background: linear-gradient(to bottom, var(--glass-scroll-edge), transparent);
+/* 滚起来之后加一层更沉的外投影：苹果的玻璃会**随背后内容自适应影子深浅** ——
+   内容压到玻璃底下时影子变重，把玻璃和内容分开。静止时那道轻影读作「这是浮层」。 */
+.session-page.is-scrolled .ctrl-top,
+.session-page.is-scrolled .track,
+.session-page.is-scrolled .iconbtn,
+.session-page.is-scrolled .ghost {
+  box-shadow:
+    var(--glass-shadow-lifted),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 10px 18px -12px var(--glass-sheen),
+    inset 0 0 0 1px var(--glass-rim-2),
+    inset 0 1px 10px -2px var(--glass-caustic);
 }
 
-/* 三条暗带一起亮：状态挂在 .session-page 上（它是三条边的共同祖先 ——
-   .shead / .progwrap / .dock 都是它的子节点，而 .scrollbody 只包住中间那段，
-   挂在它上面够不到上下两条）。 */
-html[data-motion='rich'] .session-page.is-scrolled .dock::before,
-html[data-motion='rich'] .session-page.is-scrolled .progwrap::before,
-html[data-motion='rich'] .session-page.is-scrolled .shead::before {
-  opacity: 1;
+/* 上面那条把整串 box-shadow 重写了一遍（CSS 没法只覆盖列表里的第一项），
+   所以「减弱透明度」下要在这里再压回去一次：系统要的是实底 + 常规投影，
+   不能因为内容滚起来了就把光学层和重落影又请回来。同权重、排在后面，故它赢。 */
+@media (prefers-reduced-transparency: reduce) {
+  .session-page.is-scrolled .ctrl-top,
+  .session-page.is-scrolled .track,
+  .session-page.is-scrolled .iconbtn,
+  .session-page.is-scrolled .ghost {
+    box-shadow: var(--shadow-float);
+  }
 }
 
 .drow {
-  gap: 14px;
+  gap: 12px;
   width: 100%;
 }
 
 /* 坞内主按钮随行伸缩：休息态两枚图标钮 + 主键在窄屏也要放得下；
-   热身坞三键并排（图标 + 跳过 + 完成），收窄内边距避免 390px 挤爆 */
+   热身态三键并排（图标 + 跳过 + 完成），收窄内边距避免 390px 挤爆 */
 .drow .primary {
   min-width: 0;
   padding: 0 26px;
 }
 
-/* 组格矩阵：点当前格 = 完成该组 */
-.tiles {
-  justify-content: center;
-  gap: 12px;
-}
-
 .dtile {
   width: 58px;
-  height: 58px;
-  border: 2px solid transparent;
-  border-radius: 17px;
+  height: 52px;
+  /* 同心：16 = 轨外圈 22 − 内边距 6。热身重量格与正式组格同一档 —— 从前是两个值
+     （52 与 58 两种高度、17 与无圆角两种角），同一块轨里换模式会跳一下 */
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: var(--fs-title2);
   font-weight: 700;
-  color: var(--text-2);
+  color: var(--text-3);
   cursor: default;
   transition: all var(--dur-base) var(--ease-standard);
 }
 
+/* 已完成的组：全仓统一的完成态（soft 底 + 深色前景） */
 .dtile.done {
   background: var(--c-exercise-soft);
-  color: #3d7a00;
-  box-shadow: none;
+  color: var(--c-exercise-deep);
 }
 
+/* 待完成（当前组）：抬起来的**中性填充**，不带色相也不带渐变 —— 与底部 Dock 的活动底
+   同一条规矩（选中/当前交给底的明度，色相留给前景）。
+   底取 --surface + --shadow-thumb，也就是卡内「一键填入」里那枚主推候选（.qseg.rec）
+   的同一套：一块白底从玻璃轨上抬起来。不用 --glass-tab-fill 是因为它压在**内容**上
+   （不是压在页面画布上）：它自己就是半透明白，叠在同样是半透明白的玻璃轨上等于没提亮，
+   组格数字压着背后滚过的东西读不清 —— 而这里恰恰是「必须读得清」的那一格。
+   从前它是黑实底：底下那颗唯一的主行动也是黑实底，两块黑互相抢，谁主谁次读不出来。 */
 .dtile.cur {
-  background: var(--text-1);
-  color: var(--bg);
-  box-shadow: 0 6px 18px rgba(29, 29, 31, 0.3);
+  background: var(--surface);
+  color: var(--text-1);
+  box-shadow: var(--shadow-thumb);
   cursor: pointer;
 }
 
@@ -1730,15 +1849,11 @@ html[data-motion='rich'] .session-page.is-scrolled .shead::before {
   transform: scale(0.92);
 }
 
-@media (prefers-color-scheme: dark) {
-  .dtile.done {
-    color: var(--c-exercise);
-  }
-}
-
 /* 主按钮 —— 实底是**语义选择**不是玻璃：它是这一步唯一的主行动，
    超高档也要保住"黑/白实底 + 玻璃"这条最高的对比层级，玻璃化会和内容糊在一起。
-   凝胶按压（scale 收缩）保留；定向光晕在丰富档另加，见文末 .glow-layer。 */
+   它也因此**独立于玻璃之外**（苹果：主行动单独放、并且着色当焦点），
+   于是它是胶囊这件事不构成同心问题 —— 胶囊只对独立控件成立，嵌套进玻璃里才会「胀角」。
+   按压走全仓 Dock 那套体积守恒挤压 + 回弹（见 base.css 的 .dock-tab）。 */
 .primary {
   min-width: 240px;
   height: 54px;
@@ -1749,26 +1864,40 @@ html[data-motion='rich'] .session-page.is-scrolled .shead::before {
   font-size: var(--fs-headline);
   font-weight: 600;
   box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22);
-  transition: transform var(--dur-fast) var(--ease-standard);
+  transition:
+    transform var(--dur-slow) var(--ease-spring),
+    background-color var(--dur-fast) var(--ease-standard);
 }
 
 .primary:active {
-  transform: scale(0.96);
+  /* 纵向压得多、横向略胀，近似体积守恒；松手沿弹簧曲线过冲回正 */
+  transform: scale(1.04, 0.92);
+  transition: transform 120ms var(--ease-out);
 }
 
-/* 次按钮与图标钮：控制层玻璃 —— 材质走 .glass-surface（全仓一份定义）。
-   这里只补几何；相对主按钮退一档材质，仍然读得出"可按"。 */
+/* 次按钮与图标钮：控制层玻璃 —— 材质走 .glass-surface（全仓一份定义），
+   这里只补几何。它们与主按钮是**并排的独立块**，不在任何一层玻璃里面，
+   所以叠玻璃是合法的（嵌套才是被禁的那种）。 */
 .ghost {
-  height: 50px;
-  border-radius: 25px;
+  flex: none;
+  height: 54px;
+  border-radius: 27px;
   padding: 0 24px;
   font-size: var(--fs-callout);
   font-weight: 600;
   color: var(--text-1);
+  transition:
+    transform var(--dur-slow) var(--ease-spring),
+    background-color var(--dur-fast) var(--ease-standard);
+}
+
+.ghost:active {
+  transform: scale(1.03, 0.94);
+  transition: transform 120ms var(--ease-out);
 }
 
 .ghost.danger {
-  color: var(--danger);
+  color: var(--danger-strong);
 }
 
 /* 休息时长图标钮 */
@@ -1781,11 +1910,14 @@ html[data-motion='rich'] .session-page.is-scrolled .shead::before {
   align-items: center;
   justify-content: center;
   color: var(--text-1);
-  transition: transform var(--dur-fast) var(--ease-standard);
+  transition:
+    transform var(--dur-slow) var(--ease-spring),
+    background-color var(--dur-fast) var(--ease-standard);
 }
 
 .iconbtn:active {
-  transform: scale(0.92);
+  transform: scale(1.05, 0.9);
+  transition: transform 120ms var(--ease-out);
 }
 
 .iconbtn svg {

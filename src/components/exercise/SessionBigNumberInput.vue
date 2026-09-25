@@ -103,7 +103,7 @@ function bump(d: number): void {
     <button
       v-if="!editing"
       type="button"
-      class="wbtn glass-surface"
+      class="wbtn"
       :aria-label="`${label}减 ${step}${unit}`"
       @click="bump(-step)"
     >
@@ -135,7 +135,7 @@ function bump(d: number): void {
     <button
       v-if="!editing"
       type="button"
-      class="wbtn glass-surface"
+      class="wbtn"
       :aria-label="`${label}加 ${step}${unit}`"
       @click="bump(step)"
     >
@@ -151,14 +151,16 @@ function bump(d: number): void {
   gap: 10px;
 }
 
-/* 步进钮：控制层圆形钮 —— 材质走 .glass-surface（模板上带）。
-   它压在那张玻璃内容卡里，所以只吃令牌、不叠折射：两片背靠背的玻璃会
-   把彼此变成对方的背景源，反而糊掉。 */
+/* 步进钮：它们压在**内容卡**上（本组登记卡），卡本身已经是不透明的内容层表面，
+   所以这里要的是填充而不是又一层玻璃 —— 苹果的规矩：往玻璃上放东西，上层只用
+   fills / transparency / vibrancy，两层都上玻璃就成了 glass on glass。
+   填充取 --surface-2，与卡内其它分段（今日状态档位、一键填入）同一个底。 */
 .wbtn {
   width: 44px;
   height: 44px;
   flex: none;
   border-radius: 50%;
+  background: var(--surface-2);
   color: var(--text-1);
   display: flex;
   align-items: center;
