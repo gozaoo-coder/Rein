@@ -733,7 +733,7 @@ async function main() {
     await sleep(600)
     const extProbe = await evalJS(OPT_PROBE)
 
-    // 极致与超高真正看得见的差别在材质铺开的范围：卡片这类内容层也变成玻璃。
+    // 极致与超高真正看得见的差别在材质铺开的范围：卡片这类内容层也拿到玻璃的材质。
     // 先量这一条，再把材质拉平去比滤镜链（下面的 tier-equiv 会把它暂时退回实底）。
     const extGlass = await evalJS(`(() => {
       const card = document.querySelector('.card')
@@ -743,7 +743,12 @@ async function main() {
       document.body.appendChild(probe)
       const panelFill = getComputedStyle(probe).backgroundColor
       probe.remove()
-      return { bg: cs.backgroundColor, backdrop: String(cs.backdropFilter || cs.webkitBackdropFilter), panelFill }
+      return {
+        bg: cs.backgroundColor,
+        backdrop: String(cs.backdropFilter || cs.webkitBackdropFilter),
+        shadow: cs.boxShadow,
+        panelFill,
+      }
     })()`)
 
     // 两档的材质本来就不同（极致的光学层更深、覆盖更广）—— 要比的是**滤镜链**，
@@ -806,9 +811,9 @@ async function main() {
       `${glassDiff.diff}/${glassDiff.total} 像素有差异 · 最大通道差 ${glassDiff.maxDelta} · 包围盒 ${JSON.stringify(glassDiff.bbox)}`,
     )
     ok(
-      '极致 · 卡片等更多表面铺上玻璃（底取自 --glass-panel-fill + 背景模糊）',
-      extGlass.bg === extGlass.panelFill && extGlass.backdrop.includes('blur('),
-      `card bg=${extGlass.bg} · panel-fill=${extGlass.panelFill} · backdrop=${extGlass.backdrop}`,
+      '极致 · 在流内容面拿到材质但**不挂滤镜**（它背后永远只有平滑画布，滤镜是纯亏）',
+      extGlass.bg === extGlass.panelFill && !extGlass.backdrop.includes('blur(') && extGlass.shadow.includes('inset'),
+      `card bg=${extGlass.bg} · panel-fill=${extGlass.panelFill} · backdrop=${extGlass.backdrop} · 光学层=${extGlass.shadow.includes('inset')}`,
     )
 
     // 对照：把通道偏移拉开成色散后，超高必须**自动退回完整链**（恒等不再成立）
@@ -1036,18 +1041,43 @@ async function main() {
         }
       }
       const token = (k) => getComputedStyle(document.documentElement).getPropertyValue(k).trim()
-      const glassEls = [...scope.querySelectorAll('.glass-surface')]
+      const hasFilter = (el) => {
+        const bf = getComputedStyle(el).backdropFilter || getComputedStyle(el).webkitBackdropFilter || 'none'
+        return bf !== 'none' && bf !== ''
+      }
+      // 控制层的玻璃根 = SessionGlassButton 渲染出来的 .sgbtn（GlassSurface 的根）。
+      // 沉浸页**不再**用 .glass-surface 那个「模糊 + 令牌」的毛玻璃：它在超高下也只是糊，
+      // 拿不到折射，所以这里量的是组件那一路。
+      const glassEls = [...scope.querySelectorAll('.sgbtn')]
+      // 折射的定义宿主（GlassSurface 的 .gdefs，v-show 控制）：display 非 none
+      // 才说明折射分支是活的 —— 只看 backdrop-filter 里有没有 url() 会被退化兜底骗过。
+      const defs = [...scope.querySelectorAll('.gdefs')]
+      const filtered = [...scope.querySelectorAll('*')].filter(hasFilter)
+      // 「玻璃套玻璃」的通用判据：挂着 backdrop-filter 的元素又套在另一个这样的元素里。
+      // 契约恒为 0（苹果：往玻璃上放东西只许用 fills / transparency / vibrancy）。
+      const nested = filtered.filter((el) => {
+        let p = el.parentElement
+        while (p && p !== scope) {
+          if (hasFilter(p)) return true
+          p = p.parentElement
+        }
+        return false
+      }).length
       return {
         perf: document.documentElement.dataset.perf,
         motion: document.documentElement.dataset.motion,
         fill: token('--glass-fill'),
         blurToken: token('--glass-blur'),
         rimHi: token('--glass-rim-hi'),
-        glass: ['.ctrl-top', '.track', '.ghost', '.iconbtn'].map(read).filter(Boolean),
-        content: ['.setcard', '.blockcard', '.wbtn'].map(read).filter(Boolean),
+        // 三个探针都要落在**玻璃根**上（材质与光学层在它身上）——.iconbtn / .ghost
+        // 是玻璃里面那颗按钮，它们自己没有 box-shadow。
+        glass: ['.ctrl-top .sgbtn', '.ctrl-dock .sgbtn', '.ctrl-dock .sgbtn ~ .sgbtn'].map(read).filter(Boolean),
+        refracting: glassEls.filter((el) => String(getComputedStyle(el).backdropFilter || '').includes('url(')).length,
         glassTotal: glassEls.length,
-        // 玻璃块里还套着玻璃块的个数。契约上是 0。
-        nested: glassEls.filter((el) => el.parentElement?.closest('.glass-surface')).length,
+        defsOn: defs.filter((el) => getComputedStyle(el).display !== 'none').length,
+        content: ['.setcard', '.blockcard', '.wbtn'].map(read).filter(Boolean),
+        filteredTotal: filtered.length,
+        nested,
       }
     })()`
 
@@ -1104,10 +1134,13 @@ async function main() {
     )
     if (session.glass.length >= 2) {
       await shot('immersive-session-ultra')
+      // 这条是本次改动的核心契约：沉浸页的控制层必须走**折射**那一路
+      // （GlassSurface 的 url() 位移滤镜 + 活的 <filter> 定义），而不是只有
+      // backdrop-filter 的 blur —— 上一版这里挂的是 .glass-surface，超高下也只是一层糊。
       ok(
-        '超高 · 沉浸层控制层的玻璃块都接上同一份 .glass-surface 材质',
-        session.glass.every((r) => isGlassSurface(r, session)),
-        `blurToken=${JSON.stringify(session.blurToken)} · 不合格：${session.glass.filter((r) => !isGlassSurface(r, session)).map((r) => `${r.sel}[grad=${r.bgImage.split('linear-gradient').length - 1} blurMatch=${r.blur.includes(session.blurToken)}]`).join(' ') || '无'}`,
+        '超高 · 沉浸层控制层的玻璃块全部在折射（不是只有 backdrop blur）',
+        session.refracting === session.glassTotal && session.defsOn === session.glassTotal && session.glassTotal >= 3,
+        `探针 ${session.glass.length} 块 / 共 ${session.glassTotal} 块 · 折射 ${session.refracting} · 活的滤镜定义 ${session.defsOn}`,
       )
       ok(
         '超高 · 沉浸层控制层的光学层（内圈描边 / 焦散）都已就位',
@@ -1121,28 +1154,26 @@ async function main() {
         session.content.length > 0 && session.content.every((r) => r.blur === 'none'),
         `${session.content.length} 块 · 仍是玻璃的：${session.content.filter((r) => r.blur !== 'none').map((r) => r.sel).join(' ') || '无'}`,
       )
-      // 这条是本次重做的核心回归：玻璃块之间的嵌套必须恒为 0。
+      // 这条是上一轮重做的核心回归：玻璃块之间的嵌套必须恒为 0。
       ok(
         '超高 · 沉浸层没有玻璃套玻璃',
         session.nested === 0,
-        `共 ${session.glassTotal} 块玻璃，其中嵌套的 ${session.nested} 块`,
+        `挂滤镜的共 ${session.filteredTotal} 块，其中套在另一块滤镜里的 ${session.nested} 块`,
       )
     } else {
       ok('训练沉浸层可被探针触及（真实入口可达）', false, `入口=${opened} · 只量到 ${session.glass.length} 块：${session.glass.map((r) => r.sel).join(' ')}`)
     }
 
-    // 弱档：同一批**控制层玻璃**必须整体顶成实底且不挂模糊（退化语义不能只覆盖 Dock）。
-    // 判「实底」不能看 background-color —— 玻璃的底是 background 里那条渐变，
-    // background-color 恒为 transparent（这是设计，不是漏洞）。要看渐变里那层
-    // padding-box 的颜色是不是已经被 --glass-fill 顶成了不透明的那个值。
+    // 弱档：同一批**控制层玻璃**必须整体退回实底、折射与模糊一起关掉（退化语义不能只覆盖 Dock）。
     await setTier('low')
     const sessionLow = await evalJS(IMMERSIVE_PROBE)
     ok(
-      '流畅档 · 沉浸层控制层顶成实底、模糊被全局关掉',
-      sessionLow.glass.length > 0 &&
-        sessionLow.glass.every((r) => r.blur === 'none') &&
-        sessionLow.glass.every((r) => !r.bgImage.includes('border-box') || r.bgImage.includes(sessionLow.fill)),
-      `${sessionLow.glass.length} 块 · blur=${sessionLow.glass[0]?.blur} · --glass-fill=${sessionLow.fill}`,
+      '流畅档 · 沉浸层控制层顶成实底、折射与模糊一起关掉',
+      sessionLow.glassTotal > 0 &&
+        sessionLow.refracting === 0 &&
+        sessionLow.defsOn === 0 &&
+        sessionLow.glass.every((r) => r.blur === 'none'),
+      `${sessionLow.glassTotal} 块 · 折射 ${sessionLow.refracting} · 活的定义 ${sessionLow.defsOn} · blur=${sessionLow.glass[0]?.blur}`,
     )
 
     await setTier('ultra')
