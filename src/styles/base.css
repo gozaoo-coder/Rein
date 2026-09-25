@@ -564,7 +564,17 @@ html[data-motion='rich'] .dock-block.pill.goo .dock-tab::before {
    两种挂法，因为这两类控件的 background 各有用途：
      · `.press-glow`  —— 背景只是一层纯色，光晕直接再叠一层 background-image；
      · `.glow-layer`  —— 背景要用在别处（活动底、轨道色），光晕走 ::after。
-   `::after` 在这两类控件上都是空的（它们只占了 ::before）。 */
+    `::after` 在这两类控件上都是空的（它们只占了 ::before）。 */
+/* `.glow-layer` 自己必须是定位元素：它的 ::after 是 `inset: 0` 的绝对定位盒，
+   包含块得落在**元素自己**身上。这条写进这份定义、不交给调用处去记 —— 漏了它的
+   那一处，光晕会以最近的定位祖先（沉浸页的 .ctrl-dock）为包含块：`--gx/--gy` 却是
+   按按钮自己算的（usePressGlow 写的是元素相对坐标），于是整条坞被点亮、而按钮上
+   什么都看不见（2026-09-25 沉浸页审查实测）。Dock 与分段控件各自也写着 relative，
+   在这里再声明一次是幂等的。 */
+.glow-layer {
+  position: relative;
+}
+
 html[data-motion='rich'] .press-glow:active {
   background-image: radial-gradient(
     circle 120px at var(--gx, 50%) var(--gy, 50%),
