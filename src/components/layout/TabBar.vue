@@ -3,9 +3,8 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { House, Sparkles, User } from 'lucide-vue-next'
 
-import ActionSheet from '@/components/common/ActionSheet.vue'
-import GlassSurface from '@/components/common/GlassSurface.vue'
-import GlassThumb from '@/components/common/GlassThumb.vue'
+import AppMenu from '@/components/common/AppMenu.vue'
+import GlassDockAssembly from '@/components/common/GlassDockAssembly.vue'
 import { useDockStore } from '@/stores/dock'
 import { useFeaturesStore } from '@/stores/features'
 import { motionRich } from '@/system/motion'
@@ -37,8 +36,6 @@ const CORE_TABS: NavContribution[] = [
 /** 右独立圆钮的落点：AI */
 const AI_TAB: NavContribution = { route: 'ai', label: 'AI', icon: Sparkles, surfaces: ['tabbar'], order: 0 }
 
-/** 三块玻璃的几何：两侧正圆与药丸同高（= Dock 高度），圆角从高度推出来 */
-const BLOCK = 'var(--tabbar-h)'
 /** 长按判定：按住这么久就开选择器（松手不跳转） */
 const LONG_PRESS_MS = 480
 
@@ -77,6 +74,8 @@ usePressGlow(dockEl, '.dock-tab, .dock-slot')
 
 /* ---------- 左钮：短按直达 / 长按换落点 ---------- */
 const pickerOpen = ref(false)
+/** 菜单锚点：被长按的那颗左钮 —— bind 菜单从它旁边弹出（Dock 贴底，AppMenu 会自动翻到上方） */
+const pickerAnchor = ref<HTMLElement | null>(null)
 let pressTimer: ReturnType<typeof setTimeout> | null = null
 let longPressed = false
 
@@ -87,8 +86,10 @@ function cancelPress(): void {
   }
 }
 
-function startPress(): void {
+function startPress(e: PointerEvent): void {
   longPressed = false
+  // 锚点就取被按住的那颗左钮：长按开了菜单之后，菜单要贴着它出现
+  pickerAnchor.value = e.currentTarget as HTMLElement
   cancelPress()
   pressTimer = setTimeout(() => {
     pressTimer = null
@@ -111,89 +112,76 @@ function closePicker(): void {
   longPressed = false
 }
 
-const pickerActions = computed(() => candidates.value.map((c) => ({ label: c.label, value: c.route })))
+/** 候选带上各自的模块图标：bind 菜单是「图标 + 文字」版，扫一眼就知道是哪个模块 */
+const pickerActions = computed(() =>
+  candidates.value.map((c) => ({ label: c.label, value: c.route, icon: c.icon })),
+)
+
+const dockItems = computed(() =>
+  tabs.value.map((item) => ({ id: item.route, label: item.label, icon: item.icon })),
+)
+const leftItem = computed(() =>
+  leftTab.value
+    ? { id: leftTab.value.route, label: leftTab.value.label, icon: leftTab.value.icon }
+    : undefined,
+)
+const rightItem = { id: AI_TAB.route, label: AI_TAB.label, icon: AI_TAB.icon }
 
 onBeforeUnmount(cancelPress)
 </script>
 
 <template>
   <nav ref="dockEl" class="dock" aria-label="主导航">
-    <!-- 左 · 独立圆钮（自定义落点）：短按直达，长按换一个模块主页面 -->
-    <GlassSurface
-      v-if="leftTab"
-      class="dock-block"
-      data-slot="left"
-      :width="BLOCK"
-      :height="BLOCK"
-      border-radius="50%"
-      fill="var(--glass-fill)"
+    <GlassDockAssembly
+      :items="dockItems"
+      :active="String(route.name ?? '')"
+      :left="leftItem"
+      :right="rightItem"
+      :goo="goo"
+      left-slot="left"
+      right-slot="ai"
     >
-      <button
-        type="button"
-        class="dock-slot glow-layer"
-        :class="{ active: route.name === leftTab.route }"
-        :aria-label="`${leftTab.label}（长按更换）`"
-        @pointerdown="startPress"
-        @pointerup="cancelPress"
-        @pointerleave="cancelPress"
-        @pointercancel="cancelPress"
-        @contextmenu.prevent
-        @click="onLeftClick"
-      >
-        <component :is="leftTab.icon" :size="21" :stroke-width="route.name === leftTab.route ? 2.4 : 1.9" />
-        <span>{{ leftTab.label }}</span>
-      </button>
-    </GlassSurface>
+      <template #left="{ item, active }">
+        <button
+          type="button"
+          class="dock-slot glow-layer"
+          :class="{ active }"
+          :aria-label="`${item.label}（长按更换）`"
+          @pointerdown="startPress($event)"
+          @pointerup="cancelPress"
+          @pointerleave="cancelPress"
+          @pointercancel="cancelPress"
+          @contextmenu.prevent
+          @click="onLeftClick"
+        >
+          <component :is="item.icon" :size="21" :stroke-width="active ? 2.4 : 1.9" />
+          <span>{{ item.label }}</span>
+        </button>
+      </template>
+      <template #tab="{ item, active }">
+        <RouterLink
+          :to="{ name: item.id }"
+          class="dock-tab glow-layer"
+          :class="{ active }"
+        >
+          <component :is="item.icon" :size="22" :stroke-width="active ? 2.4 : 1.9" />
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </template>
+      <template #right="{ item, active }">
+        <RouterLink :to="{ name: item.id }" class="dock-slot glow-layer" :class="{ active }">
+          <component :is="item.icon" :size="21" :stroke-width="active ? 2.4 : 1.9" />
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </template>
+    </GlassDockAssembly>
 
-    <!-- 中 · 药丸：内核 + 插件页签 -->
-    <GlassSurface
-      class="dock-block pill"
-      :class="{ goo }"
-      :height="BLOCK"
-      border-radius="var(--radius-full)"
-      fill="var(--glass-fill)"
-    >
-      <!-- 丰富档的液态活动底：**放在玻璃 slot 里面**，包在外面会让折射整段失效
-           （带 filter 的元素是后代 backdrop-filter 的 backdrop root） -->
-      <GlassThumb v-if="goo" :index="tabIndex" :count="tabs.length" />
-      <RouterLink
-        v-for="it in tabs"
-        :key="it.route"
-        :to="{ name: it.route }"
-        class="dock-tab glow-layer"
-        :class="{ active: route.name === it.route }"
-      >
-        <component :is="it.icon" :size="22" :stroke-width="route.name === it.route ? 2.4 : 1.9" />
-        <span>{{ it.label }}</span>
-      </RouterLink>
-    </GlassSurface>
-
-    <!-- 右 · 独立圆钮：AI -->
-    <GlassSurface
-      class="dock-block"
-      data-slot="ai"
-      :width="BLOCK"
-      :height="BLOCK"
-      border-radius="50%"
-      fill="var(--glass-fill)"
-    >
-      <RouterLink
-        :to="{ name: AI_TAB.route }"
-        class="dock-slot glow-layer"
-        :class="{ active: route.name === AI_TAB.route }"
-      >
-        <component
-          :is="AI_TAB.icon"
-          :size="21"
-          :stroke-width="route.name === AI_TAB.route ? 2.4 : 1.9"
-        />
-        <span>{{ AI_TAB.label }}</span>
-      </RouterLink>
-    </GlassSurface>
-
-    <!-- 长按左钮的选择器：候选来自插件层（关掉模块即从清单里消失） -->
-    <ActionSheet
+    <!-- 长按左钮的选择器：候选来自插件层（关掉模块即从清单中消失）。
+         用 bind 菜单贴着被长按的那颗钮弹（图标 + 文字）——它是「换一个落点」，
+         不是需要遮罩压场的破坏性操作 -->
+    <AppMenu
       :open="pickerOpen"
+      :anchor="pickerAnchor"
       title="底栏左键"
       :actions="pickerActions"
       @select="dock.setLeftRoute"
@@ -215,7 +203,6 @@ onBeforeUnmount(cancelPress)
   max-width: var(--frame-max);
   height: var(--tabbar-h);
   display: flex;
-  gap: 8px;
   z-index: 60;
 }
 </style>

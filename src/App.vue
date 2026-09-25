@@ -20,21 +20,13 @@ import { useUpdateStore } from '@/stores/update'
 import { useCourseSelectStore } from '@/stores/courseSelect'
 import { useToast } from '@/composables/useToast'
 import { askAiForGrabRescue } from '@/utils/campusAi'
-import { kickPerfWatch, startPerfWatch } from '@/system/perf'
-import { immersiveClosing, immersiveOpen } from '@/system/sessionImmersive'
 
 const route = useRoute()
 /** 桌面工作台：视口 ≥ DESKTOP_MIN 时以三窗格壳（导航轨 + 主人区 + 右侧信息栏）替代底部 TabBar */
 const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 
 /** 全屏形态：fullscreen 路由（跑步）或训练课沉浸层打开——隐藏壳导航与悬浮条 */
-const fullscreenUI = computed(() => route.meta.fullscreen === true || immersiveOpen.value)
-/** 沉浸层收起动画期间悬浮条提前回归，与形变块同位接续（v-show 保实例，动画不打断弹簧状态） */
-const wbarVisible = computed(() => !fullscreenUI.value || immersiveClosing.value)
-
-/** 路由切换是一轮已知的重负载（整页重建 + 入场过渡）：让性能采样插队补一轮，
- *  不必等休息窗口到期——卡顿最容易发生在这里，也最容易被「刚好没在采样」漏掉。 */
-watch(() => route.fullPath, () => kickPerfWatch())
+const shellVisible = computed(() => route.meta.fullscreen !== true)
 
 /* ---------------- 参数错误 → 立刻交给 AI 补救 ----------------
  *
@@ -72,7 +64,6 @@ watch(
 const updatePrompt = ref(false)
 
 onMounted(() => {
-  startPerfWatch()
   const update = useUpdateStore()
   void (async () => {
     await update.load()
@@ -84,7 +75,7 @@ onMounted(() => {
 <template>
   <!-- 桌面三窗格壳：沉浸页（运动模式）同样隐藏导航轨 -->
   <div v-if="isDesktop" class="desk-frame">
-    <DesktopRail v-if="!fullscreenUI" />
+    <DesktopRail v-show="shellVisible" data-immersive-shell />
     <main class="desk-main" :class="{ wide: route.name === 'home' || route.name === 'todos' }">
       <!-- 超范围平移层（桌面）：到边拖动时整页位移，只写 transform、不改布局（system/rubberScroll） -->
       <div data-rubber-content>
@@ -96,7 +87,7 @@ onMounted(() => {
       </div>
     </main>
     <!-- 第三窗格 · 今日信息栏：全页面常驻（沉浸页除外），保证桌面构图平衡 -->
-    <DesktopInspector v-if="!fullscreenUI" />
+    <DesktopInspector v-show="shellVisible" data-immersive-shell />
   </div>
 
   <!-- 移动端（原结构）：内容居中窄栏 + 底部标签导航 -->
@@ -109,16 +100,19 @@ onMounted(() => {
         </Transition>
       </RouterView>
     </div>
-    <TabBar v-if="!fullscreenUI" />
+    <TabBar
+      v-show="shellVisible"
+      data-immersive-shell
+    />
   </div>
-  <!-- 悬浮运动条：异常中断恢复提示，桌面/移动共用（沉浸形态下隐藏；收起动画期间提前回归接续） -->
-  <ActiveWorkoutBar v-show="wbarVisible" />
+  <!-- 悬浮运动条：收起完成后才恢复，自身按停靠方向渐入 -->
+  <ActiveWorkoutBar />
   <!-- 录音悬浮条：录音进行中常驻（可拖拽停靠，轻点进录音页） -->
-  <RecordFloatBar v-show="wbarVisible" />
+  <RecordFloatBar v-show="shellVisible" data-immersive-shell />
   <!-- 语音转写悬浮条：语音会话收起后台转写继续（与录音浮条同套停靠、独立 key） -->
-  <VoiceFloatBar v-show="wbarVisible" />
+  <VoiceFloatBar v-show="shellVisible" data-immersive-shell />
   <!-- 抢课监视器：后台引擎有活儿时顶部落一条，点进选课页（顶部定位，不与底部三条浮条抢位） -->
-  <GrabFloatBar v-show="wbarVisible" />
+  <GrabFloatBar v-show="shellVisible" data-immersive-shell />
   <!-- 语音会话视图：单例 runtime 驱动，任何入口可唤起（voiceRuntime.openView） -->
   <VoiceSessionView />
   <!-- 训练课沉浸层：常驻挂载不走路由（system/sessionImmersive 驱动显隐与形变） -->

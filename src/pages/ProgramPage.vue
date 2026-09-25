@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Circle,
+  FileText,
   Info,
   MoreHorizontal,
   ShoppingBag,
@@ -14,7 +15,7 @@ import {
   Wand2,
 } from 'lucide-vue-next'
 
-import ActionSheet from '@/components/common/ActionSheet.vue'
+import AppMenu from '@/components/common/AppMenu.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
@@ -206,19 +207,27 @@ const blob = computed(() => parsedBlob.value.blob)
 /** 状态条展开（静态参数详情）与页头「⋯」操作菜单 */
 const stripOpen = ref(false)
 const moreOpen = ref(false)
+/** 菜单锚点：页头那颗「⋯」——bind 菜单要贴着它弹 */
+const moreBtn = ref<HTMLElement | null>(null)
 
 const activeTierLabel = computed(() =>
   store.active?.tier === 'conservative' ? '保守' : store.active?.tier === 'aggressive' ? '进取' : '均衡',
 )
 
-/** ⋯ 菜单项：方案结束后归档项让位给成绩单 */
+/** ⋯ 菜单项：方案结束后归档项让位给成绩单；删除保留「再点一次」的二次确认语义 */
 const moreActions = computed(() => {
   if (!store.active) return []
-  const items: { label: string; value: string; danger?: boolean }[] = []
-  if (isEnded.value) items.push({ label: '生成本期成绩单', value: 'wrapup' })
-  if (!isEnded.value) items.push({ label: '归档方案', value: 'archive' })
-  items.push({ label: '删除方案', value: 'delete', danger: true })
-  return items
+  return [
+    isEnded.value
+      ? { label: '生成本期成绩单', value: 'wrapup', icon: FileText }
+      : { label: '归档方案', value: 'archive', icon: Archive },
+    {
+      label: deleteArmed.value ? '再点一次确认删除' : '删除方案',
+      value: 'delete',
+      icon: Trash2,
+      danger: true,
+    },
+  ]
 })
 
 function onMore(value: string): void {
@@ -641,7 +650,7 @@ function adjustmentsOf(r: ProgramRecord): number {
   <div class="page">
     <PageHeader title="健康方案" subtitle="程序算基线 · 日程级安排 · AI 只复盘调参" back>
       <template v-if="phase === 'active'" #action>
-        <button class="hdr-btn" aria-label="更多方案操作" @click="moreOpen = true">
+        <button ref="moreBtn" class="hdr-btn" aria-label="更多方案操作" @click="moreOpen = true">
           <MoreHorizontal :size="19" />
         </button>
       </template>
@@ -897,8 +906,17 @@ function adjustmentsOf(r: ProgramRecord): number {
       <!-- 智能添加（food 模式）：文字/图片描述 → 食物卡确认写入；餐次可由下一餐预选 -->
       <SmartAddSheet :open="smartAddOpen" mode="food" :date="todayStr()" :default-meal="smartAddMeal" @close="smartAddOpen = false" />
 
-      <!-- 页头「⋯」：低频方案操作的收纳入口（胶囊快捷钮的双通道备份） -->
-      <ActionSheet :open="moreOpen" title="方案操作" :actions="moreActions" @select="onMore" @close="moreOpen = false" />
+      <!-- 页头「⋯」：低频方案操作的收纳入口（胶囊快捷钮的双通道备份）。
+           用 bind 菜单贴着触发钮弹 —— 动作之间平级、没有需要遮罩压场的破坏性确认
+           （删除本身还有「再点一次」的第二道闸） -->
+      <AppMenu
+        :open="moreOpen"
+        :anchor="moreBtn"
+        title="方案操作"
+        :actions="moreActions"
+        @select="onMore"
+        @close="moreOpen = false"
+      />
 
     </template>
 

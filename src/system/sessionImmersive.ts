@@ -25,6 +25,7 @@ import { ref } from 'vue'
 
 export const immersiveOpen = ref(false)
 export const immersiveClosing = ref(false)
+export const immersiveReturning = ref(false)
 export const immersiveOpenSeq = ref(0)
 
 /** 浮窗几何快照：rect + 圆角（形变起止的圆角补偿基准）。
@@ -39,6 +40,13 @@ export interface ImmersiveOriginSnapshot {
 
 let originProvider: (() => HTMLElement | null) | null = null
 let originSnapshot: ImmersiveOriginSnapshot | null = null
+let returnTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelReturnTimer(): void {
+  if (!returnTimer) return
+  clearTimeout(returnTimer)
+  returnTimer = null
+}
 
 export function setImmersiveOriginProvider(fn: () => HTMLElement | null): void {
   originProvider = fn
@@ -54,8 +62,11 @@ function measure(el: HTMLElement | null, explicit: boolean): ImmersiveOriginSnap
 
 /** 打开沉浸层（from = 显式锚点元素，缺省取悬浮条注册的定位元素） */
 export function openImmersive(from?: HTMLElement | null): void {
+  cancelReturnTimer()
   originSnapshot = measure(from ?? originProvider?.() ?? null, from != null)
   immersiveClosing.value = false
+  immersiveReturning.value = false
+  document.documentElement.dataset.immersive = 'open'
   immersiveOpen.value = true
   immersiveOpenSeq.value++
 }
@@ -68,14 +79,26 @@ export function closeImmersive(): void {
 
 /** 立即关闭（不播动画）：会话已结束 / 作废，浮窗随之消失时用 */
 export function closeImmersiveNow(): void {
+  cancelReturnTimer()
   originSnapshot = null
   immersiveClosing.value = false
+  immersiveReturning.value = false
+  document.documentElement.dataset.immersive = 'ready'
   immersiveOpen.value = false
 }
 
 /** 收起动画收尾回调（仅 SessionOverlay 内部调用） */
 export function settleClosed(): void {
-  closeImmersiveNow()
+  originSnapshot = null
+  immersiveClosing.value = false
+  immersiveReturning.value = true
+  document.documentElement.dataset.immersive = 'returning'
+  immersiveOpen.value = false
+  returnTimer = setTimeout(() => {
+    returnTimer = null
+    immersiveReturning.value = false
+    document.documentElement.dataset.immersive = 'ready'
+  }, 240)
 }
 
 /** 展开动画起点：openImmersive 时刻的浮窗快照，无浮窗时为 null */

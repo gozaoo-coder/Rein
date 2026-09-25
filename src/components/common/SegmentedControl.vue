@@ -45,8 +45,8 @@ function onKey(e: KeyboardEvent, i: number): void {
 </script>
 
 <template>
-  <!-- 段数多时缩字号：每一段的宽度是总宽除以段数，5 段 × 4 个汉字在 320px 上会溢出。
-       缩字号只作用于分段控件本身，完整标签在调用处的清单里给足（PERF_MODES 的 short） -->
+  <!-- 段数多时缩字号：每一段的宽度是总宽除以段数，超过 4 段时 4 个汉字在 320px 上会溢出。
+       缩字号只作用于分段控件本身，完整标签在调用处的清单里给足（PERF_MODES） -->
   <div
     ref="segEl"
     class="seg"

@@ -5,7 +5,7 @@ import { Expand } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import { workoutRuntime } from '@/system/workoutRuntime'
-import { openImmersive, setImmersiveOriginProvider } from '@/system/sessionImmersive'
+import { immersiveClosing, immersiveOpen, immersiveReturning, openImmersive, setImmersiveOriginProvider } from '@/system/sessionImmersive'
 import { useDragDock } from '@/composables/useDragDock'
 import { useToast } from '@/composables/useToast'
 
@@ -32,6 +32,7 @@ const { toast } = useToast()
 
 const view = rt.view
 const endOpen = ref(false)
+const rootEl = ref<HTMLElement | null>(null)
 
 /* ---------- 拖拽停靠 ---------- */
 const posEl = ref<HTMLElement | null>(null)
@@ -50,17 +51,7 @@ onMounted(() => {
   })
 })
 
-/** 冷启动静默恢复的首个出现不播入场动画；之后的挂载（如退出沉浸页）正常播 */
-const enterMuted = ref(true)
-watch(view, (v) => {
-  if (v) void nextTick().then(() => (enterMuted.value = false))
-})
-// 重挂载时 view 可能已非空（运行时早已接管）：watch 不再触发，这里补一次解锁
-onMounted(() => {
-  if (view.value) void nextTick().then(() => (enterMuted.value = false))
-})
-
-/* ---------- bottom 停靠 ⇒ 页面底部预留 + 满底自动跟随滚动 ---------- */
+/* 沉浸收起完成后的显形由 returning 状态类直接驱动 */
 
 /** 移动端是文档级滚动；桌面三窗格壳滚在 .desk-main 上 */
 function activeScroller(): HTMLElement | null {
@@ -68,6 +59,21 @@ function activeScroller(): HTMLElement | null {
   if (dm instanceof HTMLElement) return dm
   return (document.scrollingElement as HTMLElement | null) ?? null
 }
+
+watch([immersiveOpen, immersiveClosing, immersiveReturning], ([open, closing, returning]) => {
+  const root = rootEl.value
+  if (!root) return
+  document.documentElement.dataset.immersive = returning ? 'returning' : open ? 'open' : 'ready'
+  root.classList.toggle('immersive-hidden', open && !closing)
+  root.classList.toggle('immersive-measuring', closing)
+  if (!returning) {
+    root.classList.remove('returning')
+    return
+  }
+  root.classList.remove('returning')
+  void root.offsetWidth
+  root.classList.add('returning')
+}, { immediate: true })
 
 watch(
   [slot, view],
@@ -137,12 +143,12 @@ async function onEndPick(value: string): Promise<void> {
 </script>
 
 <template>
-  <Transition :name="enterMuted ? 'wdock-mute' : 'wdock'">
-    <section
-      v-if="view"
-      class="wdock-root"
-      :class="[`dock-${slot}`, { dragging }]"
-    >
+  <section
+    v-if="view"
+    ref="rootEl"
+    class="wdock-root"
+    :class="[`dock-${slot}`, { dragging }]"
+  >
       <div ref="posEl" class="dock-pos">
         <div
           class="dock-body glass-surface"
@@ -220,8 +226,7 @@ async function onEndPick(value: string): Promise<void> {
         @select="void onEndPick($event)"
         @close="endOpen = false"
       />
-    </section>
-  </Transition>
+  </section>
 </template>
 
 <style scoped>
@@ -281,6 +286,53 @@ async function onEndPick(value: string): Promise<void> {
 /* 抓取反馈：按下轻收、抓住抬升 */
 .dock-body.pressing {
   transform: scale(0.97);
+}
+
+@keyframes dock-return-bottom {
+  from { opacity: 0; translate: 0 24px; }
+}
+
+@keyframes dock-return-top {
+  from { opacity: 0; translate: 0 -24px; }
+}
+
+@keyframes dock-return-left {
+  from { opacity: 0; translate: -18px 0; }
+}
+
+@keyframes dock-return-right {
+  from { opacity: 0; translate: 18px 0; }
+}
+
+.wdock-root.immersive-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.wdock-root.immersive-measuring {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
+.wdock-root.immersive-measuring .dock-body {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.wdock-root.returning {
+  animation: dock-return-bottom 240ms var(--ease-out) both;
+}
+
+.wdock-root.dock-top.returning {
+  animation-name: dock-return-top;
+}
+
+.wdock-root.dock-left.returning {
+  animation-name: dock-return-left;
+}
+
+.wdock-root.dock-right.returning {
+  animation-name: dock-return-right;
 }
 
 /* 条形态：宽度沿用旧悬浮条的视口窄栏（居中由弹簧坐标负责，不靠 margin） */
@@ -344,38 +396,7 @@ async function onEndPick(value: string): Promise<void> {
   text-overflow: ellipsis;
 }
 
-/* 进出同路径：自当前停靠方向浮入 / 滑出 */
-.wdock-enter-active,
-.wdock-leave-active {
-  transition:
-    opacity var(--dur-sheet) var(--ease-sheet),
-    transform var(--dur-sheet) var(--ease-sheet);
-}
-
-.wdock-enter-from,
-.wdock-leave-to {
-  opacity: 0;
-}
-
-.dock-bottom.wdock-enter-from,
-.dock-bottom.wdock-leave-to {
-  transform: translateY(18px);
-}
-
-.dock-top.wdock-enter-from,
-.dock-top.wdock-leave-to {
-  transform: translateY(-18px);
-}
-
-.dock-left.wdock-enter-from,
-.dock-left.wdock-leave-to {
-  transform: translateX(-14px);
-}
-
-.dock-right.wdock-enter-from,
-.dock-right.wdock-leave-to {
-  transform: translateX(14px);
-}
+/* 两种显形都由状态类直接驱动 */
 
 /* 左侧信息区：整块可点，等价「恢复沉浸」 */
 .info {
@@ -488,16 +509,6 @@ async function onEndPick(value: string): Promise<void> {
 
 /* 减弱动效：保留透明度确认，去掉一切位移动画与呼吸点 */
 @media (prefers-reduced-motion: reduce) {
-  .wdock-enter-from,
-  .wdock-leave-to {
-    transform: none;
-  }
-
-  .wdock-enter-active,
-  .wdock-leave-active {
-    transition-duration: 150ms;
-  }
-
   .layer,
   .layer.off {
     transform: none;

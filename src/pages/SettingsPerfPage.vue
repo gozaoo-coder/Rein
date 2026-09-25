@@ -3,13 +3,13 @@ import { computed, ref } from 'vue'
 import { CalendarDays, ChevronRight, Dumbbell, House, Plus, SlidersHorizontal, Sparkles, User } from 'lucide-vue-next'
 
 import GlassSurface from '@/components/common/GlassSurface.vue'
+import GlassDockAssembly from '@/components/common/GlassDockAssembly.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import GlassThumb from '@/components/common/GlassThumb.vue'
 import GlassTunerSheet from '@/components/perf/GlassTunerSheet.vue'
 import { usePressGlow } from '@/composables/usePressGlow'
 import { motionEffective, motionLevel, motionRich, setMotionLevel, MOTION_LEVELS, type MotionLevel } from '@/system/motion'
-import { PERF_MODES, glassPipeline, liquidGlass, perfDegraded, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
+import { PERF_MODES, liquidGlass, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
 
 /**
  * 画质预览（三级页，入口在「设置 › 性能」）：**超高档的液态玻璃长什么样**。
@@ -44,20 +44,25 @@ const mode = computed({
   },
 })
 
-const PERF_OPTIONS = PERF_MODES.map(({ value, label, short }) => ({ value, label: short ?? label }))
+const PERF_OPTIONS = PERF_MODES.map(({ value, label }) => ({ value, label }))
 
 /** 当前档位下这块玻璃的真实状态：能力不足就明说，别让人对着退化结果猜 */
 const glassState = computed(() => {
+  const extreme = perfMode.value === 'extreme'
   if (!liquidGlass.value) {
-    if (!supportsSvgBackdrop()) return { tone: 'warn', text: '本机内核不支持折射，已退化为普通毛玻璃' }
-    if (perfDegraded.value) return { tone: 'warn', text: '已降级到流畅优先（玻璃顶成实底）' }
-    return { tone: 'idle', text: '当前档位用普通毛玻璃 · 切到「超高」即开折射' }
+    if (!supportsSvgBackdrop()) {
+      return extreme
+        ? { tone: 'warn', text: '本机内核不支持折射：极致仍会铺全局玻璃，折射退化为普通毛玻璃' }
+        : { tone: 'warn', text: '本机内核不支持折射，已退化为普通毛玻璃' }
+    }
+    if (perfMode.value === 'low') return { tone: 'warn', text: '流畅档：玻璃顶成实底，不做折射' }
+    return { tone: 'idle', text: '当前档位用普通毛玻璃 · 切到「超高」或「极致」即开折射' }
   }
-  // 折射开着时，把**实际走的链**报出来：这一页要能验证「优化档」到底换了什么，
-  // 而不是只看档位标签。塌缩链与完整链逐像素等价，只有原语数不同。
-  return glassPipeline.value === 'collapsed'
-    ? { tone: 'on', text: '超高（优化）· 折射已开启 · 塌缩管线（3 个原语）' }
-    : { tone: 'on', text: '超高 · 折射已开启 · 完整管线（10 个原语）' }
+  // 折射开着时，把**实际走的链**报出来：这一页要能验证两档到底换了什么，
+  // 而不是只看档位标签。塌缩链与完整链在出厂参数下逐像素等价，只有原语数不同。
+  return extreme
+    ? { tone: 'on', text: '极致 · 折射已开启 · 完整管线（10 个原语）+ 全局玻璃' }
+    : { tone: 'on', text: '超高 · 折射已开启 · 塌缩管线（3 个原语）' }
 })
 
 /** 底部栏的三项（与应用里的 Dock 同名同图标，方便对照观感） */
@@ -66,10 +71,11 @@ const TABS = [
   { id: 'sports', label: '运动', icon: Dumbbell },
   { id: 'me', label: '我', icon: User },
 ]
+const previewDock = {
+  left: { id: 'schedule', label: '课表', icon: CalendarDays },
+  right: { id: 'ai', label: 'AI', icon: Sparkles },
+}
 const active = ref('sports')
-/** 标本台里的活动底也要跟着丰富档走：标本的意义就是「所见即应用里的那一块」 */
-const specIndex = computed(() => Math.max(0, TABS.findIndex((t) => t.id === active.value)))
-const specGoo = computed(() => motionRich.value)
 
 /** 参数调节面板（液态玻璃管线上的 12 个数字）：入口在标本台正下方 */
 const tunerOpen = ref(false)
@@ -109,7 +115,6 @@ function replaySpecimen(): void {
 
 /** 仅图标按钮的边长（与应用里主按钮的 54 一致），正圆取半高 */
 const ICON_BTN = 54
-const DOCK_BTN = 58
 </script>
 
 <template>
@@ -152,49 +157,40 @@ const DOCK_BTN = 58
           </GlassSurface>
         </div>
 
-        <!-- ③ 组件装配：底部栏（左圆钮 + 中药丸 + 右圆钮）—— 三块玻璃**并列留缝**，
-              不互相叠压：各自都带受光边，一叠就会在缝上出现一道月牙形的硬边（像画错了）。
-              这一行**不另画一遍**：结构与前景类（.dock-block / .dock-tab / .dock-slot）
-              与真实 Dock 共用 base.css 里的那一份，材质也走同一份令牌（不套暗场那套，
-              否则标本会比真实 Dock 暗一档）—— 所见即应用里的那一块 -->
+        <!-- ③ 组件装配：直接复用生产 Dock 的共享玻璃装配组件 -->
         <div ref="dockRowEl" class="dockrow">
-          <GlassSurface class="dock-block" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" fill="var(--glass-fill)">
-            <button type="button" class="dock-slot glow-layer" aria-label="课表（自定义落点示例）">
-              <CalendarDays :size="21" />
-              <span>课表</span>
-            </button>
-          </GlassSurface>
-
-          <GlassSurface
-            class="dock-block pill"
-            :class="{ goo: specGoo }"
-            :height="DOCK_BTN"
-            border-radius="var(--radius-full)"
-            fill="var(--glass-fill)"
+          <GlassDockAssembly
+            :items="TABS"
+            :active="active"
+            :left="previewDock.left"
+            :right="previewDock.right"
+            :goo="motionRich"
           >
-            <!-- 与真实 Dock 同一份液态活动底（丰富档）：标本不另画一遍，
-                 否则「所见即应用里的那一块」这条就断了 -->
-            <GlassThumb v-if="specGoo" :index="specIndex" :count="TABS.length" />
-            <button
-              v-for="t in TABS"
-              :key="t.id"
-              type="button"
-              class="dock-tab glow-layer"
-              :class="{ active: active === t.id }"
-              :aria-pressed="active === t.id"
-              @click="active = t.id"
-            >
-              <component :is="t.icon" :size="22" :stroke-width="active === t.id ? 2.4 : 1.9" />
-              <span>{{ t.label }}</span>
-            </button>
-          </GlassSurface>
-
-          <GlassSurface class="dock-block" :width="DOCK_BTN" :height="DOCK_BTN" border-radius="50%" fill="var(--glass-fill)">
-            <button type="button" class="dock-slot glow-layer" aria-label="AI">
-              <Sparkles :size="21" />
-              <span>AI</span>
-            </button>
-          </GlassSurface>
+            <template #left>
+              <button type="button" class="dock-slot glow-layer" aria-label="课表（自定义落点示例）">
+                <CalendarDays :size="21" />
+                <span>课表</span>
+              </button>
+            </template>
+            <template #tab="{ item, active: itemActive }">
+              <button
+                type="button"
+                class="dock-tab glow-layer"
+                :class="{ active: itemActive }"
+                :aria-pressed="itemActive"
+                @click="active = item.id"
+              >
+                <component :is="item.icon" :size="22" :stroke-width="itemActive ? 2.4 : 1.9" />
+                <span>{{ item.label }}</span>
+              </button>
+            </template>
+            <template #right>
+              <button type="button" class="dock-slot glow-layer" aria-label="AI">
+                <Sparkles :size="21" />
+                <span>AI</span>
+              </button>
+            </template>
+          </GlassDockAssembly>
         </div>
       </div>
     </section>
@@ -232,10 +228,11 @@ const DOCK_BTN = 58
         不会留下空白。
       </p>
       <p class="pnote t-3">
-        两个「超高」都是手动钉死的档：选了就一直开折射，不参与掉帧自动判定（与「高画质」同理）。
-        「超高（优化）」与「超高」观感相同 —— 它把三通道位移合成换成了等价的单次位移
-        （出厂参数下那套合成是恒等变换），台上读数会报出实际走的是哪条链。
-        手机上若觉得发烫或掉帧，切回「自动」即可。
+        四档都是手动钉死的固定档，不会在后台自己切。「超高」的折射走塌缩管线：把三通道
+        位移合成换成等价的单次位移（出厂参数下那套合成是恒等变换），成本更低；「极致」
+        换回完整管线保留三通道色散，并把玻璃材质铺到卡片、抽屉、菜单、操作面板与快捷磁贴，
+        材质分层对齐苹果的 Liquid Glass 规范。台上读数会报出实际走的是哪条链。
+        手机上若觉得发烫，切回「高画质」或「流畅」即可。
       </p>
     </section>
 
@@ -570,9 +567,9 @@ const DOCK_BTN = 58
 
 .modes li b {
   flex: none;
-  /* 要放得下最长的那档「超高（优化）」（6 个全角字 × 14px）：列宽固定，
-     右边的说明才对得齐；窄了它就会折成「超高（优 / 化）」 */
-  width: 84px;
+  /* 要放得下最长的档名「高画质」（3 个全角字 × 14px）+ 余量：列宽固定，
+     右边的说明才对得齐 */
+  width: 56px;
   font-size: var(--fs-subhead);
   font-weight: 600;
   color: var(--text-2);

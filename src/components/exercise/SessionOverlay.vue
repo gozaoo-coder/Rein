@@ -13,7 +13,10 @@ import SessionBigNumberInput from '@/components/exercise/SessionBigNumberInput.v
 import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
+import { usePressGlow } from '@/composables/usePressGlow'
+import { useScrolled } from '@/composables/useScrolled'
 import { motionOn } from '@/system/motion'
+import { perfDegraded } from '@/system/perf'
 import { workoutRuntime } from '@/system/workoutRuntime'
 import { useToast } from '@/composables/useToast'
 import {
@@ -388,8 +391,18 @@ async function saveNow(): Promise<void> {
 const layerEl = ref<HTMLElement | null>(null)
 const fadeEl = ref<HTMLElement | null>(null)
 
+/* 丰富档的按压定向光晕：跟随手指位置的那一路反馈（另一路 scale 挤压各控件自带）。
+   事件走整层委托，:active 决定亮不亮 —— 即时反馈等不得一个事件回调。 */
+usePressGlow(layerEl, '.glow-layer')
+
+/* 滚动边缘（丰富档）：内容滚离顶部即置位，CSS 据此浮起底坞的暗带 */
+const scrollEl = ref<HTMLElement | null>(null)
+const bodyScrolled = useScrolled(scrollEl)
+
 const EXPAND_MS = 480
 const COLLAPSE_MS = 400
+const EXPAND_MS_LOW = 360
+const COLLAPSE_MS_LOW = 300
 
 /** 形变锚点：无浮窗几何（课程页直接开课等）时兜底为屏幕中央卡片 */
 function anchorFrom(s: ImmersiveOriginSnapshot | null): { rect: DOMRect; radius: number } {
@@ -457,11 +470,10 @@ function writeMorph(m: MorphState): void {
     el.style.transform = ''
     el.style.borderRadius = ''
   } else {
-    el.style.transform = `translate(${m.tx}px, ${m.ty}px) scale(${m.sx}, ${m.sy})`
-    // 非均匀缩放下圆角按轴补偿成椭圆：起点视觉半径 = 悬浮条圆角
-    el.style.borderRadius = `${m.r / m.sx}px / ${m.r / m.sy}px`
+    el.style.transform = `translate3d(${m.tx}px, ${m.ty}px, 0) scale(${m.sx}, ${m.sy})`
   }
   fade.style.opacity = String(m.fade)
+  fade.style.visibility = m.fade <= 0.001 ? 'hidden' : 'visible'
 }
 
 function stopMorph(): void {
@@ -471,7 +483,9 @@ function stopMorph(): void {
   morphTo = null
   morphDone = null
   // 无论正常收尾还是中途打断，都恢复毛玻璃材质
-  layerEl.value?.classList.remove('is-morphing')
+  const layer = layerEl.value
+  layer?.classList.remove('is-morphing')
+  if (layer) layer.style.borderRadius = ''
 }
 
 /* ---- 形变调试日志（默认静默）：控制台执行
@@ -503,9 +517,11 @@ function stepMorph(now: number): void {
     sy: lp(morphFrom.sy, morphTo.sy),
     tx: lp(morphFrom.tx, morphTo.tx),
     ty: lp(morphFrom.ty, morphTo.ty),
-    r: lp(morphFrom.r, morphTo.r),
+    r: morphFrom.r,
     fade: lpf(morphFrom.fade, morphTo.fade),
   })
+  const contentThreshold = morphTo.fade > morphFrom.fade ? (perfDegraded.value ? 0.9 : 0.95) : 2
+  fadeEl.value!.style.visibility = p < contentThreshold ? 'hidden' : 'visible'
   if (!morphFrameLogged) {
     morphFrameLogged = true
     debugMorph('firstFrame', { p: +p.toFixed(3), cur: { ...cur, sx: +cur.sx.toFixed(4), sy: +cur.sy.toFixed(4), tx: +cur.tx.toFixed(1), ty: +cur.ty.toFixed(1), r: +cur.r.toFixed(1), fade: +cur.fade.toFixed(3) } })
@@ -526,13 +542,15 @@ function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => vo
   const brief = (m: MorphState) => ({ sx: +m.sx.toFixed(4), sy: +m.sy.toFixed(4), tx: +m.tx.toFixed(1), ty: +m.ty.toFixed(1), r: +m.r.toFixed(1), fade: +m.fade.toFixed(3) })
   debugMorph('run', { from: brief(from), to: brief(to), dur })
   if (!motionOn.value) {
+    prepareMorphShell(to.r)
     writeMorph(to)
+    stopMorph()
     done?.()
     return
   }
   morphFrameLogged = false
-  // 动画期摘 blur、壳换实色（Android WebView 合成稳定性，见样式注释）
-  layerEl.value?.classList.add('is-morphing')
+  prepareMorphShell(from.r || to.r)
+  if (to.fade <= from.fade) fadeEl.value!.style.visibility = 'hidden'
   morphFrom = { ...from }
   morphTo = { ...to }
   morphT0 = performance.now()
@@ -541,10 +559,19 @@ function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => vo
   morphRaf = requestAnimationFrame(stepMorph)
 }
 
+function prepareMorphShell(radius: number): void {
+  const layer = layerEl.value
+  if (!layer) return
+  layer.classList.add('is-open', 'is-morphing')
+  layer.style.borderRadius = perfDegraded.value ? '0px' : `${radius}px`
+}
+
 function playExpand(): void {
   if (!layerEl.value || !fadeEl.value) return
   morphDebugOn = !!localStorage.getItem('reinMorphDebug')
   const presetSnap = immersiveOriginSnapshot()
+  prepareMorphShell(presetSnap?.radius ?? anchorFrom(presetSnap).radius)
+  fadeEl.value.style.visibility = 'hidden'
   debugMorph('expand:req', {
     explicit: presetSnap?.explicit ?? false,
     snapshot: presetSnap ? { x: +presetSnap.rect.left.toFixed(1), y: +presetSnap.rect.top.toFixed(1), w: +presetSnap.rect.width.toFixed(1), h: +presetSnap.rect.height.toFixed(1), r: presetSnap.radius } : null,
@@ -560,9 +587,9 @@ function playExpand(): void {
     // 立即出现，若被「现量浮窗」覆盖，块会从底部而非用户点击处长出；
     // 无显式锚（从浮窗打开 / 收起途中反打）才现量优先，量不到落回快照
     const snap = immersiveOriginSnapshot()
-    const anchor = snap?.explicit ? snap : measureOriginNow() ?? snap
+    const anchor = snap ?? measureOriginNow()
     debugMorph('expand:anchor', {
-      source: anchor?.explicit ? 'snapshot(显式锚)' : anchor ? 'measured(现量)' : 'fallback(中央兜底)',
+      source: anchor?.explicit ? 'snapshot(显式锚)' : anchor ? 'snapshot(打开时测量)' : 'fallback(中央兜底)',
       rect: anchor ? { x: +anchor.rect.left.toFixed(1), y: +anchor.rect.top.toFixed(1), w: +anchor.rect.width.toFixed(1), h: +anchor.rect.height.toFixed(1) } : null,
       radius: anchor?.radius ?? null,
     })
@@ -571,7 +598,7 @@ function playExpand(): void {
     // （形变中断后的反向展开从当前透明度接续，不闪跳）
     const from = morphStateOf(rect, radius)
     from.fade = cur.fade < 1 ? cur.fade : 0
-    morphRun(from, IDENTITY(), EXPAND_MS)
+    morphRun(from, IDENTITY(), perfDegraded.value ? EXPAND_MS_LOW : EXPAND_MS)
   })
 }
 
@@ -611,7 +638,7 @@ function playCollapse(): void {
     morphRun(
       { ...cur },
       { ...morphStateOf(rect, radius), fade: 0 },
-      COLLAPSE_MS,
+      perfDegraded.value ? COLLAPSE_MS_LOW : COLLAPSE_MS,
       () => {
         // 恒等基态写入与置 closed 隐藏在同一任务帧，无中间渲染
         writeMorph(IDENTITY())
@@ -629,16 +656,20 @@ watch(immersiveClosing, (closing) => {
   if (closing) playCollapse()
 }, { flush: 'post' })
 watch(immersiveOpen, (open) => {
-  if (!open) stopMorph()
+  if (!open) {
+    layerEl.value?.classList.remove('is-open')
+    stopMorph()
+  }
 })
 </script>
 
 <template>
   <!-- 沉浸层根：形变壳（transform/border-radius 由 container transform 动画驱动，静止恒为全屏） -->
-  <div v-show="immersiveOpen" ref="layerEl" class="session-layer">
-    <div ref="fadeEl" class="session-page">
-      <!-- 顶部：收起 / 进度 / 结束键 -->
-      <header class="shead row between">
+  <div ref="layerEl" class="session-layer">
+    <div ref="fadeEl" class="session-page" :class="{ 'is-scrolled': bodyScrolled }">
+      <!-- 顶部：收起 / 进度 / 结束键。玻璃为**贴上缘**的一份（glass-edge-t）：
+           受光边只保留下沿那条贴边渐变，屏幕顶缘本身不该多画一条亮线。 -->
+      <header class="shead row between glass-surface glass-edge-t">
         <button class="min" aria-label="收起运动模式" @click="minimize">
           <ChevronDown :size="20" /> 收起
         </button>
@@ -653,8 +684,8 @@ watch(immersiveOpen, (open) => {
 
       <p v-if="s.persistError" class="warn">⚠ 进度同步失败：{{ s.persistError }}</p>
 
-      <!-- 全课进度格条：每格一组，动作分组留缝，下一组呼吸 -->
-      <div v-if="cells.length" class="progwrap">
+      <!-- 全课进度格条：每格一组，动作分组留缝，下一组呼吸。贴上缘玻璃（glass-edge-t） -->
+      <div v-if="cells.length" class="progwrap glass-surface glass-edge-t">
         <div class="obar">
           <i
             v-for="(c, i) in cells"
@@ -664,7 +695,8 @@ watch(immersiveOpen, (open) => {
         </div>
       </div>
 
-      <main class="scrollbody">
+      <!-- 内容区 -->
+      <main ref="scrollEl" class="scrollbody">
         <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 滚动框站住，只有 item 位移
              （system/rubberScroll）。各态的 .pane 都留在层内：它们带 fadeUp 入场动画，
              自己不能当层（会与动画抢同一个 transform）。 -->
@@ -686,7 +718,7 @@ watch(immersiveOpen, (open) => {
             </div>
 
             <!-- 本组登记：小重量找发力感，重量可现场调整，完成即按实际重量登记 -->
-            <div class="setcard">
+            <div class="setcard glass-surface">
               <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
                    排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
               <div v-if="showReadinessPrompt" class="rdsec">
@@ -738,12 +770,12 @@ watch(immersiveOpen, (open) => {
               <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
             </div>
 
-            <div v-if="activation" class="blockcard">
+            <div v-if="activation" class="blockcard glass-surface">
               <h3>肌群激活</h3>
               <MuscleMap :activation="activation" interactive />
             </div>
 
-            <div v-if="exTips" class="blockcard">
+            <div v-if="exTips" class="blockcard glass-surface">
               <h3>动作要点</h3>
               <p>{{ exTips }}</p>
             </div>
@@ -757,7 +789,7 @@ watch(immersiveOpen, (open) => {
             <!-- 本组登记（重量 ＋ 次数同卡同构）：数字可点键入，± 微调；完成本组即记录当前值。
                  这两行是同一组记录的两个字段，之前分开在两处（重量在卡里、次数裸在卡外当大字），
                  视觉上像两件不相干的事，中间还夹着今日状态那张卡，谁主谁次读不出来 -->
-            <div class="setcard">
+            <div class="setcard glass-surface">
               <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
                    排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
               <div v-if="showReadinessPrompt" class="rdsec">
@@ -837,17 +869,17 @@ watch(immersiveOpen, (open) => {
               </div>
             </div>
 
-            <div v-if="activation" class="blockcard">
+            <div v-if="activation" class="blockcard glass-surface">
               <h3>肌群激活</h3>
               <MuscleMap :activation="activation" interactive />
             </div>
 
-            <div v-if="exTips" class="blockcard">
+            <div v-if="exTips" class="blockcard glass-surface">
               <h3>动作要点</h3>
               <p>{{ exTips }}</p>
             </div>
 
-            <div v-if="nextEx" class="blockcard">
+            <div v-if="nextEx" class="blockcard glass-surface">
               <h3>接下来</h3>
               <p class="nextrow">▸ 下一动作 · <b>{{ nextExName }}</b> · {{ nextExDesc }}</p>
             </div>
@@ -872,11 +904,11 @@ watch(immersiveOpen, (open) => {
               {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.currentEx.sets} 组` : `${s.currentEx.durationMin} 分钟` }}
               <template v-if="s.currentEx.kind === 'timed'"> · 组间休息 {{ s.currentEx.restSec }}s</template>
             </p>
-            <div v-if="activation" class="blockcard">
+            <div v-if="activation" class="blockcard glass-surface">
               <h3>肌群激活</h3>
               <MuscleMap :activation="activation" interactive />
             </div>
-            <button class="readybtn" @click="s.prepareTimed()">我准备好了</button>
+            <button class="readybtn glass-surface glow-layer" @click="s.prepareTimed()">我准备好了</button>
             <p class="hint">准备好后点击开始倒数</p>
           </div>
 
@@ -898,13 +930,14 @@ watch(immersiveOpen, (open) => {
               · 用时约 {{ s.durationMin }} 分钟 · 约 {{ s.estimateKcalValue }} 大卡
             </p>
             <button class="primary" @click="saveNow">保存训练</button>
-            <button class="ghost danger" @click="endOpen = true">放弃不保存</button>
+            <button class="ghost glass-surface glow-layer danger" @click="endOpen = true">放弃不保存</button>
           </div>
         </div>
       </main>
 
-      <!-- 底部操作坞：热身态=激活格；组格即完成控件；休息态 = 时长抽屉 ＋ 跳过 -->
-      <div v-if="dockMode !== 'none'" class="dock col">
+      <!-- 底部操作坞：热身态=激活格；组格即完成控件；休息态 = 时长抽屉 ＋ 跳过。
+           贴下缘玻璃（glass-edge-b）。 -->
+      <div v-if="dockMode !== 'none'" class="dock col glass-surface glass-edge-b">
         <template v-if="dockMode === 'warmup'">
           <div class="tiles row">
             <button
@@ -922,10 +955,10 @@ watch(immersiveOpen, (open) => {
             </button>
           </div>
           <div class="drow row">
-            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
+            <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
-            <button class="ghost flex-1" @click="s.skipWarmup()">跳过热身</button>
+            <button class="ghost glass-surface glow-layer flex-1" @click="s.skipWarmup()">跳过热身</button>
             <button class="primary" @click="s.completeWarmup()">完成热身组</button>
           </div>
         </template>
@@ -936,7 +969,7 @@ watch(immersiveOpen, (open) => {
               v-for="i in s.effSets(s.currentEx!)"
               :key="i"
               type="button"
-              class="dtile num"
+              class="dtile num glass-surface glow-layer"
               :class="{ done: i <= workingDone, cur: i === curTile }"
               :disabled="i !== curTile"
               @click="s.completeSet()"
@@ -946,7 +979,7 @@ watch(immersiveOpen, (open) => {
             </button>
           </div>
           <div class="drow row">
-            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
+            <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="primary flex-1" @click="s.completeSet()">完成第 {{ s.setIndex }} 组</button>
@@ -955,7 +988,7 @@ watch(immersiveOpen, (open) => {
 
         <template v-else-if="dockMode === 'rest'">
           <div class="drow row">
-            <button class="iconbtn" aria-label="调整休息时长" @click="openRestAdd($event)">
+            <button class="iconbtn glass-surface glow-layer" aria-label="调整休息时长" @click="openRestAdd($event)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="11" cy="13.5" r="7.5" />
                 <path d="M11 13.5V9.5" />
@@ -964,7 +997,7 @@ watch(immersiveOpen, (open) => {
                 <path d="M20.5 2.5v4" />
               </svg>
             </button>
-            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
+            <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
             <button class="primary flex-1" @click="s.skipRest()">
@@ -975,10 +1008,10 @@ watch(immersiveOpen, (open) => {
 
         <template v-else-if="dockMode === 'timed'">
           <div class="drow row">
-            <button class="iconbtn" aria-label="更多功能" @click="openMore($event)">
+            <button class="iconbtn glass-surface glow-layer" aria-label="更多功能" @click="openMore($event)">
               <Ellipsis :size="24" />
             </button>
-            <button class="ghost danger" @click="s.abortTimed()">放弃</button>
+            <button class="ghost glass-surface glow-layer danger" @click="s.abortTimed()">放弃</button>
             <button class="primary flex-1" @click="s.finishTimed()">完成</button>
           </div>
         </template>
@@ -1047,7 +1080,10 @@ watch(immersiveOpen, (open) => {
   inset: 0;
   z-index: 80; /* 覆盖 TabBar(60) 与全部页面内容 */
   overflow: hidden;
+  contain: layout paint;
   transform-origin: 0 0;
+  opacity: 0;
+  pointer-events: none;
   box-shadow: var(--shadow-float);
   background: var(--surface-translucent);
   backdrop-filter: blur(20px) saturate(180%);
@@ -1058,15 +1094,43 @@ watch(immersiveOpen, (open) => {
    transform 逐帧更新是 Android WebView 合成器最易冻结的组合；层内
    毛玻璃条（顶栏/底坞）随层缩放时同样在重采样，一并禁用。动画期以
    近似材质换稳定性，结束帧恢复毛玻璃与浮窗接续 */
+.session-layer.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .session-layer.is-morphing {
   background: var(--surface);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-.session-layer.is-morphing :deep(*) {
+/* 形变中：玻璃条要退成**近材质**而不是纯透明——令牌换成实底 + 常规描边，
+   这样即使 blur 被摘掉，顶栏/进度条/底坞仍是可读的一层，而不是空掉。
+   内容里的玻璃控件（登记卡/要点卡/次按钮）一并退成实底：形变期整个层在逐帧
+   缩放，每多一块 backdrop-filter 就多一处重采样。 */
+.session-layer.is-morphing :deep(.shead),
+.session-layer.is-morphing :deep(.progwrap),
+.session-layer.is-morphing :deep(.dock) {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  transition: none !important;
+  background: var(--surface-translucent);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.session-layer.is-morphing :deep(.glass-surface) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.session-layer.is-morphing :deep(.obar i.cur),
+.session-layer.is-morphing :deep(.wstep.cur) {
+  animation: none !important;
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -1090,15 +1154,17 @@ watch(immersiveOpen, (open) => {
   padding-top: var(--safe-top);
 }
 
-/* 顶部栏 */
+/* 顶部栏 —— 材质来自 .glass-surface（全仓一份定义，令牌按档位变）。
+   这里只补几何；不要再手写 backdrop-filter：那是 .glass-surface 的活，
+   手写会在超高档下错过整份令牌（rim-2 / caustic / halo 三层光学），
+   也会在弱档下顶不掉 blur。
+   丰富档的滚动边缘暗带挂在上缘（::before），内容从底下滚进顶栏时把它抬起来。 */
 .shead {
+  position: relative;
   flex: none;
   height: 54px;
   padding: 0 18px;
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 0.5px solid var(--line);
+  transition: box-shadow var(--dur-base) var(--ease-standard);
 }
 
 .min {
@@ -1117,7 +1183,8 @@ watch(immersiveOpen, (open) => {
   padding: 8px 4px;
 }
 
-/* 组数胶囊：点击进全课抽屉；› 提示可展开 */
+/* 组数胶囊：点开全课抽屉。它坐在玻璃顶栏里，自身不再叠一层玻璃 ——
+   嵌套玻璃会变成背景根，把外层顶栏的折射也一起废掉。 */
 .pcapsule {
   display: flex;
   align-items: center;
@@ -1125,7 +1192,7 @@ watch(immersiveOpen, (open) => {
   height: 30px;
   padding: 0 8px 0 12px;
   border-radius: var(--radius-full);
-  background: var(--surface-2);
+  background: var(--glass-tab-fill);
   font-size: var(--fs-footnote);
   font-weight: 700;
   color: var(--text-2);
@@ -1152,14 +1219,10 @@ watch(immersiveOpen, (open) => {
   background: rgba(255, 149, 0, 0.14);
 }
 
-/* 全课进度格条 */
+/* 全课进度格条 —— 材质同顶部栏（.glass-surface glass-edge-t），只补几何 */
 .progwrap {
   flex: none;
   padding: 12px 18px 11px;
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 0.5px solid var(--line);
 }
 
 .obar {
@@ -1260,12 +1323,14 @@ watch(immersiveOpen, (open) => {
 /* 本组登记卡：重量与次数同卡同构 —— 标签定宽在左、± 分列两端、数值居中，
    两行因此左右严格对齐，读起来是一张表，而不是几块拼图。
    今日状态（首次进入时的一次性自评）也收进这张卡：它是建议重量的输入，
-   单开一张卡夹在重量与次数之间，等于把「一组记录」切成了两半。 */
+   单开一张卡夹在重量与次数之间，等于把「一组记录」切成了两半。
+
+   材质是模板上的 .glass-surface 类（材质只有那一份定义，不在这里重写）：
+   大面积内容卡**不折射** —— 成本随面积与半径线性涨，而这里几乎贴满内容区；
+   但它吃玻璃的全部光学层，超高下半透出后面的滚动内容。 */
 .setcard {
   width: min(360px, 100%);
   border-radius: var(--radius-l);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
@@ -1421,7 +1486,9 @@ watch(immersiveOpen, (open) => {
   color: var(--text-3);
 }
 
-/* 五档等宽：档位是同一把尺子上的五点，等宽才读得出一条量表 */
+/* 五档等宽：档位是同一把尺子上的五点，等宽才读得出一条量表。
+   五枚都压在同一张内容卡里，各自再带一层玻璃会互相折射、把量表读成五块噪声 ——
+   所以这一组走**卡内的实底分档**（--surface-2），只有玻璃那张卡在外层。 */
 .rchips {
   display: flex;
   gap: 6px;
@@ -1456,8 +1523,8 @@ watch(immersiveOpen, (open) => {
 .wstep {
   padding: 7px 14px;
   border-radius: var(--radius-full);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+  background: var(--glass-fill);
+  border: 1px solid transparent;
   font-size: var(--fs-callout);
   font-weight: 600;
   color: var(--text-2);
@@ -1487,12 +1554,10 @@ watch(immersiveOpen, (open) => {
   margin-top: 8px;
 }
 
-/* 要点 / 接下来 卡片 */
+/* 要点 / 接下来 卡片 —— 材质同 .setcard（模板上的 .glass-surface），只补几何 */
 .blockcard {
   width: min(360px, 100%);
   border-radius: var(--radius-l);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   padding: 16px 18px;
   display: flex;
   flex-direction: column;
@@ -1537,13 +1602,14 @@ watch(immersiveOpen, (open) => {
   font-weight: 500;
 }
 
-/* 计时准备 */
+/* 计时准备：全屏那颗最大的离散控件 —— 走玻璃材质（模板上的 .glass-surface）。
+   3px 描边收成 1px 透明边框（玻璃的受光边就是背景渐变画出来的，硬描边会盖掉它），
+   悬停仍翻成实底反色：那一下是"我要按下去了"的确认，不该被半透明削弱。 */
 .readybtn {
   width: 216px;
   height: 216px;
   margin-top: 14px;
   border-radius: 50%;
-  border: 3px solid var(--text-1);
   font-size: var(--fs-title2);
   font-weight: 600;
   color: var(--text-1);
@@ -1567,15 +1633,51 @@ watch(immersiveOpen, (open) => {
   line-height: 1;
 }
 
-/* ---------- 底部操作坞 ---------- */
+/* 底部操作坞 ---------- */
+/* 材质同顶部栏（.glass-surface glass-edge-b），这里只补几何。
+   丰富档的滚动边缘暗带挂在这里（::before）——内容从坞下滚过时抬起这块玻璃，
+   与 PageHeader 的做法同一套；默认档不画这条，多一道渐变只是多一次合成。 */
 .dock {
+  position: relative;
   flex: none;
   gap: 12px;
   padding: 12px 18px calc(14px + var(--safe-bottom));
-  background: var(--surface-translucent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-top: 0.5px solid var(--line);
+}
+
+html[data-motion='rich'] .dock::before,
+html[data-motion='rich'] .progwrap::before,
+html[data-motion='rich'] .shead::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+
+/* 底坞的暗带在**上缘**：内容从底下滚进坞下方时抬起它 */
+html[data-motion='rich'] .dock::before {
+  top: -18px;
+  height: 26px;
+  background: linear-gradient(to top, var(--glass-scroll-edge), transparent);
+}
+
+/* 顶栏 / 进度条的暗带在**下缘**：内容从底下滚上来时压暗底边，抬起玻璃 */
+html[data-motion='rich'] .progwrap::before,
+html[data-motion='rich'] .shead::before {
+  bottom: -18px;
+  height: 22px;
+  background: linear-gradient(to bottom, var(--glass-scroll-edge), transparent);
+}
+
+/* 三条暗带一起亮：状态挂在 .session-page 上（它是三条边的共同祖先 ——
+   .shead / .progwrap / .dock 都是它的子节点，而 .scrollbody 只包住中间那段，
+   挂在它上面够不到上下两条）。 */
+html[data-motion='rich'] .session-page.is-scrolled .dock::before,
+html[data-motion='rich'] .session-page.is-scrolled .progwrap::before,
+html[data-motion='rich'] .session-page.is-scrolled .shead::before {
+  opacity: 1;
 }
 
 .drow {
@@ -1601,8 +1703,6 @@ watch(immersiveOpen, (open) => {
   height: 58px;
   border: 2px solid transparent;
   border-radius: 17px;
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1636,7 +1736,9 @@ watch(immersiveOpen, (open) => {
   }
 }
 
-/* 主按钮 */
+/* 主按钮 —— 实底是**语义选择**不是玻璃：它是这一步唯一的主行动，
+   超高档也要保住"黑/白实底 + 玻璃"这条最高的对比层级，玻璃化会和内容糊在一起。
+   凝胶按压（scale 收缩）保留；定向光晕在丰富档另加，见文末 .glow-layer。 */
 .primary {
   min-width: 240px;
   height: 54px;
@@ -1654,12 +1756,12 @@ watch(immersiveOpen, (open) => {
   transform: scale(0.96);
 }
 
+/* 次按钮与图标钮：控制层玻璃 —— 材质走 .glass-surface（全仓一份定义）。
+   这里只补几何；相对主按钮退一档材质，仍然读得出"可按"。 */
 .ghost {
   height: 50px;
   border-radius: 25px;
   padding: 0 24px;
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   font-size: var(--fs-callout);
   font-weight: 600;
   color: var(--text-1);
@@ -1675,8 +1777,6 @@ watch(immersiveOpen, (open) => {
   height: 54px;
   flex: none;
   border-radius: 27px;
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   display: flex;
   align-items: center;
   justify-content: center;

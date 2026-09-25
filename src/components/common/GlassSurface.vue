@@ -37,7 +37,8 @@ import { glassPipeline, liquidGlass } from '@/system/perf'
  * 大面板下每帧成本 13.09ms → 1.69ms）。
  *
  * 所以：
- *   · 档位「超高（优化）」走**塌缩链**（10 个原语 → 3 个），观感与「超高」一致；
+ *   · 档位「超高」走**塌缩链**（10 个原语 → 3 个），出厂参数下与完整链逐像素一致；
+ *   · 档位「极致」走**完整链**，三通道色散能力完整保留；
  *   · 通道偏移一旦被调开（调参面板能把它们拉成色散），恒等就不成立 ——
  *     useCollapsed 会自己判定并退回完整链，**任何档位下都不会画错**。
  *
@@ -58,9 +59,10 @@ import { glassPipeline, liquidGlass } from '@/system/perf'
  *   - 低画质档 → 同上，且 base.css 会全局关掉模糊。
  *
  * 材质档位：`.glass` 与 `.glass-surface` 共用同一份 `--glass-*` 令牌，所以
- * **增加档位是改令牌、不是改组件** —— 超高档在 base.css 里把整套令牌换掉
- * （底更薄 + 内圈描边 + 上缘焦散 + 外缘层），这里与导航轨一起升级；
- * 弱档则被顶成实底。（折射仍只有这边的 `url()` 滤镜，名单见 docs/ARCHITECTURE.md。）
+ * **增加档位是改令牌、不是改组件** —— 超高 / 极致档在 base.css 里把整套令牌换掉
+ * （底更薄 + 内圈描边 + 上缘焦散 + 外缘层；极致再深一档并把材质铺到更多组件），
+ * 这里与导航轨一起升级；弱档则被顶成实底。（折射仍只有这边的 `url()` 滤镜，
+ * 名单见 docs/ARCHITECTURE.md。）
  */
 const props = withDefaults(
   defineProps<{
@@ -274,7 +276,7 @@ const darkTint = computed(() => (props.tint === 'auto' ? isDarkMode.value : prop
  * 三次位移的 scale 是 distortionScale + 各通道 offset，三个 offset 相等时三次结果
  * 逐像素相同，而三张单通道图 screen 复合正好还原原色 —— 整段复合是恒等变换。
  * 通道偏移一旦被调开（色散），恒等就不成立 —— 这里自己判定并退回完整链，
- * 所以「超高（优化）」这一档在任何参数下都不会画错。
+ * 所以超高档在任何参数下都不会画错。
  */
 const useCollapsed = computed(
   () =>

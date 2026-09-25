@@ -158,10 +158,8 @@ async function onSemesterChange(id: number): Promise<void> {
 /* ---------------- 账号管理 ---------------- */
 
 const confirmOpen = ref(false)
-const dangerActions = [
-  { label: '删除账号并清除课表日程', value: 'delete', danger: true },
-  { label: '取消', value: 'cancel' },
-]
+// 取消由 ActionSheet 自己那颗「取消」承担，清单里不再重复一条
+const dangerActions = [{ label: '删除账号并清除课表日程', value: 'delete', danger: true }]
 
 async function onDanger(value: string): Promise<void> {
   confirmOpen.value = false

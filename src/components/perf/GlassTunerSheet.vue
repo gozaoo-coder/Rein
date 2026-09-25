@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
-import { LayoutGrid, Sparkles } from 'lucide-vue-next'
+import { CalendarDays, Dumbbell, House, Sparkles, User } from 'lucide-vue-next'
 
-import GlassSurface from '@/components/common/GlassSurface.vue'
+import GlassDockAssembly from '@/components/common/GlassDockAssembly.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import {
   GLASS_PARAM_SPECS,
@@ -29,6 +29,14 @@ import { glassPipeline, liquidGlass, setPerfMode } from '@/system/perf'
  */
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
+
+const previewItems = [
+  { id: 'home', label: '主页', icon: House },
+  { id: 'sports', label: '运动', icon: Dumbbell },
+  { id: 'me', label: '我', icon: User },
+]
+const previewLeft = { id: 'schedule', label: '课表', icon: CalendarDays }
+const previewRight = { id: 'ai', label: 'AI', icon: Sparkles }
 
 /** 小数位从步长推出来（0.02 → 2 位、1 → 0 位）：读数、输入框、吸附共用一套 */
 function decimals(step: number): number {
@@ -80,7 +88,7 @@ function onSlide(spec: GlassParamSpec, e: Event): void {
 const stateText = computed(() =>
   liquidGlass.value
     ? `折射已开启（${glassPipeline.value === 'collapsed' ? '塌缩管线' : '完整管线'}），下面的拖动即时生效`
-    : '当前档位没有折射，参数只在「超高」两档生效',
+    : '当前档位没有折射，参数只在「超高」与「极致」生效',
 )
 </script>
 
@@ -90,32 +98,23 @@ const stateText = computed(() =>
       <button type="button" class="reset" :disabled="!glassTuned" @click="resetGlassParams">恢复默认</button>
     </template>
 
-    <!-- 暗场预览：细格给位移当量尺，光晕给边缘当色散源（纯装饰，读屏不必知道） -->
+    <!-- 暗场预览：直接渲染生产 Dock 的共享玻璃装配，圆角与尺寸不会再漂 -->
     <div class="stage stage-dark" aria-hidden="true">
       <span class="glow" />
       <span class="grid" />
-      <div class="stage-row">
-        <GlassSurface :width="54" :height="54" border-radius="50%" tint="dark">
-          <span class="glyph"><LayoutGrid :size="20" /></span>
-        </GlassSurface>
-        <GlassSurface class="stage-pill" :height="54" border-radius="27" tint="dark">
-          <span class="stage-tabs">
-            <span class="stage-tab on">主页</span>
-            <span class="stage-tab">运动</span>
-            <span class="stage-tab">AI</span>
-          </span>
-        </GlassSurface>
-        <GlassSurface :width="54" :height="54" border-radius="50%" tint="dark">
-          <span class="glyph"><Sparkles :size="20" /></span>
-        </GlassSurface>
-      </div>
+      <GlassDockAssembly
+        :items="previewItems"
+        active="sports"
+        :left="previewLeft"
+        :right="previewRight"
+      />
     </div>
 
     <!-- 参数只作用于折射分支：没开折射时先说清楚，并给一键切档 -->
     <p class="state" :class="liquidGlass ? 'on' : 'warn'">
       <span class="sdot" />
       <span class="stxt">{{ stateText }}</span>
-      <button v-if="!liquidGlass" type="button" class="jump" @click="setPerfMode('ultra-opt')">切到超高（优化）</button>
+      <button v-if="!liquidGlass" type="button" class="jump" @click="setPerfMode('ultra')">切到超高</button>
     </p>
 
     <div class="params">
@@ -234,45 +233,6 @@ const stateText = computed(() =>
     linear-gradient(var(--hero-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--hero-grid) 1px, transparent 1px);
   background-size: 12px 12px;
-}
-
-.stage-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  max-width: 300px;
-}
-
-.stage-pill {
-  flex: 1;
-  min-width: 0;
-}
-
-.glyph {
-  display: flex;
-  color: var(--hero-text);
-}
-
-.stage-tabs {
-  display: flex;
-  width: 100%;
-  height: 100%;
-}
-
-.stage-tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--hero-text-dim);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-}
-
-.stage-tab.on {
-  color: var(--hero-text);
 }
 
 /* ---------- 状态 ---------- */

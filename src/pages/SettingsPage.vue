@@ -10,7 +10,7 @@ import { toggleablePlugins } from '@/plugins'
 import { usePomodoroStore } from '@/stores/pomodoro'
 import { useUpdateStore } from '@/stores/update'
 import { MOTION_LEVELS, motionEffective, motionLevel, setMotionLevel, type MotionLevel } from '@/system/motion'
-import { PERF_MODES, liquidGlass, perfDegraded, perfMode, setPerfMode, type PerfMode } from '@/system/perf'
+import { PERF_MODES, liquidGlass, perfMode, setPerfMode, type PerfMode } from '@/system/perf'
 
 /**
  * 设置（二级内容页）：从「我」页的设置抽屉升级而来——抽屉放不下第二个分组，
@@ -30,8 +30,8 @@ const updateHint = computed(() => {
   return `当前 v${update.currentVersion || '—'}`
 })
 
-/** 性能档位：auto 按掉帧判定自动切换，high / ultra / ultra-opt / low 手动钉死（判定逻辑见 system/perf） */
-const PERF_OPTIONS = PERF_MODES.map(({ value, label, short }) => ({ value, label: short ?? label }))
+/** 性能档位：四个固定档（low / high / ultra / extreme）都是手动钉死（判定逻辑见 system/perf） */
+const PERF_OPTIONS = PERF_MODES.map(({ value, label }) => ({ value, label }))
 
 const perfChoice = computed({
   get: () => perfMode.value as string,
@@ -40,15 +40,16 @@ const perfChoice = computed({
   },
 })
 
-/** 副标要说清当下生效的是哪一档——自动降级和用户自己选的「流畅优先」不是一回事 */
+/** 副标要说清当下生效的是哪一档：不支持折射时如实说明，别让人对着退化结果猜 */
 const perfHint = computed(() => {
-  if (perfMode.value === 'low') return '始终流畅优先'
-  if (perfMode.value === 'ultra') return liquidGlass.value ? '超高 · 液态玻璃已开' : '超高（本机不支持折射）'
-  if (perfMode.value === 'ultra-opt') {
-    return liquidGlass.value ? '超高（优化）· 折射已开，走塌缩管线' : '超高（优化）（本机不支持折射）'
+  if (perfMode.value === 'low') return '始终流畅'
+  if (perfMode.value === 'extreme') {
+    return liquidGlass.value ? '极致 · 完整折射 + 全局玻璃' : '极致 · 已铺全局玻璃（本机不支持折射）'
   }
-  if (perfMode.value === 'high') return '始终高画质'
-  return perfDegraded.value ? '已自动降级' : '当前高画质'
+  if (perfMode.value === 'ultra') {
+    return liquidGlass.value ? '超高 · 折射已开（塌缩管线）' : '超高（本机不支持折射）'
+  }
+  return '始终高画质'
 })
 
 /** 动效档位：关闭 / 默认 / 丰富（三档在分段控件里放得下完整名字，不必再给 short） */
@@ -118,10 +119,11 @@ onMounted(() => {
       </header>
       <SegmentedControl v-model="perfChoice" class="perfseg" :options="PERF_OPTIONS" />
       <p class="pnote t-3">
-        连续掉帧时自动降级：页头的渐进模糊换成底色遮罩，并关掉毛玻璃与循环动画。
-        低端机可手动固定「流畅优先」，画面更好的机器可固定「高画质」省去判定；
-        「超高」在高画质之上再开液态玻璃（折射表面），是本机最耗性能的一档；
-        「超高（优化）」与它同一套观感，只是换成塌缩管线（省掉恒等的三通道复合）。
+        四档都是手动钉死的固定档，不会在后台自己切。低端机选「流畅」：玻璃顶成实底、
+        关掉模糊与循环动画；「高画质」是四层毛玻璃的基线；「超高」在其上再开液态玻璃，
+        折射走塌缩管线（出厂参数下与完整链逐像素等价，成本更低）；「极致」换完整折射
+        管线（保留三通道色散），并把玻璃材质铺到卡片、抽屉、菜单、操作面板与快捷磁贴，
+        材质分层对齐苹果的 Liquid Glass 规范，是本机最耗性能的一档。
       </p>
       <button class="frow row" @click="router.push({ name: 'settings-perf' })">
         <i class="fic" style="background: var(--accent-soft); color: var(--accent)">

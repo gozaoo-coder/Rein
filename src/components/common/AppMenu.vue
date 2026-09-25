@@ -64,8 +64,26 @@ function setPanel(i: number, el: unknown): void {
   else panelEls.delete(i)
 }
 
-const GAP = 6
+/** 面板与锚点之间的间隙：贴太近会读成「锚点自己的一部分」，苹果菜单约 8px */
+const GAP = 8
+/** 视口边缘的最小留白（纵向；横向再并上手机的手势安全区，见 hEdges） */
 const EDGE = 8
+
+/**
+ * 列表里只要有一项带图标，就统一留出图标列 —— 否则缺图标的那几行标签会左移，
+ * 同一份菜单里的标签左边缘参差不齐。缺图标的项渲染一个等宽空位（见模板）。
+ */
+function levelHasIcon(items: MenuItem[] | undefined): boolean {
+  return !!items?.some((it) => !!it.icon)
+}
+
+/** 横向可用边距：手机两缘有手势返回带（--safe-left/right ≥ 20px），菜单不贴进带内 */
+function hEdges(): { left: number; right: number } {
+  if (typeof document === 'undefined') return { left: EDGE, right: EDGE }
+  const cs = getComputedStyle(document.documentElement)
+  const px = (name: string): number => parseFloat(cs.getPropertyValue(name)) || 0
+  return { left: Math.max(EDGE, px('--safe-left')), right: Math.max(EDGE, px('--safe-right')) }
+}
 
 /** 测量各层面板尺寸并定位：优先锚点下方，空间不足翻到上方；水平越界则右对齐/钳制在视口内 */
 async function layout(): Promise<void> {
@@ -79,6 +97,7 @@ async function layout(): Promise<void> {
     if (!rect) return
     const vw = window.innerWidth
     const vh = window.innerHeight
+    const edge = hEdges()
     let top: number
     let originY: string
     if (i === 0) {
@@ -107,17 +126,17 @@ async function layout(): Promise<void> {
     let originX = 'left'
     if (i === 0) {
       left = rect.left
-      if (left + w > vw - EDGE) {
+      if (left + w > vw - edge.right) {
         left = rect.right - w
         originX = 'right'
       }
-      if (left < EDGE) {
-        left = EDGE
+      if (left < edge.left) {
+        left = edge.left
         originX = 'left'
       }
     } else {
       // 子层默认向右层叠，右侧放不下翻到左侧
-      if (rect.right + GAP + w <= vw - EDGE) {
+      if (rect.right + GAP + w <= vw - edge.right) {
         left = rect.right + GAP
         originX = 'left'
       } else {
@@ -128,7 +147,7 @@ async function layout(): Promise<void> {
     lv.style = {
       position: 'fixed',
       top: `${Math.round(top)}px`,
-      left: `${Math.round(Math.max(EDGE, Math.min(left, vw - EDGE - w)))}px`,
+      left: `${Math.round(Math.max(edge.left, Math.min(left, vw - edge.right - w)))}px`,
       zIndex: `${115 + i}`,
       transformOrigin: `${originX} ${originY}`,
       // 丰富档的透镜式展开（clip-path 圆心）就落在被贴住的那个角上 ——
@@ -220,6 +239,9 @@ const flatActions = computed(() => {
   walk(props.actions, 0)
   return out
 })
+
+/** dialog 模式同样统一图标列（理由见 levelHasIcon） */
+const flatHasIcon = computed(() => flatActions.value.some((f) => !f.header && !!f.item.icon))
 </script>
 
 <template>
@@ -233,6 +255,7 @@ const flatActions = computed(() => {
           :key="i"
           :ref="(el) => setPanel(i, el)"
           class="panel"
+          :class="{ 'with-ic': levelHasIcon(lv.items) }"
           :style="lv.style ?? undefined"
           role="menu"
         >
@@ -250,7 +273,8 @@ const flatActions = computed(() => {
               :aria-expanded="a.children?.length && levels[i + 1]?.openedFrom === a.value ? 'true' : undefined"
               @click="onItemClick(a, $event, i)"
             >
-              <component :is="a.icon" v-if="a.icon" class="ic" :size="18" :stroke-width="2" />
+              <component :is="a.icon" v-if="a.icon" class="ic" :size="19" :stroke-width="2" />
+              <span v-else-if="levelHasIcon(lv.items)" class="ic" aria-hidden="true" />
               <span class="lbl">{{ a.label }}</span>
               <ChevronRight v-if="a.children?.length" class="chev" :size="14" />
             </button>
@@ -279,7 +303,8 @@ const flatActions = computed(() => {
               :style="{ paddingLeft: `${12 + f.depth * 22}px` }"
               @click="emit('select', f.item.value); emit('close')"
             >
-              <component :is="f.item.icon" v-if="f.item.icon" class="ic" :size="18" :stroke-width="2" />
+              <component :is="f.item.icon" v-if="f.item.icon" class="ic" :size="19" :stroke-width="2" />
+              <span v-else-if="flatHasIcon" class="ic" aria-hidden="true" />
               <span class="lbl">{{ f.item.label }}</span>
             </button>
           </template>
@@ -299,8 +324,10 @@ const flatActions = computed(() => {
 }
 
 .panel {
-  min-width: 180px;
-  max-width: 280px;
+  /* 菜单的参数：宽 200–300px（窄于 200 时「生成本期成绩单」这类标签会被截成省略号，
+     宽于 300 就失去「贴着触发点」的读感）；窄屏用 100vw−16 兜底 */
+  min-width: 200px;
+  max-width: min(300px, calc(100vw - 16px));
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   background: var(--surface);
@@ -323,7 +350,7 @@ const flatActions = computed(() => {
 .item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   min-height: 44px;
   padding: 0 12px;
@@ -339,9 +366,26 @@ const flatActions = computed(() => {
   background: var(--surface-2);
 }
 
+/* 桌面（有悬停能力的设备）：悬停与按压同一档底色 —— 鼠标下「能不能点」要有反馈 */
+@media (hover: hover) {
+  .item:not(.disabled):hover {
+    background: var(--surface-2);
+  }
+}
+
+/* 键盘焦点落在项上：外发光会被面板的 overflow 裁掉，改成内描边 */
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .item .lbl {
   flex: 1;
   min-width: 0;
+  /* 菜单是「一眼扫过」的控件：标签不折行，长了给省略号（面板宽度已经放得下常用文案） */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .item .chev {
@@ -349,8 +393,13 @@ const flatActions = computed(() => {
   color: var(--text-3);
 }
 
+/* 图标列：定宽 20px —— 图标与「缺图标的空位」占同一格，标签左边缘才对得齐 */
 .item .ic {
   flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
   color: var(--text-2);
 }
 

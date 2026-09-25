@@ -22,7 +22,7 @@
      B · 容器自身超伸：滚动框整体位移。只给「位移的就是它本身」的小容器：
        data-rubber-self    横向条 / 纯文本盒 / 列表块这类自身即主体的滚动体
      **页面级滚动区一律走 A**（整页框内自滚动的那些：ModelsPage .page、
-     KnowledgePage .scroll、AIPage .msgs、RunPage .pane、SessionOverlay
+     AIPage .msgs、RunPage .pane、SessionOverlay
      .scrollbody、VoiceSessionView .body/.tr）：页面框与吸顶页头必须站住，
      动的只能是 item。带 transform 动画 / 定位的元素同样不能当层（会与动画
      抢同一个 transform 属性），包一层镜像布局的 .rubber-layer 承载位移。

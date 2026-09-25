@@ -222,16 +222,35 @@ async function main() {
       btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     })()`)
     await sleep(700)
-    const picker = await evalJS(`(() => ({
-      open: !!document.querySelector('.card-wrap'),
-      opts: [...document.querySelectorAll('.card-wrap .opt')].map((e) => e.textContent.trim()),
-    }))()`)
+    // 长按换落点走 AppMenu 的 bind 模式：面板是 .panel[role="menu"]（SheetModal 的 .panel 是 dialog）
+    const picker = await evalJS(`(() => {
+      const panel = document.querySelector('.panel[role="menu"]')
+      const items = panel ? [...panel.querySelectorAll('.item')] : []
+      return {
+        open: !!panel,
+        opts: items.map((e) => e.textContent.trim()),
+        panelW: panel ? Math.round(panel.getBoundingClientRect().width) : 0,
+        // 「图标 + 文字」版：每一项都要有自己的 svg，且图标列定宽 20（标签左缘对齐）
+        icons: items.filter((e) => !!e.querySelector('svg')).length,
+        icW: items[0] ? getComputedStyle(items[0].querySelector('.ic')).width : '',
+      }
+    })()`)
     ok(
       '长按左钮弹出选择器（候选来自插件层的模块主页面）',
       picker.open && picker.opts.includes('营养') && picker.opts.includes('待办'),
       picker.opts.join(' · '),
     )
-    await clickText('.card-wrap .opt', '待办')
+    ok(
+      '选择器是 bind 菜单的「图标 + 文字」版（每项带图标、图标列定宽 20）',
+      picker.icons === picker.opts.length && picker.opts.length > 0 && picker.icW === '20px',
+      `项数 ${picker.opts.length} · 带图标 ${picker.icons} · 图标列 ${picker.icW}`,
+    )
+    ok(
+      '菜单宽度参数生效（200–300px 区间内）',
+      picker.panelW >= 200 && picker.panelW <= 300,
+      `${picker.panelW}px`,
+    )
+    await clickText('.panel[role="menu"] .item', '待办')
     await sleep(500)
     ok(
       '选中「待办」后左钮就地换落点',

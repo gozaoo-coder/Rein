@@ -5,8 +5,11 @@ import { ChevronDown, LocateFixed, Play } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
+import GlassThumb from '@/components/common/GlassThumb.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useRunStore, fmtClock, fmtPace } from '@/stores/run'
+import { motionRich } from '@/system/motion'
+import { usePressGlow } from '@/composables/usePressGlow'
 import { workoutRuntime } from '@/system/workoutRuntime'
 import { openImmersive } from '@/system/sessionImmersive'
 import { useToast } from '@/composables/useToast'
@@ -106,6 +109,14 @@ type CamMode = 'follow' | 'manual' | 'fit'
 const camMode = ref<CamMode>('follow')
 /** 固定档捏合比例（回到 follow 时保留用户缩放） */
 const userScale = ref(1)
+
+/**
+ * 相机模式两段切换的液态滑块（丰富档）：与 SegmentedControl 同一套做法 ——
+ * 两段是等宽的，GlassThumb 要的就是"均分槽位"这个前提。
+ * manual 与 follow 在这一格上语义相同（都锁定跟随），所以手动接管后仍高亮「固定」。
+ */
+const goo = motionRich
+const msegIndex = computed(() => (camMode.value === 'fit' ? 1 : 0))
 /** 手势接管的冻结相机（世界坐标稳定：锚定首点） */
 const manualCam = ref<Cam | null>(null)
 /** 运动方向朝上的旋转角（度，EMA 平滑） */
@@ -332,6 +343,20 @@ watch(
 /* ---------- 底部抽屉拖拽：展开 ↔ 收起（露出 peek）两档吸附 ---------- */
 
 const drawerEl = ref<HTMLElement | null>(null)
+/** 按压定向光晕（丰富档）：整页一份委托 —— :active 决定亮不亮，即时反馈等不得事件 */
+usePressGlow(drawerEl, '.glow-layer')
+/** 丰富档的滚动边缘：抽屉里任一面板滚起来即置位（暗带只画一条，在抽屉上缘） */
+const paneScrolled = ref(false)
+
+/** 三个面板各是独立的滚动框（v-if 换面），事件冒泡到抽屉根统一收一份。 */
+function onDrawerScroll(e: Event): void {
+  const t = e.target as HTMLElement
+  paneScrolled.value = t.scrollTop > 4
+}
+
+// 阶段切换时换了一整个面板，滚动位置随之归零 —— 暗带不能留着上一面的状态
+watch(() => r.phase, () => (paneScrolled.value = false))
+
 const drawerCollapsed = ref(false)
 const drawerDragging = ref(false)
 const dragY = ref<number | null>(null)
@@ -436,10 +461,12 @@ function bumpKm(delta: number): void {
 
 <template>
   <div class="run-page" :class="r.phase">
-    <!-- ========== 暗区 · 轨迹剧场（满屏，抽屉覆盖其下沿） ========== -->
+    <!-- ========== 暗区 · 轨迹剧场（满屏，抽屉覆盖其下沿） ==========
+         stage-dark：这一片是深色底，浮在上面的 chip 要取**暗场**玻璃令牌
+         （暗色下 halo 是溢到背后的微光、rim 收得更低），亮色那套压上来会翻白。 -->
     <section
       ref="heroEl"
-      class="hero"
+      class="hero stage-dark"
       @pointerdown="onMapDown"
       @pointermove="onMapMove"
       @pointerup="onMapUp"
@@ -466,16 +493,16 @@ function bumpKm(delta: number): void {
         <span v-else class="ph" />
       </header>
 
-      <span v-if="gpsChip" class="chip gps" :class="{ ok: r.gpsStatus === 'active' }">
+      <span v-if="gpsChip" class="chip gps glass-surface" :class="{ ok: r.gpsStatus === 'active' }">
         <i class="gdot" />{{ gpsChip }}
       </span>
 
-      <span v-if="r.phase === 'running' || r.phase === 'paused'" class="chip dist">
+      <span v-if="r.phase === 'running' || r.phase === 'paused'" class="chip dist glass-surface">
         <span class="lab num">{{ distChipText }}</span>
         <span v-if="r.goalKind !== 'open'" class="bar"><i :style="{ width: goalBarWidth }" /></span>
       </span>
 
-      <span v-if="r.phase === 'paused'" class="paused-badge">已暂停 · 计时停止</span>
+      <span v-if="r.phase === 'paused'" class="paused-badge glass-surface">已暂停 · 计时停止</span>
     </section>
 
     <p v-if="r.persistError" class="warn">⚠ 进度同步失败：{{ r.persistError }}</p>
@@ -484,8 +511,9 @@ function bumpKm(delta: number): void {
     <main
       ref="drawerEl"
       class="drawer"
-      :class="{ collapsed: drawerCollapsed, dragging: drawerDragging }"
+      :class="{ collapsed: drawerCollapsed, dragging: drawerDragging, 'is-scrolled': paneScrolled }"
       :style="dragStyle"
+      @scroll.capture="onDrawerScroll"
     >
       <!-- 把手行：回中 / 拖拽档位 / 缩放模式（仅进行中与暂停） -->
       <div
@@ -496,14 +524,15 @@ function bumpKm(delta: number): void {
         @pointerup="onHandleUp"
         @pointercancel="onHandleUp"
       >
-        <button v-if="camMode === 'manual'" class="hbtn" aria-label="回到跟随锁定" @click="recenter">
+        <button v-if="camMode === 'manual'" class="hbtn glass-surface" aria-label="回到跟随锁定" @click="recenter">
           <LocateFixed :size="16" />
         </button>
         <span v-else class="hph" />
         <i class="grab" />
-        <div class="mseg">
-          <button :class="{ on: camMode !== 'fit' }" @click="recenter">固定</button>
-          <button :class="{ on: camMode === 'fit' }" @click="fitAll">全览</button>
+        <div ref="msegEl" class="mseg glass-surface" :class="{ goo: goo }">
+          <GlassThumb v-if="goo" :index="msegIndex" :count="2" />
+          <button class="seg-item glow-layer" :class="{ on: camMode !== 'fit' }" @click="recenter">固定</button>
+          <button class="seg-item glow-layer" :class="{ on: camMode === 'fit' }" @click="fitAll">全览</button>
         </div>
       </div>
 
@@ -524,20 +553,20 @@ function bumpKm(delta: number): void {
           />
 
           <div v-if="r.goalKind === 'time'" class="goalbox row">
-            <button class="gbtn" :disabled="r.goalTimeMin <= 5" @click="r.goalTimeMin -= 5">− 5</button>
+            <button class="gbtn glass-surface glow-layer" :disabled="r.goalTimeMin <= 5" @click="r.goalTimeMin -= 5">− 5</button>
             <b class="num gval">{{ r.goalTimeMin }}</b>
             <small class="gunit">分钟</small>
-            <button class="gbtn" :disabled="r.goalTimeMin >= 180" @click="r.goalTimeMin += 5">+ 5</button>
+            <button class="gbtn glass-surface glow-layer" :disabled="r.goalTimeMin >= 180" @click="r.goalTimeMin += 5">+ 5</button>
           </div>
           <div v-else-if="r.goalKind === 'distance'" class="goalbox row">
-            <button class="gbtn" @click="bumpKm(-0.5)">− 0.5</button>
+            <button class="gbtn glass-surface glow-layer" @click="bumpKm(-0.5)">− 0.5</button>
             <b class="num gval">{{ r.goalDistanceKm }}</b>
             <small class="gunit">公里</small>
-            <button class="gbtn" @click="bumpKm(0.5)">+ 0.5</button>
+            <button class="gbtn glass-surface glow-layer" @click="bumpKm(0.5)">+ 0.5</button>
           </div>
           <p v-else class="meta">不限时长与距离，随时结束并保存</p>
 
-          <button class="gobtn" @click="onGo">
+          <button class="gobtn glass-surface glow-layer" @click="onGo">
             <Play :size="30" :stroke-width="2.6" />
             <span>开始跑步</span>
           </button>
@@ -560,7 +589,7 @@ function bumpKm(delta: number): void {
             </div>
           </div>
 
-          <div class="pace row">
+          <div class="pace row glass-surface">
             <div class="col center">
               <span class="lab"><i class="live-dot" />瞬时配速</span>
               <b class="num pv">{{ instPaceText }}</b>
@@ -578,7 +607,7 @@ function bumpKm(delta: number): void {
               <button class="primary" @click="r.pause()">暂停</button>
             </template>
             <template v-else>
-              <button class="ghost danger" @click="endOpen = true">结束</button>
+              <button class="ghost glass-surface glow-layer danger" @click="endOpen = true">结束</button>
               <button class="primary" @click="r.resume()">继续</button>
             </template>
           </div>
@@ -612,7 +641,7 @@ function bumpKm(delta: number): void {
           <p class="hint left">{{ kmText === '—' ? '未获取到定位：跑步机跑完可手动填距离' : 'GPS 距离已预填，可按实际修正' }}</p>
 
           <button class="primary" @click="doSave">保存训练</button>
-          <button class="ghost danger" @click="endOpen = true">放弃不保存</button>
+          <button class="ghost glass-surface glow-layer danger" @click="endOpen = true">放弃不保存</button>
         </div>
       </div>
     </main>
@@ -784,16 +813,15 @@ function bumpKm(delta: number): void {
   width: 48px;
 }
 
-/* 悬浮信息 chip */
+/* 悬浮信息 chip —— 走 .glass-surface + .stage-dark 的暗场令牌
+   （超高档的 halo/caustic/rim 在暗场里才有意义：亮色下的落影压在深色地图上
+   才是"这块玻璃浮在画面之上"的重量感。手写 blur(14px) 拿不到那三层光学层，
+   弱档也顶不掉 blur —— 都交给令牌。） */
 .chip {
   position: absolute;
   z-index: 4;
   padding: 9px 13px;
   border-radius: 16px;
-  background: var(--hero-chip-bg);
-  backdrop-filter: blur(14px) saturate(160%);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  border: 0.5px solid var(--hero-chip-line);
   color: var(--hero-text);
 }
 
@@ -854,6 +882,9 @@ function bumpKm(delta: number): void {
   transition: width 1s linear;
 }
 
+/* 暂停徽标 —— 材质同 chip（.glass-surface + .stage-dark 令牌）。
+   暂停是"运动被冻结"的状态，徽标要压得住画面：底色仍偏黑（stage-dark 令牌
+   里 --glass-fill 就是 --hero-chip-bg），只是光学层与饱和度交给令牌统一管。 */
 .paused-badge {
   position: absolute;
   z-index: 6;
@@ -862,10 +893,6 @@ function bumpKm(delta: number): void {
   transform: translate(-50%, -50%);
   padding: 10px 22px;
   border-radius: var(--radius-full);
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 0.5px solid var(--hero-chip-line);
   color: var(--hero-text);
   font-size: var(--fs-callout);
   font-weight: 700;
@@ -897,7 +924,12 @@ function bumpKm(delta: number): void {
   background: rgba(255, 149, 0, 0.14);
 }
 
-/* ---------- 亮区 · 可拖拽抽屉 ---------- */
+/* ---------- 亮区 · 可拖拽抽屉 ----------
+   抽屉本身**不玻璃化**：它是大面积可滚动的内容载体，自身带 backdrop-filter
+   会成为整棵子树的后备根，把里面每一块玻璃的采样范围都锁死在抽屉自己的内容上
+   （同 DesktopInspector 的取舍）。所以它保持不透明底，玻璃交给把手行上的
+   离散控件与浮在上面的 HUD chip。
+   丰富档的滚动边缘暗带挂在上缘：内容滚起来时把这条边抬离移动的内容。 */
 .drawer {
   position: absolute;
   left: 0;
@@ -913,6 +945,24 @@ function bumpKm(delta: number): void {
   overflow: hidden;
   transform: translateY(0);
   transition: transform var(--dur-sheet) var(--ease-standard);
+}
+
+html[data-motion='rich'] .drawer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 2;
+  background: linear-gradient(to bottom, var(--glass-scroll-edge), transparent);
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+
+html[data-motion='rich'] .drawer.is-scrolled::before {
+  opacity: 1;
 }
 
 /* 收起档：只露出 peek（把手 + 时长/千卡行） */
@@ -945,12 +995,12 @@ function bumpKm(delta: number): void {
   -webkit-user-select: none;
 }
 
+/* 回中按钮：抽屉上的离散小控件 —— 走 .glass-surface。
+   它压在抽屉的不透明底上，玻璃采样的正是抽屉本身，得到的是真的磨砂层次。 */
 .hbtn {
   width: 30px;
   height: 30px;
   border-radius: 15px;
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   color: var(--c-exercise);
   display: flex;
   align-items: center;
@@ -969,15 +1019,21 @@ function bumpKm(delta: number): void {
   background: var(--line);
 }
 
+/* 相机模式切换：两段分段控件 —— 轨道走 .glass-surface（抽屉上的浮玻璃），
+   滑块在丰富档换成 GlassThumb（液态融合 + 形变），与 SegmentedControl 同一套做法。 */
 .mseg {
+  position: relative;
   display: flex;
   gap: 2px;
   padding: 2px;
   border-radius: 12px;
-  background: var(--surface-2);
+  overflow: hidden;
 }
 
+/* 丰富档：滑块落在这条**玻璃轨道**上，所以用半透 blob 语义（不覆写令牌），
+   融合时能看到它与轨道玻璃的通透关系。 */
 .mseg button {
+  position: relative;
   padding: 4px 11px;
   border-radius: 10px;
   font-size: var(--fs-micro);
@@ -986,9 +1042,18 @@ function bumpKm(delta: number): void {
 }
 
 .mseg button.on {
-  background: var(--surface);
   color: var(--text-1);
+}
+
+/* 默认档：没有 goo 滤镜，纯色滑块常驻；丰富档由 GlassThumb 接管并压掉这块 */
+.mseg:not(.goo) button.on {
+  background: var(--surface);
   box-shadow: var(--shadow-card);
+}
+
+.mseg.goo button.on {
+  background: transparent;
+  box-shadow: none;
 }
 
 .pane {
@@ -1028,13 +1093,12 @@ function bumpKm(delta: number): void {
   margin-top: 6px;
 }
 
+/* 目标步进钮：控制层小胶囊 —— 材质走 .glass-surface，这里只补几何 */
 .gbtn {
   align-self: center;
   min-width: 64px;
   height: 44px;
   border-radius: 22px;
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   font-size: var(--fs-callout);
   font-weight: 600;
 }
@@ -1076,12 +1140,14 @@ function bumpKm(delta: number): void {
   margin: -8px 0 0;
 }
 
+/* 开始跑步：全屏那颗最大的离散控件 —— 走玻璃材质（模板上的 .glass-surface）。
+   3px 绿描边收成 1px 透明边框（受光边由背景渐变画出，硬描边会盖掉它），
+   悬停仍翻成实底 —— 那是"确认要开始了"，不该被半透明削弱。 */
 .gobtn {
   width: 216px;
   height: 216px;
   margin-top: 10px;
   border-radius: 50%;
-  border: 3px solid var(--c-exercise);
   color: #3d7a00;
   display: flex;
   flex-direction: column;
@@ -1150,12 +1216,12 @@ function bumpKm(delta: number): void {
   margin-top: 2px;
 }
 
-/* 双配速对照卡：瞬时（呼吸点 · 活的）｜平均（更重 · 稳的） */
+/* 双配速对照卡：瞬时（呼吸点 · 活的）｜平均（更重 · 稳的）
+   材质走 .glass-surface —— 它是抽屉里最大的一张数据卡，超高档下该半透出下面的
+   距离/千卡行，形成一块悬浮的玻璃板；弱档令牌自动顶回实底。 */
 .pace {
   width: 100%;
-  background: var(--surface);
   border-radius: var(--radius-l);
-  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 
@@ -1213,7 +1279,7 @@ function bumpKm(delta: number): void {
   margin-top: auto;
 }
 
-/* 按钮 */
+/* 主按钮：实底是**语义选择**不是玻璃 —— 保持"这一屏唯一的主行动"最高对比层级 */
 .primary {
   min-width: 240px;
   height: 54px;
@@ -1226,12 +1292,11 @@ function bumpKm(delta: number): void {
   box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22);
 }
 
+/* 次按钮：控制层玻璃 —— 材质走 .glass-surface（全仓一份定义），这里只补几何 */
 .ghost {
   height: 50px;
   border-radius: 25px;
   padding: 0 24px;
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   font-size: var(--fs-callout);
   font-weight: 600;
   color: var(--text-1);

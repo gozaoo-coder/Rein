@@ -260,10 +260,7 @@ async function removeCustom(): Promise<void> {
   <ActionSheet
     :open="confirmDelete"
     title="删除这个自建动作？"
-    :actions="[
-      { label: '删除动作', value: 'del', danger: true },
-      { label: '取消', value: 'cancel' },
-    ]"
+    :actions="[{ label: '删除动作', value: 'del', danger: true }]"
     @select="(v: string) => (v === 'del' ? void removeCustom() : (confirmDelete = false))"
     @close="confirmDelete = false"
   />

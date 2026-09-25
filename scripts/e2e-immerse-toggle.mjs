@@ -51,18 +51,18 @@ async function evalJS(expression) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const LOW_TIER = process.env.REIN_E2E_LOW === '1'
 
-async function waitFor(expr, timeoutMs = 6000, label = expr.slice(0, 50)) {
+async function waitFor(expr, timeoutMs = 6000, label = expr.slice(0, 50), pollMs = 200) {
   const t0 = Date.now()
   while (Date.now() - t0 < timeoutMs) {
-    const v = await evalJS(`Boolean(${expr})`)
-    if (v) return true
-    await sleep(200)
+    if (await evalJS(`Boolean(${expr})`)) return true
+    await sleep(pollMs)
   }
   throw new Error(`等待超时: ${label}`)
 }
 
-const layerVisible = `(() => { const el = document.querySelector('.session-layer'); return !!el && el.getClientRects().length > 0 })()`
+const layerVisible = `(() => { const el = document.querySelector('.session-layer'); return !!el && el.classList.contains('is-open') && Number(getComputedStyle(el).opacity) > 0.99 })()`
 const wbarVisible = `(() => { const el = document.querySelector('.wdock-root'); return !!el && el.getClientRects().length > 0 })()`
 
 // ---------- 启动无头 Edge ----------
@@ -99,6 +99,12 @@ try {
   await cdp('Runtime.enable')
   await cdp('Page.enable')
   await sleep(2500)
+  await cdp('Emulation.setCPUThrottlingRate', { rate: LOW_TIER ? 4 : 1 })
+  await evalJS(`document.querySelector('.up-x')?.click()`)
+  if (process.env.REIN_E2E_LOW === '1') {
+    await evalJS(`localStorage.setItem('rein.perf.v1','low'); location.reload()`)
+    await sleep(2200)
+  }
 
   /* ---------- T1. 开始课程 → 沉浸层打开，hash 不变（不走路由） ---------- */
   await waitFor(`!!document.querySelector('.card li .play')`, 15000, '课程卡渲染')
@@ -107,17 +113,87 @@ try {
   const hash1 = await evalJS('location.hash')
   ok('T1 开始课程开沉浸层且 hash 不变', !hash1.includes('session'), hash1)
 
-  /* ---------- T2. 收起 → 沉浸层关闭，悬浮条回归 ---------- */
-  await evalJS(`document.querySelector('.shead .min')?.click()`)
-  await sleep(900) // 收起动画 400ms + 余量
+  /* ---------- T2. 收起 → 形变期间 Dock 只测量不抢镜，随后按方向渐入 ---------- */
+  await evalJS(`(() => {
+    window.__reinMorphFrames = []
+    let last = 0
+    const sample = (now) => {
+      if (document.documentElement.dataset.immersive === 'returning') return
+      if (last) window.__reinMorphFrames.push(now - last)
+      last = now
+      if (window.__reinMorphFrames.length >= 200) return
+      requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+    document.querySelector('.shead .min')?.click()
+  })()`)
+  await sleep(120)
+  const t2mid = await evalJS(`(() => {
+    const bar = document.querySelector('.wdock-root')
+    return {
+      measuring: bar?.classList.contains('immersive-measuring') ?? false,
+      opacity: bar ? Number(getComputedStyle(bar).opacity) : -1,
+      tabbarOpacity: document.querySelector('.dock') ? Number(getComputedStyle(document.querySelector('.dock')).opacity) : -1,
+      reserve: getComputedStyle(document.documentElement).getPropertyValue('--wbar-reserve').trim(),
+      pad: parseFloat(getComputedStyle(document.querySelector('.page')).paddingBottom),
+    }
+  })()`)
+  ok('T2 收起前半程 Dock 透明且只用于测量', t2mid.measuring && t2mid.opacity === 0, JSON.stringify(t2mid))
+  ok('T2 收起前半程 Dock 不抢镜', t2mid.tabbarOpacity === 0 && !!t2mid.reserve, JSON.stringify(t2mid))
+  await waitFor(`document.querySelector('.wdock-root')?.classList.contains('returning')`, 2000, '收起完成进入 Dock 渐入段', 16)
+  await sleep(70)
+  const t2return = await evalJS(`(() => {
+    const bar = document.querySelector('.wdock-root')
+    return {
+      opacity: bar ? Number(getComputedStyle(bar).opacity) : -1,
+      translate: bar ? getComputedStyle(bar).translate : 'none',
+      tabbarDisplay: document.querySelector('.dock') ? getComputedStyle(document.querySelector('.dock')).display : 'missing',
+      tabbarOpacity: document.querySelector('.dock') ? Number(getComputedStyle(document.querySelector('.dock')).opacity) : -1,
+      pad: parseFloat(getComputedStyle(document.querySelector('.page')).paddingBottom),
+    }
+  })()`)
+  const dockReturnOk = LOW_TIER
+    ? t2return.opacity === 1 && t2return.translate === '0px'
+    : t2return.opacity > 0 && t2return.opacity < 1 && t2return.translate !== 'none'
+  ok(LOW_TIER ? 'T2 流畅档 Dock 瞬时落位' : 'T2 收起完成后 Dock 沿停靠方向渐入', dockReturnOk, JSON.stringify(t2return))
+  ok('T2 收起后 Dock 与页面安全区同段恢复', t2return.tabbarOpacity > 0 && t2return.pad >= t2mid.pad, JSON.stringify({ mid: t2mid, return: t2return }))
+  const frameStats = await evalJS(`(() => {
+    const values = window.__reinMorphFrames.filter((v) => v < 1000)
+    values.sort((a,b) => a-b)
+    const at = (p) => values[Math.min(values.length - 1, Math.floor(values.length * p))] ?? 0
+    return { frames: values.length, p50: at(0.5), p95: at(0.95), max: values.at(-1) ?? 0, dropped: values.filter((v) => v > 32).length }
+  })()`)
+  const collapseFrameOk = frameStats.p95 <= 40 && frameStats.dropped / Math.max(1, frameStats.frames) <= 0.1
+  ok(LOW_TIER ? 'T2 4× CPU 低功耗档收起 p95 ≤ 40ms 且掉帧率 ≤ 10%' : 'T2 收起 p95 ≤ 40ms 且掉帧率 ≤ 10%', collapseFrameOk, JSON.stringify(frameStats))
+  await sleep(LOW_TIER ? 260 : 360)
   const t2layer = await evalJS(layerVisible)
-  const t2bar = await evalJS(wbarVisible)
+  const t2barOpacity = await evalJS(`Number(getComputedStyle(document.querySelector('.wdock-root')).opacity)`)
   ok('T2 收起后沉浸层关闭', !t2layer)
-  ok('T2 收起后悬浮条回归', t2bar)
+  ok('T2 收起后悬浮条完全恢复', t2barOpacity === 1, String(t2barOpacity))
 
   /* ---------- T3. 悬浮条恢复沉浸 → 沉浸层再开（同一实例复用） ---------- */
-  await evalJS(`document.querySelector('.wdock-root [aria-label="恢复沉浸模式"]')?.click()`)
+  await evalJS(`(() => {
+    window.__reinExpandFrames = []
+    let last = 0
+    const sample = (now) => {
+      if (last) window.__reinExpandFrames.push(now - last)
+      last = now
+      if (window.__reinExpandFrames.length >= 200) return
+      requestAnimationFrame(sample)
+    }
+    requestAnimationFrame(sample)
+    document.querySelector('.wdock-root [aria-label="恢复沉浸模式"]')?.click()
+  })()`)
   await waitFor(layerVisible, 8000, '沉浸层再开')
+  await sleep(LOW_TIER ? 260 : 360)
+  const expandStats = await evalJS(`(() => {
+    const values = window.__reinExpandFrames.filter((v) => v < 1000)
+    values.sort((a,b) => a-b)
+    const at = (p) => values[Math.min(values.length - 1, Math.floor(values.length * p))] ?? 0
+    return { frames: values.length, p50: at(0.5), p95: at(0.95), max: values.at(-1) ?? 0, dropped: values.filter((v) => v > 32).length }
+  })()`)
+  const expandFrameOk = expandStats.p95 <= 40 && expandStats.dropped / Math.max(1, expandStats.frames) <= 0.1
+  ok(LOW_TIER ? 'T3 4× CPU 低功耗档展开 p95 ≤ 40ms 且掉帧率 ≤ 10%' : 'T3 展开 p95 ≤ 40ms 且掉帧率 ≤ 10%', expandFrameOk, JSON.stringify(expandStats))
   ok('T3 悬浮条恢复沉浸层', true)
 
   /* ---------- T4. 收起动画进行中再展开（重入）→ 沉浸层保持可见 ---------- */

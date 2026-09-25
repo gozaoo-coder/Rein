@@ -68,9 +68,9 @@ if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
 /**
  * **真正生效的档位**（CSS 与 JS 都只认它）：
  *   · 用户选了关闭，或系统要求减弱动效        → off
- *   · 掉帧降级（system/perf 判定）            → 至多 default ——
+ *   · 画质档位是「流畅」（perfDegraded）      → 至多 default ——
  *     丰富档那几样都是**每帧合成**（融合滤镜、全视口遮罩模糊、滚动逐帧写变量），
- *     正在掉帧时再叠上去就是火上浇油。降级态本身承诺的是「先把画面稳住」。
+ *     用户主动选了最省的画质档时再叠上去就是火上浇油。流畅档承诺的是「先把画面稳住」。
  *   · 其余                                    → 用户选的档位
  */
 const effective = computed<MotionLevel>(() => {

@@ -103,7 +103,7 @@ function bump(d: number): void {
     <button
       v-if="!editing"
       type="button"
-      class="wbtn"
+      class="wbtn glass-surface"
       :aria-label="`${label}减 ${step}${unit}`"
       @click="bump(-step)"
     >
@@ -135,7 +135,7 @@ function bump(d: number): void {
     <button
       v-if="!editing"
       type="button"
-      class="wbtn"
+      class="wbtn glass-surface"
       :aria-label="`${label}加 ${step}${unit}`"
       @click="bump(step)"
     >
@@ -151,12 +151,14 @@ function bump(d: number): void {
   gap: 10px;
 }
 
+/* 步进钮：控制层圆形钮 —— 材质走 .glass-surface（模板上带）。
+   它压在那张玻璃内容卡里，所以只吃令牌、不叠折射：两片背靠背的玻璃会
+   把彼此变成对方的背景源，反而糊掉。 */
 .wbtn {
   width: 44px;
   height: 44px;
   flex: none;
   border-radius: 50%;
-  background: var(--surface-2);
   color: var(--text-1);
   display: flex;
   align-items: center;

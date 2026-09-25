@@ -446,16 +446,40 @@ async function main() {
     await kb('fileRename', note1.id, '训练/膝盖注意事项')
 
     /* ---------- D. 知识库页 UI ---------- */
+    //
+    // 信息架构（本轮重构后）：主页面只留高频三块 —— 检索 / 长期记忆 / 文件；
+    // 机器层（索引概况 · 检索模式 · 索引范围 · 云端配置）收进页头的「检索设置」抽屉。
+    // 所以先断言主页面，再开抽屉断言机器层，最后回主页面跑检索。
 
     await gotoHash('#/ai/knowledge')
-    await waitFor("document.body.innerText.includes('索引概况')", 8000, '知识库页渲染')
-    await waitFor("document.body.innerText.includes('条目')", 8000, '索引进度加载')
+    await waitFor("document.body.innerText.includes('长期记忆')", 8000, '知识库页渲染')
     const pageText = await evalJS('document.body.innerText')
-    ok('UI：渲染索引概况与统计', pageText.includes('索引概况') && pageText.includes('条目'), '')
-    ok('UI：渲染检索模式三档', pageText.includes('关键词') && pageText.includes('本地模型') && pageText.includes('云端'), '')
-    ok('UI：渲染索引范围开关', pageText.includes('索引范围') && pageText.includes('日程与附件'), '')
-    ok('UI：渲染长期记忆区', pageText.includes('长期记忆'), '')
-    ok('UI：文件卡提供文件库入口', pageText.includes('文件库'), '')
+    ok('UI：主页面按到访频率排布（检索 / 长期记忆 / 文件）', pageText.includes('检索') && pageText.includes('长期记忆') && pageText.includes('文件库'), '')
+    ok(
+      'UI：检索入口在位（输入框 + 搜索钮）',
+      await evalJS(`!!document.querySelector('input[type=search]') && [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === '搜索')`),
+      '',
+    )
+
+    // 打开「检索设置」抽屉（页头设置钮），机器层全在这里
+    await evalJS(`document.querySelector('.hdr-btn[aria-label="检索设置"]')?.click()`)
+    await waitFor("document.body.innerText.includes('索引概况')", 8000, '检索设置抽屉')
+    const drawerText = await evalJS(`document.querySelector('.panel')?.innerText ?? ''`)
+    ok('UI：抽屉渲染索引概况与统计', drawerText.includes('索引概况') && drawerText.includes('条目'), '')
+    ok('UI：抽屉渲染检索模式三档', drawerText.includes('关键词') && drawerText.includes('本地模型') && drawerText.includes('云端'), '')
+    ok('UI：抽屉渲染索引范围开关', drawerText.includes('索引范围') && drawerText.includes('日程与附件'), '')
+
+    ok('UI：切到云端模式显示配置项', (await evalJS(`(async () => {
+      const btns = [...document.querySelectorAll('.panel button')].filter((b) => b.textContent.trim() === '云端')
+      btns[0]?.click()
+      await new Promise((r) => setTimeout(r, 300))
+      const t = document.querySelector('.panel')?.innerText ?? ''
+      return t.includes('服务地址') && t.includes('密钥') && t.includes('模型名')
+    })()`)) === true)
+
+    // 关抽屉，回主页面
+    await evalJS(`document.querySelector('.panel .close')?.click()`)
+    await sleep(500)
 
     // 检索试跑：输入关键词 → 点搜索 → 结果出现
     await evalJS(`(() => {
@@ -475,13 +499,6 @@ async function main() {
     const hitText = await evalJS('document.body.innerText')
     ok('UI：检索试跑出结果', hitText.includes('腿部力量训练'), '命中标题已渲染')
     ok('UI：结果不泄漏附件 base64', !hitText.includes('QUJDREVGR0g'))
-
-    ok('UI：切到云端模式显示配置项', (await evalJS(`(async () => {
-      const btns = [...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === '云端')
-      btns[0]?.click()
-      await new Promise((r) => setTimeout(r, 300))
-      return document.body.innerText.includes('Base URL')
-    })()`)) === true)
 
     /* ---------- E. 文件库页 ---------- */
 

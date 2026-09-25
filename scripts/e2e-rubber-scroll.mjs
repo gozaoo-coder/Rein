@@ -9,7 +9,8 @@
 import { chromium } from 'playwright-core'
 
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
-const BASE = 'http://127.0.0.1:1420'
+/** 与其它 e2e 同一条约定：本机 1420 被划进保留端口段时用 REIN_E2E_URL 指向别的实例 */
+const BASE = process.env.REIN_E2E_URL ?? 'http://127.0.0.1:1420'
 
 /* 与 src/system/rubberScroll.ts 的 DECAY_BASE 同步；调参后这里也要改 */
 const DECAY_BASE = 1.02

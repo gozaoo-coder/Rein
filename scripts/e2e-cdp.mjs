@@ -357,11 +357,17 @@ async function main() {
     await waitFor(`!!document.querySelector('.cockpit')`, 15000, 'active 态驾驶舱渲染')
 
     /* ---------- C. 生效态（驾驶舱/罗盘/菜单/地图/航道） ---------- */
-    /* C0 页头 ⋯ → ActionSheet（成绩单/归档/删除收纳） */
+    /* C0 页头 ⋯ → AppMenu bind（成绩单/归档/删除收纳，图标 + 文字） */
     await evalJS(`document.querySelector('.hdr-btn')?.click()`)
-    await waitFor(`[...document.querySelectorAll('.card-wrap .opt')].some(o => o.textContent.includes('删除方案'))`, 6000, '更多菜单')
-    ok('C0 ⋯ 菜单含 归档/删除', await evalJS(
-      `(() => { const t = document.body.textContent; const okMenu = t.includes('归档方案') && t.includes('删除方案'); document.querySelector('.opt.cancel')?.click(); return okMenu })()`,
+    await waitFor(`[...document.querySelectorAll('.panel[role="menu"] .item')].some(o => o.textContent.includes('删除方案'))`, 6000, '更多菜单')
+    ok('C0 ⋯ bind 菜单含 归档/删除，且每项带图标', await evalJS(
+      `(() => {
+        const items = [...document.querySelectorAll('.panel[role="menu"] .item')]
+        const labels = items.map((i) => i.textContent.trim())
+        const icons = items.filter((i) => i.querySelector('svg')).length
+        document.querySelector('.catcher')?.click()
+        return labels.some((l) => l.includes('归档方案')) && labels.some((l) => l.includes('删除方案')) && icons === items.length
+      })()`,
     ))
 
     const headText = await evalJS(`document.querySelector('.head-strip').textContent`)

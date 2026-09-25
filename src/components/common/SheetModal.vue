@@ -419,7 +419,7 @@ onBeforeUnmount(() => {
         <!-- 固定操作区（可选插槽）：抽屉打开的目的常常就是按这颗按钮 ——
              让它跟内容一起滚出视野，等于把主操作藏起来。
              不用这个插槽的抽屉完全不受影响（渲染上什么都不会多出来） -->
-        <div v-if="$slots.footer" class="foot">
+        <div v-if="$slots.footer" class="foot sheet-foot">
           <slot name="footer" />
         </div>
       </section>

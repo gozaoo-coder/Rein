@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Sparkles } from 'lucide-vue-next'
+import { Merge, RefreshCw, ShieldCheck, Sparkles } from 'lucide-vue-next'
 
-import ActionSheet from '@/components/common/ActionSheet.vue'
+import AppMenu from '@/components/common/AppMenu.vue'
 import { usePlanStore } from '@/stores/plan'
 import { useToast } from '@/composables/useToast'
 
@@ -17,6 +17,8 @@ const { toast } = useToast()
 
 const sheetOpen = ref(false)
 const busy = ref(false)
+/** 菜单锚点：横幅里那颗「更新」——bind 菜单要贴着它弹 */
+const optBtn = ref<HTMLElement | null>(null)
 
 const SUMMARY = computed(() => {
   const s = planStore.seed
@@ -41,10 +43,11 @@ function onPick(value: string): void {
   else if (value === 'keep') void run(planStore.applySeedKeep, '已保留你的课程')
 }
 
+/** 三选一是平级命令（怎么应用更新），不是破坏性确认 —— 走 bind 菜单，图标 + 文字 */
 const ACTIONS = [
-  { label: '兼容合并', value: 'migrate' },
-  { label: '使用新版本', value: 'override' },
-  { label: '保留我的', value: 'keep' },
+  { label: '兼容合并', value: 'migrate', icon: Merge },
+  { label: '使用新版本', value: 'override', icon: RefreshCw },
+  { label: '保留我的', value: 'keep', icon: ShieldCheck },
 ]
 </script>
 
@@ -57,10 +60,12 @@ const ACTIONS = [
       <p class="title">{{ SUMMARY }}</p>
       <p class="desc">不会覆盖你的修改，可先看看你的版本</p>
     </div>
-    <button class="opt" :disabled="busy" @click="sheetOpen = true">更新</button>
+    <button ref="optBtn" class="opt" :disabled="busy" @click="sheetOpen = true">更新</button>
 
-    <ActionSheet
+    <!-- 贴着「更新」弹的 bind 菜单：三项平级、都能反悔（不改数据的那项排在最后） -->
+    <AppMenu
       :open="sheetOpen"
+      :anchor="optBtn"
       title="如何应用新版内置课程？"
       :actions="ACTIONS"
       @select="onPick"

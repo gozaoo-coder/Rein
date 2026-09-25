@@ -133,7 +133,7 @@ function goBack(): void {
   opacity: 1;
 }
 
-/* 超高档的底色垫层（苹果的「硬边缘」变体）：只有超高才有 —— 它属于材质档位，
+/* 超高 / 极致档的底色垫层（苹果的「硬边缘」变体）：只有这两档才有 —— 它属于材质档位，
    不是动效（动效是下面那两条 scale）。不加 --bg 垫层时，页头压的是"内容被糊开"，
    标题与内容的分离靠模糊本身；加一层同色渐变后，标题的落点更明确。
    显隐只能挂在这层自己身上，与 .pblur 同一条理由（祖先一旦 opacity<1 就成了
@@ -146,7 +146,7 @@ function goBack(): void {
   background: linear-gradient(to bottom, var(--bg) 0%, transparent 72%);
 }
 
-html[data-perf='ultra'] .page-header.scrolled .ph-scrim {
+html:is([data-perf='ultra'], [data-perf='extreme']) .page-header.scrolled .ph-scrim {
   opacity: 0.6;
 }
 
@@ -237,9 +237,9 @@ html[data-motion='rich'] .page-header :slotted(.hdr-btn):active {
   );
 }
 
-/* ---------- 超高档：页头的圆钮也变成玻璃盘 ----------
+/* ---------- 超高 / 极致档：页头的圆钮也变成玻璃盘 ----------
    一份 :slotted 改动覆盖全部页面的图标钮（各页只挂 hdr-btn 类，不各自写样式 ——
-   见 docs/ARCHITECTURE.md 的页头按钮规范），这是"超高铺到全部组件"里性价比最高的一处。
+   见 docs/ARCHITECTURE.md 的页头按钮规范），这是"玻璃铺到全部组件"里性价比最高的一处。
 
    为什么页头这两颗**不用 SVG 折射**：它们压在页头那层渐进模糊（ProgressiveBlur，
    5 层 backdrop-filter）之上，再叠一次 `url()` 折射既糊又贵，而 38px 的圆上
@@ -247,10 +247,10 @@ html[data-motion='rich'] .page-header :slotted(.hdr-btn):active {
    + 内圈细描边 + 背景模糊 —— 普通 blur 在 38px 上比 url() 便宜一个量级。
 
    底薄了会不会读不清：圆钮坐落在页头正上方，背后是已经糊过一遍的内容；亮色主题下
-   页面本身是浅的，0.42 的白 + 20px 模糊合成出来仍接近白。全屏暗场页面（跑步）不走
+   页面本身是浅的，档位给出的半透明白 + 20px 模糊合成出来仍接近白。全屏暗场页面（跑步）不走
    PageHeader，所以不存在"白底压暗图"的组合。 */
-html[data-perf='ultra'] .page-header .back,
-html[data-perf='ultra'] .page-header :slotted(.hdr-btn:not(.accent)) {
+html:is([data-perf='ultra'], [data-perf='extreme']) .page-header .back,
+html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-btn:not(.accent)) {
   background: var(--glass-fill);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -263,8 +263,8 @@ html[data-perf='ultra'] .page-header :slotted(.hdr-btn:not(.accent)) {
 
 /* 系统要求「减弱透明度」时退回实底 —— 与 .glass-surface 的退化同一条语义 */
 @media (prefers-reduced-transparency: reduce) {
-  html[data-perf='ultra'] .page-header .back,
-  html[data-perf='ultra'] .page-header :slotted(.hdr-btn:not(.accent)) {
+  html:is([data-perf='ultra'], [data-perf='extreme']) .page-header .back,
+  html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-btn:not(.accent)) {
     background: var(--surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;

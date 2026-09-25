@@ -184,11 +184,27 @@ html[data-motion='off'] *::after {
   transition-duration: 0.01ms !important;
 }
 
-/* ---------- 性能降级（system/perf.ts 判定掉帧后写入 data-perf="low"） ----------
+/* ---------- 性能降级（system/perf.ts 的「流畅」档写入 data-perf="low"） ----------
    只关最费合成器的两类：毛玻璃（每帧都要重算背后的内容，渐进模糊页头更是多层叠加）
    与循环动画（常驻合成层）。一次性过渡刻意保留——按压反馈、弹层进出没有这些会显得
    失灵。底色用 --surface-translucent → --surface 顶掉，半透明表面在关掉 blur 后
    会变成一层发灰的薄膜。 */
+html[data-immersive='open'] [data-immersive-shell] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+html[data-immersive='returning'] [data-immersive-shell] {
+  animation: rein-shell-return 220ms var(--ease-out) both;
+}
+
+@keyframes rein-shell-return {
+  from {
+    opacity: 0;
+    translate: 0 22px;
+  }
+}
+
 html[data-perf='low'] {
   --surface-translucent: var(--surface);
   /* 玻璃表面（--glass-*，悬浮 Dock 等）顶成实底：没有 blur 的半透明底会成灰膜；
@@ -313,6 +329,71 @@ html[data-perf='ultra'] {
   }
 }
 
+/* ---------- 极致材质（system/perf.ts 写入 data-perf="extreme"） ----------
+   在超高之上做两件事：
+     1. 光学层再深一档（受光边更亮、焦散更明显、外缘层更厚）——与超高拉开可感知的
+        差距，但仍然**不加 blur 半径**（半径是最贵的旋钮，加大只会更糊）；
+     2. 把玻璃材质铺到更多组件：卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴（见下面的
+        扩展选择器）。这些表面承载正文，所以底用 --glass-panel-fill（比悬浮玻璃更实），
+        透光看得见材质，对比度不随背后内容浮动。
+   这正是苹果 Liquid Glass 的分层：导航与控件层用玻璃，内容层保持可读。
+   折射走完整链（三通道 + 色散能力），由 system/perf 的 glassPipeline 决定。 */
+html[data-perf='extreme'] {
+  --glass-fill: rgba(255, 255, 255, 0.4);
+  --glass-rim-hi: #ffffff;
+  --glass-rim-lo: rgba(255, 255, 255, 0.5);
+  --glass-sheen: rgba(255, 255, 255, 0.85);
+  --glass-rim-2: rgba(255, 255, 255, 0.62);
+  --glass-caustic: rgba(255, 255, 255, 0.58);
+  --glass-halo: 0 22px 56px -18px rgba(0, 0, 0, 0.3);
+  --glass-panel-fill: rgba(255, 255, 255, 0.66);
+  --surface-translucent: rgba(255, 255, 255, 0.52);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-perf='extreme'] {
+    --glass-fill: rgba(40, 40, 46, 0.38);
+    --glass-rim-hi: rgba(255, 255, 255, 0.66);
+    --glass-rim-lo: rgba(255, 255, 255, 0.2);
+    --glass-sheen: rgba(255, 255, 255, 0.3);
+    --glass-rim-2: rgba(255, 255, 255, 0.36);
+    --glass-caustic: rgba(255, 255, 255, 0.26);
+    --glass-halo: 0 -1px 24px -8px rgba(255, 255, 255, 0.34);
+    --glass-panel-fill: rgba(28, 28, 30, 0.68);
+    --surface-translucent: rgba(28, 28, 30, 0.56);
+  }
+}
+
+/* 极致档：玻璃不再只给导航 / 悬浮层，卡片、抽屉、菜单、操作面板、快捷磁贴也一起
+   用同一份 --glass-* 材质（内容层用更实的 --glass-panel-fill）。
+   **不改 border / padding**：切换档位时这些盒子的尺寸不能跳一下。
+   卡片那条用 :where() 把选择器压回与基线 .card 同级（0,1,0）—— 凡是**自己定义了底**
+   的卡片（周时间线的分类色、函数/证据面板的次级底）都在各自 scoped 样式里赢过这条，
+   档位升级不会把有语义的底色顶成统一玻璃。 */
+:where(html[data-perf='extreme']) .card,
+html[data-perf='extreme'] .panel,
+html[data-perf='extreme'] .sheet,
+html[data-perf='extreme'] .card-wrap,
+html[data-perf='extreme'] .qa,
+html[data-perf='extreme'] .tuner {
+  background: var(--glass-panel-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  box-shadow:
+    var(--glass-shadow),
+    var(--glass-halo),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 12px 20px -14px var(--glass-sheen),
+    inset 0 0 0 1px var(--glass-rim-2),
+    inset 0 1px 10px -2px var(--glass-caustic);
+}
+
+/* 抽屉的固定操作区本来是不透明实底（保证按钮区不被内容透上来干扰）：
+   它的父层已经是玻璃，这里让出底色只留分隔线，否则抽屉底部会断开成两截材质。 */
+html[data-perf='extreme'] .sheet-foot {
+  background: transparent;
+}
+
 /* ---------- 暗场材质上下文 ----------
    压在深色内容上的玻璃（画质预览台的标本、参数面板的预览、跑步页的 HUD 芯片）：
    底换成暗场芯片材质、受光边换中性白 —— 于是**前景永远是浅色**（--hero-text*），
@@ -348,6 +429,22 @@ html[data-perf='low'] .stage-dark {
     -webkit-backdrop-filter: none;
     border-color: var(--line);
     box-shadow: var(--shadow-float);
+  }
+
+  /* 极致档新铺开的那些玻璃表面：系统要求「减弱透明度」时一并退回实底。
+     与 .glass-surface 同一语义 —— 这是苹果规范里必须尊重的一条。
+     卡片的选择器同样用 :where()（理由见上面极致档块）。 */
+  :where(html[data-perf='extreme']) .card,
+  html[data-perf='extreme'] .panel,
+  html[data-perf='extreme'] .sheet,
+  html[data-perf='extreme'] .card-wrap,
+  html[data-perf='extreme'] .qa,
+  html[data-perf='extreme'] .tuner,
+  html[data-perf='extreme'] .sheet-foot {
+    background: var(--surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: var(--shadow-card);
   }
 }
 

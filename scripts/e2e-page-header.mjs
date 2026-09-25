@@ -168,7 +168,9 @@ const HEADER_STATE = `(() => {
   const mask = h.querySelector('.ph-mask')
   const mcs = mask ? getComputedStyle(mask) : null
   const mr = mask ? mask.getBoundingClientRect() : null
-  const spans = mask ? [...mask.querySelectorAll('span')] : []
+  // 只量真正的模糊层：.ph-mask 里还有一层 .ph-scrim（超高 / 极致档的底色垫层），
+  // 它没有 backdrop-filter、opacity 也永远按自己的规则走，算进来会把层数与显隐判错
+  const spans = mask ? [...mask.querySelectorAll('.pblur span')] : []
   const viewportTop = (() => {
     const main = document.querySelector('.desk-main')
     return main ? main.getBoundingClientRect().top : 0
@@ -270,13 +272,10 @@ async function navigateTo(url) {
 
 async function main() {
   const debugPort = await freePort()
-  /** 档位钉死：这些断言验的是遮罩怎么渲染，不该被无头环境的掉帧判定搅进来 */
+  /** 档位钉死：这些断言验的是遮罩怎么渲染，固定档位最稳 */
   const pinHigh = `localStorage.setItem('rein.perf.v1', 'high');`
   const pinLow = `localStorage.setItem('rein.perf.v1', 'low');`
-  // 「auto」写进去只是为了明确：**默认档就是 auto**（缺省时 `loadMode()` 回落到 auto），
-  // 所以 removeItem 得到的也是 auto —— 见下面的 22b。
-  const pinAuto = `localStorage.setItem('rein.perf.v1', 'auto');`
-  /** 抹掉本地档位 = 全新安装的样子 */
+  /** 抹掉本地档位 = 全新安装的样子（缺省时 loadMode() 回落到 high）—— 见下面的 22b */
   const clearPerf = `localStorage.removeItem('rein.perf.v1');`
 
   const edge = spawn(
@@ -320,7 +319,7 @@ async function main() {
       String(s.layerMask),
     )
     const layerBlurs = await evalJS(
-      `[...document.querySelectorAll('.ph-mask span')].map(s => getComputedStyle(s).backdropFilter)`,
+      `[...document.querySelectorAll('.ph-mask .pblur span')].map(s => getComputedStyle(s).backdropFilter)`,
     )
     ok(
       '8 各层模糊量递增（越靠上叠加越浓）',
@@ -452,15 +451,7 @@ async function main() {
       `data-perf=${s.perfAttr} 层数=${s.layerCount}`,
     )
 
-    /* ---------- 5 默认档（auto）：空闲时保持高画质 ---------- */
-    await cdp('Page.addScriptToEvaluateOnNewDocument', { source: pinAuto })
-    await navigateTo(`${APP}/#/settings`)
-    await evalJS(SCROLL_MID)
-    await sleep(500)
-    s = await evalJS(HEADER_STATE)
-    ok('23 默认 auto 档空闲时仍为高画质', s.perfAttr === 'high' && s.layerCount === 5, `data-perf=${s.perfAttr} 层数=${s.layerCount}`)
-
-    /* ---------- 6 其它页标题同样固定 ---------- */
+    /* ---------- 5 其它页标题同样固定 ---------- */
     await cdp('Page.addScriptToEvaluateOnNewDocument', { source: pinHigh })
     for (const [route, title] of [
       ['#/me', '我'],

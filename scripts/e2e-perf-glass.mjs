@@ -18,8 +18,9 @@
  *   6 真实 Dock（左圆钮 + 中药丸 + 右圆钮，三块并列玻璃）：超高逐块折射 / 高画质普通
  *     毛玻璃 / 弱档顶成实底，页签对比度真图采像素
  *   7 参数调节面板：12 行参数、拖滑杆滤镜跟着重烘、点值就地输入、恢复默认
- *   8 「超高（优化）」：与「超高」**逐像素一致**（关掉壁纸动画后整帧比对），
- *     实际管线是塌缩链（3 个原语，data-glass=collapsed），data-perf 仍是 ultra
+ *   8 「超高」vs「极致」：出厂偏移下**玻璃带逐像素一致**（塌缩链 3 个原语 vs
+ *     完整链 10 个原语），两档各写自己的 data-perf / data-glass；极致另验
+ *     卡片等内容层也铺上玻璃（--glass-panel-fill + 背景模糊）
  *
  * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
  * 运行：node scripts/e2e-perf-glass.mjs
@@ -334,7 +335,7 @@ async function main() {
     })()`)
     await shot('tier-low')
     ok('弱档玻璃顶成实底且不挂模糊（暗场基本件）', low.mounted === 'low' && low.noBlur && low.fill === 'rgb(11, 11, 14)', `data-perf=${low.mounted} bg=${low.fill} backdrop=${low.noBlur ? 'none' : '仍在'}`)
-    ok('弱档读数说「已降级到流畅优先」', low.text.includes('warn') && low.detail.includes('已降级到流畅优先'), `${low.text} · ${low.detail}`)
+    ok('流畅档读数说「玻璃顶成实底，不做折射」', low.text.includes('warn') && low.detail.includes('玻璃顶成实底'), `${low.text} · ${low.detail}`)
     const lowSync = await evalJS(SYNC_PROBE)
     ok(
       '弱档 · 底栏标本仍与真实 Dock 一致（退化语义两边同步）',
@@ -645,9 +646,10 @@ async function main() {
     await sleep(600)
     ok('面板可关闭', (await evalJS(`!!document.querySelector('.panel')`)) === false)
 
-    // ---------- 8 「超高（优化）」vs「超高」 ----------
-    // 这一档的全部主张就是「与超高逐像素一致，只是链更短」—— 那就直接比像素，
-    // 不要用「计算样式一样」糊过去。
+    // ---------- 8 「超高」vs「极致」 ----------
+    // 两档的滤镜链在**出厂通道偏移（0/0/0）**下逐像素等价：超高走塌缩链（3 个原语），
+    // 极致走完整链（10 个原语）—— 那就直接比像素，不要用「计算样式一样」糊过去。
+    // 极致另外把玻璃铺到卡片等更多表面，那是材质层的设计差异，不参与这条等价断言。
     //
     // 关键：**在同一次页面加载里切档**（点分段控件，不 reload）。
     // 两次加载之间台子上的光晕相位、壁纸滚动位置、进场动效都会差一点，
@@ -689,18 +691,6 @@ async function main() {
         return true
       })()`)
 
-    /** 切档时本来就该变的几块 UI：读数胶囊 / 分段控件滑块 / 档位清单高亮。
-     *  比对时按矩形排掉 —— 否则「读数换了行字」会盖住「玻璃本身有没有变」。 */
-    const CHANGING_UI = `(() => {
-      const rect = (s) => {
-        const e = document.querySelector(s)
-        if (!e) return null
-        const b = e.getBoundingClientRect()
-        return [Math.floor(b.left), Math.floor(b.top), Math.ceil(b.right), Math.ceil(b.bottom)]
-      }
-      return [rect('.plaque'), rect('.perfseg'), rect('.modes')].filter(Boolean)
-    })()`
-
     /** 玻璃所在的带：标本台的「基本件 + 底栏」与真实 Dock —— 逐像素比对只比这几块 */
     const GLASS_RECTS = `(() => {
       const rect = (s) => {
@@ -720,65 +710,108 @@ async function main() {
     await sleep(600)
 
     const ultraProbe = await evalJS(OPT_PROBE)
-    const excludeRects = await evalJS(CHANGING_UI)
     const glassRects = await evalJS(GLASS_RECTS)
+    /** 超高这一档生效的材质令牌（下面的等价比对要先把极致拉回这一组） */
+    const TOKEN_KEYS = [
+      '--glass-fill',
+      '--glass-rim-hi',
+      '--glass-rim-lo',
+      '--glass-sheen',
+      '--glass-rim-2',
+      '--glass-caustic',
+      '--glass-halo',
+      '--surface-translucent',
+      '--glass-panel-fill',
+    ]
+    const ultraTokens = await evalJS(`(() => {
+      const cs = getComputedStyle(document.documentElement)
+      return Object.fromEntries(${JSON.stringify(TOKEN_KEYS)}.map((k) => [k, cs.getPropertyValue(k).trim()]))
+    })()`)
     const ultraFrame = await shot('tier-ultra')
 
-    ok('档位分段控件里有「超高（优化）」（5 档）', await pickTier('超高＋'), '找不到「超高＋」分段')
+    ok('档位分段控件里有「极致」（4 档）', await pickTier('极致'), '找不到「极致」分段')
     await sleep(600)
-    const optProbe = await evalJS(OPT_PROBE)
-    const optRects = await evalJS(CHANGING_UI)
-    // 两边的矩形取并集：读数胶囊换字之后宽了 40px，只按一边排会漏掉边
-    for (let i = 0; i < optRects.length; i++) {
-      const a = excludeRects[i]
-      if (!a) { excludeRects[i] = optRects[i]; continue }
-      excludeRects[i] = [Math.min(a[0], optRects[i][0]), Math.min(a[1], optRects[i][1]), Math.max(a[2], optRects[i][2]), Math.max(a[3], optRects[i][3])]
-    }
-    const optFrame = await shot('tier-ultra-opt')
+    const extProbe = await evalJS(OPT_PROBE)
+
+    // 极致与超高真正看得见的差别在材质铺开的范围：卡片这类内容层也变成玻璃。
+    // 先量这一条，再把材质拉平去比滤镜链（下面的 tier-equiv 会把它暂时退回实底）。
+    const extGlass = await evalJS(`(() => {
+      const card = document.querySelector('.card')
+      const cs = getComputedStyle(card)
+      const probe = document.createElement('div')
+      probe.style.background = 'var(--glass-panel-fill)'
+      document.body.appendChild(probe)
+      const panelFill = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return { bg: cs.backgroundColor, backdrop: String(cs.backdropFilter || cs.webkitBackdropFilter), panelFill }
+    })()`)
+
+    // 两档的材质本来就不同（极致的光学层更深、覆盖更广）—— 要比的是**滤镜链**，
+    // 所以先把极致档的材质令牌临时拉回超高那一组，并让铺开的表面暂时退回实底，
+    // 这样两次截图之间只剩「塌缩链 vs 完整链」这一个变量。
+    const equivDecls = Object.entries(ultraTokens)
+      .map(([k, v]) => `${k}:${v}`)
+      .join(';')
+    const equivCss =
+      `html[data-perf='extreme']{${equivDecls}}` +
+      `,html[data-perf='extreme'] .card,html[data-perf='extreme'] .panel,` +
+      `html[data-perf='extreme'] .sheet,html[data-perf='extreme'] .card-wrap,` +
+      `html[data-perf='extreme'] .qa,html[data-perf='extreme'] .tuner,html[data-perf='extreme'] .sheet-foot{` +
+      `background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:var(--shadow-card)}`
+    await evalJS(`(() => {
+      const s = document.createElement('style')
+      s.id = 'tier-equiv'
+      s.textContent = ${JSON.stringify(equivCss)}
+      document.head.appendChild(s)
+    })()`)
+    await sleep(400)
+    const extFrame = await shot('tier-extreme')
 
     ok(
-      '超高 · 完整管线（3 位移 + 3 色矩阵 + 2 混合 + 贴图 + 模糊 = 10 个原语）',
-      ultraProbe.prims === 10 && ultraProbe.kinds.feDisplacementMap === 3 && ultraProbe.kinds.feBlend === 2,
+      '超高 · 塌缩管线（1 位移 + 贴图 + 模糊 = 3 个原语）',
+      ultraProbe.prims === 3 && ultraProbe.kinds.feDisplacementMap === 1 && !ultraProbe.kinds.feColorMatrix && !ultraProbe.kinds.feBlend,
       `data-glass=${ultraProbe.glass} 原语=${ultraProbe.prims} ${JSON.stringify(ultraProbe.kinds)}`,
     )
     ok(
-      '优化档 · 塌缩管线（1 位移 + 贴图 + 模糊 = 3 个原语）',
-      optProbe.prims === 3 && optProbe.kinds.feDisplacementMap === 1 && !optProbe.kinds.feColorMatrix && !optProbe.kinds.feBlend,
-      `data-glass=${optProbe.glass} 原语=${optProbe.prims} ${JSON.stringify(optProbe.kinds)}`,
+      '极致 · 完整管线（3 位移 + 3 色矩阵 + 2 混合 + 贴图 + 模糊 = 10 个原语）',
+      extProbe.prims === 10 && extProbe.kinds.feDisplacementMap === 3 && extProbe.kinds.feBlend === 2,
+      `data-glass=${extProbe.glass} 原语=${extProbe.prims} ${JSON.stringify(extProbe.kinds)}`,
     )
     ok(
-      '优化档 · data-perf 仍是 ultra（观感档位没变），实现写在 data-glass',
-      optProbe.perf === 'ultra' && optProbe.glass === 'collapsed' && ultraProbe.glass === 'full',
-      `超高 ${ultraProbe.perf}/${ultraProbe.glass} · 优化 ${optProbe.perf}/${optProbe.glass}`,
+      '两档各写自己的 data-perf / data-glass（材质档与实现分离）',
+      ultraProbe.perf === 'ultra' && ultraProbe.glass === 'collapsed' && extProbe.perf === 'extreme' && extProbe.glass === 'full',
+      `超高 ${ultraProbe.perf}/${ultraProbe.glass} · 极致 ${extProbe.perf}/${extProbe.glass}`,
     )
     ok(
-      '优化档 · 位移量 / 通道选择器 / 边缘柔化照旧生效',
-      optProbe.scale === ultraProbe.scale &&
-        optProbe.x === ultraProbe.x &&
-        optProbe.y === ultraProbe.y &&
-        optProbe.blur === ultraProbe.blur,
-      `scale=${optProbe.scale} x=${optProbe.x} y=${optProbe.y} blur=${optProbe.blur}`,
+      '两档 · 位移量 / 通道选择器 / 边缘柔化照旧生效',
+      extProbe.scale === ultraProbe.scale &&
+        extProbe.x === ultraProbe.x &&
+        extProbe.y === ultraProbe.y &&
+        extProbe.blur === ultraProbe.blur,
+      `scale=${extProbe.scale} x=${extProbe.x} y=${extProbe.y} blur=${extProbe.blur}`,
     )
-    ok('优化档 · 读数报出实际走的链', optProbe.plaque.includes('塌缩管线'), optProbe.plaque)
-    ok('优化档 · 档位落盘', (await evalJS(`localStorage.getItem('rein.perf.v1')`)) === 'ultra-opt', await evalJS(`localStorage.getItem('rein.perf.v1')`))
+    ok('超高 · 读数报出实际走的链', ultraProbe.plaque.includes('塌缩管线'), ultraProbe.plaque)
+    ok(
+      '极致 · 读数报出完整管线与全局玻璃',
+      extProbe.plaque.includes('完整管线') && extProbe.plaque.includes('全局玻璃'),
+      extProbe.plaque,
+    )
+    ok('极致 · 档位落盘', (await evalJS(`localStorage.getItem('rein.perf.v1')`)) === 'extreme', await evalJS(`localStorage.getItem('rein.perf.v1')`))
 
-    // 主张的核心：同一次加载里切档，**玻璃**必须逐像素一模一样。
-    // 全帧另比一次，给 4 个色阶的容差 —— 分段控件滑块动了会让 Chromium 重光栅化
-    // 挨着的一片 tile，正文可能抖 1~3 阶（人体不可见），那不是玻璃的锅。
-    const glassDiff = await diffFrames(ultraFrame, optFrame, [], glassRects)
+    // 材质拉平后两条链必须逐像素等价：同一次加载里切档，**玻璃带**一模一样。
+    const glassDiff = await diffFrames(ultraFrame, extFrame, [], glassRects)
     ok(
-      '优化档与超高 · 玻璃带逐像素一致（标本台基本件 + 底栏 + 真实 Dock）',
+      '超高与极致 · 材质拉平后玻璃带逐像素一致（出厂偏移下塌缩链与完整链等价）',
       glassDiff.diff === 0,
       `${glassDiff.diff}/${glassDiff.total} 像素有差异 · 最大通道差 ${glassDiff.maxDelta} · 包围盒 ${JSON.stringify(glassDiff.bbox)}`,
     )
-    const tierDiff = await diffFrames(ultraFrame, optFrame, excludeRects)
     ok(
-      '优化档与超高 · 全帧除切档该变的 UI 外无可感差异（≤4 色阶）',
-      tierDiff.maxDelta <= 4,
-      `${tierDiff.diff}/${tierDiff.total} 像素有差异（另排掉 ${tierDiff.skipped}）· 最大通道差 ${tierDiff.maxDelta} · 包围盒 ${JSON.stringify(tierDiff.bbox)}`,
+      '极致 · 卡片等更多表面铺上玻璃（底取自 --glass-panel-fill + 背景模糊）',
+      extGlass.bg === extGlass.panelFill && extGlass.backdrop.includes('blur('),
+      `card bg=${extGlass.bg} · panel-fill=${extGlass.panelFill} · backdrop=${extGlass.backdrop}`,
     )
 
-    // 对照：把通道偏移拉开成色散后，优化档必须**自动退回完整链**（恒等不再成立）
+    // 对照：把通道偏移拉开成色散后，超高必须**自动退回完整链**（恒等不再成立）
     await evalJS(`(() => {
       const raw = localStorage.getItem('rein.glass.v1')
       const o = raw ? JSON.parse(raw) : { rev: 3, values: {} }
@@ -786,13 +819,13 @@ async function main() {
       localStorage.setItem('rein.glass.v1', JSON.stringify(o))
       return true
     })()`)
-    await setTier('ultra-opt')
+    await setTier('ultra')
     await cdp('Page.navigate', { url: `${APP}/#/settings/perf` })
     await sleep(2200)
     if (await evalJS(dismiss)) await sleep(400)
     const spread = await evalJS(OPT_PROBE)
     ok(
-      '通道偏移拉开后优化档退回完整链（恒等只在 offset 相等时成立）',
+      '通道偏移拉开后超高档退回完整链（恒等只在 offset 相等时成立）',
       spread.prims === 10 && spread.kinds.feBlend === 2 && spread.kinds.feDisplacementMap === 3,
       `redOffset=12 blueOffset=-12 → 原语=${spread.prims} ${JSON.stringify(spread.kinds)}`,
     )
@@ -903,7 +936,7 @@ async function main() {
       `dock=${mBack.dockGoo} ::before opacity=${mBack.fillOpacity}`,
     )
 
-    // ---------- 8 超高材质：光学层只在超高档存在，且每一档都有退化路径 ----------
+    // ---------- 8 材质档位：光学层只在超高 / 极致存在，且每一档都有退化路径 ----------
     //
     // 探针往 body 里临时插一个 .glass-surface：这样不依赖当前页面碰巧有玻璃表面，
     // 量到的就是"这一档下 .glass-surface 这条定义长什么样"。
@@ -946,16 +979,265 @@ async function main() {
     )
     ok(
       '超高 · 底比高画质更薄（观感差异来自光学层，不来自加 blur）',
-      matUltra.fill.includes('0.42') && matUltra.blur === matHigh.blur,
+      matUltra.fill !== matHigh.fill && matUltra.blur === matHigh.blur,
       `fill=${matUltra.fill} backdrop=${matUltra.blur}（高画质为 ${matHigh.blur}）`,
+    )
+
+    await setTier('extreme')
+    const matExt = await evalJS(MATERIAL_PROBE)
+    ok(
+      '极致 · 光学层再深一档（内圈描边 / 上缘焦散 / 外缘层都比超高强）',
+      matExt.perf === 'extreme' &&
+        !isTransparent(matExt.rim2) &&
+        !isTransparent(matExt.caustic) &&
+        matExt.rim2 !== matUltra.rim2 &&
+        matExt.caustic !== matUltra.caustic &&
+        matExt.halo !== matUltra.halo,
+      `rim2=${matExt.rim2} caustic=${matExt.caustic} halo=${matExt.halo}`,
+    )
+    ok(
+      '极致 · 底再薄一档，但 blur 仍不加（差异来自光学层与铺开的表面）',
+      matExt.fill !== matUltra.fill && matExt.blur === matHigh.blur,
+      `fill=${matExt.fill}（超高 ${matUltra.fill}） backdrop=${matExt.blur}`,
     )
 
     await setTier('low')
     const matLow = await evalJS(MATERIAL_PROBE)
     ok(
-      '流畅优先 · 光学层归零、模糊被全局关掉',
+      '流畅 · 光学层归零、模糊被全局关掉',
       matLow.perf === 'low' && isTransparent(matLow.rim2) && matLow.blur === 'none',
       `data-perf=${matLow.perf} rim2=${matLow.rim2} backdrop=${matLow.blur}`,
+    )
+    await evalJS(`localStorage.removeItem('rein.motion.v1')`)
+
+    // ---------- 9 运动沉浸页：材质铺到训练与跑步两套沉浸界面 ----------
+    //
+    // 契约：沉浸界面不吃第二份材质定义 —— 顶栏 / 进度条 / 底坞 / 内容卡 /
+    // 离散控件全部挂 **同一个** .glass-surface 类，靠 data-perf 的令牌分档。
+    // 断言查的是「这条类真的解析到同一份材质」而不是「长得像玻璃」：
+    // 背景取自 --glass-fill、模糊取自 --glass-blur、两端描边取自 rim 令牌。
+    // 另有一条硬约束：跑步页的抽屉**不该**是玻璃 —— 它是大面积可滚动载体，
+    // 自己带 backdrop-filter 会把里面每块玻璃的采样范围锁死。
+    //
+    // 作用域必须锁在 .session-layer 里：**底栏 Dock 也叫 .dock**，而它是 App.vue
+    // 全局常驻的（沉浸层打开时它只是被移开视线，DOM 里还在）。
+    // 用 document.querySelector 会先命中底栏那条 —— 量到的是「底栏没有玻璃」
+    // （底栏的玻璃在它内部三块上），而不是沉浸层坞的材质。
+    const IMMERSIVE_PROBE = `(() => {
+      const scope = document.querySelector('.session-layer') || document
+      const read = (sel) => {
+        const el = scope.querySelector(sel)
+        if (!el) return null
+        const cs = getComputedStyle(el)
+        return {
+          sel,
+          bgImage: cs.backgroundImage,
+          bgColor: cs.backgroundColor,
+          blur: String(cs.backdropFilter || cs.webkitBackdropFilter || 'none'),
+          shadow: cs.boxShadow,
+          border: cs.borderTopColor,
+        }
+      }
+      const token = (k) => getComputedStyle(document.documentElement).getPropertyValue(k).trim()
+      return {
+        perf: document.documentElement.dataset.perf,
+        motion: document.documentElement.dataset.motion,
+        fill: token('--glass-fill'),
+        blurToken: token('--glass-blur'),
+        rimHi: token('--glass-rim-hi'),
+        sels: ['.shead', '.progwrap', '.dock', '.setcard', '.blockcard', '.ghost', '.iconbtn']
+          .map(read)
+          .filter(Boolean),
+      }
+    })()`
+
+    // 材质真的接上了，就必然出现**两条** linear-gradient（padding-box 的底 +
+    // border-box 的受光边）且模糊半径正好是 --glass-blur 的值。
+    //
+    // 别去查 backgroundImage 里的 'padding-box' / 'border-box' 字样：那两个是
+    // background **简写**里的 origin/clip 层，Chromium 解析后会拆进
+    // background-origin / background-clip，不会留在 backgroundImage 串里
+    // （量出来是 false 是解析器的正常行为，不是材质缺失）。层数 + 模糊半径
+    // 才是稳定可观测的：手写 blur(20px) 的旧路径层数相同但半径不同，正好被这条抓住。
+    const isGlassSurface = (r, t) =>
+      r.bgImage.split('linear-gradient').length - 1 === 2 && r.blur.includes(t.blurToken)
+
+    await cdp('Page.navigate', { url: `${APP}/#/` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
+
+    // 走**产品里的真实入口**：运动页的计划卡的播放键 → session.start() →
+    // openImmersive()（带冲突则先点「继续」）。不直接改 store ——
+    // 那样量到的是一份绕开入口的旁路，不是用户会看到的那一块。
+    await setTier('ultra')
+    await setMotion('rich')
+    await cdp('Page.navigate', { url: `${APP}/#/sports` })
+    await sleep(2600)
+    if (await evalJS(dismiss)) await sleep(400)
+
+    const opened = await evalJS(`(() => {
+      const play = document.querySelector('.play')
+      if (!play) return 'no-play'
+      play.click()
+      return 'play'
+    })()`)
+    await sleep(1000)
+    // 有进行中会话时会先弹冲突确认，点「继续训练」才真正开起来
+    await evalJS(`(() => {
+      const b = [...document.querySelectorAll('.card-wrap button, .sheet button, .panel button')].find((x) => /继续|开始|接续/.test(x.textContent.trim()))
+      if (b) { b.click(); return true }
+      return false
+    })()`)
+    await sleep(1400)
+    // 等形变真正收尾（morphDone 摘掉 is-morphing）再量 —— 见下面那条断言
+    await sleep(600)
+
+    const session = await evalJS(IMMERSIVE_PROBE)
+    // 形变期（is-morphing）会**故意**把玻璃退成实底（Android WebView 合成器在
+    // 逐帧缩放 + backdrop-filter 组合下会冻结图层）。量材质必须在形变**结束后** ——
+    // 稳定态才是产品常态，动画期那几帧是刻意换来的稳定性，不是材质缺失。
+    const morphing = await evalJS(`document.querySelector('.session-layer')?.classList.contains('is-morphing') ?? null`)
+    ok(
+      '形变结束后材质恢复（is-morphing 已摘掉）',
+      morphing === false,
+      `is-morphing=${morphing}`,
+    )
+    if (session.sels.length >= 4) {
+      await shot('immersive-session-ultra')
+      ok(
+        '超高 · 训练沉浸层的 chrome 与内容卡都接上同一份 .glass-surface 材质',
+        session.sels.every((r) => isGlassSurface(r, session)),
+        `blurToken=${JSON.stringify(session.blurToken)} · 不合格：${session.sels.filter((r) => !isGlassSurface(r, session)).map((r) => `${r.sel}[grad=${r.bgImage.split('linear-gradient').length - 1} border-box=${r.bgImage.includes('border-box')} padding-box=${r.bgImage.includes('padding-box')} blurMatch=${r.blur.includes(session.blurToken)}]`).join(' ') || '无'}`,
+      )
+      ok(
+        '超高 · 沉浸层的光学层（内圈描边 / 焦散）都已就位',
+        session.sels.every((r) => r.shadow.includes('inset')),
+        `缺 inset 的：${session.sels.filter((r) => !r.shadow.includes('inset')).map((r) => r.sel).join(' ') || '无'} · 首块 ${session.sels[0]?.shadow?.slice(0, 100)}`,
+      )
+    } else {
+      ok('训练沉浸层可被探针触及（真实入口可达）', false, `入口=${opened} · 只量到 ${session.sels.length} 块：${session.sels.map((r) => r.sel).join(' ')}`)
+    }
+
+    // 弱档：同一批表面必须整体顶成实底且不挂模糊（退化语义不能只覆盖 Dock）。
+    // 判「实底」不能看 background-color —— 玻璃的底是 background 里那条渐变，
+    // background-color 恒为 transparent（这是设计，不是漏洞）。要看渐变里那层
+    // padding-box 的颜色是不是已经被 --glass-fill 顶成了不透明的那个值。
+    await setTier('low')
+    const sessionLow = await evalJS(IMMERSIVE_PROBE)
+    ok(
+      '流畅档 · 沉浸层同一批表面顶成实底、模糊被全局关掉',
+      sessionLow.sels.length > 0 &&
+        sessionLow.sels.every((r) => r.blur === 'none') &&
+        sessionLow.sels.every((r) => !r.bgImage.includes('border-box') || r.bgImage.includes(sessionLow.fill)),
+      `${sessionLow.sels.length} 块 · blur=${sessionLow.sels[0]?.blur} · --glass-fill=${sessionLow.fill}`,
+    )
+
+    await setTier('ultra')
+
+    // 跑步页：HUD chip 走 stage-dark 的暗场玻璃，抽屉自己**不是**玻璃。
+    // 先把上一轮训练沉浸测试留下的会话收掉 —— 它还开着的话，跑步入口会弹
+    // 「已有进行中的训练课」，而点「前往接续」会把路由带到训练沉浸页去，
+    // 量到的就不是 RunPage 了（上一版就是栽在这里）。
+    await cdp('Page.navigate', { url: `${APP}/#/sports` })
+    await sleep(2400)
+    if (await evalJS(dismiss)) await sleep(400)
+    await evalJS(`(() => {
+      // 收起悬浮条上的结束入口，或直接走运行时放弃
+      const bar = document.querySelector('.wdock-root')
+      if (bar) {
+        const end = [...bar.querySelectorAll('button')].find((b) => /结束|放弃/.test(b.textContent.trim()))
+        if (end) { end.click(); return 'bar-end' }
+      }
+      return 'none'
+    })()`)
+    await sleep(900)
+    // 结束确认弹层
+    await evalJS(`(() => {
+      const c = [...document.querySelectorAll('.card-wrap button, .sheet button, .panel button')]
+        .find((x) => /放弃|结束|确认/.test(x.textContent.trim()))
+      if (c) { c.click(); return true }
+      return false
+    })()`)
+    await sleep(1400)
+
+    await cdp('Page.navigate', { url: `${APP}/#/session/run` })
+    await sleep(2400)
+    if (await evalJS(dismiss)) await sleep(400)
+    // 把手行（回中钮 + 相机切换）与配速卡只在**进行中/暂停**态渲染，准备态没有。
+    await evalJS(`(() => {
+      const start = document.querySelector('.gobtn')
+      if (start) start.click()
+      return !!start
+    })()`)
+    await sleep(4600) // 3 秒倒数 + 起跑余量
+    if (await evalJS(dismiss)) await sleep(300)
+    const run = await evalJS(`(() => {
+      const read = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const cs = getComputedStyle(el)
+        return {
+          sel,
+          bgImage: cs.backgroundImage,
+          blur: String(cs.backdropFilter || cs.webkitBackdropFilter || 'none'),
+          bg: cs.backgroundColor,
+          shadow: cs.boxShadow,
+        }
+      }
+      const hero = document.querySelector('.hero')
+      const heroCs = hero ? getComputedStyle(hero) : null
+      return {
+        phase: document.querySelector('.run-page')?.className ?? 'no-run-page',
+        stageDark: !!document.querySelector('.hero.stage-dark'),
+        heroFill: heroCs ? heroCs.getPropertyValue('--glass-fill').trim() : '',
+        rootFill: getComputedStyle(document.documentElement).getPropertyValue('--glass-fill').trim(),
+        glassCount: document.querySelectorAll('.run-page .glass-surface').length,
+        drawer: read('.drawer'),
+        drawBlurless: (() => { const d = document.querySelector('.drawer'); if (!d) return true; const c = getComputedStyle(d); return (c.backdropFilter || c.webkitBackdropFilter || 'none') === 'none' })(),
+        seg: read('.mseg'),
+      }
+    })()`)
+    await shot('immersive-run-ultra')
+    // .stage-dark 把 --glass-fill 换成暗场的那份（--hero-chip-bg），这是**契约本身**：
+    // 深色地图上压亮色玻璃底会翻白。查的是「与根令牌不同」而不是某个具体色值 ——
+    // 暗场底的具体浓度会随设计调，钉死数值只会让这条断言在调参后误报。
+    ok(
+      '超高 · 跑步页的轨迹剧场挂上 stage-dark，chip 取的是暗场玻璃底而非亮色那套',
+      run.stageDark && !!run.heroFill && run.heroFill !== run.rootFill,
+      `stage-dark=${run.stageDark} · 暗场 ${run.heroFill} vs 根 ${run.rootFill}`,
+    )
+    ok(
+      '超高 · 跑步页有玻璃表面接上材质（HUD / 把手行 / 配速卡）',
+      run.glassCount > 0 && !!run.seg && run.seg.bgImage.split('linear-gradient').length - 1 === 2 && run.seg.blur.includes(session.blurToken),
+      `${run.glassCount} 块 · ${run.seg ? `mseg blur=${run.seg.blur} grad=${run.seg.bgImage.split('linear-gradient').length - 1}` : `mseg 未渲染（阶段=${run.phase}）`}`,
+    )
+    ok(
+      '跑步页 · 抽屉自己不做毛玻璃（否则会把里面每块玻璃的采样范围锁死）',
+      run.drawBlurless,
+      `.drawer backdrop=${run.drawer?.blur}`,
+    )
+
+    await setTier('low')
+    const runLow = await evalJS(`(() => {
+      const chips = [...document.querySelectorAll('.run-page .glass-surface')]
+      return { count: chips.length, allNoBlur: chips.every((c) => { const s = getComputedStyle(c); return (s.backdropFilter || s.webkitBackdropFilter || 'none') === 'none' }) }
+    })()`)
+    ok(
+      '流畅档 · 跑步页的玻璃表面同样顶成实底',
+      runLow.count > 0 && runLow.allNoBlur,
+      `${runLow.count} 块`,
+    )
+
+    await setTier('ultra')
+    await setMotion('default')
+    const richOff = await evalJS(`(() => {
+      const h = document.documentElement
+      return { motion: h.dataset.motion, scrollEdge: getComputedStyle(document.documentElement).getPropertyValue('--glass-scroll-edge').trim() }
+    })()`)
+    ok(
+      '默认档 · 滚动边缘暗带不在（丰富档专属），但令牌在',
+      richOff.motion === 'default' && !!richOff.scrollEdge,
+      `data-motion=${richOff.motion} --glass-scroll-edge=${richOff.scrollEdge}`,
     )
     await evalJS(`localStorage.removeItem('rein.motion.v1')`)
 
