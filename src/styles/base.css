@@ -373,6 +373,8 @@ html[data-perf='extreme'] {
    卡片那条用 :where() 把选择器压回与基线 .card 同级（0,1,0）—— 凡是**自己定义了底**
    的卡片（周时间线的分类色、函数/证据面板的次级底）都在各自 scoped 样式里赢过这条，
    档位升级不会把有语义的底色顶成统一玻璃。 */
+/* 材质（底 + 光学层）铺到全部六个表面：这一份是**身份的来源**，
+   有没有滤镜都是同一套玻璃。 */
 :where(html[data-perf='extreme']) .card,
 html[data-perf='extreme'] .panel,
 html[data-perf='extreme'] .sheet,
@@ -380,8 +382,6 @@ html[data-perf='extreme'] .card-wrap,
 html[data-perf='extreme'] .qa,
 html[data-perf='extreme'] .tuner {
   background: var(--glass-panel-fill);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   box-shadow:
     var(--glass-shadow),
     var(--glass-halo),
@@ -389,6 +389,21 @@ html[data-perf='extreme'] .tuner {
     inset 0 12px 20px -14px var(--glass-sheen),
     inset 0 0 0 1px var(--glass-rim-2),
     inset 0 1px 10px -2px var(--glass-caustic);
+}
+
+/* 滤镜只给**背后真的有内容**的那三个：抽屉 / 菜单 / 操作面板浮在页面之上，
+   底下的正文会从它们背后经过，blur 有活干。
+
+   在流里的内容卡 / 快捷磁贴 / 参数入口**不给** —— 它们背后永远只有页面画布那一条
+   平滑渐变，没有任何内容会跑到它们下面：同一条渐变的「模糊」与「不模糊」肉眼一致，
+   而 backdrop-filter 会给每张卡开一个背景根、滚动时逐帧重采样。极致档一屏十来张卡，
+   那就是纯亏（用户实测：打开极致后滚动严重掉帧，来源正是这几张没有背景内容的卡）。
+   要模糊一条本来就平滑的渐变，等于花钱买一个看不出来的效果。 */
+:where(html[data-perf='extreme']) .panel,
+html[data-perf='extreme'] .sheet,
+html[data-perf='extreme'] .card-wrap {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
 }
 
 /* 抽屉的固定操作区本来是不透明实底（保证按钮区不被内容透上来干扰）：
