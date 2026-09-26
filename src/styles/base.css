@@ -458,8 +458,12 @@ html[data-perf='low'] .stage-dark {
 @media (prefers-reduced-transparency: reduce) {
   .glass-surface {
     background: var(--surface);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    /* 带 !important：折射那一支的 `backdrop-filter` 是**内联样式**（四条悬浮条在
+       超高档下把 url(#…) 写在元素自己身上），媒体查询里的普通声明压不过内联 ——
+       系统既然要求「减弱透明度」，这些表面就不该还有一层玻璃在折射。
+       与 GlassSurface 的退化分支同一条语义（那边同样带 !important）。 */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     border-color: var(--line);
     box-shadow: var(--shadow-float);
   }
