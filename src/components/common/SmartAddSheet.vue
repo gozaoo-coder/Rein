@@ -9,6 +9,7 @@ import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
 import FoodPickerSheet from '@/components/diet/FoodPickerSheet.vue'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
 import { CATEGORY_META, MEAL_LABELS, MEAL_ORDER, priorityMeta, suggestMeal } from '@/config/domain'
+import { recordCardOutcome } from '@/ai/cardOutcomes'
 import { useAiStore } from '@/stores/ai'
 import { useModelsStore } from '@/stores/models'
 import { useTodoStore } from '@/stores/todo'
@@ -176,6 +177,14 @@ async function addChecked(): Promise<void> {
       })
       d.added = true
     }
+    // 跨页提议卡的「用户已处理」信号：聊天模型看不到这个抽屉，靠 @/ai/cardOutcomes 带过去
+    recordCardOutcome(
+      'smart-add',
+      `智能添加写入待办 ${pick.length} 条（${pick
+        .slice(0, 3)
+        .map((d) => d.title)
+        .join('、')}${pick.length > 3 ? ' 等' : ''}）`,
+    )
   } finally {
     adding.value = false
   }
@@ -239,6 +248,13 @@ async function commitFoods(): Promise<void> {
         : `已写入 ${r.written} 项到今日${MEAL_LABELS[meal.value]}`,
     )
     foodCommitted.value = true
+    recordCardOutcome(
+      'smart-add',
+      `智能添加记入今日${MEAL_LABELS[meal.value]} ${r.written} 项（${foods.value
+        .slice(0, 3)
+        .map((f) => f.foodName)
+        .join('、')}${foods.value.length > 3 ? ' 等' : ''}）`,
+    )
   } finally {
     committing.value = false
   }

@@ -60,6 +60,7 @@ import type {
   Todo,
 } from '@/types'
 import type { AiMenuMeal } from '@/ai/recipeGen'
+import { recordCardOutcome } from '@/ai/cardOutcomes'
 import { diffDays, fmtDateCn, todayStr } from '@/utils/date'
 import {
   ADJUSTMENT_LIMITS,
@@ -505,6 +506,9 @@ async function startReview(): Promise<void> {
 async function applyReview(patch: AdjustmentPatch, summary: string): Promise<void> {
   if (!store.active) return
   await store.adjust(store.active, patch, summary, 'ai')
+  // 逐条采纳的结果落在 adjustments_json（模型查得到），查不到的是「刚采纳了复盘建议」这条因果。
+  // 只记这条界面链路；聊天工具 adjust_program 那条不记（模型自己刚做完，再报一遍是噪音）
+  recordCardOutcome('program-review', `方案复盘采纳调整 —— ${summary}`)
   reviewOpen.value = false
 }
 

@@ -1,6 +1,7 @@
 /** AI 域类型 · 与 Rust `modules/ai` 对应 */
 
 import type { DailyTargets } from './nutrition'
+import type { MealType } from './diet'
 
 export interface ParsedFoodItem {
   foodId: number | null
@@ -115,6 +116,10 @@ export interface AiMessage {
   items?: ParsedFoodItem[]
   /** 解析结果是否已写入今日饮食 */
   committed?: boolean
+  /** 确认写入时选择的餐次（payload 持久化；旧数据没有） */
+  mealType?: MealType
+  /** 建卡时模型给的条目快照（payload 持久化）：用来判断用户是否改过数值 */
+  proposal?: { foodName: string; grams: number }[]
   /** 解析来源（写入饮食记录时使用） */
   source?: 'photo_ai' | 'text_ai'
   /** kind=photo 时的压缩缩略图（base64，无 data: 前缀） */

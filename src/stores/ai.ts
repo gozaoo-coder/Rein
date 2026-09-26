@@ -14,6 +14,8 @@ import { hasImage, getEntry, registerImage, registerSourceImage, resetChat, setA
 import { chatStreamView } from '@/ai/streamExtract'
 import { createStreamAggregator } from '@/ai/streamBubbles'
 import { toParsedItems, type ModelFoodRow } from '@/ai/foodMatch'
+import { buildCardStateBlock, MAX_MEMOS } from '@/ai/cardState'
+import { listCardOutcomes, recordCardOutcome } from '@/ai/cardOutcomes'
 import { findAppTool, resolveToolPlan } from '@/ai/tools/registry'
 import type { ToolGroup } from '@/ai/tools/types'
 import { useFeaturesStore } from '@/stores/features'
@@ -246,6 +248,9 @@ export const useAiStore = defineStore('ai', () => {
       meta.items = m.items
       meta.source = m.source
       meta.committedAt = m.committed ? m.at : null
+      // mealType / proposal 供下一轮回灌的【食物卡状态】段（@/ai/cardState）读回
+      if (m.mealType) meta.mealType = m.mealType
+      if (m.proposal?.length) meta.proposal = m.proposal
     }
     if (m.kind === 'tools' && m.toolCalls) meta.calls = m.toolCalls
     if (m.kind === 'tools' && m.segments?.length) meta.segments = m.segments
@@ -282,6 +287,8 @@ export const useAiStore = defineStore('ai', () => {
           items?: AiMessage['items']
           source?: AiMessage['source']
           committedAt?: string | null
+          mealType?: AiMessage['mealType']
+          proposal?: AiMessage['proposal']
           thinking?: string
           thinkingSec?: number
           segments?: ProcessSegment[]
@@ -296,6 +303,8 @@ export const useAiStore = defineStore('ai', () => {
           m.items = p.items
           m.source = p.source
           if (p.committedAt) m.committed = true
+          if (p.mealType) m.mealType = p.mealType
+          if (p.proposal) m.proposal = p.proposal
           if (p.thinking) m.thinking = p.thinking
         } else if (p.thinking) {
           m.thinking = p.thinking
@@ -409,6 +418,30 @@ export const useAiStore = defineStore('ai', () => {
     }
     const v = injectionCache.value
     return v.system.trim() || v.memory.trim() ? v : undefined
+  }
+
+  /**
+   * 本会话引用过的纪要（含每条总结的写入状态，见 voice_memos.summaryJson）。
+   * 只在会话里真的有语音轮时才查库（其余会话零开销）；不缓存 —— 用户刚点「写入」
+   * 下一轮就得反映出来。任何失败都静默返回空：绝不因为纪要读不到就让这一轮发不出去。
+   */
+  async function memosForChat(list: AiMessage[]): Promise<VoiceMemo[]> {
+    const ids: string[] = []
+    for (const m of list) {
+      const id = m.kind === 'voice' ? m.voiceMeta?.memoId : undefined
+      if (id && !ids.includes(id)) ids.push(id)
+    }
+    if (ids.length === 0) return []
+    try {
+      // 只认最近 MAX_MEMOS 条纪要：更早的那些不属于「刚发生的事」
+      const want = new Set(ids.slice(-MAX_MEMOS))
+      const all = await voiceService.memoList(50)
+      return all
+        .filter((memo) => want.has(memo.id))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    } catch {
+      return []
+    }
   }
 
   /* ---------- 记忆整理（定期去噪的“做梦”任务） ---------- */
@@ -696,7 +729,11 @@ export const useAiStore = defineStore('ai', () => {
   function settleStreamMessages(finalBubble: AiMessage | null): void {
     for (const m of streamCreated) {
       m.streaming = false
-      if (m === finalBubble) continue
+      // 认 id 不认对象：finalBubble 多半来自 messages.value.find(...)（响应式代理），
+      // 而 streamCreated 里存的是原始对象，身份比对恒不相等 —— 那会把定稿气泡当「无正文
+      // 也无过程的空占位」摘掉，于是「模型没思考没工具、直接出 food 卡」时卡片落在一个
+      // 已脱列的对象上，界面上什么都不显示（定稿数据还在，只是没人渲染它）。
+      if (finalBubble && m.id === finalBubble.id) continue
       const meta = agg.getMeta(m.id)
       if (!m.text && meta && (meta.reasoning || meta.toolCalls.length)) {
         settleProcessMessage(m)
@@ -807,6 +844,8 @@ export const useAiStore = defineStore('ai', () => {
         msg.kind = 'food-parse'
         msg.source = 'text_ai'
         msg.items = await toParsedItems(rows)
+        // 模型原始条目快照：用户改过克重时，卡片状态回灌要标出「修改后确认」（@/ai/cardState）
+        msg.proposal = msg.items.map((it) => ({ foodName: it.foodName, grams: it.grams }))
         msg.text = undefined
         persist(msg)
         return
@@ -990,6 +1029,14 @@ export const useAiStore = defineStore('ai', () => {
       // 系统提示词 + 用户记忆一并全量注入（§3.4）
       const cognition = await cognitionForPrompt()
       const injection = await injectionForPrompt()
+      // 卡片本身不进历史（下面的 history 只挑 text/analysis/voice/photo/doc），
+      // 所以「用户确认了没有、最终写了什么」只能靠这段每轮重发的事实前提带过去：
+      // 聊天内的卡（食物卡 / 纪要）现算，跨页面的 AI 提议看记录（@/ai/cardOutcomes）
+      const cardState = buildCardStateBlock({
+        messages: messages.value,
+        memos: await memosForChat(messages.value),
+        outcomes: listCardOutcomes(),
+      })
       const r = await chatWithModel(cfg, history, { text: outgoingText, images: outgoingImages.length > 0 ? outgoingImages : undefined }, {
         onText: (p) => {
           // 从 JSON 协议流里解出正文；food 卡 / 未定型阶段保持打字态
@@ -1023,6 +1070,7 @@ export const useAiStore = defineStore('ai', () => {
       }, {
         cognition,
         injection,
+        cardState,
         // 按需装载：常驻组 + 本轮消息命中的组 + 本会话粘住的组；关掉的功能插件整组不给
         plugins: enabledPluginIds(),
         loadedGroups: chatToolGroups,
@@ -1175,6 +1223,8 @@ export const useAiStore = defineStore('ai', () => {
     if (!msg?.items?.length || msg.committed) return
     const r = await commitParsedItems(msg.items, mealType, msg.source ?? 'text_ai')
     msg.committed = true
+    // 餐次落 payload：下一轮回灌要告诉模型「已写入今日午餐」（否则只能说「已写入今日饮食」）
+    msg.mealType = mealType
     persist(msg)
     const skipped = msg.items.length - r.written
     if (skipped > 0) toast.toast(`已写入 ${r.written} 项，跳过 ${skipped} 项未匹配`)
@@ -1221,15 +1271,28 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
+  /** 目标建议的变更摘要（一行，给模型看）：热量 1900 → 1800 大卡、蛋白质 110 → 130 g */
+  function targetChangeText(p: TargetAdjustProposal): string {
+    const parts = p.changes
+      .slice(0, 4)
+      .map((c) => `${c.label} ${Math.round(c.from)} → ${Math.round(c.to)}${c.unit}`)
+    return `${parts.join('、')}${p.changes.length > 4 ? ` 等 ${p.changes.length} 项` : ''}`
+  }
+
   /** 确认采用 AI 建议的新目标（跨域联动：经 nutrition store 落库并刷新） */
   async function applyTargetProposal(): Promise<void> {
     const p = targetProposal.value
     if (!p) return
     await useNutritionStore().saveTargets(p.targets)
+    // 目标值本身模型自己查得到，查不到的是「这是刚采纳的 AI 建议」这条因果
+    recordCardOutcome('target-adjust', `采用了 AI 目标调整建议 —— ${targetChangeText(p)}`)
     targetProposal.value = null
   }
 
   function dismissTargetProposal(): void {
+    const p = targetProposal.value
+    // 只有真的改动了目标才值得记一条；无变更的「知道了」是纯噪音
+    if (p?.changes.length) recordCardOutcome('target-adjust', '放弃了 AI 目标调整建议 —— 目标未改动')
     targetProposal.value = null
   }
 

@@ -9,6 +9,7 @@ import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { DESKTOP_MIN } from '@/config/domain'
 import { autoSchedule, type Placement } from '@/ai/autoSchedule'
+import { recordCardOutcome } from '@/ai/cardOutcomes'
 import { useModelsStore } from '@/stores/models'
 import { useTodoStore } from '@/stores/todo'
 import CanvasTimeline from '@/components/todo/CanvasTimeline.vue'
@@ -17,7 +18,7 @@ import DayDetailPanel from '@/components/todo/DayDetailPanel.vue'
 import AllTodoList from '@/components/todo/AllTodoList.vue'
 import WeekSummary from '@/components/todo/WeekSummary.vue'
 import WeekTimeline from '@/components/todo/WeekTimeline.vue'
-import { addDays, fmtDateCn, nowMin, todayStr, weekDates } from '@/utils/date'
+import { addDays, fmtDateCn, minToHHmm, nowMin, todayStr, weekDates } from '@/utils/date'
 import { busyIntervals, freeGaps } from '@/utils/schedule'
 import type { Todo, TodoSubtask } from '@/types'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
@@ -286,6 +287,17 @@ async function applyGhosts(): Promise<void> {
     if (cur) items.push({ todo: cur, date: canvasDate.value, startMin: g.startMin })
   }
   await applyMoves(items, `已排入 ${items.length} 项，可拖动微调`)
+  // 智能排程是「AI 提议 → 幽灵块预览 → 用户确认」，确认这一步只有界面知道：
+  // 记一条给聊天模型（@/ai/cardOutcomes），省得它回过头又问「要不要我帮你排一下」
+  if (items.length > 0) {
+    recordCardOutcome(
+      'schedule',
+      `智能排程采纳 ${items.length} 项安排（${items
+        .slice(0, 3)
+        .map((i) => `${i.startMin != null ? minToHHmm(i.startMin) : ''} ${i.todo.title}`.trim())
+        .join('、')}${items.length > 3 ? ' 等' : ''}）`,
+    )
+  }
 }
 
 /* ---------- 每日规划仪式 ---------- */

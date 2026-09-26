@@ -642,7 +642,10 @@ async function onMenuSelect(value: string): Promise<void> {
                     </button>
                   </div>
                 </template>
-                <p v-else class="committed"><Check :size="14" /> 已写入今日饮食</p>
+                <p v-else class="committed">
+                  <Check :size="14" />
+                  {{ m.mealType ? `已写入今日${MEAL_LABELS[m.mealType]}` : '已写入今日饮食' }}
+                </p>
               </div>
 
               <!-- 分析卡 -->

@@ -6,6 +6,7 @@ import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { MEAL_LABELS, MEAL_ORDER, suggestMeal } from '@/config/domain'
+import { recordCardOutcome } from '@/ai/cardOutcomes'
 import { useToast } from '@/composables/useToast'
 import { useAiStore } from '@/stores/ai'
 import { removeFoodDraft, saveFoodDraft, updateFoodDraftItems, type FoodDraft } from '@/utils/foodDrafts'
@@ -83,6 +84,14 @@ async function commit(): Promise<void> {
         : `已写入 ${r.written} 项到今日${MEAL_LABELS[meal.value]}`,
     )
     if (draftId.value) removeFoodDraft(draftId.value)
+    // 草稿箱里的卡也是 AI 出的：记一条「用户处理了它」，聊天下轮就知道这笔已经记过
+    recordCardOutcome(
+      'food-draft',
+      `从草稿箱写入今日${MEAL_LABELS[meal.value]} ${r.written} 项（${items.value
+        .slice(0, 3)
+        .map((it) => it.foodName)
+        .join('、')}${items.value.length > 3 ? ' 等' : ''}）`,
+    )
     emit('committed')
     close()
   } finally {
