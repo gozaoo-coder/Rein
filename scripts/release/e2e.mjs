@@ -7,6 +7,7 @@
  *   · 清单签名与清单字节是否严格一致（服务端重新序列化就会坏）
  *   · 篡改一个字节后是否**一定**被拒（安全声明不能只写在文档里）
  *   · Range 断点续传、admin 鉴权、AI 网关的未配置态
+ *   · 更新文案是否只带本版那一节、是否过得了《更新文案规范》闸门（scripts/release/notes.mjs）
  *
  *   node scripts/release/e2e.mjs [--keep] [--artifact <安装包路径>]
  */
@@ -18,6 +19,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { REPO_ROOT, loadReleaseConfig, log, signFile, signText } from './lib.mjs'
+import { prepareNotes } from './notes.mjs'
 import { verifyMinisign } from '../../server/src/verify.mjs'
 
 const argv = process.argv.slice(2)
@@ -130,6 +132,51 @@ async function main() {
     throw new Error(`缺少签名私钥：${cfg.keyPath}\n先跑 node scripts/release/keygen.mjs`)
   }
   const pubkey = fs.readFileSync(pubFile, 'utf8').trim()
+
+  // ---------- 更新文案：抽取与规范闸门（scripts/release/notes.mjs）----------
+  //
+  // 这组不需要服务器，先跑：它是**纯函数**，坏了就没必要往下走。
+  // 背景：清单从前装的是整份 RELEASE_NOTES.md —— 线上实测 79,848 字节里 77,481 是 notes，
+  // 每次检查更新都要把全部历史重下一遍。
+  {
+    const cumulative = '## v0.9.9\n- 最新的那版\n\n## v0.9.8\n- 上一版\n- 上上版也在这\n'
+    const section = prepareNotes({ fullText: cumulative, version: '0.9.9' })
+    check(
+      '说明只取本版那一节（不再把整份历史塞进清单）',
+      section.ok && section.body.includes('最新的那版') && !section.body.includes('上上版也在这'),
+      `${section.body.replace(/\n/g, ' ⏎ ').slice(0, 80)}`,
+    )
+
+    const dotted = prepareNotes({ inline: '## v1.0.0\n· 圆点条目一\n· 圆点条目二', version: '1.0.0' })
+    check(
+      '行首圆点归一成 `- `（Markdown 渲染器只认连字符，否则整段读成散文）',
+      dotted.ok && dotted.body.includes('- 圆点条目一') && !dotted.body.includes('·'),
+      dotted.body.replace(/\n/g, ' ⏎ '),
+    )
+
+    const missing = prepareNotes({ fullText: cumulative, version: '1.2.3' })
+    check('RELEASE_NOTES.md 里缺这一版 → 拒绝发布（先把说明写上）', !missing.ok, missing.problems[0] ?? '')
+
+    const tooMany = prepareNotes({
+      inline: `## v1.0.0\n${Array.from({ length: 6 }, (_, i) => `- 第 ${i} 条`).join('\n')}`,
+      version: '1.0.0',
+    })
+    const tooLong = prepareNotes({ inline: `## v1.0.0\n- ${'字'.repeat(80)}`, version: '1.0.0' })
+    const jargon = prepareNotes({ inline: '## v1.0.0\n- 跑了 e2e 全绿', version: '1.0.0' })
+    const nested = prepareNotes({ inline: '## v1.0.0\n- 一条\n  - 子条', version: '1.0.0' })
+    check(
+      '规范闸门：条数 / 单条字数 / 工程内部词 / 嵌套列表 四种都要拦',
+      !tooMany.ok && !tooLong.ok && !jargon.ok && !nested.ok,
+      [tooMany.ok, tooLong.ok, jargon.ok, nested.ok].join(','),
+    )
+
+    const okCase = prepareNotes({ inline: '## v1.0.0\n- 修好了 A\n- 加了 B', version: '1.0.0' })
+    check(
+      '规范内的文案放行（闸门不能把正常发布也挡了）',
+      okCase.ok && okCase.body.split('\n').length === 3,
+      JSON.stringify(okCase.problems),
+    )
+  }
 
   // 被测物：优先用真实安装包（顺便验证大文件路径），否则造一个 3MB 的假包
   let artifact = artifactArg ? path.resolve(REPO_ROOT, artifactArg) : null

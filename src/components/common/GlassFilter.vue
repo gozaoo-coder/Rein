@@ -1,21 +1,28 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { glassParams, type GlassParamKey } from '@/system/glassParams'
-import { glassPipeline } from '@/system/perf'
 
 /**
  * 液态玻璃的**滤镜定义**（位移贴图 + 位移链）—— 整条折射管线只有这一份实现。
  *
  * 为什么单独拆出来：`backdrop-filter: url(#id)` 这件事由两部分组成 ——
  * 引用它的那个**表面**（`GlassSurface.vue` 的根、页头两颗圆钮、四条悬浮条），
- * 与**被引用的那段滤镜**（位移贴图 + feDisplacementMap 链）。两者可以分开：
+ * 与**被引用的那段滤镜**（位移贴图 + feDisplacementMap）。两者可以分开：
  * 表面只要在自己的 CSS / 内联样式里写上 `url(#id)`，滤镜定义可以来自任何地方
  * （同一份定义还能被多个表面共用 —— 页头三颗 38px 圆钮就是共用一张贴图）。
  *
  * 拆的另一个理由是「两份定义必然漂」这条已经付过代价的教训：滤镜链一旦被抄成两份，
- * 改一处（比如给塌缩链补一个原语）另一处就会悄悄落后，而表现只是「这块玻璃看着不太一样」。
+ * 改一处另一处就会悄悄落后，而表现只是「这块玻璃看着不太一样」。
  * 所以这里既服务 `GlassSurface`，也服务那些**不是** GlassSurface 的折射表面。
+ *
+ * ---------- 只有一条链（2026-09-26）----------
+ * 从前这里有两份 `<filter>`：塌缩链（3 个原语）与完整链（10 个原语，三通道色散）。
+ * 功能上完整链是塌缩链的超集，而**出厂参数下两者逐像素等价**（三通道偏移相等时
+ * 三次位移结果相同、单通道图 screen 复合正好还原原色，整段是恒等变换）。
+ * 也就是说：日常所有渲染里那 7 个多余原语从不改变一个像素，却每帧都在算 ——
+ * 合成台架实测 12 块折射面上完整链比塌缩链多 0.8ms/帧。
+ * 既然色散没有对应的产品设计，完整链整条删掉，`useCollapsed` 这个开关也随之消失。
  *
  * 量尺：默认量**自己的父元素**（把本组件放进那块玻璃里即可，尺寸/圆角自动跟着走，
  * 尺寸变了由 ResizeObserver 重烘）；给了 `w` / `h` 就按静态尺寸烘一次（页头那种固定规格）。
@@ -25,6 +32,9 @@ import { glassPipeline } from '@/system/perf'
  *   · 宽高取整：getBoundingClientRect 给的是小数，亚像素抖动会让指纹每次都变；
  *   · 贴图里**不掺实例 id** —— 它是自己一份独立文档，id 不会与页面串。尺寸参数相同的
  *     玻璃因此拿到同一个 data URI，浏览器按 URL 缓存解码结果，只烘一次；
+ *   · 同一份指纹的 data URI 在模块级再缓存一层（见 MAP_CACHE）：指纹相同就连字符串
+ *     都不再重新拼一遍 —— 贴图是「拼 SVG 源码 + encodeURIComponent 几千个字符」，
+ *     一屏十来块玻璃、每块一次，拖参数滑杆时更是每帧一次。
  *   · 与 ResizeObserver 一起合并到一帧一次（拖滑杆时一个事件触发一遍，不合并就按事件数重烘）。
  * 写入一律先比旧值：实测写**相同**值与写变化值一样贵（都是「触发一次滤镜失效」），
  * 所以守卫写入是纯赚。
@@ -51,6 +61,38 @@ const props = withDefaults(
   }>(),
   { mixBlendMode: 'difference', xChannel: 'R', yChannel: 'G', enabled: true },
 )
+
+/**
+ * 位移贴图的模块级缓存：指纹 → data URI。
+ *
+ * 贴图本身已经按「尺寸 + 参数」去重（不掺实例 id，所以同规格的玻璃拿到同一个
+ * 字符串，浏览器按 URL 缓存解码结果），但**拼这个字符串**的工作仍是每块玻璃各做一遍：
+ * 往模板里插十来个值，再对几千个字符跑一次 encodeURIComponent。一屏十来块玻璃
+ * 就是十来次，而拖参数滑杆时每一次 input 都要全部重来。
+ *
+ * 缓存键必须与 `updateMap` 的指纹一致（否则会拿错贴图），所以两处共用 `mapKeyOf`。
+ * 内容不变时返回的是**同一个字符串实例** —— 这对浏览器也更友好：字符串常量
+ * 在 URL 缓存里命中的路径比内容相等的两份新字符串更短。
+ *
+ * 不设上限：一个会话里纹理规格的组合数就是「界面上出现过的玻璃尺寸 × 参数组数」，
+ * 用户不动参数时它基本不增长，而每组值只有几 KB。
+ */
+const MAP_CACHE = new Map<string, string>()
+
+/** 当前生效的材质参数 → 参与烘图的那些拼成一个指纹（`updateMap` 与缓存共用） */
+function mapKeyOf(w: number, h: number, rx: number): string {
+  return [
+    w,
+    h,
+    rx,
+    props.mixBlendMode,
+    mat('borderWidth'),
+    mat('brightness'),
+    mat('opacity'),
+    mat('blur'),
+    mat('mapScale'),
+  ].join('|')
+}
 
 const el = ref<SVGSVGElement | null>(null)
 let resizeObserver: ResizeObserver | null = null
@@ -101,8 +143,15 @@ function radiusPx(w: number, h: number): number {
  * 根 svg 的 width/height 给成 w/scale，feImage 再用 preserveAspectRatio="none" 拉回原尺寸。
  * 贴图是一条平滑渐变（边缘那道斜坡由 blur 撑开），降分辨率只是把斜坡采样得粗一点，
  * 位移量是连续量，采样误差落回亚像素 —— 所以这是「省一点、观感几乎不动」的那个旋钮。
+ *
+ * 拼字符串 + 编码这几千个字符的结果走 MAP_CACHE：缓存键与重烘指纹同源（`mapKeyOf`），
+ * 所以「要不要重烘」与「贴图是哪一张」永远是同一个判断，不会各判各的。
  */
 function mapDataUri(w: number, h: number, rx: number): string {
+  const key = mapKeyOf(w, h, rx)
+  const hit = MAP_CACHE.get(key)
+  if (hit !== undefined) return hit
+
   const edge = Math.min(w, h) * (mat('borderWidth') * 0.5)
   const scale = Math.max(1, Math.round(mat('mapScale')))
   // id 是写死的：贴图是自己一份独立文档，不会与页面里的 id 串。写死之后
@@ -126,7 +175,12 @@ function mapDataUri(w: number, h: number, rx: number): string {
         <rect x="${edge}" y="${edge}" width="${w - edge * 2}" height="${h - edge * 2}" rx="${rx}" fill="hsl(0 0% ${mat('brightness')}% / ${mat('opacity')})" style="filter:blur(${mat('blur')}px)" />
       </svg>
     `
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+  const uri = `data:image/svg+xml,${encodeURIComponent(svg)}`
+  // 拖窗口时尺寸会连续变，每次都是一个新键 —— 给个上限，别让缓存在一次拖拽里长成几百条。
+  // 简单粗暴地整份清掉就够了：清完立刻又会被当前这批尺寸填上，不搞 LRU 那套。
+  if (MAP_CACHE.size > 64) MAP_CACHE.clear()
+  MAP_CACHE.set(key, uri)
+  return uri
 }
 
 function updateMap(): void {
@@ -142,37 +196,31 @@ function updateMap(): void {
   // 整块玻璃会变成一片空白。静态尺寸（页头）不走这条路
   const w = Math.max(1, Math.round(props.w ?? rect?.width ?? 0))
   const h = Math.max(1, Math.round(props.h ?? rect?.height ?? 0))
-  const key = [
-    w,
-    h,
-    props.radius,
-    props.mixBlendMode,
-    mat('borderWidth'),
-    mat('brightness'),
-    mat('opacity'),
-    mat('blur'),
-    mat('mapScale'),
-  ].join('|')
+  // 指纹里放的是 prop 上的圆角写法而不是解析后的像素：解析要 getComputedStyle，
+  // 那是一次强制样式结算，只在真的要重烘时才付（所以它在下面那一行之后才调用）。
+  const key = [w, h, props.radius, props.mixBlendMode, mat('borderWidth'), mat('brightness'), mat('opacity'), mat('blur'), mat('mapScale')].join('|')
   // 尺寸与参数都没动、贴图也还挂在同一个元素上，就别重烘：
   // ResizeObserver 每帧都回调，拖窗口时按帧重烘是白花
   if (img === mapEl && key === mapKey) return
   mapEl = img
   mapKey = key
-  writeAttr(img, 'href', mapDataUri(w, h, radiusPx(w, h)))
+  const rx = radiusPx(w, h)
+  writeAttr(img, 'href', mapDataUri(w, h, rx))
 }
 
 function updateFilter(): void {
   if (!props.enabled) return
   const root = el.value
   if (!root) return
-  // 塌缩链只有一次位移，取的是红通道那次的 scale —— 走塌缩的前提就是三个 offset 相等
-  const offsets = [mat('redOffset'), mat('greenOffset'), mat('blueOffset')]
-  root.querySelectorAll('feDisplacementMap').forEach((node, i) => {
+  // 只有一次位移（塌缩链），位移量就是 distortionScale —— 从前那三个通道偏移
+  // 是「加在 distortionScale 上的偏置」，只在三通道各自位移时才有意义，已随完整链删掉
+  const dm = root.querySelector('feDisplacementMap')
+  if (dm) {
     // 通道选择器是常量（prop），守卫写入让它在第一次之后就完全免费
-    writeAttr(node, 'xChannelSelector', props.xChannel)
-    writeAttr(node, 'yChannelSelector', props.yChannel)
-    writeAttr(node, 'scale', String(mat('distortionScale') + (offsets[i] ?? offsets[0])))
-  })
+    writeAttr(dm, 'xChannelSelector', props.xChannel)
+    writeAttr(dm, 'yChannelSelector', props.yChannel)
+    writeAttr(dm, 'scale', String(mat('distortionScale')))
+  }
   const blur = root.querySelector('feGaussianBlur')
   if (blur) writeAttr(blur, 'stdDeviation', String(mat('displace')))
 }
@@ -188,20 +236,6 @@ function schedule(): void {
   })
 }
 
-/**
- * 走哪条滤镜链。塌缩链只有在**恒等条件**成立时才等价于完整链：
- * 三次位移的 scale 是 distortionScale + 各通道 offset，三个 offset 相等时三次结果
- * 逐像素相同，而三张单通道图 screen 复合正好还原原色 —— 整段复合是恒等变换。
- * 通道偏移一旦被调开（色散），恒等就不成立 —— 这里自己判定并退回完整链，
- * 所以超高档在任何参数下都不会画错。
- */
-const useCollapsed = computed(
-  () =>
-    glassPipeline.value === 'collapsed' &&
-    mat('redOffset') === mat('greenOffset') &&
-    mat('greenOffset') === mat('blueOffset'),
-)
-
 function observeHost(): void {
   resizeObserver?.disconnect()
   resizeObserver = null
@@ -216,16 +250,7 @@ function observeHost(): void {
 }
 
 watch(
-  () => [
-    props.enabled,
-    props.source,
-    props.w,
-    props.h,
-    props.radius,
-    props.params,
-    glassParams.value,
-    useCollapsed.value,
-  ],
+  () => [props.enabled, props.source, props.w, props.h, props.radius, props.params, glassParams.value],
   () => {
     observeHost()
     schedule()
@@ -249,13 +274,14 @@ onUnmounted(() => {
 
 <template>
   <!-- 滤镜定义本身不参与绘制：opacity 0 + 绝对定位；真正生效的是别处
-       `backdrop-filter: url(#id)` 对它的引用。两条链同 id：同一时刻只有一条在 DOM 里 -->
+       `backdrop-filter: url(#id)` 对它的引用。整份定义只有这一条链 -->
   <svg v-show="enabled" ref="el" class="gdefs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <defs>
-      <!-- 塌缩链：三个通道偏移相等时，三通道位移 + screen 复合是恒等变换，只留一次位移。
-           10 个原语 → 3 个，逐像素等价（隔离台架实测 0/399900 像素差） -->
+      <!-- 唯一的一条：贴图 → 一次位移 → 收尾柔化，3 个原语。
+           feImage 是位移贴图（按元素像素尺寸烘的 data URI，见 mapDataUri），
+           feDisplacementMap 拿它把**背景**按红/绿通道的差位移开，
+           feGaussianBlur 把位移出来的硬边化开（stdDeviation 走「边缘柔化」参数）。 -->
       <filter
-        v-if="useCollapsed"
         :id="props.id"
         color-interpolation-filters="sRGB"
         x="0%"
@@ -265,52 +291,6 @@ onUnmounted(() => {
       >
         <feImage x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" result="map" />
         <feDisplacementMap in="SourceGraphic" in2="map" result="output" />
-        <feGaussianBlur in="output" stdDeviation="0.7" />
-      </filter>
-
-      <!-- 完整链：通道偏移拉开成色散时才需要（上游原样） -->
-      <filter
-        v-else
-        :id="props.id"
-        color-interpolation-filters="sRGB"
-        x="0%"
-        y="0%"
-        width="100%"
-        height="100%"
-      >
-        <feImage x="0" y="0" width="100%" height="100%" preserveAspectRatio="none" result="map" />
-        <feDisplacementMap in="SourceGraphic" in2="map" result="dispRed" />
-        <feColorMatrix
-          in="dispRed"
-          type="matrix"
-          values="1 0 0 0 0
-                  0 0 0 0 0
-                  0 0 0 0 0
-                  0 0 0 1 0"
-          result="red"
-        />
-        <feDisplacementMap in="SourceGraphic" in2="map" result="dispGreen" />
-        <feColorMatrix
-          in="dispGreen"
-          type="matrix"
-          values="0 0 0 0 0
-                  0 1 0 0 0
-                  0 0 0 0 0
-                  0 0 0 1 0"
-          result="green"
-        />
-        <feDisplacementMap in="SourceGraphic" in2="map" result="dispBlue" />
-        <feColorMatrix
-          in="dispBlue"
-          type="matrix"
-          values="0 0 0 0 0
-                  0 0 0 0 0
-                  0 0 1 0 0
-                  0 0 0 1 0"
-          result="blue"
-        />
-        <feBlend in="red" in2="green" mode="screen" result="rg" />
-        <feBlend in="rg" in2="blue" mode="screen" result="output" />
         <feGaussianBlur in="output" stdDeviation="0.7" />
       </filter>
     </defs>

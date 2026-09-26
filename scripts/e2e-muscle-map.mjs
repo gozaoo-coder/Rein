@@ -292,6 +292,140 @@ async function main() {
     })()`)
     ok('单独高亮三角肌前束不影响中束/后束', isolated.unchanged, `前束 fill=${isolated.self[0]}`)
 
+    // ---------- 深度分层：越靠观察者越实（见 MuscleMap 文件头） ----------
+    //
+    // 这一组是 2026-09-26 加的那层设计：三档颜色本身说不清"是哪一块肌肉"，
+    // 于是按 data-depth 分成外层 / 中层 / 后层，各自乘一个透明度。
+    // 断言分两半：**分组正确**（结构与阈值对得上）与**顺序正确**（外层确实比后层实）。
+    const BANDS = `(() => {
+      const svgs = [...document.querySelectorAll('.mapcard .mmap .figwrap svg')]
+      const alpha = (el) => Number(getComputedStyle(el).opacity)
+      const bandsOf = (svg) => [...svg.children].filter((c) => c.classList.contains('band'))
+      return svgs.map((svg) => {
+        const bands = bandsOf(svg)
+        return {
+          // 组的顺序必须是 0（后层）→ 1 → 2（外层）：绘制顺序即从远到近
+          order: bands.map((b) => Number([...b.classList].find((c) => /^band-\\d$/.test(c)).slice(5))),
+          // 每组里每块肌肉自己的 depth 必须落在这一组的区间里（分组没串）
+          depthOk: bands.every((b) => {
+            const idx = Number([...b.classList].find((c) => /^band-\\d$/.test(c)).slice(5))
+            return [...b.querySelectorAll('g[data-m]')].every((g) => {
+              const d = Number(g.dataset.depth)
+              const want = d >= 6 ? 2 : d >= 3.2 ? 1 : 0
+              return want === idx
+            })
+          }),
+          // 组上的透明度：外层 > 中层 > 后层
+          alpha: bands.map(alpha),
+          // 每块肌肉的 data-depth 与所在组对得上（供上面 depthOk 之外单独看）
+          reordered: bands.map((b) => [...b.querySelectorAll('g[data-m]')].length),
+          keys: bands.map((b) => [...b.querySelectorAll('g[data-m]')].map((g) => g.dataset.m)),
+          filters: bands.map((b) => String(getComputedStyle(b).filter)),
+          unit: getComputedStyle(document.querySelector('.mapcard .mmap')).getPropertyValue('--mmap-u').trim(),
+        }
+      })
+    })()`
+
+    const bands = await evalJS(BANDS)
+    ok(
+      '三个视图都分成 后层/中层/外层 三组，且按从远到近排列',
+      bands.every((v) => v.order.length === 3 && v.order.join(',') === '0,1,2'),
+      JSON.stringify(bands.map((v) => v.order)),
+    )
+    ok(
+      '每块肌肉都落在与它 data-depth 相符的组里（没有串组）',
+      bands.every((v) => v.depthOk),
+      JSON.stringify(bands.map((v) => v.reordered)),
+    )
+    ok(
+      '透明度梯度：外层 > 中层 > 后层（三个视图一致）',
+      bands.every((v) => v.alpha[2] > v.alpha[1] && v.alpha[1] > v.alpha[0]),
+      bands.map((v) => v.alpha.map((a) => a.toFixed(2)).join('>')).join(' | '),
+    )
+    const frontKeys = bands[0]?.keys ?? []
+    ok(
+      '正面视图里 背阔肌（后层）与 上胸（外层）分在不同的组',
+      frontKeys[0]?.includes('lats') && frontKeys[2]?.includes('chest-up'),
+      `后层 ${(frontKeys[0] ?? []).join(',')} · 外层 ${(frontKeys[2] ?? []).join(',')}`,
+    )
+    // 非极致档不加景深模糊：模糊是"更贵但更像真玻璃"那一档的pay-for
+    ok(
+      '非极致档不给分层加模糊（高画质下三组都是 none）',
+      bands.every((v) => v.filters.every((f) => f === 'none' || f === '')),
+      JSON.stringify(bands[0]?.filters),
+    )
+
+    // ---------- 极致档：被表层覆盖的肌肉加 1px / 2px 景深模糊 ----------
+    // 单位换算见 MuscleMap 的 --mmap-u：SVG 里的模糊按**用户坐标**算，直接写 1px
+    // 只有 0.13 个屏幕像素（等于没加），所以必须由 JS 量出缩放比再换算 ——
+    // 这里同时验「模糊真的挂上了」与「换算真的做过」（--mmap-u 被量出来而不是回落默认值）。
+    //
+    // 换档必须**真的重载**：档位是模块初始化时从 localStorage 读的，而
+    // `Page.navigate` 到一个**与当前相同**的 URL 不会重新加载文档 —— 于是
+    // localStorage 写了、页面却还停在上一档（第一版就是这么假通过了一条断言）。
+    const setTier = async (tier) => {
+      await evalJS(`localStorage.setItem('rein.perf.v1', ${JSON.stringify(tier)}); location.reload()`)
+      await sleep(2600)
+    }
+    await setTier('extreme')
+    await cdp('Page.navigate', { url: `${APP}/#/sports/exercises` })
+    await waitFor(`document.querySelector('.exrow')`, 15000, '动作库列表（极致档）')
+    await evalJS(`(() => {
+      const rows = [...document.querySelectorAll('.exrow')]
+      const hit = rows.find((r) => /卧推|俯卧撑|飞鸟|夹胸/.test(r.textContent)) || rows[0]
+      hit.querySelector('.main').click()
+      return true
+    })()`)
+    await waitFor(`document.querySelector('.mapcard .mmap svg')`, 10000, '肌群图渲染（极致档）')
+    await sleep(500)
+    const extreme = await evalJS(BANDS)
+    const tierNow = await evalJS(`document.documentElement.dataset.perf`)
+    const blurPx = (s) => {
+      const m = /blur\(([\d.]+)px\)/.exec(s)
+      return m ? Number(m[1]) : null
+    }
+    ok('档位真的切到了极致（换档要重载，否则量到的还是上一档）', tierNow === 'extreme', `data-perf=${tierNow}`)
+    // 索引与 band 编号一致：0 = 后层（最远）、1 = 中层、2 = 外层（最近），
+    // 上面的 order 断言已经钉住这一点，所以下面直接按这个顺序读
+    ok(
+      '极致档 · 后层（最远、被盖得最实）加 2 个设备像素的模糊',
+      extreme.every((v) => {
+        const b = blurPx(v.filters[0])
+        const u = Number(v.unit)
+        return b !== null && u > 1 && Math.abs(b - u * 2) < 0.6
+      }),
+      `后层 filter=${extreme[0]?.filters[0]} · --mmap-u=${extreme[0]?.unit}`,
+    )
+    ok(
+      '极致档 · 中层加 1 个设备像素的模糊（正好是后层的一半）',
+      extreme.every((v) => {
+        const mid = blurPx(v.filters[1])
+        const far = blurPx(v.filters[0])
+        return mid !== null && far !== null && Math.abs(far - mid * 2) < 1.2
+      }),
+      `中层=${extreme[0]?.filters[1]} · 后层=${extreme[0]?.filters[0]}`,
+    )
+    ok(
+      '极致档 · 外层（没被表层覆盖）不加模糊 —— 只有被盖住的才有景深',
+      extreme.every((v) => v.filters[2] === 'none' || v.filters[2] === ''),
+      `外层 filter=${extreme[0]?.filters[2]}`,
+    )
+    ok(
+      '极致档 · 分组的透明度梯度仍在（模糊是加在这条之上，不是换掉它）',
+      extreme.every((v) => v.alpha[2] > v.alpha[1] && v.alpha[1] > v.alpha[0]),
+      extreme.map((v) => v.alpha.map((a) => a.toFixed(2)).join('>')).join(' | '),
+    )
+    await evalJS(`localStorage.removeItem('rein.perf.v1')`)
+    await evalJS('location.reload()')
+    await sleep(2600)
+    await cdp('Page.navigate', { url: `${APP}/#/sports/exercises` })
+    await waitFor(`document.querySelector('.exrow')`, 15000, '动作库列表（收尾）')
+    ok(
+      '收尾 · 档位已回到默认（后面的用例不该还在极致档上）',
+      (await evalJS(`document.documentElement.dataset.perf`)) !== 'extreme',
+      `data-perf=${await evalJS(`document.documentElement.dataset.perf`)}`,
+    )
+
     // 深层键：激活后必须真的看得见（叠画在浅层之上），否则「标了等于没标」
     await cdp('Page.navigate', { url: `${APP}/#/sports/exercises` })
     await waitFor(`document.querySelector('.exrow')`, 15000, '动作库列表（深层键用例）')

@@ -6,6 +6,7 @@ import { AlertTriangle, Cloud, Download, RefreshCw, ShieldCheck, ShieldX, Sparkl
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import MdText from '@/components/common/MdText.vue'
 import { useToast } from '@/composables/useToast'
 import { useUpdateStore } from '@/stores/update'
 import { notesAboveCurrent } from '@/utils/updateNotes'
@@ -73,7 +74,7 @@ const platformLabel = computed(() => {
 
 const download = computed(() => update.downloadState)
 const check = computed(() => update.check)
-/** 说明只显示比本机高的版本段落：清单里装的是整份 RELEASE_NOTES.md（见 utils/updateNotes） */
+/** 说明已由发布侧裁成本版一节；这里再过滤一次是给老清单 / 自定义源兜底（见 utils/updateNotes） */
 const notes = computed(() => notesAboveCurrent(check.value?.notes, check.value?.currentVersion ?? ''))
 
 const downloadedPercent = computed(() => {
@@ -228,7 +229,8 @@ onMounted(async () => {
         <template v-if="check?.mandatory"> · 此版本为必须更新</template>
       </p>
 
-      <p v-if="notes" class="notes">{{ notes }}</p>
+      <!-- 说明是 Markdown：从前用 {{ }} 插值，用户看到的是原样的 `**` 与 `##` -->
+      <MdText v-if="notes" class="notes" :text="notes" />
 
       <p v-if="check?.downgradeBlocked" class="warn">
         <ShieldX :size="14" /> 该源给出的版本低于此前见过的最新版，可能被回放旧版本，已阻止自动更新
@@ -459,7 +461,8 @@ onMounted(async () => {
   background: var(--surface-2);
   font-size: var(--fs-caption);
   line-height: 1.6;
-  white-space: pre-wrap;
+  /* 块级渲染（MdText）：不再需要 pre-wrap 去保换行 */
+  color: var(--text-2);
 }
 
 .progress-box {

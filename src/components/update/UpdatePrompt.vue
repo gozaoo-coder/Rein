@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { AlertTriangle, Download, Sparkles, X } from 'lucide-vue-next'
 
 import { useToast } from '@/composables/useToast'
+import MdText from '@/components/common/MdText.vue'
 import { useUpdateStore } from '@/stores/update'
 import { notesAboveCurrent } from '@/utils/updateNotes'
 
@@ -27,7 +28,7 @@ const starting = ref(false)
 const version = computed(() => update.check?.latestVersion ?? '')
 /** 本机版本：清单里的 currentVersion 优先（与本段说明同一次检查取到的），回落 store 快照 */
 const currentVersion = computed(() => update.check?.currentVersion || update.currentVersion)
-/** 只留比本机高的段落：清单里装的是整份 RELEASE_NOTES.md（见 utils/updateNotes） */
+/** 说明已由发布侧裁成本版一节；这里再过滤一次是给老清单 / 自定义源兜底（见 utils/updateNotes） */
 const notes = computed(() => notesAboveCurrent(update.check?.notes, currentVersion.value))
 const sizeText = computed(() => {
   const n = update.check?.sizeBytes
@@ -96,7 +97,10 @@ async function skip(): Promise<void> {
           <template v-if="mandatory"> · <b class="up-must">此版本为必须更新</b></template>
         </p>
 
-        <p v-if="notes" class="up-notes" data-rubber-self>{{ notes }}</p>
+        <!-- 说明是 Markdown（`- ` 条目 / `**强调**` / 行内 `code`）：从前用 {{ }} 插值，
+             于是用户看到的是原样的星号与井号。MdText 是 AI 气泡那份零依赖渲染器，
+             先转义再按白名单替换，外部文本进来也安全 -->
+        <MdText v-if="notes" class="up-notes" data-rubber-self :text="notes" />
 
         <p v-if="unsupported" class="up-warn">
           <AlertTriangle :size="14" /> {{ update.snapshot?.installHint }}
@@ -184,9 +188,15 @@ async function skip(): Promise<void> {
   font-size: var(--fs-caption);
   line-height: 1.6;
   color: var(--text-2);
-  white-space: pre-wrap;
+  /* 不再 pre-wrap：说明现在由 MdText 渲成块级元素（p / ul / li），
+     留 pre-wrap 只会把块之间的换行再撑一份行高 */
   overflow-y: auto;
   max-height: 36dvh;
+}
+
+/* 条目自带左内边距会在这块窄提示里显得很凹，收紧一档 */
+.up-notes :deep(ul) {
+  padding-left: 15px;
 }
 
 .up-warn {

@@ -298,12 +298,58 @@ pub async fn update_check(
     let last_seen = settings.last_seen_version.clone();
 
     let (check, candidate) = tauri::async_runtime::spawn_blocking(move || {
+        // 所有源**并发**拉，再按源优先级顺序归并。
+        //
+        // 从前是一个 `for` 循环串行拉：每个源的超时是 15s（CHECK_TIMEOUT），
+        // 于是「主源连不上」的用户要**先干等满 15s** 才轮到 GitHub —— 手机上这一等
+        // 就是「检查更新很慢」的全部来源（国内直连 GitHub 慢、8787 端口也常被运营商掐，
+        // 两个源谁先回来完全看运气）。并发之后总耗时 = max(各源) 而不是 sum(各源)。
+        //
+        // 只把「取字节」这一步并发掉，**挑选与报告仍按源优先级顺序做**：
+        // 贪快取第一个回来的会让「取版本号最高的那个可用条目」这条契约失效（见 docs/UPDATES.md §3），
+        // 而且源卡片在界面上是按优先级排的，报告顺序必须稳定。
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            for (index, source) in sources.iter().enumerate() {
+                let tx = tx.clone();
+                scope.spawn(move || {
+                    let started = Instant::now();
+                    let outcome = fetch_source(source, allow_http);
+                    let _ = tx.send((index, outcome, started.elapsed().as_millis() as u64));
+                });
+            }
+            drop(tx);
+            // 作用域结束即所有线程收工 —— 下面的接收因此一定能读到全部结果
+        });
+
+        let mut slots: Vec<Option<(std::result::Result<SourceFetch, String>, u64)>> =
+            (0..sources.len()).map(|_| None).collect();
+        for (index, outcome, elapsed_ms) in rx.iter() {
+            if let Some(slot) = slots.get_mut(index) {
+                *slot = Some((outcome, elapsed_ms));
+            }
+        }
+
         let mut reports: Vec<SourceReport> = Vec::new();
         let mut best: Option<BestSource> = None;
 
-        for source in &sources {
-            let started = Instant::now();
-            match fetch_source(source, allow_http) {
+        for (index, source) in sources.iter().enumerate() {
+            let Some((outcome, elapsed_ms)) = slots.get_mut(index).and_then(Option::take) else {
+                // 线程没送回来（只可能是它自己 panic 了）：算这个源失败，不拖累别的源
+                reports.push(SourceReport {
+                    id: source.id.clone(),
+                    name: source.name.clone(),
+                    kind: source.kind,
+                    url: source.url.clone(),
+                    ok: false,
+                    version: None,
+                    manifest_signed: false,
+                    error: Some("检查线程没有返回结果".into()),
+                    elapsed_ms: 0,
+                });
+                continue;
+            };
+            match outcome {
                 Ok(fetched) => {
                     let version = fetched.manifest.version.clone();
                     let report_base = |ok: bool, error: Option<String>, signed: bool| SourceReport {
@@ -315,7 +361,7 @@ pub async fn update_check(
                         version: Some(version.clone()),
                         manifest_signed: signed,
                         error,
-                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        elapsed_ms,
                     };
 
                     // 通道不符的源直接跳过：stable 用户不该被 beta 清单顶上去
@@ -364,7 +410,7 @@ pub async fn update_check(
                     version: None,
                     manifest_signed: false,
                     error: Some(err),
-                    elapsed_ms: started.elapsed().as_millis() as u64,
+                    elapsed_ms,
                 }),
             }
         }

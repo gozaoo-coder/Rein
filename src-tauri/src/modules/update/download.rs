@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
-use super::verify::{sha256_file, verify_artifact};
+use super::verify::verify_artifact;
 use super::{Candidate, Phase, UpdateHub, PROGRESS_EVENT};
 use crate::error::{ReinError, Result};
 
@@ -249,16 +249,14 @@ pub fn purge(dir: &Path, candidate: &Candidate) {
 }
 
 /// 已经落盘且校验通过的文件（用于恢复「上次下载好了但没装」的场景）。
+///
+/// 只调 `verify_artifact` 一次：它自己就会按 大小 → sha256 → 签名 三道过关，
+/// 其中 sha256 还是**流式**算的。从前这里先自己算一遍 sha256、再交给 `verify_artifact`
+/// 又算一遍 —— 一个几十 MB 的 APK 在手机上被完整读两趟，只为得到同一个摘要。
 pub fn existing_verified(dir: &Path, candidate: &Candidate) -> Option<PathBuf> {
     let path = dir.join(&candidate.name);
     if !path.exists() {
         return None;
-    }
-    let (sha, _) = sha256_file(&path).ok()?;
-    if let Some(want) = &candidate.sha256 {
-        if !want.eq_ignore_ascii_case(&sha) {
-            return None;
-        }
     }
     verify_artifact(
         &path,

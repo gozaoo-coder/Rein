@@ -34,6 +34,7 @@ import {
   signFile,
   signText,
 } from './lib.mjs'
+import { NOTES_LIMITS, prepareNotes } from './notes.mjs'
 
 // ---------- 参数解析 ----------
 
@@ -66,6 +67,9 @@ function parseArgs(argv) {
         break
       case '--notes-file':
         out.notesFile = next()
+        break
+      case '--allow-long-notes':
+        out.allowLongNotes = true
         break
       case '--channel':
         out.channel = next()
@@ -218,14 +222,43 @@ async function main() {
   if (!version) fail('缺少 --version（例如 --version 0.2.1）')
   if (Object.keys(args.targets).length === 0) fail('至少需要一个 --target <平台键>=<文件>')
 
-  const notes = args.notesFile
-    ? fs.readFileSync(path.resolve(REPO_ROOT, args.notesFile), 'utf8').trim()
-    : (args.notes ?? '')
+  // 说明只取**这一版**那一节，并按《更新文案规范》校验（scripts/release/notes.mjs）。
+  // 从前是把整份 RELEASE_NOTES.md 塞进清单：线上实测 79,848 字节里 77,481 是 notes，
+  // 每个客户端每次检查更新都要下这一整份历史，而用户要看的只有最后一节。
+  const notesSource = args.notesFile
+    ? fs.readFileSync(path.resolve(REPO_ROOT, args.notesFile), 'utf8')
+    : null
+  const prepared = prepareNotes({ fullText: notesSource, version, inline: args.notes })
+  const notes = prepared.body
+  if (!prepared.ok) {
+    if (args.allowLongNotes) {
+      log(`\n⚠ 更新文案不合规范（--allow-long-notes 已放行）：`)
+      for (const p of prepared.problems) log(`   · ${p}`)
+    } else {
+      fail(
+        [
+          `v${version} 的更新文案不合规范：`,
+          ...prepared.problems.map((p) => `  · ${p}`),
+          '',
+          `规范（v1）：最多 ${NOTES_LIMITS.bullets} 条、单条 ≤ ${NOTES_LIMITS.bulletChars} 字、整段 ≤ ${NOTES_LIMITS.totalChars} 字，`,
+          '不写实现细节与工程过程、不嵌套列表与表格。',
+          '详见 scripts/release/notes.mjs 顶部 / docs/UPDATES.md §10。',
+          '确有必要时用 --allow-long-notes 显式放行。',
+        ].join('\n'),
+      )
+    }
+  }
   const tag = `v${version}`
   const toServer = args.to.split(',').map((s) => s.trim()).filter(Boolean).includes('server')
   const toGithub = args.to.split(',').map((s) => s.trim()).filter(Boolean).includes('github')
 
   log(`\n▶ Rein ${tag}（通道 ${channel}）`)
+  if (prepared.found) {
+    const lines = notes.split('\n').length
+    log(`   · 说明取自${prepared.source === 'inline' ? ' --notes' : ` ${args.notesFile} 的 v${version} 一节`}：${lines} 行 · ${notes.replace(/\s+/g, '').length} 字`)
+  } else {
+    log('   · 说明：无')
+  }
 
   // 1) 逐个产物算摘要 + 签名
   const platforms = {}

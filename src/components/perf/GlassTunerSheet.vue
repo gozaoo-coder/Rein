@@ -13,13 +13,13 @@ import {
   type GlassParamKey,
   type GlassParamSpec,
 } from '@/system/glassParams'
-import { glassPipeline, liquidGlass, setPerfMode } from '@/system/perf'
+import { liquidGlass, setPerfMode } from '@/system/perf'
 
 /**
  * 液态玻璃参数调节面板（画质预览页的入口拉开）。
  *
  * 面板自带一块**暗场预览**：折射采样的是背后的东西，台子上有细格与光晕才看得出
- * 位移与色散；三块玻璃按真实 Dock 的装配摆（圆 + 药丸 + 圆）。台内换的是与标本台
+ * 位移；三块玻璃按真实 Dock 的装配摆（圆 + 药丸 + 圆）。台内换的是与标本台
  * 同一套暗场玻璃上下文（--hero-* 那组），所以这里看到的材质就是 Dock 上的材质。
  *
  * 每一行 = 英文键名（与 GlassSurface 的 prop 同名）+ 中文名 + 当前值 + 滑杆：
@@ -86,9 +86,7 @@ function onSlide(spec: GlassParamSpec, e: Event): void {
 }
 
 const stateText = computed(() =>
-  liquidGlass.value
-    ? `折射已开启（${glassPipeline.value === 'collapsed' ? '塌缩管线' : '完整管线'}），下面的拖动即时生效`
-    : '当前档位没有折射，参数只在「超高」与「极致」生效',
+  liquidGlass.value ? '折射已开启（塌缩管线），下面的拖动即时生效' : '当前档位没有折射，参数只在「超高」与「极致」生效',
 )
 </script>
 
@@ -159,8 +157,8 @@ const stateText = computed(() =>
     </div>
 
     <p class="pnote t-3">
-      按管线顺序排：位移贴图（边缘厚度 / 中心亮度 / 贴图模糊）→ 三通道位移（位移强度 + 通道偏移，
-      偏移拉开就是边缘的彩色色散）→ 收尾柔化 → 表面（背景饱和度 / 底色浓度）。
+      按管线顺序排：位移贴图（边缘厚度 / 中心亮度 / 贴图模糊 / 贴图分辨率）→ 位移强度 →
+      收尾柔化 → 表面（背景饱和度 / 底色浓度）。
       数值点一下可直接输入；改动即时生效并存在本机。
     </p>
   </SheetModal>

@@ -89,10 +89,21 @@ class MainActivity : TauriActivity() {
    *  只作用在根滚动容器上，表现为滚动到边界时整页 scaleY 拉伸）。它是原生 View 的 EdgeEffect，
    *  CSS（overscroll-behavior / touch-action）管不到——只有把 WebView 的 overScrollMode 置为
    *  NEVER 才能关掉。超范围手感改由 Web 层自绘：src/system/rubberScroll.ts（对数阻尼 + 平移，
-   *  f(0)=0 且 f'(0)=1，与原生滚动交接无速度突变）。 */
+   *  f(0)=0 且 f'(0)=1，与原生滚动交接无速度突变）。
+   *
+   *  另外在这里关掉 WebView 自己的缩放（双指捏合 / 双击 / 缩放控件）：这套界面的尺寸
+   *  全部按 430×932 的视口标定成绝对像素（触区 44、Dock 58、页签 38），整页放大不会
+   *  触发重排，只会把已经画好的东西连同固定定位的 Dock / 悬浮条一起撑出错位。
+   *  前端那两条（index.html 的 viewport、base.css 的 touch-action）是同一件事的另外两道：
+   *  `user-scalable=no` 在部分内核上会被忽略，`touch-action` 管不到内核自带的缩放控件，
+   *  所以内核这一层必须自己关。setSupportZoom(false) 同时管住捏合与双击；它是
+   *  **WebView 的页面缩放**，不影响无障碍字号（textZoom 跟系统字体设置走）。 */
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     webView.overScrollMode = View.OVER_SCROLL_NEVER
+    webView.settings.setSupportZoom(false)
+    webView.settings.builtInZoomControls = false
+    webView.settings.displayZoomControls = false
   }
 
   /** 运行中被分享唤起（singleTask，不重建）：把新 intent 交给分享接收 */

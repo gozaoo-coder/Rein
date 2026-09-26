@@ -287,9 +287,9 @@ html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-b
 /* 折射可用（内核认 url() 滤镜 + 用户选了这两档，即 data-glass 不是 off）时，
    把上面那份模糊整条换成位移滤镜 —— 与 GlassSurface 的折射分支同一条做法：
    折射生效时不再叠 blur（url() 与 blur 同挂会让位移算在一层糊过的底上，白花）。
-   写在 .glass-surface 的书写顺序之前/之后都行，这里紧随其后，读起来是一件事的两态。 */
-html:is([data-glass='collapsed'], [data-glass='full']) .page-header .back,
-html:is([data-glass='collapsed'], [data-glass='full']) .page-header :slotted(.hdr-btn:not(.accent)) {
+   全程序只有一条链，所以这里判的就是那一个值（从前还有个 'full'）。 */
+html[data-glass='collapsed'] .page-header .back,
+html[data-glass='collapsed'] .page-header :slotted(.hdr-btn:not(.accent)) {
   backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
   -webkit-backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
 }

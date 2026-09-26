@@ -34,7 +34,7 @@ import { liquidGlass } from '@/system/perf'
  * 既有的 `.glass-surface`，只是要额外拿到折射），而滤镜链抄成两份必然漂：
  * 「两份定义必然漂」是这个仓已经付过代价的教训。拆完两边都只有一份实现。
  *
- * 两条滤镜链（塌缩 / 完整）与它们的等价条件写在 GlassFilter.vue —— 链的实现在那边，
+ * 那条唯一的滤镜链（贴图 → 一次位移 → 收尾柔化）写在 GlassFilter.vue —— 链的实现在那边，
  * 这里的 `saturate()` 只是把引用拼进 `backdrop-filter`。
  *
  * 退化（不是兜底补丁，是常态路径之一）：
@@ -68,9 +68,6 @@ const props = withDefaults(
      *  只影响成本、几乎不影响观感 —— 贴图是一条平滑渐变，降分辨率只是把它采样得粗一点 */
     mapScale?: number
     distortionScale?: number
-    redOffset?: number
-    greenOffset?: number
-    blueOffset?: number
     xChannel?: 'R' | 'G' | 'B'
     yChannel?: 'R' | 'G' | 'B'
     mixBlendMode?: string
@@ -129,9 +126,8 @@ function length(value: string | number): string {
 }
 
 /**
- * 交给 GlassFilter 的参数覆盖：滤镜链用得着的那十个（贴图边缘/亮度/不透明度/模糊/
- * 分辨率 + 位移强度/三通道偏移/边缘柔化）。剩下的背景饱和度与底色浓度写在下面的
- * 表面样式上，不进滤镜。
+ * 交给 GlassFilter 的参数覆盖：滤镜链用得着的那些（贴图边缘/亮度/不透明度/模糊/
+ * 分辨率 + 位移强度/边缘柔化）。背景饱和度与底色浓度写在下面的表面样式上，不进滤镜。
  */
 const FILTER_PARAM_KEYS: GlassParamKey[] = [
   'borderWidth',
@@ -140,9 +136,6 @@ const FILTER_PARAM_KEYS: GlassParamKey[] = [
   'blur',
   'mapScale',
   'distortionScale',
-  'redOffset',
-  'greenOffset',
-  'blueOffset',
   'displace',
 ]
 

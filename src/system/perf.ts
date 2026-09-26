@@ -6,11 +6,18 @@ import { computed, ref, watch } from 'vue'
  * 四个固定档（data-perf 的取值与之一致）：
  *   low      流畅：玻璃顶成实底、关模糊与循环动画
  *   high     高画质：毛玻璃（四层材质）、渐进模糊与动效全开
- *   ultra    超高：高画质之上再开液态玻璃。折射走**塌缩管线**（3 个原语）——
- *            出厂通道偏移相等时它与完整链逐像素等价，因此它就是标准的超高档。
- *   extreme  极致：折射走**完整链**（三通道位移 + 色散能力），并把玻璃材质铺到
- *            更多层（卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴）——对齐苹果
- *            Liquid Glass 的分层：导航与控件层用玻璃，内容保持可读。
+ *   ultra    超高：高画质之上再开液态玻璃。折射走**塌缩管线**（3 个原语）。
+ *   extreme  极致：与超高**同一条折射管线**，差别只在材质 —— 光学层再深一档，
+ *            并把玻璃材质铺到更多层（卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴），
+ *            对齐苹果 Liquid Glass 的分层：导航与控件层用玻璃，内容保持可读。
+ *
+ * 「全程序只走一条折射管线」（2026-09-26）：此前 ultra 走塌缩链、extreme 走完整
+ * 三通道链，理由是「极致要保留色散能力」。但色散从来不是出厂观感的一部分
+ * （出厂三个通道偏移都是 0，两条链逐像素等价），代价却每帧都在付：同一个合
+ * 成台架实测，12 块折射面上完整链比塌缩链**多 0.8ms/帧**（1.875 vs 1.060，
+ * 见 scripts/e2e-glass-perf.mjs）。于是完整链整条删掉 —— 色散这一档能力没有
+ * 对应的产品设计，而它是这条链上唯一还贵着的东西。**档位差异从此只在材质**：
+ * 覆盖范围与光学层，与「观感差异不来自加 blur」是同一条原则。
  *
  * 旧值迁移（0.3.x → 本版）：auto → high（它本来就只在 high / low 之间自动切），
  * 「超高＋」ultra-opt → ultra（塌缩管线成为标准超高）。
@@ -22,12 +29,14 @@ import { computed, ref, watch } from 'vue'
 export type PerfMode = 'low' | 'high' | 'ultra' | 'extreme'
 
 /**
- * 折射表面的滤镜管线：
- *   full      feImage + 3×feDisplacementMap + 3×feColorMatrix + 2×feBlend + feGaussianBlur
- *   collapsed feImage + 1×feDisplacementMap + feGaussianBlur（三通道偏移相等时与 full 逐像素等价）
+ * 折射表面的滤镜管线。**只有两条**：
+ *   collapsed feImage + 1×feDisplacementMap + feGaussianBlur（3 个原语）
  *   off       不画折射
+ *
+ * 值仍然是字符串而不是布尔：`data-glass` 是给台架与像素比对读的**实现标签** ——
+ * 断言写 `data-glass === 'collapsed'` 比 `=== 'true'` 更能说明此刻跑的是哪条链。
  */
-export type GlassPipeline = 'full' | 'collapsed' | 'off'
+export type GlassPipeline = 'collapsed' | 'off'
 
 /**
  * 档位清单：设置页与画质预览页共用这一份（标签、说明都不在页面里另抄一遍）。
@@ -44,7 +53,7 @@ export const PERF_MODES: { value: PerfMode; label: string; hint: string }[] = [
   {
     value: 'extreme',
     label: '极致',
-    hint: '完整折射管线（三通道色散）+ 玻璃铺到卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴',
+    hint: '光学层再深一档 + 玻璃铺到卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴（折射管线同超高）',
   },
 ]
 
@@ -122,22 +131,20 @@ export const liquidGlass = computed(
 )
 
 /**
- * 实际生效的折射管线 —— GlassSurface 按它决定烘哪条滤镜链。
+ * 实际生效的折射管线 —— GlassSurface / 页头 / 悬浮条都按它决定挂不挂那段滤镜。
  *
- * 超高走**塌缩链**：现行完整链把背景位移三次（R/G/B 各一次）再 screen 复合，
- * 三次的 scale 是 `distortionScale + 各通道 offset`；三个 offset 相等时三次位移的
- * 结果完全相同，而三张「只剩单通道」的图 screen 起来正好还原成原色 —— 整段复合是
- * 恒等变换。出厂值三个 offset 都是 0，所以出厂观感与完整链逐像素一致
- * （台架实测 0/399900 像素差），而原语数从 10 降到 3。
+ * **只有一条**：feImage + 1×feDisplacementMap + feGaussianBlur（3 个原语）。
+ * 上游那条完整链是「三次位移 + 三色矩阵 + 两次 screen 复合」，为的是色散；
+ * 而三次位移的 scale 是 `distortionScale + 各通道 offset` —— 三个 offset 相等时
+ * 三次结果逐像素相同，三张单通道图 screen 起来正好还原原色（screen 在通道互斥时
+ * 就是相加），整段复合是**恒等变换**。出厂值三个 offset 都是 0，所以完整链与
+ * 塌缩链逐像素一致（台架实测 0/399900 像素差）。
  *
- * 极致走**完整链**：三通道各自位移（色散能力完整保留），并配合 base.css 里
- * [data-perf='extreme'] 的玻璃材质铺到更多组件。通道偏移被调开时，即便在超高档
- * GlassSurface 也会自己退回完整链（见 useCollapsed）—— 任何档位下都不会画错。
+ * 既然出厂就是恒等、色散又没有产品设计对应，完整链整条删掉：超高与极致共用
+ * 塌缩链，档位差异只在材质（光学层深度 + 覆盖范围）。省下的不是小数 ——
+ * 12 块折射面上完整链比塌缩链多 0.8ms/帧（见 e2e-glass-perf 的实测）。
  */
-export const glassPipeline = computed<GlassPipeline>(() => {
-  if (!liquidGlass.value) return 'off'
-  return perfMode.value === 'extreme' ? 'full' : 'collapsed'
-})
+export const glassPipeline = computed<GlassPipeline>(() => (liquidGlass.value ? 'collapsed' : 'off'))
 
 export function setPerfMode(mode: PerfMode): void {
   perfMode.value = mode

@@ -17,10 +17,10 @@
  *   5 窄屏 320：不横向溢出、底栏不出界、页签触区 ≥ 44
  *   6 真实 Dock（左圆钮 + 中药丸 + 右圆钮，三块并列玻璃）：超高逐块折射 / 高画质普通
  *     毛玻璃 / 弱档顶成实底，页签对比度真图采像素
- *   7 参数调节面板：12 行参数、拖滑杆滤镜跟着重烘、点值就地输入、恢复默认
- *   8 「超高」vs「极致」：出厂偏移下**玻璃带逐像素一致**（塌缩链 3 个原语 vs
- *     完整链 10 个原语），两档各写自己的 data-perf / data-glass；极致另验
- *     卡片等内容层也铺上玻璃（--glass-panel-fill + 背景模糊）
+ *   7 参数调节面板：9 行参数、拖滑杆滤镜跟着重烘、点值就地输入、恢复默认
+ *   8 「超高」vs「极致」：两档**同一条塌缩链**（3 个原语 / `data-glass=collapsed`），
+ *     差的只在材质 —— 玻璃带逐像素一致；极致另验卡片等内容层也铺上玻璃
+ *     （--glass-panel-fill + 背景模糊）
  *   9 运动沉浸页的分层契约（控制层折射 / 内容层实底 / 不许玻璃套玻璃）
  *  10 悬浮件与页头：页头圆钮走**真折射**（几颗 38px 共用一份滤镜定义）、
  *     悬浮条在收起沉浸层后同样折射（高画质档退回毛玻璃）、
@@ -574,14 +574,21 @@ async function main() {
       }
     })()`)
     ok(
-      '面板拉开并列出全部 12 项参数',
-      tuner.open && tuner.title === '液态玻璃参数' && tuner.keys.length === 12,
+      '面板拉开并列出全部 9 项参数',
+      tuner.open && tuner.title === '液态玻璃参数' && tuner.keys.length === 9,
       `${tuner.title} · ${tuner.keys.join(' ')}`,
     )
     ok(
       '每行都是「英文键名 + 中文名 + 当前值 + 滑杆」',
       tuner.labelled && tuner.keys.includes('distortionScale') && tuner.keys.includes('backgroundOpacity'),
       `键名 ${tuner.keys.join(' ')}`,
+    )
+    // 三个通道偏移随完整链删掉了（只有一次位移时它就是换个名字的 distortionScale），
+    // 所以参数表里不该再有它们 —— 留着是三个点不动的滑杆
+    ok(
+      '参数表里没有随完整链删掉的通道偏移',
+      !tuner.keys.includes('redOffset') && !tuner.keys.includes('greenOffset') && !tuner.keys.includes('blueOffset'),
+      tuner.keys.join(' '),
     )
 
     const rowExpr = (key, inner) => `(() => {
@@ -612,14 +619,31 @@ async function main() {
     ok('改动落盘（rein.glass.v1）', String(stored).includes('"distortionScale":40'), String(stored))
 
     // 点一下就地输入：值钮 → 输入框 → 回车提交（吸附到步长、夹回区间）
+    //
+    // 等输入框出现要**轮询**，不能睡一个固定时长：这一步在整套用例里排在很后面，
+    // 前面的折射台架刚把 12 块玻璃的滤镜烘过一遍，Vue 的下一次 patch 落在哪一帧
+    // 取决于机器当时的负载（写死 200ms 会在慢一点的机器上偶发读不到输入框）。
+    const editSel = '.prow input.pval.edit'
     await evalJS(rowExpr('borderWidth', `row.querySelector('button.pval').click()`))
-    await sleep(200)
-    const editing = await evalJS(`!!document.querySelector('.prow input.pval.edit')`)
+    let editing = false
+    for (let i = 0; i < 25 && !editing; i += 1) {
+      editing = await evalJS(`!!document.querySelector(${JSON.stringify(editSel)})`)
+      if (!editing) await sleep(80)
+    }
+    if (!editing) {
+      // 读不到就把现场带出来：光看 `editing=false` 分不清是没点到、还是行没了
+      const rowHtml = await evalJS(
+        rowExpr('borderWidth', `return row.querySelector('.ptop')?.outerHTML ?? 'no .ptop'`),
+      )
+      ok('点数值应当就地变成输入框', false, `2s 内没出现输入框 · 该行现在长这样：${String(rowHtml).slice(0, 200)}`)
+    }
     await evalJS(`(() => {
-      const inp = document.querySelector('.prow input.pval.edit')
+      const inp = document.querySelector(${JSON.stringify(editSel)})
+      if (!inp) return false
       inp.value = '0.62'
       inp.dispatchEvent(new Event('input', { bubbles: true }))
       inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      return true
     })()`)
     await sleep(300)
     const typed = await evalJS(
@@ -639,7 +663,7 @@ async function main() {
     }))()`)
     ok(
       '「恢复默认」回到出厂参数',
-      reset.stored.rev === 3 &&
+      reset.stored.rev === 4 &&
         reset.stored.values.borderWidth === 0.06 &&
         reset.stored.values.distortionScale === -180 &&
         reset.stored.values.mapScale === 1 &&
@@ -651,13 +675,14 @@ async function main() {
     ok('面板可关闭', (await evalJS(`!!document.querySelector('.panel')`)) === false)
 
     // ---------- 8 「超高」vs「极致」 ----------
-    // 两档的滤镜链在**出厂通道偏移（0/0/0）**下逐像素等价：超高走塌缩链（3 个原语），
-    // 极致走完整链（10 个原语）—— 那就直接比像素，不要用「计算样式一样」糊过去。
-    // 极致另外把玻璃铺到卡片等更多表面，那是材质层的设计差异，不参与这条等价断言。
+    // 两档**共用同一条折射管线**（塌缩链，3 个原语）：完整链整条删掉了
+    // （色散没有产品设计对应，而 12 块折射面上它比塌缩链多约 0.8ms/帧，
+    // 见 scripts/e2e-glass-perf.mjs 的实测）。所以这一节现在验的是**同一件事**：
+    // 切档不改变画出来的玻璃 —— 两档的差别只在材质（覆盖范围与光学层深度）。
     //
     // 关键：**在同一次页面加载里切档**（点分段控件，不 reload）。
     // 两次加载之间台子上的光晕相位、壁纸滚动位置、进场动效都会差一点，
-    // 那些差异会淹没滤镜本身 —— 同一次加载里只剩「换了哪条链」这一个变量。
+    // 那些差异会淹没滤镜本身 —— 同一次加载里只剩「换了哪套材质」这一个变量。
     const freezeBench = `(() => {
       const s = document.createElement('style')
       s.textContent = '.bench .glow { animation: none !important }'
@@ -755,9 +780,9 @@ async function main() {
       }
     })()`)
 
-    // 两档的材质本来就不同（极致的光学层更深、覆盖更广）—— 要比的是**滤镜链**，
+    // 两档的材质本来就不同（极致的光学层更深、覆盖更广）—— 要比的是**画出来的玻璃**，
     // 所以先把极致档的材质令牌临时拉回超高那一组，并让铺开的表面暂时退回实底，
-    // 这样两次截图之间只剩「塌缩链 vs 完整链」这一个变量。
+    // 这样两次截图之间只剩「材质有没有被换掉」这一个变量（管线两档本来就相同）。
     const equivDecls = Object.entries(ultraTokens)
       .map(([k, v]) => `${k}:${v}`)
       .join(';')
@@ -781,14 +806,16 @@ async function main() {
       ultraProbe.prims === 3 && ultraProbe.kinds.feDisplacementMap === 1 && !ultraProbe.kinds.feColorMatrix && !ultraProbe.kinds.feBlend,
       `data-glass=${ultraProbe.glass} 原语=${ultraProbe.prims} ${JSON.stringify(ultraProbe.kinds)}`,
     )
+    // 极致与超高**必须**是同一条链：这是「全程序只走塌缩管线」这条约束的落点。
+    // 从前这里断言的是「极致 = 10 个原语的完整链」，正是被删掉的那条路。
     ok(
-      '极致 · 完整管线（3 位移 + 3 色矩阵 + 2 混合 + 贴图 + 模糊 = 10 个原语）',
-      extProbe.prims === 10 && extProbe.kinds.feDisplacementMap === 3 && extProbe.kinds.feBlend === 2,
+      '极致 · 与超高是同一条管线（3 个原语，没有色散那套色矩阵与混合）',
+      extProbe.prims === 3 && extProbe.kinds.feDisplacementMap === 1 && !extProbe.kinds.feColorMatrix && !extProbe.kinds.feBlend,
       `data-glass=${extProbe.glass} 原语=${extProbe.prims} ${JSON.stringify(extProbe.kinds)}`,
     )
     ok(
-      '两档各写自己的 data-perf / data-glass（材质档与实现分离）',
-      ultraProbe.perf === 'ultra' && ultraProbe.glass === 'collapsed' && extProbe.perf === 'extreme' && extProbe.glass === 'full',
+      '两档各写自己的 data-perf，但 data-glass 都是 collapsed（档位与实现分离）',
+      ultraProbe.perf === 'ultra' && ultraProbe.glass === 'collapsed' && extProbe.perf === 'extreme' && extProbe.glass === 'collapsed',
       `超高 ${ultraProbe.perf}/${ultraProbe.glass} · 极致 ${extProbe.perf}/${extProbe.glass}`,
     )
     ok(
@@ -799,18 +826,24 @@ async function main() {
         extProbe.blur === ultraProbe.blur,
       `scale=${extProbe.scale} x=${extProbe.x} y=${extProbe.y} blur=${extProbe.blur}`,
     )
+    // 位移量就是 distortionScale 本身（从前还叠各通道的 offset，已随完整链删掉）
+    ok(
+      '位移量取自 distortionScale（出厂 -180，不再叠通道偏移）',
+      ultraProbe.scale === '-180',
+      `scale=${ultraProbe.scale}`,
+    )
     ok('超高 · 读数报出实际走的链', ultraProbe.plaque.includes('塌缩管线'), ultraProbe.plaque)
     ok(
-      '极致 · 读数报出完整管线与全局玻璃',
-      extProbe.plaque.includes('完整管线') && extProbe.plaque.includes('全局玻璃'),
+      '极致 · 读数报出塌缩管线与全局玻璃',
+      extProbe.plaque.includes('塌缩管线') && extProbe.plaque.includes('全局玻璃'),
       extProbe.plaque,
     )
     ok('极致 · 档位落盘', (await evalJS(`localStorage.getItem('rein.perf.v1')`)) === 'extreme', await evalJS(`localStorage.getItem('rein.perf.v1')`))
 
-    // 材质拉平后两条链必须逐像素等价：同一次加载里切档，**玻璃带**一模一样。
+    // 材质拉平后两档的**玻璃带**必须逐像素一致：同一次加载里切档，差的只有材质。
     const glassDiff = await diffFrames(ultraFrame, extFrame, [], glassRects)
     ok(
-      '超高与极致 · 材质拉平后玻璃带逐像素一致（出厂偏移下塌缩链与完整链等价）',
+      '超高与极致 · 材质拉平后玻璃带逐像素一致（同一条链 + 同一套材质 = 同一块玻璃）',
       glassDiff.diff === 0,
       `${glassDiff.diff}/${glassDiff.total} 像素有差异 · 最大通道差 ${glassDiff.maxDelta} · 包围盒 ${JSON.stringify(glassDiff.bbox)}`,
     )
@@ -820,29 +853,33 @@ async function main() {
       `card bg=${extGlass.bg} · panel-fill=${extGlass.panelFill} · backdrop=${extGlass.backdrop} · 光学层=${extGlass.shadow.includes('inset')}`,
     )
 
-    // 对照：把通道偏移拉开成色散后，超高必须**自动退回完整链**（恒等不再成立）
+    // 通道偏移已经不存在了：往本地塞一份旧会话（rev 3 带 redOffset）后，
+    // 出厂值版本不符 → 整份丢弃 → 位移量仍是纯净的 distortionScale。
+    // 这条同时守着「删掉一个参数之后，旧本地会话不会把界面拖进半旧半新的状态」。
     await evalJS(`(() => {
-      const raw = localStorage.getItem('rein.glass.v1')
-      const o = raw ? JSON.parse(raw) : { rev: 3, values: {} }
-      o.values = { ...o.values, redOffset: 12, blueOffset: -12 }
-      localStorage.setItem('rein.glass.v1', JSON.stringify(o))
+      localStorage.setItem('rein.glass.v1', JSON.stringify({ rev: 3, values: { redOffset: 12, blueOffset: -12, distortionScale: 40 } }))
       return true
     })()`)
     await setTier('ultra')
     await cdp('Page.navigate', { url: `${APP}/#/settings/perf` })
     await sleep(2200)
     if (await evalJS(dismiss)) await sleep(400)
-    const spread = await evalJS(OPT_PROBE)
+    const stale = await evalJS(OPT_PROBE)
+    // 参数行只在面板拉开时才在 DOM 里，所以要**真的把面板拉开**再看 ——
+    // 面板关着读到 0 行，`!rows.includes('redOffset')` 会平凡成立（假通过）
+    await evalJS(`document.querySelector('.tuner').click()`)
+    await sleep(700)
+    const staleRows = await evalJS(`[...document.querySelectorAll('.prow .pkey')].map((e) => e.textContent.trim())`)
     ok(
-      '通道偏移拉开后超高档退回完整链（恒等只在 offset 相等时成立）',
-      spread.prims === 10 && spread.kinds.feBlend === 2 && spread.kinds.feDisplacementMap === 3,
-      `redOffset=12 blueOffset=-12 → 原语=${spread.prims} ${JSON.stringify(spread.kinds)}`,
+      '旧版调参会话（rev 3，带通道偏移）整份丢弃，回到新出厂值',
+      stale.prims === 3 &&
+        stale.scale === '-180' &&
+        staleRows.length === 9 &&
+        !staleRows.includes('redOffset'),
+      `原语=${stale.prims} scale=${stale.scale} 参数行=${staleRows.length} 个：${staleRows.join(' ')}`,
     )
-    // 三个通道的位移量 = distortionScale + 各自的 offset → -180+12 / -180+0 / -180-12
-    const spreadScales = await evalJS(
-      `[...${FIRST_FILTER}.querySelectorAll('feDisplacementMap')].map((e) => e.getAttribute('scale')).join(',')`,
-    )
-    ok('退回完整链时三个通道各有自己的位移量（色散还在）', spreadScales === '-168,-180,-192', `scale=${spreadScales}`)
+    await evalJS(`document.querySelector('.panel .close').click()`)
+    await sleep(500)
     await evalJS(`localStorage.removeItem('rein.glass.v1')`)
 
     // ---------- 7 动效档位（system/motion）：关闭 / 默认 / 丰富 ----------

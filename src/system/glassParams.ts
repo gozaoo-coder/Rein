@@ -21,9 +21,6 @@ export type GlassParamKey =
   | 'opacity'
   | 'blur'
   | 'distortionScale'
-  | 'redOffset'
-  | 'greenOffset'
-  | 'blueOffset'
   | 'displace'
   | 'saturation'
   | 'backgroundOpacity'
@@ -40,9 +37,13 @@ export interface GlassParamSpec {
 
 /**
  * 参数清单（也是面板的渲染顺序）：按管线的数据流排 ——
- * 位移贴图（边缘厚度 / 中心亮度 / 贴图不透明度 / 贴图模糊 / 贴图分辨率）→ 三通道位移
- * （位移强度 / 三个通道偏移）→ 收尾（边缘柔化）→ 表面（背景饱和度 / 底色浓度）。
+ * 位移贴图（边缘厚度 / 中心亮度 / 贴图不透明度 / 贴图模糊 / 贴图分辨率）→ 位移
+ * （位移强度）→ 收尾（边缘柔化）→ 表面（背景饱和度 / 底色浓度）。
  * 区间刻意给宽（面板是给「调到合适为止」用的，不是给日常微调的）。
+ *
+ * 从前这里还有 redOffset / greenOffset / blueOffset 三项（三通道色散）。它们随完整链
+ * 一起删掉了：只有一次位移时，那份「加在 distortionScale 上的通道偏置」就是一个
+ * 换个名字的 distortionScale —— 参数面板上留三个不起作用的滑杆比删掉更糟。
  */
 export const GLASS_PARAM_SPECS: GlassParamSpec[] = [
   { key: 'borderWidth', cn: '边缘厚度', min: 0, max: 1, step: 0.02 },
@@ -57,9 +58,6 @@ export const GLASS_PARAM_SPECS: GlassParamSpec[] = [
   // 但「厚玻璃」那一路要把边缘整个扯开，区间因此开到 ±300 —— 数值可以点一下直接输入，
   // 滑杆在这里只是粗调。
   { key: 'distortionScale', cn: '折射位移强度', min: -300, max: 300, step: 1 },
-  { key: 'redOffset', cn: '红通道偏移', min: -60, max: 60, step: 1 },
-  { key: 'greenOffset', cn: '绿通道偏移', min: -60, max: 60, step: 1 },
-  { key: 'blueOffset', cn: '蓝通道偏移', min: -60, max: 60, step: 1 },
   { key: 'displace', cn: '边缘柔化', min: 0, max: 8, step: 0.1 },
   { key: 'saturation', cn: '背景饱和度', min: 0, max: 5, step: 0.1 },
   { key: 'backgroundOpacity', cn: '玻璃底色浓度', min: 0, max: 1, step: 0.02 },
@@ -79,9 +77,6 @@ export const GLASS_DEFAULTS: Record<GlassParamKey, number> = {
   blur: 11,
   mapScale: 1,
   distortionScale: -180,
-  redOffset: 0,
-  greenOffset: 0,
-  blueOffset: 0,
   displace: 2.0,
   saturation: 1.4,
   backgroundOpacity: 0.1,
@@ -90,13 +85,15 @@ export const GLASS_DEFAULTS: Record<GlassParamKey, number> = {
 const STORE_KEY = 'rein.glass.v1'
 
 /**
- * 出厂值版本：**改一次 GLASS_DEFAULTS 就 +1**。
+ * 出厂值版本：**改一次 GLASS_DEFAULTS / GLASS_PARAM_SPECS 就 +1**。
  *
  * 本地存的是「调参会话」——出厂值一换，上一次会话就不再是「从当前出厂值出发的微调」，
  * 留着只会让人对着旧的一组数调（面板显示的是本地值，不是新出厂值）。所以版本不符就
  * 整份丢弃、回到新的出厂值；面板里的「恢复默认」同样回到这里。
+ *
+ * rev 4：三个通道偏移随完整链删除（rev 3 的会话里有它们的值，读进来也没处用）。
  */
-const DEFAULTS_REV = 3
+const DEFAULTS_REV = 4
 
 function clamp(spec: GlassParamSpec, value: number): number {
   return Math.min(spec.max, Math.max(spec.min, value))

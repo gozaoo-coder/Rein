@@ -2,7 +2,22 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- 视口：整页的双指捏合缩放**在设计边界之外**，所以这里把它关掉。
+         三个地方同时声明，因为没有任何一处能单独覆盖所有内核：
+           · user-scalable=no / maximum-scale=1 —— 声明式的那一条，Android WebView 认；
+             iOS 10 之后 WKWebView 会出于无障碍理由忽略 user-scalable，故不能只靠它；
+           · base.css 的 `html { touch-action: pan-x pan-y }` —— 排掉 pinch-zoom 与
+             双击缩放，同时**不阻止元素自己实现的捏合**（跑步页地图是 touch-action:none
+             自己处理的），iOS 13.4+ 也认；
+           · Android 原生侧 MainActivity：`settings.setSupportZoom(false)` —— 内核层面
+             关掉，是最后一道（webview 的缩放控件、双击缩放都归它管）。
+         目的不是"禁止一切缩放"，而是让这套按 430×932 标定的绝对像素布局不被整体放大：
+         捏合放大不会触发重排，只会把已画好的东西连同固定定位的 Dock / 悬浮条一起
+         撑出错位，玻璃的位移贴图也停在标定尺寸上。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="color-scheme" content="light dark" />
     <title>Rein</title>
   </head>

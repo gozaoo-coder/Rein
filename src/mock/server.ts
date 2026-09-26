@@ -7627,12 +7627,17 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         platform: 'windows-x86_64',
         available: !none,
         latestVersion: version,
+        // 形状与线上一致：发布侧裁出的**这一版那一节**，行首是 `- ` 而不是 `·`，
+        // 说明是 Markdown（更新页与启动提示都走 MdText 渲染）。
+        // 这里保持与 scripts/release/notes.mjs 归一后的形态相同 ——
+        // 夹具与真实清单形状不一致时，界面上的渲染问题在 mock 里根本复现不出来。
         notes: none
           ? null
           : [
-              '· 更新链路支持多源（自建服务 + GitHub）与断点续传',
-              '· 安装包在下载与安装前各做一次 Ed25519 验签',
-              '· 新增 Rein 在线服务能力探测（模型网关为预留接口）',
+              `## v${version}`,
+              '- 更新链路支持多源（自建服务 + GitHub）与断点续传',
+              '- 安装包在下载与安装前各做一次 **Ed25519** 验签',
+              '- 新增 Rein 在线服务能力探测（模型网关为预留接口）',
             ].join('\n'),
         publishedAt: new Date(Date.now() - 3600_000).toISOString(),
         sizeBytes: 42 * 1024 * 1024,

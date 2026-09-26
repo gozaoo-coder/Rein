@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import { MUSCLE_DESCS, MUSCLE_LABELS, isMuscleKey } from '@/config/muscles'
@@ -14,17 +14,38 @@ import sideSvg from '@/assets/muscles/rein/side.svg?raw'
  *
  * 素材来自 BodyParts3D 的真实人体解剖网格（scripts/build-anatomy.mjs 生成）：
  * 正交投影 → 栅格化 → 等值线追踪，三个视图共用同一套解剖比例，因此等大对齐。
- * 每个分区是一个 <g data-m="肌群键">，按观察深度用画家算法层叠 —— 远的下、
+ * 每块肌肉是一个 <g data-m="肌群键">，按观察深度用画家算法层叠 —— 远的下、
  * 近的上，深层肌群同样被画出来，只是被浅层盖住。
  *
  * 分区属性：
  *   data-m      肌群键（与 src/config/muscles.ts 的 MUSCLE_KEYS 一一对应，含 13 个深层键）
  *   data-layer  1 = 浅层肌、2 = 深层肌（「深层」开关控制是否显示）
+ *   data-depth  观察深度（0 = 离观察者最远，9 = 最近）；文档顺序即按它升序排好
  *   data-kind   构建脚本写出的 class（"m"/"a"）；**高亮与否只看键**，
  *               键在 MUSCLE_KEYS 内就是肌群，不在就只是解剖底衬
  *
- * 深层键在文档顺序里画在浅层之下，激活后会再叠画一层（.overlay），
- * 否则会出现「标了大圆肌/菱形肌却看不见」。
+ * ---------- 深度分层（2026-09-26）----------
+ * 加这一层是因为「三档颜色」本身说不清**是哪一块肌肉**：正面视图里背阔肌被胸大肌、
+ * 腹直肌压住，二者又都是同一种绿，一眼看去只能读出"这里有块肌肉被激活了"，
+ * 读不出是哪块。于是按 data-depth 把每块分进三个层，并按「越靠观察者越实」给透明度：
+ *
+ *   外层（depth ≥ 6.0）alpha 1.00  |  中层（3.2 ~ 6.0）alpha 0.78  |  后层（< 3.2）alpha 0.56
+ *
+ * 三个层**各自**乘以激活档位的颜色，所以「外层稳定」也依然比「后层主攻」实 —— 读的人
+ * 先看到的是"远近"这一维，再看颜色读出强度。阈值不是随手取的：0~9 这个深度标尺上，
+ * 3.2 / 6.0 恰好把正视图切成「后背那一片（斜方下 / 菱形 / 背阔 / 竖脊 / 臀 / 腘绳）」
+ * 与「前面那一片（胸上下 / 腹直 / 腹斜 / 股四头）」，背视图同样切得干净 —— 而背面视图
+ * 的层序是**反的**（可见的背肌在外层），这正对：判据是"离观察者多近"，不是"在人体的哪一面"。
+ *
+ * 极**致**档另给被表层覆盖的肌肉加景深模糊（中层 1px、后层 2px）：透明度之外再加一条
+ * 「被盖住的本来就不在焦平面上」的线索。单位是**设备像素**，而 SVG 里的模糊按用户坐标算
+ * （台架实测：viewBox 660 渲染到 84px 宽时 blur(16px) 只铺开约 10 个屏幕像素），
+ * 所以这里由 JS 量出「1 设备像素 = 多少用户单位」写成 --mmap-u，CSS 再乘上去 ——
+ * 换个尺寸渲染时模糊量不会跟着缩放失真。
+ *
+ * 三个层是**按 band 分组的 <g>**，不是给每块单独加样式：分组之后模糊一次只跑 3 遍
+ * （而不是每块肌肉一遍），而且因为生成的 SVG 本来就是按 depth 升序写的文档顺序，
+ * 分组不会改变任何一块的层叠次序（同组内保持原顺序，组间按 band 顺序）。
  *
  * 着色走 CSS 继承：3 主攻 = --c-exercise，2 辅助 = --heat-mid，
  * 1 稳定 = --c-exercise-soft；未激活走中性赭红，深层解剖走冷灰。
@@ -83,6 +104,39 @@ const VIEWS: { label: string; view: View }[] = [
 /** 深层开关：关掉只留浅层肌（被激活的深层肌仍会显示，否则点了没反应） */
 const showDeep = ref(false)
 
+/* ---------- 深度分层：把每块肌肉按 data-depth 分进 外层 / 中层 / 后层 ---------- */
+
+/** 分层阈值（深度标尺 0~9，数值的来源与解剖依据见文件头）。改了要同步 e2e 的断言 */
+const BAND_MID_FROM = 3.2
+const BAND_NEAR_FROM = 6.0
+
+/** 0 = 后层（离观察者最远）、1 = 中层、2 = 外层；索引即绘制顺序，也是 CSS 类名后缀 */
+function bandOf(depth: number): 0 | 1 | 2 {
+  if (depth >= BAND_NEAR_FROM) return 2
+  return depth >= BAND_MID_FROM ? 1 : 0
+}
+
+interface Band {
+  band: 0 | 1 | 2
+  regions: Region[]
+}
+
+/**
+ * 把一个视图的分区按 band 分组。生成脚本写出的文档顺序本来就是按 data-depth 升序，
+ * 所以「按 band 归组」不会改变任何一块的层叠次序 —— 组内保持原顺序、组间按 band 升序，
+ * 连起来与原来的文档顺序等价。这也是能把模糊挂在组上的前提。
+ */
+function bandsOf(regions: Region[]): Band[] {
+  const out: Band[] = []
+  for (const r of regions) {
+    const band = bandOf(r.depth)
+    const last = out[out.length - 1]
+    if (last && last.band === band) last.regions.push(r)
+    else out.push({ band, regions: [r] })
+  }
+  return out
+}
+
 /** 可高亮分区：键在 MUSCLE_KEYS 内即算肌群（不依赖 SVG 里的 class） */
 function isMuscle(r: Region): boolean {
   return isMuscleKey(r.key)
@@ -101,9 +155,10 @@ function isVisible(r: Region): boolean {
 /**
  * 深层分区在文档顺序里画在浅层之下，会被浅层盖住而「标了看不见」。
  * 已激活的深层分区在全部浅层之后再叠画一遍（半透明），保证可见。
+ * 叠画那一遍同样按 band 分组 —— 否则它又会变回「每块肌肉一遍滤镜」。
  */
-function overlayRegions(view: View): Region[] {
-  return view.regions.filter((r) => r.layer > 1 && isActive(r))
+function overlayBands(view: View): Band[] {
+  return bandsOf(view.regions.filter((r) => r.layer > 1 && isActive(r)))
 }
 
 function lv(key: MuscleKey): string {
@@ -162,10 +217,46 @@ function onMapTap(): void {
 function toggleDeep(): void {
   showDeep.value = !showDeep.value
 }
+
+/* ---------- 景深模糊的换算：1 设备像素 = 多少 SVG 用户单位 ---------- */
+
+/**
+ * SVG 里的 CSS `filter: blur(Npx)` 按**用户坐标**算，不是设备像素 —— 台架实测：
+ * viewBox 660 渲染到 84px 宽（缩放 0.127）时，blur(16px) 在屏幕上只铺开约 10 个像素，
+ * 而不是 16 个。所以「1px 模糊」不能直接写 blur(1px)（那样只有 0.13 个屏幕像素，
+ * 等于没加），得先量出缩放比再换算。
+ *
+ * 量出来的是**用户单位/设备像素**（= viewBox 宽 / 实测渲染宽），写进 --mmap-u，
+ * CSS 再乘上想要的设备像素数。量在**根元素**上，三个视图共用一份 —— 它们本来就等大。
+ * 尺寸变了要重量（.figwrap 的宽度是响应式的）。
+ */
+const root = ref<HTMLElement | null>(null)
+let scaleObserver: ResizeObserver | null = null
+
+function syncUnit(): void {
+  const host = root.value
+  const svg = host?.querySelector<SVGSVGElement>('.figwrap svg')
+  if (!host || !svg) return
+  const viewBoxWidth = svg.viewBox.baseVal.width || 660
+  const rendered = svg.getBoundingClientRect().width
+  if (rendered <= 0) return
+  host.style.setProperty('--mmap-u', String(viewBoxWidth / rendered))
+}
+
+onMounted(() => {
+  syncUnit()
+  scaleObserver = new ResizeObserver(() => syncUnit())
+  if (root.value) scaleObserver.observe(root.value)
+})
+
+onUnmounted(() => {
+  scaleObserver?.disconnect()
+})
 </script>
 
 <template>
   <div
+    ref="root"
     class="mmap col"
     :class="{ interactive }"
     :role="interactive ? 'button' : undefined"
@@ -180,27 +271,44 @@ function toggleDeep(): void {
         <div class="figwrap">
           <svg :viewBox="item.view.viewBox" role="img" :aria-label="`肌群激活 · ${item.label}视图`">
             <g class="layer base" aria-hidden="true" v-html="item.view.base" />
-            <template v-for="r in item.view.regions" :key="`${item.label}-${r.key}`">
-              <g
-                v-show="isVisible(r)"
-                class="layer"
-                :class="isMuscle(r) ? ['muscle', cls(r.key as MuscleKey)] : 'anat'"
-                :data-m="r.key"
-                :data-layer="r.layer"
-              >
-                <title v-if="isMuscle(r)">{{ title(r.key as MuscleKey) }}</title>
-                <g v-html="r.markup" />
-              </g>
-            </template>
-            <!-- 深层已激活分区：叠画在浅层之上，否则被盖住看不见 -->
+            <!-- 按深度分层：三个 band 各是一个组，越靠观察者的越实（后层最淡）。
+                 分组同时是模糊的单位 —— 极致档每个组只跑一遍滤镜，不是每块肌肉一遍 -->
             <g
-              v-for="r in overlayRegions(item.view)"
-              :key="`${item.label}-overlay-${r.key}`"
-              class="layer muscle overlay"
-              :class="cls(r.key as MuscleKey)"
-              aria-hidden="true"
-              v-html="r.markup"
-            />
+              v-for="b in bandsOf(item.view.regions)"
+              :key="`${item.label}-band-${b.band}`"
+              class="band"
+              :class="`band-${b.band}`"
+            >
+              <template v-for="r in b.regions" :key="`${item.label}-${r.key}`">
+                <g
+                  v-show="isVisible(r)"
+                  class="layer"
+                  :class="isMuscle(r) ? ['muscle', cls(r.key as MuscleKey)] : 'anat'"
+                  :data-m="r.key"
+                  :data-layer="r.layer"
+                  :data-depth="r.depth"
+                >
+                  <title v-if="isMuscle(r)">{{ title(r.key as MuscleKey) }}</title>
+                  <g v-html="r.markup" />
+                </g>
+              </template>
+            </g>
+            <!-- 深层已激活分区：叠画在浅层之上，否则被盖住看不见（同样按 band 分组） -->
+            <g
+              v-for="b in overlayBands(item.view)"
+              :key="`${item.label}-ov-band-${b.band}`"
+              class="band"
+              :class="`band-${b.band}`"
+            >
+              <g
+                v-for="r in b.regions"
+                :key="`${item.label}-overlay-${r.key}`"
+                class="layer muscle overlay"
+                :class="cls(r.key as MuscleKey)"
+                aria-hidden="true"
+                v-html="r.markup"
+              />
+            </g>
           </svg>
         </div>
         <figcaption>{{ item.label }}</figcaption>
@@ -221,6 +329,9 @@ function toggleDeep(): void {
         {{ showDeep ? '含深层' : '仅浅层' }}
       </button>
     </div>
+    <!-- 深度图例：不加这一行的话，"同一个绿色是胸还是背"只能靠猜 —— 分层的全部意义
+         就是让人一眼分清，那它自己得先说得清 -->
+    <p class="layernote t-3">越靠观察者越实：外层 &gt; 中层 &gt; 后层（正面视图里的背阔肌属后层）</p>
     <p v-if="interactive" class="taphint">点击查看全部激活肌群</p>
 
     <!-- 激活肌群抽屉：全部参与肌群按档位排序 -->
@@ -267,6 +378,38 @@ figure {
   width: 100%;
   height: auto;
   display: block;
+}
+
+/* ---------- 深度分层：越靠观察者越实 ----------
+   三个 band 的透明度**各自**叠在激活档位的颜色上（fill 在 .layer.l1/2/3 上，与这里正交）：
+   于是「外层稳定」也比「后层主攻」实 —— 先读出远近，再读颜色读强度。
+   数值刻意拉开到一眼能分（1 / 0.78 / 0.56）：差 0.05 那种量级在读图时是读不出来的，
+   而这套分层的唯一目的就是"一眼分清是哪一块"。 */
+.band {
+  opacity: var(--band-alpha, 1);
+}
+
+.band-0 {
+  --band-alpha: 0.56;
+}
+
+.band-1 {
+  --band-alpha: 0.78;
+}
+
+.band-2 {
+  --band-alpha: 1;
+}
+
+/* 极致档：被表层覆盖的肌肉再加一条景深线索（中层 1px、后层 2px 的设备像素模糊）。
+   单位换算见脚本里的 --mmap-u —— SVG 内的模糊按用户坐标算，直接写 1px 等于没加。
+   只在极致档给：这是"更贵但更像真玻璃"的那一档该付的钱，其余档靠透明度梯度就够了。 */
+html[data-perf='extreme'] .band-1 {
+  filter: blur(calc(1 * var(--mmap-u, 7.86) * 1px));
+}
+
+html[data-perf='extreme'] .band-0 {
+  filter: blur(calc(2 * var(--mmap-u, 7.86) * 1px));
 }
 
 /* 命中只发生在「画了的肌群 path」上（空白处穿透到下层/卡片） */
@@ -347,7 +490,10 @@ figure {
   fill: var(--c-exercise);
 }
 
-/* 深层已激活分区：在浅层之上半透明重描一遍，保证「标了就看得见」 */
+/* 深层已激活分区：在浅层之上半透明重描一遍，保证「标了就看得见」。
+   它自己也落在某个 band 组里，所以这个 0.72 会与组的透明度**相乘**（后层叠画 = 0.40）——
+   这是有意的：把它抬到浅层之上是为了"看得见"，而它仍然该读作"在后头"。
+   两者要的是一件事的两面：可见 ≠ 与表层同样靠前。 */
 .layer.overlay {
   opacity: 0.72;
 }
@@ -403,6 +549,12 @@ figcaption {
 .depthbtn[aria-pressed='true'] {
   color: var(--text-1);
   background: var(--surface-2);
+}
+
+.layernote {
+  margin-top: -4px;
+  font-size: var(--fs-micro);
+  text-align: center;
 }
 
 .taphint {

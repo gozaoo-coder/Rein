@@ -7,6 +7,9 @@
  *        · #/ai/models  首个模型卡片：名称→provider·modelId = 3、→价格 = 4、→能力徽章 = 10
  *        · #/settings/update  更新设置各行之间 = 0（行高自带内边距）
  *        · #/ai        输入栏底 == 底栏顶（0 间隙）
+ *   4 操作边界：整页的双指捏合 / 双击缩放必须无效（见下面 ZOOM_GUARD 的长注释）——
+ *     这套界面的尺寸全按 430×932 标定成绝对像素，整体放大不会重排，只会把固定定位的
+ *     Dock / 悬浮条撑出错位，是"超出设计允许"的那一类操作。
  *
  * 运行：node scripts/e2e-layout-guard.mjs   （先 `npm run dev`，或设 REIN_E2E_URL 指向已构建产物）
  * 退出码非 0 表示有断言失败。
@@ -137,6 +140,32 @@ const SPACING = `(() => {
   return out
 })()`
 
+/**
+ * 操作边界 · 整页缩放必须无效。
+ *
+ * 为什么它算「显示异常」而不是"无障碍偏好"：这套界面的尺寸全部是按 430×932 的视口
+ * 标定成绝对像素的（触区 44、Dock 58、页头钮 38）。捏合放大**不会触发重排**，
+ * 只是把已经画好的东西整体放大 —— 于是固定定位的 Dock / 悬浮条与内容错位、
+ * 玻璃的位移贴图停在标定尺寸上（放大后边缘那道折射带跟着被拉粗）。
+ * 也就是说它不是"把界面变大"，是"把界面画错"，所以归到这里守。
+ *
+ * 三道闸（index.html 的 viewport / base.css 的 touch-action / Android 的
+ * Settings.setSupportZoom(false)）在浏览器里只能验到前两道；这里量的是**行为**：
+ * 捏合与双击之后 visualViewport 的 scale 与页面布局宽度都不许变。
+ * 量行为比查声明强 —— 声明写对了但不生效（`user-scalable=no` 在 iOS 上就是这样）
+ * 是这类问题的常态。
+ */
+const ZOOM_GUARD = `(() => {
+  const vv = window.visualViewport
+  return {
+    scale: vv ? Number(vv.scale.toFixed(3)) : 1,
+    width: Math.round(document.documentElement.clientWidth),
+    overflow: document.documentElement.scrollWidth,
+    touchAction: getComputedStyle(document.documentElement).touchAction,
+    viewportMeta: document.querySelector('meta[name="viewport"]')?.content ?? '',
+  }
+})()`
+
 const port = await freePort()
 const edge = spawn(EDGE, ['--headless=new', `--remote-debugging-port=${port}`, '--no-first-run', `--user-data-dir=${USER_DATA}`, `--window-size=${W},${H}`, 'about:blank'], { stdio: 'ignore' })
 const failures = []
@@ -191,6 +220,53 @@ try {
       console.log(`✓ ${hash} ${spacingNote}`)
     }
   }
+
+  // ---------- 4 操作边界：双指捏合 / 双击都不许把整页放大 ----------
+  await evalJS(`location.hash = '#/nutrition'`)
+  await sleep(1200)
+  const before = await evalJS(ZOOM_GUARD)
+  const cx = Math.round(W / 2)
+  const cy = Math.round(H / 2)
+  // 真的发手势（不是查声明）：捏合放大 1.6 倍、再双击一次
+  await cdp('Input.synthesizePinchGesture', { x: cx, y: cy, scaleFactor: 1.6, relativeSpeed: 800, gestureSourceType: 'touch' })
+  await sleep(700)
+  const afterPinch = await evalJS(ZOOM_GUARD)
+  await cdp('Input.synthesizeTapGesture', { x: cx, y: cy, tapCount: 2, duration: 60, gestureSourceType: 'touch' })
+  await sleep(700)
+  const afterTap = await evalJS(ZOOM_GUARD)
+
+  const zoomChecks = [
+    ['捏合后 scale 仍为 1', afterPinch.scale === 1, `scale=${afterPinch.scale}`],
+    ['双击后 scale 仍为 1', afterTap.scale === 1, `scale=${afterTap.scale}`],
+    [
+      '捏合 / 双击都没有改变布局宽度',
+      afterPinch.width === before.width && afterTap.width === before.width,
+      `${before.width} → ${afterPinch.width} → ${afterTap.width}`,
+    ],
+    [
+      '捏合 / 双击都没有撑出横向溢出',
+      afterPinch.overflow <= afterPinch.width + 1 && afterTap.overflow <= afterTap.width + 1,
+      `overflow ${before.overflow} → ${afterPinch.overflow} → ${afterTap.overflow}`,
+    ],
+    [
+      '声明齐备：viewport 带 user-scalable=no + maximum-scale=1',
+      /user-scalable=no/.test(before.viewportMeta) && /maximum-scale=1/.test(before.viewportMeta),
+      before.viewportMeta,
+    ],
+    [
+      '声明齐备：html 的 touch-action 排掉了 pinch-zoom',
+      /pan-x\s+pan-y/.test(before.touchAction) && !/pinch-zoom/.test(before.touchAction),
+      `touch-action=${before.touchAction}`,
+    ],
+  ]
+  const zoomBad = zoomChecks.filter(([, pass]) => !pass)
+  if (zoomBad.length) {
+    failures.push({ hash: '操作边界 · 整页缩放', bad: zoomBad.map(([name, , detail]) => `${name}：${detail}`) })
+    console.log('✗ 操作边界 · 整页缩放')
+    for (const [, , detail] of zoomBad) console.log(`    ${detail}`)
+  } else {
+    console.log('✓ 操作边界 · 整页缩放（捏合 / 双击都无效，声明齐备）')
+  }
 } finally {
   edge.kill()
 }
@@ -200,4 +276,6 @@ if (failures.length) {
   console.log(`布局守卫失败：${failures.length} 个页面有问题（视口 ${VIEW.w}×${VIEW.h}）`)
   process.exit(1)
 }
-console.log(`布局守卫通过：${ROUTES.length} 个路由，视口 ${VIEW.w}×${VIEW.h}`)
+console.log(
+  `布局守卫通过：${ROUTES.length} 个路由 + 操作边界（整页缩放已关），视口 ${VIEW.w}×${VIEW.h}`,
+)
