@@ -4,8 +4,10 @@ import { useRouter } from 'vue-router'
 import { Expand } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import GlassFilter from '@/components/common/GlassFilter.vue'
 import { workoutRuntime } from '@/system/workoutRuntime'
 import { immersiveClosing, immersiveOpen, immersiveReturning, openImmersive, setImmersiveOriginProvider } from '@/system/sessionImmersive'
+import { liquidGlass } from '@/system/perf'
 import { useDragDock } from '@/composables/useDragDock'
 import { useToast } from '@/composables/useToast'
 
@@ -37,6 +39,28 @@ const rootEl = ref<HTMLElement | null>(null)
 /* ---------- 拖拽停靠 ---------- */
 const posEl = ref<HTMLElement | null>(null)
 const { slot, form, pressing, dragging, onPointerDown, expandFromBlob } = useDragDock(posEl)
+
+/* ---------- 材质：超高档起换**真折射**（与 Dock / 页头圆钮同一条管线）----------
+ * `.glass-surface` 那份是「模糊 + 令牌」的毛玻璃：档位升级只换令牌，超高下它仍然只是
+ * 一层糊，拿不到折射。而这一条是**悬浮件**（浮在页面内容之上、底下真的有东西会动），
+ * 正是苹果那条「折射给控制层的离散件」的适用对象。
+ *
+ * 做法与 GlassSurface 的折射分支一致：把元素自己的 `backdrop-filter` 从 blur() 换成
+ * `url(#filters)`，底 / 受光边 / 光学层继续由 `.glass-surface` 那套令牌给（同一块材质，
+ * 只换"怎么采样背后"这一步）。滤镜定义来自 common/GlassFilter.vue，量尺默认是父元素 ——
+ * 也就是本条浮条的 .dock-body 自己，条形态与 64px 方块形态的尺寸变化由它自己重烘贴图。
+ *
+ * 三条边界：① 只在 liquidGlass（超高 / 极致 + 内核画得出来）时才挂，其余档位走原来的
+ * 毛玻璃；② 减弱透明度时由 base.css 的媒体查询带 !important 压掉（内联样式它压不过）；
+ * ③ 拖拽的 transform 不碍事 —— 实测 Chromium 下元素自身与祖先的 transform /
+ * will-change 都不影响背景采样，只有 opacity<1 的祖先会（进入动画那 400ms 内就是这种
+ * 情况：与从前挂 blur 时同一段退化，动画结束即恢复）。 */
+const glassFilterId = `glass-filter-${Math.random().toString(36).slice(2, 10)}`
+const glassStyle = computed<Record<string, string> | undefined>(() => {
+  if (!liquidGlass.value) return undefined
+  const filter = `url(#${glassFilterId}) saturate(var(--glass-sat))`
+  return { backdropFilter: filter, WebkitBackdropFilter: filter }
+})
 
 // 注册形变锚点供给：沉浸层展开快照 / 收起实时量取都从 body 取
 // （getter 形式——收起时浮窗已恢复显示且可能刚被重新停靠，须现取现量）。
@@ -153,10 +177,14 @@ async function onEndPick(value: string): Promise<void> {
         <div
           class="dock-body glass-surface"
           :class="[form === 'blob' ? 'is-blob' : 'is-bar', { pressing, dragging }]"
+          :style="glassStyle"
           role="region"
           aria-label="进行中的运动"
           @pointerdown="onPointerDown"
         >
+          <!-- 折射滤镜定义（不参与绘制，绝对定位）：只在超高档挂，量尺是这个 .dock-body -->
+          <GlassFilter :id="glassFilterId" :enabled="liquidGlass" />
+
           <!-- 全宽条形态 -->
           <div class="layer layer-bar" :class="{ off: form !== 'bar' }">
             <button class="info row" type="button" @click="goImmersive">

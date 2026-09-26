@@ -2,8 +2,10 @@
 import { computed, ref } from 'vue'
 import { ChevronUp, Square } from 'lucide-vue-next'
 
+import GlassFilter from '@/components/common/GlassFilter.vue'
 import TimeSpine from './TimeSpine.vue'
 import { finishSpeaking, restore, voice } from '@/system/voiceRuntime'
+import { liquidGlass } from '@/system/perf'
 import { useDragDock } from '@/composables/useDragDock'
 
 /**
@@ -14,6 +16,17 @@ import { useDragDock } from '@/composables/useDragDock'
 const posEl = ref<HTMLElement | null>(null)
 const { slot, form, pressing, dragging, onPointerDown, expandFromBlob } = useDragDock(posEl, {
   storageKey: 'rein.vbar.dock.v1',
+})
+
+/* 材质：超高 / 极致档换**真折射**，与悬浮运动条同一套做法（为什么这么做、以及三条边界
+   见 ActiveWorkoutBar.vue 的那段注释）：把元素自己的 backdrop-filter 从 blur() 换成
+   `url(#…)`，底 / 受光边 / 光学层继续由 `.glass-surface` 那套令牌给。滤镜定义在
+   common/GlassFilter.vue，量尺默认是父元素（这条浮条的 .dock-body 自己）。 */
+const glassFilterId = `glass-filter-${Math.random().toString(36).slice(2, 10)}`
+const glassStyle = computed<Record<string, string> | undefined>(() => {
+  if (!liquidGlass.value) return undefined
+  const filter = `url(#${glassFilterId}) saturate(var(--glass-sat))`
+  return { backdropFilter: filter, WebkitBackdropFilter: filter }
 })
 
 function fmtMs(ms: number): string {
@@ -43,10 +56,14 @@ const dockSegs = computed(() =>
         <div
           class="dock-body glass-surface"
           :class="[form === 'blob' ? 'is-blob' : 'is-bar', { pressing, dragging }]"
+          :style="glassStyle"
           role="region"
           aria-label="正在转写"
           @pointerdown="onPointerDown"
         >
+          <!-- 折射滤镜定义（不参与绘制，绝对定位）：只在超高档挂，量尺是这个 .dock-body -->
+          <GlassFilter :id="glassFilterId" :enabled="liquidGlass" />
+
           <div class="layer layer-bar" :class="{ off: form !== 'bar' }">
             <button class="info" type="button" @click="restore">
               <span class="dot" />

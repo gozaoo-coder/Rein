@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { CheckCircle2, ChevronRight, Loader2, TriangleAlert, Zap } from 'lucide-vue-next'
 
 import { notifyGrabResult } from '@/services/notifyService'
+import GlassFilter from '@/components/common/GlassFilter.vue'
+import { liquidGlass } from '@/system/perf'
 import { grabStatusMeta, useCourseSelectStore } from '@/stores/courseSelect'
 
 /**
@@ -24,6 +26,18 @@ import { grabStatusMeta, useCourseSelectStore } from '@/stores/courseSelect'
 const store = useCourseSelectStore()
 const route = useRoute()
 const router = useRouter()
+
+/* 材质：超高 / 极致档换**真折射**，与悬浮运动条同一套做法（为什么这么做、以及三条边界
+   见 ActiveWorkoutBar.vue 的那段注释）：把元素自己的 backdrop-filter 从 blur() 换成
+   `url(#…)`，底 / 受光边 / 光学层继续由 `.glass-surface` 那套令牌给。滤镜定义在
+   common/GlassFilter.vue，量尺默认是父元素（这条 HUD 自己）。
+   与那三条浮条不同的是：这条是**顶部胶囊**、不参与拖拽，只有进出场的位移。 */
+const glassFilterId = `glass-filter-${Math.random().toString(36).slice(2, 10)}`
+const glassStyle = computed<Record<string, string> | undefined>(() => {
+  if (!liquidGlass.value) return undefined
+  const filter = `url(#${glassFilterId}) saturate(var(--glass-sat))`
+  return { backdropFilter: filter, WebkitBackdropFilter: filter }
+})
 
 const now = ref(Date.now())
 let tick: ReturnType<typeof setInterval> | null = null
@@ -291,7 +305,9 @@ const spoken = computed(() => {
          注意 aria-hidden 只挂在**会每秒变的文字**上，不能挂在整块上 ——
          那样会把「去看」这颗唯一的可操作元素一起从读屏里抹掉。
          真正给读屏的是下面那条只在跨档时才改写的 .sr 播报。 -->
-    <div v-if="show" class="hud glass-surface" :class="tone">
+    <div v-if="show" class="hud glass-surface" :class="tone" :style="glassStyle">
+      <!-- 折射滤镜定义（不参与绘制，绝对定位）：只在超高档挂，量尺是上面这条 .hud -->
+      <GlassFilter :id="glassFilterId" :enabled="liquidGlass" />
       <span class="dot" :class="{ pulse: tone === 'run' }" aria-hidden="true" />
       <Zap v-if="tone === 'run'" :size="14" class="ico" />
       <CheckCircle2 v-else-if="tone === 'ok'" :size="14" class="ico" />

@@ -3,10 +3,11 @@ import { ref } from 'vue'
 import { ChevronLeft } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
+import GlassFilter from '@/components/common/GlassFilter.vue'
 import ProgressiveBlur from '@/components/common/ProgressiveBlur.vue'
 import { usePressGlow } from '@/composables/usePressGlow'
 import { useScrolled, useScrollCollapsed } from '@/composables/useScrolled'
-import { perfDegraded } from '@/system/perf'
+import { liquidGlass, perfDegraded } from '@/system/perf'
 
 /** iOS 大标题页头；back = 二级页返回键（有来路则返回，直链进入回首页）。
  *  compact = 导航条模式（对话/工具页）：单行小标题、按钮居中，把纵向空间留给内容。
@@ -52,6 +53,18 @@ function goBack(): void {
 
 <template>
   <header ref="root" class="page-header" :class="{ compact, scrolled, collapsed, lite: perfDegraded }">
+    <!-- 页头圆钮的折射滤镜定义（与 Dock / 悬浮条同一份管线，规格固定 38×38 所以按静态
+         尺寸烘一次；.back 与各页的 .hdr-btn 共用这一张贴图）。只在折射可用时挂：
+         高画质 / 流畅档下这几颗圆钮是实底，不需要任何滤镜 -->
+    <GlassFilter
+      v-if="liquidGlass"
+      id="glass-filter-header"
+      :w="38"
+      :h="38"
+      :radius="19"
+      :enabled="true"
+    />
+
     <!-- 遮罩：只在页面滚起来后显形（顶部没有内容经过时不该出现任何底色） -->
     <div class="ph-mask" aria-hidden="true">
       <!-- 超高 + 已滚起时的底色垫层（苹果的「硬边缘」变体）：模糊之下再压一层画布色的
@@ -241,33 +254,54 @@ html[data-motion='rich'] .page-header :slotted(.hdr-btn):active {
    一份 :slotted 改动覆盖全部页面的图标钮（各页只挂 hdr-btn 类，不各自写样式 ——
    见 docs/ARCHITECTURE.md 的页头按钮规范），这是"玻璃铺到全部组件"里性价比最高的一处。
 
-   为什么页头这两颗**不用 SVG 折射**：它们压在页头那层渐进模糊（ProgressiveBlur，
-   5 层 backdrop-filter）之上，再叠一次 `url()` 折射既糊又贵，而 38px 的圆上
-   折射带只有一两像素、根本看不出来。这里要的是"玻璃盘"的手感：薄底 + 上缘受光
-   + 内圈细描边 + 背景模糊 —— 普通 blur 在 38px 上比 url() 便宜一个量级。
+   **要的是真折射，不是又一层 backdrop-filter: blur**（2026-09-25 修）：这一档叫「液态玻璃」，
+   而只挂 blur 的那一版在超高下与高画质档读起来是同一层糊 —— 名字在，材质不在。
+   位移贴图与滤镜链来自 common/GlassFilter.vue，与底部 Dock / 沉浸层控制层**同一份实现**
+   （38px 静态尺寸烘一张，同页几颗圆钮共用）。
+
+   曾经不这么做的理由是「38px 的圆上折射带只有一两像素、还要压着页头那层渐进模糊」——
+   实测下来这两条都不成立：折射带窄是**参数**问题（同样的 38px 在出厂参数下可见，
+   GlassFilter 按元素尺寸烘贴图，与小尺寸的既有标定一致），而它压在渐进模糊之上只意味着
+   「折射的是一层已经糊开的底」——那正是玻璃压在毛玻璃上的正常样子，不是画不出来。
 
    底薄了会不会读不清：圆钮坐落在页头正上方，背后是已经糊过一遍的内容；亮色主题下
-   页面本身是浅的，档位给出的半透明白 + 20px 模糊合成出来仍接近白。全屏暗场页面（跑步）不走
+   页面本身是浅的，档位给出的半透明白 + 折射合成出来仍接近白。全屏暗场页面（跑步）不走
    PageHeader，所以不存在"白底压暗图"的组合。 */
 html:is([data-perf='ultra'], [data-perf='extreme']) .page-header .back,
 html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-btn:not(.accent)) {
   background: var(--glass-fill);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+  /* 光学层与 GlassSurface 的 .glass 对齐（外缘层 / 内顶高光 / 上缘焦散都在）——
+     页头的玻璃盘与 Dock 的玻璃块在超高档下要是同一套材质，不能一处厚一处薄 */
   box-shadow:
     var(--glass-shadow),
+    var(--glass-halo),
     inset 0 1px 0 var(--glass-rim-hi),
     inset 0 -1px 0 var(--glass-rim-lo),
-    inset 0 0 0 1px var(--glass-rim-2);
+    inset 0 14px 22px -16px var(--glass-sheen),
+    inset 0 0 0 1px var(--glass-rim-2),
+    inset 0 1px 10px -2px var(--glass-caustic);
 }
 
-/* 系统要求「减弱透明度」时退回实底 —— 与 .glass-surface 的退化同一条语义 */
+/* 折射可用（内核认 url() 滤镜 + 用户选了这两档，即 data-glass 不是 off）时，
+   把上面那份模糊整条换成位移滤镜 —— 与 GlassSurface 的折射分支同一条做法：
+   折射生效时不再叠 blur（url() 与 blur 同挂会让位移算在一层糊过的底上，白花）。
+   写在 .glass-surface 的书写顺序之前/之后都行，这里紧随其后，读起来是一件事的两态。 */
+html:is([data-glass='collapsed'], [data-glass='full']) .page-header .back,
+html:is([data-glass='collapsed'], [data-glass='full']) .page-header :slotted(.hdr-btn:not(.accent)) {
+  backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
+}
+
+/* 系统要求「减弱透明度」时退回实底 —— 与 .glass-surface 的退化同一条语义
+   （排在上面两条之后、同权重，所以它赢：折射与模糊一起关掉） */
 @media (prefers-reduced-transparency: reduce) {
   html:is([data-perf='ultra'], [data-perf='extreme']) .page-header .back,
   html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-btn:not(.accent)) {
     background: var(--surface);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
     box-shadow: var(--shadow-card);
   }
 }
