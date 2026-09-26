@@ -351,6 +351,13 @@ html[data-perf='extreme'] {
   --glass-halo: 0 22px 56px -18px rgba(0, 0, 0, 0.3);
   --glass-panel-fill: rgba(255, 255, 255, 0.66);
   --surface-translucent: rgba(255, 255, 255, 0.52);
+  /* 极致档铺开的那些表面共用的光学内层（内顶高光 ×2 / 内圈细描边 / 上缘焦散）。
+     外投影**不在**这里：在流的内容面与浮层要的是两种落影（见下面两组选择器）。 */
+  --glass-insets:
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 12px 20px -14px var(--glass-sheen),
+    inset 0 0 0 1px var(--glass-rim-2),
+    inset 0 1px 10px -2px var(--glass-caustic);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -372,23 +379,31 @@ html[data-perf='extreme'] {
    **不改 border / padding**：切换档位时这些盒子的尺寸不能跳一下。
    卡片那条用 :where() 把选择器压回与基线 .card 同级（0,1,0）—— 凡是**自己定义了底**
    的卡片（周时间线的分类色、函数/证据面板的次级底）都在各自 scoped 样式里赢过这条，
-   档位升级不会把有语义的底色顶成统一玻璃。 */
-/* 材质（底 + 光学层）铺到全部六个表面：这一份是**身份的来源**，
-   有没有滤镜都是同一套玻璃。 */
+   档位升级不会把有语义的底色顶成统一玻璃。
+
+   分成两组、而且是**按落影分**的：材质是同一套（底 + 光学内层），落影按「这东西浮不浮」定。
+   上一版六个表面共用一条 box-shadow，于是**在流**的卡片也拿到了悬浮玻璃那份落影 ——
+   亮色下是 0.18 + 外缘层 0.3 的大范围暗影，暗色下更是 0.4/0.55 的黑加一圈白溢光，
+   一屏卡片看起来像被压出了一片黑边（用户实测：「改极致时页面的所有卡片 box-shadow
+   异常变深变黑」，2026-09-25 修）。 */
+
+/* ① 在流的内容面（卡片 / 快捷磁贴 / 参数入口）：材质 + 光学内层，**落影沿用卡片那一档**。
+   --glass-panel-shadow 与 --shadow-card 同值，但永远不会是 none（列表语法的要求，
+   见 tokens.css 的注释）—— 暗色下卡片本来就没有落影，这里也照旧没有。 */
 :where(html[data-perf='extreme']) .card,
-html[data-perf='extreme'] .panel,
-html[data-perf='extreme'] .sheet,
-html[data-perf='extreme'] .card-wrap,
 html[data-perf='extreme'] .qa,
 html[data-perf='extreme'] .tuner {
   background: var(--glass-panel-fill);
-  box-shadow:
-    var(--glass-shadow),
-    var(--glass-halo),
-    inset 0 1px 0 var(--glass-sheen),
-    inset 0 12px 20px -14px var(--glass-sheen),
-    inset 0 0 0 1px var(--glass-rim-2),
-    inset 0 1px 10px -2px var(--glass-caustic);
+  box-shadow: var(--glass-panel-shadow), var(--glass-insets);
+}
+
+/* ② 浮层（抽屉 / 菜单 / 操作面板）：浮在页面之上、底下有正文经过，落影用悬浮玻璃那一档
+   （内容压过来时把它们托起来）。 */
+html[data-perf='extreme'] .panel,
+html[data-perf='extreme'] .sheet,
+html[data-perf='extreme'] .card-wrap {
+  background: var(--glass-panel-fill);
+  box-shadow: var(--glass-shadow), var(--glass-halo), var(--glass-insets);
 }
 
 /* 滤镜只给**背后真的有内容**的那三个：抽屉 / 菜单 / 操作面板浮在页面之上，

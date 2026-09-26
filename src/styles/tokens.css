@@ -60,6 +60,13 @@
       所以单独给一档更实的底：透光看得见材质，正文仍稳稳落在可读区间。
       其余档位等于 --surface（不透明的内容层）。 */
   --glass-panel-fill: var(--surface);
+  /* 内容层玻璃的**落影**（在流表面：卡片 / 快捷磁贴 / 参数入口）。
+      它与 --shadow-card 同值 —— 在流表面的影子就该是卡片那一档，而不是悬浮玻璃那份
+      （--glass-shadow 亮色 0.18、暗色 0.4/0.55 的黑加白溢光，压在一屏卡片上会成一片黑边）。
+      之所以另立一个令牌而不是直接写 var(--shadow-card)：落影要和光学内层拼成一条
+      box-shadow **列表**，而列表里一旦出现 none 整条声明就失效（CSS 语法：none 只能单独出现），
+      暗色下 --shadow-card 恰好就是 none。所以这里在暗色档换成同义的空影子。 */
+  --glass-panel-shadow: var(--shadow-card);
 
   /* ---------- 控制层 · 按压定向光晕与液态 blob（丰富档专用） ----------
      specular 是跟随触点的那圈高光（苹果的「定向光晕」）：位置由
@@ -322,6 +329,9 @@
 
     --shadow-card: none;
     --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.6);
+    /* 与 --shadow-card 同义的「没有落影」，但它得能进 box-shadow 的多层列表
+       （none 出现在列表里会让整条声明失效）—— 理由见亮色档那份注释 */
+    --glass-panel-shadow: 0 0 0 rgba(0, 0, 0, 0);
 
     /* 暗色下提亮三环与宏量色，保持对比度 */
     --c-fat: #ffd60a;
