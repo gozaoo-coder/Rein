@@ -21,6 +21,10 @@
  *   8 「超高」vs「极致」：出厂偏移下**玻璃带逐像素一致**（塌缩链 3 个原语 vs
  *     完整链 10 个原语），两档各写自己的 data-perf / data-glass；极致另验
  *     卡片等内容层也铺上玻璃（--glass-panel-fill + 背景模糊）
+ *   9 运动沉浸页的分层契约（控制层折射 / 内容层实底 / 不许玻璃套玻璃）
+ *  10 悬浮件与页头：页头圆钮走**真折射**（几颗 38px 共用一份滤镜定义）、
+ *     悬浮条在收起沉浸层后同样折射（高画质档退回毛玻璃）、
+ *     极致档**在流卡片**的落影是内容层那一档而非悬浮玻璃那份（亮暗两色）
  *
  * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
  * 运行：node scripts/e2e-perf-glass.mjs
@@ -1284,6 +1288,307 @@ async function main() {
       `data-motion=${richOff.motion} --glass-scroll-edge=${richOff.scrollEdge}`,
     )
     await evalJS(`localStorage.removeItem('rein.motion.v1')`)
+
+    // ---------- 10 悬浮件的折射 + 极致档在流卡片的落影 ----------
+    //
+    // 三件事各有一条不变量：
+    //  ① **页头的圆钮走真折射**（不是只有 backdrop-filter: blur）。这一档叫「液态玻璃」，
+    //     只挂 blur 的那一版在超高下与高画质档读起来是同一层糊 —— 名字在、材质不在；
+    //  ② **四条悬浮条同样是折射件**（运动 / 录音 / 语音 / 抢课）：它们是控制层的悬浮件、
+    //     底下真的有内容经过，正是折射该去的地方。这里量的是**真的渲染着的那一条**
+    //     （开一次训练 → 收起沉浸层 → 浮条回到屏幕上），不是被隐藏壳挡住的状态；
+    //  ③ **极致档把材质铺到在流卡片时，落影必须是卡片那一档**：借悬浮玻璃那份重落影
+    //     （亮色 0.18 + 外缘层、暗色 0.4/0.55 的黑 + 白溢光）就是用户报的
+    //     「所有卡片 box-shadow 异常变深变黑」，所以这条按**计算样式的层序**钉死。
+    const HEADER_GLASS_PROBE = `(() => {
+      const read = (el) => {
+        const cs = getComputedStyle(el)
+        return {
+          cls: String(el.className),
+          filter: String(cs.backdropFilter || cs.webkitBackdropFilter || 'none'),
+          shadow: cs.boxShadow,
+          w: Math.round(el.getBoundingClientRect().width),
+          h: Math.round(el.getBoundingClientRect().height),
+        }
+      }
+      const defs = [...document.querySelectorAll('.page-header .gdefs')]
+      return {
+        tier: document.documentElement.dataset.perf,
+        glass: document.documentElement.dataset.glass,
+        // accent 变体是主操作 CTA，刻意留在实底（与 Dock 页签同一套「主操作不玻璃化」的约定），
+        // 所以这里只看玻璃化的那些
+        btns: [...document.querySelectorAll('.page-header .back, .page-header .hdr-btn:not(.accent)')].map(read),
+        accents: [...document.querySelectorAll('.page-header .hdr-btn.accent')].map(read),
+        defs: defs.map((d) => ({
+          display: getComputedStyle(d).display,
+          id: d.querySelector('filter')?.id ?? '',
+          mapBaked: !!d.querySelector('feImage')?.getAttribute('href'),
+          prims: d.querySelector('filter')?.children.length ?? 0,
+        })),
+        // 引用必须解析得到：写错 id 时 Chromium 是**静默忽略**整条的
+        // （表现是「这颗圆钮什么材质都没有」，而 DOM 里一切看着都对）
+        resolved: !!document.getElementById('glass-filter-header'),
+      }
+    })()`
+
+    await setTier('ultra')
+    // ① AI 页：两颗非 accent 的 .hdr-btn（走 :slotted(.hdr-btn) 那条路）
+    await cdp('Page.navigate', { url: `${APP}/#/ai` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
+    const headerUltra = await evalJS(HEADER_GLASS_PROBE)
+    await shot('header-glass-ultra')
+    ok(
+      '超高 · 页头图标钮（各页的 .hdr-btn）在折射（url(#…) 位移管线，不是只有 blur）',
+      headerUltra.btns.length >= 2 &&
+        // 计算值里 url() 是**带引号**回放的（url("#glass-filter-header")），
+        // 拿不带引号的字面量比会永远为假 —— 先去掉引号再比
+        headerUltra.btns.every((b) => b.filter.replace(/"/g, '').includes('url(#glass-filter-header)')) &&
+        headerUltra.btns.every((b) => b.w === 38 && b.h === 38),
+      `${headerUltra.btns.length} 颗 · ${headerUltra.btns.map((b) => `${b.cls.split(' ')[0]}=${b.filter}`).join(' | ')} · 尺寸 ${headerUltra.btns.map((b) => `${b.w}×${b.h}`).join(' ')}`,
+    )
+    ok(
+      '超高 · 页头的滤镜定义只有一份且贴图已烘（几颗 38px 圆钮共用，不是各烘一张）',
+      headerUltra.defs.length === 1 &&
+        headerUltra.defs[0].display !== 'none' &&
+        headerUltra.defs[0].mapBaked &&
+        headerUltra.defs[0].id === 'glass-filter-header' &&
+        headerUltra.resolved,
+      `定义 ${headerUltra.defs.length} 份 · ${JSON.stringify(headerUltra.defs[0])} · 引用可解析=${headerUltra.resolved}`,
+    )
+    ok(
+      '超高 · 页头圆钮的玻璃光学层都在（受光边 / 内圈描边 / 上缘焦散）',
+      headerUltra.btns.every((b) => b.shadow.includes('inset')),
+      `缺 inset 的：${headerUltra.btns.filter((b) => !b.shadow.includes('inset')).length} 颗`,
+    )
+    ok(
+      '超高 · accent 主操作钮不参与玻璃化（留在实底，与页签那条约定一致）',
+      headerUltra.accents.length === 0 || headerUltra.accents.every((b) => !b.filter.includes('url(')),
+      headerUltra.accents.map((b) => b.filter).join(' | ') || '本页没有 accent 钮',
+    )
+
+    // ② 二级页的返回键：同一个 id、同一份规则（返回键是 PageHeader 自己的，图标钮在插槽里 —— 两条路都要走通）
+    await cdp('Page.navigate', { url: `${APP}/#/ai/models` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
+    const headerBack = await evalJS(HEADER_GLASS_PROBE)
+    ok(
+      '超高 · 返回键与图标钮共用同一份折射定义（返回键也走 url() 管线）',
+      headerBack.btns.some((b) => b.cls.includes('back')) &&
+        headerBack.btns.every((b) => b.filter.replace(/"/g, '').includes('url(#glass-filter-header)')) &&
+        headerBack.defs.length === 1,
+      `${headerBack.btns.map((b) => `${b.cls.split(' ')[0]}=${b.filter}`).join(' | ')} · 定义 ${JSON.stringify(headerBack.defs)}`,
+    )
+
+    await setTier('high')
+    await cdp('Page.navigate', { url: `${APP}/#/ai` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
+    const headerHigh = await evalJS(HEADER_GLASS_PROBE)
+    ok(
+      '高画质 · 页头圆钮退回实底：不挂滤镜、也不留一层模糊',
+      headerHigh.btns.length >= 2 &&
+        headerHigh.defs.length === 0 &&
+        headerHigh.btns.every((b) => !b.filter.includes('url(') && !b.filter.includes('blur(')),
+      `${headerHigh.btns.length} 颗 · 定义 ${headerHigh.defs.length} 份 · ${headerHigh.btns.map((b) => b.filter).join(' | ')}`,
+    )
+
+    // 悬浮条：走产品里的真实入口开一次训练，再把沉浸层收起来 —— 这样量到的是**屏幕上真的
+    // 挂着的那条浮条**（沉浸层开着时它是 opacity:0 的隐藏态，量它等于量了个寂寞）
+    const FLOAT_BAR_PROBE = `(() => {
+      const el = document.querySelector('.wdock-root .dock-body')
+      if (!el) return null
+      const cs = getComputedStyle(el)
+      const defs = el.querySelector('.gdefs')
+      const r = el.getBoundingClientRect()
+      // 材质底是**两层 background-image**（padding-box 的 fill + border-box 的受光边），
+      // 颜色本身是透明的 —— 拿 backgroundColor 比会误判成「没有底」，见 base.css 的 .glass-surface
+      const probe = document.createElement('div')
+      probe.style.background = 'var(--glass-fill)'
+      document.body.appendChild(probe)
+      const fillToken = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return {
+        tier: document.documentElement.dataset.perf,
+        filter: String(cs.backdropFilter || cs.webkitBackdropFilter || 'none'),
+        gradLayers: cs.backgroundImage.split('linear-gradient').length - 1,
+        usesFillToken: cs.backgroundImage.includes(fillToken),
+        fillToken,
+        radius: cs.borderRadius,
+        // 「在屏幕上」= 有尺寸、不是隐藏态、而且**此刻它自己就是那个位置最上面的元素** ——
+        // 只判尺寸会被「被跑步页 / 沉浸层盖住」的状态骗过去（浮条还在 DOM 里、样式也全对）
+        onScreen: (() => {
+          if (!(r.width > 0 && r.height > 0) || cs.opacity === '0') return false
+          const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2))
+          return !!hit && el.contains(hit)
+        })(),
+        // 判定为「不在最上层」时把现场带出来：光看 false 没法知道是被谁盖住了
+        hitInfo: (() => {
+          const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2))
+          const chain = []
+          let n = hit
+          while (n && chain.length < 7) {
+            const s = getComputedStyle(n)
+            chain.push(
+              n.tagName + '.' + String(n.className).slice(0, 36) +
+                '|pe=' + s.pointerEvents + '|z=' + s.zIndex + '|op=' + s.opacity,
+            )
+            n = n.parentElement
+          }
+          return {
+            rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+            opacity: cs.opacity,
+            rootClass: String(document.querySelector('.wdock-root')?.className ?? ''),
+            hit: hit ? hit.tagName + '.' + String(hit.className).slice(0, 48) : 'none',
+            inSession: !!(hit && hit.closest('.session-layer')),
+            inRunPage: !!(hit && hit.closest('.run-page')),
+            chain,
+          }
+        })(),
+        defs: defs
+          ? {
+              display: getComputedStyle(defs).display,
+              mapBaked: !!defs.querySelector('feImage')?.getAttribute('href'),
+              prims: defs.querySelector('filter')?.children.length ?? 0,
+            }
+          : null,
+      }
+    })()`
+
+    await setTier('ultra')
+    // 先把上一节留下的会话收掉（跑步 / 训练课走同一条：浮条上的「结束」→ 二级确认里的「放弃」）。
+    // 不收的话下面点 .play 会被「已有进行中的运动」的接续流程带去跑步页 ——
+    // 那时浮条虽然还在 DOM 里、样式也全对，却是被盖住的状态，量它等于没量。
+    await evalJS(`(() => {
+      const bar = document.querySelector('.wdock-root')
+      const end = bar ? [...bar.querySelectorAll('button')].find((b) => /结束|放弃/.test(b.textContent.trim())) : null
+      if (!end) return 'no-session'
+      end.click()
+      return 'end-clicked'
+    })()`)
+    await sleep(900)
+    // 「放弃」优先于「结束」：结束会进总结页（跑步是路由级的 `.run-page`，z-index 80 盖住浮条），
+    // 那正是这一步要避免的状态
+    const discarded = await evalJS(`(() => {
+      const btns = [...document.querySelectorAll('.card-wrap button, .sheet button, .panel button')]
+      const c = btns.find((x) => /放弃/.test(x.textContent.trim())) ?? btns.find((x) => /结束|确认/.test(x.textContent.trim()))
+      if (c) { c.click(); return c.textContent.trim() }
+      return 'none'
+    })()`)
+    await sleep(1600)
+
+    await cdp('Page.navigate', { url: `${APP}/#/sports` })
+    await sleep(2600)
+    if (await evalJS(dismiss)) await sleep(400)
+    await evalJS(`(() => { const play = document.querySelector('.play'); if (play) play.click(); return !!play })()`)
+    await sleep(1200)
+    // 仍有残留会话时会先弹冲突确认，点「继续训练」才真正开起来
+    await evalJS(`(() => {
+      const b = [...document.querySelectorAll('.card-wrap button, .sheet button, .panel button')].find((x) => /继续|开始|接续/.test(x.textContent.trim()))
+      if (b) { b.click(); return true }
+      return false
+    })()`)
+    await sleep(2000)
+    const immersiveOpen = await evalJS(`!!document.querySelector('.session-layer')`)
+    // 收起沉浸层（顶栏第一颗玻璃块的「⌄ 收起」）：浮条重新回到屏幕上
+    const collapsed = await evalJS(`(() => {
+      const b = document.querySelector('.ctrl-top .sgbtn button')
+      if (!b) return false
+      b.click()
+      return true
+    })()`)
+    // 收起是**形变动画**（浮层缩回浮条），动画走完之前它仍盖在浮条上面 ——
+    // 固定等一个数会随设备快慢时好时坏，所以这里轮询到浮条真的成为那个点的最上层元素为止
+    const barOnTop = await (async () => {
+      for (let i = 0; i < 16; i++) {
+        const top = await evalJS(`(() => {
+          const el = document.querySelector('.wdock-root .dock-body')
+          if (!el) return false
+          const r = el.getBoundingClientRect()
+          if (!(r.width > 0 && r.height > 0)) return false
+          const hit = document.elementFromPoint(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2))
+          return !!hit && el.contains(hit)
+        })()`)
+        if (top) return true
+        await sleep(300)
+      }
+      return false
+    })()
+    const barUltra = await evalJS(FLOAT_BAR_PROBE)
+    await shot('float-bar-ultra')
+    ok(
+      '超高 · 悬浮运动条（收起沉浸层后）在折射，且贴图已烘',
+      !!barUltra &&
+        barUltra.onScreen &&
+        barUltra.filter.replace(/"/g, '').includes('url(#') &&
+        barUltra.defs?.mapBaked === true &&
+        barUltra.defs.display !== 'none',
+      `沉浸层=${immersiveOpen} 收起=${collapsed} 浮条到最上层=${barOnTop} 清场=${discarded} · filter=${barUltra?.filter} · 最上层=${barUltra?.onScreen} · 现场=${JSON.stringify(barUltra?.hitInfo)} · 定义=${JSON.stringify(barUltra?.defs)}`,
+    )
+    ok(
+      '超高 · 悬浮条的底 / 受光边 / 圆角仍取自那套令牌（折射只换「怎么采样背后」）',
+      !!barUltra &&
+        barUltra.gradLayers === 2 &&
+        barUltra.usesFillToken &&
+        barUltra.radius === '22px',
+      `grad 层=${barUltra?.gradLayers} · 用当档 --glass-fill(${barUltra?.fillToken})=${barUltra?.usesFillToken} · radius=${barUltra?.radius}`,
+    )
+
+    await setTier('high')
+    const barHigh = await evalJS(FLOAT_BAR_PROBE)
+    ok(
+      '高画质 · 悬浮条退回毛玻璃（不挂 url()，仍是 .glass-surface 那份模糊 + 令牌）',
+      !!barHigh && !barHigh.filter.includes('url(') && barHigh.filter.includes('blur(') && barHigh.defs?.display === 'none',
+      `filter=${barHigh?.filter} · 定义=${JSON.stringify(barHigh?.defs)}`,
+    )
+
+    // 极致档在流卡片的落影：与 --shadow-card 同层的「内容层玻璃落影」，
+    // 不是悬浮玻璃那份（外缘层 + 重落影）。亮暗两色各量一次 —— 暗色才是报得最凶的那一档
+    // （--shadow-card 在暗色是 none，而悬浮玻璃那份是 0.4/0.55 的黑）。
+    const CARD_SHADOW_PROBE = `(() => {
+      const probe = document.createElement('div')
+      document.body.appendChild(probe)
+      const token = (v) => { probe.style.boxShadow = v; const out = getComputedStyle(probe).boxShadow; return out }
+      const panelShadow = token('var(--glass-panel-shadow)')
+      const floatShadow = token('var(--glass-shadow)')
+      probe.remove()
+      const shadowOf = (sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el).boxShadow : null }
+      return {
+        tier: document.documentElement.dataset.perf,
+        dark: matchMedia('(prefers-color-scheme: dark)').matches,
+        panelShadow,
+        floatShadow,
+        cards: [...document.querySelectorAll('.card')].slice(0, 6).map((c) => getComputedStyle(c).boxShadow),
+        qas: [...document.querySelectorAll('.qa')].slice(0, 4).map((c) => getComputedStyle(c).boxShadow),
+      }
+    })()`
+
+    for (const theme of ['light', 'dark']) {
+      await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] })
+      await setTier('extreme')
+      // 营养全览：4 张 .card + 3 个 .qa（地图探针实测），是最能代表「一屏卡片」的一页
+      await cdp('Page.navigate', { url: `${APP}/#/nutrition` })
+      await sleep(2400)
+      if (await evalJS(dismiss)) await sleep(400)
+      const cardShadow = await evalJS(CARD_SHADOW_PROBE)
+      const inFlow = [...cardShadow.cards, ...cardShadow.qas]
+      await shot(`card-shadow-extreme-${theme}`)
+      ok(
+        `极致 · ${theme} · 在流卡片的落影是内容层那一档（不是悬浮玻璃那份）`,
+        inFlow.length > 0 &&
+          inFlow.every((s) => s.startsWith(cardShadow.panelShadow)) &&
+          inFlow.every((s) => !s.startsWith(cardShadow.floatShadow)) &&
+          inFlow.every((s) => !s.includes('0px 12px 36px')),
+        `${inFlow.length} 块 · 首块=${String(inFlow[0]).slice(0, 100)}… · 悬浮那份=${cardShadow.floatShadow}`,
+      )
+      ok(
+        `极致 · ${theme} · 在流卡片仍拿到玻璃的光学内层（只是落影换了档）`,
+        inFlow.length > 0 && inFlow.every((s) => s.includes('inset')),
+        `缺 inset 的：${inFlow.filter((s) => !s.includes('inset')).length} 块`,
+      )
+    }
+    await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
+    await setTier('ultra')
 
     const errs = await evalJS('window.__errs ?? []')
     ok('末次运行期无未捕获异常', errs.length === 0, errs.join(' | '))
