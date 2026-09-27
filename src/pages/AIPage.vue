@@ -659,7 +659,10 @@ async function onMenuSelect(value: string): Promise<void> {
       </div>
 
       <!-- 底栏（快捷操作 → 引用 → 纪要 → 附图 → 输入栏）：与页头同理粘在滚动区底部，
-           内容从底部的渐进模糊里滚过；输入栏是浮起的圆角胶囊，胶囊之间能看到糊住的正文。
+           整条底栏垫在**同一块玻璃**上（.cb-glass），内容从它背后的渐进模糊里滚过。
+           芯片、附图、输入栏、图标钮都只是**玻璃上的浅色层**（fill），不再是各自一块实底 ——
+           从前导航栏是玻璃、输入栏是一块 background-color，两块材质对不上，
+           正文还会从胶囊与芯片的缝隙里露出来，被切得参差不齐。
            margin-top:auto 保证消息不足一屏时它依然落在底部，而不是吊在最后一条下面。 -->
       <div class="composer">
         <div class="cb-mask" aria-hidden="true">
@@ -667,6 +670,11 @@ async function onMenuSelect(value: string): Promise<void> {
                组件根上——容器 opacity<1 就成 backdrop root，模糊在过渡期间不渲染 -->
           <ProgressiveBlur v-if="!perfDegraded" direction="up" />
         </div>
+
+        <!-- 玻璃垫层：材质走全局那一份 .glass-surface（亮暗与四档的退化都写在
+             base.css / tokens.css 里），与页头玻璃盘、运动沉浸页控制层同一条实现 ——
+             这一层才是底栏的「材质」，上面那些控件只负责层次与命中区。 -->
+        <div class="cb-glass glass-surface glass-edge-t" aria-hidden="true" />
 
         <!-- 快捷操作 -->
         <div class="chips">
@@ -837,7 +845,7 @@ async function onMenuSelect(value: string): Promise<void> {
      底部让开 = Dock 顶 − 它，输入栏底边才正好压在 Dock 顶上
      （间距不变量：AI 输入栏底→底栏顶 = 0，见 scripts/e2e-layout-guard.mjs）。
      悬浮运动条停靠在底部时写入的 --wbar-reserve 一并计进来。 */
-  --inbar-pad-b: 4px;
+  --inbar-pad-b: 8px;
   padding: 0 var(--page-pad-x) calc(var(--dock-top) - var(--inbar-pad-b) + var(--wbar-reserve, 0px));
 }
 
@@ -866,13 +874,13 @@ async function onMenuSelect(value: string): Promise<void> {
   align-self: flex-end;
 }
 
-/* 引用条（输入栏上方） */
+/* 引用条（输入栏上方）：玻璃上的浅色层，不是又一张卡 */
 .quote-bar {
   gap: 8px;
   padding: 7px 10px;
   margin-bottom: 6px;
   border-radius: var(--radius-m);
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--text-1) 7%, transparent);
 }
 
 .q-text {
@@ -889,7 +897,8 @@ async function onMenuSelect(value: string): Promise<void> {
   height: 26px;
   flex: none;
   border-radius: 50%;
-  background: var(--surface);
+  /* 引用条是玻璃上的浅色层，这条里的钮就再深一档，而不是又垫一块实底 */
+  background: color-mix(in srgb, var(--text-1) 9%, transparent);
   color: var(--text-2);
   display: flex;
   align-items: center;
@@ -979,27 +988,39 @@ async function onMenuSelect(value: string): Promise<void> {
   margin-top: var(--safe-top);
 }
 
-/* 底栏：粘在滚动区底部，内容从底部的渐进模糊里滚过。
-   自身建立层叠上下文，遮罩才能用 -1 沉到糖果条与输入栏背后。 */
+/* 底栏：粘在滚动区底部，整条垫在同一块玻璃上（.cb-glass），内容从玻璃背后的
+   渐进模糊里滚过。自身建立层叠上下文，遮罩与玻璃才能用负 z-index 沉到控件背后。 */
 .composer {
   position: sticky;
   bottom: 0;
   z-index: 30;
   /* margin-top:auto：消息不足一屏时底栏依然落在底部，而不是吊在最后一条下面；
-     左右负外边距把底栏拉到整帧宽，遮罩才铺得满 */
+     左右负外边距把底栏拉到整帧宽，遮罩与玻璃才铺得满 */
   margin: auto calc(-1 * var(--page-pad-x)) 0;
-  padding: 6px var(--page-pad-x) var(--inbar-pad-b);
+  /* 上 8 / 下 --inbar-pad-b：与芯片、输入栏、Dock 之间是同一档 8px 节奏 */
+  padding: 8px var(--page-pad-x) var(--inbar-pad-b);
 }
 
-/* 向上多铺一段：内容从模糊里滚出来，而不是在输入栏上沿被硬切 */
+/* 向上多铺一段：内容从模糊里滚出来，而不是在玻璃上沿被硬切 */
 .cb-mask {
   position: absolute;
   top: -18px;
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: -2;
+  pointer-events: none;
+}
+
+/* 玻璃垫层：底栏的**材质**（填充 / 受光边 / 光学层 / 四档退化全在 .glass-surface 里）。
+   贴在内容背后（-1），于是正文不再从芯片与胶囊的缝隙里露出来 —— 缝隙里看到的
+   是这一层玻璃，和 Dock 上看到的是同一套令牌。 */
+.cb-glass {
+  position: absolute;
+  inset: 0;
   z-index: -1;
   pointer-events: none;
+  border-radius: 0;
 }
 
 .msgs::-webkit-scrollbar {
@@ -1252,17 +1273,24 @@ async function onMenuSelect(value: string): Promise<void> {
 .chips {
   display: flex;
   gap: 8px;
-  padding: 2px 0 8px;
+  padding: 0 0 8px;
 }
 
+/* 玻璃上的浅色层（vibrancy）：不再是自带投影的白卡 —— 底栏整体是一块玻璃，
+   层与层之间靠 fill 的深浅分档，而不是各自再抬一层影子（同一块玻璃上两层影子，
+   层次反而说不清）。配方与卡面上的角标、`.stk-more` 一致。 */
 .chip {
   padding: 6px 13px;
   border-radius: var(--radius-full);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-1);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.chip:active {
+  background: color-mix(in srgb, var(--text-1) 14%, transparent);
 }
 
 .chip:disabled {
@@ -1320,8 +1348,8 @@ async function onMenuSelect(value: string): Promise<void> {
   gap: 8px;
   padding: 9px 12px;
   border-radius: var(--radius-m);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+  /* 待发送文档芯片也在底栏里：玻璃上的浅色层（不再是实底卡 + 影子） */
+  background: color-mix(in srgb, var(--text-1) 7%, transparent);
   color: var(--text-1);
   width: 100%;
 }
@@ -1462,10 +1490,15 @@ async function onMenuSelect(value: string): Promise<void> {
 
 .inbar {
   gap: 8px;
-  padding: 8px 8px 8px 6px;
+  /* 对称 6px：40px 的图标钮 + 6 = 52px 高的胶囊，与文字行（22px 行高 + 9px 内边距）等高 */
+  padding: 6px;
   border-radius: var(--radius-full);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+  /* 玻璃上的输入区：走 --surface-translucent（导航 / 标签栏毛玻璃那份令牌，亮暗两色
+     各一份值）—— 输入框是「玻璃上的一层浅面」，不是实底也不是更深的染色块。
+     实测理由：更弱的染色让输入区底色跟着背后的正文起伏（亮色下压到 3.2:1），
+     占位文字读不出来；这一份把底色抬回近白（亮）/ 近底（暗），两色下占位都过 AA。 */
+  background: var(--surface-translucent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--text-1) 8%, transparent);
 }
 
 .cam {
@@ -1473,11 +1506,17 @@ async function onMenuSelect(value: string): Promise<void> {
   height: 40px;
   flex: none;
   border-radius: 50%;
-  background: var(--surface-2);
+  /* 玻璃上的图标钮：与卡面角标同一配方（--text-1 的 9%），不再是实底灰 */
+  background: color-mix(in srgb, var(--text-1) 9%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-1);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.cam:active {
+  background: color-mix(in srgb, var(--text-1) 16%, transparent);
 }
 
 .inbar textarea {
@@ -1500,8 +1539,12 @@ async function onMenuSelect(value: string): Promise<void> {
   display: none;
 }
 
+/* 占位文字按正文档读：--text-3 在亮色只有 3.2:1、暗色约 3.6:1（实测），够不着 AA。
+   这里按 --text-1 的 64% 合成而不是直接取某个灰：同一个 alpha 在两色下都落在
+   「亮 ≈4.7:1 / 暗 ≈6.9:1」—— 因为它是与输入框底色合成的，底越暗前景就越亮。
+   正在输入的正文是 --text-1，两色下都在 13:1 以上（亮色实测 13.76:1，底 232/232/234）。 */
 .inbar textarea::placeholder {
-  color: var(--text-3);
+  color: color-mix(in srgb, var(--text-1) 64%, transparent);
 }
 
 .send {
@@ -1509,14 +1552,16 @@ async function onMenuSelect(value: string): Promise<void> {
   height: 40px;
   flex: none;
   border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--text-3);
+  background: color-mix(in srgb, var(--text-1) 9%, transparent);
+  color: var(--text-2);
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-/* 有文字或附图时点亮（Kimi 式：灰 → 主色） */
+/* 有文字或附图时点亮（Kimi 式：灰 → 主色）。主操作不玻璃化 —— 与 Dock 的 .accent、
+   页头的主操作钮同一条约定：实底主色才是「点这里」的那一个。 */
 .send.ready {
   background: var(--accent);
   color: #fff;

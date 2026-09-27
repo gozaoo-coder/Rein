@@ -128,11 +128,11 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   <div ref="scroller" class="wrap" data-rubber-self>
     <div class="grid" :style="{ '--today-col': todayIndex + 1 }">
       <!-- 表头：星期 + 日期；左上角同时冻结两轴 -->
-      <div class="cell head corner glass-surface glass-edge-b">时间</div>
+      <div class="cell head corner">时间</div>
       <div
         v-for="(d, i) in days"
         :key="d"
-        class="cell head day glass-surface glass-edge-b"
+        class="cell head day"
         :class="{ today: i === todayIndex }"
       >
         <span class="dow">{{ dayLabel(d) }}</span>
@@ -235,29 +235,38 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 }
 
 /* ---------- 冻结三件套 ---------- */
-/* 表头格子：材质走全局那一份 .glass-surface（受光边 + 内顶高光 + 超高的光学层），
-   但**模糊半径自己压小**（14px）：这一行是 8 个各自带 backdrop-filter 的格子，
-   按令牌默认的 28px 走，冻结行的每帧合成成本要翻几倍 —— 令牌化之后，
-   「同一套材质、不同成本预算」只需要覆盖一个变量，不必再抄一份材质出来。
-   glass-edge-b：8 个格子只画各自的下缘，拼起来就是原来那条分隔线（四边都画会竖着切出格线）。 */
+/* 表头行、左上角、左侧时间列**与卡片底同一种材质（--surface）**。
+   这里曾经让表头格子走 .glass-surface（半透明 + blur）、角与时间列走实底：
+   亮色下两者颜色本来就接近、看不出，暗色下就是两块深浅不同的灰拼在一起（实测确认），
+   而且八个格子各自背一层 backdrop-filter。数据表的冻结区属于内容面，
+   跟卡片走同一种实底；玻璃留给悬浮控件（底部 Dock、页头盘、悬浮条）。 */
 .head {
-  --glass-blur: 14px;
   position: sticky;
   top: 0;
   z-index: 3;
+  background: var(--surface);
+  /* 冻结区下缘比行线重一档：横滑时它仍是「表头的边界」（原来靠 glass-edge-b 的同一条渐变） */
+  border-bottom-color: var(--line-strong);
+}
+
+/* 冻结边界的「封边」：一道硬分隔线 + 一道向右衰减的阴影。
+   缺了它，横滑时左边缘与内容之间没有界线 —— 看起来只是「一列被切掉了」，
+   而不是「左侧这一列是冻住的」。封边同时把任何从缝隙里透出来的内容挡住。
+
+   阴影色走 --glass-scroll-edge（亮 0.16 / 暗 0.44 的**黑**）：原来取的是 --text-1 的 32%，
+   而暗色下 --text-1 是近白 —— 一条白雾沿着整列铺开，比不画还糟。 */
+.time,
+.corner {
+  background: var(--surface);
+  box-shadow:
+    1px 0 0 var(--line-strong),
+    10px 0 12px -10px var(--glass-scroll-edge);
 }
 
 .time {
   position: sticky;
   left: 0;
   z-index: 2;
-  background: var(--surface);
-  /* 冻结边界的「封边」：一道硬分隔线 + 一道向右衰减的阴影。
-     缺了它，横滑时左边缘与内容之间没有界线 —— 看起来只是「一列被切掉了」，
-     而不是「左侧这一列是冻住的」。封边同时把任何从缝隙里透出来的内容挡住。 */
-  box-shadow:
-    1px 0 0 var(--line-strong),
-    10px 0 12px -10px color-mix(in srgb, var(--text-1) 32%, transparent);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -269,11 +278,6 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 .corner {
   left: 0;
   z-index: 4;
-  /* 左上角要撑住两道边界（横滑 + 纵滑），封边与外层同款，否则滚动时会看到断层 */
-  background: var(--surface);
-  box-shadow:
-    1px 0 0 var(--line-strong),
-    10px 0 12px -10px color-mix(in srgb, var(--text-1) 32%, transparent);
   font-size: var(--fs-micro);
   color: var(--text-3);
   font-weight: 600;
@@ -408,13 +412,5 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   color: var(--text-3);
   font-weight: 600;
   padding: 0 2px;
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .head {
-    background: var(--surface);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 }
 </style>

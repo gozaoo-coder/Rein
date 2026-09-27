@@ -182,6 +182,10 @@ const PAINTED_BOXES = `(() => {
     // 它们本来就该是「画了底色、没有文字」的图标按钮，不是空气泡。
     // 空气泡的定义是「消息内容里的空盒子」，所以这里只排除交互控件与页头/输入栏这两块 chrome。
     if (el.closest('button, input, textarea, [contenteditable="true"], .inbar, header')) continue
+    // 纯绘制层（玻璃垫层、渐进模糊遮罩：aria-hidden + 不接指针）按定义不承载内容 ——
+    // 它只负责材质，气泡是能装文字的东西。少了这条，底栏那块 .cb-glass（480×104 的
+    // 玻璃垫层）会被当成一个「画了底色却没有文字」的空气泡。
+    if (el.closest('[aria-hidden="true"]')) continue
     const cs = getComputedStyle(el)
     const bare = cs.backgroundColor === 'rgba(0, 0, 0, 0)' && cs.borderTopWidth === '0px' && cs.backgroundImage === 'none'
     if (bare) continue
