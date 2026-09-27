@@ -8,11 +8,14 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { campusService } from '@/services/campusService'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
+import { useFeaturesStore } from '@/stores/features'
 import type { AiAction, SchoolSystemInfo } from '@/types'
 
 const store = useCampusStore()
 const router = useRouter()
 const toast = useToast()
+// 选课/抢课是课表的子模块（默认关闭）：入口显隐问功能开关
+const features = useFeaturesStore()
 
 /* ---------------- 学校系统选择器 ---------------- */
 
@@ -53,6 +56,14 @@ const sessionLost = ref(false)
 
 /** 会话过期且存过密码：密码可以留空 —— 后端会用存下的那份重登（见 Rust `relogin`） */
 const canUseSavedPassword = computed(() => sessionLost.value && !!store.account?.hasPassword)
+
+/**
+ * 当前选的是正方（ZFSoft）那一套吗。
+ *
+ * 两家的验证码时机不同，UI 要跟着变：树维**随时可能要**（登录响应里直接说 needCaptcha），
+ * 正方是**错够几次才要**，而且失败页里看不出这个要求 —— 所以正方要多一个人工入口。
+ */
+const isZfsoft = computed(() => activeSystem.value?.loginStrategy === 'zfsoft-login-rsa')
 
 const canLogin = computed(
   () =>
@@ -258,7 +269,8 @@ onMounted(async () => {
       <label class="flabel">服务地址</label>
       <input v-model="baseUrl" type="url" class="mono" autocomplete="off" spellcheck="false" />
       <p class="tip">
-        默认指向学校测试环境；切换到正式环境时改这里。业务类型：本科生（{{ activeSystem?.bizTypeId }}）。
+        {{ activeSystem?.baseUrlHint }}
+        <template v-if="activeSystem?.bizTypeId">业务类型：本科生（{{ activeSystem.bizTypeId }}）。</template>
       </p>
     </section>
 
@@ -310,6 +322,13 @@ onMounted(async () => {
         <label class="flabel">密码</label>
         <input v-model="password" type="password" autocomplete="current-password" placeholder="教务系统密码" />
         <p class="tip">密码区分大小写，<b>结尾的符号也要原样输入</b>（不会被自动去除）。</p>
+
+        <!-- 正方的验证码是「错够几次才要」，而登录失败页里**看不到**这个要求
+             （没有验证码输入框的痕迹，只有一句提示文字）。所以给一个人工出口：
+             教务一旦要求验证码，用户在这里就能把输入框请出来，而不是卡死。 -->
+        <button v-if="isZfsoft && !needCaptcha" class="cap-link" @click="refreshCaptcha">
+          教务提示需要验证码？点这里获取
+        </button>
 
         <template v-if="needCaptcha">
           <label class="flabel">验证码</label>
@@ -394,13 +413,21 @@ onMounted(async () => {
         </span>
         <ChevronRight :size="18" />
       </button>
-      <button class="link-row" @click="router.push({ name: 'campus-course-select' })">
+      <!-- 选课/抢课是课表的子模块（默认关闭）：入口跟着开关走，不再只是一个「开着的页面」 -->
+      <button
+        v-if="features.isEnabled('campus-grab')"
+        class="link-row"
+        @click="router.push({ name: 'campus-course-select' })"
+      >
         <span>
           选课（直连教务）
           <em>选课窗口开放后可在这里一键选课</em>
         </span>
         <ChevronRight :size="18" />
       </button>
+      <p v-else class="tip">
+        「选课 · 抢课」是课表的子模块，默认关闭。需要时到「设置 › 打开或关闭功能」里打开。
+      </p>
     </section>
 
     <!-- ⑤ AI 排障：操作记录 + 救援脚本。写操作不弹确认（抢课窗口里确认就是拖延），
@@ -654,6 +681,22 @@ input:focus,
 .cap-row {
   display: flex;
   gap: 8px;
+}
+
+/* 正方的「人工取验证码」入口：做得像一个可点的提示，而不是主操作按钮 */
+.cap-link {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.cap-link:active {
+  transform: scale(0.985);
 }
 
 .cap-input {

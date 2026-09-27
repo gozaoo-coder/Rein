@@ -400,7 +400,8 @@ export const campusProgramTools: AppTool[] = [
   /* ─────────────── 2. 预约 ─────────────── */
   defineTool({
     name: 'campus_reserve',
-    group: 'campus',
+    // 预约就是「抢课计划」的入口 —— 它属于课表的子模块，跟着 'campus-grab' 一起开关
+    group: 'campusGrab',
     label: '预约抢课',
     description:
       '**预约**：把商量好的课提前落成抢课计划 —— 一句模糊查询 = 一门课（课名 / 课程代码 / 教师，空格分词，' +

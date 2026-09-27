@@ -24,6 +24,7 @@
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { presetFeatureFlags } from './lib/features.mjs'
 
 const EDGE_CANDIDATES = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -107,6 +108,8 @@ async function connect(url) {
   }
   await cdp('Page.enable')
   await cdp('Runtime.enable')
+  // 抢课是课表的子模块，**默认关闭** —— 本剧本测的正是它，先把开关预置好
+  await presetFeatureFlags(cdp)
   await cdp('Page.navigate', { url })
   const t0 = Date.now()
   while (Date.now() - t0 < 15000) {

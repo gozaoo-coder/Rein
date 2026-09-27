@@ -48,7 +48,7 @@
 //!    「等一会再动」，并且**优先去核对上一次那张受理单**，而不是重新投一次。
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -71,6 +71,10 @@ pub const GRAB_EVENT: &str = "campus://grab";
 
 /// 没有任何任务时的轮询间隔。够慢，不浪费电。
 const IDLE_WAIT_MS: i64 = 2000;
+/// 模块关闭时的心跳间隔。**不是「什么都不做」的循环**：`step` 在开头就返回，
+/// 什么请求都不发；这个睡眠只是保证开关被打开后（notify 会立刻打断它）
+/// 或者有别的唤醒源时，引擎还能定期醒来看一眼开关有没有变。
+const DISABLED_WAIT_MS: i64 = 3000;
 /// 有任务但不着急时的最大睡眠。太长了会让「刚入队一个任务」响应变钝。
 const MAX_WAIT_MS: i64 = 5000;
 /// 临近开火时的睡眠上限（进入 [`APPROACH_MS`] 之后用）
@@ -494,6 +498,12 @@ pub struct GrabHub {
     dump_path: Option<std::path::PathBuf>,
     /// 「现在用的名单是旧的」——只在教务拉不到、改用落盘名单时非空。
     lessons_stale: Mutex<Option<String>>,
+    /// **模块开关**：抢课是课表的子模块，默认关闭（见 `plugins/builtin/campusGrab.ts`）。
+    ///
+    /// 这是真门闩，不是界面开关：关闭时 `step` 一进来就返回，**一个请求都不发**
+    /// （连窗口探测都不做）。持久化在 `app_meta`，开机时读回来 ——
+    /// 否则「关掉之后重启」会自己又跑起来，而用户看不到任何解释。
+    enabled: AtomicBool,
 }
 
 /// 名单落盘的文件名。
@@ -705,12 +715,23 @@ impl GrabHub {
 
     /// 启动后台线程。与 `KbHub::start` 同形：先 manage 好状态再调它。
     pub fn start(self: &Arc<Self>, app: AppHandle) {
+        // **先把开关读回来**（落在 `app_meta`，默认关）：关闭状态下，
+        // 对账与外投口都要跳过 —— 用户关了抢课，开机就不该有任何动作。
+        {
+            let state = app.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            let on = read_meta(&conn, ENABLED_KEY).as_deref() == Some("1");
+            self.set_enabled_flag(on);
+        }
+
         let (tx, rx) = mpsc::channel::<()>();
         if let Ok(mut guard) = self.wake.lock() {
             *guard = Some(tx);
         }
         // 启动对账：上一次进程若在请求途中被杀，任务会停在 running。
         // 把它们归位成「稍后重试」，并按「先核对受理单」的顺序继续 —— 见模块头第 5 条。
+        // 关闭时也照做：它是**纯本地**的归位（不发请求），且不做的话，
+        // 用户之后一打开开关就会有一批卡在 running 的死任务。
         reconcile_on_start(&app);
 
         let hub = Arc::clone(self);
@@ -719,7 +740,23 @@ impl GrabHub {
             .spawn(move || worker_loop(app, hub, rx))
             .expect("启动抢课引擎线程失败");
     }
+
+    /// 模块开关的当前值。
+    pub fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
+    }
+
+    /// 打开/关闭引擎。命令层与启动路径共用；`notify` 会立刻中断当前那次睡眠，
+    /// 所以「打开」是立即生效的，不必等下一轮心跳。
+    pub fn set_enabled_flag(&self, on: bool) {
+        self.enabled.store(on, Ordering::Relaxed);
+        self.notify();
+    }
 }
+
+/// `app_meta` 里的开关键。值 `"1"` = 开，其余（含缺省）= 关 ——
+/// **默认关**是产品要求（抢课是课表的子模块），所以缺省必须是关而不是开。
+pub const ENABLED_KEY: &str = "campus_grab_enabled";
 
 /// 启动对账：把中断的 running 任务放回队列。
 ///
@@ -776,6 +813,13 @@ fn worker_loop(app: AppHandle, hub: Arc<GrabHub>, rx: mpsc::Receiver<()>) {
 ///
 /// **一轮只发一个请求**，且受 [`GrabHub::pace_gap_ms`] 的全局闸门约束。
 fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
+    // ── 模块开关（默认关）。**这是最先判的一件事**：关着的时候连窗口探测都不做 ——
+    //    「关了还在每分钟问一次教务」和没关没有区别。睡眠给得比较短，
+    //    因为 `set_enabled_flag` 的 notify 能立刻打断它，「打开」是即时生效的。
+    if !hub.enabled() {
+        return Ok(Duration::from_millis(DISABLED_WAIT_MS as u64));
+    }
+
     let state = app.state::<AppState>();
 
     // ── 短锁：读设置 + 账号。出了这个块就没有锁了。
@@ -3271,6 +3315,7 @@ pub fn snapshot(conn: &Connection, hub: &GrabHub) -> Result<GrabState> {
 
     Ok(GrabState {
         alive: true,
+        enabled: hub.enabled(),
         active,
         // 界面上的「教务时间」此刻该显示什么：把最近一次采样按偏差推到现在
         server_time: skew_ms

@@ -19,6 +19,7 @@
  */
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
+import { presetFeatureFlags } from './lib/features.mjs'
 
 const EDGE_CANDIDATES = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
@@ -102,6 +103,8 @@ async function connect(url) {
   }
   await cdp('Page.enable')
   await cdp('Runtime.enable')
+  // 抢课是课表的子模块，**默认关闭** —— 本剧本测的正是它，先把开关预置好
+  await presetFeatureFlags(cdp)
   await cdp('Page.navigate', { url })
   const t0 = Date.now()
   while (Date.now() - t0 < 15000) {
@@ -252,9 +255,16 @@ async function main() {
 
     /* ---- 4. 与培养方案逐门对照 ---- */
     const cross = await callTool('campus_program', { view: 'crosscheck' })
+    // `counts.lessons` 是**教学班记录数**（10 条：同一门课可能开多个班），
+    // 去重到「课程」的那一档是 `counts.coursesInTurn`（7 门）——
+    // 两者都要对上，模型才分得清「教务给了几条教学班」与「有几门课」。
+    // （这条断言原先只写 `lessons === 7`：把去重后的数期望在了未去重的字段上，
+    //   而 mock 的 fixture 一直是 10 条 / 7 门 —— 它当时就是红的。）
     ok(
-      '核对挂在当前批次上（带去重后的教学班数）',
-      cross?.window?.turn === '77' && cross?.counts?.lessons === 7,
+      '核对挂在当前批次上（教学班记录 10 条 / 去重后 7 门课）',
+      cross?.window?.turn === '77' &&
+        cross?.counts?.lessons === 10 &&
+        cross?.counts?.coursesInTurn === 7,
       JSON.stringify({ window: cross?.window, counts: cross?.counts }),
     )
     const insideNames = (cross?.inProgram ?? []).map((r) => r.course)
@@ -350,7 +360,11 @@ async function main() {
     await setHook('__REIN_MOCK_NO_SELECT_TURN__', false)
 
     /* ---- 7. 落库：预约之后不用再管 ---- */
-    const committed = await callTool('campus_reserve', { queries: ['体育'], dryRun: false })
+    // 查询词用**课程全名**而不是「体育」：名单里同时有「体育（一）」（000031）与
+    // 「大学体育1」（000004，体育课的真实形状），单写「体育」会命中两个课程代码 ——
+    // 引擎按规矩**停下来要课程代码**（见 e2e-grab-plan 的跨课程断言），
+    // 于是这一步永远等不到志愿任务。这不是缺陷，是它该有的行为。
+    const committed = await callTool('campus_reserve', { queries: ['体育（一）'], dryRun: false })
     ok(
       'dryRun:false 才真的落库（返回计划 id）',
       committed?.dryRun === false && (committed?.reserved?.[0]?.id ?? 0) > 0,
@@ -366,14 +380,14 @@ async function main() {
       'campus_status',
       { probe: false },
       // 工具给模型的投影里 groupKeys 叫 groups（见 campus.ts::intentDigest）
-      (s) => (s?.intents ?? []).some((i) => i.query === '体育' && (i.groups ?? []).length > 0),
+      (s) => (s?.intents ?? []).some((i) => i.query === '体育（一）' && (i.groups ?? []).length > 0),
       20000,
       '引擎把计划解析成志愿任务',
     )
     ok(
       '引擎自己把计划解析成了志愿任务（候选教学班列出来了）',
       true,
-      JSON.stringify((parsed?.intents ?? []).find((i) => i.query === '体育')?.candidates ?? []),
+      JSON.stringify((parsed?.intents ?? []).find((i) => i.query === '体育（一）')?.candidates ?? []),
     )
     ok(
       '落库留了审计（写操作不弹确认，靠事后可查兜底）',

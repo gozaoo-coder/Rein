@@ -16,6 +16,8 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 
+import { GRAB_PLUGIN_ON } from './lib/features.mjs'
+
 const EDGE = [
   'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
@@ -192,7 +194,8 @@ async function main() {
     await cdp('Page.enable')
     await cdp('Runtime.enable')
     await cdp('Page.addScriptToEvaluateOnNewDocument', {
-      source: 'window.__REIN_MOCK_UPDATE_NONE__ = true;',
+      // 抢课是课表的子模块且默认关闭：整页加载前先把开关预置好（含后面的重启加载）
+      source: `window.__REIN_MOCK_UPDATE_NONE__ = true;${GRAB_PLUGIN_ON}`,
     })
     await cdp('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 2, mobile: true })
 

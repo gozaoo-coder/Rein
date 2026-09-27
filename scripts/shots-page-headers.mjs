@@ -18,6 +18,8 @@ import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
+import { GRAB_PLUGIN_ON } from './lib/features.mjs'
+
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 const APP = process.env.REIN_E2E_URL ?? 'http://localhost:1420'
 const USER_DATA = `${process.env.TEMP}/rein-e2e-headers-${Date.now()}`
@@ -241,6 +243,9 @@ async function main() {
     await cdp('Page.addScriptToEvaluateOnNewDocument', {
       source: `
         localStorage.setItem('rein.perf.v1', 'high');
+        // 选课/抢课页在清单里，而抢课是课表的子模块且默认关闭 —— 不预置开关，
+        // 那一页会被守卫拦回主页，截出来的就是首页（而且看着「没报错」，很隐蔽）
+        ${GRAB_PLUGIN_ON};
         const applySafe = () => {
           document.documentElement.style.setProperty('--safe-top-native', '${SAFE_TOP}px');
           document.documentElement.style.setProperty('--safe-bottom-native', '${SAFE_BOTTOM}px');

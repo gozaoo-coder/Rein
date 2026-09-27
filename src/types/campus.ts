@@ -12,12 +12,20 @@ export interface SchoolSystemInfo {
   /** 稳定键，落库在 `campus_accounts.system_kind` */
   kind: string
   name: string
+  /** 简短校名（摘要入口用） */
+  shortName: string
   /** 厂商/产品线，帮用户确认自己学校是不是这一套 */
   vendor: string
   defaultBaseUrl: string
-  /** 登录握手标识，如 "supwisdom-portal-rsa"；UI 据此决定表单文案 */
+  /** 服务地址输入框下面那句话（每所学校的说法不同，由后端声明） */
+  baseUrlHint: string
+  /**
+   * 登录握手标识：`"supwisdom-portal-rsa"`（树维）/ `"zfsoft-login-rsa"`（正方）。
+   * UI 据此决定表单文案与验证码入口 —— 两者的失败模式不一样。
+   */
   loginStrategy: string
-  bizTypeId: number
+  /** 培养层次（1 研究生 / 2 本科）。正方没有这个概念，为 null */
+  bizTypeId: number | null
   /** 登录过程中可能出现图形验证码，UI 预留验证码位 */
   mayRequireCaptcha: boolean
 }
@@ -456,6 +464,8 @@ export interface GrabTurnBrief {
 /** 引擎快照（`campus_grab_state` 的返回，也是 `campus://grab` 事件的负载） */
 export interface GrabState {
   alive: boolean
+  /** 模块开关：抢课是课表的子模块，默认关闭。关闭时引擎不发任何请求 */
+  enabled: boolean
   /** 是否有任务处在非终态 */
   active: boolean
   /** 教务服务器时间（把最近一次采样按偏差推到现在） */

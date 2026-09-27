@@ -136,9 +136,18 @@ export const GROUP_POLICY: Record<ToolGroup, GroupPolicy> = {
   },
   campus: {
     label: '校园教务',
-    hint: '培养方案、约课、现场诊断与抢课编排',
+    hint: '培养方案、学分完成度与课程清单',
     plugin: 'campus',
-    keywords: /教务|课表|选课|抢课|培养方案|学分|教学班|志愿|预约|排课|桂电|开课|课程表/,
+    keywords: /教务|课表|培养方案|学分|课程表/,
+  },
+  // 课表的**子模块**（默认关闭）：门禁认 'campus-grab'，而它的可用性又取决于
+  // 父模块「课表」开着 —— 这一层继承在 `stores/features.ts::isEnabled` 里统一判定，
+  // 所以这里不必写成 ['campus','campus-grab'] 那种复合条件。
+  campusGrab: {
+    label: '抢课',
+    hint: '选课批次、抢课编排与现场诊断（课表的子模块，默认关闭）',
+    plugin: 'campus-grab',
+    keywords: /选课|抢课|教学班|志愿|预约|开课|抢|退课/,
   },
 }
 

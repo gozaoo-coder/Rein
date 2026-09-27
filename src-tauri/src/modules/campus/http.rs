@@ -280,6 +280,28 @@ trait ReadToEndVec: std::io::Read {
 }
 impl<R: std::io::Read + ?Sized> ReadToEndVec for R {}
 
+/// 「这个响应能不能继续用」的统一判定：302 = 会话没了（教务表达「你没登录」的方式），
+/// 非 2xx = 这个请求本身没成。
+///
+/// 抽到 HTTP 层是因为两个厂商适配器都要这两句，而**错误码必须一致**：
+/// `session_lost` 是上层自动重登的触发条件（`commands::is_session_lost` 认它），
+/// 各写各的迟早会漏掉一边，表现就是「明明能自愈却让用户手动重登」。
+pub fn guard(resp: &HttpResponse, what: &str) -> Result<()> {
+    if resp.is_redirect() {
+        return Err(ReinError::coded(
+            "session_lost",
+            format!("{what} 需要登录：会话已过期，请重新登录教务系统"),
+        ));
+    }
+    if !resp.is_ok() {
+        return Err(ReinError::Message(format!(
+            "{what} 失败：HTTP {}",
+            resp.status
+        )));
+    }
+    Ok(())
+}
+
 /// 树维门户的登录握手：`RSA_PKCS1_v1_5(salt + "-" + password)`。
 ///
 /// 对齐登录页 `JSEncrypt.encrypt()`：它用的是 **PKCS#1 v1.5 填充**（不是 OAEP，也没有 hash）。
@@ -295,6 +317,43 @@ pub fn rsa_encrypt_password(public_key_b64: &str, salt: &str, password: &str) ->
     let plaintext = format!("{salt}-{password}");
     let ciphertext = key
         .encrypt(&mut rng, Pkcs1v15Encrypt, plaintext.as_bytes())
+        .map_err(|e| ReinError::Message(format!("口令加密失败：{e}")))?;
+
+    Ok(STANDARD.encode(ciphertext))
+}
+
+/// 正方（ZFSoft）的登录握手：`RSA_PKCS1_v1_5(password)`，公钥来自 `login_getPublicKey.html`。
+///
+/// 对齐登录页的 `rsaKey.setPublic(b64tohex(modulus), b64tohex(exponent))` + `hex2b64(rsaKey.encrypt(mm))`：
+/// 同样是 **PKCS#1 v1.5 填充**（jsbn 的 type-2 填充），只是明文是**裸口令**（没有盐），
+/// 且公钥是运行时取回的两个 base64 大数。
+///
+/// 实测的两个细节：
+/// 1. 模数解出来是 **129 字节**而不是 128 —— Java 的 `BigInteger.toByteArray()` 给最高位
+///    为 1 的数补了一个符号位 `0x00`，正方把这段字节原样 base64 出来。这是**正常的**，
+///    `BigUint::from_bytes_be` 不在乎前导零，解密侧看到的数值一样（1024-bit）。
+/// 2. 指数不是固定的 65537 字面量，而是同一份 JSON 里的 `AQAB`，必须一起 parse 成大数。
+pub fn rsa_encrypt_password_with_key(
+    modulus_b64: &str,
+    exponent_b64: &str,
+    password: &str,
+) -> Result<String> {
+    let modulus = STANDARD
+        .decode(modulus_b64.trim())
+        .map_err(|e| ReinError::Message(format!("登录公钥（模数）解析失败：{e}")))?;
+    let exponent = STANDARD
+        .decode(exponent_b64.trim())
+        .map_err(|e| ReinError::Message(format!("登录公钥（指数）解析失败：{e}")))?;
+
+    let key = RsaPublicKey::new(
+        rsa::BigUint::from_bytes_be(&modulus),
+        rsa::BigUint::from_bytes_be(&exponent),
+    )
+    .map_err(|e| ReinError::Message(format!("登录公钥无效：{e}")))?;
+
+    let mut rng = rand::thread_rng();
+    let ciphertext = key
+        .encrypt(&mut rng, Pkcs1v15Encrypt, password.as_bytes())
         .map_err(|e| ReinError::Message(format!("口令加密失败：{e}")))?;
 
     Ok(STANDARD.encode(ciphertext))
@@ -348,13 +407,41 @@ mod tests {
         // 而「口令不该出现在源码里」这条没有例外 —— 联调走 REIN_GUET_USER/REIN_GUET_PASS。
         // PKCS#1 v1.5 会补齐到 128 字节，所以换任何输入都不影响下面两条断言。
         let key = super::super::provider::spec("guet-supwisdom-eams5").unwrap();
+        let public_key = key.login.public_key().expect("树维的公钥写在 spec 里");
         let out = rsa_encrypt_password(
-            key.login.public_key(),
+            public_key,
             "00000000-0000-0000-0000-000000000000",
             "synthetic-passphrase.",
         )
         .unwrap();
         assert_eq!(out.len(), 172);
         assert_eq!(STANDARD.decode(&out).unwrap().len(), 128);
+    }
+
+    /// 正方的公钥是**运行时取回**的两个 base64 大数，且模数带着 Java 的符号位
+    /// （实测 129 字节）。这条用例钉住两个事实：
+    /// 1. 前导零不该让它被拒（`BigUint::from_bytes_be` 不在乎，但改错实现很容易踩）；
+    /// 2. 密文长度仍是 128 字节（1024-bit）。
+    ///
+    /// 用合成模数而不是线上那个：公钥本身不是机密，但**没必要**把别人的站点指纹
+    /// 抄进源码 —— 这里要验的是解析与加密，不是那个具体的数。
+    #[test]
+    fn zfsoft_rsa_tolerates_java_sign_byte() {
+        // 129 字节：第一个字节是 Java `BigInteger.toByteArray()` 补的符号位
+        let mut modulus = vec![0x00u8];
+        modulus.extend(std::iter::repeat(0xAB).take(127));
+        modulus.push(0xAD); // 质数模数必须是奇数
+        let modulus_b64 = STANDARD.encode(&modulus);
+        let exponent_b64 = STANDARD.encode([0x01u8, 0x00, 0x01]);
+
+        let out =
+            rsa_encrypt_password_with_key(&modulus_b64, &exponent_b64, "synthetic-passphrase")
+                .unwrap();
+        assert_eq!(out.len(), 172);
+        assert_eq!(STANDARD.decode(&out).unwrap().len(), 128);
+
+        // 解析不出 / 公钥退化的（e=1）都要有话说，而不是 panic
+        assert!(rsa_encrypt_password_with_key("!!!", &exponent_b64, "x").is_err());
+        assert!(rsa_encrypt_password_with_key(&modulus_b64, "AQ", "x").is_err());
     }
 }

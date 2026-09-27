@@ -37,7 +37,7 @@ pub struct RemoteSemester {
 // ─────────────────────────── 远端：课表 ───────────────────────────
 
 /// `courseType` 只需要中文名
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteNamed {
     #[serde(default)]
@@ -51,7 +51,7 @@ pub struct RemoteNamed {
 /// - `week_indexes` 教学周序号（如 `[9,10,11,12]`），**不是公历周**
 /// - `start_time` / `end_time` `"16:30"` / `"18:05"` —— 教务已经算好了本节次的真实时间，
 ///   我们不需要自己维护「第几节→几点」的表，这也是需求里「左侧列显示实际上课时间」的数据来源
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimetableActivity {
     #[serde(default)]
@@ -127,10 +127,164 @@ pub struct TimetableResponse {
     pub student_table_vms: Vec<StudentTableVm>,
 }
 
-/// 课表页面上刮下来的变量（[`super::guet::GuetAdapter::fetch_page_vars`] 的产物）。
+/// 课表页面上刮下来的变量（`GuetAdapter::fetch_page_vars` 的产物）。
 #[derive(Debug, Clone, Default)]
 pub struct PageVars {
     pub semesters: Vec<RemoteSemester>,
+}
+
+/// 归一化后的课表快照（落库前的中间形态）。**两个厂商的适配器都产出这个形状** ——
+/// 落库与周次展开只认它，不认教务的原话。
+pub struct TimetableSnapshot {
+    pub student_id: Option<String>,
+    pub student_code: Option<String>,
+    pub student_name: Option<String>,
+    pub department: Option<String>,
+    pub major: Option<String>,
+    pub adminclass: Option<String>,
+    pub grade: Option<String>,
+    pub total_credits: Option<f64>,
+    pub activities: Vec<TimetableActivity>,
+}
+
+// ─────────────────────── 远端：正方（ZFSoft） ───────────────────────
+//
+// 正方的字段命名与树维完全两套：键名多为下划线小写（`kbList[].kcmc`），学生档案则是
+// **全大写**（`xsxx.XM`）。数字字段（学分 `xf`、周次位掩码 `oldzc`）实测是字符串，
+// 但别处见过数字形态，所以走 `lenient_*` 取值而不是直接钉死类型。
+
+/// 教务的数字字段有时给数字、有时给字符串（正方的 `xf` / `oldzc` 两种都见过）。
+/// **只在这两种形态里取值**，收到别的就当没有 —— 不猜，也不让整次解析因此失败。
+pub fn lenient_i64(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// 同 [`lenient_i64`]，用于学分这类小数。
+pub fn lenient_f64(v: &serde_json::Value) -> Option<f64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// 正方课表接口（`/kbcx/xskbcx_cxXsgrkb.html`）的顶层形状。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZfsoftKbResponse {
+    #[serde(default)]
+    pub xsxx: Option<ZfsoftStudent>,
+    /// 课程表行：**一行 = 一门课的一个上课时段**（同一教学班多行 = 一周多次）
+    #[serde(default)]
+    pub kb_list: Vec<ZfsoftKbRow>,
+    /// 实践课：只有起止周次，**没有星期与节次**，所以上不了课表网格
+    #[serde(default)]
+    pub sjk_list: Vec<ZfsoftPracticeRow>,
+}
+
+/// `xsxx` —— 学生档案。键名是全大写，逐字对齐教务。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ZfsoftStudent {
+    #[serde(default, rename = "XH")]
+    pub code: Option<String>,
+    #[serde(default, rename = "XH_ID")]
+    pub id: Option<String>,
+    #[serde(default, rename = "XM")]
+    pub name: Option<String>,
+    /// 行政班（如「临床261」）
+    #[serde(default, rename = "BJMC")]
+    pub adminclass: Option<String>,
+    #[serde(default, rename = "ZYMC")]
+    pub major: Option<String>,
+    /// 年级（如「2026」）
+    #[serde(default, rename = "NJDM_ID")]
+    pub grade: Option<String>,
+}
+
+/// `kbList` 的一行。字段名就是正方的原话（`kcmc` / `cdmc` / `xqj` / `jcs` / `zcd`…）。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ZfsoftKbRow {
+    #[serde(default)]
+    pub kcmc: Option<String>,
+    #[serde(default)]
+    pub kch: Option<String>,
+    /// 教学班 id：32 位 hex UUID（**不是数字**），落库前哈希成 i64
+    #[serde(default)]
+    pub jxb_id: Option<String>,
+    /// 教学班名（「系统解剖学-0001」）
+    #[serde(default)]
+    pub jxbmc: Option<String>,
+    /// 教师，逗号分隔（「张庆金,纪芳芳」）
+    #[serde(default)]
+    pub xm: Option<String>,
+    /// 场地名（「4C501」「文昌田径场」；未排地点时是「未排地点」）
+    #[serde(default)]
+    pub cdmc: Option<String>,
+    /// 楼名（「第四教学楼」）
+    #[serde(default)]
+    pub lh: Option<String>,
+    #[serde(default)]
+    pub xqmc: Option<String>,
+    /// 星期，1=周一 … 7=周日（与全项目口径一致）
+    #[serde(default)]
+    pub xqj: Option<String>,
+    /// 节次（`"1-2"` / `"11-13"`）。
+    ///
+    /// **只用 `jcs`，不要用 `jcor`**：实测两列会不一致（`jcs="6-7"` 而 `jcor="6-10"`），
+    /// 而 `jcs` 才是网格上真正显示的那一段 —— 同一行的 `oldjc` 位掩码与它逐位吻合。
+    #[serde(default)]
+    pub jcs: Option<String>,
+    /// 周次文本（`"6-18周"` / `"6-12周,14-16周"`）
+    #[serde(default)]
+    pub zcd: Option<String>,
+    /// 周次位掩码（第 n 周 = 第 n-1 位）。`zcd` 的交叉校验，实测两者完全一致。
+    #[serde(default)]
+    pub oldzc: Option<serde_json::Value>,
+    /// 课程类别（「专业课」「通识课」）
+    #[serde(default)]
+    pub kclbmc: Option<String>,
+    /// 学分。实测是字符串（`"5"` / `"0.5"`）。
+    #[serde(default)]
+    pub xf: Option<serde_json::Value>,
+}
+
+/// `sjkList` 的一行（实践课）。没有星期与节次，无法定位到课表网格。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ZfsoftPracticeRow {
+    #[serde(default)]
+    pub kcmc: Option<String>,
+    #[serde(default)]
+    pub jsxm: Option<String>,
+    /// 起止周次（`"6-14周"`）
+    #[serde(default)]
+    pub qsjsz: Option<String>,
+}
+
+/// 节次时间表（`/kbcx/xskbcx_cxRjc.html`）的一行：
+/// `{jcmc:"1", qssj:"08:20", jssj:"09:00"}`。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ZfsoftSlotRow {
+    #[serde(default)]
+    pub jcmc: Option<String>,
+    #[serde(default)]
+    pub qssj: Option<String>,
+    #[serde(default)]
+    pub jssj: Option<String>,
+}
+
+/// 周次表（`/kbcx/xskbcxZccx_cxZcByXnxq.html`）的一行：
+/// `{zs:"1", rq:"2026-09-07/2026-09-13"}`。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ZfsoftWeekRow {
+    #[serde(default)]
+    pub zs: Option<String>,
+    /// 该周的**起止日期**（`起/止`）。第 1 周那行就是学期锚点。
+    #[serde(default)]
+    pub rq: Option<String>,
 }
 
 // ─────────────────────────── 本地：落库形状 ───────────────────────────
@@ -711,6 +865,10 @@ impl GrabTask {
 pub struct GrabState {
     /// 引擎线程是否活着（恒为 true；false 只在启动失败时出现）
     pub alive: bool,
+    /// **模块开关**：抢课是课表的子模块，默认关闭。
+    /// 关闭时引擎不发任何请求，这里如实为 false —— 界面与 AI 据此说真话，
+    /// 而不是显示一堆「静止的任务」让人以为它还在盯着。
+    pub enabled: bool,
     /// 是否有任务处在非终态
     pub active: bool,
     /// 教务服务器时间文本（最近一次采样）

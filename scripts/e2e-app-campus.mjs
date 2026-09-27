@@ -15,6 +15,7 @@
  * 运行：node scripts/e2e-app-campus.mjs
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { presetFeatureFlags } from './lib/features.mjs'
 
 const PORT = Number(process.env.REIN_APP_DEBUG_PORT ?? 9222)
 const USER = process.env.REIN_GUET_USER
@@ -125,6 +126,8 @@ async function connect() {
   }
   await cdp('Page.enable')
   await cdp('Runtime.enable')
+  // 抢课是课表的子模块，**默认关闭** —— 本剧本测的正是它，先把开关预置好
+  await presetFeatureFlags(cdp)
   console.log(`     已连上 ${target.url}`)
 }
 

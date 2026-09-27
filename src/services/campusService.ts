@@ -175,6 +175,15 @@ export const campusService = {
 
   /* ---------------- 自动抢课（后台引擎） ---------------- */
 
+  /**
+   * 抢课模块开关（课表的子模块，默认关闭）。
+   *
+   * 前端的功能开关是权威（`stores/features.ts`），这里把它同步给 Rust 引擎：
+   * 关闭后引擎不再探测窗口、不再发任何请求。**开机时也要同步一次**
+   * （`App.vue` 里做），否则「上次关着」与「引擎启动时读到什么」可能不一致。
+   */
+  grabSetEnabled: (enabled: boolean) => invoke<void>('campus_grab_set_enabled', { enabled }),
+
   grabState: () => invoke<GrabState>('campus_grab_state'),
 
   /**

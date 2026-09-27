@@ -2,7 +2,8 @@ import { CalendarDays } from 'lucide-vue-next'
 
 import { definePlugin } from '../registry'
 
-/** 课表模块：教务同步、课表三视图、培养方案与抢课（可开关，见「打开或关闭功能」） */
+/** 课表模块：教务同步、课表三视图、培养方案（可开关，见「打开或关闭功能」）。
+ *  抢课是它的**子模块**（`campusGrab.ts`，默认关闭）—— 那部分激进得多，单独一个开关。 */
 export const campusPlugin = definePlugin({
   id: 'campus',
   name: '课表',
@@ -11,7 +12,7 @@ export const campusPlugin = definePlugin({
   accent: '--cat-class',
   toggleable: true,
   defaultEnabled: true,
-  routes: ['campus-schedule', 'campus-settings', 'campus-program', 'campus-course-select'],
+  routes: ['campus-schedule', 'campus-settings', 'campus-program'],
   nav: [{ route: 'campus-schedule', label: '课表', icon: CalendarDays, surfaces: ['rail'], order: 130 }],
   tools: [
     {

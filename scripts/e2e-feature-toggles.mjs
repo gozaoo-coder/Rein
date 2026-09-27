@@ -292,9 +292,69 @@ async function main() {
     await clickText('.frow', '打开或关闭功能')
     await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页挂载')
     const rows = await evalJS(`[...document.querySelectorAll('.prow .ptxt b')].map((e) => e.textContent.trim())`)
-    ok('开关页列出三个可开关模块', rows.join() === '运动,课表,健康方案', rows.join(' · '))
+    ok(
+      '开关页列出四个可开关模块（抢课是课表的子模块）',
+      rows.join() === '运动,课表,抢课,健康方案',
+      rows.join(' · '),
+    )
     const switches = await evalJS(`document.querySelectorAll('.prow [role="switch"]').length`)
-    ok('每个模块一个 role=switch 开关', switches === 3, `${switches} 个`)
+    ok('每个模块一个 role=switch 开关', switches === 4, `${switches} 个`)
+    // 子模块必须缩进挂在父模块下面（DOM 顺序即视觉顺序）
+    const nested = await evalJS(`(() => {
+      const all = [...document.querySelectorAll('.prow')]
+      const parent = all.findIndex((r) => r.querySelector('.ptxt b')?.textContent.trim() === '课表')
+      const child = all.findIndex((r) => r.querySelector('.ptxt b')?.textContent.trim() === '抢课')
+      const childEl = all[child]
+      return {
+        rightAfter: child === parent + 1,
+        indented: childEl ? parseFloat(getComputedStyle(childEl).marginLeft) > 0 : false,
+        tagged: childEl?.querySelector('.namerow .tag')?.textContent.trim() === '子模块',
+      }
+    })()`)
+    ok(
+      '子模块紧跟在父模块之后、有缩进且带「子模块」标记',
+      nested.rightAfter && nested.indented && nested.tagged,
+      JSON.stringify(nested),
+    )
+    // **默认关闭**：抢课是这套开关里唯一一个默认关的（它比课表激进）
+    const defaults = await evalJS(`(() => {
+      const out = {}
+      for (const r of document.querySelectorAll('.prow')) {
+        const name = r.querySelector('.ptxt b')?.textContent.trim()
+        const sw = r.querySelector('[role="switch"]')
+        if (name && sw) out[name] = sw.getAttribute('aria-checked') === 'true'
+      }
+      return out
+    })()`)
+    ok(
+      '抢课默认关闭，其余默认打开',
+      defaults['抢课'] === false && defaults['课表'] === true && defaults['运动'] === true,
+      JSON.stringify(defaults),
+    )
+    // 默认关着 → 直链进不去
+    await evalJS(`location.hash = '#/campus/course-select'`)
+    await sleep(600)
+    ok(
+      '抢课默认关闭时直链被守卫拦回主页',
+      (await evalJS(`location.hash`)) === '#/',
+      await evalJS(`location.hash`),
+    )
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页')
+
+    /* ---- 2b. 子模块开关真的放行（开了就能进，关了就不行） ---- */
+    ok('打开「抢课」开关', (await setToggle('抢课', true)) === 'clicked')
+    await evalJS(`location.hash = '#/campus/course-select'`)
+    await sleep(800)
+    ok(
+      '打开后直链可进（选课页真的挂载了）',
+      (await evalJS(`document.querySelector('h1')?.textContent`)) === '选课',
+      await evalJS(`location.hash`),
+    )
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页')
+    ok('关掉「抢课」开关（回到默认态）', (await setToggle('抢课', false)) === 'clicked')
+    await sleep(300)
     await shot('2-features')
     await shotDark('2-features-dark')
 
@@ -319,6 +379,25 @@ async function main() {
     await evalJS(`location.hash = '#/settings/features'`)
     await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页')
     ok('关闭「课表」开关', (await setToggle('课表', false)) === 'clicked')
+    await sleep(300)
+    // 子模块继承父模块：课表关了，抢课开关必须置灰且视为关闭 ——
+    // 「工具卡没了但直链还能进」那种半关状态就是这里防的
+    const subOff = await evalJS(`(() => {
+      const row = [...document.querySelectorAll('.prow')].find(
+        (r) => r.querySelector('.ptxt b')?.textContent.trim() === '抢课',
+      )
+      const sw = row?.querySelector('[role="switch"]')
+      return {
+        disabled: sw?.disabled === true,
+        checked: sw?.getAttribute('aria-checked') === 'true',
+        hint: row?.querySelector('.ptxt em')?.textContent.includes('课表关闭时不可用') === true,
+      }
+    })()`)
+    ok(
+      '课表关掉后抢课开关置灰、视为关闭、并写明原因',
+      subOff.disabled && subOff.checked === false && subOff.hint,
+      JSON.stringify(subOff),
+    )
     await evalJS(`location.hash = '#/settings/features'`) // 关掉的开关会改导航，这里重新确认页面在
     await sleep(300)
     ok('关闭「健康方案」开关', (await setToggle('健康方案', false)) === 'clicked')

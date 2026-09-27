@@ -53,13 +53,28 @@ impl<'a> LessonSearchClient<'a> {
         Self { spec, session }
     }
 
+    /// 树维那一套接口表。开课查询**只有树维这条系统有路** ——
+    /// 正方（如广西科技大学）的接口表里没有它，这里就明确报错，
+    /// 而不是拿空路径打出去换回一个登录页 HTML。
+    fn endpoints(&self) -> Result<super::provider::Eams5Endpoints> {
+        self.spec.endpoints.eams5.ok_or_else(|| {
+            ReinError::Message(format!(
+                "{} 的正方教务系统没有「全校开课查询」接口，本应用暂不支持",
+                self.spec.short_name
+            ))
+        })
+    }
+
+    fn biz_type_id(&self) -> Result<i64> {
+        self.spec.term.biz_type_id.ok_or_else(|| {
+            ReinError::Message(format!("{} 没有声明培养层次（bizTypeId）", self.spec.kind))
+        })
+    }
+
     /// 开课查询入口页。**只取学期列表**：页面里的 var semesters = JSON.parse('…')
     /// 与课表页是同一份形状，所以复用 super::guet 的解析。
     pub fn semesters(&mut self) -> Result<Vec<super::models::RemoteSemester>> {
-        let path = self
-            .spec
-            .endpoints
-            .lesson_search_page_for(self.spec.term.biz_type_id);
+        let path = self.endpoints()?.lesson_search_page_for(self.biz_type_id()?);
         let resp = self.session.get(&path)?;
         guard(&resp, "打开全校开课查询")?;
         super::guet::parse_semesters(&resp.text())
@@ -70,23 +85,19 @@ impl<'a> LessonSearchClient<'a> {
     /// 单独一步是有意义的：**数据接口对未登录会话也返回 200 空列表**，
     /// 只看数据接口会把「没登录」误判成「这门课没人开」。
     pub fn open(&mut self, student_id: &str) -> Result<()> {
-        let path = self.spec.endpoints.lesson_search_index_for(student_id);
+        let path = self.endpoints()?.lesson_search_index_for(student_id);
         let resp = self.session.get(&path)?;
         guard(&resp, "打开开课查询页面")
     }
 
     /// 查一页开课名单。
     pub fn search(&mut self, student_id: &str, q: &LessonSearchQuery) -> Result<LessonSearchPage> {
+        let ep = self.endpoints()?;
+        let biz = self.biz_type_id()?;
         let (page, size) = normalize_page(q.page, q.page_size);
-        let path = self.spec.endpoints.lesson_search_data_for(
-            q.semester_id,
-            student_id,
-            self.spec.term.biz_type_id,
-            page,
-            size,
-        );
+        let path = ep.lesson_search_data_for(q.semester_id, student_id, biz, page, size);
         // 数据接口要带 Referer：教务按来源页判上下文，缺了它偶尔会回空。
-        let referer = self.spec.endpoints.lesson_search_index_for(student_id);
+        let referer = ep.lesson_search_index_for(student_id);
         let resp = self.session.get_with_referer(&path, &referer)?;
         guard(&resp, "查询开课名单")?;
 
@@ -346,7 +357,11 @@ mod tests {
     /// 页面地址与数据地址要逐字对齐实测抓包 —— 这两条最容易写错。
     #[test]
     fn paths_match_the_captured_requests() {
-        let e = provider::spec("guet-supwisdom-eams5").unwrap().endpoints;
+        let e = provider::spec("guet-supwisdom-eams5")
+            .unwrap()
+            .endpoints
+            .eams5
+            .expect("开课查询只有树维那条系统有");
         assert_eq!(
             e.lesson_search_page_for(2),
             "/student/for-std/lesson-search?bizTypeId=2"
@@ -475,7 +490,11 @@ mod tests {
     /// 路径构造器只负责拼串，不负责夹取 —— 这两件事分开才不会互相掩盖。
     #[test]
     fn path_builder_is_a_pure_formatter() {
-        let e = provider::spec("guet-supwisdom-eams5").unwrap().endpoints;
+        let e = provider::spec("guet-supwisdom-eams5")
+            .unwrap()
+            .endpoints
+            .eams5
+            .expect("开课查询只有树维那条系统有");
         let data = e.lesson_search_data_for(321, "1", 2, 1, 9999);
         assert!(
             data.contains("queryPage__=1,9999"),

@@ -55,6 +55,15 @@ export interface PluginSpec {
   toggleable?: boolean
   /** 首次运行的默认开关状态（仅 toggleable 有意义，默认开） */
   defaultEnabled?: boolean
+  /**
+   * 父模块 id：声明「本模块是它的子模块」。
+   *
+   * 两件事由它决定，缺一不可：
+   * - **设置页把它缩进挂在父模块下面**，用户看得出从属关系；
+   * - **父模块关掉时子模块自动失效**（见 `stores/features.ts`）——
+   *   子模块依赖父模块的数据/会话，父的不在，它开着也没意义。
+   */
+  parent?: string
   /** 该插件拥有的路由名：关闭后这些路由被守卫拦回主页 */
   routes?: string[]
   tools?: ToolContribution[]

@@ -16,9 +16,10 @@ use tauri::{AppHandle, Manager, State};
 use crate::error::{ReinError, Result};
 use crate::state::{AppState, CampusHub, CourseSelectToken, PendingLogin};
 
+use super::adapter::AnyAdapter;
 use super::course_select::CourseSelectClient;
+use super::dates;
 use super::grab::{self, GrabHub};
-use super::guet::{self, GuetAdapter, TimetableSnapshot};
 use super::http::{CookieJar, HttpResponse, Session};
 use super::lesson_search::{self, LessonSearchClient};
 use super::matcher;
@@ -212,7 +213,7 @@ fn relogin(account: &AccountRow) -> Result<CookieJar> {
     let spec = account.spec()?;
     let mut session = Session::new(&account.base_url, CookieJar::default());
     let outcome = {
-        let mut adapter = GuetAdapter::new(spec, &mut session);
+        let mut adapter = AnyAdapter::new(spec, &mut session);
         adapter.login(&account.login_name, password, "")?
     };
     if !outcome.ok {
@@ -260,8 +261,8 @@ fn recover_session(db: &Mutex<Connection>, hub: &CampusHub, account: &AccountRow
 /// 学期第一教学周第一天的公历日期。
 /// `start_date` 理论上就是它，但仍做一次吸附：万一教务给了个周中日期，吸附后依然自洽。
 fn semester_anchor(sem: &CampusSemester) -> Option<NaiveDate> {
-    Some(guet::week_anchor(
-        guet::parse_ymd(&sem.start_date)?,
+    Some(dates::week_anchor(
+        dates::parse_ymd(&sem.start_date)?,
         sem.week_start_on_sunday,
     ))
 }
@@ -459,8 +460,8 @@ fn build_time_slots(sessions: &[CampusSession]) -> Vec<TimeSlot> {
             continue;
         }
         let (Some(sm), Some(em)) = (
-            guet::hhmm_to_min(&s.start_time),
-            guet::hhmm_to_min(&s.end_time),
+            dates::hhmm_to_min(&s.start_time),
+            dates::hhmm_to_min(&s.end_time),
         ) else {
             continue;
         };
@@ -547,16 +548,16 @@ fn materialize_todos(
     let mut written = 0i64;
 
     for entry in expand_entries(sem, sessions) {
-        let Some(d) = guet::parse_ymd(&entry.date) else {
+        let Some(d) = dates::parse_ymd(&entry.date) else {
             continue;
         };
         if d < from || d > to || done.contains(&(entry.session.id, entry.date.clone())) {
             continue;
         }
-        let Some(start_min) = guet::hhmm_to_min(&entry.session.start_time) else {
+        let Some(start_min) = dates::hhmm_to_min(&entry.session.start_time) else {
             continue;
         };
-        let duration = guet::hhmm_to_min(&entry.session.end_time)
+        let duration = dates::hhmm_to_min(&entry.session.end_time)
             .map(|e| e - start_min)
             .filter(|d| *d > 0)
             .unwrap_or(DEFAULT_CLASS_MIN);
@@ -677,20 +678,10 @@ pub async fn campus_captcha(
         tauri::async_runtime::spawn_blocking(move || -> Result<(String, PendingLogin)> {
             let mut session = Session::new(&base, CookieJar::default());
 
-            // 先把 salt 取回来：这一步同时建立了会话（响应会 Set-Cookie），
-            // 之后的验证码 GET 才会挂在同一个会话上。
-            let salt_resp = session.get(spec.login.salt_path())?;
-            if !salt_resp.is_ok() {
-                return Err(ReinError::Message(format!(
-                    "获取登录盐值失败：HTTP {}",
-                    salt_resp.status
-                )));
-            }
-            if salt_resp.text().trim().is_empty() {
-                return Err(ReinError::Message("登录盐值为空，教务系统可能已改版".into()));
-            }
-
-            let mut adapter = GuetAdapter::new(spec, &mut session);
+            // 先把会话建起来（树维要取 salt，正方不用）—— 之后的验证码 GET
+            // 与随后的登录提交必须挂在这个会话上。
+            let mut adapter = AnyAdapter::new(spec, &mut session);
+            adapter.warm_login_session()?;
             let image = adapter.fetch_captcha()?;
 
             Ok((
@@ -775,7 +766,7 @@ pub async fn campus_login(
             let jar = pending.map(|p| p.cookies).unwrap_or_default();
             let mut session = Session::new(&base, jar);
             let outcome = {
-                let mut adapter = GuetAdapter::new(spec, &mut session);
+                let mut adapter = AnyAdapter::new(spec, &mut session);
                 adapter.login(&login_name, &plain, &captcha)?
             };
             Ok((outcome, session.jar().clone()))
@@ -840,6 +831,23 @@ pub async fn campus_login(
     })
 }
 
+/// 抢课模块开关（课表的子模块，**默认关闭**）。
+///
+/// 前端的功能开关是权威（`stores/features.ts`），这里负责把它同步给引擎：
+/// 关闭时引擎一个请求都不发（连窗口探测都停）。只关界面不关引擎，
+/// 等于「用户以为关了，但它还在每分钟问教务」。
+///
+/// 落库 `app_meta`：重启后仍按上次的开关来 —— 否则关掉再开机会自己又跑起来。
+#[tauri::command]
+pub fn campus_grab_set_enabled(state: State<AppState>, hub: State<GrabHub>, enabled: bool) -> Result<()> {
+    {
+        let conn = state.db.lock().unwrap();
+        meta_set(&conn, grab::ENABLED_KEY, if enabled { "1" } else { "0" })?;
+    }
+    hub.set_enabled_flag(enabled);
+    Ok(())
+}
+
 /// 会话是否仍然有效。
 #[tauri::command]
 pub async fn campus_session_probe(state: State<'_, AppState>) -> Result<bool> {
@@ -850,7 +858,7 @@ pub async fn campus_session_probe(state: State<'_, AppState>) -> Result<bool> {
     let spec = account.spec()?;
     tauri::async_runtime::spawn_blocking(move || -> Result<bool> {
         let mut session = account.session();
-        GuetAdapter::new(spec, &mut session).probe_session()
+        AnyAdapter::new(spec, &mut session).probe_session()
     })
     .await
     .map_err(|e| ReinError::Message(format!("会话探测失败：{e}")))?
@@ -974,8 +982,10 @@ fn fetch_snapshot(
     session: &mut Session,
     wanted_remote: Option<i64>,
 ) -> Result<(Vec<RemoteSemester>, TimetableSnapshot, i64)> {
-    let mut adapter = GuetAdapter::new(spec, session);
-    let vars = adapter.fetch_page_vars()?;
+    let mut adapter = AnyAdapter::new(spec, session);
+    // 把「要哪个学期」透给适配器：正方那边学期列表要逐个补周历（起止日期），
+    // 默认只取当前学年 ±1 —— 用户翻回很老的学期时，少了这个提示就会静默同步到别的学期。
+    let vars = adapter.fetch_page_vars(wanted_remote)?;
     let today = Local::now().date_naive();
 
     // 选目标学期：显式指定 > 覆盖今天的 > 起始日最晚的
@@ -986,8 +996,8 @@ fn fetch_snapshot(
         .or_else(|| {
             vars.semesters.iter().find(|s| {
                 match (
-                    guet::parse_ymd(s.start_date.as_deref().unwrap_or("")),
-                    guet::parse_ymd(s.end_date.as_deref().unwrap_or("")),
+                    dates::parse_ymd(s.start_date.as_deref().unwrap_or("")),
+                    dates::parse_ymd(s.end_date.as_deref().unwrap_or("")),
                 ) {
                     (Some(a), Some(b)) => a <= today && today <= b,
                     _ => false,
@@ -996,7 +1006,7 @@ fn fetch_snapshot(
         })
         .or_else(|| {
             vars.semesters.iter().max_by_key(|s| {
-                guet::parse_ymd(s.start_date.as_deref().unwrap_or("")).unwrap_or(today)
+                dates::parse_ymd(s.start_date.as_deref().unwrap_or("")).unwrap_or(today)
             })
         })
         .ok_or_else(|| ReinError::Message("教务系统没有返回可用学期".into()))?;
@@ -1021,13 +1031,13 @@ fn remote_to_local(
     spec: &'static SchoolSystemSpec,
     today: NaiveDate,
 ) -> Option<LocalSemester> {
-    let start = guet::parse_ymd(remote.start_date.as_deref()?)?;
-    let end = guet::parse_ymd(remote.end_date.as_deref()?)?;
+    let start = dates::parse_ymd(remote.start_date.as_deref()?)?;
+    let end = dates::parse_ymd(remote.end_date.as_deref()?)?;
     if end < start {
         return None;
     }
     Some(LocalSemester {
-        name: guet::semester_display_name(
+        name: dates::semester_display_name(
             remote.school_year.as_deref(),
             remote.season.as_deref(),
             // 拼不出中文名时退到教务的英文名，再退到学期代码
@@ -1041,8 +1051,8 @@ fn remote_to_local(
         week_start_on_sunday: remote
             .week_start_on_sunday
             .unwrap_or(spec.term.week_start_on_sunday),
-        total_weeks: guet::total_weeks(start, end),
-        current_week: guet::current_week(start, end, today),
+        total_weeks: dates::total_weeks(start, end),
+        current_week: dates::current_week(start, end, today),
     })
 }
 
@@ -1338,11 +1348,11 @@ pub fn campus_schedule(
     let today = Local::now().date_naive();
     let lo = from
         .as_deref()
-        .and_then(guet::parse_ymd)
+        .and_then(dates::parse_ymd)
         .unwrap_or_else(|| today - Duration::days(MATERIALIZE_BACK_DAYS));
     let hi = to
         .as_deref()
-        .and_then(guet::parse_ymd)
+        .and_then(dates::parse_ymd)
         .unwrap_or_else(|| today + Duration::days(MATERIALIZE_FORWARD_DAYS));
     let (lo_s, hi_s) = (
         lo.format("%Y-%m-%d").to_string(),
@@ -1414,7 +1424,7 @@ pub async fn campus_program(
         let mut refreshed: Option<CookieJar> = None;
 
         let mut raw = {
-            let mut adapter = GuetAdapter::new(spec, &mut session);
+            let mut adapter = AnyAdapter::new(spec, &mut session);
             adapter.fetch_program_info(&student_id)
         };
         if matches!(&raw, Err(e) if is_session_lost(e)) {
@@ -1422,7 +1432,7 @@ pub async fn campus_program(
                 Ok(jar) => {
                     session = Session::new(&account.base_url, jar.clone());
                     refreshed = Some(jar);
-                    raw = GuetAdapter::new(spec, &mut session).fetch_program_info(&student_id);
+                    raw = AnyAdapter::new(spec, &mut session).fetch_program_info(&student_id);
                 }
                 Err(e) => raw = Err(e),
             }
@@ -2723,7 +2733,7 @@ pub async fn campus_rescue_state(
             let jar = CookieJar::from_json(acc.cookies.as_deref());
             let probed = tauri::async_runtime::spawn_blocking(move || {
                 let mut session = Session::new(&base, jar);
-                GuetAdapter::new(spec, &mut session).probe_session()
+                AnyAdapter::new(spec, &mut session).probe_session()
             })
             .await;
             match probed {
@@ -3174,7 +3184,7 @@ mod tests {
 
     #[test]
     fn occurrence_dates_match_calendar() {
-        let anchor = guet::parse_ymd("2026-09-14").unwrap();
+        let anchor = dates::parse_ymd("2026-09-14").unwrap();
         // 第 1 教学周周一 = 学期起始日
         assert_eq!(
             occurrence_date(anchor, 1, 1, false).unwrap().to_string(),
@@ -3197,7 +3207,7 @@ mod tests {
 
     #[test]
     fn occurrence_dates_sunday_first_week() {
-        let anchor = guet::parse_ymd("2026-09-13").unwrap(); // 周日
+        let anchor = dates::parse_ymd("2026-09-13").unwrap(); // 周日
         assert_eq!(
             occurrence_date(anchor, 1, 7, true).unwrap().to_string(),
             "2026-09-13"

@@ -3933,6 +3933,9 @@ function grabSnapshot(): GrabState {
   }
   return {
     alive: true,
+    // mock 里引擎总是「在跑」：浏览器的假引擎没有真门闩，开关由插件层管（入口/路由），
+    // 而 e2e 要验的是插件层那部分。真后端才有真门闩（grab.rs 的 ENABLED_KEY）。
+    enabled: true,
     active,
     serverTime: grabWallOf(now),
     skewSec: 0,
@@ -6766,14 +6769,16 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     /* ---------- 校园教务（演示数据，只在 mock 里存在） ---------- */
 
     case 'campus_systems':
-      // 与 Rust 的 REGISTRY 同序同形：**正式在前**（默认选中正式域），测试在后。
-      // 两个域是同一套系统，除域名之外一字不差 —— 见 `campus/provider.rs` 的 macro。
+      // 与 Rust 的 REGISTRY 同序同形。**字段名与语义必须与 `provider::list_info` 一致**：
+      // 少一个 shortName，选择器与摘要入口在浏览器里就会显示成空白。
       return delay([
         {
           kind: 'guet-supwisdom-eams5',
           name: '桂林电子科技大学 · 本科生教学信息平台（正式）',
+          shortName: '桂林电子科技大学',
           vendor: '树维 Supwisdom EAMS5 · 学生端 · bkjw.guet.edu.cn（正式选课在这里）',
           defaultBaseUrl: 'https://bkjw.guet.edu.cn',
+          baseUrlHint: '默认指向学校测试环境；切换到正式环境时改这里。',
           loginStrategy: 'supwisdom-portal-rsa',
           bizTypeId: 2,
           mayRequireCaptcha: true,
@@ -6781,10 +6786,24 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         {
           kind: 'guet-supwisdom-eams5-test',
           name: '桂林电子科技大学 · 本科生教学信息平台（测试）',
+          shortName: '桂林电子科技大学',
           vendor: '树维 Supwisdom EAMS5 · 学生端 · bkjwtest.guet.edu.cn（联调用，风控更松）',
           defaultBaseUrl: 'https://bkjwtest.guet.edu.cn',
+          baseUrlHint: '默认指向学校测试环境；切换到正式环境时改这里。',
           loginStrategy: 'supwisdom-portal-rsa',
           bizTypeId: 2,
+          mayRequireCaptcha: true,
+        },
+        {
+          kind: 'gxust-zfsoft-zftal',
+          name: '广西科技大学 · 教学管理信息平台',
+          shortName: '广西科技大学',
+          vendor: '正方 ZFSoft zftal-ui-v5 · jwxt.gxust.edu.cn',
+          defaultBaseUrl: 'https://jwxt.gxust.edu.cn',
+          baseUrlHint: '学校正式教务地址；除非学校另行通知，不要改。',
+          loginStrategy: 'zfsoft-login-rsa',
+          // 正方没有「培养层次」这个概念（学期就是学年 + 学期代码）
+          bizTypeId: null,
           mayRequireCaptcha: true,
         },
       ] as T)
@@ -7092,6 +7111,11 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     case 'campus_grab_state':
       return delay(grabSnapshot() as T)
+
+    // 模块开关：真后端会落 app_meta 并停掉引擎线程；mock 里没有线程，收到即认。
+    // 留着这一条是为了让「拨开关 → 同步给引擎」这条链路在浏览器里也不报缺命令。
+    case 'campus_grab_set_enabled':
+      return delay(undefined as T)
 
     /* ---- 救援面（AI 的最后补救） ---- */
 

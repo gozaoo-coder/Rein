@@ -4,12 +4,11 @@
 //! 改接口时先对照注释确认，别凭直觉猜。
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use chrono::{Datelike, NaiveDate};
 
 use crate::error::{ReinError, Result};
 
-use super::http::{rsa_encrypt_password, HttpResponse, Session};
-use super::models::{LoginOutcome, PageVars, RemoteSemester, TimetableResponse};
+use super::http::{guard, rsa_encrypt_password, Session};
+use super::models::{LoginOutcome, PageVars, RemoteSemester, TimetableResponse, TimetableSnapshot};
 use super::provider::SchoolSystemSpec;
 
 /// 课表页面里学期列表的入口。真实形状（2026-09 实测）：
@@ -141,32 +140,6 @@ pub fn parse_semesters(html: &str) -> Result<Vec<RemoteSemester>> {
     serde_json::from_str(&inner).map_err(|e| ReinError::Message(format!("学期列表解析失败：{e}")))
 }
 
-fn ok_resp(resp: &HttpResponse, what: &str) -> Result<()> {
-    if resp.is_redirect() {
-        return Err(ReinError::coded(
-            "session_lost",
-            format!("{what} 需要登录：会话已过期，请重新登录教务系统"),
-        ));
-    }
-    if !resp.is_ok() {
-        return Err(ReinError::Message(format!(
-            "{what} 失败：HTTP {}",
-            resp.status
-        )));
-    }
-    Ok(())
-}
-
-/// `AUTUMN` → `第一学期`。教务的 `nameEn`（`2026-2027 1st Term`）不友好，自己拼中文名。
-fn season_cn(season: Option<&str>) -> &'static str {
-    match season.unwrap_or("") {
-        "AUTUMN" => "第一学期",
-        "SPRING" => "第二学期",
-        "SUMMER" => "小学期",
-        _ => "学期",
-    }
-}
-
 /// 登录被拒时的文案。
 ///
 /// 教务对「账号密码不对」并不总给 `message`（实测有时是空串 / null）。
@@ -194,30 +167,6 @@ fn login_failure(raw: &str, need_captcha: bool, captcha: &str) -> (String, Optio
     }
 }
 
-pub fn semester_display_name(
-    school_year: Option<&str>,
-    season: Option<&str>,
-    fallback: &str,
-) -> String {
-    match school_year {
-        Some(y) if !y.is_empty() => format!("{y} {}", season_cn(season)),
-        _ => fallback.to_string(),
-    }
-}
-
-/// 归一化后的课表快照（落库前的中间形态）。
-pub struct TimetableSnapshot {
-    pub student_id: Option<String>,
-    pub student_code: Option<String>,
-    pub student_name: Option<String>,
-    pub department: Option<String>,
-    pub major: Option<String>,
-    pub adminclass: Option<String>,
-    pub grade: Option<String>,
-    pub total_credits: Option<f64>,
-    pub activities: Vec<super::models::TimetableActivity>,
-}
-
 pub struct GuetAdapter<'a> {
     pub spec: &'static SchoolSystemSpec,
     pub session: &'a mut Session,
@@ -228,11 +177,42 @@ impl<'a> GuetAdapter<'a> {
         Self { spec, session }
     }
 
+    /// 树维那一套接口表。声明成树维的学校必须带上它 —— 缺了就是 spec 写错了，
+    /// 与其拿着空路径去打教务，不如在这里明说。
+    fn endpoints(&self) -> Result<super::provider::Eams5Endpoints> {
+        self.spec.endpoints.eams5.ok_or_else(|| {
+            ReinError::Message(format!("{} 没有声明树维 EAMS5 的接口表", self.spec.kind))
+        })
+    }
+
+    /// 培养层次（`bizTypeId`）。同样是「声明里必须有」的东西。
+    fn biz_type_id(&self) -> Result<i64> {
+        self.spec.term.biz_type_id.ok_or_else(|| {
+            ReinError::Message(format!("{} 没有声明培养层次（bizTypeId）", self.spec.kind))
+        })
+    }
+
     /// 会话探针：`GET /student/home`。200 = 仍有效，302 = 被踢回登录页。
     pub fn probe_session(&mut self) -> Result<bool> {
         let path = self.spec.login.probe_path();
         let resp = self.session.get(path)?;
         Ok(resp.is_ok())
+    }
+
+    /// 取验证码前的**会话预热**。
+    ///
+    /// 树维把验证码答案绑在会话上，所以必须先把会话建起来（`GET salt` 会 Set-Cookie），
+    /// 否则「取图」与「提交」落在两个会话里，验证码必然对不上。
+    pub fn warm_login_session(&mut self) -> Result<()> {
+        let salt_path = self.spec.login.salt_path().ok_or_else(|| {
+            ReinError::Message(format!("{} 的登录策略里没有盐值地址", self.spec.kind))
+        })?;
+        let resp = self.session.get(salt_path)?;
+        guard(&resp, "获取登录盐值")?;
+        if resp.text().trim().is_empty() {
+            return Err(ReinError::Message("登录盐值为空，教务系统可能已改版".into()));
+        }
+        Ok(())
     }
 
     /// 拉取图形验证码（原始 JPEG 字节的 base64，前端自行拼 `data:` URL）。
@@ -247,7 +227,7 @@ impl<'a> GuetAdapter<'a> {
         );
         let referer = self.spec.login.login_path();
         let resp = self.session.get_with_referer(&path, referer)?;
-        ok_resp(&resp, "获取验证码")?;
+        guard(&resp, "获取验证码")?;
         Ok(STANDARD.encode(&resp.body))
     }
 
@@ -259,9 +239,11 @@ impl<'a> GuetAdapter<'a> {
         captcha: &str,
     ) -> Result<LoginOutcome> {
         // ① 取 salt —— 注意这一步同时替我们建立了携带 SESSION 的 Cookie
-        let salt_path = self.spec.login.salt_path();
+        let salt_path = self.spec.login.salt_path().ok_or_else(|| {
+            ReinError::Message(format!("{} 的登录策略里没有盐值地址", self.spec.kind))
+        })?;
         let salt_resp = self.session.get(salt_path)?;
-        ok_resp(&salt_resp, "获取登录盐值")?;
+        guard(&salt_resp, "获取登录盐值")?;
         let salt = salt_resp.text().trim().to_string();
         if salt.is_empty() {
             return Err(ReinError::Message(
@@ -270,7 +252,10 @@ impl<'a> GuetAdapter<'a> {
         }
 
         // ② RSA_PKCS1_v1_5(salt + "-" + password) —— 与 JSEncrypt.encrypt 等价
-        let encrypted = rsa_encrypt_password(self.spec.login.public_key(), &salt, password)?;
+        let public_key = self.spec.login.public_key().ok_or_else(|| {
+            ReinError::Message(format!("{} 的登录策略里没有公钥", self.spec.kind))
+        })?;
+        let encrypted = rsa_encrypt_password(public_key, &salt, password)?;
 
         // ③ 提交
         let login_path = self.spec.login.login_path();
@@ -324,11 +309,10 @@ impl<'a> GuetAdapter<'a> {
     /// 树维没有独立的 `semester-list` 接口（实测 404），学期列表只内嵌在这个页面里。
     pub fn fetch_page_vars(&mut self) -> Result<PageVars> {
         let path = self
-            .spec
-            .endpoints
-            .course_table_page_for(self.spec.term.biz_type_id);
+            .endpoints()?
+            .course_table_page_for(self.biz_type_id()?);
         let resp = self.session.get(&path)?;
-        ok_resp(&resp, "获取课表页面")?;
+        guard(&resp, "获取课表页面")?;
         let html = resp.text();
 
         let semesters = parse_semesters(&html)?;
@@ -340,9 +324,9 @@ impl<'a> GuetAdapter<'a> {
 
     /// 课表数据（主数据源）。路径里只有 semesterId，不需要额外的 dataId，最稳。
     pub fn fetch_timetable(&mut self, semester_id: i64) -> Result<TimetableSnapshot> {
-        let path = self.spec.endpoints.course_table_print_for(semester_id);
+        let path = self.endpoints()?.course_table_print_for(semester_id);
         let resp = self.session.get(&path)?;
-        ok_resp(&resp, "获取课表数据")?;
+        guard(&resp, "获取课表数据")?;
         let raw = resp
             .json()
             .map_err(|e| ReinError::Message(format!("课表数据解析失败：{e}")))?;
@@ -370,55 +354,10 @@ impl<'a> GuetAdapter<'a> {
 
     /// 培养方案。响应可达 900KB+，调用方负责缓存。
     pub fn fetch_program_info(&mut self, student_id: &str) -> Result<serde_json::Value> {
-        let path = self.spec.endpoints.program_info_for(student_id);
+        let path = self.endpoints()?.program_info_for(student_id);
         let resp = self.session.get(&path)?;
-        ok_resp(&resp, "获取培养方案")?;
+        guard(&resp, "获取培养方案")?;
         resp.json()
-    }
-}
-
-/// `"16:30"` → 990（距 00:00 的分钟数），与 `todos.start_min` 同口径。
-pub fn hhmm_to_min(s: &str) -> Option<i64> {
-    let (h, m) = s.trim().split_once(':')?;
-    let h: i64 = h.trim().parse().ok()?;
-    let m: i64 = m.trim().parse().ok()?;
-    if !(0..24).contains(&h) || !(0..60).contains(&m) {
-        return None;
-    }
-    Some(h * 60 + m)
-}
-
-/// `"2026-09-14"` → NaiveDate
-pub fn parse_ymd(s: &str) -> Option<NaiveDate> {
-    NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok()
-}
-
-/// 学期总周数：起止日（含端点）除以 7 向上取整。
-/// 实测 2026-09-14 ~ 2027-01-24 → 133 天 → 19 周，与教务的 `weekIndices: [1..19]` 一致。
-pub fn total_weeks(start: NaiveDate, end: NaiveDate) -> i64 {
-    let days = (end - start).num_days() + 1;
-    if days <= 0 {
-        return 0;
-    }
-    (days + 6) / 7
-}
-
-/// 今天是第几教学周（1 起）；不在学期内返回 None。
-pub fn current_week(start: NaiveDate, end: NaiveDate, today: NaiveDate) -> Option<i64> {
-    if today < start || today > end {
-        return None;
-    }
-    Some((today - start).num_days() / 7 + 1)
-}
-
-/// 学期起始日所在周的周一（`week_start_on_sunday=false` 时即起始日本身）。
-pub fn week_anchor(start: NaiveDate, week_start_on_sunday: bool) -> NaiveDate {
-    let from_sunday = start.weekday().num_days_from_sunday() as i64;
-    if week_start_on_sunday {
-        start - chrono::Duration::days(from_sunday)
-    } else {
-        let from_monday = start.weekday().num_days_from_monday() as i64;
-        start - chrono::Duration::days(from_monday)
     }
 }
 
@@ -494,47 +433,6 @@ mod tests {
         let (msg, act) = login_failure("用户名或密码错误", false, "");
         assert_eq!(msg, "用户名或密码错误");
         assert!(act.is_none());
-    }
-
-    #[test]
-    fn season_labels() {
-        assert_eq!(season_cn(Some("AUTUMN")), "第一学期");
-        assert_eq!(season_cn(Some("SPRING")), "第二学期");
-        assert_eq!(
-            semester_display_name(Some("2026-2027"), Some("AUTUMN"), "x"),
-            "2026-2027 第一学期"
-        );
-        assert_eq!(semester_display_name(None, None, "回退名"), "回退名");
-    }
-
-    #[test]
-    fn time_and_date_helpers() {
-        assert_eq!(hhmm_to_min("16:30"), Some(990));
-        assert_eq!(hhmm_to_min("18:05"), Some(1085));
-        assert_eq!(hhmm_to_min("24:00"), None);
-        assert_eq!(hhmm_to_min("bad"), None);
-
-        let start = parse_ymd("2026-09-14").unwrap();
-        let end = parse_ymd("2027-01-24").unwrap();
-        assert_eq!(total_weeks(start, end), 19);
-        assert_eq!(current_week(start, end, start), Some(1));
-        assert_eq!(
-            current_week(start, end, parse_ymd("2026-09-21").unwrap()),
-            Some(2)
-        );
-        assert_eq!(
-            current_week(start, end, parse_ymd("2026-09-13").unwrap()),
-            None
-        );
-    }
-
-    #[test]
-    fn week_anchor_snaps_to_monday() {
-        // 2026-09-14 本身就是周一
-        let d = parse_ymd("2026-09-14").unwrap();
-        assert_eq!(week_anchor(d, false), d);
-        // 2026-09-16 是周三 → 锚点仍是 09-14
-        assert_eq!(week_anchor(parse_ymd("2026-09-16").unwrap(), false), d);
     }
 
     /// 真机联调（默认忽略）。带上凭据手动跑一次，确认「登录握手 → 课表页面解析 → 课表归一化」

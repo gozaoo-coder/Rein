@@ -257,7 +257,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 1. 现场 ─────────────── */
   defineTool({
     name: 'campus_status',
-    group: 'campus',
+    group: 'campusGrab',
     label: '教务现场',
     description:
       '一次拿到教务与抢课的完整现场：账号与会话是否有效、教务服务器时间与时钟偏差、当前开放的批次与窗口、' +
@@ -285,7 +285,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 2. 教学班 ─────────────── */
   defineTool({
     name: 'campus_lessons',
-    group: 'campus',
+    group: 'campusGrab',
     label: '教学班查询',
     description:
       '查教务当前批次的教学班：给关键词（空格分词，全部命中；可命中课程名/课程代码/教学班/教师）就模糊查，' +
@@ -330,7 +330,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 3. 排抢课 ─────────────── */
   defineTool({
     name: 'campus_grab_plan',
-    group: 'campus',
+    group: 'campusGrab',
     label: '排抢课',
     description:
       '把课排进抢课任务单，之后引擎自己守时钟与重试，不用人盯着。两种给法：' +
@@ -438,7 +438,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 4. 调度 ─────────────── */
   defineTool({
     name: 'campus_grab_control',
-    group: 'campus',
+    group: 'campusGrab',
     label: '抢课调度',
     description:
       '指挥抢课引擎。`retry_stuck` = 把卡住（连败/逾期未动）的任务全部重置重试 —— 任务「不动了」先试它；' +
@@ -563,7 +563,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 5. 直接选课 ─────────────── */
   defineTool({
     name: 'campus_select',
-    group: 'campus',
+    group: 'campusGrab',
     label: '直接选课',
     description:
       '绕过抢课引擎直接提交一次选课并等结果（submit = 正式提交，predicate = 占位，drop = 退课）。' +
@@ -631,7 +631,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 6. 会话 ─────────────── */
   defineTool({
     name: 'campus_session',
-    group: 'campus',
+    group: 'campusGrab',
     label: '教务会话',
     description:
       '处理教务会话。probe = 看会话是否还有效（一次请求）；relogin = 用保存的密码静默重登（没存密码时会明确拒绝并说怎么办）；' +
@@ -697,7 +697,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 7. 原始请求（curl） ─────────────── */
   defineTool({
     name: 'campus_http',
-    group: 'campus',
+    group: 'campusGrab',
     label: '教务请求',
     description:
       '带教务会话打一条任意 HTTP 请求（就是 curl）。教务改了接口、返回了看不懂的东西、某个命令报错时，用它看**原始响应**：' +
@@ -780,7 +780,7 @@ export const campusTools: AppTool[] = [
   /* ─────────────── 8. 导出脚本 ─────────────── */
   defineTool({
     name: 'campus_export_script',
-    group: 'campus',
+    group: 'campusGrab',
     label: '导出救援脚本',
     description:
       '把刚才真实打过的请求导出成一份**能脱离 App 重放的 bash 脚本**（含当时的 Cookie 与选课令牌快照）：' +

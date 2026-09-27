@@ -259,6 +259,7 @@ pub fn run() {
             modules::campus::commands::campus_course_select_drop,
             // campus（自动抢课：任务单 + 后台引擎）
             modules::campus::commands::campus_grab_state,
+            modules::campus::commands::campus_grab_set_enabled,
             modules::campus::commands::campus_grab_enqueue,
             modules::campus::commands::campus_grab_task_action,
             modules::campus::commands::campus_grab_clear_finished,

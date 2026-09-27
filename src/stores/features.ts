@@ -54,10 +54,18 @@ export const useFeaturesStore = defineStore('features', () => {
     { deep: true },
   )
 
-  /** 插件是否启用：内核插件（不可开关）恒开 */
+  /**
+   * 插件是否启用：内核插件（不可开关）恒开。
+   *
+   * **父模块关掉时，子模块一律视为关闭** —— 子模块（如抢课）吃的是父模块（课表）的
+   * 登录会话与学期数据，父的不在，它开着只会撞一堵「还没有绑定教务系统」的墙。
+   * 判定放在这里而不是每个消费方各写一遍：入口显隐、路由守卫、AI 工具门禁
+   * 都问这一个函数，才不会出现「工具卡没了但直链还能进」这种半关状态。
+   */
   function isEnabled(id: string): boolean {
     const p = pluginById(id)
     if (!p || !p.toggleable) return true
+    if (p.parent && !isEnabled(p.parent)) return false
     return overrides.value[id] ?? p.defaultEnabled !== false
   }
 

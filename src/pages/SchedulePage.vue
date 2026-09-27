@@ -11,6 +11,7 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
+import { useFeaturesStore } from '@/stores/features'
 import { addDays, addMonths, endOfMonth, fmtDateCn, startOfMonth, todayStr, weekDates } from '@/utils/date'
 
 type ViewKey = 'day' | 'week' | 'month'
@@ -18,6 +19,8 @@ type ViewKey = 'day' | 'week' | 'month'
 const store = useCampusStore()
 const router = useRouter()
 const toast = useToast()
+// 抢课是课表的子模块（默认关闭）：入口卡的显隐问功能开关，不在页面里写死
+const features = useFeaturesStore()
 
 const view = ref<ViewKey>('week')
 const anchor = ref(todayStr())
@@ -186,9 +189,14 @@ watch([view, anchor], reload)
       <!-- 课表下方的常驻入口。
            放在这里而不是只留在「课表配置」里：这两个是**学期尺度**的东西
            （培养方案看四年、抢课看这一两周），用户想起它们的时候多半正看着课表，
-           而不是在配置页里找开关。 -->
+           而不是在配置页里找开关。
+           「选课 · 抢课」是课表的**子模块**且默认关闭，所以入口跟着开关走。 -->
       <nav class="links">
-        <button class="link-row" @click="router.push({ name: 'campus-course-select' })">
+        <button
+          v-if="features.isEnabled('campus-grab')"
+          class="link-row"
+          @click="router.push({ name: 'campus-course-select' })"
+        >
           <i class="pic grab"><Zap :size="17" /></i>
           <span class="col flex-1">
             <b>选课 · 抢课</b>

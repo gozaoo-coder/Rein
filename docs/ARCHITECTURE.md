@@ -34,7 +34,7 @@
 | `src/services/*` | 命令名 → 类型化函数 | 业务逻辑 |
 | `src/stores/exerciseLib.ts` | 动作库缓存与解析：`byId` / `resolveName(item)` / `musclesOf(item)` / `tipsOf(item)` / `forKind` / `search`。课程的展示名一律先查它，查不到才回落课程条目里的名称快照 | 写业务数据（增删改一律经 service）；认识页面组件 |
 | `src/plugins/*` | 功能插件声明与注册表：`builtin/` 一个模块一个文件（`definePlugin`），`registry.ts` 纯数据（不认识 Pinia），`types.ts` 扩展点形状 | 启用状态（在 `stores/features.ts`）；直接 import router |
-| `src/stores/features.ts` | 插件启用态（localStorage `rein.features.v1`）+ 派生列表：`tools` / `nav(surface)` / `isEnabled` | 业务逻辑；认识具体页面组件 |
+| `src/stores/features.ts` | 插件启用态（localStorage `rein.features.v1`）+ 派生列表：`tools` / `nav(surface)` / `isEnabled`（含**父关子关**的继承判定） | 业务逻辑；认识具体页面组件 |
 | `src/mock/server.ts` | 与 Rust 相同的命令契约 | 生产分支逻辑 |
 | `src/ai/*` | AI 推理层（pi-ai / pi-agent-core）：`runtime.ts` 模型装配、`probe.ts` max_tokens=1 能力探测、`vision.ts` 照片食物识别。模型请求由 WebView 直连 provider，不经 Rust | 直接 import '@tauri-apps/api'；同步 import 进主包（store 侧动态 import） |
 | `src/components/program/*` | 健康方案的十块 UI：`ProgramDashboard`（今日驾驶舱）、`ProgramCycleMap`（全周期网格）、`ProgramEvidenceSheet`（三条研究曲线）、`ProgramCompare`（三档对比矩阵 + 4 周强度预览双视图）、`ProgramConstraints`（内联约束向导，chips 写回 profile）、`ProgramNutritionCompass`（聚焦日宏量环 + 餐次分布）、`ProgramEvolutionChart`（参数演进双泳道图 + 节点 diff + 摇摆检测）、`ProgramWeightChannel`（体重航道：档位速率走廊 ±0.3kg）、`ProgramReviewSheet`（AI 复盘：数据先行 + 建议逐条采纳 + 实时汇总） | 直连 IPC；方案参数的写入 |
@@ -166,11 +166,12 @@
 **新增一个页面**：`pages/X.vue` → `router.ts` 登记（meta.tab）→ 若属一级导航，在对应插件的 `nav` 里加一条（`surfaces: ['tabbar']` 落在移动端 Dock 的药丸、`['rail']` 落在桌面导航轨）；路由若归属于某个功能模块，写进该插件的 `routes` → 本文件登记路由清单。
 
 **新增一个功能模块（插件）**：
-1. `src/plugins/builtin/<模块>.ts`：`definePlugin({ id, name, desc, icon, accent, routes, tools, nav })`；可被用户开关的模块加 `toggleable: true`（列表自动出现在「设置 › 打开或关闭功能」）
+1. `src/plugins/builtin/<模块>.ts`：`definePlugin({ id, name, desc, icon, accent, routes, tools, nav })`；可被用户开关的模块加 `toggleable: true`（列表自动出现在「设置 › 打开或关闭功能」）；是某个模块的子模块就加 `parent: '<父模块 id>'`（父关子关、设置页缩进显示）
 2. `src/plugins/builtin/index.ts` 加一行 import（导入即注册）
 3. 页面 / store / service 仍照常分层（插件只声明入口与路由归属，不代替分层）
-4. 工具卡二选一：`to`（跳转）或 `action`（就地动作 —— 需先在 `plugins/types.ts` 的 `ToolAction` 加字面量，再由承载工具格的页面在 ACTIONS 表里实现）
-5. 补 `scripts/e2e-feature-toggles.mjs` 断言，并更新本文件
+4. **若它还带着后台任务（引擎、定时器、常驻浮条），必须给后端一个真门闩**：开关变化同步过去（如 `campus_grab_set_enabled`），让引擎在不该跑的时候一个请求都不发 —— 只关 UI 等于没关
+5. 工具卡二选一：`to`（跳转）或 `action`（就地动作 —— 需先在 `plugins/types.ts` 的 `ToolAction` 加字面量，再由承载工具格的页面在 ACTIONS 表里实现）
+6. 补 `scripts/e2e-feature-toggles.mjs` 断言（含默认开关状态与父子联动），并更新本文件
 
 **新增一个领域模块（后端）**：
 1. `src-tauri/src/modules/<域>/`：`mod.rs` + `models.rs` + `commands.rs`
@@ -215,7 +216,7 @@
 | `/campus/schedule` | campus-schedule | 我的课表（**一级入口：底部 Dock 左键的默认落点**，同时保留页头返回键；日/周/月三视图 + 顶栏同步刷新 + 课表配置入口。周视图为 7 列 × 节次网格，双向冻结窗格，左列显示实际上课时间） |
 | `/campus/settings` | campus-settings | 课表配置与设置（二级内容页：学校系统选择器 + 教务登录（含验证码）+ 学期切换与同步 + 培养方案与选课入口 + 账号管理） |
 | `/campus/program` | campus-program | 培养方案（二级内容页：方案档案 + 学分进度 + 学分分布树 + 课程清单；数据源 900KB+，后端缓存） |
-| `/campus/course-select` | campus-course-select | 选课·抢课（二级内容页：教务服务器时间 + 抢课任务单 + 批次列表 → 教学班搜索/加入抢课；批次未开放时是「等待窗口开放」态，入口在课表配置页） |
+| `/campus/course-select` | campus-course-select | 选课·抢课（二级内容页：教务服务器时间 + 抢课任务单 + 批次列表 → 教学班搜索/加入抢课；批次未开放时是「等待窗口开放」态）。**归 `campus-grab` 插件所有（课表的子模块，默认关闭）**：入口只在课表页/配置页且开关打开时出现，直链被守卫拦回主页 |
 | `/session/run` | session-run | 运动模式·跑步（沉浸二级页：目标设置 → GPS/计时 → 暂停/继续 → 总结保存） |
 | `/record` | record | 录音（二级内容页：录音台 + 未归档 take 管理（回放 / 删除 / 附加到待办）；录音中由录音悬浮条跨页接管） |
 
@@ -273,22 +274,30 @@
 
 ## 12. 校园教务（src-tauri/src/modules/campus · stores/campus.ts · stores/courseSelect.ts）
 
-把学校教务系统的课表接进 Rein，并投影到时间线。目标系统是**桂林电子科技大学 · 本科生教学信息平台学生端**（厂商：上海树维 Supwisdom，产品线 `eams5-student`）。
+把学校教务系统的课表接进 Rein，并投影到时间线。**在册两所**：桂林电子科技大学 · 本科生教学信息平台学生端（树维 Supwisdom `eams5-student`）与广西科技大学 · 教学管理信息平台（正方 ZFSoft `zftal-ui-v5`）—— 两套是**完全不同的系统**（登录握手、数据形状、字段命名没有一处相同），差异全部收在各自的适配器里，命令层只认「登录 / 学期 / 课表」这几个动作。
 
 **分层**（自下而上，每层职责单一）：
 
 | 文件 | 职责 |
 | --- | --- |
-| `provider.rs` | **学校系统选择器**。`SchoolSystemSpec` 把「哪所学校 + 哪套登录握手 + 打哪些接口」声明成数据；新增一所学校 = 在 `REGISTRY` 加一条，前端选择器自动出现。`LoginStrategy` 抽象登录握手（当前只有树维门户 RSA 一种）。 |
-| `http.rs` | 带 Cookie 会话的 HTTP 层。项目其它域都是一次性请求（API Key 头），**只有教务需要会话**，所以这里补了 `CookieJar`、浏览器伪装头、以及「不跟随重定向」（靠 302 判定会话过期，而不是被静默跳到登录页拿到 200）。同文件含 `rsa_encrypt_password`。 |
-| `guet.rs` | 桂电适配器：登录握手、课表页面变量解析、课表归一化、时间/日期小工具。 |
-| `course_select.rs` | **抢课**子系统（`/course-selection-api`）客户端。独立鉴权（见下），信封约定与其余接口相反，只在这一处判断。所有请求体都抽成纯函数并逐个加了单测。 |
-| `grab.rs` | **自动抢课引擎**：后台线程 + `campus_grab_tasks` 任务表 + `campus://grab` 事件流。时钟校正、错误分级重试、结果不明时的核对、崩溃续跑、**互斥志愿组**、**窗口监听**、**文件投递口**、**抢课计划的解析**全在这里。 |
+| `provider.rs` | **学校系统选择器**。`SchoolSystemSpec` 把「哪所学校 + 哪套登录握手 + 打哪些接口」声明成数据；新增一所学校 = 在 `REGISTRY` 加一条，前端选择器自动出现。`LoginStrategy` 抽象登录握手（树维门户 RSA / 正方表单 RSA 两种），`EndpointSpec` 按厂商分表（`eams5` / `zfsoft`，互斥，不支持的能力留 `None` 而不是空串）。 |
+| `http.rs` | 带 Cookie 会话的 HTTP 层。项目其它域都是一次性请求（API Key 头），**只有教务需要会话**，所以这里补了 `CookieJar`、浏览器伪装头、以及「不跟随重定向」（靠 302 判定会话过期，而不是被静默跳到登录页拿到 200）。同文件含两种登录加密（`rsa_encrypt_password` / `rsa_encrypt_password_with_key`）与会话判定 `guard`。 |
+| `dates.rs` | 学期口径的换算与命名（周次 ↔ 公历日期、节次 ↔ 时刻、学期显示名）。**厂商无关**：两家适配器共用，所以从 `guet.rs` 提了出来。 |
+| `adapter.rs` | **适配器分派**：按 `LoginStrategy` 把调用转给对应厂商适配器。命令层原先有 8 处直接 `GuetAdapter::new(...)`，第二家进来后收口到这一处。 |
+| `guet.rs` | 桂电（树维 EAMS5）适配器：登录握手、课表页面变量解析、课表归一化。 |
+| `zfsoft.rs` | 广科大（正方 zftal）适配器：表单登录（csrftoken + 运行时公钥）、学年/学期下拉解析、课表归一化（节次表 + 周次表 + 位掩码）。 |
+| `course_select.rs` | **抢课**子系统（`/course-selection-api`）客户端。独立鉴权（见下），信封约定与其余接口相反，只在这一处判断。所有请求体都抽成纯函数并逐个加了单测。**只有树维那套系统有这条路**。 |
+| `grab.rs` | **自动抢课引擎**：后台线程 + `campus_grab_tasks` 任务表 + `campus://grab` 事件流。时钟校正、错误分级重试、结果不明时的核对、崩溃续跑、**互斥志愿组**、**窗口监听**、**文件投递口**、**抢课计划的解析**全在这里。**带模块开关**（默认关，见 §13）。 |
 | `matcher.rs` | **模糊匹配**：把「高数 张」这类人的说法落成具体的教学班。纯函数（无网络无库），计划解析与输入预览共用同一份实现与同一套排序。 |
-| `models.rs` | 远端 JSON 映射 + 本地落库形状 + IPC 契约。 |
+| `models.rs` | 远端 JSON 映射（两家各自的形状）+ 本地落库形状 + IPC 契约 + 归一化快照 `TimetableSnapshot`。 |
 | `commands.rs` | Tauri 命令 + SQL，以及**周次 → 公历日期**这条全链路唯一的换算。 |
 
-**登录握手**（实测对齐登录页 `main.js::submit`）：`GET /student/ldap/login-salt` → `RSA_PKCS1_v1_5(salt + "-" + password)` → `POST /student/ldap/login {username, password, captcha}` → Cookie 会话。RSA 用 `rsa` crate（纯 Rust，四端交叉编译零原生依赖），填充与 JSEncrypt 的 `encrypt()` 等价。图形验证码答案绑在**会话**上，所以「取验证码」与「提交登录」必须共用同一个 Cookie —— 用 `CampusHub` 暂存这一次握手的 jar。
+**两套登录握手**（都以真实站点实测为准）：
+
+- **树维**（`guet.rs`，对齐登录页 `main.js::submit`）：`GET /student/ldap/login-salt` → `RSA_PKCS1_v1_5(salt + "-" + password)` → `POST /student/ldap/login {username, password, captcha}` → Cookie 会话。
+- **正方**（`zfsoft.rs`，对齐登录页 `login.js` 的 `#dl`）：`GET /xtgl/login_slogin.html`（拿 `csrftoken`，同时建会话）→ `GET /xtgl/login_getPublicKey.html`（modulus/exponent，**每次登录现取**）→ `RSA_PKCS1_v1_5(裸口令)` → `POST` 同一地址（`yhm` / `mm` / `csrftoken`）。判定与直觉相反、实测两次确认：**200 = 被拒**（登录页就地重渲染，原因在 `#tips` 里），**302 = 通过**（重定向回登录页本身，该页对已登录会话会再跳到菜单页）。
+
+RSA 用 `rsa` crate（纯 Rust，四端交叉编译零原生依赖），填充与登录页的 `encrypt()` 等价。树维的图形验证码答案绑在**会话**上，所以「取验证码」与「提交登录」必须共用同一个 Cookie —— 用 `CampusHub` 暂存这一次握手的 jar；正方的验证码（`/kaptcha`）只在该校「错够几次」后才要，失败页里看不出来，所以配置页给了一个人工取图的入口。
 
 **会话自愈**（`commands.rs`：`is_session_lost` / `relogin` / `persist_session` / `recover_session`）。教务会话的寿命不归我们管（服务端 TTL、在别处登了一次都会让它失效），而失效的信号只有一个：**302 回登录页**（HTTP 层不跟随重定向，就是为了把 302 留作判据），文案统一是「…会话已过期，请重新登录…」。于是：
 
@@ -325,7 +334,7 @@
 
 **命令**：`campus_systems` / `campus_account_get` / `campus_captcha` / `campus_login` / `campus_session_probe` / `campus_logout` / `campus_account_delete` / `campus_semesters` / `campus_set_current_semester` / `campus_sync` / `campus_schedule` / `campus_program`。
 选课：`campus_course_select_status` / `_lessons` / `_simplest_lessons` / `_query_condition` / `_apply` / `_predicate` / `_result` / `_predicate_result` / `_drop`。
-自动抢课：`campus_grab_state` / `_enqueue` / `_task_action` / `_clear_finished` / `_pause_all` / `_resume_all` / `_settings_get` / `_settings_set`。
+自动抢课：`campus_grab_state` / `campus_grab_set_enabled`（模块开关，默认关；落 `app_meta` 并停/启引擎） / `_enqueue` / `_task_action` / `_clear_finished` / `_pause_all` / `_resume_all` / `_settings_get` / `_settings_set`。
 抢课计划：`campus_grab_intent_add` / `_action`（`remove` 移除并收掉它派出去的任务 / `now` 立刻重新解析） / `_preview`（这句查询照当前名单能匹配到哪些班）。
 起飞前自检：`campus_grab_preflight`（登录 / 令牌 / 批次 / 时钟 / 名单 / 每条计划逐项 GO·NO-GO + 证据一句话；按需触发，不自动跑）。
 
@@ -531,17 +540,20 @@ App 里的窗口监听只救「App 开着」的情况；**窗口在 App 没开�
 
 ## 13. 功能插件层（src/plugins · stores/features.ts）
 
-把「一个功能模块」声明成数据，而不是散落在导航栏、主页工具格、路由守卫里的三份硬编码：元数据（名称/说明/图标/主题色）+ 扩展点贡献（导航条目、主页工具卡）+ **路由所有权**。三个开关（运动 / 课表 / 健康方案）是它的第一批消费者，内核功能（营养 / 语音 / AI / 专注 / 待办 / 记账）同样走这套声明，只是不可关。
+把「一个功能模块」声明成数据，而不是散落在导航栏、主页工具格、路由守卫里的三份硬编码：元数据（名称/说明/图标/主题色）+ 扩展点贡献（导航条目、主页工具卡）+ **路由所有权** + **父子关系**。四个开关（运动 / 课表 / **抢课** / 健康方案）是它的第一批消费者，内核功能（营养 / 语音 / AI / 专注 / 待办 / 记账）同样走这套声明，只是不可关。
 
 - **声明**：`src/plugins/builtin/<模块>.ts` 调 `definePlugin`；`builtin/index.ts` 导入即注册（新增模块 = 加一行 import）。`definition` 是纯数据——不认识 Pinia、不 import router、不持有组件状态。
 - **注册表**：`src/plugins/registry.ts`。`routeOwner(routeName)` 供路由守卫查「这条路由归谁」，`toggleablePlugins()` 供设置页取开关清单。
 - **启用态**：`stores/features.ts`，唯一事实来源。`tools`（主页工具卡，已过滤未开模块并按 order 排好）、`nav(surface)`（`tabbar` / `rail` 两种导航容器的条目）、`isEnabled(id)`（守卫与条件渲染）。持久化在 localStorage `rein.features.v1`：它与番茄钟设置同属**界面级偏好**，不进 SQLite、不进知识库索引；只存用户改过的项，未覆盖的回落声明里的 `defaultEnabled`，所以新增插件不需要迁移旧数据。
+- **子模块（`parent`）**：声明 `parent: '<父模块 id>'` 即成为它的子模块。两个效果都在 `isEnabled` 里：父模块关掉时**子模块一律视为关闭**（子模块吃的是父模块的会话与数据，父的不在它开着只会撞墙），设置页则把它缩进挂在父模块下面并写明「父模块关闭时不可用」。当前唯一一例：**抢课（`campus-grab`）是课表的子模块且 `defaultEnabled: false`** —— 它比课表激进得多（后台引擎会按节奏反复打教务），两者的风险不在一个量级，不该共用一个开关。
+- **带后台引擎的模块必须给引擎真门闩**：关闭不能只关 UI。抢课的开关变化会同步给 Rust（`campus_grab_set_enabled` → `GrabHub::set_enabled_flag` + 落 `app_meta`），引擎在 `step` 开头就返回，**关着时一个请求都不发**（连窗口探测都停），重启后也按上次的开关来。只关界面不关引擎，等于「用户以为关了，它还在每分钟问教务」。
 - **扩展点（当前两处）**：
   - `nav`（`NavContribution`）：`surfaces: ['tabbar' | 'rail']` 决定落点，`TabBar.vue` / `DesktopRail.vue` 只渲染「内核条目 + 插件条目」，没有第二份清单。移动端 Dock 里：`tabbar` 的条目落在**中药丸**；内核落点（主页 / 我 / AI）由 TabBar 自己声明 —— AI 是右独立圆钮，所以插件层的 AI 只投 `rail`；**左独立圆钮是用户自定义落点**（`stores/dock.ts`，候选 = `nav('rail')` 去掉 Dock 已有的项），关掉模块后候选自然消失、存量落点回落到候选第一项。
   - `tools`（`ToolContribution`）：主页工具卡。跳转用 `to`；就地交互用 `action`（`ToolAction` 联合类型）——动作由**承载工具格的页面**实现（`HomePage.vue` 的 ACTIONS 表，开弹层 / 唤起运行时），插件不 import router，页面也不反过来认识插件内部。
 - **关闭一个模块的连锁效果**：工具卡与导航条目消失（响应式）、其名下路由被 `router.beforeEach` 拦回主页并 toast 说明、页面按 `isEnabled` 跳过该模块的数据加载（如主页不再 `program.load()`、体重提醒卡不出现）、桌面便当总览收起对应的概览块（`.bento.no-sports` 重排网格，不留空洞）。
 - **不变量**：开关页 `/settings/features` 自身不属于任何插件，任何组合下都可达；关闭**只影响入口与路由**，不删任何数据（记住「关掉 ≠ 删掉」）。
-- **回归**：`node scripts/e2e-feature-toggles.mjs`（需 `npm run dev` 在 1420）。覆盖「我 › 设置」入口、三组设置、三个开关的显隐联动、直链拦截与提示、刷新后持久化，以及桌面端的导航轨/便当布局自检（`grid-template-areas` 少写一行会凭空多出隐式轨道——这条断言就是为那次事故留的）。
+- **回归**：`node scripts/e2e-feature-toggles.mjs`（需 `npm run dev` 在 1420）。覆盖「我 › 设置」入口、四组设置、四个开关的显隐联动、**抢课默认关 + 子模块缩进 + 父关子失效 + 打开后直链放行**、直链拦截与提示、刷新后持久化，以及桌面端的导航轨/便当布局自检（`grid-template-areas` 少写一行会凭空多出隐式轨道——这条断言就是为那次事故留的）。
+  抢课/选课类的其它剧本（`e2e-course-select` / `e2e-auto-grab` / `e2e-grab-*` / `e2e-campus-*` / `e2e-layout-guard`）**必须在导航前把开关预置为开**，否则守卫会把它们全拦回主页：用 `scripts/lib/features.mjs` 的 `presetFeatureFlags(cdp)`（走 CDP 的 `Page.addScriptToEvaluateOnNewDocument` —— pinia 的 features store 在应用启动时就读了 localStorage，进页面后再写不生效）。
 
 ## 14. 在线更新与 Rein 在线服务（modules/update · server · scripts/release）
 
