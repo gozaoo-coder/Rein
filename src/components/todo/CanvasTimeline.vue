@@ -48,12 +48,33 @@ const DEFAULT_PX = 56
 const MIN_PX = 18
 const MAX_PX = 104
 
-/** .tt 行高与卡片纵向内边距（px）：按块高折算可完整显示的行数，须与样式保持一致 */
+/** .tt 行高与卡片纵向内边距（px）：按块高折算可完整显示的行数 */
 const TT_LINE_H = 17
 const TT_LINE_H_COMPACT = 16
 const CARD_PAD_Y = 8
 
-const px = ref(props.compact ? 30 : DEFAULT_PX)
+/**
+ * 首行行高 —— **样式的唯一来源**。
+ * 它同时决定三件事，三者必须永远相等：行数折算（`linesFor`）、CSS 里的 `--blk-lh`、
+ * 以及勾选框尺寸 `--ck`（勾选框与行高等大，控件才和文字同档，在首行里也天生居中）。
+ * 从前 CSS 各自写一份（17px / 16px），改一处忘另一处就会出现「算得出 2 行、视觉只放得下 1 行」
+ * 这种谁也说不清的现象，所以这里统一由 TS 下发。
+ */
+const lineH = computed(() => (props.compact ? TT_LINE_H_COMPACT : TT_LINE_H))
+const lineVars = computed(() => {
+  const px = `${lineH.value}px`
+  return { '--blk-lh': px, '--ck': px }
+})
+
+/**
+ * 紧凑画布默认缩放（px/小时）。
+ * 48 是「半小时块正好 24px」的临界值：块的最小高度是一行标题（16px）+ 上下内边距（8px），
+ * 缩放低于它，最常见的半小时任务就被压到最小高度、首行被裁、彼此重叠 —— 而勾选框的尺寸
+ * 等于行高，也就跟着塞不进去。
+ */
+const COMPACT_PX = 48
+
+const px = ref(props.compact ? COMPACT_PX : DEFAULT_PX)
 const scroller = ref<HTMLElement | null>(null)
 
 const totalPx = computed(() => 24 * px.value)
@@ -102,7 +123,12 @@ interface Stack {
   h: number
 }
 
-const minBlkH = computed(() => (props.compact ? 17 : 22))
+/**
+ * 块的最小高度 = 一行标题 + 上下内边距。
+ * 勾选框与行高等大，所以这同时是「一个块最少要有多高才塞得下首行那一行」；
+ * 低于它的块会把自己的首行（和勾选框）裁掉一截 —— 那不是可接受的退化。
+ */
+const minBlkH = computed(() => lineH.value + CARD_PAD_Y)
 
 /**
  * 叠层卡最小高度：卡面要同时容下右上「展开」与右下「编辑」两枚控件，
@@ -159,13 +185,13 @@ const ghostLaid = computed(() =>
     todo: g.todo,
     startMin: g.startMin,
     top: g.startMin * pxPerMin.value,
-    h: Math.max(props.compact ? 17 : 22, durOf(g.todo) * pxPerMin.value),
+    h: Math.max(minBlkH.value, durOf(g.todo) * pxPerMin.value),
   })),
 )
 
 /** 块高 → 可完整显示的标题行数（至少 1 行；再放不下由 line-clamp 在行末省略） */
 function linesFor(h: number): number {
-  return Math.max(1, Math.floor((h - CARD_PAD_Y) / (props.compact ? TT_LINE_H_COMPACT : TT_LINE_H)))
+  return Math.max(1, Math.floor((h - CARD_PAD_Y) / lineH.value))
 }
 
 /** 块定位（外层只管坐标与手势，卡片视觉在 .blk-card）：fit-content 收窄，列宽作上限；拖拽中实时跟手 */
@@ -376,7 +402,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ctl" :class="{ compact }" @wheel="onWheel">
+  <div class="ctl" :class="{ compact }" :style="lineVars" @wheel="onWheel">
     <div ref="scroller" class="scroll" data-testid="canvas-scroll">
       <div class="inner" :style="{ height: `${totalPx}px` }" data-rubber-content>
         <template v-for="h in hours" :key="h.min">
@@ -527,6 +553,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .ctl {
+  /* --blk-lh / --ck 由 TS 下发（见 lineVars）：行数折算与视觉行高只能有一个来源 */
   position: relative;
   border-radius: var(--radius-m);
   background: var(--surface);
@@ -724,10 +751,11 @@ onBeforeUnmount(() => {
   opacity: 0.55;
 }
 
+/* 勾选框：尺寸 = 首行行高（--ck），于是它与文字同档、在首行里天生居中，不需要 margin 补偿 */
 .ck {
   flex: none;
-  width: 14px;
-  height: 14px;
+  width: var(--ck);
+  height: var(--ck);
   border-radius: 50%;
   border: 1.5px solid var(--line-strong);
   background: transparent;
@@ -762,12 +790,6 @@ onBeforeUnmount(() => {
   overflow: hidden;
   line-height: var(--blk-lh, 17px);
   overflow-wrap: break-word;
-}
-
-/* 勾选框与首行光学对齐（首行行高 17px，勾选框 14px） */
-.blk-card .ck,
-.stk-card .ck {
-  margin-top: 2px;
 }
 
 /* 幽灵块：AI 预览，虚线描边；出现淡入（预览生成是瞬时状态切换，不该闪现） */
@@ -903,7 +925,8 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 
-/* 卡片右下角编辑钮：与勾选钮同档尺寸（紧凑再缩一档），最小块高也放得下 */
+/* 卡片右下角编辑钮：比勾选框低一档的次级控件（勾选框与行高等大，它是一枚角标），
+   紧凑再缩一档；最小块高也放得下 */
 .edit {
   flex: none;
   align-self: flex-end;
@@ -990,11 +1013,6 @@ onBeforeUnmount(() => {
   font-size: var(--fs-micro);
 }
 
-.compact {
-  /* 紧凑画布标题行高 16px（linesFor 同步折算行数上限） */
-  --blk-lh: 16px;
-}
-
 .compact .stk-more {
   height: 14px;
   padding: 0 6px;
@@ -1016,10 +1034,5 @@ onBeforeUnmount(() => {
 
 .compact .bmin {
   font-size: 9px;
-}
-
-.compact .ck {
-  width: 11px;
-  height: 11px;
 }
 </style>
