@@ -37,6 +37,8 @@ pub struct SyncStatus {
     pub log_len: i64,
     /// 待处理的本地改动（脏队列积压）
     pub pending: i64,
+    /// 还差几张表没补录存量（首次运行或表结构刚变过；0 = 已补齐）
+    pub stale_tables: i64,
     pub conflicts: i64,
     pub last_at: Option<i64>,
     pub last_path: Option<String>,

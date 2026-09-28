@@ -49,6 +49,9 @@ pub struct Raw {
     pub op: char,
 }
 
+/// 超过这个长度的文本列一律走 blob 通道（见 `build_row` 的通用闸门）。
+pub const OVERSIZE_COLUMN_BYTES: usize = 64 * 1024;
+
 /// 脏队列：钩子往里塞，同步线程成批取。
 pub struct Dirty {
     q: Mutex<Vec<Raw>>,
@@ -181,13 +184,7 @@ fn remember_map(conn: &Connection, kind: &str, local_id: &str, uuid: &str) -> Re
 }
 
 fn column_names(conn: &Connection, table: &str) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(1))?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    tables::column_names(conn, table)
 }
 
 fn value_to_json(v: rusqlite::types::ValueRef<'_>) -> Value {
@@ -265,6 +262,20 @@ fn build_row(conn: &Connection, store: &BlobStore, spec: &'static TableSpec, row
                     map.insert(name.clone(), m);
                     continue;
                 }
+            }
+        }
+        // 通用闸门：**任何**列只要大到这个尺寸就走 blob 通道。
+        // 登记表里的 media 声明是我们的预期，而这里是兜底 —— 大文本（知识库正文、
+        // 长备注、以后新增的列）不该因为「没登记」就把单条对象撑成几 MB：
+        // 帧层要能分块、中继只肯走小对象，都建立在这条上。
+        if let Value::String(s) = &value {
+            if s.len() >= OVERSIZE_COLUMN_BYTES {
+                let hash = store.put(conn, s.as_bytes())?;
+                map.insert(
+                    name.clone(),
+                    serde_json::json!({ "__blob": hash, "bytes": s.len(), "enc": "text" }),
+                );
+                continue;
             }
         }
         map.insert(name.clone(), value);
@@ -372,6 +383,96 @@ pub fn capture(
     Ok(Some(uuid))
 }
 
+/// 存量补录（第一次运行，或某张表的结构变了）。
+///
+/// 变更钩子只看得到**今后**的写入：升级上来的安装里已经躺着几千行（待办、做组记录、
+/// 饮食记录……），它们从没被捕获过 —— 第一次同步会是空的，而「两台设备各有一半历史」
+/// 正是这个功能要解决的事。所以开机先补一遍：逐表走 rowid，把每一行都过一遍 `capture`
+/// （幂等：内容与已存对象相同就什么都不做）。
+///
+/// 结构变了也要重来一遍：`ALTER TABLE ADD COLUMN` 是 DDL，不触发变更钩子，
+/// 那些行的对象里因此缺这一列，对端只能拿到列默认值。所以每张表记一个**列指纹**，
+/// 开机比对；指纹变了就重扫这张表 —— 迁移加了列，下一次开机自动补上。
+pub fn backfill(conn: &Connection, store: &BlobStore, me: &str) -> Result<BackfillStats> {
+    let mut stats = BackfillStats::default();
+    for spec in tables::TABLES {
+        let fingerprint = column_fingerprint(conn, spec.name)?;
+        let key = format!("fp:{}", spec.name);
+        if meta_get(conn, &key).as_deref() == Some(fingerprint.as_str()) {
+            continue;
+        }
+        let rowids: Vec<i64> = {
+            let mut stmt = conn.prepare(&format!("SELECT rowid FROM {} ORDER BY rowid", spec.name))?;
+            let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            out
+        };
+        stats.tables += 1;
+        stats.scanned += rowids.len() as i64;
+        for rowid in rowids {
+            let raw = Raw {
+                table: spec.name.to_string(),
+                rowid,
+                op: 'u',
+            };
+            if capture(conn, store, me, &raw)?.is_some() {
+                stats.captured += 1;
+            }
+        }
+        meta_set(conn, &key, &fingerprint)?;
+    }
+    Ok(stats)
+}
+
+#[derive(Default, Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackfillStats {
+    pub tables: i64,
+    pub scanned: i64,
+    /// 真正产生了对象（或新版本）的行数；其余是因为「内容没变」跳过
+    pub captured: i64,
+}
+
+/// 列指纹：列名 + 类型 + 非空标记。迁移加/删/改列都会变。
+fn column_fingerprint(conn: &Connection, table: &str) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |r| {
+        Ok(format!(
+            "{}:{}:{}",
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    for r in rows {
+        hasher.update(r?.as_bytes());
+        hasher.update(b"|");
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .take(8)
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// 还差几张表没补录（状态卡片如实显示）。
+pub fn stale_tables(conn: &Connection) -> Result<i64> {
+    let mut n = 0;
+    for spec in tables::TABLES {
+        let key = format!("fp:{}", spec.name);
+        if meta_get(conn, &key).as_deref() != Some(column_fingerprint(conn, spec.name)?.as_str()) {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// 同步线程：等脏队列 → 捕获 → 更新积压计数。
 pub struct SyncHub {
     data_dir: PathBuf,
@@ -401,6 +502,10 @@ impl SyncHub {
 
     fn loop_forever(&self, app: AppHandle) {
         let store = BlobStore::new(&self.data_dir);
+        // 开机先补存量与结构变化（幂等：表结构没变时只比一次指纹，几乎不花时间）
+        if let Err(e) = self.run_backfill(&app, &store) {
+            eprintln!("同步存量补录失败：{e}");
+        }
         while self.running.load(Ordering::Relaxed) {
             let batch = self.dirty.drain(500);
             if batch.is_empty() {
@@ -422,6 +527,13 @@ impl SyncHub {
             capture(&conn, store, &me, raw)?;
         }
         Ok(())
+    }
+
+    fn run_backfill(&self, app: &AppHandle, store: &BlobStore) -> Result<BackfillStats> {
+        let state = app.state::<crate::state::AppState>();
+        let conn = state.db.lock().unwrap();
+        let me = identity::ensure(&conn)?.device_id;
+        backfill(&conn, store, &me)
     }
 }
 
@@ -717,5 +829,87 @@ mod tests {
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0].table, "todos");
         assert_eq!(batch[0].op, 'i');
+    }
+
+    /// 存量补录：升级上来的库里已经躺着的行，第一次同步必须带上。
+    #[test]
+    fn backfill_captures_existing_rows() {
+        let e = env();
+        // 直接写库（不走 capture，模拟「升级前的历史数据」）
+        e.conn
+            .execute(
+                "INSERT INTO todos (id, title, created_at) VALUES (1, '老的待办', '2026-01-01')",
+                [],
+            )
+            .unwrap();
+        e.conn
+            .execute(
+                "INSERT INTO foods (id, name, is_custom, created_at) VALUES (1, '自制酸奶', 1, '2026-01-01')",
+                [],
+            )
+            .unwrap();
+        e.conn
+            .execute(
+                "INSERT INTO foods (id, name, is_custom, created_at) VALUES (2, '鸡蛋', 0, '2026-01-01')",
+                [],
+            )
+            .unwrap();
+
+        let stats = backfill(&e.conn, &e.store, &e.me).unwrap();
+        assert!(stats.captured >= 2, "{stats:?}");
+        let kinds: Vec<String> = objects(&e.conn).into_iter().map(|o| o.1).collect();
+        assert!(kinds.contains(&"todos".to_string()));
+        assert!(kinds.contains(&"foods".to_string()));
+        assert_eq!(
+            kinds.iter().filter(|k| *k == "foods").count(),
+            1,
+            "内置食物不进同步"
+        );
+        assert_eq!(stale_tables(&e.conn).unwrap(), 0, "补完就没有陈旧表了");
+
+        // 第二次是幂等的：不再新增对象、也不再写日志
+        let objects_before = objects(&e.conn).len();
+        let logs_before: i64 = e
+            .conn
+            .query_row("SELECT COUNT(*) FROM sync_log", [], |r| r.get(0))
+            .unwrap();
+        let again = backfill(&e.conn, &e.store, &e.me).unwrap();
+        assert_eq!(again.tables, 0, "指纹没变就不该重扫");
+        assert_eq!(objects(&e.conn).len(), objects_before);
+        assert_eq!(
+            e.conn
+                .query_row("SELECT COUNT(*) FROM sync_log", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            logs_before
+        );
+    }
+
+    /// 表结构变了（迁移加列）要重扫：ALTER 是 DDL，不触发变更钩子。
+    #[test]
+    fn backfill_reruns_after_schema_change() {
+        let e = env();
+        e.conn
+            .execute("INSERT INTO todos (id, title, created_at) VALUES (1, 'x', 'now')", [])
+            .unwrap();
+        backfill(&e.conn, &e.store, &e.me).unwrap();
+        assert_eq!(stale_tables(&e.conn).unwrap(), 0);
+
+        e.conn
+            .execute("ALTER TABLE todos ADD COLUMN extra_note TEXT", [])
+            .unwrap();
+        assert!(stale_tables(&e.conn).unwrap() > 0, "加列之后该认得出来");
+
+        e.conn
+            .execute("UPDATE todos SET extra_note = '新列的值' WHERE id = 1", [])
+            .unwrap();
+        backfill(&e.conn, &e.store, &e.me).unwrap();
+        let blob = objects(&e.conn)
+            .into_iter()
+            .find(|o| o.1 == "todos")
+            .unwrap()
+            .3;
+        assert!(blob.contains("extra_note"), "重扫后新列要进对象：{blob}");
+        assert!(blob.contains("新列的值"));
+        assert_eq!(stale_tables(&e.conn).unwrap(), 0);
     }
 }

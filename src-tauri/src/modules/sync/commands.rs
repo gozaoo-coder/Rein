@@ -61,6 +61,7 @@ pub fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus> {
         log_len: count(&conn, "SELECT COUNT(*) FROM sync_log"),
         // 脏队列在里程碑 2 接上；在此之前如实报 0（而不是编一个数字）
         pending: super::pending_count(),
+        stale_tables: super::engine::stale_tables(&conn).unwrap_or(-1),
         conflicts: count(&conn, "SELECT COUNT(*) FROM sync_conflicts"),
         last_at: super::meta_get(&conn, "last_at").and_then(|v| v.parse().ok()),
         last_path: super::meta_get(&conn, "last_path").filter(|s| !s.is_empty()),

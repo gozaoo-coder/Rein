@@ -48,6 +48,8 @@ pub struct ApplyStats {
     pub skipped: usize,
     pub conflicts: usize,
     pub unresolved: usize,
+    /// 对端有、本机这张表还没有的列（版本不一致时如实计数，不报错）
+    pub skipped_columns: usize,
     /// 引用解析不了、留到下一轮的对象（uuid）
     pub pending: Vec<String>,
 }
@@ -117,7 +119,10 @@ pub fn apply_batch(conn: &Connection, store: &BlobStore, objects: &[RemoteObject
     let mut retry: Vec<&RemoteObject> = Vec::new();
     for obj in ordered {
         match apply_one(conn, store, obj)? {
-            Outcome::Applied => stats.applied += 1,
+            Outcome::Applied { unknown_columns } => {
+                stats.applied += 1;
+                stats.skipped_columns += unknown_columns;
+            }
             Outcome::Skipped => stats.skipped += 1,
             Outcome::Conflict => stats.conflicts += 1,
             Outcome::Unresolved => retry.push(obj),
@@ -125,7 +130,10 @@ pub fn apply_batch(conn: &Connection, store: &BlobStore, objects: &[RemoteObject
     }
     for obj in retry {
         match apply_one(conn, store, obj)? {
-            Outcome::Applied => stats.applied += 1,
+            Outcome::Applied { unknown_columns } => {
+                stats.applied += 1;
+                stats.skipped_columns += unknown_columns;
+            }
             Outcome::Skipped => stats.skipped += 1,
             Outcome::Conflict => stats.conflicts += 1,
             Outcome::Unresolved => {
@@ -138,7 +146,8 @@ pub fn apply_batch(conn: &Connection, store: &BlobStore, objects: &[RemoteObject
 }
 
 enum Outcome {
-    Applied,
+    /// 落库成功；payload 里本机没有的列数（版本不一致时如实计数）
+    Applied { unknown_columns: usize },
     Skipped,
     Conflict,
     Unresolved,
@@ -184,6 +193,7 @@ fn apply_one(conn: &Connection, store: &BlobStore, obj: &RemoteObject) -> Result
 
     // 到这儿就是远端赢了（或本地还没有这条）
     let row_id = local_row_id(conn, spec, obj)?;
+    let mut unknown_columns = 0;
     if obj.deleted {
         if let Some(id) = &row_id {
             conn.execute(&format!("DELETE FROM {} WHERE rowid = ?1", spec.name), [id])?;
@@ -199,7 +209,7 @@ fn apply_one(conn: &Connection, store: &BlobStore, obj: &RemoteObject) -> Result
             _ => return Err(crate::error::ReinError::Message("row 不是对象".into())),
         };
         match write_row(conn, store, spec, &obj.uuid, &row_id, &columns)? {
-            Some(()) => {}
+            Some(skipped) => unknown_columns = skipped,
             None => return Ok(Outcome::Unresolved),
         }
     }
@@ -214,7 +224,39 @@ fn apply_one(conn: &Connection, store: &BlobStore, obj: &RemoteObject) -> Result
         "INSERT INTO sync_log (uuid, hlc) VALUES (?1, ?2)",
         rusqlite::params![obj.uuid, obj.hlc],
     )?;
-    Ok(Outcome::Applied)
+    Ok(Outcome::Applied { unknown_columns })
+}
+
+/// 按 uuid 取一条对象（推方补发 `pending` 时用）。
+pub fn object_by_uuid(conn: &Connection, uuid: &str) -> Result<Option<RemoteObject>> {
+    Ok(conn
+        .query_row(
+            "SELECT uuid, kind, hlc, device, deleted, blob FROM sync_objects WHERE uuid = ?1",
+            [uuid],
+            |r| {
+                Ok(RemoteObject {
+                    uuid: r.get(0)?,
+                    kind: r.get(1)?,
+                    hlc: r.get(2)?,
+                    device: r.get(3)?,
+                    deleted: r.get::<_, i64>(4)? != 0,
+                    blob: r.get(5)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// 这条对象最近一次出现在复制日志里的序号（游标回退用它）。
+pub fn seq_of_uuid(conn: &Connection, uuid: &str) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row(
+            "SELECT MAX(seq) FROM sync_log WHERE uuid = ?1",
+            [uuid],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .optional()?
+        .flatten())
 }
 
 /// 这条对象对应本机哪一行：映射表 → 文本主键 → 业务唯一键（都没有则 None = 插入新行）。
@@ -269,7 +311,11 @@ fn local_row_id(
 }
 
 /// 写一行：解析引用与大字段，然后按已知本地 id 更新、或插入新行。
-/// `Ok(None)` = 引用暂时解析不了（整条留到下一轮），不是错误。
+/// `Ok(None)` = 引用暂时解析不了（整条留到下一轮），不是错误；
+/// `Ok(Some(n))` 里 n 是**本机这张表还没有的列数** —— 对端版本更新时会出现，
+/// 那些列整列跳过（本机保持列默认值），而不是整条应用失败：版本错开是常态，
+/// 不该让一次升级把同步卡死。payload 原样留在 `sync_objects` 里，将来本机升上来
+/// 也不会重新拉一次（对象已经是本机最新版本），这是有意的取舍，写在 docs/SYNC.md。
 fn write_row(
     conn: &Connection,
     store: &BlobStore,
@@ -277,11 +323,17 @@ fn write_row(
     uuid: &str,
     row_id: &Option<i64>,
     columns: &Map<String, Value>,
-) -> Result<Option<()>> {
+) -> Result<Option<usize>> {
+    let local_columns = tables::column_names(conn, spec.name)?;
     let mut names: Vec<String> = Vec::new();
     let mut values: Vec<rusqlite::types::Value> = Vec::new();
+    let mut unknown = 0usize;
     for (name, raw) in columns {
         if spec.skip.contains(&name.as_str()) {
+            continue;
+        }
+        if !local_columns.iter().any(|c| c == name) {
+            unknown += 1;
             continue;
         }
         match resolve_value(conn, store, spec, uuid, raw)? {
@@ -293,7 +345,7 @@ fn write_row(
         }
     }
     if names.is_empty() {
-        return Ok(Some(()));
+        return Ok(Some(unknown));
     }
 
     if let Some(id) = row_id {
@@ -306,7 +358,7 @@ fn write_row(
             "INSERT OR REPLACE INTO sync_map (kind, local_id, uuid) VALUES (?1, ?2, ?3)",
             rusqlite::params![spec.name, id.to_string(), uuid],
         )?;
-        return Ok(Some(()));
+        return Ok(Some(unknown));
     }
 
     let placeholders: Vec<&str> = names.iter().map(|_| "?").collect();
@@ -322,7 +374,7 @@ fn write_row(
         "INSERT OR REPLACE INTO sync_map (kind, local_id, uuid) VALUES (?1, ?2, ?3)",
         rusqlite::params![spec.name, id.to_string(), uuid],
     )?;
-    Ok(Some(()))
+    Ok(Some(unknown))
 }
 
 /// 对象里的一个值 → 本地列的 SQL 值。`Ok(None)` = 引用解析不了。

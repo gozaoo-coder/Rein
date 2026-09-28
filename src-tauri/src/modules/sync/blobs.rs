@@ -77,6 +77,80 @@ impl BlobStore {
         Ok(Some(std::fs::read(path)?))
     }
 
+    /// 分块接收：随机写 `.part` 文件（顺序无关，丢块重传也只覆盖那一段）。
+    ///
+    /// 为什么不能直接写最终路径：`put` 见到文件已存在就跳过（内容寻址的幂等），
+    /// 半截文件会让「补齐」永远落不下去 —— 长度对、内容错，且这种错会被摘要掩盖住。
+    pub fn write_chunk(&self, hash: &str, off: usize, total: usize, bytes: &[u8]) -> Result<()> {
+        let part = self.part_path(hash);
+        if let Some(dir) = part.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&part)?;
+        // 先按 total 撑到该有的长度，避免乱序时中间出现空洞
+        if file.metadata()?.len() < total as u64 {
+            file.set_len(total as u64)?;
+        }
+        use std::io::{Seek, SeekFrom, Write};
+        file.seek(SeekFrom::Start(off as u64))?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        Ok(())
+    }
+
+    /// 收齐一块 blob：校验 sha256 与前缀给的 hash 一致，再改名就位并登记。
+    pub fn finish_chunked(&self, conn: &Connection, hash: &str, total: usize) -> Result<()> {
+        let part = self.part_path(hash);
+        if !part.is_file() {
+            return Err(ReinError::Message(format!("blob {hash} 没有收到任何字节")));
+        }
+        if part.metadata()?.len() != total as u64 {
+            return Err(ReinError::Message(format!(
+                "blob {hash} 长度不对：{} != {total}",
+                part.metadata()?.len()
+            )));
+        }
+        let mut hasher = Sha256::new();
+        {
+            use std::io::Read;
+            let mut f = std::fs::File::open(&part)?;
+            let mut buf = vec![0u8; 256 * 1024];
+            loop {
+                let n = f.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+            }
+        }
+        let actual: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if actual != hash {
+            let _ = std::fs::remove_file(&part);
+            return Err(ReinError::Message(format!(
+                "blob 摘要不符（期望 {hash}，实得 {actual}），已丢弃"
+            )));
+        }
+        let path = self.path(hash);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::rename(&part, &path)?;
+        conn.execute(
+            "INSERT INTO sync_blobs (hash, bytes, created_at) VALUES (?1, ?2, ?3) \
+             ON CONFLICT(hash) DO UPDATE SET bytes = excluded.bytes",
+            rusqlite::params![hash, total as i64, chrono::Utc::now().timestamp_millis()],
+        )?;
+        Ok(())
+    }
+
+    pub fn part_path(&self, hash: &str) -> PathBuf {
+        self.path(hash).with_extension("part")
+    }
+
     /// 目录表里少一行但文件在（手工拷进来的库）时补登记；文件不在则返回大小 0。
     pub fn size_of(&self, conn: &Connection, hash: &str) -> Result<i64> {
         let known: Option<i64> = conn

@@ -337,6 +337,17 @@ pub fn spec(name: &str) -> Option<&'static TableSpec> {
     TABLES.iter().find(|s| s.name == name)
 }
 
+/// 表当前的列名（两处用：拼对象、应用时挡掉本机没有的列）。
+pub fn column_names(conn: &rusqlite::Connection, table: &str) -> crate::error::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(1))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// 应用顺序（小的先应用）。同一批到达的对象按它排序，外键因此先有落点。
 pub fn apply_order(name: &str) -> u8 {
     spec(name).map(|s| s.order).unwrap_or(u8::MAX)

@@ -292,3 +292,27 @@ fn natural_key_merges_local_row() {
     assert_eq!(b.int("SELECT COUNT(*) FROM body_metrics"), 1, "不该多出一行");
     assert!((b.conn.query_row("SELECT weight_kg FROM body_metrics", [], |r| r.get::<_, f64>(0)).unwrap() - 70.5).abs() < 0.001);
 }
+
+/// 版本错开：对端的对象里有本机这张表还没有的列 —— 跳过那一列，其余照常落地。
+/// 整条失败是不行的：一次升级不该把同步卡死。
+#[test]
+fn unknown_columns_are_skipped() {
+    let a = Dev::new();
+    let b = Dev::new();
+    a.conn
+        .execute("ALTER TABLE todos ADD COLUMN future_col TEXT", [])
+        .unwrap();
+    a.conn
+        .execute(
+            "INSERT INTO todos (id, title, created_at, future_col) VALUES (1, '新版本写的', 'now', '只有 A 有')",
+            [],
+        )
+        .unwrap();
+    a.touch("todos", 1, 'i');
+
+    let (objects, _) = outbox(&a.conn, 0, 500).unwrap();
+    let stats = apply_batch(&b.conn, &b.store, &objects).unwrap();
+    assert_eq!(stats.applied, 1);
+    assert_eq!(stats.skipped_columns, 1, "那一列要如实计数");
+    assert_eq!(b.text("SELECT title FROM todos"), "新版本写的");
+}

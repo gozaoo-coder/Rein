@@ -111,6 +111,11 @@ pub fn decode(store: &BlobStore, conn: &rusqlite::Connection, row_id: &str, mark
             let bytes = bytes_of(store, marker)?;
             Ok(B64.encode(bytes))
         }
+        // 超大文本列（通用闸门挂上来的）：原样还原成字符串
+        "text" => {
+            let bytes = bytes_of(store, marker)?;
+            Ok(String::from_utf8_lossy(&bytes).to_string())
+        }
         "dataurl" => {
             let bytes = bytes_of(store, marker)?;
             let mime = marker.get("mime").and_then(|v| v.as_str()).unwrap_or("application/octet-stream");

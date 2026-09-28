@@ -34,10 +34,12 @@
 pub mod apply;
 pub mod blobs;
 pub mod commands;
+pub mod crypto;
 pub mod engine;
 pub mod identity;
 pub mod media;
 pub mod models;
+pub mod protocol;
 pub mod tables;
 
 use rusqlite::Connection;
