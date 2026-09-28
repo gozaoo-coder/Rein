@@ -657,114 +657,112 @@ async function onMenuSelect(value: string): Promise<void> {
           </div>
         </template>
       </div>
+    </div>
 
-      <!-- 底栏：**悬浮的 dock 栏**，不是贴底的 tab 栏 —— 输入条本体是一块圆角胶囊玻璃，
-           芯片是它上方的两块同款小玻璃，三者与底部 Dock 用同一个组件、同一档退化：
-           超高 / 极致整块折射（液态玻璃），其余档位普通毛玻璃，流畅档顶成实底。
-           正文从这些玻璃背后与两侧滚过（不再有 full-bleed 的垫层与全宽模糊带）。
-           margin-top:auto 保证消息不足一屏时它依然落在底部，而不是吊在最后一条下面。 -->
-      <div class="composer">
-        <!-- 快捷操作：与 Dock 的页签同档浓度（--glass-fill，标签整字重，读得清） -->
-        <div class="chips">
-          <GlassSurface class="cchip" width="auto" border-radius="var(--radius-full)" fill="var(--glass-fill)">
-            <button class="chip" :disabled="ai.busy" @click="ai.analyzeToday()">分析今日饮食</button>
-          </GlassSurface>
-          <GlassSurface class="cchip" width="auto" border-radius="var(--radius-full)" fill="var(--glass-fill)">
-            <button class="chip" @click="openDrafts()">
-              草稿箱{{ drafts.length > 0 ? ` · ${drafts.length}` : '' }}
-            </button>
-          </GlassSurface>
-        </div>
+    <!-- 底栏：**悬浮的 dock 栏外观，但它自己占一行** —— 不在滚动容器里（.msgs 的兄弟）。
+         放进滚动区里时，正文会从它背后滚过去：芯片之间、芯片与输入条之间的缝里露出被
+         切断的行（用户报的「下面被挡住了」），而把它改成 overflow:visible 又会让它按
+         视口底部定位、直接压到 Dock 上（超出安全区）。挪出来之后：正文永远在它上面，
+         玻璃仍然浮在页面上（两侧页边距 + 与 Dock 之间 10px 空气），只是没有东西从它
+         下面穿过 —— 这也正是「挡住」的来源。折射名单见 .chips / .cbar 的注释。 -->
+    <div class="composer">
+      <!-- 快捷操作：令牌材质的药丸（.glass-surface），**不折射** —— 这一组里只有
+           输入条那块值得挂 url() 背景滤镜，理由与实测数字写在这条样式下面。 -->
+      <div class="chips">
+        <button class="chip glass-surface" :disabled="ai.busy" @click="ai.analyzeToday()">分析今日饮食</button>
+        <button class="chip glass-surface" @click="openDrafts()">
+          草稿箱{{ drafts.length > 0 ? ` · ${drafts.length}` : '' }}
+        </button>
+      </div>
 
-        <!-- 引用条 -->
-        <div v-if="quote" class="quote-bar row">
-          <p class="q-text flex-1">引用：{{ quote.text ?? '[图片]' }}</p>
-          <button class="q-x" aria-label="取消引用" @click="quote = null">
-            <X :size="14" />
+      <!-- 引用条 -->
+      <div v-if="quote" class="quote-bar row">
+        <p class="q-text flex-1">引用：{{ quote.text ?? '[图片]' }}</p>
+        <button class="q-x" aria-label="取消引用" @click="quote = null">
+          <X :size="14" />
+        </button>
+      </div>
+
+      <!-- @纪要 chips（发送时注入纪要内容） -->
+      <div v-if="memoRefs.length > 0" class="memo-refs">
+        <span v-for="m in memoRefs" :key="m.id" class="memo-chip">
+          @ {{ m.title }}<button class="mx" aria-label="移除纪要引用" @click="removeMemoRef(m.id)"><X :size="10" :stroke-width="3" /></button>
+        </span>
+      </div>
+
+      <!-- 待发送附图芯片（可多张累积：相机连拍 + 图库多选，随下一条消息发出） -->
+      <div v-if="attachments.length > 0" class="attach-row">
+        <div v-for="(a, i) in attachments" :key="i" class="attach-chip">
+          <img
+            :src="`data:image/jpeg;base64,${a.small ?? a.full}`"
+            alt="待发送图片"
+          >
+          <button class="attach-x" aria-label="移除图片" @click="attachments = attachments.filter((_, j) => j !== i)">
+            <X :size="11" :stroke-width="3" />
           </button>
         </div>
-
-        <!-- @纪要 chips（发送时注入纪要内容） -->
-        <div v-if="memoRefs.length > 0" class="memo-refs">
-          <span v-for="m in memoRefs" :key="m.id" class="memo-chip">
-            @ {{ m.title }}<button class="mx" aria-label="移除纪要引用" @click="removeMemoRef(m.id)"><X :size="10" :stroke-width="3" /></button>
-          </span>
-        </div>
-
-        <!-- 待发送附图芯片（可多张累积：相机连拍 + 图库多选，随下一条消息发出） -->
-        <div v-if="attachments.length > 0" class="attach-row">
-          <div v-for="(a, i) in attachments" :key="i" class="attach-chip">
-            <img
-              :src="`data:image/jpeg;base64,${a.small ?? a.full}`"
-              alt="待发送图片"
-            >
-            <button class="attach-x" aria-label="移除图片" @click="attachments = attachments.filter((_, j) => j !== i)">
-              <X :size="11" :stroke-width="3" />
-            </button>
-          </div>
-        </div>
-
-        <!-- 待发送文档芯片（解析结果 + 内嵌图勾选，随下一条消息发出） -->
-        <div v-if="docAtt" class="attach-row doc-attach">
-          <div class="doc-chip">
-            <FileText :size="18" />
-            <div class="dc-info">
-              <p class="dc-name">{{ docAtt.file.name }}</p>
-              <p class="dc-meta">
-                {{ docAtt.doc.chars }} 字{{ docAtt.doc.truncated ? '（已截断）' : '' }} · 图片
-                {{ docAtt.doc.images.length }} 张{{ docAtt.doc.skippedImages > 0 ? `（跳过 ${docAtt.doc.skippedImages}）` : '' }}
-              </p>
-            </div>
-            <button class="attach-x" aria-label="移除文档" @click="docAtt = null">
-              <X :size="11" :stroke-width="3" />
-            </button>
-          </div>
-          <div v-if="docAtt.doc.images.length > 0" class="doc-imgs">
-            <button
-              v-for="im in docAtt.doc.images"
-              :key="im.id"
-              class="doc-img"
-              :class="{ on: docAtt.selected.has(im.id) }"
-              :aria-label="`${docAtt.selected.has(im.id) ? '取消发送' : '发送'}${im.where}的图片`"
-              @click="toggleDocImage(im.id)"
-            >
-              <img :src="`data:image/jpeg;base64,${docAtt.views.get(im.id)?.base64 ?? ''}`" alt="文档内嵌图片">
-              <small>{{ im.where }}</small>
-              <span v-if="docAtt.selected.has(im.id)" class="doc-check"><Check :size="11" :stroke-width="3" /></span>
-            </button>
-          </div>
-          <p class="doc-hint">点选要发给 AI 的图片（已默认选前 3 张）；发出后可让 AI 放大查看细节。</p>
-        </div>
-
-        <!-- 输入栏（dock 栏本体）：底比 Dock 的页签厚一档（--surface-translucent）——
-             这里承载占位文字与用户输入，底太薄时底下的正文会把它压到读不清
-             （实测：0.52 的玻璃底上占位只有 3.2:1；这一档把底线拉到 4.7:1 以上）。
-             它同时是这一组玻璃里唯一「整块可点」的表面：两侧圆钮是它内部的浅色层。 -->
-        <GlassSurface class="cbar" border-radius="var(--radius-full)" fill="var(--surface-translucent)">
-          <div class="inbar row">
-            <button ref="camBtn" class="cam" aria-label="添加附件" @click="openCamMenu">
-              <Plus :size="21" :stroke-width="2.4" />
-            </button>
-            <textarea
-              ref="inputEl"
-              v-model="draft"
-              rows="1"
-              :placeholder="docAtt ? '问问这份文档，或让 AI 放大看图' : attachments.length > 1 ? `问问这 ${attachments.length} 张图，或直接记录饮食` : attachments.length === 1 ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
-              @keydown.enter.exact.prevent="send"
-              @input="autoGrow"
-            />
-            <button
-              class="send"
-              :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
-              aria-label="发送"
-              :disabled="ai.busy || (!draft.trim() && attachments.length === 0 && !docAtt && memoRefs.length === 0)"
-              @click="send"
-            >
-              <SendHorizontal :size="18" />
-            </button>
-          </div>
-        </GlassSurface>
       </div>
+
+      <!-- 待发送文档芯片（解析结果 + 内嵌图勾选，随下一条消息发出） -->
+      <div v-if="docAtt" class="attach-row doc-attach">
+        <div class="doc-chip">
+          <FileText :size="18" />
+          <div class="dc-info">
+            <p class="dc-name">{{ docAtt.file.name }}</p>
+            <p class="dc-meta">
+              {{ docAtt.doc.chars }} 字{{ docAtt.doc.truncated ? '（已截断）' : '' }} · 图片
+              {{ docAtt.doc.images.length }} 张{{ docAtt.doc.skippedImages > 0 ? `（跳过 ${docAtt.doc.skippedImages}）` : '' }}
+            </p>
+          </div>
+          <button class="attach-x" aria-label="移除文档" @click="docAtt = null">
+            <X :size="11" :stroke-width="3" />
+          </button>
+        </div>
+        <div v-if="docAtt.doc.images.length > 0" class="doc-imgs">
+          <button
+            v-for="im in docAtt.doc.images"
+            :key="im.id"
+            class="doc-img"
+            :class="{ on: docAtt.selected.has(im.id) }"
+            :aria-label="`${docAtt.selected.has(im.id) ? '取消发送' : '发送'}${im.where}的图片`"
+            @click="toggleDocImage(im.id)"
+          >
+            <img :src="`data:image/jpeg;base64,${docAtt.views.get(im.id)?.base64 ?? ''}`" alt="文档内嵌图片">
+            <small>{{ im.where }}</small>
+            <span v-if="docAtt.selected.has(im.id)" class="doc-check"><Check :size="11" :stroke-width="3" /></span>
+          </button>
+        </div>
+        <p class="doc-hint">点选要发给 AI 的图片（已默认选前 3 张）；发出后可让 AI 放大查看细节。</p>
+      </div>
+
+      <!-- 输入栏（dock 栏本体，这一组里**唯一**折射的一块）：底比 Dock 的页签厚一档
+           （--surface-translucent）—— 这里承载占位文字与用户输入，底太薄时底下的正文
+           会把它压到读不清（实测：0.52 的玻璃底上占位只有 3.2:1；这一档把底线拉到
+           4.7:1 以上）。两侧圆钮是它内部的浅色层，命中区整块可点。 -->
+      <GlassSurface class="cbar" border-radius="var(--radius-full)" fill="var(--surface-translucent)">
+        <div class="inbar row">
+          <button ref="camBtn" class="cam" aria-label="添加附件" @click="openCamMenu">
+            <Plus :size="21" :stroke-width="2.4" />
+          </button>
+          <textarea
+            ref="inputEl"
+            v-model="draft"
+            rows="1"
+            :placeholder="docAtt ? '问问这份文档，或让 AI 放大看图' : attachments.length > 1 ? `问问这 ${attachments.length} 张图，或直接记录饮食` : attachments.length === 1 ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
+            @keydown.enter.exact.prevent="send"
+            @input="autoGrow"
+          />
+          <button
+            class="send"
+            :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
+            aria-label="发送"
+            :disabled="ai.busy || (!draft.trim() && attachments.length === 0 && !docAtt && memoRefs.length === 0)"
+            @click="send"
+          >
+            <SendHorizontal :size="18" />
+          </button>
+        </div>
+      </GlassSurface>
     </div>
 
     <!-- 三个隐藏入口：系统相机 / 图库多选 / 文件（图片+Office+文本/Markdown） -->
@@ -838,7 +836,8 @@ async function onMenuSelect(value: string): Promise<void> {
   margin-top: calc(-1 * var(--safe-top));
   display: flex;
   flex-direction: column;
-  /* 悬浮条与 Dock 之间的空气：底部让开 = Dock 顶 + 这一段，输入条底边落在 Dock 顶上方
+  /* 底栏占一行（.msgs 的兄弟），底部让开 = Dock 顶 + 它下面这段空气：
+     输入条底边因此落在 Dock 顶上方 10px
      （间距不变量：AI 输入栏底→底栏顶 = --cb-gap，见 scripts/e2e-layout-guard.mjs）。
      悬浮运动条停靠在底部时写入的 --wbar-reserve 一并计进来。 */
   --cb-gap: 10px;
@@ -985,16 +984,15 @@ async function onMenuSelect(value: string): Promise<void> {
   margin-top: var(--safe-top);
 }
 
-/* 底栏：悬浮在滚动区底部的一组玻璃（芯片 + 输入条），正文从它们背后与两侧滚过。
-   自身建立层叠上下文（粘在滚动区底部的那一行由 .page 的下内边距预留出来）。 */
+/* 底栏：悬浮 dock 栏的**外观**，位置是普通的一行（.msgs 的兄弟，不是它的最后一格）——
+   正文因此永远在它上面，不会有东西从玻璃底下穿过。自身建立层叠上下文，
+   玻璃与芯片的层叠关系（浅色层在玻璃里）与别的档位一致。 */
 .composer {
-  position: sticky;
-  bottom: 0;
+  position: relative;
   z-index: 30;
   display: flex;
   flex-direction: column;
-  /* margin-top:auto：消息不足一屏时这组玻璃依然落在底部，而不是吊在最后一条下面 */
-  margin: auto 0 0;
+  flex: none;
 }
 
 .msgs::-webkit-scrollbar {
@@ -1243,21 +1241,19 @@ async function onMenuSelect(value: string): Promise<void> {
   white-space: pre-line;
 }
 
-/* 快捷操作：两块并列的小玻璃（与 Dock 的三块同一装配语言：并列留缝、互不叠压） */
+/* 快捷操作：两块并列的令牌材质药丸。它们与输入条同属「浮起来的一组」，
+   但只有输入条挂 url() 折射（名单有预算，见 .chip 上面的注释）。 */
 .chips {
   display: flex;
   gap: 8px;
   padding: 0 0 8px;
 }
 
-/* 芯片标签：玻璃里的前景。命中区是整块玻璃（按钮把它撑满），玻璃只负责材质 ——
-   所以这里没有底色、没有圆角、没有影子，那些全归 GlassSurface（四档退化也跟着它走）。 */
+/* 芯片：牌子自己就是玻璃（底 / 受光边 / 光学层 / 模糊全在 .glass-surface 里），
+   命中区也是它本身，没有里外两层。 */
 .chip {
-  width: 100%;
-  height: 100%;
   padding: 6px 14px;
-  display: flex;
-  align-items: center;
+  border-radius: var(--radius-full);
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-1);

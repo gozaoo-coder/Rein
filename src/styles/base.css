@@ -353,7 +353,9 @@ html[data-perf='ultra'] {
         扩展选择器）。这些表面承载正文，所以底用 --glass-panel-fill（比悬浮玻璃更实），
         透光看得见材质，对比度不随背后内容浮动。
    这正是苹果 Liquid Glass 的分层：导航与控件层用玻璃，内容层保持可读。
-   折射走完整链（三通道 + 色散能力），由 system/perf 的 glassPipeline 决定。 */
+   折射走**唯一那条塌缩链**（feImage + 1×feDisplacementMap + feGaussianBlur，3 个原语），
+   由 system/perf 的 glassPipeline 决定（它只会是 collapsed 或 off —— 上游那条带色散的
+   完整链在出厂参数下与它逐像素等价，已整条删掉）。 */
 html[data-perf='extreme'] {
   --glass-fill: rgba(255, 255, 255, 0.4);
   --glass-rim-hi: #ffffff;
