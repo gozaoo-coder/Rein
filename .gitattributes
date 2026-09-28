@@ -1,0 +1,5 @@
+# 送上服务器执行的脚本一律 LF。
+# Windows 检出默认给 CRLF，部署脚本原样 scp 上去后，服务器上 `set -euo pipefail\r`
+# 会直接报 invalid option name —— 整条部署链断在第一步（2026-09-28 踩过）。
+*.sh text eol=lf
+*.service text eol=lf
