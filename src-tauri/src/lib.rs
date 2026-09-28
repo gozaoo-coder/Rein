@@ -21,6 +21,10 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let conn = db::init(app.handle())?;
+            // 多设备同步：变更捕获的钩子必须在连接交出去之前装 —— 钩子只往脏队列记一笔
+            // （表名/rowid/操作），真正的读行与拼对象由下面的 rein-sync 线程成批做。
+            let dirty = std::sync::Arc::new(modules::sync::engine::Dirty::new());
+            modules::sync::engine::install_hook(&conn, std::sync::Arc::clone(&dirty));
             app.manage(AppState::new(conn));
             app.manage(crate::state::VoiceHub::new());
             app.manage(crate::state::CampusHub::new());
@@ -48,6 +52,12 @@ pub fn run() {
             ));
             grab.start(app.handle().clone());
             app.manage(grab);
+
+            // 多设备同步：变更捕获线程（见上面 install_hook 的注释）。
+            // 与知识库/抢课同形 —— 先 manage 好状态再启动线程，线程每轮借那把唯一的连接。
+            let sync_hub = modules::sync::engine::SyncHub::new(data_dir.clone(), dirty);
+            sync_hub.start(app.handle().clone());
+            app.manage(sync_hub);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -178,6 +188,9 @@ pub fn run() {
             // share（分享收件箱：Android 系统分享/打开的文件）
             modules::share::commands::share_poll,
             modules::share::commands::share_read,
+            // sync（多设备同步：设备身份 / 状态 / 配对 / 传输）
+            modules::sync::commands::sync_status,
+            modules::sync::commands::sync_set_device_name,
             // voice（语音对话：豆包 ASR/TTS + 纪要）
             modules::voice::commands::voice_config_get,
             modules::voice::commands::voice_config_save,

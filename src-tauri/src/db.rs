@@ -1129,6 +1129,75 @@ ALTER TABLE exercises ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE exercises ADD COLUMN steps TEXT NOT NULL DEFAULT '[]';
 "#;
 
+/// 0034 · 多设备同步的地基（见 `modules/sync`）。
+///
+/// 同步要解决的两件事都在这里落成数据：
+/// 1. **对象身份**：业务表的自增主键只在本地有效，两台设备各自 `INSERT` 必然撞号，
+///    所以每行在 `sync_map` 里挂一个 uuid —— uuid 才是跨设备的身份，本地 id 只是别名。
+/// 2. **删除**：业务表是硬删（没有 `deleted` 列），删掉的行没有任何痕迹可传播，
+///    所以删除要留**墓碑**（`sync_objects.deleted = 1`）。
+///
+/// `sync_log` 是复制日志：本机改动与「应用来的远端改动」都追加一行，对端游标 = 已确认
+/// 的 seq。多设备（A→B→C）靠它转传，也让「传到一半断了」能续。
+const MIGRATION_0034: &str = r#"
+CREATE TABLE sync_meta (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+);
+
+CREATE TABLE sync_objects (
+  uuid    TEXT PRIMARY KEY,
+  kind    TEXT NOT NULL,
+  hlc     INTEGER NOT NULL,
+  device  TEXT NOT NULL,
+  deleted INTEGER NOT NULL DEFAULT 0,
+  blob    TEXT NOT NULL
+);
+CREATE INDEX sync_objects_hlc ON sync_objects(hlc, device);
+CREATE INDEX sync_objects_kind ON sync_objects(kind);
+
+CREATE TABLE sync_map (
+  kind     TEXT NOT NULL,
+  local_id TEXT NOT NULL,
+  uuid     TEXT NOT NULL,
+  PRIMARY KEY (kind, local_id)
+);
+CREATE INDEX sync_map_uuid ON sync_map(uuid);
+
+CREATE TABLE sync_log (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid TEXT NOT NULL,
+  hlc  INTEGER NOT NULL
+);
+
+CREATE TABLE sync_peers (
+  device        TEXT PRIMARY KEY,
+  name          TEXT NOT NULL DEFAULT '',
+  x25519_pub    TEXT NOT NULL,
+  group_id      TEXT NOT NULL,
+  last_seq_sent INTEGER NOT NULL DEFAULT 0,
+  last_seq_ack  INTEGER NOT NULL DEFAULT 0,
+  last_seen     INTEGER,
+  path          TEXT
+);
+
+CREATE TABLE sync_conflicts (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  uuid      TEXT NOT NULL,
+  kind      TEXT NOT NULL,
+  kept_hlc  INTEGER NOT NULL,
+  lost_hlc  INTEGER NOT NULL,
+  lost_blob TEXT NOT NULL,
+  at        INTEGER NOT NULL
+);
+
+CREATE TABLE sync_blobs (
+  hash       TEXT PRIMARY KEY,
+  bytes      INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1163,6 +1232,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0031,
     MIGRATION_0032,
     MIGRATION_0033,
+    MIGRATION_0034,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

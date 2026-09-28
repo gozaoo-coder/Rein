@@ -16,7 +16,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+# bundled = 自带 SQLite 源码（四端一致）；hooks = update_hook（同步的变更捕获靠它，
+# 比逐表写 70 多条 SQL 触发器少一份维护面）。
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 thiserror = "2"
 chrono = "0.4"
 # AI web 工具（web_search / web_fetch）：服务端抓取避免 WebView CORS 限制
@@ -48,6 +50,12 @@ tokenizers = { version = "0.23", default-features = false, features = ["fancy-re
 minisign-verify = "0.2"
 sha2 = "0.10"
 semver = "1"
+# 多设备同步（modules/sync）：配对与端到端加密。三件都是纯 Rust 实现 ——
+# Android arm64 交叉编译不需要任何原生依赖（rsa 那条注释同理）。
+# x25519 走 static_secrets：密钥要落库，会话密钥那种一次性类型不能序列化。
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
 tauri-plugin-notification = "2"
 
 [profile.release]

@@ -15,6 +15,7 @@ pub mod program;
 pub mod seed;
 pub mod session;
 pub mod share;
+pub mod sync;
 pub mod todo;
 pub mod tracking;
 pub mod update;
