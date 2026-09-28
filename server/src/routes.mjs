@@ -40,7 +40,7 @@ function replaceBase(url, from, to) {
   return typeof url === 'string' && url.startsWith(from) ? `${to}${url.slice(from.length)}` : url
 }
 
-export function createRouter({ cfg, store, ai, log }) {
+export function createRouter({ cfg, store, ai, sync, log }) {
   const channels = cfg.update.channels
 
   // ---------- 公开：清单 ----------
@@ -370,6 +370,12 @@ export function createRouter({ cfg, store, ai, log }) {
       // 管理接口前缀是 /admin/api/...，这里把 api 剥掉，下面按业务段匹配
       const adminPath = parts[1] === 'api' ? parts.slice(2) : parts.slice(1)
       return handleAdmin(req, res, adminPath, query)
+    }
+
+    // ===== 多设备同步：配对 / 会合 / 中继（只在内存里，见 sync.mjs） =====
+    if (parts[0] === 'api' && parts[1] === 'v1' && parts[2] === 'sync') {
+      if (!sync) return sendError(res, 503, 'sync_disabled', '本服务未启用同步会合')
+      return sync.handle(req, res, parts.slice(3), query)
     }
 
     return sendError(res, 404, 'not_found', `未知路径：${url.pathname}`)

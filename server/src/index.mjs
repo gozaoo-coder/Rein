@@ -16,6 +16,7 @@ import path from 'node:path'
 import { loadConfig } from './config.mjs'
 import { createRouter } from './routes.mjs'
 import { AiGateway } from './ai.mjs'
+import { SyncService, SYNC_UDP_PORT } from './sync.mjs'
 import { Store } from './store.mjs'
 import { nowIso, sendError } from './util.mjs'
 
@@ -37,7 +38,15 @@ function log(event, detail = {}) {
 
 const store = new Store(cfg, log)
 const ai = new AiGateway(cfg, log)
-const router = createRouter({ cfg, store, ai, log })
+// 同步会合：UDP 只做「告诉两端彼此的公网 ip:port」，HTTP 中继只在打洞不成时用
+const sync = new SyncService(cfg, log)
+const udpPort = Number(process.env.REIN_SYNC_UDP_PORT ?? SYNC_UDP_PORT)
+try {
+  sync.attachUdp(udpPort)
+} catch (e) {
+  log('sync-udp-unavailable', { error: String(e?.message ?? e), port: udpPort })
+}
+const router = createRouter({ cfg, store, ai, sync, log })
 
 const server = http.createServer((req, res) => {
   const started = Date.now()
@@ -91,6 +100,7 @@ server.listen(cfg.port, cfg.host, () => {
     `│ 更新公钥      ${cfg.update.publicKey ? '已配置' : '未配置（发布方上传后才会校验签名）'}`,
     `│ 通道          ${cfg.update.channels.join(', ')}（默认 ${cfg.update.defaultChannel}）`,
     `│ 模型网关      ${ai.health().status}（预留接口，/v1/chat/completions）`,
+    `│ 同步会合      UDP ${udpPort}（打洞）+ /api/v1/sync/relay（中继，仅内存）`,
     '└────────────────────────────────────────────────────────────────',
     '',
   ].join('\n')
