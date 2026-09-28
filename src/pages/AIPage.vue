@@ -4,12 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { Camera, Check, ChartPie, Copy, FileText, Folder, FolderUp, History, Images, Mic, Plus, Quote, RotateCcw, SendHorizontal, Trash2, X } from 'lucide-vue-next'
 
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
+import GlassSurface from '@/components/common/GlassSurface.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
 import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
 import ProcessSection from '@/components/ai/ProcessSection.vue'
 import MdText from '@/components/common/MdText.vue'
-import ProgressiveBlur from '@/components/common/ProgressiveBlur.vue'
 import MemoPickerSheet from '@/components/voice/MemoPickerSheet.vue'
 import { openMemoById } from '@/system/voiceRuntime'
 import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
@@ -24,7 +24,6 @@ import { copyText } from '@/utils/clipboard'
 import { listFoodDrafts, removeFoodDraft, type FoodDraft } from '@/utils/foodDrafts'
 import { bitmapToJpeg, decodeBitmap, DEFAULT_IMAGE_EDGE } from '@/utils/image'
 import { officeKindOf, parseOffice, parseTextFile, type ParsedDoc } from '@/utils/documentParse'
-import { perfDegraded } from '@/system/perf'
 import { shareInbox } from '@/system/shareInbox'
 import type { SendImage } from '@/stores/ai'
 import type { VoiceMemo } from '@/types'
@@ -518,8 +517,9 @@ async function onMenuSelect(value: string): Promise<void> {
 
 <template>
   <div class="page">
-    <!-- 消息区是唯一的滚动容器：页头与底栏都粘在它内部（sticky），内容从两端的
-         渐进模糊里滚过，而不是被两条硬边裁断（遮罩见 ProgressiveBlur/PageHeader）。 -->
+    <!-- 消息区是唯一的滚动容器：页头与底栏都粘在它内部（sticky）。
+         页头仍是「内容从渐进模糊里滚过」（遮罩见 ProgressiveBlur/PageHeader）；
+         底栏不是 —— 它是一组悬浮玻璃，正文从它们背后与两侧滚过。 -->
     <div ref="listEl" class="msgs">
       <PageHeader title="AI" compact>
         <template #lead>
@@ -658,30 +658,22 @@ async function onMenuSelect(value: string): Promise<void> {
         </template>
       </div>
 
-      <!-- 底栏（快捷操作 → 引用 → 纪要 → 附图 → 输入栏）：与页头同理粘在滚动区底部，
-           整条底栏垫在**同一块玻璃**上（.cb-glass），内容从它背后的渐进模糊里滚过。
-           芯片、附图、输入栏、图标钮都只是**玻璃上的浅色层**（fill），不再是各自一块实底 ——
-           从前导航栏是玻璃、输入栏是一块 background-color，两块材质对不上，
-           正文还会从胶囊与芯片的缝隙里露出来，被切得参差不齐。
+      <!-- 底栏：**悬浮的 dock 栏**，不是贴底的 tab 栏 —— 输入条本体是一块圆角胶囊玻璃，
+           芯片是它上方的两块同款小玻璃，三者与底部 Dock 用同一个组件、同一档退化：
+           超高 / 极致整块折射（液态玻璃），其余档位普通毛玻璃，流畅档顶成实底。
+           正文从这些玻璃背后与两侧滚过（不再有 full-bleed 的垫层与全宽模糊带）。
            margin-top:auto 保证消息不足一屏时它依然落在底部，而不是吊在最后一条下面。 -->
       <div class="composer">
-        <div class="cb-mask" aria-hidden="true">
-          <!-- 切档（v-if）时由 ProgressiveBlur 自己从透明淡入：淡入不能挂在容器或
-               组件根上——容器 opacity<1 就成 backdrop root，模糊在过渡期间不渲染 -->
-          <ProgressiveBlur v-if="!perfDegraded" direction="up" />
-        </div>
-
-        <!-- 玻璃垫层：材质走全局那一份 .glass-surface（亮暗与四档的退化都写在
-             base.css / tokens.css 里），与页头玻璃盘、运动沉浸页控制层同一条实现 ——
-             这一层才是底栏的「材质」，上面那些控件只负责层次与命中区。 -->
-        <div class="cb-glass glass-surface glass-edge-t" aria-hidden="true" />
-
-        <!-- 快捷操作 -->
+        <!-- 快捷操作：与 Dock 的页签同档浓度（--glass-fill，标签整字重，读得清） -->
         <div class="chips">
-          <button class="chip" :disabled="ai.busy" @click="ai.analyzeToday()">分析今日饮食</button>
-          <button class="chip" @click="openDrafts()">
-            草稿箱{{ drafts.length > 0 ? ` · ${drafts.length}` : '' }}
-          </button>
+          <GlassSurface class="cchip" width="auto" border-radius="var(--radius-full)" fill="var(--glass-fill)">
+            <button class="chip" :disabled="ai.busy" @click="ai.analyzeToday()">分析今日饮食</button>
+          </GlassSurface>
+          <GlassSurface class="cchip" width="auto" border-radius="var(--radius-full)" fill="var(--glass-fill)">
+            <button class="chip" @click="openDrafts()">
+              草稿箱{{ drafts.length > 0 ? ` · ${drafts.length}` : '' }}
+            </button>
+          </GlassSurface>
         </div>
 
         <!-- 引用条 -->
@@ -744,29 +736,34 @@ async function onMenuSelect(value: string): Promise<void> {
           <p class="doc-hint">点选要发给 AI 的图片（已默认选前 3 张）；发出后可让 AI 放大查看细节。</p>
         </div>
 
-        <!-- 输入栏 -->
-        <div class="inbar row">
-          <button ref="camBtn" class="cam" aria-label="添加附件" @click="openCamMenu">
-            <Plus :size="21" :stroke-width="2.4" />
-          </button>
-          <textarea
-            ref="inputEl"
-            v-model="draft"
-            rows="1"
-            :placeholder="docAtt ? '问问这份文档，或让 AI 放大看图' : attachments.length > 1 ? `问问这 ${attachments.length} 张图，或直接记录饮食` : attachments.length === 1 ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
-            @keydown.enter.exact.prevent="send"
-            @input="autoGrow"
-          />
-          <button
-            class="send"
-            :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
-            aria-label="发送"
-            :disabled="ai.busy || (!draft.trim() && attachments.length === 0 && !docAtt && memoRefs.length === 0)"
-            @click="send"
-          >
-            <SendHorizontal :size="18" />
-          </button>
-        </div>
+        <!-- 输入栏（dock 栏本体）：底比 Dock 的页签厚一档（--surface-translucent）——
+             这里承载占位文字与用户输入，底太薄时底下的正文会把它压到读不清
+             （实测：0.52 的玻璃底上占位只有 3.2:1；这一档把底线拉到 4.7:1 以上）。
+             它同时是这一组玻璃里唯一「整块可点」的表面：两侧圆钮是它内部的浅色层。 -->
+        <GlassSurface class="cbar" border-radius="var(--radius-full)" fill="var(--surface-translucent)">
+          <div class="inbar row">
+            <button ref="camBtn" class="cam" aria-label="添加附件" @click="openCamMenu">
+              <Plus :size="21" :stroke-width="2.4" />
+            </button>
+            <textarea
+              ref="inputEl"
+              v-model="draft"
+              rows="1"
+              :placeholder="docAtt ? '问问这份文档，或让 AI 放大看图' : attachments.length > 1 ? `问问这 ${attachments.length} 张图，或直接记录饮食` : attachments.length === 1 ? '问问这张图，或直接记录饮食' : '吃了什么？例如：一个鸡蛋和一碗米饭'"
+              @keydown.enter.exact.prevent="send"
+              @input="autoGrow"
+            />
+            <button
+              class="send"
+              :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
+              aria-label="发送"
+              :disabled="ai.busy || (!draft.trim() && attachments.length === 0 && !docAtt && memoRefs.length === 0)"
+              @click="send"
+            >
+              <SendHorizontal :size="18" />
+            </button>
+          </div>
+        </GlassSurface>
       </div>
     </div>
 
@@ -841,12 +838,11 @@ async function onMenuSelect(value: string): Promise<void> {
   margin-top: calc(-1 * var(--safe-top));
   display: flex;
   flex-direction: column;
-  /* 输入栏自身的下内边距（给胶囊的投影在滚动区里留一点余地）。
-     底部让开 = Dock 顶 − 它，输入栏底边才正好压在 Dock 顶上
-     （间距不变量：AI 输入栏底→底栏顶 = 0，见 scripts/e2e-layout-guard.mjs）。
+  /* 悬浮条与 Dock 之间的空气：底部让开 = Dock 顶 + 这一段，输入条底边落在 Dock 顶上方
+     （间距不变量：AI 输入栏底→底栏顶 = --cb-gap，见 scripts/e2e-layout-guard.mjs）。
      悬浮运动条停靠在底部时写入的 --wbar-reserve 一并计进来。 */
-  --inbar-pad-b: 8px;
-  padding: 0 var(--page-pad-x) calc(var(--dock-top) - var(--inbar-pad-b) + var(--wbar-reserve, 0px));
+  --cb-gap: 10px;
+  padding: 0 var(--page-pad-x) calc(var(--dock-top) + var(--cb-gap) + var(--wbar-reserve, 0px));
 }
 
 /* 消息长按菜单：禁用原生文本选择避免冲突（复制走菜单） */
@@ -874,13 +870,14 @@ async function onMenuSelect(value: string): Promise<void> {
   align-self: flex-end;
 }
 
-/* 引用条（输入栏上方）：玻璃上的浅色层，不是又一张卡 */
+/* 引用条（输入条上方）：悬浮的一小块，底走 --surface-translucent ——
+   它和芯片不同，下面没有玻璃垫着，太薄的底会被背后的正文压穿。 */
 .quote-bar {
   gap: 8px;
   padding: 7px 10px;
   margin-bottom: 6px;
   border-radius: var(--radius-m);
-  background: color-mix(in srgb, var(--text-1) 7%, transparent);
+  background: var(--surface-translucent);
 }
 
 .q-text {
@@ -897,8 +894,8 @@ async function onMenuSelect(value: string): Promise<void> {
   height: 26px;
   flex: none;
   border-radius: 50%;
-  /* 引用条是玻璃上的浅色层，这条里的钮就再深一档，而不是又垫一块实底 */
-  background: color-mix(in srgb, var(--text-1) 9%, transparent);
+  /* 引用条自身是一层悬浮面，这条里的钮就再深一档，而不是又垫一块实底 */
+  background: color-mix(in srgb, var(--text-1) 10%, var(--surface-translucent));
   color: var(--text-2);
   display: flex;
   align-items: center;
@@ -988,39 +985,16 @@ async function onMenuSelect(value: string): Promise<void> {
   margin-top: var(--safe-top);
 }
 
-/* 底栏：粘在滚动区底部，整条垫在同一块玻璃上（.cb-glass），内容从玻璃背后的
-   渐进模糊里滚过。自身建立层叠上下文，遮罩与玻璃才能用负 z-index 沉到控件背后。 */
+/* 底栏：悬浮在滚动区底部的一组玻璃（芯片 + 输入条），正文从它们背后与两侧滚过。
+   自身建立层叠上下文（粘在滚动区底部的那一行由 .page 的下内边距预留出来）。 */
 .composer {
   position: sticky;
   bottom: 0;
   z-index: 30;
-  /* margin-top:auto：消息不足一屏时底栏依然落在底部，而不是吊在最后一条下面；
-     左右负外边距把底栏拉到整帧宽，遮罩与玻璃才铺得满 */
-  margin: auto calc(-1 * var(--page-pad-x)) 0;
-  /* 上 8 / 下 --inbar-pad-b：与芯片、输入栏、Dock 之间是同一档 8px 节奏 */
-  padding: 8px var(--page-pad-x) var(--inbar-pad-b);
-}
-
-/* 向上多铺一段：内容从模糊里滚出来，而不是在玻璃上沿被硬切 */
-.cb-mask {
-  position: absolute;
-  top: -18px;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: -2;
-  pointer-events: none;
-}
-
-/* 玻璃垫层：底栏的**材质**（填充 / 受光边 / 光学层 / 四档退化全在 .glass-surface 里）。
-   贴在内容背后（-1），于是正文不再从芯片与胶囊的缝隙里露出来 —— 缝隙里看到的
-   是这一层玻璃，和 Dock 上看到的是同一套令牌。 */
-.cb-glass {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  /* margin-top:auto：消息不足一屏时这组玻璃依然落在底部，而不是吊在最后一条下面 */
+  margin: auto 0 0;
 }
 
 .msgs::-webkit-scrollbar {
@@ -1269,28 +1243,30 @@ async function onMenuSelect(value: string): Promise<void> {
   white-space: pre-line;
 }
 
-/* 快捷与输入 */
+/* 快捷操作：两块并列的小玻璃（与 Dock 的三块同一装配语言：并列留缝、互不叠压） */
 .chips {
   display: flex;
   gap: 8px;
   padding: 0 0 8px;
 }
 
-/* 玻璃上的浅色层（vibrancy）：不再是自带投影的白卡 —— 底栏整体是一块玻璃，
-   层与层之间靠 fill 的深浅分档，而不是各自再抬一层影子（同一块玻璃上两层影子，
-   层次反而说不清）。配方与卡面上的角标、`.stk-more` 一致。 */
+/* 芯片标签：玻璃里的前景。命中区是整块玻璃（按钮把它撑满），玻璃只负责材质 ——
+   所以这里没有底色、没有圆角、没有影子，那些全归 GlassSurface（四档退化也跟着它走）。 */
 .chip {
-  padding: 6px 13px;
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--text-1) 8%, transparent);
+  width: 100%;
+  height: 100%;
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-1);
-  transition: background-color var(--dur-fast) var(--ease-standard);
+  white-space: nowrap;
+  transition: opacity var(--dur-fast) var(--ease-standard);
 }
 
 .chip:active {
-  background: color-mix(in srgb, var(--text-1) 14%, transparent);
+  opacity: 0.6;
 }
 
 .chip:disabled {
@@ -1348,8 +1324,8 @@ async function onMenuSelect(value: string): Promise<void> {
   gap: 8px;
   padding: 9px 12px;
   border-radius: var(--radius-m);
-  /* 待发送文档芯片也在底栏里：玻璃上的浅色层（不再是实底卡 + 影子） */
-  background: color-mix(in srgb, var(--text-1) 7%, transparent);
+  /* 待发送文档芯片也是悬浮的一块：与引用条同档的底（下面没有玻璃垫着） */
+  background: var(--surface-translucent);
   color: var(--text-1);
   width: 100%;
 }
@@ -1461,7 +1437,9 @@ async function onMenuSelect(value: string): Promise<void> {
   gap: 4px;
   padding: 4px 8px;
   border-radius: var(--radius-full);
-  background: var(--accent-soft);
+  /* 纪要芯片也浮在正文上：底色取主色的 16% 并与 --surface-translucent 合成，
+     而不是 12% 的主色直接铺在半透明层上（那样正文会透上来） */
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-translucent));
   color: var(--accent);
   font-size: var(--fs-caption);
   font-weight: 700;
@@ -1488,17 +1466,12 @@ async function onMenuSelect(value: string): Promise<void> {
   line-height: inherit;
 }
 
+/* 输入条内部：底与描边由 GlassSurface 给（`.cbar`），这里只排布控件 ——
+   8px 内边距 + 40px 圆钮 = 56px 高，与 Dock 的 58px 同档。 */
 .inbar {
+  width: 100%;
   gap: 8px;
-  /* 对称 6px：40px 的图标钮 + 6 = 52px 高的胶囊，与文字行（22px 行高 + 9px 内边距）等高 */
-  padding: 6px;
-  border-radius: var(--radius-full);
-  /* 玻璃上的输入区：走 --surface-translucent（导航 / 标签栏毛玻璃那份令牌，亮暗两色
-     各一份值）—— 输入框是「玻璃上的一层浅面」，不是实底也不是更深的染色块。
-     实测理由：更弱的染色让输入区底色跟着背后的正文起伏（亮色下压到 3.2:1），
-     占位文字读不出来；这一份把底色抬回近白（亮）/ 近底（暗），两色下占位都过 AA。 */
-  background: var(--surface-translucent);
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--text-1) 8%, transparent);
+  padding: 8px;
 }
 
 .cam {

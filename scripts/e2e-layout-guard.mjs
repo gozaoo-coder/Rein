@@ -6,7 +6,7 @@
  *   3 三处间距不变量（用户实测口径）：
  *        · #/ai/models  首个模型卡片：名称→provider·modelId = 3、→价格 = 4、→能力徽章 = 10
  *        · #/settings/update  更新设置各行之间 = 0（行高自带内边距）
- *        · #/ai        输入栏底 == 底栏顶（0 间隙）
+ *        · #/ai        输入栏底 → 底栏顶 = 10（悬浮条与 Dock 之间的空气，--cb-gap）
  *   4 操作边界：整页的双指捏合 / 双击缩放必须无效（见下面 ZOOM_GUARD 的长注释）——
  *     这套界面的尺寸全按 430×932 标定成绝对像素，整体放大不会重排，只会把固定定位的
  *     Dock / 悬浮条撑出错位，是"超出设计允许"的那一类操作。
@@ -16,6 +16,7 @@
  */
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
+import { presetFeatureFlags } from './lib/features.mjs'
 
 const EDGE = process.env.REIN_EDGE ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 const APP = process.env.REIN_E2E_URL ?? 'http://localhost:1420'
@@ -134,8 +135,10 @@ const SPACING = `(() => {
     }
   }
   if (location.hash === '#/ai') {
-    const inbar = rect('.inbar'), dock = rect('.dock')
-    if (inbar && dock) out.checks.push({ name: 'AI 输入栏底→底栏顶', got: dock.top - inbar.bottom, want: 0 })
+    // 悬浮条（dock 样式）：**玻璃外缘**到 Dock 顶 = 10px（--cb-gap）——不是压在一起。
+    // 量 .cbar（玻璃本体）而不是 .inbar：输入行退在玻璃的描边之内，会多算 1px（实测 11）。
+    const bar = rect('.cbar') || rect('.inbar'), dock = rect('.dock')
+    if (bar && dock) out.checks.push({ name: 'AI 输入栏底→底栏顶', got: Math.round(dock.top - bar.bottom), want: 10 })
   }
   return out
 })()`
@@ -182,6 +185,8 @@ try {
   }
   await cdp('Page.enable')
   await cdp('Runtime.enable')
+  // 抢课是课表的子模块，**默认关闭** —— 本剧本测的正是它，先把开关预置好
+  await presetFeatureFlags(cdp)
   await cdp('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: true })
   await cdp('Page.addScriptToEvaluateOnNewDocument', {
     source: `localStorage.setItem('rein.perf.v1','high');
