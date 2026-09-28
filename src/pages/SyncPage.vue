@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { Link2, RefreshCw, Trash2, Zap } from 'lucide-vue-next'
+import { ChevronRight, Fingerprint, KeyRound, Link2, LogIn, Package, Smartphone, Zap } from 'lucide-vue-next'
 
+import ActionSheet from '@/components/common/ActionSheet.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { syncService } from '@/services/syncService'
@@ -11,31 +13,22 @@ import type { PairStatus, SyncPeerInfo, SyncRunResult, SyncRunStats, SyncStatus 
 /**
  * 多设备同步（三级页，入口在「设置 › 多设备同步」）。
  *
- * 这一页要回答四件事，顺序就是卡片顺序：
- *   1. 我是谁（设备名 + 设备号 + 公钥指纹 —— 指纹是人工核对配对有没有被掉包的）
- *   2. 连了谁（每台设备上次走的哪条路：局域网直连 / 打洞直连 / 云端中继）
- *   3. 怎么再加一台（开码 / 报码，5 分钟有效）
- *   4. 这次同步发生了什么（落了多少条、有没有冲突、走了多少流量）
+ * 三张卡片，顺序就是用户的心智顺序：
+ *   1. 本机是谁（名字 / 指纹 / 有多少条在账上）
+ *   2. 连了谁（每台上次走的哪条路：局域网直连 · 打洞直连 · 云端中继）
+ *   3. 怎么再加一台（开码 / 输码）
  *
- * 三条路径的**选择是自动的**：同一网段直接连 → 跨网段打洞 → 都走不通才中继。
- * 这里只如实显示结果，不给用户一个「用哪条路」的开关 —— 那是实现细节，不是选择。
+ * 路径是自动选的（同网段直连 → 打洞 → 中继兜底），页面上**不给「用哪条路」的开关** ——
+ * 那是实现细节，不是用户的选择；这里只如实显示这次走成了哪条。
  */
-const { toast: rawToast } = useToast()
-
-/**
- * 这一页的提示一律「一句人话」：本应用的 toast 只收字符串（没有 tone）。
- * 这里把 {title, description} 拼成一句，调用处读起来更顺。
- */
-function toast(note: { title: string; description?: string; tone?: string } | string): void {
-  rawToast(typeof note === 'string' ? note : note.description ? `${note.title}：${note.description}` : note.title)
-}
+const { toast } = useToast()
 
 const status = ref<SyncStatus | null>(null)
 const busy = ref(false)
 const offer = ref<string | null>(null)
 const claimCode = ref('')
-const claimed = ref<SyncPeerInfo | null>(null)
 const lastRun = ref<SyncRunStats | null>(null)
+const peerSheet = ref<SyncPeerInfo | null>(null)
 let pollTimer: number | null = null
 
 const PATH_TEXT: Record<string, string> = {
@@ -47,15 +40,49 @@ const PATH_TEXT: Record<string, string> = {
 const peers = computed(() => status.value?.peers ?? [])
 const paired = computed(() => peers.value.length > 0)
 
+const peerActions = computed(() => [
+  { label: '立即同步', value: 'run' },
+  { label: `解除与「${peerSheet.value?.name || peerSheet.value?.short || ''}」的配对`, value: 'forget', danger: true },
+])
+
+const pendingHint = computed(() => {
+  const s = status.value
+  if (!s) return ''
+  const bits: string[] = []
+  if (s.pending > 0) bits.push(`${s.pending} 条正在打包`)
+  if (s.staleTables > 0) bits.push(`${s.staleTables} 张表结构变了，会重新补录`)
+  if (s.conflicts > 0) bits.push(`${s.conflicts} 处冲突留档`)
+  return bits.length > 0 ? bits.join(' · ') : '改动会自动打包，同步时只发对方没有的'
+})
+
+/**
+ * 「上次走的是哪条路」这一行。
+ * 本次会话刚回来时用事件里的明细（含用时与流量）；重新进页面时退回到状态里记的那一份 ——
+ * 用户最想知道的就是这句话，不该只在刚同步完的那几分钟里看得见。
+ */
+const lastSummary = computed(() => {
+  const run = lastRun.value
+  if (run) {
+    const tail = run.notes.length > 0 ? ` · ${run.notes.join(' · ')}` : ''
+    return `这次走「${run.pathLabel}」· 收到 ${run.applied} 条 · 冲突 ${run.conflicts} 处 · 用时 ${secs(run.ms)} 秒 · ↑${fmtBytes(run.up)} ↓${fmtBytes(run.down)}${tail}`
+  }
+  const s = status.value
+  if (s?.lastAt) {
+    return `上次同步 ${fmtTime(s.lastAt)} · 走「${pathText(s.lastPath)}」· ↑${fmtBytes(s.lastUp)} ↓${fmtBytes(s.lastDown)}`
+  }
+  return ''
+})
+
 function pathText(p: string | null | undefined): string {
-  if (!p) return '还没同步过'
+  if (!p) return '未同步'
   return PATH_TEXT[p] ?? p
 }
 
 function fmtBytes(n: number | null | undefined): string {
-  if (!n) return '0'
+  if (!n) return '0 B'
   const mb = n / 1024 / 1024
-  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
+  if (mb >= 1) return `${mb.toFixed(1)} MB`
+  return `${Math.max(1, Math.round(n / 1024))} KB`
 }
 
 function fmtTime(ms: number | null | undefined): string {
@@ -65,6 +92,10 @@ function fmtTime(ms: number | null | undefined): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
   return new Date(ms).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function secs(ms: number): string {
+  return (ms / 1000).toFixed(ms < 10_000 ? 1 : 0)
 }
 
 async function refresh(): Promise<void> {
@@ -84,10 +115,10 @@ async function pairStart(): Promise<void> {
     const res = await syncService.pairStart()
     offer.value = res.code
     stopPoll()
-    // 另一台输完码，这边的轮询就能收尾 —— 5 分钟到期由服务端判，这里只负责问
+    // 另一台输完码这边就该收尾；过期由服务端判，这里只管问
     pollTimer = window.setInterval(() => void pollOnce(), 2000)
   } catch (e) {
-    toast({ title: '开码失败', description: String(e), tone: 'error' })
+    toast(`开码失败：${String(e)}`)
   } finally {
     busy.value = false
   }
@@ -100,10 +131,10 @@ async function pollOnce(): Promise<void> {
       stopPoll()
       offer.value = null
       await refresh()
-      toast({ title: '配对完成', description: `${st.peer.name || st.peer.short} 已加入`, tone: 'success' })
+      toast(`配对完成：${st.peer.name || st.peer.short} 已加入`)
     }
   } catch {
-    // 轮询失败不打扰用户：下一拍再试，码过期自然会报错
+    // 轮询失败不打扰：下一拍再试，码过期会由服务端返回错误
   }
 }
 
@@ -113,12 +144,11 @@ async function claim(): Promise<void> {
   busy.value = true
   try {
     const st = await syncService.pairClaim(code)
-    claimed.value = st.peer
     claimCode.value = ''
     await refresh()
-    toast({ title: '配对完成', description: st.peer?.name || '已加入同步组', tone: 'success' })
+    toast(`配对完成：${st.peer?.name || '已加入同步组'}`)
   } catch (e) {
-    toast({ title: '配对没成', description: String(e), tone: 'error' })
+    toast(`配对没成：${String(e)}`)
   } finally {
     busy.value = false
   }
@@ -132,14 +162,34 @@ async function runNow(): Promise<void> {
     await syncService.run()
   } catch (e) {
     busy.value = false
-    toast({ title: '同步起不来', description: String(e), tone: 'error' })
+    toast(`同步起不来：${String(e)}`)
+    return
   }
+  // 结果由 sync://result 事件送回来；万一事件没到（例如浏览器里的 mock），
+  // 别让按钮一直卡在「同步中」—— 但留足时间，别把真在跑的大同步放开成第二次。
+  window.setTimeout(() => {
+    if (busy.value) {
+      busy.value = false
+      void refresh()
+    }
+  }, 20000)
 }
 
 async function forget(peer: SyncPeerInfo): Promise<void> {
-  if (!window.confirm(`解除与「${peer.name || peer.short}」的配对？本机数据不会删。`)) return
   status.value = await syncService.forget(peer.device)
-  toast({ title: '已解除', tone: 'success' })
+  lastRun.value = null
+  toast('已解除配对，本机数据没动')
+}
+
+function openPeer(peer: SyncPeerInfo): void {
+  peerSheet.value = peer
+}
+
+async function onPeerAction(value: string): Promise<void> {
+  const peer = peerSheet.value
+  if (!peer) return
+  if (value === 'run') await runNow()
+  if (value === 'forget') await forget(peer)
 }
 
 let unlisten: (() => void) | null = null
@@ -152,17 +202,13 @@ onMounted(async () => {
     const first = payload.stats?.[0] ?? null
     lastRun.value = first
     if (payload.error) {
-      toast({ title: '同步失败', description: payload.error, tone: 'error' })
+      toast(`同步失败：${payload.error}`)
     } else if (payload.errors && payload.errors.length > 0) {
-      toast({ title: '部分设备没同步成', description: payload.errors.join('；'), tone: 'error' })
+      toast(`部分设备没同步成：${payload.errors.join('；')}`)
     } else if (first) {
-      toast({
-        title: `${first.pathLabel} · 完成`,
-        description: `收到 ${first.applied} 条，用时 ${(first.ms / 1000).toFixed(1)} 秒`,
-        tone: 'success',
-      })
+      toast(`${first.pathLabel} · 收到 ${first.applied} 条，用时 ${secs(first.ms)} 秒`)
     } else {
-      toast({ title: '没有已配对的设备', tone: 'error' })
+      toast('还没有配对的设备')
     }
     void refresh()
   })
@@ -181,308 +227,275 @@ onUnmounted(() => {
     <!-- 本机 -->
     <section class="card">
       <h2 class="gtitle">本机</h2>
-      <div class="kv">
-        <span class="k t-3">设备名</span>
-        <span class="v">{{ status?.deviceName || '—' }}</span>
-      </div>
-      <div class="kv">
-        <span class="k t-3">设备号</span>
-        <span class="v mono">{{ status?.deviceShort || '—' }}</span>
-      </div>
-      <div class="kv">
-        <span class="k t-3">公钥指纹</span>
-        <span class="v mono">{{ status?.fingerprint || '—' }}</span>
+      <div class="rows">
+        <div class="frow row">
+          <i class="fic"><Smartphone :size="17" /></i>
+          <span class="col ftxt">
+            <b>{{ status?.deviceName || '—' }}</b>
+            <em class="t-3">这台设备在同步里的名字</em>
+          </span>
+        </div>
+        <div class="frow row">
+          <i class="fic"><Fingerprint :size="17" /></i>
+          <span class="col ftxt">
+            <b class="mono">{{ status?.fingerprint || '—' }}</b>
+            <em class="t-3">公钥指纹 · 设备号 {{ status?.deviceShort || '—' }}</em>
+          </span>
+        </div>
+        <div class="frow row">
+          <i class="fic"><Package :size="17" /></i>
+          <span class="col ftxt">
+            <b>{{ status?.objects ?? 0 }} 条在同步账上</b>
+            <em class="t-3">{{ pendingHint }}</em>
+          </span>
+        </div>
       </div>
       <p class="pnote t-3">
-        配对时两端会互换公钥指纹；两边显示的一致，才说明中间没有人插进来。
+        配对时两端会互换公钥指纹：两边显示的一致，才说明中间没有人插进来。
         之后每次连接都按这把公钥校验，换了就拒连。
       </p>
-      <div class="kv">
-        <span class="k t-3">本机待同步</span>
-        <span class="v">
-          {{ status?.objects ?? 0 }} 条对象
-          <em v-if="(status?.pending ?? 0) > 0" class="t-3">（还有 {{ status?.pending }} 条正在打包）</em>
-        </span>
-      </div>
     </section>
 
     <!-- 已配对设备 -->
     <section class="card">
       <h2 class="gtitle">已配对设备</h2>
-      <p v-if="!paired" class="pnote t-3">
-        还没有配对任何设备。下面开一串码，在另一台上输入即可 —— 两台都要装 Rein，
-        并且都在「设置 → 在线服务」里配好同一台服务器地址（用于换地址打洞与兜底中继）。
-      </p>
 
-      <div v-for="p in peers" :key="p.device" class="peer">
-        <div class="prow">
-          <i class="pic" :style="{ background: 'var(--accent-soft)', color: 'var(--accent)' }">
-            <Link2 :size="16" />
-          </i>
-          <span class="col">
-            <b>{{ p.name || '未命名设备' }}</b>
-            <em class="t-3 mono">{{ p.short }} · {{ p.fingerprint }}</em>
-          </span>
-          <span class="pill" :class="p.path ?? 'none'">{{ pathText(p.path) }}</span>
+      <EmptyState
+        v-if="!paired"
+        :icon="Link2"
+        title="还没有配对的设备"
+        hint="两台设备都装 Rein、都指向同一台在线服务，然后下面开一串码互相认一下即可"
+      />
+
+      <template v-else>
+        <div class="rows">
+          <button v-for="p in peers" :key="p.device" class="frow row" @click="openPeer(p)">
+            <i class="fic"><Link2 :size="17" /></i>
+            <span class="col ftxt">
+              <b>{{ p.name || '未命名设备' }}</b>
+              <em class="t-3">{{ p.short }} · 上次 {{ fmtTime(p.lastSeen) }}</em>
+            </span>
+            <span class="tag" :class="p.path ?? 'none'">{{ pathText(p.path) }}</span>
+            <ChevronRight :size="16" class="t-3" />
+          </button>
         </div>
-        <div class="pmeta t-3">
-          上次同步 {{ fmtTime(p.lastSeen) }}
-          <template v-if="p.seqSent > 0"> · 已发 {{ p.seqSent }} 条</template>
-        </div>
-        <button class="ghost danger" @click="forget(p)">
-          <Trash2 :size="15" /> 解除配对
+
+        <button class="btn" :disabled="busy" @click="runNow">
+          <Zap :size="16" />
+          {{ busy ? '同步中…' : '立即同步' }}
         </button>
-      </div>
 
-      <button class="primary" :disabled="busy || !paired" @click="runNow">
-        <Zap :size="16" :class="{ spin: busy }" />
-        {{ busy ? '同步中…' : '立即同步' }}
-      </button>
-
-      <div v-if="lastRun" class="result">
-        <b>这次走了「{{ lastRun.pathLabel }}」</b>
-        <span class="t-3">
-          收到 {{ lastRun.applied }} 条 · 冲突 {{ lastRun.conflicts }} · 用时
-          {{ (lastRun.ms / 1000).toFixed(1) }} 秒 · ↑{{ fmtBytes(lastRun.up) }} ↓{{ fmtBytes(lastRun.down) }}
-        </span>
-        <span v-for="(note, i) in lastRun.notes" :key="i" class="t-3">{{ note }}</span>
-      </div>
+        <p v-if="lastSummary" class="pnote t-3">{{ lastSummary }}</p>
+      </template>
     </section>
 
-    <!-- 配对 -->
+    <!-- 加一台设备 -->
     <section class="card">
       <h2 class="gtitle">加一台设备</h2>
-      <p class="pnote t-3">
-        两台设备各点一次就行：这一台开码，另一台输码。码 5 分钟内有效，用过即废；
-        组密钥由两端各自用一次性码推出来，服务器全程不知道。
-      </p>
-
-      <button class="primary" :disabled="busy || !!offer" @click="pairStart">
-        <RefreshCw :size="16" :class="{ spin: busy }" /> 在这台开同步码
-      </button>
-      <div v-if="offer" class="code">
-        <b class="mono">{{ offer }}</b>
-        <span class="t-3">在另一台设备上输入这串码；这边会自动等它进来</span>
+      <div class="rows">
+        <div class="frow row">
+          <i class="fic"><KeyRound :size="17" /></i>
+          <span class="col ftxt">
+            <b>在这台开同步码</b>
+            <em class="t-3">念给另一台，5 分钟内有效、用过即废</em>
+          </span>
+          <button class="btn small" :disabled="busy || !!offer" @click="pairStart">开码</button>
+        </div>
       </div>
 
+      <div v-if="offer" class="code">
+        <b class="mono">{{ offer }}</b>
+        <em class="t-3">在另一台上输入这串码，这边会自动收尾</em>
+      </div>
+
+      <p class="pnote t-3">或者反过来 —— 在另一台上开码，把码输到这里：</p>
       <div class="claim">
         <input
           v-model="claimCode"
           class="input mono"
-          placeholder="输入另一台上的同步码"
+          placeholder="ABCD2345"
           maxlength="12"
           autocapitalize="characters"
+          autocomplete="off"
           @keyup.enter="claim"
         />
-        <button class="primary" :disabled="busy || !claimCode.trim()" @click="claim">确认</button>
-      </div>
-      <div v-if="claimed" class="result">
-        <b>已与「{{ claimed.name || claimed.short }}」配对</b>
-        <span class="t-3 mono">{{ claimed.fingerprint }}</span>
+        <button class="btn small" :disabled="busy || !claimCode.trim()" @click="claim">
+          <LogIn :size="15" /> 确认
+        </button>
       </div>
     </section>
+
+    <ActionSheet
+      :open="!!peerSheet"
+      :title="peerSheet?.name || peerSheet?.short || ''"
+      :actions="peerActions"
+      @close="peerSheet = null"
+      @select="onPeerAction"
+    />
   </div>
 </template>
 
 <style scoped>
 .page {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  padding: 10px var(--page-pad-x) var(--page-pad-bottom);
 }
 
 .gtitle {
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-3);
-  letter-spacing: 0.04em;
+  font-size: var(--fs-footnote);
+  font-weight: 700;
+  color: var(--text-2);
 }
 
-.pnote {
-  font-size: var(--fs-caption);
-  line-height: 1.55;
+/* 分组行：行间细线，首行不留线（与设置页同一套） */
+.rows {
+  display: grid;
+  grid-template-columns: 1fr;
+  margin-top: 4px;
 }
 
-.kv {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: var(--fs-caption);
+.rows > * + * {
+  border-top: 0.5px solid var(--line);
 }
 
-.k {
+.frow {
+  width: 100%;
+  gap: 11px;
+  padding: 10px 0;
+  text-align: left;
+  color: inherit;
+}
+
+.fic {
+  width: 34px;
+  height: 34px;
   flex: none;
+  border-radius: var(--radius-s);
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
-.v {
-  text-align: right;
-  color: var(--text-1);
+.ftxt {
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+
+.ftxt b {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.ftxt em {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mono {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.92em;
+  font-size: 0.94em;
+  letter-spacing: 0.02em;
 }
 
-.peer {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md, 12px);
-}
-
-.prow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.pic {
+/* 路径标签：走成打洞时给一点强调色 —— 这是用户最想确认的事 */
+.tag {
   flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-full);
-  display: grid;
-  place-items: center;
-}
-
-.col {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.col em {
-  font-style: normal;
-  font-size: var(--fs-caption);
-}
-
-.pill {
-  flex: none;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: var(--radius-full);
   font-size: var(--fs-caption);
-  background: var(--surface-2, var(--surface));
-  border: 1px solid var(--line);
-  color: var(--text-2, var(--text-3));
+  color: var(--text-3);
+  background: var(--surface-2);
 }
 
-.pill.punch {
+.tag.punch {
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: var(--accent-soft);
 }
 
-.pill.lan {
-  color: var(--text-1);
+.tag.lan {
+  color: var(--text-2);
+  background: var(--surface-2);
 }
 
-.pmeta {
-  font-size: var(--fs-caption);
-}
-
-.primary,
-.ghost {
+.btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  margin-top: 14px;
+  padding: 10px 16px;
   border-radius: var(--radius-full);
-  font-size: var(--fs-caption);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--fs-body);
   font-weight: 600;
-  padding: 9px 14px;
   transition: opacity var(--dur-fast) var(--ease-standard);
 }
 
-.primary {
-  background: var(--accent);
-  color: #fff;
+.btn:disabled {
+  opacity: 0.45;
 }
 
-.primary:disabled {
-  opacity: 0.5;
-}
-
-.ghost {
-  background: transparent;
-  border: 1px solid var(--line);
-  color: var(--text-2, var(--text-3));
-  align-self: flex-start;
-}
-
-.ghost.danger {
-  color: var(--danger, #e5484d);
+.btn.small {
+  margin-top: 0;
+  padding: 7px 13px;
+  font-size: var(--fs-caption);
 }
 
 .code {
   display: flex;
   flex-direction: column;
-  gap: 4px;
   align-items: center;
-  padding: 12px;
-  border-radius: var(--radius-md, 12px);
-  background: var(--surface-2, var(--surface));
+  gap: 4px;
+  margin-top: 12px;
+  padding: 16px;
+  border-radius: var(--radius-l);
+  background: var(--surface-2);
 }
 
 .code b {
-  font-size: 26px;
-  letter-spacing: 0.16em;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--text-1);
 }
 
-.code span,
-.result span {
+.code em {
+  font-style: normal;
   font-size: var(--fs-caption);
+}
+
+.pnote {
+  margin-top: 12px;
+  font-size: var(--fs-micro);
+  line-height: 1.7;
 }
 
 .claim {
   display: flex;
   gap: 8px;
+  margin-top: 10px;
 }
 
 .input {
   flex: 1;
   min-width: 0;
-  padding: 9px 12px;
+  padding: 9px 13px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--line);
-  background: var(--surface-2, var(--surface));
+  border: 0.5px solid var(--line);
+  background: var(--surface-2);
   color: var(--text-1);
-  font-size: var(--fs-caption);
-  letter-spacing: 0.08em;
+  font-size: var(--fs-body);
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-.result {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-size: var(--fs-caption);
-  padding: 10px;
-  border-radius: var(--radius-md, 12px);
-  background: var(--surface-2, var(--surface));
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+.input::placeholder {
+  color: var(--text-3);
+  letter-spacing: 0.14em;
 }
 </style>

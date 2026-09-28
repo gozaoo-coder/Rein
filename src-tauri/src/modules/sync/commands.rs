@@ -250,10 +250,16 @@ pub async fn sync_pair_claim(app: AppHandle, code: String) -> Result<PairStatus>
 // ---------- 同步 ----------
 
 /// 跑一轮同步（后台线程，结果用 `sync://result` 事件回报）。
+/// 同一进程同一时间只允许一次会话：两条会话会互相踩对方的复制游标（游标回退、对象重发）。
+static SESSION_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[tauri::command]
 pub fn sync_run(app: AppHandle) -> Result<()> {
+    if SESSION_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err(ReinError::Message("上一次同步还在跑，等它结束".into()));
+    }
     let handle = app.clone();
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("rein-sync-run".into())
         .spawn(move || {
             let outcome = (|| -> Result<(Vec<super::runner::RunStats>, Vec<String>)> {
@@ -271,8 +277,12 @@ pub fn sync_run(app: AppHandle) -> Result<()> {
                 Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
             };
             let _ = handle.emit("sync://result", payload);
-        })
-        .map_err(|e| ReinError::Message(format!("起不了同步线程：{e}")))?;
+            SESSION_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+    if let Err(e) = spawned {
+        SESSION_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        return Err(ReinError::Message(format!("起不了同步线程：{e}")));
+    }
     Ok(())
 }
 

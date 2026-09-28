@@ -1956,6 +1956,72 @@ const kbMemories: MockKbMemory[] = []
 let kbMemoryId = 0
 const kbFiles: MockKbFile[] = []
 let kbFileId = 0
+
+/* ---------- 多设备同步：内存态 ----------
+   起手就带一台已配对设备 + 一次同步记录：浏览器里一打开就能看到完整形态
+   （设备列表、路径标签、「上次走的是哪条路」那一行）；点「开码」走的是真实配对流程，
+   点「解除」会把这台摘掉、回到空态。路径每次点同步就换一条（lan → punch → relay）。 */
+const syncMock = {
+  name: '浏览器调试设备',
+  objects: 137,
+  conflicts: 2,
+  peers: [
+    {
+      device: 'mock-peer-0000-0000-0000-000000000002',
+      short: 'mock-pee',
+      name: 'iPad（模拟）',
+      fingerprint: 'MOCK-1111-1111',
+      path: 'punch',
+      lastSeen: Date.now() - 42 * 60 * 1000,
+      seqSent: 12,
+      seqAck: 12,
+    },
+  ] as Record<string, unknown>[],
+  lastAt: Date.now() - 42 * 60 * 1000,
+  lastPath: 'punch' as string | null,
+  lastUp: 5120,
+  lastDown: 262144,
+  runCount: 1,
+}
+
+const SYNC_MOCK_PATHS = ['lan', 'punch', 'relay'] as const
+
+const syncMockPeer = (): Record<string, unknown> => ({
+  device: 'mock-peer-0000-0000-0000-000000000002',
+  short: 'mock-pee',
+  name: '另一台设备（模拟）',
+  fingerprint: 'MOCK-1111-1111',
+  path: syncMock.lastPath,
+  lastSeen: syncMock.lastAt,
+  seqSent: 12,
+  seqAck: 12,
+})
+
+const syncMockStatus = (): Record<string, unknown> => ({
+  deviceId: 'mock-device-0000-0000-0000-000000000001',
+  deviceShort: 'mock-dev',
+  deviceName: syncMock.name,
+  fingerprint: 'MOCK-0000-0000',
+  inGroup: syncMock.peers.length > 0,
+  groupId: syncMock.peers.length > 0 ? 'mock-room' : null,
+  peers: syncMock.peers,
+  objects: syncMock.objects,
+  tombstones: 3,
+  logLen: syncMock.objects + 3,
+  pending: 0,
+  staleTables: 0,
+  conflicts: syncMock.conflicts,
+  lastAt: syncMock.lastAt,
+  lastPath: syncMock.lastPath,
+  lastUp: syncMock.lastUp,
+  lastDown: syncMock.lastDown,
+})
+
+const syncMockPair = (): void => {
+  if (!syncMock.peers.some((p) => p.device === 'mock-peer-0000-0000-0000-000000000002')) {
+    syncMock.peers.push(syncMockPeer())
+  }
+}
 const kbAssets: MockKbAsset[] = []
 let kbAssetId = 0
 const kbMoves: MockKbFsMove[] = []
@@ -5960,51 +6026,36 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     /* ---------- 多设备同步（浏览器开发用的空实现：形状与 Rust 一致，流程可走通） ---------- */
     case 'sync_status':
-      return delay({
-        deviceId: 'mock-device-0000-0000-0000-000000000001',
-        deviceShort: 'mock-dev',
-        deviceName: '浏览器调试设备',
-        fingerprint: 'MOCK-0000-0000',
-        inGroup: false,
-        groupId: null,
-        peers: [],
-        objects: 0,
-        tombstones: 0,
-        logLen: 0,
-        pending: 0,
-        staleTables: 0,
-        conflicts: 0,
-        lastAt: null,
-        lastPath: null,
-        lastUp: 0,
-        lastDown: 0,
-      } as T)
+      return delay(syncMockStatus() as T)
     case 'sync_set_device_name':
-      return delay(undefined as T)
+      syncMock.name = String((args as { name?: string } | undefined)?.name ?? syncMock.name)
+      return delay(syncMockStatus() as T)
     case 'sync_pair_start':
       // 短码固定，方便在浏览器里把「开码 → 报码 → 完成」这条流程点一遍
       return delay({ code: 'MOCKCODE', expiresAt: Date.now() + 5 * 60 * 1000 } as T)
     case 'sync_pair_poll':
-      return delay({
-        pending: false,
-        peer: {
-          device: 'mock-peer-0000-0000-0000-000000000002',
-          short: 'mock-pee',
-          name: '另一台设备（模拟）',
-          fingerprint: 'MOCK-1111-1111',
-          path: 'punch',
-          lastSeen: Date.now(),
-          seqSent: 0,
-          seqAck: 0,
-        },
-        room: 'mock-room',
-      } as T)
+      syncMockPair()
+      return delay({ pending: false, peer: syncMockPeer(), room: 'mock-room' } as T)
     case 'sync_pair_claim':
-      return delay({ pending: false, peer: null, room: 'mock-room' } as T)
-    case 'sync_run':
+      syncMockPair()
+      return delay({ pending: false, peer: syncMockPeer(), room: 'mock-room' } as T)
+    case 'sync_run': {
+      // 每次点都换一条路，三种路径标签都能在浏览器里看一遍
+      const next = SYNC_MOCK_PATHS[syncMock.runCount % SYNC_MOCK_PATHS.length] ?? 'lan'
+      syncMock.runCount += 1
+      syncMock.lastPath = next
+      syncMock.lastAt = Date.now()
+      syncMock.lastUp = 4096 + syncMock.runCount * 1024
+      syncMock.lastDown = 262144 * syncMock.runCount
+      syncMock.objects += 7
+      syncMock.peers = syncMock.peers.map((p) => ({ ...p, path: next, lastSeen: syncMock.lastAt }))
       return delay(undefined as T)
+    }
     case 'sync_forget':
-      return delay(undefined as T)
+      syncMock.peers = syncMock.peers.filter(
+        (p) => p.device !== String((args as { device?: string } | undefined)?.device ?? ''),
+      )
+      return delay(syncMockStatus() as T)
 
     /* ---------- 知识库与长期记忆 ---------- */
     case 'kb_status': {
