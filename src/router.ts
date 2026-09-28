@@ -76,6 +76,13 @@ export const routes = [
     meta: { title: '打开或关闭功能' },
   },
   {
+    path: '/settings/sync',
+    name: 'settings-sync',
+    component: () => import('@/pages/SyncPage.vue'),
+    // 三级页：多设备同步（入口在「设置 › 多设备同步」）
+    meta: { title: '多设备同步' },
+  },
+  {
     path: '/settings/update',
     name: 'settings-update',
     component: () => import('@/pages/UpdatePage.vue'),

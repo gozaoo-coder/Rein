@@ -156,6 +156,25 @@ onMounted(() => {
       </p>
     </section>
 
+    <!-- 多设备同步 -->
+    <section class="card">
+      <h2 class="gtitle">多设备同步</h2>
+      <p class="pnote t-3">
+        手机、电脑之间同步记录：同一网段直接连，跨网段先用云服务器换地址打洞直连，
+        都走不通才经云服务器中转 —— 三条路上跑的**都是端到端加密**的密文，
+        服务器看不到内容，也不存业务数据。
+      </p>
+      <button class="frow row" @click="router.push({ name: 'settings-sync' })">
+        <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
+          <RefreshCw :size="18" />
+        </i>
+        <span class="col ftxt">
+          <b>多设备同步</b>
+          <em class="t-3">配一台新设备、看上次走的哪条路、处理冲突</em>
+        </span>
+      </button>
+    </section>
+
     <!-- 关于 -->
     <section class="card">
       <h2 class="gtitle">关于</h2>

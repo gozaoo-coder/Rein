@@ -5958,6 +5958,54 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'tracking_status':
       return delay({ granted: true, busy: false } as T)
 
+    /* ---------- 多设备同步（浏览器开发用的空实现：形状与 Rust 一致，流程可走通） ---------- */
+    case 'sync_status':
+      return delay({
+        deviceId: 'mock-device-0000-0000-0000-000000000001',
+        deviceShort: 'mock-dev',
+        deviceName: '浏览器调试设备',
+        fingerprint: 'MOCK-0000-0000',
+        inGroup: false,
+        groupId: null,
+        peers: [],
+        objects: 0,
+        tombstones: 0,
+        logLen: 0,
+        pending: 0,
+        staleTables: 0,
+        conflicts: 0,
+        lastAt: null,
+        lastPath: null,
+        lastUp: 0,
+        lastDown: 0,
+      } as T)
+    case 'sync_set_device_name':
+      return delay(undefined as T)
+    case 'sync_pair_start':
+      // 短码固定，方便在浏览器里把「开码 → 报码 → 完成」这条流程点一遍
+      return delay({ code: 'MOCKCODE', expiresAt: Date.now() + 5 * 60 * 1000 } as T)
+    case 'sync_pair_poll':
+      return delay({
+        pending: false,
+        peer: {
+          device: 'mock-peer-0000-0000-0000-000000000002',
+          short: 'mock-pee',
+          name: '另一台设备（模拟）',
+          fingerprint: 'MOCK-1111-1111',
+          path: 'punch',
+          lastSeen: Date.now(),
+          seqSent: 0,
+          seqAck: 0,
+        },
+        room: 'mock-room',
+      } as T)
+    case 'sync_pair_claim':
+      return delay({ pending: false, peer: null, room: 'mock-room' } as T)
+    case 'sync_run':
+      return delay(undefined as T)
+    case 'sync_forget':
+      return delay(undefined as T)
+
     /* ---------- 知识库与长期记忆 ---------- */
     case 'kb_status': {
       kbEnsureIndex()
