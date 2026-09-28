@@ -529,6 +529,24 @@ impl SyncHub {
         Ok(())
     }
 
+    /// 立刻把脏队列落成对象。同步会话开始前调用 —— 否则刚改的东西会落在这一次之后，
+    /// 用户看到的就是「点了同步，刚才那条没过去」。
+    pub fn flush(&self, conn: &Connection, store: &BlobStore, me: &str) -> Result<usize> {
+        let batch = self.dirty.drain(0);
+        for raw in &batch {
+            capture(conn, store, me, raw)?;
+        }
+        if !batch.is_empty() {
+            set_pending(0);
+        }
+        Ok(batch.len())
+    }
+
+    /// 数据目录（命令层要用它拼 blob 库路径）。
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
+    }
+
     fn run_backfill(&self, app: &AppHandle, store: &BlobStore) -> Result<BackfillStats> {
         let state = app.state::<crate::state::AppState>();
         let conn = state.db.lock().unwrap();

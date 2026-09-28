@@ -40,7 +40,9 @@ pub mod identity;
 pub mod media;
 pub mod models;
 pub mod protocol;
+pub mod runner;
 pub mod tables;
+pub mod transport;
 
 use rusqlite::Connection;
 use std::sync::atomic::{AtomicI64, Ordering};

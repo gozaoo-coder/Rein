@@ -191,6 +191,11 @@ pub fn run() {
             // sync（多设备同步：设备身份 / 状态 / 配对 / 传输）
             modules::sync::commands::sync_status,
             modules::sync::commands::sync_set_device_name,
+            modules::sync::commands::sync_pair_start,
+            modules::sync::commands::sync_pair_poll,
+            modules::sync::commands::sync_pair_claim,
+            modules::sync::commands::sync_run,
+            modules::sync::commands::sync_forget,
             // voice（语音对话：豆包 ASR/TTS + 纪要）
             modules::voice::commands::voice_config_get,
             modules::voice::commands::voice_config_save,

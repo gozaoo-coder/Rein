@@ -13,9 +13,25 @@ pub struct SyncPeerInfo {
     pub fingerprint: String,
     pub path: Option<String>,
     pub last_seen: Option<i64>,
-    /// 已送达 / 已确认的复制日志序号（增量同步的进度）
     pub seq_sent: i64,
     pub seq_ack: i64,
+}
+
+/// 配对第一步的回执：念给另一台设备的短码。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairOffer {
+    pub code: String,
+    pub expires_at: i64,
+}
+
+/// 配对过程中的状态（开码侧轮询、报码侧一次性拿到对端）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairStatus {
+    pub pending: bool,
+    pub peer: Option<SyncPeerInfo>,
+    pub room: Option<String>,
 }
 
 /// 本机同步状态：设置页那一张卡片的全部输入。

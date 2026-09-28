@@ -178,6 +178,14 @@ pub fn random_epoch() -> [u8; 4] {
     e
 }
 
+/// 随机十六进制串（房间号等一次性标识用）。
+pub fn random_hex(bytes: usize) -> String {
+    use rand::RngCore;
+    let mut buf = vec![0u8; bytes];
+    rand::rngs::OsRng.fill_bytes(&mut buf);
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn epoch_b64(epoch: &[u8; 4]) -> String {
     B64.encode(epoch)
 }
