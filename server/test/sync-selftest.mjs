@@ -100,6 +100,13 @@ async function main() {
   })
   check('坏房间号被拒', badClaim.status === 400, JSON.stringify(badClaim.json))
 
+  const huge = await api('POST', '/api/v1/sync/pair', { device: 'x'.repeat(300 * 1024), pub: 'pk' })
+  check('超长设备号被拒（不进日志不进内存）', huge.status === 400, JSON.stringify(huge.json))
+  const tricky = await api('POST', '/api/v1/sync/pair', { device: '../evil', pub: 'pk' })
+  check('带路径字符的设备号被拒', tricky.status === 400, JSON.stringify(tricky.json))
+  const eventsWithEvil = events.filter((e) => e.event === 'sync-pair-open' && String(e.detail?.device ?? '').length > 64)
+  check('被拒的设备号没有落进日志', eventsWithEvil.length === 0)
+
   // ---------- HTTP 中继 ----------
   process.stdout.write('\n中继\n')
   const room = 'b'.repeat(32)
@@ -173,9 +180,20 @@ async function main() {
   await sleep(120)
   check('垃圾报文不会让服务端崩', true)
 
+  const evil = dgram.createSocket('udp4')
+  const evilInbox = []
+  evil.on('message', (m) => evilInbox.push(JSON.parse(m.toString())))
+  await new Promise((r) => evil.bind(0, '127.0.0.1', r))
+  await new Promise((r) => {
+    evil.send(Buffer.from(JSON.stringify({ t: 'hello', room: room2, device: '../evil' })), udpPort, '127.0.0.1', r)
+  })
+  await sleep(150)
+  check('UDP 的坏设备号被忽略（不回包不占位）', evilInbox.length === 0, JSON.stringify(evilInbox))
+
   a.close()
   b.close()
   bad.close()
+  evil.close()
 
   // ---------- 收尾 ----------
   check('日志里有配对与会合事件', events.some((e) => e.event === 'sync-pair-open') && events.some((e) => e.event === 'sync-udp-listen'))

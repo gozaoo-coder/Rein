@@ -69,9 +69,17 @@ pub struct Outcome {
 }
 
 /// 一帧最多这么大（blob 与对象都按它分块）。
-const CHUNK: usize = 192 * 1024;
+///
+/// 上限的约束来自中继档：整帧还要再 base64 一层塞进服务端的 256KiB 单帧
+/// （明文预算 ≈192KiB），减去 JSON 信封与 AEAD 的固定开销后，分片本体只能取
+/// 128KiB —— 再大，中继对任何超过一格的对象都必然报「单帧过大」，而中继是
+/// 最后一档，没有更早的链路可退。
+const CHUNK: usize = 128 * 1024;
 /// 一批清单最多这么多对象。
 const BATCH: usize = 256;
+/// 远端报来的对象/blob 总长上限：正经数据到不了这个量级，超了就是对面在捣乱。
+/// `vec![0u8; total]` 分配失败在 Rust 里是 abort（进程直接死），必须赶在分配前挡住。
+const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 /// 引用解不开时最多重试几轮（剩下的留给下一次会话）。
 const MAX_RETRY_ROUNDS: usize = 4;
 
@@ -593,6 +601,10 @@ fn pull(
                     let bytes = B64
                         .decode(&data)
                         .map_err(|_| ReinError::Message("数据块不是合法 base64".into()))?;
+                    // off/total 是对端报来的：离谱的总量与越界的偏移直接拒绝
+                    if total > MAX_PAYLOAD_BYTES || off.saturating_add(bytes.len()) > total {
+                        return Err(ReinError::Message("数据块长度越界".into()));
+                    }
                     match chunks.iter_mut().find(|c| c.0 == u) {
                         Some(slot) => {
                             let end = off + bytes.len();
@@ -604,9 +616,7 @@ fn pull(
                         None => {
                             let mut buf = vec![0u8; total];
                             let end = off + bytes.len();
-                            if end <= total {
-                                buf[off..end].copy_from_slice(&bytes);
-                            }
+                            buf[off..end].copy_from_slice(&bytes);
                             chunks.push((u.clone(), k, h, d, x, total, buf, 0));
                             wanted -= 1;
                         }
@@ -631,7 +641,7 @@ fn pull(
         let mut missing: Vec<String> = Vec::new();
         for obj in &staged {
             for hash in referenced_blobs(&obj.blob) {
-                if !store.has(&hash) && !missing.contains(&hash) {
+                if !store.has(&hash)? && !missing.contains(&hash) {
                     missing.push(hash);
                 }
             }
@@ -659,6 +669,11 @@ fn pull(
                     let bytes = B64
                         .decode(&data)
                         .map_err(|_| ReinError::Message("blob 块不是合法 base64".into()))?;
+                    // hash 与长度都是对端可控的：write_chunk 会按 hash 拼路径、按 total
+                    // 撑文件，必须在碰文件系统之前把两边都挡住
+                    if total > MAX_PAYLOAD_BYTES || off.saturating_add(bytes.len()) > total {
+                        return Err(ReinError::Message("blob 块长度越界".into()));
+                    }
                     // 写 `.part`、收齐校验摘要后改名就位：不能直接写最终路径（见 blobs.rs）
                     store.write_chunk(&b, off, total, &bytes)?;
                     if off + bytes.len() >= total {

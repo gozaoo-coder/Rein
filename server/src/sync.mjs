@@ -47,6 +47,18 @@ function validRoom(room) {
   return typeof room === 'string' && /^[a-f0-9]{16,64}$/.test(room)
 }
 
+/** 设备号是 uuid v4（36 字符）、公钥是 32 字节的 base64（44 字符）。
+ *  不设边界的话，一个 4MB 的 device 会随着成功请求被原样写进日志与内存配对位 ——
+ *  这台机器磁盘小，持续刷能把盘刷满，所以不合法的值在进门处就拒掉。
+ *  公钥对服务端是不透明字节（真正解码在 App 侧），管住长度就够了，字符集不卡。 */
+function validDevice(device) {
+  return typeof device === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(device)
+}
+
+function validIdentity(device, pub) {
+  return validDevice(device) && typeof pub === 'string' && pub.length >= 1 && pub.length <= 128
+}
+
 export class SyncService {
   constructor(cfg, log) {
     this.cfg = cfg
@@ -85,7 +97,7 @@ export class SyncService {
 
   /** 开一个配对位：返回给人念的短码。repeat 为真表示这是一次「重新配对」。 */
   openPairing(device, pub) {
-    if (!device || !pub) return { error: '缺少设备号或公钥' }
+    if (!validIdentity(device, pub)) return { error: '设备号或公钥不合法' }
     // 每台设备同时只保留一个待配对位，免得旧的短码被翻出来用
     for (const [code, v] of this.pairs) if (v.device === device && !v.claimedBy) this.pairs.delete(code)
     if (this.pairs.size >= PAIR_MAX) return { error: '待配对过多，稍后再试' }
@@ -103,7 +115,7 @@ export class SyncService {
       this.pairs.delete(key)
       return { error: '同步码已过期', status: 404 }
     }
-    if (!device || !pub) return { error: '缺少设备号或公钥', status: 400 }
+    if (!validIdentity(device, pub)) return { error: '设备号或公钥不合法', status: 400 }
     if (!validRoom(room)) return { error: '房间号非法', status: 400 }
     if (slot.device === device) return { error: '不能与自己配对', status: 400 }
     slot.claimedBy = { device, pub, room, at: Date.now() }
@@ -196,7 +208,7 @@ export class SyncService {
       } catch {
         return
       }
-      if (!msg || msg.t !== 'hello' || !validRoom(msg.room) || !msg.device) return
+      if (!msg || msg.t !== 'hello' || !validRoom(msg.room) || !validDevice(msg.device)) return
       const peers = this.udpPeers.get(msg.room) ?? {}
       peers[msg.device] = { ip, port: rinfo.port, at: Date.now() }
       this.udpPeers.set(msg.room, peers)

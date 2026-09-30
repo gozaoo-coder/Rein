@@ -39,13 +39,27 @@ impl BlobStore {
         hasher.finalize().iter().map(|b| format!("{b:02x}")).collect()
     }
 
+    /// 对端可控的 hash 必须是 64 位小写 hex 才许碰文件系统：`path()` 是直接 join，
+    /// `..\` 或绝对路径能逃出 blob 库（失陷的对端设备 → 对本机任意读/写文件）。
+    /// 发送侧的 hash 都是自己算的，只有接收侧会遇到不老实的值，错误要在落盘前报。
+    pub fn check_hash(hash: &str) -> Result<()> {
+        let ok = hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if ok {
+            Ok(())
+        } else {
+            let preview: String = hash.chars().take(16).collect();
+            Err(ReinError::Message(format!("blob hash 不合法：{preview}")))
+        }
+    }
+
     pub fn path(&self, hash: &str) -> PathBuf {
         let bucket = hash.get(0..2).unwrap_or("00");
         self.root.join(bucket).join(hash)
     }
 
-    pub fn has(&self, hash: &str) -> bool {
-        self.path(hash).is_file()
+    pub fn has(&self, hash: &str) -> Result<bool> {
+        Self::check_hash(hash)?;
+        Ok(self.path(hash).is_file())
     }
 
     /// 写入字节并登记目录表（幂等：同一份内容第二次写只更新目录行）。
@@ -70,6 +84,7 @@ impl BlobStore {
     }
 
     pub fn get(&self, hash: &str) -> Result<Option<Vec<u8>>> {
+        Self::check_hash(hash)?;
         let path = self.path(hash);
         if !path.is_file() {
             return Ok(None);
@@ -82,6 +97,7 @@ impl BlobStore {
     /// 为什么不能直接写最终路径：`put` 见到文件已存在就跳过（内容寻址的幂等），
     /// 半截文件会让「补齐」永远落不下去 —— 长度对、内容错，且这种错会被摘要掩盖住。
     pub fn write_chunk(&self, hash: &str, off: usize, total: usize, bytes: &[u8]) -> Result<()> {
+        Self::check_hash(hash)?;
         let part = self.part_path(hash);
         if let Some(dir) = part.parent() {
             std::fs::create_dir_all(dir)?;
@@ -104,6 +120,7 @@ impl BlobStore {
 
     /// 收齐一块 blob：校验 sha256 与前缀给的 hash 一致，再改名就位并登记。
     pub fn finish_chunked(&self, conn: &Connection, hash: &str, total: usize) -> Result<()> {
+        Self::check_hash(hash)?;
         let part = self.part_path(hash);
         if !part.is_file() {
             return Err(ReinError::Message(format!("blob {hash} 没有收到任何字节")));
@@ -153,6 +170,7 @@ impl BlobStore {
 
     /// 目录表里少一行但文件在（手工拷进来的库）时补登记；文件不在则返回大小 0。
     pub fn size_of(&self, conn: &Connection, hash: &str) -> Result<i64> {
+        Self::check_hash(hash)?;
         let known: Option<i64> = conn
             .query_row("SELECT bytes FROM sync_blobs WHERE hash = ?1", [hash], |r| {
                 r.get(0)

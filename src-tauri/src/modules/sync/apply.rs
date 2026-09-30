@@ -277,6 +277,18 @@ fn local_row_id(
             return Ok(Some(id));
         }
     }
+    // 单行表：整表一条对象，落点就是本机那一行（种子保证 id=1 存在）。映射表对不上
+    // 是对端第一次发来（升级安装配对后首次同步），必须找到它走 UPDATE —— 靠 INSERT
+    // 让 SQLite 分配 rowid 会拿到 2，撞上 `CHECK (id = 1)`，整批应用失败且永不收敛。
+    // 查不到行说明表是空的，落到下面的 INSERT 没问题（rowid 从 1 起）。
+    if let Pk::Singleton = spec.pk {
+        let found: Option<i64> = conn
+            .query_row(&format!("SELECT rowid FROM {} LIMIT 1", spec.name), [], |r| r.get(0))
+            .optional()?;
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
     // 文本主键：uuid 就是 id
     if let Pk::Text(col) = spec.pk {
         let found: Option<i64> = conn

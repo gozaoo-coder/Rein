@@ -293,6 +293,33 @@ fn natural_key_merges_local_row() {
     assert!((b.conn.query_row("SELECT weight_kg FROM body_metrics", [], |r| r.get::<_, f64>(0)).unwrap() - 70.5).abs() < 0.001);
 }
 
+/// 单行表（profile 这类 `id = 1`）首次同步：映射表里还没有它的落点，必须找到本机
+/// 那一行做 UPDATE，而不是 INSERT 一条 rowid=2 撞 `CHECK (id = 1)` 卡死整个会话。
+#[test]
+fn singleton_converges_without_prior_map() {
+    let a = Dev::new();
+    let b = Dev::new();
+    a.conn
+        .execute("UPDATE profile SET nickname = '小陈' WHERE id = 1", [])
+        .unwrap();
+    a.touch("profile", 1, 'u');
+
+    let stats = a.send_to(&b);
+    assert_eq!(stats.applied, 1, "对端第一次收到 singleton 必须能落地");
+    assert_eq!(b.text("SELECT nickname FROM profile"), "小陈");
+    assert_eq!(b.int("SELECT COUNT(*) FROM profile"), 1, "不能多出一行");
+    assert_eq!(b.int("SELECT rowid FROM profile"), 1, "落在种子的那一行上");
+
+    // 反向也通：B 改完发回 A，之后就是普通的 LWW 收敛
+    b.conn
+        .execute("UPDATE profile SET nickname = '小陈二号' WHERE id = 1", [])
+        .unwrap();
+    b.touch("profile", 1, 'u');
+    let stats = b.send_to(&a);
+    assert_eq!(stats.applied, 1);
+    assert_eq!(a.text("SELECT nickname FROM profile"), "小陈二号");
+}
+
 /// 版本错开：对端的对象里有本机这张表还没有的列 —— 跳过那一列，其余照常落地。
 /// 整条失败是不行的：一次升级不该把同步卡死。
 #[test]

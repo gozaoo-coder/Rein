@@ -94,6 +94,22 @@ pub fn encode(store: &BlobStore, kind: Media, conn: &rusqlite::Connection, value
     }
 }
 
+/// marker 里带来的 name、对象 uuid 这类**对端可控**的字符串要当文件名成分用之前，
+/// 先过这道白名单：拒绝路径分隔符、盘符、`..` 与控制字符 —— 失陷的对端设备不能借
+/// 落地路径把文件写出工作区。合法值（uuid、中文文件名、`photo.jpg`）都原样通过。
+fn safe_component(s: &str) -> Option<&str> {
+    if s.is_empty() || s == "." || s == ".." {
+        return None;
+    }
+    if s.contains(['/', '\\', ':']) {
+        return None;
+    }
+    if s.chars().any(char::is_control) {
+        return None;
+    }
+    Some(s)
+}
+
 /// blob 引用 → 列值（还原成前端读到的原始形态）。
 pub fn decode(store: &BlobStore, conn: &rusqlite::Connection, row_id: &str, marker: &Value) -> Result<String> {
     let enc = marker.get("enc").and_then(|v| v.as_str()).unwrap_or("");
@@ -125,7 +141,12 @@ pub fn decode(store: &BlobStore, conn: &rusqlite::Connection, row_id: &str, mark
             // 落回 `workspace/media/<hash 前两位>/<文件名>`：内容寻址，同一份字节不重复落
             let bytes = bytes_of(store, marker)?;
             let hash = super::blobs::marker_field(marker, "__blob")?;
-            let name = marker.get("name").and_then(|v| v.as_str()).unwrap_or(hash);
+            // name 是对端可控的：不老实就退回内容寻址名，宁可名字难看也不能写出目录
+            let name = marker
+                .get("name")
+                .and_then(|v| v.as_str())
+                .and_then(safe_component)
+                .unwrap_or(hash);
             let dir = store.data_dir().join("workspace").join("media").join(&hash[..2.min(hash.len())]);
             std::fs::create_dir_all(&dir)?;
             let path = dir.join(name);
@@ -137,9 +158,13 @@ pub fn decode(store: &BlobStore, conn: &rusqlite::Connection, row_id: &str, mark
         "wav" => {
             // 音频必须落在 voice_sessions/ 下：素材协议的白名单就是那个目录
             let bytes = bytes_of(store, marker)?;
+            let base = safe_component(row_id).ok_or_else(|| {
+                let preview: String = row_id.chars().take(16).collect();
+                crate::error::ReinError::Message(format!("语音对象 id 不合法：{preview}"))
+            })?;
             let dir = store.data_dir().join("voice_sessions");
             std::fs::create_dir_all(&dir)?;
-            let path = dir.join(format!("{row_id}.wav"));
+            let path = dir.join(format!("{base}.wav"));
             if !path.is_file() {
                 std::fs::write(&path, &bytes)?;
             }
