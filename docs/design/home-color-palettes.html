@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rein · 首页 10 套配色方案</title>
+<style>
+/* ============================================================
+   画廊外壳（固定暗色，与 IDE 主题无关 —— 它是评审台不是产品界面）
+   ============================================================ */
+:root{
+  --g-bg:#0c0d10; --g-surface:#141619; --g-surface-2:#1c1f24;
+  --g-text:#eceef2; --g-text-2:#9a9da6; --g-text-3:#6a6d76;
+  --g-line:rgba(255,255,255,.09); --g-accent:#5b9cff; --g-accent-soft:rgba(91,156,255,.14);
+  --g-ok:#4ecf7a; --g-warn:#f5a623; --g-danger:#ff6b63;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--g-bg); color:var(--g-text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  line-height:1.6; -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1400px;margin:0 auto;padding:0 32px}
+
+header.hero{padding:56px 0 32px;border-bottom:1px solid var(--g-line)}
+.eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--g-accent);font-weight:600}
+h1{font-size:33px;font-weight:600;letter-spacing:-.6px;margin:10px 0 12px}
+.lede{font-size:15px;color:var(--g-text-2);max-width:820px}
+.criteria{
+  display:flex;gap:8px;flex-wrap:wrap;margin-top:22px;
+}
+.cchip{
+  font-size:12px;padding:6px 12px;border-radius:7px;
+  background:var(--g-surface);border:1px solid var(--g-line);color:var(--g-text-2);
+}
+.cchip b{color:var(--g-text);font-weight:600;font-variant-numeric:tabular-nums}
+
+/* ---------- 控制条 ---------- */
+.controls{
+  position:sticky;top:0;z-index:50;background:rgba(12,13,16,.9);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--g-line);padding:14px 0;margin-bottom:8px;
+}
+.cwrap2{max-width:1400px;margin:0 auto;padding:0 32px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.swatches{display:flex;gap:8px;flex-wrap:wrap;flex:1}
+.sw{
+  width:40px;height:40px;border-radius:11px;cursor:pointer;position:relative;
+  border:2px solid transparent;padding:0;overflow:hidden;
+  transition:transform .14s,border-color .14s;
+}
+.sw:hover{transform:translateY(-2px)}
+.sw.on{border-color:#fff;box-shadow:0 0 0 3px rgba(255,255,255,.14)}
+.sw i{position:absolute;inset:0;display:block}
+.sw b{
+  position:absolute;left:0;right:0;bottom:0;font-size:9px;font-weight:700;
+  color:#fff;text-align:center;line-height:1.5;letter-spacing:.02em;
+  text-shadow:0 1px 3px rgba(0,0,0,.9);pointer-events:none;
+}
+.seg{display:flex;background:var(--g-surface-2);border-radius:9px;padding:3px;border:1px solid var(--g-line)}
+.seg button{
+  padding:7px 15px;border-radius:7px;font-size:12.5px;font-weight:600;
+  color:var(--g-text-2);font-family:inherit;transition:background .14s,color .14s;
+}
+.seg button.on{background:var(--g-accent);color:#fff}
+.grid2{display:flex;background:var(--g-surface-2);border-radius:9px;padding:3px;border:1px solid var(--g-line)}
+.grid2 button{
+  padding:7px 13px;border-radius:7px;font-size:12.5px;font-weight:600;
+  color:var(--g-text-2);font-family:inherit;transition:background .14s,color .14s;
+}
+.grid2 button.on{background:var(--g-surface);color:var(--g-text);box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.ctl-label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--g-text-3);font-weight:600;margin-right:-10px}
+
+/* ---------- 方案主体 ---------- */
+main{padding:26px 0 90px}
+.pal{padding:46px 0 50px;border-top:1px solid var(--g-line)}
+.pal:first-child{border-top:none;padding-top:20px}
+.palhead{display:grid;grid-template-columns:1fr auto;gap:30px;align-items:start;margin-bottom:26px}
+.pal-left{max-width:660px}
+.pnum{
+  display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.1em;
+  color:var(--g-accent);background:var(--g-accent-soft);
+  padding:4px 10px;border-radius:6px;margin-bottom:12px;
+}
+.pal h2{font-size:25px;font-weight:600;letter-spacing:-.4px;display:flex;align-items:baseline;gap:11px}
+.pal h2 small{font-size:13px;font-weight:500;color:var(--g-text-3);letter-spacing:0}
+.ptag{font-size:15px;color:var(--g-text-2);margin-top:9px}
+.specs{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.spec{
+  font-size:12px;padding:6px 11px;border-radius:7px;background:var(--g-surface);
+  border:1px solid var(--g-line);color:var(--g-text-2);
+}
+.spec b{color:var(--g-text);font-weight:600}
+.fit-cost{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+.fc{border-radius:11px;padding:14px 16px;font-size:13.5px;line-height:1.6}
+.fc.fit{background:var(--g-surface);border:1px solid var(--g-line);color:var(--g-text-2)}
+.fc.fit .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--g-ok);font-weight:700;margin-bottom:6px}
+.fc.cost{background:rgba(245,166,35,.07);border:1px solid rgba(245,166,35,.24);color:var(--g-text-2)}
+.fc.cost .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--g-warn);font-weight:700;margin-bottom:6px}
+.fc b{color:var(--g-text);font-weight:600}
+
+/* ---------- 手机预览（忠实还原 HomePage 结构） ---------- */
+.stage{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.phone{
+  position:sticky;top:88px;width:412px;flex:none;
+  border-radius:38px;padding:9px;
+  background:linear-gradient(#3a3a3c,#1c1c1e);
+  box-shadow:0 22px 60px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.07);
+}
+.screen{
+  border-radius:30px;overflow:hidden;min-height:660px;position:relative;
+  background:var(--pg-bg);
+  display:flex;flex-direction:column;
+  font-size:13px;color:var(--pg-t1);
+}
+.statusbar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:11px 24px 4px;font-size:12px;font-weight:600;color:var(--pg-t1);
+}
+.hdr{padding:6px 18px 12px;display:flex;align-items:flex-end;gap:12px}
+.hdr h1{font-size:28px;font-weight:700;letter-spacing:-.6px;line-height:1.1}
+.hdr p{margin-top:3px;font-size:12.5px;color:var(--pg-t2);font-weight:500}
+.scroll{flex:1;padding:0 18px 96px}
+
+/* 状态条：三环 + 大数字 + 副行 */
+.strip{display:flex;align-items:center;gap:14px;width:100%;padding:2px 2px 14px}
+.rings{position:relative;width:60px;height:60px;flex:none}
+.ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:50%}
+.strip .big b{font-size:38px;font-weight:200;letter-spacing:-1.2px;line-height:1;color:var(--pg-intake);font-variant-numeric:tabular-nums}
+.strip .big span{font-size:12px;color:var(--pg-t2)}
+.subs{margin-top:7px;gap:12px;font-size:12px;color:var(--pg-t2)}
+.subs i{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px}
+.strip .more{margin-left:auto;flex:none;font-size:12px;color:var(--pg-t3)}
+
+/* 卡片 */
+.card{
+  background:var(--pg-surface);border-radius:28px;padding:20px;
+  box-shadow:0 1px 2px rgba(0,0,0,.02),0 12px 32px rgba(0,0,0,.05),0 40px 80px rgba(0,0,0,.04);
+}
+.card + .card{margin-top:14px}
+.chead{display:flex;align-items:center;justify-content:space-between}
+.chead h2{font-size:19px;font-weight:700;letter-spacing:-.3px}
+.chead .meta{font-size:12px;color:var(--pg-t3);font-variant-numeric:tabular-nums}
+.pool{display:flex;gap:7px;margin:10px 0 2px}
+.pchip{
+  display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;
+  background:var(--pg-surface2);font-size:12px;font-weight:600;color:var(--pg-t1);white-space:nowrap;
+}
+.pchip em{font-style:normal;font-weight:500;color:var(--pg-t3)}
+.pchip i{width:7px;height:7px;border-radius:50%;background:var(--pg-acc);flex:none}
+
+/* 时间轴：几何照 CanvasTimeline 紧凑档 —— 48px/小时、视窗 150px、块最小 24px */
+.ctl{
+  position:relative;height:150px;margin-top:10px;overflow:hidden;
+  border-radius:14px;background:var(--pg-surface);border:.5px solid var(--pg-line);
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%);
+          mask-image:linear-gradient(to bottom,transparent 0,#000 12px,#000 calc(100% - 12px),transparent 100%)
+}
+.hlab{position:absolute;left:0;width:40px;text-align:right;transform:translateY(-6px);font-size:11px;color:var(--pg-t3);font-variant-numeric:tabular-nums;z-index:1}
+.hline{position:absolute;left:48px;right:0;height:.5px;background:var(--pg-line)}
+.nowline{position:absolute;left:48px;right:0;height:0;border-top:1.5px solid var(--pg-danger);z-index:3}
+.nowline::before{content:'';position:absolute;left:-4px;top:-3.5px;width:7px;height:7px;border-radius:50%;background:var(--pg-danger)}
+.nowtag{
+  position:absolute;left:0;top:-9px;font-size:10px;font-weight:700;color:var(--pg-danger);
+  background:var(--pg-surface);padding:1px 5px;border-radius:5px;
+}
+.blk{position:absolute;left:56px;right:6px;z-index:1}
+.blk-card{
+  height:100%;display:flex;align-items:flex-start;gap:7px;padding:4px 8px;border-radius:10px;overflow:hidden;
+  background:color-mix(in srgb, var(--bc) 15%, var(--pg-surface));
+  border:.5px solid color-mix(in srgb, var(--bc) 38%, var(--pg-line));
+  box-shadow:0 1px 3px color-mix(in srgb, var(--pg-t1) 9%, transparent);
+}
+.blk-card .ck{flex:none;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--pg-line-strong);background:transparent;margin-top:0}
+.blk-card .tt{
+  font-size:12.5px;font-weight:600;line-height:16px;flex:1;min-width:0;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:var(--blk-lines,1);overflow:hidden;
+}
+.bmin{
+  position:absolute;left:2px;font-size:10px;line-height:1;font-weight:600;
+  color:var(--pg-t3);white-space:nowrap;pointer-events:none;z-index:2;
+}
+.bmin-start{top:-13px}
+.bmin-end{top:calc(100% + 2px)}
+.blk.past{opacity:.5}
+.blk.done .blk-card{opacity:.62}
+.blk.done .tt{text-decoration:line-through}
+
+.meals{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.mchip{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:999px;background:var(--pg-surface2);font-size:11px;font-weight:600;color:var(--pg-t2);font-variant-numeric:tabular-nums}
+.mchip i{width:7px;height:7px;border-radius:50%}
+.foot{margin-top:10px;padding-top:10px;border-top:.5px solid var(--pg-line);width:100%;text-align:left;font-size:13px;color:var(--pg-t3)}
+.foot .num{color:var(--pg-acc);font-weight:700;font-variant-numeric:tabular-nums}
+
+.textlinks{display:flex;justify-content:center;gap:6px;margin:14px 0}
+.textlinks button{padding:7px 13px;border-radius:999px;background:var(--pg-surface2);font-size:13px;font-weight:600;color:var(--pg-t2)}
+.tools{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tool{display:flex;align-items:center;gap:11px;padding:12px 14px;border-radius:14px;background:var(--pg-surface);box-shadow:0 1px 2px rgba(0,0,0,.02),0 12px 32px rgba(0,0,0,.05);text-align:left;min-width:0}
+.tool-ic{width:40px;height:40px;flex:none;border-radius:50%;display:grid;place-items:center;font-size:18px}
+.tool-txt{display:flex;flex-direction:column;gap:1px;flex:1;min-width:0}
+.tool-txt b{font-size:14px;font-weight:700}
+.tool-txt em{font-style:normal;font-size:11px;font-weight:500;color:var(--pg-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 悬浮 Dock */
+.dock{
+  position:absolute;left:14px;right:14px;bottom:14px;height:58px;
+  display:flex;align-items:center;gap:8px;
+}
+.dock-block{
+  height:100%;border-radius:999px;display:flex;align-items:center;justify-content:center;
+  background:color-mix(in srgb, var(--pg-surface) 72%, transparent);
+  backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%);
+  box-shadow:0 1px 2px rgba(0,0,0,.04),0 12px 36px rgba(0,0,0,.18),
+             inset 0 1px 0 rgba(255,255,255,.95),inset 0 1px 0 rgba(255,255,255,.3),
+             inset 0 10px 18px -12px rgba(255,255,255,.6);
+  border:1px solid transparent;
+}
+.dock-block.round{width:58px;flex:none}
+.dock-block.pill{flex:1;min-width:0;gap:2px;padding:0 4px}
+.dtab{
+  flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  border-radius:999px;color:var(--pg-t3);font-size:10px;font-weight:600;position:relative;
+}
+.dtab .ic{font-size:17px;line-height:1}
+.dtab.on{color:var(--pg-accs)}
+.dtab.on::before{
+  content:'';position:absolute;z-index:-1;inset:4px 5px;border-radius:999px;
+  background:rgba(255,255,255,.62);
+}
+body[data-mode="dark"] .dtab.on::before{background:rgba(255,255,255,.08)}
+
+/* ---------- 令牌表 ---------- */
+.tokens{flex:1;min-width:460px}
+.tgroup{margin-bottom:22px}
+.tgroup h3{
+  font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--g-text-3);margin-bottom:9px;
+}
+.tgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:7px}
+.tok{
+  display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;
+  background:var(--g-surface);border:1px solid var(--g-line);
+}
+.tok .sw2{width:22px;height:22px;border-radius:6px;flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.09)}
+.tok .nm{font-size:11.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--g-text-2);overflow:hidden;text-overflow:ellipsis}
+.tok .hx{margin-left:auto;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:var(--g-text-3);flex:none}
+.audittable{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+.audittable th{
+  text-align:left;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--g-text-3);
+  font-weight:600;padding:7px 10px;border-bottom:1px solid var(--g-line);
+}
+.audittable td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.05);color:var(--g-text-2);font-variant-numeric:tabular-nums}
+.audittable td:first-child{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--g-text-3)}
+.pass{color:var(--g-ok);font-weight:600}
+.note{
+  background:var(--g-surface);border:1px solid var(--g-line);border-left:2px solid var(--g-accent);
+  border-radius:0 10px 10px 0;padding:14px 17px;margin-top:20px;
+}
+.note .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--g-accent);font-weight:700;margin-bottom:6px}
+.note p{font-size:13.5px;color:var(--g-text-2)}
+.note p b{color:var(--g-text);font-weight:600}
+.note code{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--g-surface-2);padding:1px 5px;border-radius:4px;color:var(--g-text)}
+
+@media (max-width:900px){
+  .fit-cost{grid-template-columns:1fr}
+  .phone{width:100%;max-width:412px;position:static}
+  .wrap,.cwrap2{padding:0 18px}
+  .palhead{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body data-mode="light">
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Rein Design · Color System</div>
+    <h1>首页 10 套配色方案</h1>
+    <p class="lede">
+      全部基于现行 <code>src/styles/tokens.css</code> 的令牌结构与 <code>HomePage.vue</code> 的真实布局绘制 ——
+      状态条三环、今日画布（未安排池 / 时间轴 / 现在线 / 餐次摘要）、查阅文字链、四格工具、悬浮玻璃 Dock，
+      每一处都用对应方案的真实令牌值上色，不是示意图。左侧可切 10 套方案，右侧给出该方案的令牌表与实测对比度。
+    </p>
+    <div class="criteria">
+      <span class="cchip">正文 <b>≥ 7:1</b></span>
+      <span class="cchip">次要信息 <b>≥ 4.5:1</b></span>
+      <span class="cchip">三级补充 <b>≥ 3:1</b></span>
+      <span class="cchip">主色实底上的白字 <b>≥ 4.5:1</b></span>
+      <span class="cchip">三环两两 ΔE(Lab) <b>≥ 20</b></span>
+      <span class="cchip">每环压卡片底 <b>≥ 3:1</b></span>
+      <span class="cchip">20 组（10 套 × 明暗）<b>全部通过</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="cwrap2">
+    <span class="ctl-label">方案</span>
+    <div class="swatches" id="swatches"></div>
+    <span class="ctl-label">明暗</span>
+    <div class="seg" id="modeSeg">
+      <button data-mode="light" class="on">亮色</button>
+      <button data-mode="dark">暗色</button>
+    </div>
+    <span class="ctl-label">对照</span>
+    <div class="grid2" id="layoutSeg">
+      <button data-l="single" class="on">单栏</button>
+      <button data-l="dual">双屏对照</button>
+    </div>
+  </div>
+</div>
+
+<main><div class="wrap" id="main"></div></main>
+
+<script type="module">
+const PALETTES = [
+  {
+    id: 'silver',
+    index: 0,
+    name: '原生银',
+    latin: 'Native Silver',
+    tagline: '现行配色的修正版 —— 不换气质，只把两处实测不达标的补上',
+    mood: '中性 / 克制 / iOS 原生',
+    anchor: '冷灰画布 · iOS 蓝 · 三环原色',
+    fit: '想零风险上线的默认皮肤；与现有 UI 审查记录逐条对得上',
+    cost: '修正了两处现存缺陷：暗色主色压白字 3.65:1 → 5.24:1（on-accent 改深墨）、亮色运动环 2.98:1 → 3.30:1',
+    L: {
+      bg: '#f5f5f7', bgMid: '#eef0f4', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#f2f2f4',
+      t1: '#1d1d1f', t2: '#6e6e73', t3: '#86868b',
+      acc: '#006ee8', accStrong: '#0a5ec2', onAcc: '#ffffff',
+      intake: '#fa114f', exercise: '#569f00', balance: '#0b8fd6',
+      ok: '#248a3d', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#5856d6', catWork: '#c26a00', ledShopping: '#af52de',
+    },
+    D: {
+      bg: '#000000', bgMid: '#0b0b0d', bgHi: '#16161a',
+      surface: '#1c1c1e', surface2: '#2c2c2e',
+      t1: '#f5f5f7', t2: '#97979d', t3: '#7c7c82',
+      acc: '#0a84ff', accStrong: '#4da3ff', onAcc: '#04101f',
+      intake: '#ff375f', exercise: '#a4f04b', balance: '#40b8e0',
+      ok: '#30d158', warn: '#ffb340', danger: '#ff6961',
+      catStudy: '#7d7aff', catWork: '#ff9f0a', ledShopping: '#bf5af2',
+    },
+  },
+  {
+    id: 'graphite',
+    index: 1,
+    name: '石墨夜航',
+    latin: 'Graphite Night',
+    tagline: '把暗色从「关灯」升级成「另一种设计」—— 蓝黑画布 + 电光蓝',
+    mood: '冷静 / 专业 / 夜间友好',
+    anchor: '蓝黑画布 · 电光蓝 · 翠绿点缀',
+    fit: '常在夜里跑步/复盘的人；桌面三窗格工作台最吃这一套',
+    cost: '暗色不是「亮色反过来」：画布带蓝味、卡片比画布亮一档、玻璃要重新调，否则会读成灰膜',
+    L: {
+      bg: '#eceef2', bgMid: '#e4e7ec', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#e8eaef',
+      t1: '#101215', t2: '#565c66', t3: '#7c828d',
+      acc: '#0b5cd5', accStrong: '#0a4fae', onAcc: '#ffffff',
+      intake: '#e8385c', exercise: '#2f9e52', balance: '#0b6fd6',
+      ok: '#1f7a44', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#4f46c8', catWork: '#a86200', ledShopping: '#8b45c4',
+    },
+    D: {
+      bg: '#05060a', bgMid: '#0a0c12', bgHi: '#151821',
+      surface: '#14161c', surface2: '#1f222a',
+      t1: '#f2f5f9', t2: '#9aa1ad', t3: '#767d8a',
+      acc: '#4c9dff', accStrong: '#7cb8ff', onAcc: '#04101f',
+      intake: '#ff4d6d', exercise: '#3ddc84', balance: '#38bdf8',
+      ok: '#3ddc84', warn: '#ffb340', danger: '#ff6961',
+      catStudy: '#8b87ff', catWork: '#ffb020', ledShopping: '#c17ce8',
+    },
+  },
+  {
+    id: 'sand',
+    index: 2,
+    name: '暖砂',
+    latin: 'Warm Sand',
+    tagline: '把冷灰换成带体温的米砂 —— 一天三次打开也不觉得冷',
+    mood: '温暖 / 松弛 / 生活感',
+    anchor: '米砂画布 · 陶土橙 · 橄榄绿',
+    fit: '偏「生活记录」气质；记账与待办权重高的人',
+    cost: '暖色画布上「白」不再是纯白，玻璃受光环必须跟着偏暖，否则玻璃会显脏',
+    L: {
+      bg: '#f4efe9', bgMid: '#efe8de', bgHi: '#fffdfa',
+      surface: '#fffdfa', surface2: '#efe8de',
+      t1: '#2b2119', t2: '#6f6053', t3: '#97867a',
+      acc: '#a3451f', accStrong: '#8a3a1a', onAcc: '#ffffff',
+      intake: '#e2724f', exercise: '#5d7f26', balance: '#2f7d8c',
+      ok: '#2f6b3c', warn: '#8a5300', danger: '#b3311f',
+      catStudy: '#6a4bb8', catWork: '#b06000', ledShopping: '#9a4f9e',
+    },
+    D: {
+      bg: '#17120e', bgMid: '#1d1712', bgHi: '#2a221b',
+      surface: '#221b16', surface2: '#2e2620',
+      t1: '#f7f0e8', t2: '#a2958a', t3: '#84796f',
+      acc: '#e88a5e', accStrong: '#f2a67f', onAcc: '#241009',
+      intake: '#ff8a6b', exercise: '#a9c46a', balance: '#5fc4bb',
+      ok: '#7fc98d', warn: '#ffb340', danger: '#ff7a68',
+      catStudy: '#b39ae8', catWork: '#ffb35c', ledShopping: '#e08fc4',
+    },
+  },
+  {
+    id: 'mint',
+    index: 3,
+    name: '薄荷',
+    latin: 'Mint Fresh',
+    tagline: '冷白泛青的主色 —— 比 iOS 蓝轻，比薄荷糖克制',
+    mood: '清爽 / 干净 / 轻食',
+    anchor: '青白画布 · 深松绿 · 天蓝点缀',
+    fit: '饮食记录占比高、喜欢「轻」字的人',
+    cost: '绿主色与「完成/运动绿」同族，主色与三环要在明度上拉开，否则选中态会读成状态色',
+    L: {
+      bg: '#eff5f2', bgMid: '#e7efe9', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#e7efe9',
+      t1: '#12211b', t2: '#4e6157', t3: '#7a8c82',
+      acc: '#0e7a5a', accStrong: '#0a6349', onAcc: '#ffffff',
+      intake: '#ec5f7e', exercise: '#1f9d63', balance: '#0b74c4',
+      ok: '#1f7a44', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#4f46b8', catWork: '#a06a00', ledShopping: '#7d4fb0',
+    },
+    D: {
+      bg: '#07120e', bgMid: '#0b1813', bgHi: '#132420',
+      surface: '#0f1c17', surface2: '#1a2822',
+      t1: '#e8f5ef', t2: '#94a8a0', t3: '#75897f',
+      acc: '#35d39b', accStrong: '#5ee0ae', onAcc: '#04140e',
+      intake: '#ff6b85', exercise: '#3ddc84', balance: '#4aa8ff',
+      ok: '#3ddc84', warn: '#ffb340', danger: '#ff6961',
+      catStudy: '#9b8cff', catWork: '#ffc44d', ledShopping: '#c98ce0',
+    },
+  },
+  {
+    id: 'rose',
+    index: 4,
+    name: '玫瑰灰',
+    latin: 'Dusty Rose',
+    tagline: '藕粉 × 灰 —— 不用饱和粉也能把界面做出性格',
+    mood: '柔和 / 细腻 / 低刺激',
+    anchor: '藕粉画布 · 酒红主色 · 灰蓝点缀',
+    fit: '长时段使用、希望降低视觉疲劳的人',
+    cost: '玫瑰色与摄入环红同族，两者明度必须拉开（当前 ΔE 101，靠明度差而非色相差）',
+    L: {
+      bg: '#f7f1f2', bgMid: '#f2e6e9', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#f2e6e9',
+      t1: '#2a1a1e', t2: '#6d5459', t3: '#907b81',
+      acc: '#b03a5a', accStrong: '#93304a', onAcc: '#ffffff',
+      intake: '#e2557a', exercise: '#5d9c3f', balance: '#2f6fb5',
+      ok: '#1f7a44', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#6d4bc0', catWork: '#b35c00', ledShopping: '#a13f8f',
+    },
+    D: {
+      bg: '#150d10', bgMid: '#1b1114', bgHi: '#281a1e',
+      surface: '#201418', surface2: '#2c1c22',
+      t1: '#f9edf0', t2: '#a8969b', t3: '#8a777d',
+      acc: '#f0809f', accStrong: '#ffa0ba', onAcc: '#24080f',
+      intake: '#ff7d9a', exercise: '#a3d17a', balance: '#7fb8e0',
+      ok: '#3ddc84', warn: '#ffb340', danger: '#ff6961',
+      catStudy: '#c39cff', catWork: '#ffb86b', ledShopping: '#e894c8',
+    },
+  },
+  {
+    id: 'indigo',
+    index: 5,
+    name: '靛蓝',
+    latin: 'Deep Indigo',
+    tagline: '主色压深一档的「学术蓝」—— 与 iOS 蓝同族但更沉稳',
+    mood: '沉稳 / 理性 / 高信息密度',
+    anchor: '冷灰蓝画布 · 深靛主色 · 玫红环',
+    fit: '桌面工作台、表格与图表多的场景；需要长时间阅读数字',
+    cost: '深靛在亮色画布上对比 7.33:1，是 10 套里最高的一档 —— 也因此按钮显得最「重」',
+    L: {
+      bg: '#eef0f7', bgMid: '#e6e9f4', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#e6e9f4',
+      t1: '#141726', t2: '#565b70', t3: '#838898',
+      acc: '#3a45c8', accStrong: '#2c35a3', onAcc: '#ffffff',
+      intake: '#f0566f', exercise: '#2f9e7f', balance: '#3f5fd0',
+      ok: '#1f7a44', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#5a3fd0', catWork: '#a86200', ledShopping: '#8b45c4',
+    },
+    D: {
+      bg: '#080911', bgMid: '#0c0e18', bgHi: '#171a28',
+      surface: '#12141d', surface2: '#1c1f2c',
+      t1: '#eff1fa', t2: '#9aa0b8', t3: '#7c8299',
+      acc: '#7b86ff', accStrong: '#9aa3ff', onAcc: '#0a0b2a',
+      intake: '#ff6b81', exercise: '#4ade80', balance: '#60a5fa',
+      ok: '#3ddc84', warn: '#ffb340', danger: '#ff6961',
+      catStudy: '#a99bff', catWork: '#ffc44d', ledShopping: '#c98ce0',
+    },
+  },
+  {
+    id: 'citrus',
+    index: 6,
+    name: '柑柠',
+    latin: 'Citrus',
+    tagline: '把琥珀当主色 —— 亮色档压深到 #a05e00 才托得住白字',
+    mood: '明快 / 有劲 / 夏日',
+    anchor: '米黄画布 · 琥珀主色 · 橘红环',
+    fit: '喜欢暖调、想和运动模块呼应的人',
+    cost: '亮色主色与摄入环同属橙红族（ΔE 90，靠明度与饱和度拉开）；暗色是 10 套里最亮的一档，长时间用要留意',
+    L: {
+      bg: '#fbf7ec', bgMid: '#f3ecd9', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#f3ecd9',
+      t1: '#2a2413', t2: '#665c3d', t3: '#8d8362',
+      acc: '#a05e00', accStrong: '#824c00', onAcc: '#ffffff',
+      intake: '#ef5b3f', exercise: '#6f9c15', balance: '#0f8f96',
+      ok: '#2f6b3c', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#5f4bc0', catWork: '#b06000', ledShopping: '#9a4f9e',
+    },
+    D: {
+      bg: '#14110a', bgMid: '#1a160d', bgHi: '#272115',
+      surface: '#1f1a11', surface2: '#2b2417',
+      t1: '#f9f2e0', t2: '#a79c82', t3: '#8a8069',
+      acc: '#ffb020', accStrong: '#ffc65c', onAcc: '#241900',
+      intake: '#ff7a5c', exercise: '#b6dc4a', balance: '#3fc4c0',
+      ok: '#8fce6a', warn: '#ffd60a', danger: '#ff6961',
+      catStudy: '#b39ae8', catWork: '#ffd60a', ledShopping: '#e08fc4',
+    },
+  },
+  {
+    id: 'celadon',
+    index: 7,
+    name: '青瓷',
+    latin: 'Celadon',
+    tagline: '宋瓷釉色的低饱和青 —— 主色与画布同族，只差明度',
+    mood: '安静 / 克制 / 东方',
+    anchor: '青灰画布 · 松石主色 · 灰蓝点缀',
+    fit: '喜欢极低饱和、界面要「退后」但不无聊的人',
+    cost: '全局饱和度压得最低，三环、分类色、记账色的区分度最依赖明度差，改动时最容易踩线',
+    L: {
+      bg: '#eff2ef', bgMid: '#e6ebe7', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#e6ebe7',
+      t1: '#18211c', t2: '#55605a', t3: '#7f8a84',
+      acc: '#2c6e63', accStrong: '#205a51', onAcc: '#ffffff',
+      intake: '#d9646e', exercise: '#5d8a26', balance: '#2f6ea8',
+      ok: '#2f6b3c', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#4a5fb0', catWork: '#9c6a10', ledShopping: '#7a5aa8',
+    },
+    D: {
+      bg: '#0c1211', bgMid: '#101817', bgHi: '#1a2321',
+      surface: '#141b19', surface2: '#1e2724',
+      t1: '#eaf2ef', t2: '#95a5a0', t3: '#788883',
+      acc: '#5fbfae', accStrong: '#86d6c6', onAcc: '#04140f',
+      intake: '#ff8a92', exercise: '#a3cf62', balance: '#6fb0d8',
+      ok: '#7fc98d', warn: '#ffb340', danger: '#ff6961',
+      catStudy: '#9ab4f0', catWork: '#d4b45c', ledShopping: '#b09ce0',
+    },
+  },
+  {
+    id: 'sunset',
+    index: 8,
+    name: '落日',
+    latin: 'Sunset',
+    tagline: '10 套里唯一暖到偏「红」的方案 —— 强调运动与冲刺',
+    mood: '热烈 / 冲刺 / 高对比',
+    anchor: '肉桂画布 · 朱红主色 · 琥珀环',
+    fit: '把运动放在第一位的人；跑步模式与三环是主角',
+    cost: '主色与摄入环同属红橙族，全屏红调容易疲劳；建议只作暗色档（夜训）或单独给运动模块用',
+    L: {
+      bg: '#f8ece4', bgMid: '#f4e3d8', bgHi: '#fffaf6',
+      surface: '#fffaf6', surface2: '#f4e3d8',
+      t1: '#2e1a12', t2: '#70503f', t3: '#957567',
+      acc: '#c23d24', accStrong: '#a3321c', onAcc: '#ffffff',
+      intake: '#d81b45', exercise: '#c2740a', balance: '#0e8fa8',
+      ok: '#2f6b3c', warn: '#8a5300', danger: '#b3311f',
+      catStudy: '#7a3fa8', catWork: '#b86200', ledShopping: '#a8447e',
+    },
+    D: {
+      bg: '#180f0b', bgMid: '#1e130e', bgHi: '#2c1c15',
+      surface: '#241713', surface2: '#32211b',
+      t1: '#faece4', t2: '#ab8f80', t3: '#8f7568',
+      acc: '#ff7a52', accStrong: '#ff9c7c', onAcc: '#260c05',
+      intake: '#ff4d6d', exercise: '#fbbf24', balance: '#38bdf8',
+      ok: '#8fce6a', warn: '#ffd60a', danger: '#ff6961',
+      catStudy: '#c78ce8', catWork: '#ffb35c', ledShopping: '#e888b8',
+    },
+  },
+  {
+    id: 'mono',
+    index: 9,
+    name: '素白',
+    latin: 'Pure Mono',
+    tagline: '界面本身无色 —— 所有颜色让位给数据，视觉重心交给内容',
+    mood: '极简 / 工具感 / 中性',
+    anchor: '纯白/纯黑画布 · 无彩色主色 · 三环是唯一彩色',
+    fit: '把 Rein 当工具而不是装饰；也是「视觉重心」问题的参考答案',
+    cost: '主色退成黑白后，页面上唯一有色彩的就是三环与状态色 —— 这正是重心，但也意味着「选中态」几乎不可见，Dock 需靠中性活动底撑起选中',
+    L: {
+      bg: '#fafafa', bgMid: '#f4f4f4', bgHi: '#ffffff',
+      surface: '#ffffff', surface2: '#f0f0f0',
+      t1: '#0a0a0a', t2: '#5f5f5f', t3: '#8c8c8c',
+      acc: '#111111', accStrong: '#000000', onAcc: '#ffffff',
+      intake: '#e8385c', exercise: '#2f9e52', balance: '#0b6fd6',
+      ok: '#1f7a44', warn: '#8a5300', danger: '#c1271d',
+      catStudy: '#3f3f46', catWork: '#5f5f66', ledShopping: '#52525b',
+    },
+    D: {
+      bg: '#000000', bgMid: '#0a0a0a', bgHi: '#181818',
+      surface: '#0e0e0e', surface2: '#1c1c1c',
+      t1: '#fafafa', t2: '#9a9a9a', t3: '#767676',
+      acc: '#fafafa', accStrong: '#ffffff', onAcc: '#0a0a0a',
+      intake: '#ff4d6d', exercise: '#3ddc84', balance: '#38bdf8',
+      ok: '#3ddc84', warn: '#ffb340', danger: '#ff6961',
+      catStudy: '#a1a1aa', catWork: '#d4d4d8', ledShopping: '#c4c4cc',
+    },
+  },
+]
+
+/* ---------- WCAG 计算（与 scripts/colorlab/audit_palettes.py 同一套公式） ---------- */
+const hx = h => { h = h.replace('#',''); return [0,2,4].map(i => parseInt(h.slice(i,i+2),16)/255) }
+const lum = h => { const f = c => c<=0.03928 ? c/12.92 : ((c+0.055)/1.055)**2.4
+  const [r,g,b] = hx(h).map(f); return 0.2126*r+0.7152*g+0.0722*b }
+const cr = (a,b) => { const l1=lum(a), l2=lum(b); const hi=Math.max(l1,l2), lo=Math.min(l1,l2)
+  return (hi+0.05)/(lo+0.05) }
+const lab = h => { const f = c => c<=0.03928 ? c/12.92 : ((c+0.055)/1.055)**2.4
+  const [r,g,b] = hx(h).map(f)
+  const X=r*0.4124+g*0.3576+b*0.1805, Y=r*0.2126+g*0.7152+b*0.0722, Z=r*0.0193+g*0.1192+b*0.9505
+  const q = t => t>0.008856 ? Math.cbrt(t) : 7.787*t+16/116
+  const fx=q(X/0.95047), fy=q(Y), fz=q(Z/1.08883)
+  return [116*fy-16, 500*(fx-fy), 200*(fy-fz)] }
+const dE = (a,b) => { const A=lab(a), B=lab(b)
+  return Math.hypot(A[0]-B[0], A[1]-B[1], A[2]-B[2]) }
+
+let MODE = 'light'
+let LAYOUT = 'single'
+
+/* ---------- 手机预览：还原 HomePage.vue ---------- */
+function phoneHTML(p, mode) {
+  const m = mode === 'light' ? p.L : p.D
+  const s = k => `var(--pg-${k})`
+  // 变量表
+  const vars = [
+    `--pg-bg:${m.bg}`, `--pg-bgmid:${m.bgMid}`, `--pg-bghi:${m.bgHi}`,
+    `--pg-surface:${m.surface}`, `--pg-surface2:${m.surface2}`,
+    `--pg-t1:${m.t1}`, `--pg-t2:${m.t2}`, `--pg-t3:${m.t3}`,
+    `--pg-line:rgba(${mode==='light'?'0,0,0':'255,255,255'},${mode==='light'?0.07:0.08})`,
+    `--pg-line-strong:rgba(${mode==='light'?'0,0,0':'255,255,255'},${mode==='light'?0.12:0.16})`,
+    `--pg-acc:${m.acc}`, `--pg-accs:${m.accStrong}`,
+    `--pg-intake:${m.intake}`, `--pg-ex:${m.exercise}`, `--pg-bal:${m.balance}`,
+    `--pg-danger:${m.danger}`, `--pg-ok:${m.ok}`,
+  ].join(';')
+
+  // 三环
+  const rings = [
+    { c: m.intake, size: 60, sw: 10, v: 0.72 },
+    { c: m.exercise, size: 60 - 60*0.24, sw: 12, v: 0.45 },
+    { c: m.balance, size: 60 - 60*0.48, sw: 15, v: 0.88 },
+  ].map(r => {
+    const rad = (r.size - r.sw) / 2
+    const circ = 2 * Math.PI * rad
+    const dash = circ * Math.min(r.v, 1)
+    return `<div class="ring" style="width:${r.size}px;height:${r.size}px">
+      <svg width="${r.size}" height="${r.size}" viewBox="0 0 ${r.size} ${r.size}">
+        <circle cx="${r.size/2}" cy="${r.size/2}" r="${rad}" fill="none"
+          stroke="rgba(128,128,128,.22)" stroke-width="${r.sw}"/>
+        <circle cx="${r.size/2}" cy="${r.size/2}" r="${rad}" fill="none"
+          stroke="${r.c}" stroke-width="${r.sw}" stroke-linecap="round"
+          stroke-dasharray="${dash} ${circ}" transform="rotate(-90 ${r.size/2} ${r.size/2})"/>
+      </svg></div>`
+  }).join('')
+
+  // 时间轴：严格照 CanvasTimeline 的紧凑档几何 —— 48px/小时（COMPACT_PX），
+  // 块最小高度 = 一行标题 16px + 上下内边距 8px = 24px（linesFor 的下限）。
+  // 视窗 150px ≈ 3.1 小时，锚定「现在」；上下缘 12px 渐隐同源。
+  const PXH = 48, PXM = PXH / 60, HH = 150
+  const H0 = 7, H1 = 22
+  const y = min => min * PXM                       // 相对 00:00 的像素
+  const VIEW_FROM = 14 * 60 + 30                  // 视窗顶：现在(15:20) 往上留 50 分钟
+  const off = y(VIEW_FROM)
+  const hours = []
+  for (let h = H0; h <= H1; h++) {
+    const top = y(h * 60) - off
+    if (top < -20 || top > HH + 20) continue
+    hours.push(`<span class="hlab" style="top:${top}px">${String(h).padStart(2,'0')}:00</span>
+      <i class="hline" style="top:${top}px"></i>`)
+  }
+  // 块：起止（分钟）· 分类色 · 标题 · 状态
+  const blocks = [
+    { s: 8*60,   e: 9*60+30,  c: m.acc,        t: '数据结构实验课', st: 'done' },
+    { s: 10*60,  e: 11*60,    c: m.ledShopping, t: '高数作业',       st: 'done' },
+    { s: 12*60+30,e: 13*60+30, c: m.exercise,   t: '力量 · 推日',    st: '' },
+    { s: 14*60+30,e: 15*60+30, c: m.catStudy,   t: 'AI 复盘',        st: '' },
+    { s: 16*60,  e: 17*60,    c: m.catWork,     t: '社团例会',      st: 'past' },
+    { s: 19*60+30,e: 21*60,    c: m.exercise,   t: '夜跑 5km',       st: 'past' },
+  ].map(b => {
+    const top = y(b.s) - off
+    const h = Math.max((b.e - b.s) * PXM, 24)     // 与 linesFor 同一条下限
+    if (top < -h || top > HH) return ''
+    const lines = Math.max(1, Math.floor((h - 8) / 16))
+    return `<div class="blk ${b.st}" style="--bc:${b.c};--blk-lines:${lines};top:${top}px;height:${h}px">
+      <span class="bmin bmin-start">${fmt(b.s)}</span>
+      <div class="blk-card"><i class="ck"></i><span class="tt">${b.t}</span></div>
+      <span class="bmin bmin-end">${fmt(b.e)}</span>
+    </div>`
+  }).join('')
+  const now = 15 * 60 + 20
+
+  return `<div class="phone">
+    <div class="screen" style="${vars}">
+      <div class="statusbar"><span>9:41</span><span>▮▮▮ ⌁ ▰</span></div>
+      <div class="hdr"><div><h1>今天</h1><p>10月2日 · 星期四</p></div></div>
+      <div class="scroll">
+        <div class="strip">
+          <div class="rings">${rings}</div>
+          <div class="col">
+            <div class="row big"><b>1486</b><span>/ 2100 大卡</span></div>
+            <div class="row subs">
+              <span><i style="background:${m.exercise}"></i>运动 +320</span>
+              <span><i style="background:${m.balance}"></i>剩余 614</span>
+            </div>
+          </div>
+          <span class="more">详情 ›</span>
+        </div>
+
+        <div class="card">
+          <div class="chead"><h2>今日画布</h2><span class="meta">6 个安排 · 2 条未安排</span></div>
+          <div class="pool">
+            <span class="pchip"><i></i>整理笔记<em>30 分钟</em></span>
+            <span class="pchip"><i></i>买洗衣液</span>
+          </div>
+          <div class="ctl">
+            ${hours.join('')}
+            ${blocks}
+            <div class="nowline" style="top:${y(now) - off}px"><span class="nowtag">现在</span></div>
+          </div>
+          <div class="meals">
+            <span class="mchip"><i style="background:${m.warn}"></i>早餐 07:40 · 420 大卡</span>
+            <span class="mchip"><i style="background:${m.ok}"></i>午餐 12:10 · 680 大卡</span>
+            <span class="mchip"><i style="background:${m.catStudy}"></i>晚餐 18:30 · 386 大卡</span>
+          </div>
+          <div class="foot">打开完整画布 <span class="num">7</span> 条未完成 ›</div>
+        </div>
+
+        <div class="textlinks">
+          <button>饮食库</button><button>食谱库</button><button>饮食历史</button>
+        </div>
+
+        <div class="tools">
+          <div class="tool"><i class="tool-ic" style="background:color-mix(in srgb, ${m.intake} 12%, transparent);color:${m.intake}">📷</i>
+            <span class="tool-txt"><b>记饮食</b><em>拍照 / 文字 · AI 帮你记</em></span></div>
+          <div class="tool"><i class="tool-ic" style="background:color-mix(in srgb, ${m.exercise} 20%, transparent);color:${cr(m.exercise,m.surface)>4.5?m.exercise:m.ok}">🏋</i>
+            <span class="tool-txt"><b>记运动</b><em>力量 / 有氧 · MET 估算</em></span></div>
+          <div class="tool"><i class="tool-ic" style="background:color-mix(in srgb, ${m.ledShopping} 12%, transparent);color:${m.ledShopping}">🎙</i>
+            <span class="tool-txt"><b>语音对话</b><em>实时转写 · AI 纪要</em></span></div>
+          <div class="tool"><i class="tool-ic" style="background:color-mix(in srgb, ${m.catStudy} 14%, transparent);color:${m.catStudy}">✨</i>
+            <span class="tool-txt"><b>AI 助手</b><em>提问 · 拍照识别</em></span></div>
+        </div>
+      </div>
+
+      <div class="dock">
+        <div class="dock-block round" style="color:${m.t3}">📅</div>
+        <div class="dock-block pill">
+          <div class="dtab on"><span class="ic">⌂</span>主页</div>
+          <div class="dtab"><span class="ic">🍽</span>营养</div>
+          <div class="dtab"><span class="ic">🏃</span>运动</div>
+          <div class="dtab"><span class="ic">📚</span>待办</div>
+          <div class="dtab"><span class="ic">💰</span>记账</div>
+          <div class="dtab"><span class="ic">⏱</span>专注</div>
+        </div>
+        <div class="dock-block round" style="color:${m.accStrong}">✨</div>
+      </div>
+    </div>
+  </div>`
+}
+
+const fmt = min => `${String(Math.floor(min/60)).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`
+
+/* ---------- 令牌表 ---------- */
+const TOKENS = [
+  ['画布底',    m => m.bg,        ['--bg']],
+  ['画布高光',  m => m.bgHi,       ['body 渐变起点']],
+  ['画布中段',  m => m.bgMid,     ['body 渐变中段']],
+  ['卡片面',    m => m.surface,   ['--surface']],
+  ['次级面',    m => m.surface2,  ['--surface-2']],
+  ['正文',      m => m.t1,        ['--text-1']],
+  ['次要信息',  m => m.t2,        ['--text-2']],
+  ['三级补充',  m => m.t3,        ['--text-3']],
+  ['主色实底',  m => m.acc,       ['--accent']],
+  ['主色文字',  m => m.accStrong, ['--accent-strong']],
+  ['主色上前景',m => m.onAcc,     ['--on-accent']],
+  ['摄入环',    m => m.intake,    ['--c-intake']],
+  ['运动环',    m => m.exercise,  ['--c-exercise']],
+  ['均衡环',    m => m.balance,   ['--c-balance']],
+  ['完成/收入', m => m.ok,        ['--ok-strong']],
+  ['警告',      m => m.warn,      ['--warn-strong']],
+  ['危险/现在线',m => m.danger,   ['--danger-strong']],
+  ['学习分类',  m => m.catStudy,  ['--cat-study']],
+  ['工作分类',  m => m.catWork,    ['--cat-work']],
+  ['消费/语音', m => m.ledShopping,['--led-shopping']],
+]
+
+function auditTable(p, mode) {
+  const m = mode === 'light' ? p.L : p.D
+  const rows = [
+    ['正文 text-1 / surface', cr(m.t1, m.surface), 7],
+    ['次要 text-2 / surface', cr(m.t2, m.surface), 4.5],
+    ['三级 text-3 / surface', cr(m.t3, m.surface), 3],
+    ['主色文字 accent-strong / surface', cr(m.accStrong, m.surface), 4.5],
+    ['主色实底上的 on-accent', cr(m.onAcc, m.acc), 4.5],
+    ['摄入环 / surface', cr(m.intake, m.surface), 3],
+    ['运动环 / surface', cr(m.exercise, m.surface), 3],
+    ['均衡环 / surface', cr(m.balance, m.surface), 3],
+    ['三环 intake↔exercise ΔE', dE(m.intake, m.exercise), 20],
+    ['三环 exercise↔balance ΔE', dE(m.exercise, m.balance), 20],
+    ['三环 intake↔balance ΔE', dE(m.intake, m.balance), 20],
+  ]
+  return `<table class="audittable"><thead><tr><th>校验项</th><th>实测</th><th>门槛</th><th></th></tr></thead><tbody>
+    ${rows.map(([k,v,th]) => `<tr><td>${k}</td><td>${v.toFixed(2)}</td><td>≥ ${th}</td>
+      <td class="pass">${v>=th?'通过':'不达标'}</td></tr>`).join('')}
+  </tbody></table>`
+}
+
+function tokenHTML(p, mode) {
+  const m = mode === 'light' ? p.L : p.D
+  return `<div class="tgroup"><h3>令牌值 · ${mode === 'light' ? '亮色' : '暗色'}</h3>
+    <div class="tgrid">
+      ${TOKENS.map(([name, get, tok]) => `<div class="tok">
+        <i class="sw2" style="background:${get(m)}"></i>
+        <span class="nm">${tok.join(' · ')}</span>
+        <span class="hx">${get(m)}</span>
+      </div>`).join('')}
+    </div></div>
+  <div class="tgroup"><h3>实测对比度</h3>${auditTable(p, mode)}</div>`
+}
+
+/* ---------- 渲染 ---------- */
+function render() {
+  document.body.dataset.mode = MODE
+  const main = document.getElementById('main')
+  main.innerHTML = PALETTES.map(p => {
+    const phones = LAYOUT === 'dual'
+      ? `<div class="phone" data-m="light">${phoneHTML(p, 'light')}</div>
+         <div class="phone" data-m="dark">${phoneHTML(p, 'dark')}</div>`
+      : phoneHTML(p, MODE)
+    return `<section class="pal" id="${p.id}">
+      <div class="palhead">
+        <div class="pal-left">
+          <span class="pnum">方案 ${String(p.index).padStart(2,'0')}</span>
+          <h2>${p.name} <small>${p.latin}</small></h2>
+          <p class="ptag">${p.tagline}</p>
+          <div class="specs">
+            <span class="spec"><b>取向</b> ${p.mood}</span>
+            <span class="spec"><b>色相锚点</b> ${p.anchor}</span>
+          </div>
+        </div>
+      </div>
+      <div class="fit-cost">
+        <div class="fc fit"><div class="lbl">适合</div>${p.fit}</div>
+        <div class="fc cost"><div class="lbl">代价 / 注意</div>${p.cost}</div>
+      </div>
+      <div class="stage">
+        ${phones}
+        <div class="tokens">${tokenHTML(p, MODE)}</div>
+      </div>
+    </section>`
+  }).join('')
+  document.querySelectorAll('.sw').forEach(el => {
+    el.classList.toggle('on', el.dataset.id === PALETTES[0].id)
+  })
+  highlight()
+}
+
+function highlight() {
+  const y = window.scrollY + 140
+  let cur = PALETTES[0].id
+  for (const p of PALETTES) {
+    const el = document.getElementById(p.id)
+    if (el && el.offsetTop <= y) cur = p.id
+  }
+  document.querySelectorAll('.sw').forEach(el => el.classList.toggle('on', el.dataset.id === cur))
+}
+
+document.getElementById('swatches').innerHTML = PALETTES.map(p => {
+  const m = MODE === 'light' ? p.L : p.D
+  return `<button class="sw" data-id="${p.id}" title="${p.name} · ${p.latin}"
+    style="background:linear-gradient(135deg, ${m.bgHi} 0%, ${m.bg} 45%, ${m.surf0||m.bgMid} 100%)">
+    <i style="background:linear-gradient(135deg, ${m.bg} 0 46%, ${m.acc} 46% 72%, ${m.intake} 72% 100%)"></i>
+    <b>${p.index}</b></button>`
+}).join('')
+
+document.getElementById('swatches').addEventListener('click', e => {
+  const b = e.target.closest('.sw')
+  if (!b) return
+  document.getElementById(b.dataset.id).scrollIntoView({ behavior: 'smooth', block: 'start' })
+})
+
+document.getElementById('modeSeg').addEventListener('click', e => {
+  const b = e.target.closest('button')
+  if (!b) return
+  MODE = b.dataset.mode
+  document.querySelectorAll('#modeSeg button').forEach(x => x.classList.toggle('on', x === b))
+  render()
+})
+
+document.getElementById('layoutSeg').addEventListener('click', e => {
+  const b = e.target.closest('button')
+  if (!b) return
+  LAYOUT = b.dataset.l
+  document.querySelectorAll('#layoutSeg button').forEach(x => x.classList.toggle('on', x === b))
+  render()
+})
+
+window.addEventListener('scroll', highlight, { passive: true })
+render()
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Dumbbell, Footprints, ListChecks, PenLine } from 'lucide-vue-next'
+import { Footprints, ListChecks, PenLine } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import QuickTile from '@/components/common/QuickTile.vue'
@@ -10,17 +10,13 @@ import ExerciseWeekCard from '@/components/exercise/ExerciseWeekCard.vue'
 import PlanRecentCard from '@/components/exercise/PlanRecentCard.vue'
 import StrengthProgressCard from '@/components/exercise/StrengthProgressCard.vue'
 import AddWorkoutSheet from '@/components/exercise/AddWorkoutSheet.vue'
-import WorkoutDetailDrawer from '@/components/exercise/WorkoutDetailDrawer.vue'
-import WorkoutRow from '@/components/exercise/WorkoutRow.vue'
-import EmptyState from '@/components/common/EmptyState.vue'
 import TodoListCard from '@/components/todo/TodoListCard.vue'
 import { useExerciseStore } from '@/stores/exercise'
 import { useNutritionStore } from '@/stores/nutrition'
 import { useTodoStore } from '@/stores/todo'
-import type { Workout } from '@/types'
 import { todayStr } from '@/utils/date'
 
-/** 运动页（训练主页）：周概览 + 跑步/手动记快速入口 + 课程启动 + 运动待办 + 最近记录详情。 */
+/** 运动页（训练主页）：周概览（含最近一次）+ 跑步/手动记快速入口 + 课程启动 + 运动负荷 + 运动待办。 */
 const router = useRouter()
 const ex = useExerciseStore()
 const todo = useTodoStore()
@@ -35,13 +31,6 @@ onMounted(() => {
 })
 
 const manualOpen = ref(false)
-const detailOpen = ref(false)
-const detailWorkout = ref<Workout | null>(null)
-
-function openDetail(w: Workout): void {
-  detailWorkout.value = w
-  detailOpen.value = true
-}
 </script>
 
 <template>
@@ -86,24 +75,10 @@ function openDetail(w: Workout): void {
     <!-- 运动类待办（与待办域联动） -->
     <TodoListCard :date="today" title="运动计划" filter-category="workout" />
 
-    <!-- 最近运动。桌面通栏：记录行是「名称 + 数据 + 操作」的横向条，
-         放在半栏里会被挤成两行，反而比手机版更难扫。 -->
-    <section class="card d-full">
-      <header class="head"><h2>最近运动</h2></header>
-      <EmptyState v-if="ex.recent.length === 0" :icon="Dumbbell" title="本周还没有运动记录" hint="在上方「运动计划」中安排运动" />
-      <ul v-else class="list">
-        <WorkoutRow
-          v-for="w in ex.recent"
-          :key="w.id"
-          :workout="w"
-          @detail="openDetail(w)"
-          @remove="ex.remove(w.id)"
-        />
-      </ul>
-    </section>
-
-    <!-- 运动详情抽屉（Teleport；保证页面单根） -->
-    <WorkoutDetailDrawer :open="detailOpen" :workout="detailWorkout" @close="detailOpen = false" />
+    <!-- 最近运动已并入上方「本周运动」卡的一行提示（只显示一条）。
+         原来这里是一整张卡（标题 + 记录列表 + 每行删除按钮），而它要说的只是
+         「你最近练了这一次」—— 让它单独占一张卡，等于用列表的形态承载一句话。
+         要看完整记录：走「本周运动」卡的「详情 ›」→ 全部运动记录（那里才有列表与详情抽屉）。 -->
 
     <!-- 手动记运动 -->
     <AddWorkoutSheet :open="manualOpen" @close="manualOpen = false" />

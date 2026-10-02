@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, type Component } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Brain,
   CalendarDays,
@@ -59,6 +60,8 @@ import {
 
 const ai = useAiStore()
 const toast = useToast()
+/** 「去原页面」用：派生投影只是索引，正文要看真身就得回它自己的页面 */
+const router = useRouter()
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -367,6 +370,82 @@ const classifyLabel = computed(() => {
   }
 })
 
+/**
+ * 正文文本（**首行去重后**）。
+ *
+ * 后端每个派生文档的正文第一段恒等于它的标题（source.rs 里 `parts = vec![title]`），
+ * 而标题已经在卡片顶部大号显示 —— 原样渲染就是「标题 / 标题」两行，
+ * 正文区读起来像空的。这里统一取「raw 优先，其次分块拼接」，再剔掉开头等于标题的段。
+ *
+ * 剔完可能是空串：那说明这条记录真的只有标题（源记录没有备注/子任务/明细），
+ * 由模板走 .thin 分支讲清楚，而不是留一片空白让用户以为文件坏了。
+ */
+const bodyText = computed(() => {
+  const r = reader.value
+  if (!r) return ''
+  const full = r.raw !== null ? r.raw : r.chunks.map((c) => c.text).join('\n')
+  const paras = full.split('\n').filter((s) => s.trim().length > 0)
+  if (paras.length && paras[0].trim() === r.title.trim()) paras.shift()
+  return paras.join('\n').trim()
+})
+
+/** 是否还有后续分块可加载（raw 直读的真源没有分页概念） */
+const canPageMore = computed(() => reader.value !== null && reader.value.raw === null)
+
+/**
+ * 摘要：**与标题相同时不显示**。派生文档的 summary 多数就是标题本身
+ * （投影只有标题与结构化字段），原样渲染会在标题下再重复一行同样的字。
+ * 只有摘要确实包含额外信息（如笔记的首句）时才值得占一行。
+ */
+const summaryText = computed(() => {
+  const r = reader.value
+  if (!r?.summary) return ''
+  const s = r.summary.trim()
+  return s && s !== r.title.trim() ? s : ''
+})
+
+/**
+ * 「这条记录本就这么短」的补充说明：把该源类型实际会展开的字段列出来。
+ * 目的是让用户明白这不是加载失败 —— 原来只有一片空白，读起来就是「坏了」。
+ */
+const structuredHint = computed(() => {
+  const t = reader.value?.sourceType
+  switch (t) {
+    case 'todo':
+      return '备注、子任务、附件摘要'
+    case 'workout':
+      return '训练组数、次数、重量、容量、备注'
+    case 'meal':
+      return '各食物克重与营养'
+    case 'plan':
+      return '动作、组次与强度'
+    case 'body_metric':
+      return '各项体测数值'
+    case 'voice_memo':
+      return '转写与要点'
+    default:
+      return ''
+  }
+})
+
+/** 原始内容所在页面（派生投影只是给人看的索引，该去看真身）。
+ *  只列**确实有独立页面**的源类型 —— 语音纪要走 voiceRuntime 浮层、没有路由可推，
+ *  硬凑一个链接只会点出 404。 */
+const ORIGIN: Partial<Record<KbSourceType, { path: string; label: string }>> = {
+  todo: { path: '/todos', label: '待办' },
+  workout: { path: '/sports/records', label: '运动记录' },
+  meal: { path: '/nutrition', label: '营养' },
+  body_metric: { path: '/nutrition', label: '营养' },
+  food: { path: '/nutrition/foods', label: '食物库' },
+  plan: { path: '/sports/plans', label: '课程库' },
+  program: { path: '/program', label: '健康方案' },
+  chat_message: { path: '/ai', label: 'AI 会话' },
+}
+
+const origin = computed(() => (reader.value ? ORIGIN[reader.value.sourceType] : undefined))
+const originRoute = computed(() => origin.value?.path ?? null)
+const originLabel = computed(() => origin.value?.label ?? '原页面')
+
 /** 模态展示名（chips） */
 function modalLabel(m: string): string {
   return m === 'text' ? '文本' : m === 'image' ? '图片' : m === 'audio' ? '音频' : m === 'video' ? '视频' : '本体'
@@ -613,7 +692,9 @@ onMounted(async () => {
       <div v-if="reader.tags.length" class="tags row">
         <span v-for="t in reader.tags" :key="t" class="tag">{{ t }}</span>
       </div>
-      <p v-if="reader.summary" class="summary">{{ reader.summary }}</p>
+      <!-- 摘要块：**标题型记录的摘要就等于标题**，再渲染一次又是重复的一行。
+           只在摘要确实带来新信息时才显示（与正文首行去重同一条理由）。 -->
+      <p v-if="summaryText" class="summary">{{ summaryText }}</p>
 
       <!-- 模态切换：一个节点可以有多种模态（§2.2） -->
       <div v-if="reader.modalities.length > 1" class="modals row">
@@ -639,17 +720,30 @@ onMounted(async () => {
           </div>
         </template>
         <template v-else>
-          <div v-if="reader.raw !== null" class="doc">{{ reader.raw }}</div>
-          <div v-else class="doc">
-            <p v-for="c in reader.chunks" :key="c.ord">{{ c.text }}</p>
+          <!-- 正文（已剔掉与标题重复的首段）。空 = 这条记录真的只有标题，
+               走下面的 .thin 说明，而不是留白。 -->
+          <div v-if="bodyText" class="doc">{{ bodyText }}</div>
+          <div v-else class="thin">
+            <p class="thin-t">这条记录没有更多正文</p>
+            <p class="thin-b">
+              工作区里的{{ sourceLabel }}条目是按「标题 + 结构化字段」导出的投影<template
+                v-if="structuredHint"
+              >（{{ structuredHint }}）</template>，它本身没有可展开的长文。
+              上面那些标签就是这条记录的全部信息；要改内容请回它自己的页面。
+            </p>
+            <button v-if="originRoute" class="btn" @click="router.push(originRoute)">
+              去{{ originLabel }}
+            </button>
           </div>
-          <div v-if="reader.hasMore" class="row more-row">
+
+          <!-- 分页读取：只有走分块（非 note 真源直读）的文档才有"下一页" -->
+          <div v-if="canPageMore && reader.hasMore" class="row more-row">
             <button class="btn ghost" :disabled="reader.loadingMore || reader.busy" @click="loadMore">
               {{ reader.loadingMore ? '加载中…' : `继续加载（${reader.chunks.length}/${reader.totalChunks} 块）` }}
             </button>
             <button class="btn ghost" :disabled="reader.busy" @click="loadAll">一次读完</button>
           </div>
-          <p v-else-if="reader.raw === null && reader.totalChunks > 1" class="t-3 fin">
+          <p v-else-if="canPageMore && bodyText && reader.totalChunks > 1" class="t-3 fin">
             已到末尾 · 约 {{ reader.chars.toLocaleString() }} 字
           </p>
         </template>
@@ -1191,6 +1285,35 @@ li + li .item {
 
 .doc p + p {
   margin-top: 8px;
+}
+
+/* 「这条记录没有更多正文」：派生文档只带标题与结构化字段，而那些字段已经在
+   上面的 pills 里说过了 —— 正文区于是常常是空的。原先直接留白，用户读到的是
+   「文件坏了」；这里把原因讲清，并把人送回真身所在页面。 */
+.thin {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  text-align: center;
+}
+
+.thin-t {
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.thin-b {
+  margin: 6px auto 0;
+  max-width: 34em;
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.thin .btn {
+  margin-top: 12px;
 }
 
 .fallback {

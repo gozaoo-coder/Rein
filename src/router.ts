@@ -46,7 +46,7 @@ export const routes = [
     path: '/ai/files',
     name: 'ai-files',
     component: () => import('@/pages/FileLibraryPage.vue'),
-    // 文件管理器：AI 页左上角「文件」入口（虚拟文件系统的真实视图，docs/ai-workspace.md §5）
+    // 文件管理器：AI 页左上角「历史」菜单里的「文件」一项（虚拟文件系统的真实视图，docs/ai-workspace.md §5）
     meta: { title: '文件', desk: 'wide' },
   },
   {

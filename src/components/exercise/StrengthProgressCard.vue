@@ -1,17 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ChevronDown, ChevronLeft, ChevronRight, Pause, Play } from 'lucide-vue-next'
 
+import StrengthExercisePicker from '@/components/exercise/StrengthExercisePicker.vue'
 import WeightCurve from '@/components/exercise/WeightCurve.vue'
 import { sessionService } from '@/services/sessionService'
 import { useExerciseStore } from '@/stores/exercise'
+import { motionOn } from '@/system/motion'
 import { fmtDateCn } from '@/utils/date'
 import { aggregateStrengthDays, fmtKg, type StrengthDay } from '@/utils/strength'
 import type { StrengthExerciseRef } from '@/types'
 
 /**
  * 力量进步卡（运动页）：按动作查看重量变化曲线。
- * 动作 chips 来自逐组记录的最近训练排序（聚合键 = 动作库 id）；
- * 无力量记录时整卡隐藏。页面常驻后不再因导航离开重挂载，
+ *
+ * 动作选择有三条路，覆盖面不同：
+ *  1. **点击动作名** → 抽屉里从全部练过的动作中选（还带搜索）——
+ *     想要某个特定动作时走这条，动作多也找得到；
+ *  2. **左右箭头** → 在列表里前后翻一个，适合"顺手看看隔壁"；
+ *  3. **自动轮播** → 每 5 秒换一个，让人**发现自己没注意过的动作**
+ *     （这一卡最大的问题是「只看最近练的那个」，而进步幅度大的往往是别的动作）。
+ *     轮播可随时暂停，用户一动（翻页 / 选动作）就重新计时。
+ *
+ * 轮播默认**跟随动效偏好**：用户在设置里关掉动效、或系统声明减少动态效果时
+ * 不自动开始 —— 自己换内容比过渡动画更该让位给「别自己动」这条意愿。
+ *
  * 落库变化靠 exerciseStore.strengthRev 失效缓存。
  */
 const exStore = useExerciseStore()
@@ -20,6 +33,7 @@ const loaded = ref(false)
 const selected = ref('')
 const curveDays = ref<StrengthDay[]>([])
 const loadingCurve = ref(false)
+const pickerOpen = ref(false)
 
 /** 已加载过的动作历史缓存（切回不重复请求） */
 const cache = new Map<string, StrengthDay[]>()
@@ -28,6 +42,66 @@ const cache = new Map<string, StrengthDay[]>()
 function refKey(r: StrengthExerciseRef): string {
   return r.exerciseId || r.name
 }
+
+/* ---------- 自动轮播 ---------- */
+
+const ROTATE_MS = 5000
+const rotating = ref(false)
+let rotateTimer: number | null = null
+
+function stopRotate(): void {
+  rotating.value = false
+}
+
+function clearTimer(): void {
+  if (rotateTimer !== null) {
+    window.clearInterval(rotateTimer)
+    rotateTimer = null
+  }
+}
+
+/** 重新计时：手动操作后从这一刻起重新数 5 秒，而不是让定时器按旧相位打断 */
+function restartTimer(): void {
+  clearTimer()
+  if (!rotating.value || refs.value.length < 2) return
+  rotateTimer = window.setInterval(() => next(1), ROTATE_MS)
+}
+
+function toggleRotate(): void {
+  rotating.value = !rotating.value
+  if (rotating.value) restartTimer()
+  else clearTimer()
+}
+
+/** 前后翻一个（绕回），dir = ±1 */
+function next(dir: number): void {
+  const list = refs.value
+  if (list.length < 2) return
+  const idx = list.findIndex((r) => refKey(r) === selected.value)
+  const base = idx < 0 ? 0 : idx
+  const to = (base + dir + list.length) % list.length
+  selected.value = refKey(list[to]!)
+  restartTimer()
+}
+
+/** 页面切到后台时停轮播：看不见的图上转等于白烧定时器与请求 */
+function onVisibility(): void {
+  if (document.hidden) clearTimer()
+  else restartTimer()
+}
+
+onMounted(() => {
+  void loadRefs()
+  rotating.value = motionOn.value
+  document.addEventListener('visibilitychange', onVisibility)
+})
+
+onBeforeUnmount(() => {
+  clearTimer()
+  document.removeEventListener('visibilitychange', onVisibility)
+})
+
+/* ---------- 数据 ---------- */
 
 async function loadRefs(keep = false): Promise<void> {
   const prev = selected.value
@@ -41,13 +115,14 @@ async function loadRefs(keep = false): Promise<void> {
   if (!refs.value.length) {
     selected.value = ''
     curveDays.value = []
+    stopRotate()
     return
   }
   const name = keep && refs.value.some((r) => refKey(r) === prev) ? prev : refKey(refs.value[0]!)
   void select(name)
+  // 列表就位后再起轮播（此前 refs 为空，计时器会立刻自己停掉）
+  if (rotating.value) restartTimer()
 }
-
-onMounted(() => void loadRefs())
 
 watch(selected, (name) => {
   if (name) void select(name)
@@ -61,6 +136,12 @@ watch(
     void loadRefs(true)
   },
 )
+
+/** 抽屉打开时暂停轮播：正在挑动作却被换掉很恼人；关掉后接着转 */
+watch(pickerOpen, (o) => {
+  if (o) clearTimer()
+  else restartTimer()
+})
 
 async function select(name: string): Promise<void> {
   selected.value = name
@@ -82,6 +163,11 @@ async function select(name: string): Promise<void> {
   }
 }
 
+/* ---------- 展示 ---------- */
+
+const current = computed(() => refs.value.find((r) => refKey(r) === selected.value) ?? null)
+const currentName = computed(() => current.value?.name ?? '选择动作')
+
 /** 展示窗口（近 10 次）里最近一次的做组摘要 */
 const lastDay = computed(() => curveDays.value[curveDays.value.length - 1] ?? null)
 
@@ -91,6 +177,14 @@ const lastSummary = computed(() => {
   const working = d.sets.map((s) => `${fmtKg(s.weightKg ?? 0)}×${s.reps ?? '?'}`).join(' · ')
   return `${working}（${fmtDateCn(d.date)}）`
 })
+
+/** 轮播开关只在动作多于一个时才有意义 */
+const canRotate = computed(() => refs.value.length > 1)
+
+function onPick(key: string): void {
+  selected.value = key
+  restartTimer()
+}
 </script>
 
 <template>
@@ -100,25 +194,69 @@ const lastSummary = computed(() => {
       <span class="sub">力量训练的渐进超负荷</span>
     </header>
 
-    <div v-if="refs.length > 1" class="chips row" role="tablist" aria-label="选择动作">
+    <!-- 动作切换条：名字可点（开抽屉）、两枚箭头翻页、右侧轮播开关 -->
+    <div v-if="refs.length" class="switcher row">
       <button
-        v-for="r in refs.slice(0, 6)"
-        :key="refKey(r)"
-        class="chip"
-        :class="{ on: refKey(r) === selected }"
-        role="tab"
-        :aria-selected="refKey(r) === selected"
-        @click="selected = refKey(r)"
+        v-if="canRotate"
+        class="arrow"
+        type="button"
+        aria-label="上一个动作"
+        @click="next(-1)"
       >
-        {{ r.name }}
+        <ChevronLeft :size="17" />
+      </button>
+
+      <button
+        class="pickbtn row center"
+        type="button"
+        aria-haspopup="dialog"
+        :aria-expanded="pickerOpen"
+        @click="pickerOpen = true"
+      >
+        <span class="pname">{{ currentName }}</span>
+        <ChevronDown :size="15" class="pchev" />
+      </button>
+
+      <button
+        v-if="canRotate"
+        class="arrow"
+        type="button"
+        aria-label="下一个动作"
+        @click="next(1)"
+      >
+        <ChevronRight :size="17" />
+      </button>
+
+      <button
+        v-if="canRotate"
+        class="rotate"
+        type="button"
+        :aria-pressed="rotating"
+        :aria-label="rotating ? '暂停轮播' : '开始轮播'"
+        @click="toggleRotate"
+      >
+        <component :is="rotating ? Pause : Play" :size="14" />
+        {{ rotating ? '轮播中' : '轮播' }}
       </button>
     </div>
+
+    <p v-if="current" class="cmeta t-3 num">
+      共 {{ current.sessions }} 次训练 · 最近 {{ fmtDateCn(current.lastDate) }}
+    </p>
 
     <div v-if="curveDays.length" class="curvewrap">
       <WeightCurve :days="curveDays" />
       <p v-if="lastSummary" class="lastsets num">{{ lastSummary }}</p>
     </div>
     <p v-else class="hint">{{ loadingCurve ? '加载中…' : '该动作还没有重量记录' }}</p>
+
+    <StrengthExercisePicker
+      :open="pickerOpen"
+      :items="refs"
+      :selected="selected"
+      @close="pickerOpen = false"
+      @pick="onPick"
+    />
   </section>
 </template>
 
@@ -140,31 +278,82 @@ const lastSummary = computed(() => {
   color: var(--text-3);
 }
 
-.chips {
+.switcher {
   gap: 8px;
-  flex-wrap: wrap;
   margin-top: 12px;
 }
 
-.chip {
-  padding: 7px 14px;
-  border-radius: var(--radius-full);
+.arrow {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 50%;
   background: var(--surface-2);
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-2);
-  transition:
-    background-color var(--dur-fast) var(--ease-standard),
-    color var(--dur-fast) var(--ease-standard);
+  color: var(--text-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.chip.on {
+.arrow:active {
+  opacity: 0.6;
+}
+
+/* 当前动作名：整块可点（这一卡里最主要的选择入口），占了中间的全部余量 */
+.pickbtn {
+  flex: 1;
+  min-width: 0;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.pickbtn:active {
+  opacity: 0.7;
+}
+
+.pname {
+  font-size: var(--fs-callout);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pchev {
+  flex: none;
+  color: var(--text-3);
+}
+
+.rotate {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 11px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+
+/* 轮播开启时用运动色点亮 —— 与下面的曲线同一个色，读作"这个动作正在被自动翻看" */
+.rotate[aria-pressed='true'] {
   background: var(--c-exercise-soft);
   color: var(--c-exercise-deep);
 }
 
+.cmeta {
+  margin-top: 8px;
+  font-size: var(--fs-caption);
+}
+
 .curvewrap {
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 .lastsets {

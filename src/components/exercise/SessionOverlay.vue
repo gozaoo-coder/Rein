@@ -18,6 +18,7 @@ const MuscleMap = defineAsyncComponent(() => import('@/components/exercise/Muscl
 import SessionBigNumberInput from '@/components/exercise/SessionBigNumberInput.vue'
 import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
 import SessionGlassButton from '@/components/exercise/SessionGlassButton.vue'
+import ReadinessDialog from '@/components/exercise/ReadinessDialog.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import { usePressGlow } from '@/composables/usePressGlow'
@@ -108,15 +109,6 @@ const curWarmup = computed(() => {
   if (!ex?.warmups?.length) return null
   return ex.warmups[Math.min(s.warmupDone(ex), ex.warmups.length - 1)] ?? null
 })
-
-/** 今日状态自评档位（短文案版；更多菜单里的 READINESS_ACTIONS 是同一套档位的长文案版） */
-const READINESS_CHIPS = [
-  { value: 5, label: '很好' },
-  { value: 4, label: '不错' },
-  { value: 3, label: '一般' },
-  { value: 2, label: '疲惫' },
-  { value: 1, label: '很差' },
-] as const
 
 /** 一键填入的重量候选：同一个重量的三个出处（今日建议 / 上次 / 计划），点一下即填入 */
 interface FillSource {
@@ -349,6 +341,38 @@ const showReadinessPrompt = computed(
     (s.phase === 'exercise' || s.phase === 'warmup') &&
     s.doneCount === 0,
 )
+
+/* ---------- 今日状态对话框 ----------
+ * 出现时机完全由 showReadinessPrompt 决定（首次进入力量训练、还没自评、还没做第一组）：
+ *  · 一旦完成第一组（doneCount > 0）或离开该阶段，computed 变 false → 对话框自动收起。
+ *    这是"打断"路径 —— 不强迫作答，但也不让它一直悬着挡视线；
+ *  · 答过（选档或跳过）就记 readinessAsked，本次训练不再自动弹；
+ *    「更多 → 今日状态」仍可随时改，两处写的是同一个 store 值，不会两套。
+ * 它取代了原来各自嵌在热身/做组两组卡片里的内联 chips（同一件事写两遍，且说不清代价）。 */
+const readinessAsked = ref(false)
+const readinessOpen = ref(false)
+
+watch(
+  showReadinessPrompt,
+  (show) => {
+    if (show && !readinessAsked.value) readinessOpen.value = true
+    else if (!show) readinessOpen.value = false
+  },
+  { immediate: true },
+)
+
+function onReadinessPick(v: number | null): void {
+  readinessAsked.value = true
+  readinessOpen.value = false
+  s.setReadiness(v)
+  if (v != null) toast('已记录今日状态 · 建议重量与练够分已同步')
+}
+
+/** 点遮罩 / 关闭键退出：记作"已问过"（避免每次进动作又弹），但**不写值** */
+function onReadinessClose(): void {
+  readinessAsked.value = true
+  readinessOpen.value = false
+}
 
 /** 临时休息时长：作为更多菜单「临时休息」的层叠子菜单 */
 const TEMP_REST_ACTIONS: MenuItem[] = [
@@ -767,25 +791,9 @@ watch(immersiveOpen, (open) => {
 
             <!-- 本组登记：小重量找发力感，重量可现场调整，完成即按实际重量登记 -->
             <div class="setcard">
-              <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
-                   排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
-              <div v-if="showReadinessPrompt" class="rdsec">
-                <div class="rdhead">
-                  <span class="rdlabel">今日状态</span>
-                  <span class="rdhint">影响建议重量 · 可跳过</span>
-                </div>
-                <div class="rchips">
-                  <button
-                    v-for="opt in READINESS_CHIPS"
-                    :key="opt.value"
-                    type="button"
-                    class="rchip"
-                    @click="s.setReadiness(opt.value)"
-                  >
-                    {{ opt.label }}
-                  </button>
-                </div>
-              </div>
+              <!-- 今日状态自评已升格为「今日状态」对话框（ReadinessDialog）：它会改
+                   建议重量与练够分，代价说不清就不该藏在卡片里当一行小字。
+                   要改也仍在「更多 → 今日状态」。 -->
 
               <div class="field">
                 <span class="flabel">重量</span>
@@ -838,26 +846,8 @@ watch(immersiveOpen, (open) => {
                  这两行是同一组记录的两个字段，之前分开在两处（重量在卡里、次数裸在卡外当大字），
                  视觉上像两件不相干的事，中间还夹着今日状态那张卡，谁主谁次读不出来 -->
             <div class="setcard">
-              <!-- 今日状态自评：首次进入力量训练时出现一次（跳过即纯自动推断）。
-                   排在重量之前是有意的 —— 它正是下面那条建议的输入，先说因后说果 -->
-              <div v-if="showReadinessPrompt" class="rdsec">
-                <div class="rdhead">
-                  <span class="rdlabel">今日状态</span>
-                  <span class="rdhint">影响建议重量 · 可跳过</span>
-                </div>
-                <div class="rchips">
-                  <button
-                    v-for="opt in READINESS_CHIPS"
-                    :key="opt.value"
-                    type="button"
-                    class="rchip"
-                    @click="s.setReadiness(opt.value)"
-                  >
-                    {{ opt.label }}
-                  </button>
-                </div>
-              </div>
-
+              <!-- 今日状态自评见 ReadinessDialog（首次进入力量训练时的那张对话框）；
+                   这里只留重量与次数，两者是同一组记录的两个字段 -->
               <div class="field">
                 <span class="flabel">重量</span>
                 <SessionBigNumberInput
@@ -1141,6 +1131,14 @@ watch(immersiveOpen, (open) => {
         :sub="s.overlay.sub"
         :count-from="s.overlay.countFrom"
         @done="s.onOverlayDone()"
+      />
+
+      <!-- 今日状态对话框：进入力量训练时问一次（会改建议重量与练够分，见组件头注释） -->
+      <ReadinessDialog
+        :open="readinessOpen"
+        :value="s.readiness"
+        @pick="onReadinessPick"
+        @close="onReadinessClose"
       />
 
       <!-- 结束（二级确认）：只有这里才算正常结束 -->
@@ -1600,58 +1598,6 @@ watch(immersiveOpen, (open) => {
 
 .whylist li + li {
   margin-top: 3px;
-}
-
-/* 今日状态自评：卡内的上分段，一条细分隔线与下面的重量行分开 */
-.rdsec {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-bottom: 12px;
-  border-bottom: 0.5px solid var(--line);
-}
-
-.rdhead {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.rdlabel {
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  color: var(--text-1);
-}
-
-.rdhint {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
-/* 五档等宽：档位是同一把尺子上的五点，等宽才读得出一条量表。
-   五枚都压在同一张内容卡里，各自再带一层玻璃会互相折射、把量表读成五块噪声 ——
-   所以这一组走**卡内的实底分档**（--surface-2），只有玻璃那张卡在外层。 */
-.rchips {
-  display: flex;
-  gap: 6px;
-}
-
-.rchip {
-  flex: 1;
-  min-width: 0;
-  padding: 10px 2px;
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-2);
-  transition: transform var(--dur-fast) var(--ease-standard);
-}
-
-.rchip:active {
-  transform: scale(0.94);
-  background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
 }
 
 /* 热身清单步骤 chips */

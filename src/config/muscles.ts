@@ -75,6 +75,107 @@ export type Level = 1 | 2 | 3
 
 export type ActivationMap = Partial<Record<MuscleKey, Level>>
 
+/**
+ * 练够分热力档位（MuscleMap 的热力模式用）。
+ *
+ * 与 `Level` 的区别是**问的问题不同**：Level 说「这个动作练到了哪块肌肉、练得多主」，
+ * 是单次动作的属性；HeatLevel 说「这块肌肉这周练够了没有」，是周期评估的属性。
+ *
+ * 档位由**练够分**（0–100，《练够分 Lite》V1.0）折算而来，语义是「越高越充分」，
+ * 与旧的「容量冷→热（越高越是堆量过头）」正好相反 —— 因为练够分把"练过头"
+ * 直接算进了扣分（频率 5+ 次、组数 >24 都会被下调），所以低分一律等于「需要关注」。
+ * 五档只做**颜色粗分**，规范里的六段档名（运动充分…明显不足）仍逐行以文字给出，
+ * 信息不因颜色变粗而丢失。
+ */
+export type HeatLevel = 0 | 1 | 2 | 3 | 4
+
+/** 档位展示文案（图例、分组列表、抽屉副标共用一份） */
+export const HEAT_LABELS: Record<HeatLevel, string> = {
+  0: '未练',
+  1: '不足',
+  2: '基本够',
+  3: '足够',
+  4: '充分',
+}
+
+/**
+ * 练够分档位分界（规范第 0 节）——向上取最近的档，`min` 含等号。
+ * 例：84 → 足够；100 → 运动充分。**六段**是规范的原始粒度。
+ */
+export const SCORE_BANDS: { min: number; label: string; hint: string }[] = [
+  { min: 100, label: '运动充分', hint: '当前目标下已经练够，维持即可' },
+  { min: 90, label: '高度充分', hint: '很够，可小幅渐进' },
+  { min: 75, label: '足够', hint: '基本够，有短板' },
+  { min: 60, label: '基本够', hint: '需要补一项或两项' },
+  { min: 40, label: '不够', hint: '刺激不足或体感拖后腿' },
+  { min: 0, label: '明显不足', hint: '优先查频率、强度或体感' },
+]
+
+/**
+ * 练够分（《练够分 Lite》）的评估单位：**10 个肌群**。
+ *
+ * 规范只定义到「胸/背/肩/二头/三头/臀/腿前/腿后/小腿/核心」这一粒度，
+ * 而本应用的动作肌群表细到 39 个肌束 —— 这里是**全端唯一的折叠口径**：
+ * 每个细肌群唯一归属一个评估组，分数按组计算，热力图上同组同色。
+ *
+ * 几处不可避免的折中（规范里没有对应组）：
+ *  · 前臂肌群 → 二头（规范只有二头/三头，前臂归手臂前侧做法）
+ *  · 胸锁乳突肌 → 肩（颈肩一体，规范无「颈」组）
+ *  · 前锯肌 → 背（肩胛带肌，与菱形/斜方同工）
+ *  · 髂腰肌 → 核心（深层屈髋，与腹直/腹斜同属躯干中段）
+ *  · 内收肌群 → 腿前（深蹲底端的主要协同，随股四头一起算）
+ */
+export type ScoreGroupKey =
+  | 'chest'
+  | 'back'
+  | 'shoulder'
+  | 'biceps'
+  | 'triceps'
+  | 'glutes'
+  | 'quads'
+  | 'hamstrings'
+  | 'calves'
+  | 'core'
+
+export const SCORE_GROUPS: { key: ScoreGroupKey; label: string; members: MuscleKey[] }[] = [
+  { key: 'chest', label: '胸', members: ['chest-up', 'chest-low'] },
+  {
+    key: 'back',
+    label: '背',
+    members: ['lats', 'traps-up', 'traps-mid', 'traps-low', 'lower-back', 'teres-major', 'rhomboids', 'serratus-ant'],
+  },
+  {
+    key: 'shoulder',
+    label: '肩',
+    members: ['delt-ant', 'delt-lat', 'delt-post', 'rotator-cuff', 'levator-scapulae', 'scm'],
+  },
+  { key: 'biceps', label: '二头', members: ['biceps', 'forearm'] },
+  { key: 'triceps', label: '三头', members: ['triceps'] },
+  { key: 'glutes', label: '臀', members: ['glute-max', 'glute-med', 'glute-min', 'quadratus-femoris'] },
+  {
+    key: 'quads',
+    label: '腿前',
+    members: ['quads-rec', 'quads-lat', 'quads-med', 'vastus-intermedius', 'adductors'],
+  },
+  { key: 'hamstrings', label: '腿后', members: ['hamstrings', 'popliteus'] },
+  {
+    key: 'calves',
+    label: '小腿',
+    members: ['calves', 'soleus', 'tibialis', 'tibialis-post', 'fibularis', 'plantaris'],
+  },
+  { key: 'core', label: '核心', members: ['abs', 'obliques', 'iliopsoas'] },
+]
+
+/** 细肌群 → 评估组（由 SCORE_GROUPS 派生，保证唯一且全覆盖） */
+export const SCORE_GROUP_OF: Record<MuscleKey, ScoreGroupKey> = Object.fromEntries(
+  SCORE_GROUPS.flatMap((g) => g.members.map((m) => [m, g.key] as const)),
+) as Record<MuscleKey, ScoreGroupKey>
+
+/** 评估组展示名 */
+export const SCORE_GROUP_LABELS: Record<ScoreGroupKey, string> = Object.fromEntries(
+  SCORE_GROUPS.map((g) => [g.key, g.label] as const),
+) as Record<ScoreGroupKey, string>
+
 /** 全部肌群键（AI 工具 schema 与数据校验共用） */
 export const MUSCLE_KEYS: MuscleKey[] = [
   'scm',

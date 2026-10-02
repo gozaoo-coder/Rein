@@ -2,8 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
-import { MUSCLE_DESCS, MUSCLE_LABELS, isMuscleKey } from '@/config/muscles'
-import type { ActivationMap, MuscleKey } from '@/config/muscles'
+import { HEAT_LABELS, MUSCLE_DESCS, MUSCLE_LABELS, isMuscleKey } from '@/config/muscles'
+import type { ActivationMap, HeatLevel, MuscleKey } from '@/config/muscles'
 
 import frontSvg from '@/assets/muscles/rein/front.svg?raw'
 import backSvg from '@/assets/muscles/rein/back.svg?raw'
@@ -53,10 +53,56 @@ import sideSvg from '@/assets/muscles/rein/side.svg?raw'
  * 细化到肌束：三角肌前/中/后束、胸大肌上/下束、斜方肌上/中/下束、
  * 股四头分股外侧/股直/股内侧、小腿分腓肠肌/比目鱼肌等，均可单独高亮。
  *
- * 交互（interactive）：点击图任意位置弹抽屉，列出本动作全部参与肌群
- * 并按激活档位排序（主攻 → 辅助 → 稳定，同档保持规则顺序）。
+ * ---------- 练够分热力模式（heat，2026-10-02 由「容量」改为「练够分」）----------
+ * `heat` 传值时整图改画**每块肌肉的本周练够分**，而不是单次动作的激活档位。
+ * 为什么另立一套而不是把分数塞进三档 activation：三档只能表达「有没有练」，
+ * 而练够分要回答的是「练够了没有」—— 同一块肌肉「30 分」和「100 分」都得看出来。
+ *
+ * 档位语义**与旧容量相反**：练够分越高越充分（绿），越低越该补（红）。
+ * 五档只是颜色粗分（未练 / 不足 / 基本够 / 足够 / 充分），规范里的六段档名
+ * （运动充分…明显不足）由调用方逐行以文字给出 —— 颜色回答"先看哪块"，
+ * 文字回答"到底多少分"。
+ *
+ * 热力模式下**本组件不再自带抽屉**：分组明细（10 个评估肌群的分/档/条）与
+ * 「计算体系说明」合并成调用方的一个抽屉（`TrainingScoreSheet`），
+ * 因为分数本来就是调用方算出来交给本组件的 —— 抽屉留在组件里就得把同一份
+ * 数据再定义一遍。所以热力模式下 `interactive` 的点击改为 `emit('detail')`。
  */
-const props = defineProps<{ activation: ActivationMap; interactive?: boolean }>()
+const props = defineProps<{
+  /** 单次动作的激活档位（3 主攻 / 2 辅助 / 1 稳定）。heat 存在时本项被忽略 */
+  activation?: ActivationMap
+  /**
+   * 练够分热力档位（0..4），细肌群 → 档位（同评估组同色，投影由调用方做）。
+   * 传了它就是热力图；不传则退回 activation 的档位着色。
+   */
+  heat?: Partial<Record<MuscleKey, HeatLevel>>
+  /**
+   * 热力模式下每块肌肉的悬停副标（如「胸 84 分 · 足够」）。
+   * 热力模式**优先整条采用它**：分数与档名都比一个「足够」更有信息量。
+   */
+  heatRows?: Partial<Record<MuscleKey, string>>
+  interactive?: boolean
+}>()
+
+/** 热力模式下点图 → 交给调用方开它自己的练够分抽屉（见文件头说明） */
+const emit = defineEmits<{ detail: [] }>()
+
+const heatMode = computed(() => props.heat !== undefined)
+
+/** 无障碍标签：两种模式说的事不同（激活 = 这块肌肉练得多主；热力 = 练够了没有） */
+const rootLabel = computed(() =>
+  heatMode.value
+    ? props.interactive
+      ? '查看练够分明细'
+      : '肌群练够分热力图'
+    : props.interactive
+      ? '查看全部激活肌群'
+      : '肌群激活图',
+)
+const viewLabel = computed(() => (heatMode.value ? '肌群练够分' : '肌群激活'))
+
+/** 当前激活表（非热力模式下用于着色与图例） */
+const act = computed<ActivationMap>(() => props.activation ?? {})
 
 interface Region {
   kind: 'm' | 'a'
@@ -142,8 +188,24 @@ function isMuscle(r: Region): boolean {
   return isMuscleKey(r.key)
 }
 
+/**
+ * 该分区是否有值可画。
+ *
+ * 两种模式对「没有值」的处理**刻意不同**：
+ *  · 激活模式：没有值的肌群不参与着色（保持中性赭红），因为「这个动作没练到它」
+ *    本来就该读作背景；
+ *  · 热力模式：**有值才有色**，而 0 档（无负荷）本身就是一个值 ——
+ *    热力图要回答的正是「哪块没练」，把无负荷的肌群也画成冷色。
+ *    所以这里按 key 是否出现在 heat 表里判定（而不是按真值判定）。
+ */
+function hasValue(r: Region): boolean {
+  if (!isMuscle(r)) return false
+  const k = r.key as MuscleKey
+  return heatMode.value ? props.heat?.[k] !== undefined : act.value[k] !== undefined
+}
+
 function isActive(r: Region): boolean {
-  return isMuscle(r) && props.activation[r.key as MuscleKey] !== undefined
+  return hasValue(r)
 }
 
 function isVisible(r: Region): boolean {
@@ -162,22 +224,36 @@ function overlayBands(view: View): Band[] {
 }
 
 function lv(key: MuscleKey): string {
-  const v = props.activation[key]
+  if (heatMode.value) {
+    const h = props.heat?.[key]
+    return h === undefined ? '' : `h${h}`
+  }
+  const v = act.value[key]
   return v === 3 ? 'l3' : v === 2 ? 'l2' : v === 1 ? 'l1' : ''
 }
 
-/** 分区着色只看档位：未激活走中性色，激活按档位 */
+/** 分区着色：激活模式看档位、热力模式看练够分档；两者都没有则走中性（idle） */
 function cls(key: MuscleKey): string {
-  return props.activation[key] ? lv(key) : 'idle'
+  const v = lv(key)
+  return v || 'idle'
 }
 
 function title(key: MuscleKey): string {
-  const v = props.activation[key]
+  if (heatMode.value) {
+    const h = props.heat?.[key]
+    if (h === undefined) return MUSCLE_LABELS[key]
+    // 调用方给的副标（「胸 84 分 · 足够」）信息量大于单一个档名 —— 整条采用
+    return props.heatRows?.[key] ?? `${MUSCLE_LABELS[key]} · ${HEAT_LABELS[h]}`
+  }
+  const v = act.value[key]
   if (!v) return MUSCLE_LABELS[key]
   return `${MUSCLE_LABELS[key]} · ${v === 3 ? '主攻' : v === 2 ? '辅助' : '稳定'}`
 }
 
-/* ---------- 交互：点击图 → 全部参与肌群按档位排序 ---------- */
+/* ---------- 交互 ----------
+ * 激活模式：点击图 → 内置抽屉列出全部参与肌群（本组件自己就能回答，数据就在手里）。
+ * 热力模式：点击图 → `emit('detail')`，由调用方开它的练够分抽屉 ——
+ * 分数是调用方算的，明细（10 个评估组 + 计算说明）也归调用方一份定义。 */
 
 const detailOpen = ref(false)
 
@@ -189,12 +265,14 @@ interface MuscleRow {
   desc: string
 }
 
+/** 激活模式的抽屉列表：主攻 → 辅助 → 稳定 */
 const sortedMuscles = computed<MuscleRow[]>(() => {
   const rows: MuscleRow[] = []
-  for (const key of Object.keys(props.activation)) {
+  const src = act.value as Record<string, number | undefined>
+  for (const key of Object.keys(src)) {
     if (!isMuscleKey(key)) continue
-    const v = props.activation[key]
-    if (!v) continue
+    const v = src[key]
+    if (v === undefined) continue
     rows.push({
       key,
       label: MUSCLE_LABELS[key],
@@ -203,15 +281,15 @@ const sortedMuscles = computed<MuscleRow[]>(() => {
       desc: MUSCLE_DESCS[key],
     })
   }
-  // 按激活档位降序（主攻 → 辅助 → 稳定），同档保持配置顺序（稳定排序）
-  rows.sort((a, b) => b.level - a.level)
-  return rows
+  return rows.sort((a, b) => b.level - a.level)
 })
 
 const detailTitle = computed(() => `激活肌群 · ${sortedMuscles.value.length} 个`)
 
 function onMapTap(): void {
-  if (props.interactive) detailOpen.value = true
+  if (!props.interactive) return
+  if (heatMode.value) emit('detail')
+  else detailOpen.value = true
 }
 
 function toggleDeep(): void {
@@ -264,7 +342,7 @@ onUnmounted(() => {
     :class="{ interactive }"
     :role="interactive ? 'button' : undefined"
     :tabindex="interactive ? 0 : undefined"
-    :aria-label="interactive ? '查看全部激活肌群' : '肌群激活图'"
+    :aria-label="rootLabel"
     @click="onMapTap"
     @keydown.enter.prevent="onMapTap"
     @keydown.space.prevent="onMapTap"
@@ -272,7 +350,7 @@ onUnmounted(() => {
     <div class="figs row">
       <figure v-for="item in VIEWS" :key="item.label">
         <div class="figwrap">
-          <svg :viewBox="item.view.viewBox" role="img" :aria-label="`肌群激活 · ${item.label}视图`">
+          <svg :viewBox="item.view.viewBox" role="img" :aria-label="`${viewLabel} · ${item.label}视图`">
             <g class="layer base" aria-hidden="true" v-html="item.view.base" />
             <!-- 按深度分层：三个 band 各是一个组，越靠观察者的越实（后层最淡）。
                  分组同时是模糊的单位 —— 极致档每个组只跑一遍滤镜，不是每块肌肉一遍 -->
@@ -318,8 +396,21 @@ onUnmounted(() => {
       </figure>
     </div>
 
-    <!-- 图例 -->
-    <div class="legend row">
+    <!-- 图例：两种模式的说法不同 —— 激活说「这块肌肉练得多主」，热力说「练够了没有」 -->
+    <div v-if="heatMode" class="legend row heatlegend">
+      <span v-for="h in ([0, 1, 2, 3, 4] as HeatLevel[])" :key="h">
+        <i :class="`hs${h}`" />{{ HEAT_LABELS[h] }}
+      </span>
+      <button
+        class="depthbtn"
+        type="button"
+        :aria-pressed="showDeep"
+        @click.stop="toggleDeep"
+      >
+        {{ showDeep ? '含深层' : '仅浅层' }}
+      </button>
+    </div>
+    <div v-else class="legend row">
       <span><i class="d3" />主攻</span>
       <span><i class="d2" />辅助</span>
       <span><i class="d1" />稳定</span>
@@ -332,13 +423,16 @@ onUnmounted(() => {
         {{ showDeep ? '含深层' : '仅浅层' }}
       </button>
     </div>
-    <!-- 深度图例：不加这一行的话，"同一个绿色是胸还是背"只能靠猜 —— 分层的全部意义
-         就是让人一眼分清，那它自己得先说得清 -->
-    <p class="layernote t-3">越靠观察者越实：外层 &gt; 中层 &gt; 后层（正面视图里的背阔肌属后层）</p>
-    <p v-if="interactive" class="taphint">点击查看全部激活肌群</p>
+    <!-- 深度图例与点击提示：**只在激活模式给**。
+         它们是解释「同一个绿色是胸还是背」与「图还能点」的说明文字；热力视图下
+         卡上已经有明确的「说明」按钮，再留两行说明只是噪音（2026-10-02 按用户意见移除）。 -->
+    <template v-if="!heatMode">
+      <p class="layernote t-3">越靠观察者越实：外层 &gt; 中层 &gt; 后层（正面视图里的背阔肌属后层）</p>
+      <p v-if="interactive" class="taphint">点击查看全部激活肌群</p>
+    </template>
 
-    <!-- 激活肌群抽屉：全部参与肌群按档位排序 -->
-    <SheetModal :open="detailOpen" :title="detailTitle" @close="detailOpen = false">
+    <!-- 激活肌群抽屉（**只有激活模式**；热力模式的明细与计算说明归调用方的练够分抽屉） -->
+    <SheetModal v-if="!heatMode" :open="detailOpen" :title="detailTitle" @close="detailOpen = false">
       <div v-for="m in sortedMuscles" :key="m.key" class="mrow row">
         <i class="dot" :class="lv(m.key)" />
         <div class="mid flex-1">
@@ -494,6 +588,33 @@ html[data-perf='extreme'] .band-0 {
   fill: var(--c-exercise);
 }
 
+/* ---------- 练够分的 5 档色阶（低 → 高）----------
+   色相在表达"该不该管"：红（不足，最该补）→ 琥珀（基本够）→ 绿（足够/充分）。
+   0 档（未练）刻意用**中性灰**而不是色阶的一端 —— "没练到"不是一个量级，
+   是"没有数据"；给它颜色会被读成"练得很少但练了"。
+   绿的深浅只有两档（足够 / 充分）：色相已经用完了，第四档靠明度区分，
+   而这两档本来就是"够"与"很够"的差别，不需要更大的视觉落差。
+   底一律走令牌（--text-3 / --danger / --warn / --c-exercise），暗色档自动跟随。 */
+.layer.h0 {
+  fill: color-mix(in srgb, var(--text-3) 34%, transparent);
+}
+
+.layer.h1 {
+  fill: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+
+.layer.h2 {
+  fill: color-mix(in srgb, var(--warn) 62%, transparent);
+}
+
+.layer.h3 {
+  fill: color-mix(in srgb, var(--c-exercise) 46%, transparent);
+}
+
+.layer.h4 {
+  fill: color-mix(in srgb, var(--c-exercise) 82%, transparent);
+}
+
 /* 深层已激活分区：在浅层之上半透明重描一遍，保证「标了就看得见」。
    它自己也落在某个 band 组里，所以这个 0.72 会与组的透明度**相乘**（后层叠画 = 0.40）——
    这是有意的：把它抬到浅层之上是为了"看得见"，而它仍然该读作"在后头"。
@@ -541,6 +662,35 @@ figcaption {
   border-color: transparent;
 }
 
+/* 热力图例的点：与图上 fill 同源，但不带 alpha —— 图例是小色块，
+   按半透明画会糊在画布上，读不出色相。h3/h4 同色相，靠明度分（浅绿 / 实绿） */
+.legend .hs0 {
+  background: var(--text-3);
+}
+
+.legend .hs1 {
+  background: var(--danger);
+}
+
+.legend .hs2 {
+  background: var(--warn);
+}
+
+.legend .hs3 {
+  background: var(--heat-mid);
+}
+
+.legend .hs4 {
+  background: var(--c-exercise);
+}
+
+/* 热力图例：五档 + 开关挤一行会换行，允许折行并收紧间距 */
+.heatlegend {
+  gap: 11px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 .depthbtn {
   font-size: var(--fs-micro);
   color: var(--text-2);
@@ -566,11 +716,13 @@ figcaption {
   color: var(--text-3);
 }
 
-/* 激活肌群列表抽屉 */
+/* 激活肌群列表抽屉。热力模式不再有抽屉（明细与计算说明归调用方的
+   TrainingScoreSheet），所以这里只剩激活模式要用的行样式。 */
 .mrow {
   gap: 10px;
   padding: 13px 2px;
   border-bottom: 0.5px solid var(--line);
+  align-items: flex-start;
 }
 
 .mrow:last-child {

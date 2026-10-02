@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ChevronRight } from 'lucide-vue-next'
 
 import CanvasTimeline from '@/components/todo/CanvasTimeline.vue'
 import CourseDetailSheet from '@/components/campus/CourseDetailSheet.vue'
@@ -31,7 +32,6 @@ onMounted(() => {
 
 const scheduled = computed(() => todo.allTodos.filter((t) => t.date === props.date && t.startMin != null))
 const pool = computed(() => todo.allTodos.filter((t) => t.date === props.date && t.startMin == null && t.status !== 'done'))
-const openCount = computed(() => todo.allTodos.filter((t) => t.status !== 'done').length)
 
 /* 餐次摘要（只读）：保持「吃」在主页时间轴上的存在感 */
 const meals = computed(() =>
@@ -79,7 +79,17 @@ function onMove(t: Todo, startMin: number): void {
   <section class="card hcanvas" data-testid="home-canvas">
     <header class="row between head">
       <h2>今日画布</h2>
-      <span class="num t-3 meta">{{ scheduled.length }} 个安排 · {{ pool.length }} 条未安排</span>
+      <div class="row center hright">
+        <span class="num t-3 meta">{{ scheduled.length }} 个安排 · {{ pool.length }} 条未安排</span>
+        <!-- 「详情 ›」胶囊：取代卡片底部原来那行「打开完整画布 N 条未完成 ›」。
+             它本来就是同一件事（进 /todos 看全部），但那一行占了整条卡片宽度、
+             还要一条分隔线把它与正文切开，而它承载的只有一个去处的入口 ——
+             挪到卡头右侧、收成一枚胶囊，卡片底部就干净了。
+             放卡头而不是别处：页头右侧是全应用「进下一层」的位置（各详情卡都在这儿）。 -->
+        <button class="detail row center" @click="router.push('/todos')">
+          详情 <ChevronRight :size="13" :stroke-width="2.6" />
+        </button>
+      </div>
     </header>
 
     <!-- 未安排池：点卡片快排（编辑抽屉里落时间） -->
@@ -120,11 +130,6 @@ function onMove(t: Todo, startMin: number): void {
         <i class="mdot" :style="{ background: m.colorVar }" />{{ m.label }} {{ minToHHmm(m.timeMin) }} · {{ Math.round(m.kcal) }} 大卡
       </span>
     </div>
-    <p v-else class="mempty t-3">今天还没记饮食 · 下方「记饮食」一键补上</p>
-
-    <button class="foot pressable" @click="router.push('/todos')">
-      打开完整画布 <span class="num">{{ openCount }}</span> 条未完成 ›
-    </button>
 
     <TodoEditorSheet :open="editorOpen" :todo="editorTarget" :date="date" @close="editorOpen = false" />
     <CourseDetailSheet
@@ -191,18 +196,16 @@ function onMove(t: Todo, startMin: number): void {
   background: var(--accent);
 }
 
-/* 紧凑画布：固定视窗，内部滚动锚定「现在」。
-   上下缘 12px 渐隐：宣告「这里面还能滚」，别让 gutter 刻度和块在窗口边被硬裁成半截。 */
+/* 紧凑画布：固定视窗，高度从这里给（.ctl / .scroll 都是 height:100% 链）。
+   ⚠️ 这里**刻意不写 mask-image**：上下缘那 12px 渐隐由子节点 CanvasTimeline 的
+   `.scroll` 自己做（`data-testid="canvas-scroll"`，它才是真正的滚动容器）。
+   父子各写一份**完全相同的** gradient 会相乘 —— 渐隐叠成两倍深、两端比设计值更早变透明；
+   而且父层一旦有 mask 就成为后代的 backdrop root（见 docs/ARCHITECTURE.md 那条），
+   以后往里放任何玻璃面都会退化成"只采到这一层自己的内容"。
+   渐隐的实现只有一份，在滚动容器身上。（2026-10-02 按用户意见移除重复遮罩） */
 .cwrap {
   height: 216px;
   margin-top: 10px;
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    #000 12px,
-    #000 calc(100% - 12px),
-    transparent 100%
-  );
 }
 
 /* CanvasTimeline 的 .ctl/.scroll 都是 height:100% 链，视窗高度从这里给 */
@@ -236,23 +239,30 @@ function onMove(t: Todo, startMin: number): void {
   border-radius: 50%;
 }
 
-.mempty {
-  margin-top: 10px;
+/* 卡头右侧：计数 + 「详情 ›」胶囊。
+   两者不要再挤：计数是灰的次要信息（tabular 数字），胶囊是可点的去处 ——
+   形态差异本身就说明了「哪个能点」，不靠颜色大小去抢。 */
+.hright {
+  gap: 8px;
+  flex: none;
+}
+
+.detail {
+  gap: 1px;
+  padding: 5px 10px 5px 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  /* `--accent-strong` 而不是 `--accent`：后者压在 `--surface-2` 上实测只有
+     4.27:1（亮）/ 3.82:1（暗），够不着 4.5 的门槛 —— 这两个数字是量出来的，不是估的。
+     `--accent-strong` 这个令牌存在的理由就是「浅底上的文字蓝」（见 tokens.css 注释）。 */
+  color: var(--accent-strong);
   font-size: var(--fs-caption);
-}
-
-.foot {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 0.5px solid var(--line);
-  width: 100%;
-  text-align: left;
-  font-size: var(--fs-footnote);
-  color: var(--text-3);
-}
-
-.foot .num {
-  color: var(--accent);
   font-weight: 700;
+  flex: none;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.detail:active {
+  opacity: 0.6;
 }
 </style>

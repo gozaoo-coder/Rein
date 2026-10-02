@@ -24,7 +24,8 @@ import { liquidGlass, perfDegraded } from '@/system/perf'
  *  - `--ph-up`：遮罩向上铺出的量。默认与 `--ph-stick` 相同：粘在 safe-top 时遮罩正好
  *    铺满状态栏那条，滚上去的内容在那一段里也是糊的。 */
 defineProps<{
-  title: string
+  /** 页标题。**可为空** —— 空则整块标题区不渲染（如 AI 会话页，见模板注释） */
+  title?: string
   subtitle?: string
   back?: boolean
   compact?: boolean
@@ -78,10 +79,15 @@ function goBack(): void {
     <button v-if="back" class="back" aria-label="返回" @click="goBack">
       <ChevronLeft :size="21" :stroke-width="2.4" />
     </button>
-    <div class="flex-1">
+    <!-- 标题块：**title 为空时整块不渲染**（占位交给下面的 spacer）。
+         有的页面不需要标题 —— 比如 AI 会话页：顶栏左边一颗「历史」、右边两颗动作，
+         中间再塞两个字的「AI」会变成一个悬空的小标签，与两侧 38px 圆钮的重量对不上。
+         页面身份由内容与 Dock 的选中态表达，不必靠顶上那两个字。 -->
+    <div v-if="title || subtitle" class="flex-1">
       <h1>{{ title }}</h1>
       <p v-if="subtitle">{{ subtitle }}</p>
     </div>
+    <span v-else class="flex-1" />
     <slot name="action" />
   </header>
 </template>

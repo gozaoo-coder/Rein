@@ -76,8 +76,12 @@ export const ACTIVATION_WEIGHT: Record<Level, number> = { 1: 0.25, 2: 0.5, 3: 1 
 /** 增肌目标强度：留 2 次余量（RIR 2 ≈ RPE 8，对应约 95% 的当日极限） */
 export const DEFAULT_TARGET_RIR = 2
 
-/** 自评 1..5 → readiness 系数 */
-const SELF_FACTOR: Record<number, number> = { 1: 0.9, 2: 0.95, 3: 1.0, 4: 1.02, 5: 1.04 }
+/**
+ * 自评 1..5 → readiness 系数。导出是给「今日状态」对话框用的 ——
+ * 那里要把"这一步会影响训练计算"落到实处（本次建议重量的系数、练够分的体感分），
+ * 用户看到的数字必须与引擎真实使用的一致，不能在对话框里另写一份。
+ */
+export const READINESS_FACTOR: Record<number, number> = { 1: 0.9, 2: 0.95, 3: 1.0, 4: 1.02, 5: 1.04 }
 
 /* ---------------- 基础工具 ---------------- */
 
@@ -292,7 +296,7 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
     .sort((a, b) => b.sets - a.sets)
 
   /* ---- 4. 逐动作建议 ---- */
-  const selfFactor = input.selfRating ? (SELF_FACTOR[input.selfRating] ?? 1) : 1
+  const selfFactor = input.selfRating ? (READINESS_FACTOR[input.selfRating] ?? 1) : 1
   const readinessList: number[] = []
   let globalFactors: ReadinessFactor[] = []
   const perExercise: Record<string, ExerciseAdvice> = {}

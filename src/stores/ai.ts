@@ -226,17 +226,21 @@ export const useAiStore = defineStore('ai', () => {
     return t
   }
 
+  /**
+   * 旧版欢迎语入口 —— **现在刻意什么都不做**。
+   *
+   * 它原来往空会话里插一条「你好，我是 Rein AI……」的**文字气泡**。两个问题：
+   *  1. 形态上它和下面第一条真实消息完全一样（都居左、都是气泡、都同一种底色），
+   *     用户分不清哪条是机器说的、哪条是自己的数据 —— 视觉重心无处安放。
+   *  2. 它答的是「我是谁」，而空会话真正要答的是「我现在能干什么」。
+   *     现在由 AIPage 的 AiBoard 回答（今天的数据 + 六个能力入口 + 最近会话）。
+   *
+   * 保留这个空实现而不是删掉：调用点有 5 处（init / selectChat / newChat /
+   * clearContext / 从历史恢复），空会话的判定已经统一收敛在这里，
+   * 以后若要恢复某种「开场」行为（例如按时间给不同引导），改一处即可。
+   */
   function greet(): void {
-    if (messages.value.length > 0) return
-    const m: AiMessage = {
-      id: uid(),
-      role: 'assistant',
-      kind: 'text',
-      at: new Date().toISOString(),
-      text: '你好，我是 Rein AI。可以直接告诉我你吃了什么（比如「一个鸡蛋和一碗米饭」），也可以让我查改应用里的数据：记一笔账、加个待办、看这周运动量、建一套训练课都行，或者随便聊聊天。',
-    }
-    messages.value.push(m)
-    persist(m)
+    /* 空会话由 AiBoard 呈现，此处不插消息 */
   }
 
   /* ---------- 持久化 ---------- */
@@ -1230,30 +1234,20 @@ export const useAiStore = defineStore('ai', () => {
     if (skipped > 0) toast.toast(`已写入 ${r.written} 项，跳过 ${skipped} 项未匹配`)
   }
 
-  /** 基于真实汇总数据生成今日饮食分析 */
+  /**
+   * 今日饮食分析 —— **走模型的真提问**，不是模板句。
+   *
+   * 原实现是把 kcal / 蛋白质缺口 / 钠 / 纤维拼成三行固定字符串，不调模型。
+   * 它有两个问题：① 与营养子页、主页状态条展示的是同一份数据，点它只是把
+   * 已经在屏幕上的数字重念一遍；② 建议是死的（「可以来一份鸡胸肉、鸡蛋或酸奶」
+   * 对每个人都一样），也不知道用户今天到底吃了什么。
+   *
+   * 现在只发一句话，让模型自己用 list_meals / search_food 查今天吃了什么、
+   * 再结合目标给建议 —— 它能看到真实条目，也能追问「那晚饭换成什么好」。
+   */
   async function analyzeToday(): Promise<void> {
-    const n = useNutritionStore()
-    await n.loadSummary(todayStr())
-    const s = n.summary
-    if (!s) {
-      pushAssistant({ text: '还没有今天的饮食数据。' })
-      return
-    }
-    const lines: string[] = []
-    lines.push(`今天已摄入约 ${Math.round(s.intake.kcal)} 大卡（目标 ${Math.round(s.targets.kcal)}），运动消耗 ${Math.round(s.exerciseKcal)} 大卡。`)
-    const proteinLeft = Math.max(0, Math.round(s.targets.protein - s.intake.protein))
-    lines.push(
-      proteinLeft > 0
-        ? `蛋白质还差 ${proteinLeft}g，可以来一份鸡胸肉、鸡蛋或酸奶。`
-        : '蛋白质已经达标，很棒。',
-    )
-    if (s.intake.sodiumMg > s.targets.sodiumMg) {
-      lines.push('钠摄入偏高，晚上请清淡一些、多喝水。')
-    }
-    if (s.intake.fiber < 10) {
-      lines.push('膳食纤维偏少，建议补充蔬菜、水果或全谷物。')
-    }
-    pushAssistant({ kind: 'analysis', text: lines.join('\n') })
+    if (busy.value) return
+    await sendText(`看看我今天的饮食摄入，分析一下结构和问题，并给出明天可以怎么调整的建议。`)
   }
 
   /** 自然语言 → 目标调整建议（仅生成待确认方案；失败时抛错由页面提示） */

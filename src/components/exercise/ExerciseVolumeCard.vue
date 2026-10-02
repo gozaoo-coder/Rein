@@ -1,58 +1,71 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronRight } from 'lucide-vue-next'
-
+import { ChevronRight, Sparkles } from 'lucide-vue-next'
+import MuscleMap from '@/components/exercise/MuscleMap.vue'
+import MuscleCatchupSheet from '@/components/exercise/MuscleCatchupSheet.vue'
+import TrainingScoreSheet from '@/components/exercise/TrainingScoreSheet.vue'
 import { sessionService } from '@/services/sessionService'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useExerciseStore } from '@/stores/exercise'
-import { useProgramStore } from '@/stores/program'
+import { useNutritionStore } from '@/stores/nutrition'
 import { todayStr } from '@/utils/date'
-import { parseBlob } from '@/utils/programEngine'
-import { computeTrainingAdvice, type MuscleLoadRow } from '@/utils/trainingAdvice'
+import { computeTrainingScore, groupLevelMap, groupTooltipMap, type TrainingScoreResult } from '@/utils/trainingScore'
+import { weakGroups } from '@/utils/weakMuscles'
 
 /**
- * 本周容量卡（运动页）：各肌群近 7 天加权组数 vs 科学建议区间。
- * 依据 = 每肌群每周组数地标（MEV/MAV/MRV，Israetel）+ 肌群激活档位折算
- * （主攻 1 组 / 辅助 0.5 / 稳定 0.25，见 utils/trainingAdvice）。
- * 无力量记录（或全部肌群无负荷）时整卡隐藏，不占位置。
+ * 肌肉热力图卡（运动页）：本周每块肌肉的**练够分**（《练够分 Lite》0–100，100 = 运动充分）。
+ *
+ * 呈现分两块，一块回答「哪里没练够」、一块回答「为什么、怎么补」：
+ *  1. **身体热力图**（MuscleMap 的 heat 模式）：一眼看出分布 —— 正面/背面/侧面三视图，
+ *     每块肌肉按所属评估组的练够分上色（低→高：红 / 琥珀 / 浅绿 / 实绿，未练为灰）。
+ *     用图而不是只用列表，是因为「背没练够」这种事在列表里要靠读名字，在图上是一眼的事。
+ *  2. **练够分说明抽屉**（TrainingScoreSheet）：以图表 + 文字讲清这个分怎么来的
+ *     （频率 / 强度 / 体感 三维加权），逐肌群列分，并给出规范里的建议。
+ *     点图与点卡头「说明 ›」进的是同一个抽屉。
+ *
+ * 与旧「本周容量」的区别：旧体系算的是**组数 vs MEV/MAV/MRV 地标**（只看量），
+ * 练够分是**多维执行充分度**（频率 + 组数/次数/重量 + 体感，按目标加权），
+ * 与《练够分 Lite》规范逐条对应（见 utils/trainingScore）。
+ *
+ * 力量记录一条都没有（近 42 天）时整卡隐藏，不占位置。
  */
 const exStore = useExerciseStore()
 const lib = useExerciseLibStore()
-const program = useProgramStore()
+const nutrition = useNutritionStore()
 
-const rows = ref<MuscleLoadRow[]>([])
+const result = ref<TrainingScoreResult | null>(null)
 const loaded = ref(false)
+/** 近 42 天是否有力量记录：决定整卡是否出现（完全没有 = 这个评估指标对他没意义） */
+const hasHistory = ref(false)
+const sheetOpen = ref(false)
+const catchupOpen = ref(false)
 
-const STATUS_LABEL: Record<MuscleLoadRow['status'], string> = {
-  low: '偏低',
-  ok: '达标',
-  high: '充足',
-  over: '超量',
-}
+/** 热力档位：评估组分数投影到 39 个细肌群（同组同色） */
+const heat = computed(() => (result.value ? groupLevelMap(result.value) : {}))
 
-/** 展示规则：本周有负荷的肌群优先，其次近 4 周练过但本周仍低于 MEV 的（提醒补量） */
-const visible = computed(() => {
-  const withLoad = rows.value.filter((r) => r.sets > 0)
-  const behind = rows.value.filter((r) => r.sets < r.mev && r.lastDate && r.sets === 0)
-  return [...withLoad, ...behind].slice(0, 7)
-})
+/** 悬停副标：「所属组 + 分数 + 档名」，比单个档名更有信息量 */
+const heatRows = computed(() => (result.value ? groupTooltipMap(result.value) : {}))
+
+/** 弱项：本周有记录但练够分 < 60（规范「不够」及以下） */
+const weak = computed(() => (result.value ? weakGroups(result.value.groups) : []))
 
 async function load(): Promise<void> {
   try {
     await lib.ensureLoaded()
     const sets = await sessionService.strengthRecentSets(42)
-    // 有生效方案时用它的每周训练天数缩放目标区间（3 练取下沿、5 练取上沿）
-    const trainingDays = program.active ? parseBlob(program.active).params.trainingDays : null
-    const advice = computeTrainingAdvice({
+    hasHistory.value = sets.length > 0
+    // 目标决定权重（增肌 30/50/20，减脂 35/35/30）—— 没有方案时按增肌
+    await nutrition.loadProfile()
+    result.value = computeTrainingScore({
       sets,
       library: lib.list,
       today: todayStr(),
-      trainingDaysPerWeek: trainingDays,
+      goal: nutrition.profile?.goal ?? null,
     })
-    rows.value = advice.muscleLoad
   } catch (e) {
-    console.warn('[volume] 容量统计失败', e)
-    rows.value = []
+    console.warn('[score] 练够分统计失败', e)
+    result.value = null
+    hasHistory.value = false
   } finally {
     loaded.value = true
   }
@@ -66,47 +79,63 @@ watch(
   () => void load(),
 )
 
-function pct(r: MuscleLoadRow): number {
-  if (r.mrv <= 0) return 0
-  return Math.min(100, Math.round((r.sets / r.mrv) * 100))
+function openSheet(): void {
+  sheetOpen.value = true
 }
 </script>
 
 <template>
-  <section v-if="!loaded || visible.length" class="card">
-    <header class="head">
-      <h2>本周容量</h2>
-      <span class="sub">各肌群做组数 vs 建议区间</span>
+  <section v-if="!loaded || hasHistory" class="card">
+    <header class="row between head">
+      <div class="row hleft">
+        <h2>肌肉热力图</h2>
+        <span class="sub">练够分 · 每块肌肉本周练够了没有</span>
+      </div>
+      <!-- 「说明 ›」：与「点图上任意位置」进的是同一个抽屉（练够分说明）。
+           两条路都留着 —— 按钮是**可发现**的入口（卡片上没有任何别的地方提示图能点），
+           点图是**顺手**的入口（手指本来就在图上）。22px 高的胶囊不占版面。 -->
+      <button class="detail row center" type="button" aria-label="查看练够分的计算说明与建议" @click="openSheet">
+        说明 <ChevronRight :size="13" :stroke-width="2.6" />
+      </button>
     </header>
 
-    <ul class="rows">
-      <li v-for="r in visible" :key="r.muscle" class="vrow">
-        <span class="mname">{{ r.label }}</span>
-        <span class="barwrap">
-          <i class="bar" :class="r.status" :style="{ width: `${pct(r)}%` }" />
-        </span>
-        <span class="mnum num">{{ r.sets }}<small>/{{ r.mav }}</small></span>
-        <span class="mstate" :class="r.status">{{ STATUS_LABEL[r.status] }}</span>
-      </li>
-    </ul>
+    <!-- 结论行：左边一句话说清"要不要管"，右边平均分回答"整体多少分" -->
+    <div v-if="result" class="concl row between">
+      <p class="headline">{{ result.summary }}</p>
+      <span v-if="result.trainedCount" class="avg num">
+        <b>{{ result.average }}</b> 分
+      </span>
+    </div>
 
-    <!-- 数据没回来时不渲染说明与入口：只有标题的空壳卡读起来像坏了 -->
-    <p v-if="visible.length" class="foot">
-      建议区间 {{ visible[0] ? `${visible[0].mev}–${visible[0].mav}` : '' }} 组/周按肌群与训练天数缩放；
-      间接刺激按激活档位折算（辅助 0.5 / 稳定 0.25 组）。
-    </p>
+    <!-- 身体热力图：点图进练够分说明抽屉 -->
+    <MuscleMap class="bodymap" :heat="heat" :heat-rows="heatRows" interactive @detail="openSheet" />
 
-    <RouterLink v-if="visible.length" class="more row center" to="/sports/exercises">
+    <!-- 弱项加练：只在真有弱项时出现（没弱项时这个按钮点了也没内容可给） -->
+    <button v-if="weak.length" class="catchup row center" type="button" @click="catchupOpen = true">
+      <Sparkles :size="15" />
+      弱项加练
+      <small>· {{ weak.length }} 个肌群练得不够</small>
+    </button>
+
+    <RouterLink class="more row center" to="/sports/exercises">
       动作库<ChevronRight :size="14" />
     </RouterLink>
+
+    <TrainingScoreSheet :open="sheetOpen" :result="result" @close="sheetOpen = false" />
+    <MuscleCatchupSheet :open="catchupOpen" :weak="weak" @close="catchupOpen = false" />
   </section>
 </template>
 
 <style scoped>
+/* 卡头：左「标题 + 副标」、右「说明 ›」。用 between 把胶囊顶到最右 ——
+   副标是解释性的（"练够了没有"），不该把可点的入口挤在它后面。 */
 .head {
-  display: flex;
-  align-items: baseline;
   gap: 8px;
+}
+
+.hleft {
+  gap: 8px;
+  min-width: 0;
 }
 
 .head h2 {
@@ -120,83 +149,72 @@ function pct(r: MuscleLoadRow): number {
   color: var(--text-3);
 }
 
-.rows {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.vrow {
-  display: grid;
-  grid-template-columns: 52px 1fr 56px 34px;
-  align-items: center;
-  gap: 9px;
-}
-
-.mname {
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-}
-
-.barwrap {
-  height: 8px;
+/* 「说明 ›」：与副标同一档字号，形态是胶囊（与画布卡的「详情 ›」同一套语汇）。
+   色取 --accent-strong 而不是 --accent —— 后者压在 --surface-2 上实测只有
+   4.27:1（亮）/ 3.82:1（暗），够不着 4.5；换成 strong 后是 5.54 / 5.31（量出来的）。 */
+.detail {
+  gap: 1px;
+  flex: none;
+  padding: 5px 10px 5px 12px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
-  overflow: hidden;
-}
-
-.bar {
-  display: block;
-  height: 100%;
-  border-radius: var(--radius-full);
-  background: var(--c-exercise);
-  transition: width var(--dur-slow) var(--ease-standard);
-}
-
-.bar.low {
-  background: var(--text-3);
-}
-
-.bar.high {
-  background: var(--c-balance);
-}
-
-.bar.over {
-  background: var(--danger);
-}
-
-.mnum {
-  text-align: right;
+  color: var(--accent-strong);
   font-size: var(--fs-caption);
   font-weight: 700;
+  transition: opacity var(--dur-fast) var(--ease-standard);
 }
 
-.mnum small {
-  font-weight: 500;
+.detail:active {
+  opacity: 0.6;
+}
+
+.concl {
+  margin-top: 8px;
+  gap: 10px;
+}
+
+.headline {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-2);
+  min-width: 0;
+}
+
+/* 平均分：数字用标题档（它是这张卡的第二个焦点），单位小一号压在基线上 */
+.avg {
+  flex: none;
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
-.mstate {
-  font-size: var(--fs-micro);
+.avg b {
+  font-size: var(--fs-title3);
   font-weight: 700;
-  text-align: right;
-  color: var(--text-3);
+  color: var(--text-1);
+  letter-spacing: -0.3px;
 }
 
-.mstate.ok {
-  color: var(--c-exercise-deep);
+/* 热力图：三视图并排，给足宽度（84px 是 MuscleMap 里定死的单视图宽，
+   3 视图 + 间距 ≈ 300px，430 视口下卡片内正好放得下） */
+.bodymap {
+  margin-top: 6px;
 }
 
-.mstate.over {
-  color: var(--danger);
+.catchup {
+  gap: 6px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 11px 16px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-subhead);
+  font-weight: 700;
 }
 
-.foot {
-  margin-top: 12px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  line-height: 1.6;
+.catchup small {
+  font-weight: 500;
+  opacity: 0.85;
 }
 
 .more {

@@ -665,6 +665,10 @@ function resolveExerciseId(key: string): string {
 /** 逐组记录 → 查询行（含 JOIN workouts 的日期与库内展示名） */
 function strengthRecord(r: MockStrengthSet) {
   const w = workouts.find((x) => x.id === r.workoutId)
+  // readiness 与 Rust 的 json_extract(state_json,'$.readiness') 同语义：
+  // 取来源会话的自评值，未自评 / 手动记录为 null（练够分引擎的「体感」输入）
+  const sess = w?.sessionId != null ? sessions.find((x) => x.id === w.sessionId) : undefined
+  const readiness = sess?.state?.readiness
   return {
     workoutId: r.workoutId,
     date: w?.date ?? r.createdAt.slice(0, 10),
@@ -677,6 +681,7 @@ function strengthRecord(r: MockStrengthSet) {
     reps: r.reps,
     sec: r.sec,
     warmup: r.warmup,
+    readiness: typeof readiness === 'number' ? readiness : null,
   }
 }
 

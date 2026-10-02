@@ -4,10 +4,12 @@ import { ChevronRight, Flame } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 import ExerciseBars from '@/components/exercise/ExerciseBars.vue'
+import { WORKOUT_META } from '@/config/domain'
 import { useExerciseStore } from '@/stores/exercise'
-import { WEEKDAY_LABELS } from '@/utils/date'
+import { fmtDateCn, minToHHmm, WEEKDAY_LABELS } from '@/utils/date'
+import type { WorkoutType } from '@/types'
 
-/** 本周运动概览：分钟柱状图 + 汇总，并说明与能量平衡的联动。
+/** 本周运动概览：分钟柱状图 + 汇总 + 最近一次，并说明与能量平衡的联动。
  *  linkTo 传入二级页路径时整卡可点，右侧显示「详情」角标（与 EnergySummary 同款）。 */
 const props = defineProps<{ linkTo?: string }>()
 
@@ -16,6 +18,29 @@ const router = useRouter()
 
 onMounted(() => {
   if (ex.weekWorkouts.length === 0) void ex.loadWeek()
+})
+
+/** 最近一次运动（store 的 recent 已按 id 倒序，[0] 就是最新那条） */
+const latest = computed(() => ex.recent[0] ?? null)
+
+/** 类型标签：行首那枚字章取它的首字（与 WorkoutRow 同一套语汇） */
+const latestTypeLabel = computed(() =>
+  latest.value ? WORKOUT_META[latest.value.type as WorkoutType].label : '',
+)
+
+/** 行首字章 */
+const latestInitial = computed(() => latestTypeLabel.value.slice(0, 1))
+
+/**
+ * 副信息 = 日期（有开始时刻就带上）。
+ * **刻意不再拼类型标签**：类型已经由图章那一个字表达了，而训练记录的名字常常
+ * 本身就带类型（「力量训练 · 下肢」），再拼一遍会读出「力量训练 … · 力量训练」。
+ */
+const latestMeta = computed(() => {
+  const w = latest.value
+  if (!w) return ''
+  const date = fmtDateCn(w.date)
+  return w.startMin != null ? `${date} · ${minToHHmm(w.startMin)}` : date
 })
 
 const bars = computed(() =>
@@ -56,6 +81,20 @@ function goDetail(): void {
       <Flame :size="15" style="color: var(--c-exercise)" />
       今日消耗 <b class="num">{{ ex.todayKcal }}</b> 大卡，已计入「能量与营养」
     </footer>
+
+    <!-- 最近一次：原来首页底部有一整张「最近运动」卡（标题 + 列表 + 删除按钮），
+         而它真正要说的只有一件事 ——「你最近练了这一次」。收成概览卡里的一行。
+         行本身**不可点**：整张卡已经是「去全部运动记录」的入口，这里再挂一个点击区
+         只会让人不知道点哪；要看细节就顺着卡走下去（用户要求「仅仅作为提示」）。
+         只显示一条也是同一条理由：这是提示，不是列表。 -->
+    <p v-if="latest" class="latest row">
+      <i class="l-ic col center">{{ latestInitial }}</i>
+      <span class="l-txt">
+        <b>{{ latest.name }}</b>
+        <em class="num">{{ latestMeta }}</em>
+      </span>
+      <span class="l-num num">{{ latest.durationMin }} 分钟</span>
+    </p>
   </section>
 </template>
 
@@ -107,6 +146,59 @@ function goDetail(): void {
 
 .foot b {
   color: var(--text-1);
+}
+
+/* 最近一次：一行，不做卡片。分割线比 .foot 那条浅一档 ——
+   同一张卡里两条等重的分隔线会把这块切得像两个独立区域，
+   而它是挂在概览下面的补充信息。 */
+.latest {
+  gap: 9px;
+  margin-top: 11px;
+  padding-top: 11px;
+  border-top: 0.5px solid var(--line);
+  min-width: 0;
+}
+
+.l-ic {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--radius-s);
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
+  font-size: var(--fs-caption);
+  font-weight: 800;
+}
+
+.l-txt {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+
+.l-txt b {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.l-txt em {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.l-num {
+  flex: none;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
 }
 
 @media (prefers-reduced-motion: reduce) {

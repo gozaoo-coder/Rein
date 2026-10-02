@@ -4,10 +4,16 @@ import { computed, ref, watch } from 'vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { sessionService } from '@/services/sessionService'
 import { WORKOUT_META } from '@/config/domain'
+import { SCORE_GROUP_LABELS, SCORE_GROUP_OF, type Level, type MuscleKey, type ScoreGroupKey } from '@/config/muscles'
+import { useExerciseLibStore } from '@/stores/exerciseLib'
+import { useNutritionStore } from '@/stores/nutrition'
 import { usePlanStore } from '@/stores/plan'
 import { fmtClock, fmtPace } from '@/stores/run'
-import { fmtDateCn, minToHHmm } from '@/utils/date'
+import { todayStr, fmtDateCn, minToHHmm } from '@/utils/date'
 import { projectTrack, trackAscentM, trackSplits } from '@/utils/geo'
+import { libraryMuscles } from '@/utils/libraryMuscles'
+import { ACTIVATION_WEIGHT } from '@/utils/trainingAdvice'
+import { computeTrainingScore, type GroupScore, type TrainingScoreResult } from '@/utils/trainingScore'
 import type { DoneSet, PlanExercise, RunSnapshot, Workout } from '@/types'
 
 /**
@@ -39,18 +45,104 @@ type Detail =
 const detail = ref<Detail | null>(null)
 const loadFailed = ref(false)
 
+/* ---------- 肌群练够分提醒 ----------
+ * 练完一次力量课，下一个问题是「这次练的肌群，本周练够了吗」——
+ * 做组明细回答的是「练了什么」，这里回答「练够了没有」。
+ * 数据全部来自既有的纯函数层（trainingScore 的练够分 + 激活折算），
+ * 不新造口径：本次各评估组组数按激活档位折算（主攻 1 / 辅助 0.5 / 稳定 0.25），
+ * 周分数与「本周练够分」卡同一份算法，所以两处数字永远对得上。 */
+const lib = useExerciseLibStore()
+const weeklyLoad = ref<TrainingScoreResult | null>(null)
+
+/**
+ * 本次训练各评估组的加权组数（只算正式组 —— 热身不计入，与全局口径一致）。
+ * 折叠到评估组：细肌群先经 SCORE_GROUP_OF 归组，同一动作同一次里同一组只按组内
+ * 最高激活档计一次，避免卧推那种「胸 + 三头 + 前束」各记一份的虚高组数。
+ */
+const sessionMuscles = computed<{ group: ScoreGroupKey; label: string; sets: number }[]>(() => {
+  if (detail.value?.source !== 'course') return []
+  const exById = new Map((detail.value.exercises ?? []).map((e) => [e.id, e]))
+  const acc = new Map<ScoreGroupKey, number>()
+  for (const row of courseRows.value) {
+    if (row.kind !== 'strength' || row.done.length === 0) continue
+    // 课程被删过的动作取不到肌群表，libraryMuscles 会按名称规则兜底（同一口径）
+    const map = libraryMuscles({ name: row.name, muscles: exById.get(row.key)?.muscles ?? {} })
+    const byGroup = new Map<ScoreGroupKey, Level>()
+    for (const [m, lv] of Object.entries(map) as [MuscleKey, Level][]) {
+      const g = SCORE_GROUP_OF[m]
+      if (!g) continue
+      const cur = byGroup.get(g)
+      if (!cur || lv > cur) byGroup.set(g, lv)
+    }
+    for (const [g, lv] of byGroup) {
+      acc.set(g, (acc.get(g) ?? 0) + (ACTIVATION_WEIGHT[lv] ?? 0.5) * row.done.length)
+    }
+  }
+  return [...acc.entries()]
+    .map(([group, sets]) => ({ group, label: SCORE_GROUP_LABELS[group], sets: Math.round(sets * 10) / 10 }))
+    .sort((a, b) => b.sets - a.sets)
+})
+
+/** 提醒内容：本次练到的组 × 该组的本周练够分。取贡献最大的 5 个，再多就不是「提醒」了 */
+const muscleReminder = computed(() => {
+  if (!sessionMuscles.value.length || !weeklyLoad.value) return null
+  const byGroup = new Map(weeklyLoad.value.groups.map((g) => [g.group, g]))
+  const rows = sessionMuscles.value
+    .map((s) => ({ group: s.group, label: s.label, sets: s.sets, score: byGroup.get(s.group) }))
+    .filter((x): x is typeof x & { score: GroupScore } => !!x.score)
+    .slice(0, 5)
+  if (!rows.length) return null
+  return { rows, low: rows.filter((x) => x.score.score < 60).length }
+})
+
+/** 直接给规范的六段档名（运动充分…明显不足） */
+function statusLabel(g: GroupScore): string {
+  return g.band
+}
+
+/**
+ * 练够分条：**满格 = 100 分（运动充分）**，与旁边的 `NN 分` 同源。
+ *
+ * 分数本身就是 0–100 的最终结论，不再拿别的量表来换算 —— 条走到哪、
+ * 数字写到哪、档名说到哪，三处永远一致（不再另设量表基准）。
+ */
+function loadPct(g: GroupScore): number {
+  return Math.round(Math.max(0, Math.min(1, g.score / 100)) * 100)
+}
+
 watch(
   () => [props.open, props.workout?.id] as const,
   ([open]) => {
     if (!open || !props.workout) {
       detail.value = null
       loadFailed.value = false
+      weeklyLoad.value = null
       return
     }
     void load(props.workout)
+    void loadWeeklyLoad()
   },
   { immediate: true },
 )
+
+/**
+ * 本周各肌群练够分（「肌群练够分提醒」用）。与「本周练够分」卡同一份算法与同一窗口
+ * （42 天记录，引擎内部再切本周 7 天）。目标取自营养档案（cut → 减脂，其余 → 增肌）。
+ * 失败时置 null、整块提醒不渲染 —— 这条是补充信息，不能因为它把详情抽屉带崩。
+ */
+async function loadWeeklyLoad(): Promise<void> {
+  try {
+    await lib.ensureLoaded()
+    const sets = await sessionService.strengthRecentSets(42)
+    const nutrition = useNutritionStore()
+    await nutrition.loadProfile()
+    const goal = nutrition.profile?.goal ?? null
+    weeklyLoad.value = computeTrainingScore({ sets, library: lib.list, today: todayStr(), goal })
+  } catch (e) {
+    console.warn('[workout-detail] 本周练够分加载失败', e)
+    weeklyLoad.value = null
+  }
+}
 
 async function load(w: Workout): Promise<void> {
   detail.value = null
@@ -384,6 +476,26 @@ const courseTotals = computed(() => {
           <div v-if="courseTotals.volume <= 0 && courseTotals.timedSec <= 0" class="cell"><div class="v num">--</div><div class="k">暂无明细数据</div></div>
         </div>
 
+        <!-- 肌群练够分提醒：紧接统计格 —— 上面那两个数字说的是「这次练了多少」，
+             这里说的是「这次练的肌群，本周练够了没有」。数据与「本周练够分」卡同源。 -->
+        <div v-if="muscleReminder" class="mvol">
+          <div class="row between mvol-head">
+            <span class="mv-t">肌群练够分 · 本周</span>
+            <span class="mv-s" :class="{ low: muscleReminder.low > 0 }">
+              {{ muscleReminder.low > 0 ? `${muscleReminder.low} 个仍不足` : '均已练够' }}
+            </span>
+          </div>
+          <div v-for="m in muscleReminder.rows" :key="m.group" class="mv-row row">
+            <span class="mv-n">{{ m.label }}</span>
+            <span class="mv-barwrap"><i class="mv-bar" :class="{ low: m.score.score < 60 }" :style="{ width: `${loadPct(m.score)}%` }" /></span>
+            <span class="mv-num num">{{ m.score.score }}<small> 分</small></span>
+            <span class="mv-st" :class="{ low: m.score.score < 60 }">{{ statusLabel(m.score) }}</span>
+          </div>
+          <p class="mv-note">
+            数字 = 本周练够分（0–100，满分即「运动充分」）· 条满格 = 100 分。分数按 频率/强度/体感 加权，间接刺激按激活档位折算，只取本周既有训练记录计算。
+          </p>
+        </div>
+
         <p class="sec">做组明细<span v-if="courseTotals.earlyEnd" class="early"> · 提前结束</span></p>
         <div v-for="row in courseRows" :key="row.key" class="excard">
           <div class="row exhead">
@@ -547,6 +659,105 @@ const courseTotals = computed(() => {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
   margin-top: 16px;
+}
+
+/* ---------- 肌群练够分提醒 ----------
+   与统计格同一块「次级底」（--surface-2），但用圆角 + 行内条把它读成"一组数据"
+   而不是又一张卡：这一块是解释性的补充，不该和上面的完成组数/总容量抢层级。 */
+.mvol {
+  margin-top: 12px;
+  padding: 13px 14px;
+  border-radius: 16px;
+  background: var(--surface-2);
+}
+
+.mvol-head {
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.mv-t {
+  font-size: var(--fs-footnote);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.mv-s {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--c-exercise-deep);
+}
+
+/* 有不足（练够分 < 60）时用青色 —— 与「不足」这一档在全应用的颜色一致（周分数的 low 也是它） */
+.mv-s.low {
+  color: var(--c-balance);
+}
+
+.mv-row {
+  display: grid;
+  grid-template-columns: 74px 1fr 52px 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.mv-n {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mv-barwrap {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
+  overflow: hidden;
+}
+
+.mv-bar {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--c-exercise);
+  transition: width var(--dur-slow) var(--ease-standard);
+}
+
+/* 不足（练够分 < 60）才染色提醒，其余保持中性主色 —— 练够与否只分这一条线 */
+.mv-bar.low {
+  background: var(--c-balance);
+}
+
+.mv-num {
+  text-align: right;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.mv-num small {
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.mv-st {
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  text-align: right;
+  color: var(--text-3);
+}
+
+.mv-st.low {
+  color: var(--c-balance);
+}
+
+.mv-note {
+  margin-top: 7px;
+  font-size: var(--fs-micro);
+  line-height: 1.55;
+  color: var(--text-3);
 }
 
 .cell {

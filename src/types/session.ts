@@ -163,6 +163,12 @@ export interface StrengthSetRecord {
   reps: number | null
   sec: number | null
   warmup: boolean
+  /**
+   * 该组所属会话的「今日状态自评」1..5（`workout_sessions.state_json.readiness`，Rust 侧拍平）。
+   * 未自评 / 手动补录为 null —— 练够分引擎的「体感」输入即取自此
+   * （映射：5、4→良好 / 3→一般 / 1、2→差；缺失按规范默认 60 分并降置信度）。
+   */
+  readiness?: number | null
 }
 
 /** 单次训练里某动作的聚合（曲线/明细展示用，由前端按 date 聚合） */

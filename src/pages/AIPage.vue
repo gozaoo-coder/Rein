@@ -1,13 +1,32 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Camera, Check, ChartPie, Copy, FileText, Folder, FolderUp, History, Images, Mic, Plus, Quote, RotateCcw, SendHorizontal, Trash2, X } from 'lucide-vue-next'
+import {
+  Archive,
+  Camera,
+  ChartPie,
+  Check,
+  Copy,
+  FileText,
+  Folder,
+  FolderUp,
+  History,
+  Images,
+  Mic,
+  Plus,
+  Quote,
+  RotateCcw,
+  Search,
+  SendHorizontal,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from 'lucide-vue-next'
 
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import GlassSurface from '@/components/common/GlassSurface.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
-import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
 import ProcessSection from '@/components/ai/ProcessSection.vue'
 import MdText from '@/components/common/MdText.vue'
 import MemoPickerSheet from '@/components/voice/MemoPickerSheet.vue'
@@ -16,19 +35,21 @@ import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import AiBoard from '@/components/ai/AiBoard.vue'
 import { MEAL_LABELS, MEAL_ORDER, suggestMeal } from '@/config/domain'
 import { useToast } from '@/composables/useToast'
+import { kbService } from '@/services/kbService'
 import { useAiStore } from '@/stores/ai'
 import { useModelsStore } from '@/stores/models'
 import { copyText } from '@/utils/clipboard'
-import { listFoodDrafts, removeFoodDraft, type FoodDraft } from '@/utils/foodDrafts'
+import { listFoodDrafts, removeFoodDraft, saveFoodDraft, type FoodDraft } from '@/utils/foodDrafts'
 import { bitmapToJpeg, decodeBitmap, DEFAULT_IMAGE_EDGE } from '@/utils/image'
 import { officeKindOf, parseOffice, parseTextFile, type ParsedDoc } from '@/utils/documentParse'
 import { shareInbox } from '@/system/shareInbox'
 import type { SendImage } from '@/stores/ai'
 import type { VoiceMemo } from '@/types'
 import { fmtDateCn, toDateStr } from '@/utils/date'
-import type { AiMessage, AiDocMeta, MealType } from '@/types'
+import type { AiMessage, AiDocMeta, KbEmbeddingMode, MealType } from '@/types'
 
 /** AI 页：拍照直识别（可编辑卡片 + 草稿箱）/ 文字记饮食 / 数据工具对话。 */
 const ai = useAiStore()
@@ -96,9 +117,30 @@ function editDraft(d: FoodDraft): void {
   void nextTick(() => foodSheet.value?.openDraft(d))
 }
 
+/** 看板入口：把现成的那句话放进输入框，**不直接发送** ——
+ *  「查我这周练了几次」该由模型决定调哪个工具、查到什么粒度，
+ *  前端替它执行就又变成一块设定好的卡片。 */
+function askFromBoard(text: string): void {
+  draft.value = text
+  void nextTick(() => {
+    autoGrow()
+    inputEl.value?.focus()
+  })
+}
+
 function deleteDraft(id: string): void {
   removeFoodDraft(id)
   refreshDrafts()
+}
+
+/** 识别卡 → 存草稿箱。
+ *  缩略图取同一条消息的压缩图（imageBase64 就是压缩后的那一份），
+ *  文字解析来的卡没有图，留空即可 —— 草稿箱里那格会显示占位图标。 */
+function stashParse(m: AiMessage): void {
+  if (!m.items?.length) return
+  saveFoodDraft({ thumbBase64: m.imageBase64 ?? undefined, items: m.items })
+  refreshDrafts()
+  toast.toast('已存入草稿箱，可在「历史 · 饮食草稿箱」里继续处理')
 }
 
 function fmtDraftTime(iso: string): string {
@@ -190,6 +232,74 @@ const menuTarget = ref<AiMessage | null>(null)
 /** 长按菜单锚定元素：被长按的那条消息气泡 */
 const menuAnchor = ref<HTMLElement | null>(null)
 const quote = ref<AiMessage | null>(null)
+
+/* ---------- 「历史」菜单（bind 式：锚定左上角那颗圆钮弹出，带图标） ----------
+ *  原来左上角是「文件」「历史记录」两颗圆钮，功能都是「回到过去的东西」，
+ *  却各占一颗 38px 圆钮 —— 一颗装一个子页面，形态上比同级动作更重。
+ *  合并成一颗：点开是四项，第二项（搜索历史）按知识库当前的检索模式给副标，
+ *  模式名不是写死的 —— settingsGet 返回什么就显示什么（关键词 / 本地模型 / 云端）。 */
+
+/** 锚点：页头那颗「历史」圆钮 */
+const histBtn = ref<HTMLElement | null>(null)
+const histMenuOpen = ref(false)
+
+/** 检索模式只用于菜单副标，拿不到就不显示（不影响功能） */
+const embedMode = ref<KbEmbeddingMode | null>(null)
+
+onMounted(() => {
+  void kbService
+    .settingsGet()
+    .then((s) => {
+      embedMode.value = s.embeddingMode
+    })
+    .catch(() => {
+      /* 索引未初始化等：菜单副标留空 */
+    })
+})
+
+/** 当前检索模式的中文名（副标用；判不出来时回落到「关键词」——那也是后端默认值） */
+const embedModeLabel = computed(() => {
+  switch (embedMode.value) {
+    case 'local':
+      return '本地模型'
+    case 'cloud':
+      return '云端'
+    case 'keyword':
+      return '关键词'
+    default:
+      return '关键词'
+  }
+})
+
+const histActions = computed<MenuItem[]>(() => [
+  { label: '文件', value: 'files', icon: Folder },
+  { label: `搜索历史 · ${embedModeLabel.value}`, value: 'search', icon: Search },
+  {
+    label: drafts.value.length ? `饮食草稿箱 · ${drafts.value.length}` : '饮食草稿箱',
+    value: 'drafts',
+    icon: Archive,
+  },
+  { label: '历史会话', value: 'chats', icon: History },
+])
+
+/** 「搜索历史」：预置一个检索词进输入框，交给对话流里的 search_knowledge 处理。
+ *  刻意**不**自己调 kbService —— 那会绕过模型，用户搜到什么、要不要接着问，
+ *  都得留在同一条会话里才成立。 */
+function onHistSelect(value: string): void {
+  if (value === 'files') {
+    void router.push({ name: 'ai-files' })
+  } else if (value === 'search') {
+    draft.value = '搜一下我的历史记录：'
+    void nextTick(() => {
+      autoGrow()
+      inputEl.value?.focus()
+    })
+  } else if (value === 'drafts') {
+    openDrafts()
+  } else {
+    drawerOpen.value = true
+  }
+}
 
 /* ---------- @纪要引用（输入 @ 弹出选择器，发送时注入纪要总结与逐句转写） ---------- */
 const memoPickerOpen = ref(false)
@@ -521,26 +631,45 @@ async function onMenuSelect(value: string): Promise<void> {
          页头仍是「内容从渐进模糊里滚过」（遮罩见 ProgressiveBlur/PageHeader）；
          底栏不是 —— 它是一组悬浮玻璃，正文从它们背后与两侧滚过。 -->
     <div ref="listEl" class="msgs">
-      <PageHeader title="AI" compact>
+      <!-- 无标题页头：左右都是 38px 圆钮，中间不再放「AI」两个字的悬空标签。
+           页面身份由内容（看板 / 消息流）与 Dock 的选中态表达。 -->
+      <PageHeader compact>
         <template #lead>
-          <button class="hdr-btn" aria-label="文件" @click="router.push({ name: 'ai-files' })">
-            <Folder :size="18" />
-          </button>
-          <button class="hdr-btn" aria-label="历史记录" @click="drawerOpen = true">
-            <History :size="19" />
+          <!-- 左上角唯一入口：「历史」。原来分列「文件」「历史记录」两颗圆钮，
+               右下角又一枚「新建对话」圆钮 + 一枚「管理模型」胶囊 —— 四个控件里
+               三种形态（圆钮 / 圆钮 / 圆钮 / 胶囊），重要性却与形态相反：
+               真正每天要用的「记一笔」藏在最左边，而形态最重的胶囊是配置。
+               现在按「频率」重排：历史（合并入口，收起四项）· 新建对话（主操作，实底）
+               · 管理模型（降级为次要圆钮，形态与其余两枚一致）。 -->
+          <button
+            ref="histBtn"
+            class="hdr-btn"
+            aria-label="历史"
+            :aria-expanded="histMenuOpen"
+            @click="histMenuOpen = !histMenuOpen"
+          >
+            <History :size="18" :stroke-width="2.2" />
           </button>
         </template>
         <template #action>
           <button class="hdr-btn accent" aria-label="新建对话" @click="ai.newChat()">
-            <Plus :size="17" :stroke-width="2.6" />
+            <Plus :size="18" :stroke-width="2.6" />
           </button>
-          <ManageModelsButton />
+          <button class="hdr-btn" aria-label="管理模型" @click="router.push({ name: 'ai-models' })">
+            <SlidersHorizontal :size="17" :stroke-width="2.2" />
+          </button>
         </template>
       </PageHeader>
 
       <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 吸顶页头与底栏都留在层外，
            超伸时只有消息位移（system/rubberScroll） -->
       <div class="rubber-layer" data-rubber-content>
+        <!-- 空会话：会话看板取代原来那条「你好，我是 Rein AI……」。
+             那条字是纯文字气泡，与下面第一条真实消息形态完全一样（都居左、都一个气泡），
+             分不清哪条是机器说的；而且它答的是「我是谁」，
+             用户真正要问的是「我现在能干什么」—— 看板给的是后者。 -->
+        <AiBoard v-if="ai.messages.length === 0" @ask="askFromBoard" @drafts="openDrafts" />
+
         <template v-for="m in ai.messages" :key="m.id">
           <div
             v-if="showMsg(m)"
@@ -631,8 +760,18 @@ async function onMenuSelect(value: string): Promise<void> {
                     :options="MEAL_ORDER.map((x) => ({ value: x, label: MEAL_LABELS[x] }))"
                     @update:model-value="mealByMsg[m.id] = $event as MealType"
                   />
-                  <div class="row actions between">
-                    <small class="t-3">确认后写入今日{{ MEAL_LABELS[mealByMsg[m.id] ?? suggestMeal()] }}</small>
+                  <!-- 两个去向。原先只有「加入记录」，于是底部那个「草稿箱」入口
+                       永远是空的 —— saveFoodDraft 只在草稿箱自己的弹层里被调用过，
+                       也就是「先进草稿箱、再从草稿箱写入」这条唯一路径没法从聊天流起步。
+                       现在两条路并排：当场记，或留到稍后（改重量 / 补匹配）。 -->
+                  <div class="row actions">
+                    <button
+                      class="stash"
+                      :disabled="m.items.length === 0"
+                      @click="stashParse(m)"
+                    >
+                      <Archive :size="14" /> 存草稿箱
+                    </button>
                     <button
                       class="commit"
                       :disabled="m.items.every((it) => it.foodId == null)"
@@ -641,6 +780,9 @@ async function onMenuSelect(value: string): Promise<void> {
                       加入记录
                     </button>
                   </div>
+                  <p v-if="m.items.every((it) => it.foodId == null)" class="t-3 parse-hint">
+                    全部未匹配到食物库，无法直接写入 —— 可先存草稿，稍后调整。
+                  </p>
                 </template>
                 <p v-else class="committed">
                   <Check :size="14" />
@@ -666,14 +808,15 @@ async function onMenuSelect(value: string): Promise<void> {
          玻璃仍然浮在页面上（两侧页边距 + 与 Dock 之间 10px 空气），只是没有东西从它
          下面穿过 —— 这也正是「挡住」的来源。折射名单见 .chips / .cbar 的注释。 -->
     <div class="composer">
-      <!-- 快捷操作：令牌材质的药丸（.glass-surface），**不折射** —— 这一组里只有
-           输入条那块值得挂 url() 背景滤镜，理由与实测数字写在这条样式下面。 -->
-      <div class="chips">
-        <button class="chip glass-surface" :disabled="ai.busy" @click="ai.analyzeToday()">分析今日饮食</button>
-        <button class="chip glass-surface" @click="openDrafts()">
-          草稿箱{{ drafts.length > 0 ? ` · ${drafts.length}` : '' }}
-        </button>
-      </div>
+      <!-- 快捷操作条已撤掉：原来这里是两颗玻璃药丸「分析今日饮食」「草稿箱」。
+           两颗都有问题：
+             · 「分析今日饮食」—— analyzeToday 是三句**写死**的话（看 nutrition store
+               的实现：把 kcal / 蛋白质缺口 / 钠 / 纤维拼成三行字符串），不走模型；
+               而营养子页与主页状态条本来就在展示同一份数据。放在输入栏上方、
+               做成「点一下就出一张设定好的卡片」，等于让用户点了才发现得到的是
+               模板句 —— 已移除，改成看板上「拍照识食 / 看体重」这类真提问。
+             · 「草稿箱」—— 在存草稿动作补上之前（见解析卡），这个入口永远空着；
+               现在存草稿在解析卡上，而查看入口并进了左上角「历史」菜单。 -->
 
       <!-- 引用条 -->
       <div v-if="quote" class="quote-bar row">
@@ -780,6 +923,16 @@ async function onMenuSelect(value: string): Promise<void> {
       @select="onCamSelect"
     />
 
+    <!-- 「历史」菜单（bind：依附页头那颗圆钮弹出。文件 / 搜索历史 / 饮食草稿箱 / 历史会话） -->
+    <AppMenu
+      :open="histMenuOpen"
+      :actions="histActions"
+      :anchor="histBtn"
+      title="历史"
+      @close="histMenuOpen = false"
+      @select="onHistSelect"
+    />
+
     <HistoryDrawer :open="drawerOpen" @close="drawerOpen = false" />
     <MemoPickerSheet :open="memoPickerOpen" @close="memoPickerOpen = false" @pick="onPickMemo" />
 
@@ -841,7 +994,32 @@ async function onMenuSelect(value: string): Promise<void> {
      （间距不变量：AI 输入栏底→底栏顶 = --cb-gap，见 scripts/e2e-layout-guard.mjs）。
      悬浮运动条停靠在底部时写入的 --wbar-reserve 一并计进来。 */
   --cb-gap: 10px;
-  padding: 0 var(--page-pad-x) calc(var(--dock-top) + var(--cb-gap) + var(--wbar-reserve, 0px));
+  /* 底栏（输入条）底边到视口底的距离。移动端让开 Dock；--wbar-reserve 是
+     悬浮运动条停靠底部时由组件写入的高度预留，一并计进来，否则两者会叠。 */
+  --cb-bottom: calc(var(--dock-top) + var(--cb-gap) + var(--wbar-reserve, 0px));
+  /* ⚠️ 这里**不再**给底部留内边距（原为 `padding-bottom: var(--cb-bottom)`）。
+     留了它，消息区就被截在输入条底边（实测 850），而 Dock 在 860 ——
+     于是本页成了全应用唯一「内容够不到主导航」的页面。别的页面（记账 / 首页 / 运动…）
+     的滚动容器 `.scrollbody` 一律铺满整个视口，内容从 Dock 底下穿过、透过玻璃看得见
+     （见 docs/ARCHITECTURE.md 的 Dock 一条；实测记账页滚到底时最后一行正压在 Dock 下面）。
+     AI 页因为自带内层滚动区（.msgs）才要单独对齐。
+     输入条是 absolute 定位（`bottom: var(--cb-bottom)`），不依赖这段内边距 ——
+     去掉它只改滚动区高度，不动输入条与 Dock 之间的 10px（e2e-layout-guard 守着）。 */
+  padding: 0 var(--page-pad-x);
+  position: relative;
+  /* 滚动区的底部留白 = 让开**输入条** + 一点呼吸。
+     它和上面那行内边距是两件事：内边距决定「滚动区能铺到哪」，
+     留白决定「最后一行内容能停在哪」。输入条顶边距视口底 = --cb-bottom + 条高(58)，
+     所以留白取这个值再 +10 —— 滚到底时最后一条正文停在输入条上方 10px，
+     既不会被压住半行，也不会在底部留出一块读不出意义的空白。
+     引用条 / 附图芯片出现时 composer 会往上长，那是**正在输入**的瞬时状态，
+     用户此刻的注意力在输入栏，不必为它们预留。 */
+  --cb-reserve: calc(var(--cb-bottom) + 68px);
+}
+
+/* 桌面：没有底部 Dock（TabBar 只在移动端渲染），底栏贴着窗口下缘 */
+.desk-main .page {
+  --cb-bottom: 26px;
 }
 
 /* 消息长按菜单：禁用原生文本选择避免冲突（复制走菜单） */
@@ -964,14 +1142,16 @@ async function onMenuSelect(value: string): Promise<void> {
    滚动容器按 CSS 规范会裁掉溢出——只要有一个轴不是 visible，另一个轴也会变成 auto——
    于是气泡的 --shadow-card（12px 偏移 + 32/80px 模糊）被自己的滚动区硬切出直边。
    留出这段横向余量，影子才有地方扩散；气泡内容宽度与之前一致。
-   flex 列：页头与底栏都是它的子项（sticky），内容从两者之间滚过；底部内边距挪给底栏自理。 */
+   flex 列：页头是子项（sticky），内容从它下面滚过。
+   底部 padding 给底栏留出 --cb-reserve：底栏是 overlay，正文要从它下面走过，
+   但**最后一条必须能滚出玻璃下方**（留白就是为此，见 .page 里的同名变量）。 */
 .msgs {
   flex: 1;
   display: flex;
   flex-direction: column;
   margin: 0 calc(-1 * var(--page-pad-x));
   overflow-y: auto;
-  padding: 0 var(--page-pad-x);
+  padding: 0 var(--page-pad-x) var(--cb-reserve);
   scrollbar-width: none;
 }
 
@@ -984,15 +1164,32 @@ async function onMenuSelect(value: string): Promise<void> {
   margin-top: var(--safe-top);
 }
 
-/* 底栏：悬浮 dock 栏的**外观**，位置是普通的一行（.msgs 的兄弟，不是它的最后一格）——
-   正文因此永远在它上面，不会有东西从玻璃底下穿过。自身建立层叠上下文，
-   玻璃与芯片的层叠关系（浅色层在玻璃里）与别的档位一致。 */
+/* 底栏：**悬浮在滚动区之上**，内容从玻璃下方走过。
+   （此前它被特意移出滚动容器、独占一行，理由是那两颗 chips 之间的缝会漏出
+   被切断的行 —— 见上方「快捷操作条已撤掉」那段。chips 一撤，这个阻塞点就不存在了：
+   剩下的唯一一块玻璃是输入条 `.cbar`，它是整幅药丸、没有缝，内容从它背后走
+   只会整块被模糊/折射盖住，不会露出半截字。所以改回 overlay ——
+   这才是液态玻璃该有的样子：玻璃浮在内容上，内容在它下面流。）
+
+   位置用 --cb-bottom 而不是写死：移动端要让开 Dock（--dock-top + --cb-gap），
+   桌面没有 Dock（TabBar 只在移动端渲染），取页面自己的 padding-bottom。
+   这条间距是 e2e-layout-guard.mjs 的断言之一（输入栏底 → Dock 顶 = 10）。 */
 .composer {
-  position: relative;
+  position: absolute;
+  left: var(--page-pad-x);
+  right: var(--page-pad-x);
+  bottom: var(--cb-bottom);
   z-index: 30;
   display: flex;
   flex-direction: column;
-  flex: none;
+  /* 不用 .page 的横向内边距了（自己写 left/right），故宽度即 .msgs 的内容宽 */
+  pointer-events: none;
+}
+
+/* 只有输入条本体吃指针事件：.composer 整块铺满（含 chips / 引用条 / 附图区），
+   那些区域是「看得见但不挡」—— 否则它们上方那半张内容会点不到。 */
+.composer > * {
+  pointer-events: auto;
 }
 
 .msgs::-webkit-scrollbar {
@@ -1197,14 +1394,34 @@ async function onMenuSelect(value: string): Promise<void> {
   margin-top: 10px;
 }
 
+/* 解析卡的两个去向：存草稿（次要）/ 加入记录（主操作）。
+   两个都排右侧、主操作在最后 —— 与弹层里 FoodParseSheet 的那条同一条约定。 */
 .actions {
   margin-top: 12px;
-  align-items: flex-end;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
-.actions small {
-  max-width: 55%;
-  line-height: 1.4;
+.stash {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 16px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+}
+
+.stash:disabled {
+  opacity: 0.4;
+}
+
+.parse-hint {
+  margin-top: 8px;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
 }
 
 .commit {
@@ -1241,33 +1458,7 @@ async function onMenuSelect(value: string): Promise<void> {
   white-space: pre-line;
 }
 
-/* 快捷操作：两块并列的令牌材质药丸。它们与输入条同属「浮起来的一组」，
-   但只有输入条挂 url() 折射（名单有预算，见 .chip 上面的注释）。 */
-.chips {
-  display: flex;
-  gap: 8px;
-  padding: 0 0 8px;
-}
-
-/* 芯片：牌子自己就是玻璃（底 / 受光边 / 光学层 / 模糊全在 .glass-surface 里），
-   命中区也是它本身，没有里外两层。 */
-.chip {
-  padding: 6px 14px;
-  border-radius: var(--radius-full);
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-1);
-  white-space: nowrap;
-  transition: opacity var(--dur-fast) var(--ease-standard);
-}
-
-.chip:active {
-  opacity: 0.6;
-}
-
-.chip:disabled {
-  opacity: 0.5;
-}
+/* 「快捷操作」药丸（.chips / .chip）已随那两颗 chip 一起撤掉，样式不再有引用。 */
 
 /* 待发送附图芯片（Kimi 式：缩略图 + 右上角移除钮，多张自动换行） */
 .attach-row {
@@ -1553,8 +1744,5 @@ async function onMenuSelect(value: string): Promise<void> {
      于是滚动区仍与 .page 同宽，气泡的影子不会被裁。 */
   max-width: calc(var(--chat-col) + 2 * var(--page-pad-x));
   margin-inline: auto;
-  /* 桌面没有底部 Dock（TabBar 只在移动端渲染），输入条不必再让开 72px，
-     贴着窗口下缘一小段呼吸即可 */
-  padding-bottom: 26px;
 }
 </style>

@@ -74,6 +74,11 @@ pub struct StrengthSetRecord {
     pub reps: Option<i64>,
     pub sec: Option<i64>,
     pub warmup: bool,
+    /// 该组所属训练会话的「今日状态自评」1..5（workout_sessions.state_json 里的 readiness）。
+    /// 未自评 / 手动补录的记录为 None —— 练够分引擎的「体感」输入即取自此
+    /// （前端映射：5、4→良好 / 3→一般 / 1、2→差；缺失按规范默认 60 分并降置信度）。
+    /// 本来是会话级字段，这里按组拍平返回：一次查询就能同时喂「重量曲线」与「练够分」。
+    pub readiness: Option<i64>,
 }
 
 /// 有力量记录的动作引用（按最近训练在前）
