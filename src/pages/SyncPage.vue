@@ -224,6 +224,10 @@ onUnmounted(() => {
   <div class="page">
     <PageHeader title="多设备同步" back />
 
+    <!-- 桌面栅格：壳层只把 .page 的**直接子项**摊成两栏，而这一页要的是
+         「本机 | 已配对设备 并排 + 加一台设备通栏」，所以自带一层 .d-grid 承接。
+         手机端它只是个普通 div，块流与卡片间距都不变 -->
+    <div class="d-grid sync-grid">
     <!-- 本机 -->
     <section class="card">
       <h2 class="gtitle">本机</h2>
@@ -289,8 +293,8 @@ onUnmounted(() => {
       </template>
     </section>
 
-    <!-- 加一台设备 -->
-    <section class="card">
+    <!-- 加一台设备：桌面上通栏后内部再分两栏（见 .desk-main 那段注释） -->
+    <section class="card d-full add-card">
       <h2 class="gtitle">加一台设备</h2>
       <div class="rows">
         <div class="frow row">
@@ -324,6 +328,7 @@ onUnmounted(() => {
         </button>
       </div>
     </section>
+    </div>
 
     <ActionSheet
       :open="!!peerSheet"
@@ -497,5 +502,41 @@ onUnmounted(() => {
 .input::placeholder {
   color: var(--text-3);
   letter-spacing: 0.14em;
+}
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   三张卡是同一层的三件事：本机是谁 / 连了谁 / 怎么再加一台。
+   前两张并排（都是「读」，交给 .d-grid 缺省的两栏）；第三张是「写」——
+   要输入、还会吐出一串大号同步码，塞进半栏会把它自己的按钮和码挤到一起。
+   让它通栏（.d-full），内部再分两栏：
+   左边「在这台开码」（码跟着它），右边「在另一台开码、把码输进来」。
+   ============================================================ */
+
+.desk-main .add-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 var(--desk-gap);
+  align-items: start;
+}
+
+.desk-main .add-card > .gtitle {
+  grid-column: 1 / -1;
+}
+
+/* 「在这台开码」与它会吐出的那串码同栏；两段说明与输入框同栏 */
+.desk-main .add-card > .rows,
+.desk-main .add-card > .code {
+  grid-column: 1;
+}
+
+.desk-main .add-card > .pnote,
+.desk-main .add-card > .claim {
+  grid-column: 2;
+}
+
+/* 右栏首行是句小字，加个与 .rows 同值的 4px 起始偏移，两栏的第一行才齐平 */
+.desk-main .add-card > .pnote {
+  margin-top: 4px;
 }
 </style>

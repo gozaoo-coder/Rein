@@ -65,7 +65,12 @@ const emit = defineEmits<{
 /** 块宽：优先用 ASR 给的真实句末时间；只有它缺失时才按字数估朗读时长。
  *  估的时候不超过到下一句的间隔 —— 剩下的部分就是静默。 */
 function estimateDur(i: number): number {
-  const s = props.segments[i]!
+  // 越界返回 0 而不是断言非空：`total` 对**空数组**也要能算（此时最后一个下标是 -1），
+  // 而空数组是真实存在的状态 —— 会话刚进「转写中」、ASR 还没吐第一句时就是这个形状。
+  // 断言在这里会直接抛在 computed 里，把整块会话视图的渲染打断（一次抛、之后每次重渲染都抛），
+  // 表现为「开始录音后转写区永远空着」。
+  const s = props.segments[i]
+  if (!s) return 0
   if (s.durMs != null && s.durMs > 0) return s.durMs
   const next = props.segments[i + 1]
   const byText = Math.max(900, Math.min(14_000, (s.text.length / 5.2) * 1000))

@@ -80,8 +80,9 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
       </li>
     </ul>
 
-    <section class="card">
-      <ul v-if="list.length" class="foods">
+    <!-- d-full：这张卡通栏（壳层默认把 .page 的直接子级 .card 压成半栏）；列表在卡**内部**摊成多栏 -->
+    <section class="card d-full foods-card">
+      <ul v-if="list.length" class="foods d-list">
         <li v-for="f in shown" :key="f.id">
           <button class="row item" @click="openFood(f)">
             <span class="flex-1">
@@ -202,6 +203,26 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
   padding: 13px 0 7px;
   font-size: var(--fs-footnote);
   font-weight: 600;
+}
+
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
+   这张卡装着整个饮食库（2722 条）。壳层「.page 的直接子级 .card 占半栏」的规则会把它
+   压成 480px，右半屏整块空着 —— 所以要通栏的**是卡片**，多栏摊到卡**内部**去。
+
+   通栏由模板上的 .d-full 声明（规则在 base.css 的「桌面工作台 · 栅格」里）。 */
+
+
+/* 卡内摊成三栏流：一条只有「食物名 + 分类/单位 + 每 100 克热量」，480px 宽度是浪费。
+   用多栏流（columns）而不是 grid —— 分类/单位那行长短不一，grid 会按最高的一条撑行。
+   栏数交给 .d-list 的 --d-cols。 */
+.desk-main .foods {
+  --d-cols: 3;
+}
+
+/* 栏变窄之后，行与行之间只剩留白，扫读时容易串行：桌面给每条加一条发丝下边线
+   （移动端维持原来的纯留白分隔，观感不变）。 */
+.desk-main .foods .item {
+  border-bottom: 0.5px solid var(--line);
 }
 
 /* 「记录」悬浮按钮（TabBar 之上，锚定页面右缘） */

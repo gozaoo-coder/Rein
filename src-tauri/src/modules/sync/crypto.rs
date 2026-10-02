@@ -59,6 +59,8 @@ pub struct SessionCrypto {
     send_counter: u64,
     recv_counter: u64,
     /// 只用于日志与断言：这一端是 epoch 较小的那一侧吗
+    /// （运行时代码按它选出收发密钥，之后不再读；单元测试断言握手方向时读它）
+    #[allow(dead_code)]
     pub is_lower: bool,
 }
 
@@ -110,6 +112,9 @@ impl SessionCrypto {
         Ok(plain)
     }
 
+    /// 只给单元测试用：断言 nonce 计数器按方向各自单调推进。
+    /// 用 `#[cfg(test)]` 而不是 `#[allow(dead_code)]` —— 它本来就不属于运行时 API 面。
+    #[cfg(test)]
     pub fn counters(&self) -> (u64, u64) {
         (self.send_counter, self.recv_counter)
     }
@@ -202,21 +207,6 @@ pub fn epoch_from_b64(s: &str) -> Result<[u8; 4]> {
     Ok(out)
 }
 
-pub fn secret_b64(secret: &[u8; 32]) -> String {
-    B64.encode(secret)
-}
-
-pub fn secret_from_b64(s: &str) -> Result<[u8; 32]> {
-    let raw = B64
-        .decode(s.trim())
-        .map_err(|_| ReinError::Message("组密钥不是合法 base64".into()))?;
-    if raw.len() != 32 {
-        return Err(ReinError::Message("组密钥长度不对".into()));
-    }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&raw);
-    Ok(out)
-}
 
 #[cfg(test)]
 mod tests {

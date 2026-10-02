@@ -35,7 +35,7 @@ fn parse_tags(raw: &str) -> Vec<String> {
 
 #[tauri::command]
 pub fn kb_status(state: State<AppState>, hub: State<'_, Arc<KbHub>>) -> Result<KbStatus> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let s = settings::get(&conn)?;
     let enabled = settings::enabled_sources(&conn)?;
     let (docs, chunks, vectors) = index::stats(&conn)?;
@@ -71,7 +71,7 @@ pub fn kb_search(
 ) -> Result<Vec<KbHit>> {
     if query.query.trim().is_empty() {
         // 空查询 = 浏览最近内容，而不是报错
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let enabled = settings::enabled_sources(&conn)?;
         return search::browse(&conn, &query, &enabled);
     }
@@ -81,7 +81,7 @@ pub fn kb_search(
 
     // 读配置（持锁）
     let (enabled, cfg) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         (
             settings::enabled_sources(&conn)?,
             embed::resolve_config(&conn)?,
@@ -105,7 +105,7 @@ pub fn kb_search(
     };
 
     // 检索（持锁）
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     search::search(
         &conn,
         &query,
@@ -128,7 +128,7 @@ pub fn kb_read(
 ) -> Result<KbDocDetail> {
     // 刚写入的笔记/归档文档要能立刻被读到
     worker::drain_before_query(&app, REFRESH_BUDGET)?;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     read_detail(
         &conn,
         doc_id,
@@ -327,7 +327,7 @@ pub fn kb_reindex(
     sources: Option<Vec<String>>,
 ) -> Result<i64> {
     let n = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let enabled = match sources.filter(|s| !s.is_empty()) {
             Some(s) => s,
             None => settings::enabled_sources(&conn)?,
@@ -340,7 +340,7 @@ pub fn kb_reindex(
 
 #[tauri::command]
 pub fn kb_settings_get(state: State<AppState>) -> Result<KbSettings> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     settings::get(&conn)
 }
 
@@ -352,7 +352,7 @@ pub fn kb_settings_set(
     input: KbSettingsInput,
 ) -> Result<KbSettings> {
     let out = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let before = settings::get(&conn)?.embedding_mode;
         let after = settings::update(&conn, &input)?;
         if before != after.embedding_mode {
@@ -373,7 +373,7 @@ pub fn kb_settings_set(
 #[tauri::command]
 pub fn kb_probe_embedder(state: State<AppState>, hub: State<'_, Arc<KbHub>>) -> Result<usize> {
     let cfg = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         embed::resolve_config(&conn)?
     };
     if cfg.mode == MODE_KEYWORD {
@@ -391,7 +391,7 @@ pub fn kb_probe_embedder(state: State<AppState>, hub: State<'_, Arc<KbHub>>) -> 
 #[tauri::command]
 pub fn kb_rebuild_vectors(state: State<AppState>, hub: State<'_, Arc<KbHub>>) -> Result<usize> {
     let cleared = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         index::clear_vectors(&conn, None)?
     };
     hub.release_embedder();
@@ -408,7 +408,7 @@ pub fn kb_memories(
     mem_type: Option<String>,
     scope: Option<String>,
 ) -> Result<Vec<KbMemory>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     memory::list(
         &conn,
         mem_type.as_deref(),
@@ -427,7 +427,7 @@ pub fn kb_memory_apply(
 ) -> Result<MemoryApplyResult> {
     let ids = message_ids.unwrap_or_default();
     let out = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         memory::apply(&conn, &candidates, chat_id.as_deref(), &ids)?
     };
     // 新记忆要尽快可检索，也要尽快进入 prompt 注入块
@@ -442,7 +442,7 @@ pub fn kb_memory_delete(
     id: i64,
 ) -> Result<bool> {
     let ok = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         memory::delete(&conn, id)?
     };
     hub.notify();
@@ -458,7 +458,7 @@ pub fn kb_memory_archive(
     reason: Option<String>,
 ) -> Result<bool> {
     let ok = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         memory::archive(&conn, id, reason.as_deref().unwrap_or(""))
     };
     hub.notify();
@@ -473,7 +473,7 @@ pub fn kb_memory_restore(
     id: i64,
 ) -> Result<bool> {
     let ok = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         memory::restore(&conn, id)?
     };
     hub.notify();
@@ -487,7 +487,7 @@ pub fn kb_memory_maintain(
     hub: State<'_, Arc<KbHub>>,
 ) -> Result<MemoryMaintainResult> {
     let out = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         memory::maintain(&conn)?
     };
     hub.notify();
@@ -497,28 +497,28 @@ pub fn kb_memory_maintain(
 /// 记忆库信噪比概况（注入覆盖率 / 噪声占比 / 归档数 / 上次整理时间）。
 #[tauri::command]
 pub fn kb_memory_stats(state: State<AppState>) -> Result<KbMemoryStats> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     memory::stats(&conn)
 }
 
 /// 上报「刚完成一次 LLM 整理」，用于周期任务的节流（每天最多一次）。
 #[tauri::command]
 pub fn kb_memory_consolidated(state: State<AppState>) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     memory::mark_consolidated(&conn)
 }
 
 /// 喂给系统提示词的紧凑认知块。前端在每轮请求前取一次（带短 TTL 缓存）。
 #[tauri::command]
 pub fn kb_cognition(state: State<AppState>) -> Result<KbCognition> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     memory::cognition(&conn, None)
 }
 
 /// 上报「这些记忆被注入了」——注入即用到，用于后续排序。
 #[tauri::command]
 pub fn kb_memory_bump(state: State<AppState>, ids: Vec<i64>) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     memory::bump_active(&conn, &ids)
 }
 
@@ -534,7 +534,7 @@ pub fn kb_glob(
     limit: Option<i64>,
 ) -> Result<Vec<KbGlobHit>> {
     worker::drain_before_query(&app, REFRESH_BUDGET)?;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     search::glob(&conn, &pattern, limit.unwrap_or(100))
 }
 
@@ -546,11 +546,11 @@ pub fn kb_file_write(
     input: KbFileInput,
 ) -> Result<KbFile> {
     let id = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         files::write(&conn, &input.path, &input.content)?
     };
     hub.notify();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     files::get(&conn, id)
 }
 
@@ -563,11 +563,11 @@ pub fn kb_file_rename(
     path: String,
 ) -> Result<KbFile> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         files::rename(&conn, id, &path)?;
     }
     hub.notify();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     files::get(&conn, id)
 }
 
@@ -580,7 +580,7 @@ pub fn kb_file_delete(
     id: i64,
 ) -> Result<()> {
     let refs = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         files::delete(&conn, id)?
     };
     if let Ok(root) = data_root(&app) {
@@ -595,7 +595,7 @@ pub fn kb_file_delete(
 /// 取文件原文（编辑器用）。kb_read 走分块管线会丢原始换行，编辑必须拿原文。
 #[tauri::command]
 pub fn kb_file_get(state: State<AppState>, id: i64) -> Result<KbFile> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     files::get(&conn, id)
 }
 
@@ -611,11 +611,11 @@ pub fn kb_media_write(
 ) -> Result<KbFile> {
     let root = data_root(&app)?;
     let id = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         assets::write_media(&conn, &root, &input)?
     };
     hub.notify();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     files::get(&conn, id)
 }
 
@@ -628,7 +628,7 @@ pub fn kb_media_get(
     modal: Option<String>,
 ) -> Result<KbMedia> {
     let root = data_root(&app)?;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     assets::read(&conn, &root, doc_id, modal.as_deref())
 }
 
@@ -646,7 +646,7 @@ pub fn kb_fs_move(
 ) -> Result<KbFsMoveResult> {
     let src = source.unwrap_or_else(|| "user".into());
     let (out, file) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let out = governance::move_to(&conn, id, &to_dir, reason.as_deref().unwrap_or(""), &src)?;
         let fid = conn
             .query_row("SELECT id FROM kb_files WHERE path = ?1", [&out.to], |r| {
@@ -676,11 +676,11 @@ pub fn kb_fs_mkdir(
 ) -> Result<KbFile> {
     let src = source.unwrap_or_else(|| "user".into());
     let p = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         governance::mkdir(&conn, &path, reason.as_deref().unwrap_or(""), &src)?
     };
     hub.notify();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     files::get(&conn, resolve_path(&conn, &p)?)
 }
 
@@ -695,12 +695,12 @@ pub fn kb_fs_pin(
 ) -> Result<KbFile> {
     let src = source.unwrap_or_else(|| "user".into());
     let fid = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let path = governance::pin(&conn, id, pinned, &src)?;
         resolve_path(&conn, &path)?
     };
     hub.notify();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     files::get(&conn, fid)
 }
 
@@ -715,7 +715,7 @@ fn resolve_path(conn: &rusqlite::Connection, path: &str) -> Result<i64> {
 /// 整理审计流水（最近的在前）。
 #[tauri::command]
 pub fn kb_fs_moves(state: State<AppState>, limit: Option<i64>) -> Result<Vec<KbFsMove>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     governance::moves(&conn, limit.unwrap_or(50))
 }
 
@@ -727,7 +727,7 @@ pub fn kb_fs_undo(
     batch_id: String,
 ) -> Result<i64> {
     let n = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         governance::undo(&conn, &batch_id)?
     };
     hub.notify();
@@ -739,7 +739,7 @@ pub fn kb_fs_undo(
 /// 取「系统提示词 + 用户记忆」注入块。前端每轮对话前取一次（带 mtime 缓存）。
 #[tauri::command]
 pub fn kb_injection_get(state: State<AppState>) -> Result<KbInjection> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     injection::build(&conn)
 }
 

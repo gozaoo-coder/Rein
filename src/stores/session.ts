@@ -618,9 +618,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
     if (restTargetIsNextSet.value) {
       setIndex.value++
-      phase.value = 'exercise'
-      // 同一动作内保留用户的次数改写（改做 6 次就连着 6 次），重量同理保留
-      flashOverlay(`开始第 ${setIndex.value} 组`, reps.value != null ? `${reps.value} 次` : '')
+      // 下一组仍按动作类型分流：计时/有氧回准备页（倒数后开跑），力量直接进做组
+      phase.value = ex.kind === 'strength' ? 'exercise' : 'timed-ready'
+      if (ex.kind === 'strength') {
+        // 同一动作内保留用户的次数改写（改做 6 次就连着 6 次），重量同理保留
+        flashOverlay(`开始第 ${setIndex.value} 组`, reps.value != null ? `${reps.value} 次` : '')
+      }
       touch()
       return
     }
@@ -1094,8 +1097,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
         // 激活热身中被打断：原地续做（已完成的组保留在 doneSets）
         phase.value = 'warmup'
         break
-      default:
-        phase.value = 'exercise'
+      default: {
+        // 快照阶段必须与当前动作类型一致：旧版快照（或课程中途被改成计时）
+        // 可能把计时动作记成做组态 —— 回准备页重做该组，别留在力量界面
+        const cur = currentEx.value
+        phase.value = cur && cur.kind !== 'strength' ? 'timed-ready' : 'exercise'
+      }
     }
   }
 

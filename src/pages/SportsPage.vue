@@ -53,8 +53,10 @@ function openDetail(w: Workout): void {
 
     <!-- 异常中断恢复提示已由导航栏上方的悬浮运动条（ActiveWorkoutBar）接管 -->
 
-    <!-- 训练启动：跑步（沉浸 GPS）＋ 手动记（快速补录）＋ 动作库（动作唯一真源） -->
-    <ul class="quick">
+    <!-- 训练启动：跑步（沉浸 GPS）＋ 手动记（快速补录）＋ 动作库（动作唯一真源）。
+         桌面加 d-half：三个磁贴并进右半栏，正好与左边「本周运动」那张周图配成一行 ——
+         通栏铺开时每个磁贴会宽到 230px，读起来像把手机上的四列网格拉变了形。 -->
+    <ul class="quick d-half">
       <li>
         <QuickTile label="跑步" icon-bg="rgba(146, 232, 42, 0.18)" icon-color="#5ba800" @click="router.push('/session/run')">
           <Footprints :size="20" />
@@ -84,8 +86,9 @@ function openDetail(w: Workout): void {
     <!-- 运动类待办（与待办域联动） -->
     <TodoListCard :date="today" title="运动计划" filter-category="workout" />
 
-    <!-- 最近运动 -->
-    <section class="card">
+    <!-- 最近运动。桌面通栏：记录行是「名称 + 数据 + 操作」的横向条，
+         放在半栏里会被挤成两行，反而比手机版更难扫。 -->
+    <section class="card d-full">
       <header class="head"><h2>最近运动</h2></header>
       <EmptyState v-if="ex.recent.length === 0" :icon="Dumbbell" title="本周还没有运动记录" hint="在上方「运动计划」中安排运动" />
       <ul v-else class="list">
@@ -115,9 +118,15 @@ function openDetail(w: Workout): void {
 /* 快速入口：与主页同款四列磁贴网格 */
 .quick {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* 三颗磁贴（跑步/手动记/动作库）：列数跟着条目走，4 列会在右缘空出一格灰底 */
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin: 14px 0;
+}
+
+/* 桌面：磁贴并进栅格后，上下那 14px 会变成行内错位（栅格已经用 gap 管间距） */
+.desk-main .quick {
+  margin: 0;
 }
 
 .head h2 {

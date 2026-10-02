@@ -653,6 +653,124 @@ html[data-motion='rich'] .glow-layer:active::after {
   opacity: 1;
 }
 
+/* ============================================================
+   桌面工作台 · 栅格工具类
+   只在 .desk-main 存在时生效 —— 它是壳层在 ≥ DESKTOP_MIN 时才渲染的父级，
+   所以这里不必再写一遍断点（媒体查询也读不到 --desk-min）。
+   分工：**壳层**给页面根铺两栏栅格（App.vue），**这里**给页面内部提供
+   「占满 / 分栏 / 主区+侧栏」这三种声明，页面只说自己要哪种，几何不重复实现。
+   ============================================================ */
+
+/* ---------- 页面根栅格的子项摆放 ----------
+   壳层（App.vue）只把 .page 铺成两栏栅格，**摆放规则全在这里**：
+   缺省 + 工具类必须写在同一份样式表里、按顺序排好，跨文件写就会被
+   App.vue 那串 :deep 组合出来的高特指度压掉，页面作者加了 class 却不生效。
+   顺序即优先级：先「缺省」，再「显式声明」——两者特指度相同，靠先后决定胜负。 */
+/* 缺省：整行（页头、看板、通栏列表、提示条这类不该被切进半栏的东西） */
+.desk-main .page > * {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+/* 卡片是「本来就可以并排的一块」：缺省进半栏 */
+.desk-main .page > .card {
+  grid-column: span 1;
+}
+
+/* 栅格用 gap 管行距；卡片之间那条 14px 的兄弟边距要收掉，否则行距翻倍 */
+.desk-main .page > .card + .card {
+  margin-top: 0;
+}
+
+/* 显式声明（写在缺省之后，同特指度靠顺序取胜） */
+.desk-main .page > .d-full,
+.desk-main .page > .card.d-full {
+  grid-column: 1 / -1;
+}
+
+.desk-main .page > .d-half,
+.desk-main .page > .card.d-half {
+  grid-column: span 1;
+}
+
+/* 页面内部的二级栅格：一叠卡片在桌面上摊成多栏。
+   栏数由内容自己给（--d-cols），缺省两栏。stretch：同排卡片底边对齐，
+   矮卡填满行高——灰底从卡下漏出来会读成「没画完」。 */
+.desk-main .d-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--d-cols, 2), minmax(0, 1fr));
+  gap: var(--desk-gap);
+  align-items: stretch;
+}
+
+/* 栅格用 gap 管间距，卡片之间那条 +14px 的边距要收掉，否则行距翻倍 */
+.desk-main .d-grid > .card + .card {
+  margin-top: 0;
+}
+
+.desk-main .d-grid > .d-full {
+  grid-column: 1 / -1;
+}
+
+/* 主区 + 侧栏：详情/表单页在桌面上的基本构图（正文在左，上下文在右） */
+.desk-main .d-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--desk-aside);
+  gap: var(--desk-gap);
+  align-items: start;
+}
+
+/* ---------- 桌面：游离子孙的落点（teleport 到 body 的那几个） ----------
+   这些元素**不在 .desk-main 里**，用不了上面那套祖先规则，所以靠 <html> 上的壳层
+   标记判定（App.vue 随 isDesktop / 信息栏开合写 data-shell / data-inspector）。
+
+   要修的是「记录」「添加模型」这类悬浮主操作：它们的定位是按手机那条居中窄栏写的
+   （`left: 50%` 或 `right: max(18px, 50% - --frame-max/2 + 18px)`），到了桌面上会停在
+   内容栏正中间、压在列表行上 —— 既不是桌面的落点习惯（右下角），也和右侧信息栏撞不着。
+   信息栏收起时跟着让位，否则会在空出来的地方多留一格空白。 */
+html[data-shell='desk'] .fab {
+  left: auto;
+  right: calc(var(--inspector-w) + var(--desk-gutter));
+  bottom: calc(var(--dock-top) + 14px);
+  transform: none;
+}
+
+html[data-shell='desk'][data-inspector='off'] .fab {
+  right: var(--desk-gutter);
+}
+
+/* 按压回弹要另写：上面把 translateX(-50%) 收掉了，沿用原规则会让按钮往左跳半格 */
+html[data-shell='desk'] .fab:active {
+  transform: scale(0.95);
+}
+
+/* ---------- 桌面：指针悬停应有的「这一块可以点」 ----------
+   移动端没有悬停，所以全套组件只写了 :active 的按压反馈；到了桌面，一屏十来张可点卡片
+   一个都不给悬停提示，鼠标就只能在光标的形状上猜。这里统一补一条**抬影**：
+   只加在本来就声明了可点的表面（.pressable / 卡片按钮）上，不动静态卡片。
+   用 @media (hover: hover) 而不是无条件写：触屏浏览器的 :hover 会在点按后粘住不散，
+   那会让「刚点过的那张卡」一直浮着，比没有悬停更糟。 */
+@media (hover: hover) {
+  .desk-main .card.pressable:hover,
+  .desk-main .card.pressable:focus-visible,
+  .desk-main button.cell:hover,
+  .desk-main button.cell:focus-visible {
+    box-shadow: var(--shadow-float);
+  }
+}
+
+/* 长列表：桌面上按栏流。**刻意用 columns 而不是 grid** —— 条目高度参差，
+   grid 会把每一行撑到最高的那条，一屏下来全是锯齿状的空白；多栏流是自然的瀑布。
+   代价是阅读顺序变成「先读完第一栏再读第二栏」，所以只给**无序**的长列表用。 */
+.desk-main .d-list {
+  columns: var(--d-cols, 2);
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .d-list > * {
+  break-inside: avoid;
+}
+
 /* ---------- 徽章/标签不拆行 ----------
    中文标签只有两三个字，窄容器里会被拆成「在 / 线」两行：卡片高度跟着变、看着像
    布局错乱（真机 406px 视口下「火山方舟 · deepseek-v4.1-flash 在线」就会这样）。

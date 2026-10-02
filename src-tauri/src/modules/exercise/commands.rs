@@ -15,7 +15,7 @@ pub fn list_workouts(
     start_date: String,
     end_date: String,
 ) -> Result<Vec<Workout>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {WORKOUT_COLS} FROM workouts WHERE date BETWEEN ?1 AND ?2 \
          ORDER BY date DESC, (start_min IS NULL), start_min"
@@ -30,7 +30,7 @@ pub fn list_workouts(
 /// 全量记录（全部运动记录页）：不分日期范围，日期倒序。
 #[tauri::command]
 pub fn list_all_workouts(state: State<AppState>) -> Result<Vec<Workout>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {WORKOUT_COLS} FROM workouts \
          ORDER BY date DESC, (start_min IS NULL), start_min"
@@ -56,7 +56,7 @@ pub fn create_workout(
     kcal: f64,
     note: Option<String>,
 ) -> Result<Workout> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "INSERT INTO workouts (name, type, date, start_min, duration_min, kcal, intensity, note, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -79,7 +79,7 @@ pub fn create_workout(
 
 #[tauri::command]
 pub fn delete_workout(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM workouts WHERE id = ?1", [id])?;
     Ok(())
 }

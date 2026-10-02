@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | `Base64` | 纯 base64 文本（聊天图 `image_base64`） | base64 解码后的原图 |
 //! | `DataUrl` | `data:<mime>;base64,xxx` 或一个文件路径（知识库 `ref`） | 解码后的字节 / 文件内容 |
-//! | `JsonMedia` | JSON 字符串，值里散着 `data:` 与 `base64` 字段 | 每个值各存一个 blob |
+//! | `Json` | JSON 字符串，值里散着 `data:` 与 `base64` 字段 | 每个值各存一个 blob |
 //! | `Wav` | 落盘音频的路径（语音纪要） | 文件内容 |
 //!
 //! 还原是**按 marker 自描述**做的：marker 里带 `enc`，所以还原不需要再猜规则，
@@ -75,7 +75,7 @@ pub fn encode(store: &BlobStore, kind: Media, conn: &rusqlite::Connection, value
                 .unwrap_or_else(|| format!("{hash}.wav"));
             Ok(Some(marker(&hash, bytes.len() as i64, "wav", Some(&name))))
         }
-        Media::JsonMedia => {
+        Media::Json => {
             let mut parsed: Value = match serde_json::from_str(value) {
                 Ok(v) => v,
                 // 不是 JSON 就原样带着（历史数据里有纯文本）
@@ -240,12 +240,10 @@ fn walk_encode(
                 walk_encode(store, conn, it, changed)?;
             }
         }
-        Value::String(s) => {
-            if s.starts_with("data:") && s.len() >= MIN_MEDIA_LEN {
-                if let Some(m) = encode(store, Media::DataUrl, conn, s)? {
-                    *value = m;
-                    *changed = true;
-                }
+        Value::String(s) if s.starts_with("data:") && s.len() >= MIN_MEDIA_LEN => {
+            if let Some(m) = encode(store, Media::DataUrl, conn, s)? {
+                *value = m;
+                *changed = true;
             }
         }
         _ => {}
@@ -363,7 +361,7 @@ mod tests {
             "thumb": format!("data:image/png;base64,{}", B64.encode(vec![1u8; 512])),
         })
         .to_string();
-        let m = encode(&store, Media::JsonMedia, &conn, &src).unwrap().unwrap();
+        let m = encode(&store, Media::Json, &conn, &src).unwrap().unwrap();
         let text = m["__json"].as_str().unwrap();
         assert!(text.contains("__blob"), "两个大值都该被抽走");
         assert!(!text.contains("\"base64\":\"iYm"), "base64 不该留在对象里");

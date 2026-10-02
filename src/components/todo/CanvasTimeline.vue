@@ -566,6 +566,15 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
+  /* 上下缘 12px 渐隐：锚定「现在」后首尾刻度正好压在滚动口边界上，
+     不渐隐就是半截字悬在窗口边（看起来像裁切 bug）。 */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
 }
 
 .inner {
@@ -722,7 +731,7 @@ onBeforeUnmount(() => {
 
 .bmin.live {
   color: var(--accent);
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .blk.dragging {
@@ -777,7 +786,7 @@ onBeforeUnmount(() => {
 
 .tt {
   font-size: var(--fs-footnote);
-  font-weight: 550;
+  font-weight: 600;
 }
 
 /* 画布块内标题：顶对齐、按块宽折行、按块高截行（--blk-lines 由块高折算），放不下才省略 */
@@ -997,7 +1006,7 @@ onBeforeUnmount(() => {
 
 .stk-row .tt {
   font-size: var(--fs-subhead);
-  font-weight: 550;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

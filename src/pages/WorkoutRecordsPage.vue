@@ -242,8 +242,9 @@ function openDetail(w: Workout): void {
         </footer>
       </section>
 
-      <!-- 记录列表：日视图单列；周视图按日分组；年视图按月分组 -->
-      <section class="card">
+      <!-- 记录列表：日视图单列；周视图按日分组；年视图按月分组
+           （桌面按组摊成两栏，见样式里的桌面段） -->
+      <section class="card records-card">
         <header class="head"><h2>运动记录</h2></header>
         <EmptyState
           v-if="periodWorkouts.length === 0 && !ex.loading"
@@ -376,5 +377,35 @@ function openDetail(w: Workout): void {
   .content {
     animation: none;
   }
+}
+
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
+   概览卡保持通栏：柱状图本来就是横向的时间轴（7 天 / 12 个月），压进半栏只会把柱子挤在一起。
+   记录卡内部改成「一组一格」的多栏栅格 —— 日/周/年的记录都是按天（或按月）分组的，
+   一组独占一格，组内不再断开，正好把 970px 的宽度用掉，也不会把「昨天」和「9 月 29 日」分离。
+
+   栏数用 auto-fit 而不是定死两栏：日视图只有一组（当天），auto-fit 会把空轨道收掉，
+   这一组就占满整行，不会在右半边留一块空白。 */
+/* 日/周/年三段的分段控件跟着内容走：通栏拉到 970px 宽时一段就有 320px，读起来不像控件 */
+.desk-main .seg {
+  max-width: 280px;
+}
+
+.desk-main .records-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--desk-gap);
+  align-items: start;
+}
+
+/* 卡头与空态永远通栏：它们是「整张卡的说明」，不属于某一栏 */
+.desk-main .records-card > .head,
+.desk-main .records-card > .empty {
+  grid-column: 1 / -1;
+}
+
+/* 间距交给栅格 gap，否则组与组之间会多出 18px（相邻两格高度还不同，行距看着忽大忽小） */
+.desk-main .records-card .group + .group {
+  margin-top: 0;
 }
 </style>

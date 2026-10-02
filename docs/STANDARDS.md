@@ -6,7 +6,10 @@
 
 - **TypeScript**：`strict` 全开（含 `noUnusedLocals/noUnusedParameters/verbatimModuleSyntax`）。类型错误一律修代码，禁止 `any` / `@ts-ignore` 兜底；确有需要用 `unknown` + 收窄并注释原因。
 - **Vue**：`<script setup lang="ts">`；props/emits 必须类型化（`defineProps<{...}>`）；组件内样式一律 `scoped`。
-- **Rust**：以 `cargo clippy -- -D warnings` 为门槛；`unwrap()` 仅允许用于 `Mutex::lock` 与测试代码。
+- **Rust**：以 `cargo clippy -- -D warnings` 为门槛（CI 逐字跑这条）。
+- **数据库连接一律走 `state::Db::lock()`**，调用点**不 unwrap**：它返回 `MutexGuard`，锁中毒时自愈（取回连接 + 回滚半截事务）。
+  这一点是硬的 —— `state.db.lock().unwrap()` 会把「持锁时 panic」升级成**永久故障**（Mutex 中毒后每条命令都继续 panic，
+  数据层在重启前不可用）。`unwrap()` 因此只允许用于**小型状态锁**（`CampusHub` / `VoiceHub` 的成员）与测试代码。
 
 ## 2. 命名
 

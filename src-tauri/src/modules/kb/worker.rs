@@ -177,7 +177,7 @@ impl KbHub {
 fn reconcile(app: &AppHandle, hub: &KbHub) {
     let state = app.state::<AppState>();
     let outcome = (|| -> Result<i64> {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         // 系统文件（规范 / 系统提示词 / 用户记忆模板 / 收件箱）随应用版本更新，幂等；
         // 必须在对账前播种，这样它们也会被当成 note 一起编目进路径树
         files::ensure_system_files(&conn)?;
@@ -223,7 +223,7 @@ fn worker_loop(app: AppHandle, hub: Arc<KbHub>, rx: mpsc::Receiver<()>) {
                 if hub.last_error().is_some() {
                     hub.set_error(None);
                     let state = app.state::<AppState>();
-                    let conn = state.db.lock().unwrap();
+                    let conn = state.db.lock();
                     let _ = settings::set_last_error(&conn, None);
                 }
                 n
@@ -233,7 +233,7 @@ fn worker_loop(app: AppHandle, hub: Arc<KbHub>, rx: mpsc::Receiver<()>) {
                 // 错误同时落库：重启后 kb_status 仍能看到上次失败原因
                 {
                     let state = app.state::<AppState>();
-                    let conn = state.db.lock().unwrap();
+                    let conn = state.db.lock();
                     let _ = settings::set_last_error(&conn, Some(&e.to_string()));
                 }
                 0
@@ -253,7 +253,7 @@ fn worker_loop(app: AppHandle, hub: Arc<KbHub>, rx: mpsc::Receiver<()>) {
         if last_maintain.elapsed() >= MAINTAIN_INTERVAL {
             last_maintain = Instant::now();
             let state = app.state::<AppState>();
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock();
             match memory::maintain(&conn) {
                 Ok(r) if r.archived > 0 => {
                     eprintln!("[kb] 周期维护归档了 {} 条低信号记忆", r.archived)
@@ -271,7 +271,7 @@ fn cycle(app: &AppHandle, hub: &KbHub) -> Result<usize> {
 
     // 第一段：持锁取脏 + 派生落库 + 收集待嵌入文本。这里只读配置、不构建 embedder。
     let (dirty_count, pending_chunks, model_id) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let cfg = embed::resolve_config(&conn)?;
         let model_id = embed::model_id_of(&cfg);
 
@@ -325,7 +325,7 @@ fn cycle(app: &AppHandle, hub: &KbHub) -> Result<usize> {
     let mut stored = 0usize;
     if !pending_chunks.is_empty() && model_id.is_some() {
         let cfg = {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock();
             embed::resolve_config(&conn)?
         };
         if let Some(e) = hub.embedder(&cfg)? {
@@ -346,7 +346,7 @@ fn cycle(app: &AppHandle, hub: &KbHub) -> Result<usize> {
 
             // 第三段：持锁写回。模型标识以 embedder 实际返回的为准，
             // 与当初决定「哪些块要算向量」的推算值天然一致。
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock();
             stored = index::store_vectors(&conn, e.model_id(), &items)?;
         }
     }
@@ -386,7 +386,7 @@ pub fn drain_before_query(app: &AppHandle, budget: Duration) -> Result<()> {
     let deadline = Instant::now() + budget;
     loop {
         let pending = {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock();
             index::pending_count(&conn)?
         };
         if pending == 0 || Instant::now() >= deadline {

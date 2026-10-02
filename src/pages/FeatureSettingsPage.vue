@@ -36,7 +36,8 @@ function iconStyle(p: PluginSpec): Record<string, string> {
   <div class="page">
     <PageHeader title="打开或关闭功能" back />
 
-    <section class="card plist">
+    <!-- d-full：开关清单这张卡通栏（壳层默认把 .page 的直接子级 .card 压成半栏） -->
+    <section class="card d-full plist">
       <template v-for="row in rows" :key="row.plugin.id">
         <div class="prow row" :class="{ off: !features.isEnabled(row.plugin.id) }">
           <i class="pic" :style="iconStyle(row.plugin)">
@@ -190,4 +191,11 @@ function iconStyle(p: PluginSpec): Record<string, string> {
   font-size: var(--fs-caption);
   line-height: 1.6;
 }
+
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
+   开关清单只有寥寥几行，却被壳层压成半栏、右半屏空着。这张卡应当通栏 ——
+   它是一份「模块清单」，每行的开关都贴在卡右缘，读起来是一张表，摊成两栏反而会把
+   子模块（抢课）从它的父模块（课表）身边拆走（栅格逐行填充，父子会被分到不同栏）。
+
+   通栏由模板上的 .d-full 声明。 */
 </style>

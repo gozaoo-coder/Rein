@@ -35,8 +35,10 @@ defineProps<{
   color: var(--text-2);
 }
 
+/* 居中短句折行时 balance 掉 1-2 个字的孤字尾行（「……住」「……可」这类读起来像 bug） */
 .hint {
   font-size: var(--fs-caption);
+  text-wrap: balance;
 }
 
 .act {

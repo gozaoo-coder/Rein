@@ -176,7 +176,7 @@ h2 {
 
 .cap {
   font-size: var(--fs-subhead);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .desc {

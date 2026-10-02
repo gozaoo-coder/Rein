@@ -719,7 +719,7 @@ impl GrabHub {
         // 对账与外投口都要跳过 —— 用户关了抢课，开机就不该有任何动作。
         {
             let state = app.state::<AppState>();
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock();
             let on = read_meta(&conn, ENABLED_KEY).as_deref() == Some("1");
             self.set_enabled_flag(on);
         }
@@ -765,7 +765,7 @@ pub const ENABLED_KEY: &str = "campus_grab_enabled";
 fn reconcile_on_start(app: &AppHandle) {
     {
         let state = app.state::<AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let _ = conn.execute(
             "UPDATE campus_grab_tasks SET status = 'waiting', phase = 'idle', next_at = ?1 \
              WHERE status = 'running'",
@@ -777,7 +777,7 @@ fn reconcile_on_start(app: &AppHandle) {
     // 锁要分开拿：`drain_intake` 自己会去锁库。
     let account_id = {
         let state = app.state::<AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         active_account_id(&conn).ok().flatten()
     };
     if let Some(id) = account_id {
@@ -824,7 +824,7 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
 
     // ── 短锁：读设置 + 账号。出了这个块就没有锁了。
     let (settings, account_id, probed_at) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let settings = load_settings(&conn)?;
         let Some(account_id) = active_account_id(&conn)? else {
             // 没登录：静默待命，什么都不做（界面会提示去配置）
@@ -843,7 +843,7 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
         hub.set_error(Some(e));
     }
     let tasks = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         load_active_tasks(&conn, account_id)?
     };
 
@@ -878,7 +878,7 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     //    而解析只花一次名单查询（60 秒缓存），不该等任务都忙完才轮到它。
     //    与任务共用同一个节流闸门 —— 「一轮一个请求」这条规矩对解析同样成立。
     let due_intent = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         load_due_intent(&conn, account_id, now_ms())?
     };
     if let Some(mut intent) = due_intent {
@@ -1000,7 +1000,7 @@ fn step(app: &AppHandle, hub: &GrabHub) -> Result<Duration> {
     // ── 短锁：写回。**写回前重新读一次状态** —— 用户在这一次网络往返里
     //    可能已经取消或暂停了这个任务，不能把结果盖回去让它复活。
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let keep = match load_task(&conn, task.id)? {
             Some(c) => c.status != GRAB_PAUSED && c.status != GRAB_CANCELLED,
             None => false,
@@ -1068,13 +1068,13 @@ fn probe_windows(
     // 只靠一次「列表里没有它」判死太险 —— 教务偶尔会回一份空列表，
     // 那不该被读成「你的课被撤了」。上架过、现在不在，才是真的撤下。
     let previous = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         read_turns(&conn)
     };
     // 强制拉一次：这个调用点本来就是「到点了，去问一次」。
     // 计划解析走的是 [`turn_briefs`]，同一个一分钟内不会再打一遍教务。
     let briefs = fetch_turn_briefs(state, ctx)?;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
 
     // **收手条件**：批次上架过、现在从 `open-turns` 里消失了 —— 教务处把它撤下 / 提前关了。
     // 这时窗口的墙上时间已经不能作数（它是撤下前的说法），继续守着只会白等。
@@ -1143,7 +1143,7 @@ fn turn_briefs(
     ctx: &super::commands::SelectContext,
 ) -> Result<Vec<GrabTurnBrief>> {
     let cached = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         read_meta(&conn, PROBED_KEY)
             .and_then(|s| s.parse::<i64>().ok())
             .map(|at| (read_turns(&conn), at))
@@ -1165,7 +1165,7 @@ fn fetch_turn_briefs(
     let turns = ctx.client.open_turns(ctx.student_id)?;
     let briefs: Vec<GrabTurnBrief> = turns.iter().map(turn_brief).collect();
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let _ = write_meta(
             &conn,
             TURNS_KEY,
@@ -1195,7 +1195,7 @@ fn park_everything(
     };
     let until = now_ms() + delay;
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         for t in tasks {
             park(&conn, t, until, &message, kind)?;
         }
@@ -2127,7 +2127,7 @@ fn resolve_intent(
 
     // 建任务。**短锁里只做写**：名单与匹配都在锁外算完了。
     let (created, keys) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let mut created = 0usize;
         let mut keys: Vec<String> = Vec::new();
         for (gi, group) in groups.iter().enumerate() {
@@ -2231,7 +2231,7 @@ fn resolve_intent(
         format!("已排入 {created} 个志愿，按序出手{by_teacher}{tail}")
     });
 
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     save_intent(&conn, intent)
 }
 
@@ -2247,7 +2247,7 @@ fn park_intent(
     intent.status = status.to_string();
     intent.last_message = Some(message);
     intent.next_at = now_ms() + delay_ms;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     save_intent(&conn, intent)
 }
 
@@ -2515,7 +2515,7 @@ where
 
 /// 读缓存里那份偏差，**不采样**（供「马上要出手」的路径用）。
 fn cached_clock(state: &tauri::State<'_, AppState>) -> (i64, Option<SkewEstimate>) {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     match read_meta(&conn, CLOCK_KEY).and_then(|s| read_clock(&s)) {
         Some((at, est)) => (at, Some(est)),
         None => (0, None),
@@ -2613,7 +2613,9 @@ fn resample(
     let ctx = super::commands::select_context(&state.db, campus).ok()?;
     let est = sample_skew(|| ctx.client.server_time())?;
     let at = now_ms();
-    if let Ok(conn) = state.db.lock() {
+    {
+        // `Db::lock` 自带中毒恢复，这里拿到的永远是可用连接 —— 采样成功就该把时钟记下来
+        let conn = state.db.lock();
         let payload = serde_json::json!({
             "at_ms": at,
             "skew_ms": est.skew_ms,
@@ -2958,7 +2960,7 @@ fn drain_intake(app: &AppHandle, account_id: i64) -> Option<String> {
     let mut added = 0usize;
     let outcome = {
         let state = app.state::<AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let mut r = Ok(());
         for b in batches.iter() {
             for t in b.targets.iter() {
@@ -3350,7 +3352,7 @@ pub fn skew_secs(skew_ms: i64) -> i64 {
 fn emit(app: &AppHandle, hub: &GrabHub) {
     let payload = {
         let state = app.state::<AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         match snapshot(&conn, hub) {
             Ok(s) => serde_json::to_string(&s).unwrap_or_default(),
             Err(_) => return,

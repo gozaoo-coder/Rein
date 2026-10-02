@@ -135,9 +135,11 @@ async function main() {
       shape.tools === 84 && shape.hasLoader === false ? false : shape.hasLoader,
       `${shape.tools} 个工具 / ${shape.groups} 组`,
     )
+    // 按需组数跟着 GROUP_POLICY 走：campus 拆出子模块 campusGrab 之后是 9 组
+    // （原来写死 8，是拆分前的数 —— 这条断言此后一直红着，没人发现）。
     ok(
       '分组：默认只装常驻组（39 个），其余按需',
-      shape.alwaysCount === 39 && shape.available.length === 8,
+      shape.alwaysCount === 39 && shape.available.length === 9,
       `常驻 ${shape.alwaysCount} 个，可装载 ${shape.available.length} 组 [${shape.available.join(',')}]`,
     )
     ok(
@@ -170,13 +172,22 @@ async function main() {
     /* ---------- C. 功能开关门禁 ---------- */
 
     const gate = await reg(`(R) => {
-      const off = R.resolveToolPlan({ text: '我想选课、记一笔账', plugins: [] })
-      const on = R.resolveToolPlan({ text: '我想选课、记一笔账', plugins: ['campus', 'sports', 'program'] })
+      // 命中词要与分组对齐：课表/教务归 campus，选课/抢课归 campusGrab。
+      // 原来两处都用「选课」，而选课只在 campusGrab 的词表里 —— 「开着课表」那条
+      // 断言其实没在判门禁，只是碰巧红着。
+      const off = R.resolveToolPlan({ text: '我想课表里加一门课、记一笔账', plugins: [] })
+      const on = R.resolveToolPlan({ text: '我想课表里加一门课、记一笔账', plugins: ['campus', 'sports', 'program'] })
+      // 抢课是课表的子模块（默认关）：单独验一遍「父开子开才装」
+      const grab = R.resolveToolPlan({ text: '帮我抢课', plugins: ['campus', 'campus-grab'] })
       return {
         offLoaded: [...off.loaded],
         offAvail: off.available,
         onLoaded: [...on.loaded],
         offNames: R.toolNamesForGroups(off.loaded).filter((n) => n.startsWith('campus_')),
+        // 按组取而不是按名字前缀数：教务工具里带 campus_ 前缀的只是其中一部分
+        onCampusNames: R.toolNamesForGroups(['campus']),
+        grabLoaded: [...grab.loaded].includes('campusGrab'),
+        grabNames: R.toolNamesForGroups(['campusGrab']),
       }
     }`)
     ok(
@@ -184,7 +195,18 @@ async function main() {
       !gate.offLoaded.includes('campus') && !gate.offAvail.includes('campus') && gate.offNames.length === 0,
       `可用 ${gate.offAvail.join(',')}`,
     )
-    ok('门禁：开着课表 → 命中即装（且带全 10 个教务工具）', gate.onLoaded.includes('campus'), '')
+    ok(
+      '门禁：开着课表 → 命中即装（教务组工具到手）',
+      gate.onLoaded.includes('campus') && gate.onCampusNames.length > 0,
+      `campus 组 ${gate.onCampusNames.join(',')}`,
+    )
+    // 课表拆出子模块 campusGrab（默认关）之后，抢课工具只在「父开 + 子开」时到手。
+    // 这条断言是原来那两条红断言真正想守的东西。
+    ok(
+      '门禁：父开子开 → 选课命中即装（campusGrab 组整组到手）',
+      gate.grabLoaded && gate.grabNames.length > 0,
+      `campusGrab 组 ${gate.grabNames.length} 个工具`,
+    )
 
     /* ---------- D. 元工具 ---------- */
 

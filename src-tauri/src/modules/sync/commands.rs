@@ -17,7 +17,7 @@ fn count(conn: &Connection, sql: &str) -> i64 {
 /// 本机同步状态（设置页那张卡片的全部输入）。
 #[tauri::command]
 pub fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let me = identity::ensure(&conn)?;
 
     let mut peers: Vec<SyncPeerInfo> = Vec::new();
@@ -79,7 +79,7 @@ pub fn sync_status(state: State<'_, AppState>) -> Result<SyncStatus> {
 #[tauri::command]
 pub fn sync_set_device_name(state: State<'_, AppState>, name: String) -> Result<SyncStatus> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         identity::set_name(&conn, &name)?;
     }
     sync_status(state)
@@ -152,7 +152,7 @@ fn peer_info(conn: &Connection, device: &str) -> Option<SyncPeerInfo> {
 pub async fn sync_pair_start(app: AppHandle) -> Result<PairOffer> {
     tauri::async_runtime::spawn_blocking(move || -> Result<PairOffer> {
         let state = app.state::<AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let me = identity::ensure(&conn)?;
         let base = service_base(&conn)?;
         let v = post_json(
@@ -178,7 +178,7 @@ pub async fn sync_pair_start(app: AppHandle) -> Result<PairOffer> {
 pub async fn sync_pair_poll(app: AppHandle) -> Result<PairStatus> {
     tauri::async_runtime::spawn_blocking(move || -> Result<PairStatus> {
         let state = app.state::<AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let me = identity::ensure(&conn)?;
         let code = super::meta_get(&conn, "pair_code").unwrap_or_default();
         if code.is_empty() {
@@ -218,7 +218,7 @@ pub async fn sync_pair_poll(app: AppHandle) -> Result<PairStatus> {
 pub async fn sync_pair_claim(app: AppHandle, code: String) -> Result<PairStatus> {
     tauri::async_runtime::spawn_blocking(move || -> Result<PairStatus> {
         let state = app.state::<AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let me = identity::ensure(&conn)?;
         let base = service_base(&conn)?;
         let clean = code.trim().to_uppercase();
@@ -266,7 +266,7 @@ pub fn sync_run(app: AppHandle) -> Result<()> {
                 let state = handle.state::<AppState>();
                 let hub = handle.state::<super::engine::SyncHub>();
                 let store = super::blobs::BlobStore::new(hub.data_dir());
-                let conn = state.db.lock().unwrap();
+                let conn = state.db.lock();
                 let me = identity::ensure(&conn)?;
                 // 先把手头还没落成对象的改动冲掉，否则「刚改的没过去」
                 hub.flush(&conn, &store, &me.device_id)?;
@@ -290,7 +290,7 @@ pub fn sync_run(app: AppHandle) -> Result<()> {
 #[tauri::command]
 pub fn sync_forget(state: State<'_, AppState>, device: String) -> Result<SyncStatus> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         conn.execute("DELETE FROM sync_peers WHERE device = ?1", [&device])?;
         let left = count(&conn, "SELECT COUNT(*) FROM sync_peers");
         if left == 0 {

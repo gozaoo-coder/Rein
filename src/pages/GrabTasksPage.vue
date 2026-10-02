@@ -238,6 +238,10 @@ async function onSaveEdit(payload: {
         <span>{{ store.grabError }}</span>
       </p>
 
+      <!-- 桌面看板：三组任务是三个并列的状态列（进行中 / 已抢到 / 没抢到），
+           宽形态页面由这一层 d-grid 摊开。手机端它只是个普通 div，
+           卡片还是那条 margin-bottom: 14px 的一列 -->
+      <div class="grab-board">
       <!-- 进行中 -->
       <section v-if="running.length" class="card">
         <h2 class="head">
@@ -360,6 +364,7 @@ async function onSaveEdit(payload: {
           </li>
         </ul>
       </section>
+      </div>
 
       <div class="bulk">
         <button class="link" @click="store.clearFinished()">
@@ -617,5 +622,31 @@ async function onSaveEdit(payload: {
   background: var(--accent);
   border-radius: var(--radius-full);
   padding: 9px 22px;
+}
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   这一页是宽形态（desk: 'wide'），构图自负。
+   三组任务是三个并列的**状态列**，一列读完之后最该看见的是另外两列 ——
+   手机上竖着排是顺序（先看进行中、再看抢到了什么），桌面上并排才是看板。
+   栏宽下限用 --desk-aside（320px）：再窄，「课名 + 状态徽标」与右边那三颗
+   操作钮（暂停/取消/移除）会挤到同一行里打架；窄桌面自动退回两栏。
+   ============================================================ */
+.desk-main .page {
+  max-width: var(--desk-wide);
+  margin-inline: auto;
+}
+
+.desk-main .grab-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--desk-aside), 1fr));
+  gap: var(--desk-gap);
+  align-items: start;
+  margin-bottom: var(--desk-gap);
+}
+
+/* 栅格用 gap 管列间距，卡片自带的那条 margin-bottom 会把它撑成两倍 */
+.desk-main .grab-board > .card {
+  margin-bottom: 0;
 }
 </style>

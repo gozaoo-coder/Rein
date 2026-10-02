@@ -13,7 +13,8 @@ export const routes = [
     path: '/',
     name: 'home',
     component: () => import('@/pages/HomePage.vue'),
-    meta: { tab: '今天' },
+    // desk: 'wide' —— 便当总览本身就是一整块画布，内容自己决定怎么分栏
+    meta: { tab: '今天', desk: 'wide' },
   },
   {
     path: '/sports',
@@ -25,7 +26,7 @@ export const routes = [
     path: '/ai',
     name: 'ai',
     component: () => import('@/pages/AIPage.vue'),
-    meta: { tab: 'AI' },
+    meta: { tab: 'AI', desk: 'wide' },
   },
   {
     path: '/ai/models',
@@ -39,21 +40,21 @@ export const routes = [
     name: 'ai-knowledge',
     component: () => import('@/pages/KnowledgePage.vue'),
     // 二级内容页：保留底部导航，页头提供返回键
-    meta: { title: '知识库' },
+    meta: { title: '知识库', desk: 'wide' },
   },
   {
     path: '/ai/files',
     name: 'ai-files',
     component: () => import('@/pages/FileLibraryPage.vue'),
     // 文件管理器：AI 页左上角「文件」入口（虚拟文件系统的真实视图，docs/ai-workspace.md §5）
-    meta: { title: '文件' },
+    meta: { title: '文件', desk: 'wide' },
   },
   {
     path: '/ai/knowledge/files',
     name: 'ai-knowledge-files',
     component: () => import('@/pages/FileLibraryPage.vue'),
     // 文件库：知识库页的旧入口，保留为别名（与 /ai/files 同一个页面）
-    meta: { title: '文件库' },
+    meta: { title: '文件库', desk: 'wide' },
   },
   {
     path: '/me',
@@ -94,7 +95,7 @@ export const routes = [
     name: 'settings-perf',
     component: () => import('@/pages/SettingsPerfPage.vue'),
     // 三级页：画质预览（入口在「设置 › 性能 › 液态玻璃预览」）
-    meta: { title: '画质预览' },
+    meta: { title: '画质预览', desk: 'wide' },
   },
   {
     path: '/focus',
@@ -108,7 +109,8 @@ export const routes = [
     name: 'todos',
     component: () => import('@/pages/TodosPage.vue'),
     // 二级内容页：保留底部导航，页头提供返回键
-    meta: { title: '全部待办' },
+    // desk: 'wide' —— 一天画布（时间轴 + 侧边卡片网格）是桌面专属构图，不能被两栏栅格切开
+    meta: { title: '全部待办', desk: 'wide' },
   },
   {
     path: '/nutrition',
@@ -194,7 +196,7 @@ export const routes = [
     name: 'campus-schedule',
     component: () => import('@/pages/SchedulePage.vue'),
     // 二级内容页：入口在主页「常用工具栏」的课表卡（不占底部导航），页头提供返回键
-    meta: { title: '我的课表' },
+    meta: { title: '我的课表', desk: 'wide' },
   },
   {
     path: '/campus/settings',
@@ -215,7 +217,7 @@ export const routes = [
     name: 'campus-course-select',
     component: () => import('@/pages/CourseSelectPage.vue'),
     // 二级内容页：抢课（入口在课表配置页）。批次未开放时显示等待态。
-    meta: { title: '选课' },
+    meta: { title: '选课', desk: 'wide' },
   },
   {
     path: '/campus/grab-tasks',
@@ -224,7 +226,7 @@ export const routes = [
     // 三级内容页：抢课任务的**管理**面（入口在选课页页头）。
     // 为什么要有这一页：任务单在选课页只是仪表盘的一部分，抢完之后
     // 「哪些没抢到、为什么、要不要重排」需要一屏看全 + 能编辑能删。
-    meta: { title: '抢课任务' },
+    meta: { title: '抢课任务', desk: 'wide' },
   },
   {
     path: '/record',

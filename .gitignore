@@ -86,3 +86,4 @@ dist-release/
 server/data/
 server/config.json
 server/node_modules/
+.tmp-ui-shots/

@@ -29,7 +29,7 @@ fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
 
 #[tauri::command]
 pub async fn voice_config_get(state: State<'_, AppState>) -> Result<VoiceConfig> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let raw = meta_get(&conn, META_CONFIG).unwrap_or_default();
     if raw.is_empty() {
         return Ok(VoiceConfig::default());
@@ -39,7 +39,7 @@ pub async fn voice_config_get(state: State<'_, AppState>) -> Result<VoiceConfig>
 
 #[tauri::command]
 pub async fn voice_config_save(state: State<'_, AppState>, config: VoiceConfig) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     meta_set(&conn, META_CONFIG, &serde_json::to_string(&config)?)?;
     Ok(())
 }
@@ -47,7 +47,7 @@ pub async fn voice_config_save(state: State<'_, AppState>, config: VoiceConfig) 
 /// 配置状态摘要（结构化）：识别/朗读各自是否就绪 + 实际适配器 + 朗读是否独立凭据
 #[tauri::command]
 pub async fn voice_config_status(state: State<'_, AppState>) -> Result<VoiceStatus> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let raw = meta_get(&conn, META_CONFIG).unwrap_or_default();
     let cfg: VoiceConfig = if raw.is_empty() {
         VoiceConfig::default()
@@ -79,7 +79,7 @@ pub async fn voice_config_status(state: State<'_, AppState>) -> Result<VoiceStat
 
 /// 前端统一从本函数读配置（避免两处解析逻辑漂移）
 pub fn config_from_meta(state: &State<'_, AppState>) -> VoiceConfig {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let raw = meta_get(&conn, META_CONFIG).unwrap_or_default();
     if raw.is_empty() {
         VoiceConfig::default()
@@ -122,7 +122,7 @@ pub async fn voice_tts_probe(
 pub async fn voice_asr_probe(app: AppHandle) -> Result<()> {
     let cfg: VoiceConfig = {
         let st = app.state::<AppState>();
-        let conn = st.db.lock().unwrap();
+        let conn = st.db.lock();
         let raw = meta_get(&conn, META_CONFIG).unwrap_or_default();
         if raw.is_empty() {
             VoiceConfig::default()
@@ -183,7 +183,7 @@ pub async fn voice_tts_credential_save(
 ) -> Result<()> {
     let mut cfg = config_from_meta(&state);
     cfg.tts_credential = tts_credential;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     meta_set(&conn, META_CONFIG, &serde_json::to_string(&cfg)?)?;
     Ok(())
 }
@@ -202,7 +202,7 @@ pub async fn voice_asr_start(
     }
     let cfg: VoiceConfig = {
         let st = app.state::<AppState>();
-        let conn = st.db.lock().unwrap();
+        let conn = st.db.lock();
         let raw = meta_get(&conn, META_CONFIG).unwrap_or_default();
         if raw.is_empty() {
             VoiceConfig::default()
@@ -322,7 +322,7 @@ pub async fn voice_memo_create(
     state: State<'_, AppState>,
     input: VoiceMemoInput,
 ) -> Result<VoiceMemo> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let created_at = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO voice_memos (id, chat_id, message_id, title, audio_path, duration_ms, words, sentences, summary, created_at) \
@@ -345,7 +345,7 @@ pub async fn voice_memo_create(
 }
 
 fn voice_memo_get_inner(state: &State<'_, AppState>, id: &str) -> Result<VoiceMemo> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.query_row(
         &format!("SELECT {MEMO_COLS} FROM voice_memos WHERE id = ?1"),
         [id],
@@ -365,7 +365,7 @@ pub async fn voice_memo_list(
     state: State<'_, AppState>,
     limit: Option<i64>,
 ) -> Result<Vec<VoiceMemo>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let limit = limit.unwrap_or(200).clamp(1, 500);
     let mut stmt = conn.prepare(&format!(
         "SELECT {MEMO_COLS} FROM voice_memos ORDER BY created_at DESC LIMIT ?1"
@@ -381,7 +381,7 @@ pub async fn voice_memo_set_summary(
     id: String,
     summary_json: String,
 ) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE voice_memos SET summary = ?1 WHERE id = ?2",
         params![summary_json, id],
@@ -396,7 +396,7 @@ pub async fn voice_memo_rename(
     id: String,
     title: String,
 ) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE voice_memos SET title = ?1 WHERE id = ?2",
         params![title, id],
@@ -406,7 +406,7 @@ pub async fn voice_memo_rename(
 
 #[tauri::command]
 pub async fn voice_memo_delete(state: State<'_, AppState>, id: String) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM voice_memos WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -416,20 +416,20 @@ pub async fn voice_memo_delete(state: State<'_, AppState>, id: String) -> Result
 /// 转写过程中的逐句落盘草稿（崩溃后可恢复继续/补交/丢弃）
 #[tauri::command]
 pub async fn voice_draft_save(state: State<'_, AppState>, draft_json: String) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     meta_set(&conn, META_DRAFT, &draft_json)?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn voice_draft_get(state: State<'_, AppState>) -> Result<Option<String>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     Ok(meta_get(&conn, META_DRAFT))
 }
 
 #[tauri::command]
 pub async fn voice_draft_clear(state: State<'_, AppState>) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM app_meta WHERE key = ?1", [META_DRAFT])?;
     Ok(())
 }

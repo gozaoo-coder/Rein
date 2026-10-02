@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
 
@@ -7,8 +7,14 @@ import ActionSheet from '@/components/common/ActionSheet.vue'
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
 import RingProgress from '@/components/common/RingProgress.vue'
-import ExerciseDetailDrawer from '@/components/exercise/ExerciseDetailDrawer.vue'
-import MuscleMap from '@/components/exercise/MuscleMap.vue'
+// 这两块按需加载：肌群图本体是 160 KB 的解剖 SVG（三个视图 raw 内联）＋ 一处
+// 只在点开动作详情时才出现的抽屉。它们是沉浸层**内部**的详情块，用户不开到那一屏
+// 就用不到 —— 而沉浸层挂在 App 根上，静态 import 等于让每个路由都背着这 160 KB 首屏。
+// 沉浸层自身的显隐与形变动画不受影响：这两个组件都渲染在 v-if 分支里。
+const ExerciseDetailDrawer = defineAsyncComponent(
+  () => import('@/components/exercise/ExerciseDetailDrawer.vue'),
+)
+const MuscleMap = defineAsyncComponent(() => import('@/components/exercise/MuscleMap.vue'))
 import SessionBigNumberInput from '@/components/exercise/SessionBigNumberInput.vue'
 import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
 import SessionGlassButton from '@/components/exercise/SessionGlassButton.vue'
@@ -259,11 +265,22 @@ const nextEx = computed(() => s.plan?.exercises[s.exIndex + 1] ?? null)
 /** 当前动作的肌群激活表（库内显式数据优先 → 课程条目 → 按动作名关键词；均无 → 隐藏卡片） */
 const activation = computed(() => (s.currentEx ? lib.musclesOf(s.currentEx) : null))
 
+/** 下一动作的处方摘要：单位按类型取（计时只认秒、有氧认分钟；次数带脏值时也不能顶掉秒） */
 const nextExDesc = computed(() => {
   const n = nextEx.value
   if (!n) return ''
   const per =
-    n.reps != null ? `${n.reps} 次` : n.targetSec != null ? `${n.targetSec} 秒` : n.durationMin != null ? `${n.durationMin} 分钟` : ''
+    n.kind === 'timed'
+      ? n.targetSec != null
+        ? `${n.targetSec} 秒`
+        : ''
+      : n.kind === 'cardio'
+        ? n.durationMin != null
+          ? `${n.durationMin} 分钟`
+          : ''
+        : n.reps != null
+          ? `${n.reps} 次`
+          : ''
   return `${s.effSets(n)} 组${per ? ` · ${per}` : ''}`
 })
 
@@ -932,7 +949,7 @@ watch(immersiveOpen, (open) => {
             <h1 class="actname">{{ displayName }}</h1>
             <p class="meta">
               目标
-              {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.currentEx.sets} 组` : `${s.currentEx.durationMin} 分钟` }}
+              {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.effSets(s.currentEx)} 组` : `${s.currentEx.durationMin} 分钟` }}
               <template v-if="s.currentEx.kind === 'timed'"> · 组间休息 {{ s.currentEx.restSec }}s</template>
             </p>
             <div v-if="activation" class="blockcard">

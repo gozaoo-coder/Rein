@@ -482,9 +482,9 @@ function requestCloseEditor(): void {
       </template>
     </PageHeader>
 
-    <div class="cards">
-      <!-- 检索：这页 90% 的到访是搜一下 / 看看最近内容，放第一卡 -->
-      <section class="card">
+    <div class="cards" :class="{ 'is-editing': !!editor }">
+      <!-- 检索：这页 90% 的到访是搜一下 / 看看最近内容，放第一卡（桌面右栏上格） -->
+      <section class="card card-search">
         <div class="card-head">
           <Search :size="16" />
           <h2>检索</h2>
@@ -523,8 +523,8 @@ function requestCloseEditor(): void {
         />
       </section>
 
-      <!-- 长期记忆 -->
-      <section class="card">
+      <!-- 长期记忆（桌面右栏下格，条目按多栏流铺开） -->
+      <section class="card card-memory">
         <div class="card-head">
           <Brain :size="16" />
           <h2>长期记忆</h2>
@@ -621,8 +621,8 @@ function requestCloseEditor(): void {
         </p>
       </section>
 
-      <!-- 文件：入口 + 新建笔记；浏览与编辑在文件库 -->
-      <section class="card">
+      <!-- 文件：入口 + 新建笔记；浏览与编辑在文件库（桌面左栏，开编辑器时画布切单栏） -->
+      <section class="card card-files">
         <div class="card-head">
           <FolderTree :size="16" />
           <h2>文件</h2>
@@ -1319,5 +1319,96 @@ textarea {
   text-align: center;
   font-size: var(--fs-caption);
   color: var(--text-2);
+}
+
+/* ============================================================
+   桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
+   这页是 wide 路由，没有壳层的两栏栅格，构图全在这里定：
+   左栏是「目录」—— 进工作区的门（文件入口）；右栏是「正文」——
+   检索命中的文档与 AI 记住的长期记忆。
+   ============================================================ */
+
+/* 宽形态页面的内容上限，超过就不再拉长行 */
+.desk-main .page {
+  max-width: var(--desk-wide);
+}
+
+/* 左目录 + 右正文：左栏是「进得去工作区的门」（文件卡，本身就短，
+   适合待在侧栏里）；右栏才是正文 —— 检索命中的文档与长期记忆。
+   为什么长列表不进侧栏：命中列表和记忆列表都可能很长，它们需要宽度才能摊成
+   多栏；压进 320px 的侧栏只会变成一条又长又窄的列表，同时把另一半屏空出来。
+   所以侧栏只放短的入口卡，凡是会长的一律进主区。 */
+.desk-main .cards {
+  display: grid;
+  grid-template-columns: minmax(260px, var(--desk-aside)) minmax(0, 1fr);
+  gap: var(--desk-gap);
+  /* stretch：文件卡（跨两行）填满右列两卡的总高，别让灰底从左栏下面漏出来 */
+  align-items: stretch;
+}
+
+.desk-main .cards > .card-files {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.desk-main .cards > .card-search {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.desk-main .cards > .card-memory {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+/* 新建笔记的编辑区（路径 + 正文）在 320px 的侧栏里写不了字：
+   编辑器一打开，整个画布切成单栏，编辑器排到最上面（点「新建笔记」的地方
+   就在左栏顶部，编辑器出现在它下方才是可预期的），检索与记忆顺次下移。
+   关掉编辑器立刻回到左目录 + 右正文。 */
+.desk-main .cards.is-editing {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.desk-main .cards.is-editing > .card-files {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.desk-main .cards.is-editing > .card-search {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.desk-main .cards.is-editing > .card-memory {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+/* 检索命中摊成两栏：一条命中是「来源 + 路径 + 日期 + 标题 + 摘要」，
+   单栏排下来一屏看不了几条。
+   注意要显式 display:block —— 这两个列表原本是 flex 列（靠 gap 排版），
+   而多栏容器必须是块容器，不改 display 的话 columns 会被整条忽略。
+   间距改由条目的 margin-top 承担（多栏容器里 gap 不生效）。 */
+.desk-main .hits {
+  display: block;
+  columns: 2;
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .hits > li {
+  break-inside: avoid;
+  margin-top: 10px; /* 顶替原来的 flex gap */
+}
+
+/* 记忆条目同理：一列排到 700px 宽、一条只有两三行字，两栏才看得完 */
+.desk-main .mems {
+  display: block;
+  columns: 2;
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .mems > li {
+  break-inside: avoid;
+  margin-top: 10px; /* 顶替原来的 flex gap */
 }
 </style>

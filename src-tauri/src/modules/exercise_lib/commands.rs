@@ -25,7 +25,7 @@ pub fn list_exercises(
     query: Option<String>,
     include_hidden: Option<bool>,
 ) -> Result<Vec<ExerciseRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut sql = String::from(EXERCISE_SELECT);
     let mut wheres: Vec<String> = Vec::new();
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -61,7 +61,7 @@ pub fn list_exercises(
 
 #[tauri::command]
 pub fn get_exercise(state: State<AppState>, id: String) -> Result<ExerciseRecord> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!("{EXERCISE_SELECT} WHERE e.id = ?1");
     conn.query_row(&sql, [&id], exercise_from_row)
         .optional()?
@@ -87,7 +87,7 @@ pub fn upsert_exercise(state: State<AppState>, input: ExerciseInput) -> Result<E
         }
     }
 
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let id = match input.id.clone().filter(|s| !s.is_empty()) {
         Some(id) => id,
         None => format!("custom-{}", uuid::Uuid::new_v4()),
@@ -167,7 +167,7 @@ pub fn upsert_exercise(state: State<AppState>, input: ExerciseInput) -> Result<E
 /// 删除动作：自建动作真删（历史做组记录保留，展示回落快照名）；内置动作只做隐藏。
 #[tauri::command]
 pub fn delete_exercise(state: State<AppState>, id: String) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let is_custom: Option<i64> = conn
         .query_row("SELECT is_custom FROM exercises WHERE id = ?1", [&id], |r| {
             r.get(0)
@@ -192,7 +192,7 @@ pub fn delete_exercise(state: State<AppState>, id: String) -> Result<()> {
 /// 恢复显示被隐藏的内置动作
 #[tauri::command]
 pub fn restore_exercise(state: State<AppState>, id: String) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE exercises SET hidden = 0, updated_at = datetime('now') WHERE id = ?1",
         [&id],
@@ -204,7 +204,7 @@ pub fn restore_exercise(state: State<AppState>, id: String) -> Result<()> {
 /// 与 `hidden` 同属用户态：种子的覆盖式刷新不会碰这一列。
 #[tauri::command]
 pub fn set_exercise_favorite(state: State<AppState>, id: String, favorite: bool) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let exists: Option<i64> = conn
         .query_row("SELECT 1 FROM exercises WHERE id = ?1", [&id], |r| r.get(0))
         .optional()?;

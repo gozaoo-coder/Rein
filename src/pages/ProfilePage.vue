@@ -198,7 +198,9 @@ async function saveConstraints(): Promise<void> {
       <!-- 记账 -->
       <button class="cell" @click="router.push('/ledger')">
         <header class="chead"><h2>本月结余</h2></header>
-        <p class="bignum num" :class="balancePos ? 'pos' : 'neg'">
+        <!-- 带千分位的金额比「每日目标」长一截：降一档展示字号 + 不换行，
+             否则数字贴边、「元」被挤成孤字行 -->
+        <p class="bignum num sm" :class="balancePos ? 'pos' : 'neg'">
           {{ balancePos ? '+' : '-' }}{{ balanceText }}<i>元</i>
         </p>
         <p class="sub num">{{ ledgerSub }}</p>
@@ -453,6 +455,12 @@ button.cell:active {
   color: var(--text-3);
   margin-left: 3px;
   letter-spacing: 0;
+}
+
+/* 长金额（千分位 + 符号 + 单位）在半栏格里放不下展示级大字：降一档且不折行 */
+.bignum.sm {
+  font-size: var(--fs-display-s);
+  white-space: nowrap;
 }
 
 .bignum.pos {

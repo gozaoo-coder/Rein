@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import {
   ArrowUp,
   AudioLines,
@@ -21,7 +21,7 @@ import {
 import MdText from '@/components/common/MdText.vue'
 import TimeSpine from './TimeSpine.vue'
 import VoiceMemosSheet from './VoiceMemosSheet.vue'
-import { useAiStore } from '@/stores/ai'
+import type { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
 import {
   cancelSession,
@@ -44,7 +44,34 @@ import type { MemoSummaryItem, VoiceMemo } from '@/types'
  * 文本区左右 padding 用 --page-pad-x，与全应用页面栅格对齐。
  */
 
-const ai = useAiStore()
+/**
+ * AI store **按需加载**（不是顶层 import）。
+ *
+ * 本视图在 App 根部常驻挂载，所以顶层 `import { useAiStore } from '@/stores/ai'`
+ * 会把整个 AI 工具栈（工具注册表 + 18 个工具域，约 200 KB）钉进启动主包 ——
+ * 而这份依赖只有「键盘输入回退」与「结算一段」用得到。改成一个可空 ref +
+ * 首次真的要用时再 import，网关在 chat 侧，语音侧只管取。
+ *
+ * 触发点：语音视图被打开时（watch）—— 那一刻起用户随时可能敲字或让 AI 整理，
+ * 提前预热正好把 await 藏在动画里。
+ */
+const aiStore = shallowRef<ReturnType<typeof useAiStore> | null>(null)
+
+async function ensureAiStore(): Promise<ReturnType<typeof useAiStore>> {
+  if (!aiStore.value) {
+    const { useAiStore: use } = await import('@/stores/ai')
+    aiStore.value = use()
+  }
+  return aiStore.value
+}
+
+watch(
+  () => voice.view !== 'closed',
+  (open) => {
+    if (open) void ensureAiStore()
+  },
+)
+
 const toast = useToast()
 
 /* ---------- 计时 ---------- */
@@ -236,7 +263,7 @@ async function sendKbd(): Promise<void> {
   if (!text || kbdSending.value) return
   kbdSending.value = true
   try {
-    await ai.sendText(text)
+    await (await ensureAiStore()).sendText(text)
     kbdText.value = ''
   } finally {
     kbdSending.value = false
@@ -245,6 +272,8 @@ async function sendKbd(): Promise<void> {
 
 /** 键盘输入后最近一条助手回复（流式跟随） */
 const kbdReply = computed(() => {
+  const ai = aiStore.value
+  if (!ai) return null // AI 栈还没加载：键盘面板此时也不会有回复
   for (let i = ai.messages.length - 1; i >= 0; i--) {
     const m = ai.messages[i]
     if (m && m.role === 'assistant') return m

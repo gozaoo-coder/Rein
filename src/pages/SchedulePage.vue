@@ -225,6 +225,38 @@ watch([view, anchor], reload)
   gap: 10px;
 }
 
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   这一页是宽形态（desk: 'wide'），构图自负。课表周视图本来就按时段铺满整宽，
+   所以只做三件事：把画布收到 --desk-wide（再宽，一周七天就散成一条条细缝）、
+   收掉顶部那条被拉长的工具栏、把底部两个入口并排。
+   ============================================================ */
+.desk-main .page {
+  max-width: var(--desk-wide);
+  margin-inline: auto;
+  gap: var(--desk-gap);
+}
+
+/* 顶部工具栏：手机上是「分段控件 132px | 日期导航吃掉剩余」——桌面上那条导航
+   会被拉成一条 900px 长的空槽，日期反而挤在正中。改成左分段、右导航，
+   导航给 --desk-aside（320px）宽：左右箭头之间正好装下一句「9月1日 – 9月7日」 */
+.desk-main .seg {
+  margin-right: auto;
+}
+
+.desk-main .nav {
+  flex: none;
+  width: var(--desk-aside);
+}
+
+/* 底部两个入口：手机上是一列整宽行（一行只有十来字），桌面上并排成两栏 */
+.desk-main .links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--desk-gap);
+  margin-top: 0;
+}
+
 .bar {
   display: flex;
   align-items: center;

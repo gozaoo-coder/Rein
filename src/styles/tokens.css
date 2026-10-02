@@ -255,6 +255,27 @@
   --page-pad-x: 18px;
   --page-pad-bottom: calc(var(--dock-top) + 26px + var(--wbar-reserve, 0px));
 
+  /* ---------- 桌面工作台（≥ --desk-min） ----------
+     桌面不是把手机版居中放大。窗口够宽时壳层换成三窗格（导航轨 + 主人区 + 信息栏），
+     页面内容也从「一列窄栏」变成「有节奏的卡片栅格」：
+       --desk-content  卡片流/表单的内容上限 —— 再宽就该分栏，而不是把行拉长
+       --desk-wide     表格、看板、长列表这类宽内容的宽上限
+       --desk-gutter   桌面内容区左右留白，桌面下它就是 --page-pad-x
+       --desk-gap      栅格间距；与 .card + .card 的 14px 同值，换栏后垂直节奏不变
+       --desk-aside    主区 + 侧栏（d-split）布局的侧栏宽
+     --desk-min 必须与 src/config/domain.ts 的 DESKTOP_MIN 同值：媒体查询不能读 var()，
+     断点真正的来源只有 TS 那一处，这里只是同一事实的备忘。 */
+  --desk-min: 1100px;
+  --desk-content: 1040px;
+  --desk-wide: 1240px;
+  --desk-gutter: 34px;
+  --desk-gap: 14px;
+  --desk-aside: 320px;
+  /* 第三窗格（信息栏）的宽度。单独立一个令牌是因为**游离在页面之外的元素也要避让**：
+     信息栏占掉右缘 298px，而 teleport 到 body 的悬浮钮（记录 / 添加模型）用视口百分比
+     定位，在桌面上会正好压在内容栏中间 —— 它们需要知道这一格有多宽。 */
+  --inspector-w: 298px;
+
   /* ---------- 安全区 ----------
      Android WebView 的 env() 只报告状态栏 inset、不报告底部导航；
      原生侧（MainActivity）监听 WindowInsets 注入 --safe-*-native 变量，

@@ -56,7 +56,9 @@ pub struct Endpoint {
     pub room: String,
     /// 本机设备号
     pub device: String,
-    /// 是不是拨号侧（设备号小的那台拨，避免两边同时抢连）
+    /// 是不是拨号侧（设备号小的那台拨，避免两边同时抢连）。
+    /// 选路在 `runner` 里现算，这个字段暂时只作为「一次连接尝试的全貌」留在模型里。
+    #[allow(dead_code)]
     pub dial: bool,
     /// 局域网发现用的本地端口
     pub lan_port: u16,

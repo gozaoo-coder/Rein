@@ -20,7 +20,7 @@
 │ modules/<域>/commands.rs   #[tauri::command]，参数校验 + SQL                    │
 │ modules/<域>/models.rs     serde camelCase 结构体（= types/ 的镜像）             │
 │ modules/<域>/mod.rs        列常量 / 行映射等模块内共享辅助                       │
-│ db.rs  迁移（只追加）   state.rs  Mutex<Connection>   seed.rs  首启种子         │
+│ db.rs  迁移（只追加）  state.rs  Db（连接锁，带中毒恢复）  seed.rs  首启种子   │
 └──────────────────────────────── SQLite（应用数据目录/rein.db）─────────────────┘
 ```
 
@@ -35,8 +35,8 @@
 | `src/stores/exerciseLib.ts` | 动作库缓存与解析：`byId` / `resolveName(item)` / `musclesOf(item)` / `tipsOf(item)` / `forKind` / `search`。课程的展示名一律先查它，查不到才回落课程条目里的名称快照 | 写业务数据（增删改一律经 service）；认识页面组件 |
 | `src/plugins/*` | 功能插件声明与注册表：`builtin/` 一个模块一个文件（`definePlugin`），`registry.ts` 纯数据（不认识 Pinia），`types.ts` 扩展点形状 | 启用状态（在 `stores/features.ts`）；直接 import router |
 | `src/stores/features.ts` | 插件启用态（localStorage `rein.features.v1`）+ 派生列表：`tools` / `nav(surface)` / `isEnabled`（含**父关子关**的继承判定） | 业务逻辑；认识具体页面组件 |
-| `src/mock/server.ts` | 与 Rust 相同的命令契约 | 生产分支逻辑 |
-| `src/ai/*` | AI 推理层（pi-ai / pi-agent-core）：`runtime.ts` 模型装配、`probe.ts` max_tokens=1 能力探测、`vision.ts` 照片食物识别。模型请求由 WebView 直连 provider，不经 Rust | 直接 import '@tauri-apps/api'；同步 import 进主包（store 侧动态 import） |
+| `src/mock/server.ts` | 与 Rust 相同的命令契约（**只在纯浏览器构建里存在**：Tauri 构建经 vite alias 换成 `src/mock/disabled.ts` 空实现，见 §15） | 生产分支逻辑 |
+| `src/ai/*` | AI 推理层（pi-ai / pi-agent-core）：`runtime.ts` 模型装配、`probe.ts` max_tokens=1 能力探测、`vision.ts` 照片食物识别。模型请求由 WebView 直连 provider，不经 Rust | 直接 import '@tauri-apps/api'；**被 App/main 的静态 import 链够到**（`stores/ai` 一次静态 import 就把工具注册表与全部工具域拖进首屏主包 —— 入口侧一律函数内动态 import，见 §15） |
 | `src/components/program/*` | 健康方案的十块 UI：`ProgramDashboard`（今日驾驶舱）、`ProgramCycleMap`（全周期网格）、`ProgramEvidenceSheet`（三条研究曲线）、`ProgramCompare`（三档对比矩阵 + 4 周强度预览双视图）、`ProgramConstraints`（内联约束向导，chips 写回 profile）、`ProgramNutritionCompass`（聚焦日宏量环 + 餐次分布）、`ProgramEvolutionChart`（参数演进双泳道图 + 节点 diff + 摇摆检测）、`ProgramWeightChannel`（体重航道：档位速率走廊 ±0.3kg）、`ProgramReviewSheet`（AI 复盘：数据先行 + 建议逐条采纳 + 实时汇总） | 直连 IPC；方案参数的写入 |
 | `src/utils/trainingAdvice.ts` | **训练建议引擎**（纯数据 + 纯函数，无 IPC、不落库）：动作库默认处方 × 历史做组的 e1RM 基线（平均状态）× 今日状态（恢复间隔 / 周容量 / 趋势 / 自评）= 逐动作建议重量×次数×组数；另出每肌群周组数地标（MEV/MAV/MRV）对照。科学依据逐条写在文件头（Epley/Brzycki、Zourdos RPE 表、Schoenfeld 剂量反应、Damas 恢复窗口） | 任何 IPC / store 依赖；写库（建议只做预填与解释） |
 | `src/components/exercise/*` | 训练课与动作库 UI：`SessionOverlay`（沉浸训练层：今日建议 chip + 依据 + 今日状态自评）、`SessionCourseDrawer` / `SessionExerciseSwapSheet`（全课浏览、换动作 = 从动作库同类型动作里选）、`ExercisePickerSheet` / `ExerciseFormSheet`（课程编辑的动作库选择器与自建动作表单）、`ExerciseLibrarySheet`（动作详情：肌群 / 曲线 / 今日建议 / 隐藏）、`ExerciseVolumeCard`（本周容量看板）、`StrengthProgressCard` / `WeightCurve` / `ExerciseDetailDrawer`（按库 id 的重量曲线） | 直连 IPC（一律走 services）；把建议写回课程 |
@@ -97,6 +97,8 @@
 
 迁移规则：`db.rs::MIGRATIONS` 数组下标即版本号，**只追加不改历史**。新迁移 = 末尾加一条 SQL。
 
+**连接级 pragma 只在 `db.rs::tune()` 设一次**，各域不许再各自 `pragma_update`：`journal_mode=WAL`、`synchronous=NORMAL`、`foreign_keys=ON`（顺序固定，`journal_mode` 必须最先 —— `synchronous` 的语义由日志模式决定）。三条都有理由，改动前先读 `tune` 的注释与 `db::tests::tune_locks_connection_pragmas`：`synchronous` 是**写路径上最贵的一处**（WAL 下默认 FULL = 每次提交 fsync 一次；实测 2000 次单语句自动提交 2342.8 ms vs NORMAL 95.5 ms，**差 24.5 倍**），而它只影响性能不影响正确性 —— 把它删掉不会有任何功能测试变红；`foreign_keys` 反过来，默认关，漏了级联删除会静默失效。
+
 表：`foods` / `food_units` / `meal_logs` / `profile` / `todos` / `workouts` / `pomodoro_sessions`（MIGRATION_0001）、`workout_sessions`（0002）、`workout_plans`（0003）、`ledger_entries` / `ledger_settings`（0004）、`calc_params` / `body_metrics`（0005）、`ai_models` / `ai_chats` / `ai_chat_messages`（0006）、`workouts.session_id`（0007）、profile 个性化约束五列 + `workout_plans.equipment/est_duration_min` + `programs` + `todos.program_id`（0008）、`recipe_prefs`（0009）、`program_meals`（0010，方案每日 AI 菜单缓存，PK(program_id,date)，随方案级联删除）、`todos.rec_rule/rec_key/subtasks`（0011，重复规则/实例键/子任务 JSON 列，rec_key 部分唯一索引保证物化幂等）、`shopping_checks`（0012，采购清单勾选）、`workout_sets` + `app_meta`（0013，逐组做组记录与通用键值元数据）、`todos.attachments`（0014）、`ai_models.image_max_edge`（0015）、`voice_memos`（0016，语音纪要：句子/总结存 JSON 文本列，音频为磁盘文件路径）、**`exercises` + `workout_sets.exercise_id`（0025，动作库与重量曲线聚合键）**、`exercises.favorite/steps`（0033，收藏与动作要领）。营养值单位约定：宏量与纤维/糖为 g，钠钾钙等为 mg，维生素 A/D/B12/叶酸为 μg，C/E 为 mg。记账金额一律整数分（`amount_cents`）、恒为正，正负由 `kind`（expense/income）表达；`ledger_settings` 单行（id=1）存月度总预算。`calc_params` 单行快照方案计算器的身体参数（含手输年龄；改动静默自动落库）；`body_metrics` 体重身高按天一条、同日补录 COALESCE 合并，非空值同步写回 `profile` 保持计算器与「我」页同源。AI：`ai_models` 含能力探测三态（vision/thinking/effort 可空）、部分唯一索引保证至多一个默认；`ai_chat_messages` 的 `(chat_id, seq)` 唯一，`ai_chat_append` 按消息 id 幂等 upsert。健康方案：`programs.params_json` 存前端引擎的完整内容快照 `{params, days}`；`profile` 新列中 `preferred_time_slots`/`diet_restrictions` 为 JSON 数组文本列（NULL=未设置）；`workout_plans.equipment/est_duration_min` 是内置课程 meta（用户编辑不感知，upsert COALESCE 保留原值）。逐组记录：`workout_sets` 在 `session_finish` 事务内由前端提交的做组明细展开落行（workout_id 外键随 workouts 级联删除；**`exercise_id` 是重量曲线的聚合键**，`exercise_name` 只是历史快照；warmup=1 的行不计入正式组）；查询命令 `strength_history`（单动作全部做组行，入参可传库 id 或动作名）/ `strength_exercises`（有记录的动作清单，按库 id 聚合）/ `strength_last_weights`（批量取各动作最近一次做组重量，沉浸页预填「上次重量」）/ `strength_recent_sets`（近 N 天全部做组行，训练建议引擎的一次性原料）。
 
 **动作库（0025 + 0033）**：`exercises` 是全部运动动作的**唯一真源**，内置动作来自种子 `resources/exercises.json`（`scripts/gen-exercises.mjs` 生成：处方与要点取自课程种子、**肌群激活表在 SPEC 里逐条显式手写**（缺失即生成失败），另有 `scripts/catalog/dataset.mjs` 的精选导入条目），`is_custom=0` 只读、每次启动覆盖式刷新**内容列**（含 `steps`）、用户态列（`hidden` / `favorite`）不被覆盖；用户自建动作 `is_custom=1`，可改可删。四条不变量：
@@ -145,6 +147,16 @@
   3. **玻璃里面放东西只用填充**：组格（`--surface` 抬起 / `--c-exercise-soft` 已完成）、一键填入分段、步进钮、今日状态档位全是 fill / vibrancy，不是第二层玻璃。
 - **「在流内容面」不挂 backdrop-filter**（base.css 极致档分成两组）：`.card` / `.qa` / `.tuner` 这类**在流**的内容面只拿材质（`--glass-panel-fill` + 光学层），**不挂滤镜** —— 它们背后永远只有页面画布那一条平滑渐变，没有任何内容会跑到下面，模糊与不模糊肉眼一致，而滤镜会给每张卡开一个背景根、滚动时逐帧重采样（一屏十来张就是纯亏；用户实测的「开极致后严重掉帧」正是这条）。抽屉 / 菜单 / 操作面板（`.sheet` / `.panel` / `.card-wrap`）浮在页面之上、底下有正文经过，**保留** blur。判据是「背后有没有东西会动」，不是「类名叫什么」。
 - **沉浸页的浮起几何与滚动边缘**：两簇是**离四边留余量、带圆角**的浮起玻璃（不是贴边的整条），内容区 `inset` 铺满并从它们底下滚过 —— 这是玻璃能采样到东西、而不是当装饰的前提。**同心**：组格轨外圈 `--radius-l` 22 − 内边距 6 = 内圈 16（组格取这个值）；顶栏三枚是**独立胶囊**（不嵌在任何玻璃里，所以 `--radius-full` 成立）—— 嵌进玻璃里的胶囊才会胀角。顶栏占位因此从 94 降到 62（进度轨退场），内容区凭空多出 32px。顶栏三格用 `1fr auto 1fr`：中间那颗才是数学居中，两枚胶囊靠边、格宽不参与伸缩（上一版按钮被拉伸成 134px 的隐形命中区，点空白处会把训练收起来）。上下缘用 `mask-image` 把内容渐隐进背景（苹果的 Scroll Edge Effect：**溶解内容、不遮挡也不压暗**；从前那三条压暗的暗带方向正好是反的），渐隐段长度取浮层实际盖住的区域，且**与内容末段内边距同值**——滚到底时最后一屏正文正好落在完全不透明的那条线上。浮层几何由 `--top-h` / `--dock-h` 两个变量从同一组常量导出（`TOP_*` / `DOCK_*`），改版式不会只剩一边更新。`is-scrolled` 换 `--glass-shadow-lifted`：苹果的玻璃影子深浅是**自适应**的，内容压过来时变重、背后干净时变轻。
+- **桌面工作台是一套独立的构图契约，不是把手机版拉宽**（2026-10-01）。窗口够宽时三窗格壳（导航轨 64 + 主人区 + 信息栏 298）只是外壳，真正决定观感的是「页面在宽屏上怎么排」——此前除今天 / 全部待办外，三十来个页面都是把手机版那条 480/560 窄栏居中，两侧各留 300px 空白。现在的契约：
+  - **路由 meta 决定内容形态**：`meta.desk: 'wide'`（今天 / 全部待办 / AI / 知识库 / 文件 / 课表 / 选课 / 抢课任务 / 画质预览）＝主人区整宽、构图由页面自负；其余（缺省 `'grid'`）由壳层把 `.page` 铺成**两栏栅格**（内容上限 `--desk-content` 1040）。放在路由表而不是页面里：这是壳层的构图决策，导航轨与信息栏都跟着它变。
+  - **子项摆放只有一处定义**（`base.css` 的「桌面工作台 · 栅格」）：缺省整行、`.card` 半栏、`.page > .card + .card` 的上边距归零；显式声明用 `.d-full` / `.d-half`（同特指度、排在缺省之后靠顺序取胜）。**这套规则不能在 App.vue 里用 `:deep` 写**——`:deep` 会把 `[data-v]` 算进选择器，特指度压过 base.css 的工具类，页面作者加了 class 却不生效（2026-10-01 实测踩到，两个 agent 同时撞上）。页面内部的二级栅格另有 `.d-grid`（`--d-cols` 控栏数）/ `.d-split`（主区 + `--desk-aside` 320）/ `.d-list`（长列表多栏流，用 columns 而非 grid——条目高度参差，grid 会把每行撑到最高那条）。
+  - **断点只有一个来源**：媒体查询读不到 `var()`，所以壳层用「`.desk-main` 是否存在」代替宽度判断——页面里一切桌面样式用 `.desk-main` 祖先限定，**不写 `@media (min-width: 1100px)`**（1100 是 `config/domain.ts` 的 `DESKTOP_MIN`，仅作备忘）。移动端（<1100）因此天然拿不到任何桌面规则，观感逐像素不变。
+  - **内容宽度是分层的**：`--desk-content` 1040（卡片流 / 表单，再宽就该分栏而不是把行拉长）、`--desk-wide` 1240（表格 / 看板）、AI 对话自持 760 的**阅读栏**（气泡宽度是相对容器算的，容器一宽就一起失控）。
+  - **信息栏随路由变**（`DesktopInspector.vue` 的 `GROUP_OF`）：运动页给本周负荷 + 最近记录 + 直达，AI 页给工具入口 + 常用问句，营养页给能量环 + 宏量进度，记账页给本月收支 + 最近三笔，课表 / 设置族给分区入口。数据**按分组按需加载**（常驻面板最容易变成「不管在哪页都拉全量」的成本黑洞），AI 栈与 campus 服务不静态 import（信息栏在每个桌面页都在，import 什么就等于把什么钉进主包）。
+  - 桌面才有的指针反馈：`@media (hover: hover)` 下可点卡片抬一档影子、导航轨图标弹自绘标签（`data-label`，不用原生 `title`）。**不能无条件写 `:hover`**——触屏浏览器的 hover 会在点按后粘住，让"刚点过的那张卡"一直浮着，比没有悬停更糟。
+  - **键盘层是桌面的主入口**（`App.vue` 的 `onDeskKey` + `layout/CommandPalette.vue`）：`⌘K` 命令面板（页面 + 动作，按分组、带快捷键提示、支持 ↑↓/↵/esc，含「最近访问」）、`⌘1–⌘4` 一级页、`⌘I` 信息栏开关。这批键位**只能由壳层持有**——同一个组合在不同页面里含义不同的话，用户就再也不敢按；页面自己的键位（Esc 关抽屉等）仍留在页面里，两边不重叠。命令面板是**壳层常驻、桌面才挂**的，所以它不许静态 import 重模块（AI 栈 / campus 服务），只读路由表与功能开关。
+  - **游离子孙靠 `<html data-shell>` 适配**：teleport 到 body 的元素（悬浮主操作 / 悬浮条 / 提示条）不在 `.desk-main` 里，既用不了那条祖先规则也读不到"现在是不是桌面"。壳层把形态写进 `document.documentElement.dataset.shell`（`desk|mobile`）与 `data-inspector`（`on|off`）——与 `data-perf` / `data-motion` / `data-immersive` 同一条做法。第一个用它的是 `.fab`：手机那条「居中窄栏」的定位公式（`left: 50%` / `right: max(18px, 50% − --frame-max/2 + 18px)`）在桌面上会把按钮停在内容栏中间压住列表，改成贴内容区右下角、并在信息栏收起时跟着让位。
+  - **信息栏可收起**（`⌘I` 或导航轨底部那颗开关，偏好落 `localStorage rein.inspector.v1`）：它是第三扇窗格，窄桌面下用户可能更想把宽度让给主内容。开合状态同样写到 `<html>`，靠右缘定位的游离子孙才跟得上。
 - 三环语义固定：红=摄入达标，绿=运动消耗（目标 `EXERCISE_KCAL_GOAL`=300kcal），青=营养均衡（三大宏量完成度均值）。
 - 动效默认 `--ease-standard`；弹层用 `--ease-sheet`（Apple sheet 曲线）；进出必须同路径；遵守 `prefers-reduced-motion` / `prefers-reduced-transparency`。
 - **动效丰富程度是独立的一档**（`system/motion.ts`）：`off | default | rich`，与画质档位**正交** —— 画质回答的是「这块玻璃画不画得出来」，动效回答的是「界面要不要动」。一台撑得住超高折射的机器，用户也可能就是不想要动画；反过来，只能跑「流畅」档的机器，选「关闭」也不该被理解成"降级"。**`default` 就是本文件写下的这一套**（不加任何装饰），`rich` 才启用液态玻璃的动作，`off` 关掉全部补间。生效档位是**算出来的**、只有一个写入点：用户档位 → 系统 `prefers-reduced-motion` 覆盖为 `off` → 画质选「流畅」时压回 `default`（`rich` 那几样都是每帧合成，用户主动选了最省的画质档时再叠上去是火上浇油）；结论写 `<html data-motion>` 供 CSS 读，JS 侧的动效调用点（`rubberScroll` / `useDragDock` / `stores/ai` / `SessionOverlay` / `ProcessSection`）一律读 `motionOn` / `motionRich`，不再各自 `matchMedia`。「关闭」的语义是**只关补间、不关状态**：`:active` 的颜色与缩放终值照常生效，只是瞬时到位 —— 与 `prefers-reduced-motion` 那块同一条做法，也避开了弱档注释里那句「没有按压反馈会显得失灵」。档位存 localStorage `rein.motion.v1`，UI 在「设置 › 动效」与「画质预览 › 动效」各一份（共用 `MOTION_LEVELS`）。回归：`scripts/e2e-perf-glass.mjs` 第 7 节（三档各跑一遍：补间是否被压平 / 液态活动底的有无 / 纯色活动底的让位与回归）。
@@ -618,3 +630,42 @@ CI 在 tag 上跑（`.github/workflows/release.yml`），Android 缺 keystore se
 **回归**：`node scripts/release/e2e.mjs`（47 项：起临时服务端 + 假上游 provider，跑完发布/验签/下载/篡改必拒/Range/回滚/AI 未配置态/模型下发/白名单 403/计价与用量对账）；
 Rust 侧 `cargo test --lib update::`（37 项，含**官方 CLI 签名必须验得过**的跨实现互操作夹具）；
 `node scripts/e2e-update.mjs`（浏览器 UI：检查 → 下载 → 安装的状态机与更新源开关）。
+
+## 15. 构建产物与首屏预算（2026-09-30）
+
+首屏主包（`dist/assets/index-*.js`）是**唯一阻塞启动**的 JS：Tauri 窗口起来后要先解析它才谈得上渲染。
+所以它的体积是架构约束，不是打包口味。三条硬规则，动入口之前先看这一节。
+
+**规则一：桌面端不带内存 mock 后端。** `tauri build` 会在跑 `beforeBuildCommand`（= `npm run build`）
+之前注入 `TAURI_ENV_PLATFORM`，`vite.config.ts` 据此把 `@/mock/server` alias 到 `src/mock/disabled.ts`。
+理由：mock 是纯浏览器直连用的后端（6800 行实现 + `resources/foods.json` 全量，打包约 1.05 MB），
+而 Tauri 里 `transport.isTauri` 恒为真、那条分支永远不可达。替身必须与真实现**同名导出**
+（`mockInvoke` / `mockCampus` / `mockVoice`）—— 接口对不上是运行时炸，不是编译期炸。
+纯浏览器 `npm run dev` / `npm run preview`（没有该环境变量）不受影响。
+
+**规则二：App 根部的常驻组件不许静态 import AI 栈。** `stores/ai` 一旦静态可达，工具注册表与
+全部工具域（约 140 KB）就进了主包。App 根部常驻的有 `SessionOverlay` / `VoiceSessionView` /
+三条悬浮条 / `DesktopInspector`，它们对 AI 能力的引用一律写成**函数内的动态 `import()`**：
+
+- `system/voiceRuntime.ts` 的 `aiStore()`（草稿落盘 / 结算一段 / 写入纪要条目三处）；
+- `components/voice/VoiceSessionView.vue` 的 `ensureAiStore()`（打开会话视图时预热，
+  键盘回退与「最近一条助手回复」用它，未加载时该 computed 返回 null）；
+- `App.vue` 的抢课救援 `import('@/utils/campusAi')`。
+
+**规则三：重资产明细按需加载。** 肌群三视图是 160 KB 的解剖 SVG（`?raw` 内联成 JS 字符串），
+它只出现在沉浸层 `v-if="activation"` 的卡片与动作详情抽屉里 —— 所以 `SessionOverlay` 用
+`defineAsyncComponent` 引入 `MuscleMap` 与 `ExerciseDetailDrawer`，两者都不在开屏路径上。
+
+**实测**（`npm run build`）：
+
+| 产物 | 优化前 | 优化后 |
+| --- | --- | --- |
+| 首屏 `index-*.js` | 796,947 B | 394,459 B（−50%） |
+| mock chunk | 1,052,085 B | 0（Tauri 构建） |
+| `dist/` 合计（Tauri） | ≈3.38 MB | 2.34 MB（−31%） |
+| 新出现的懒加载 chunk | — | AI 工具注册表 166 KB · MuscleMap 164 KB |
+
+**回归**：`node scripts/e2e-voice.mjs`（语音链路 + 按需 AI store）、`node scripts/e2e-ai-tools.mjs`
+（分组装载与功能门禁）、`node scripts/e2e-muscle-map.mjs`（异步之后的肌群图）、
+`node scripts/e2e-layout-guard.mjs`（27 条路由的布局不变量）。
+

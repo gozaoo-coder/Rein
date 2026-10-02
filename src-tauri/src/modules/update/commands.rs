@@ -76,7 +76,7 @@ pub struct InstallResult {
 }
 
 fn settings_of(state: &AppState) -> UpdateSettings {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     super::load_settings(&conn)
 }
 
@@ -195,7 +195,7 @@ pub fn update_settings_set(
 ) -> Result<UpdateSnapshot> {
     let settings = apply_patch(settings_of(&state), patch)?;
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         super::save_settings(&conn, &settings)?;
     }
     if let Some(mut check) = hub.last_check() {
@@ -469,7 +469,7 @@ pub async fn update_check(
                 settings.last_seen_version = Some(v);
             }
         }
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         super::save_settings(&conn, &settings)?;
     }
 
@@ -612,7 +612,7 @@ pub fn update_install(
     {
         let _ = &webview;
         let silent = {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock();
             super::load_settings(&conn).silent_install
         };
         install::install(&path, InstallMode::from_flag(silent))?;

@@ -688,7 +688,7 @@ const HHMM = minToHHmm
 
 .dh .n {
   font-size: var(--fs-subhead);
-  font-weight: 750;
+  font-weight: 700;
   color: var(--text-2);
 }
 
@@ -791,7 +791,7 @@ const HHMM = minToHHmm
 .tt {
   min-width: 0;
   font-size: var(--fs-micro);
-  font-weight: 570;
+  font-weight: 600;
   line-height: var(--blk-lh, 16px);
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -832,7 +832,7 @@ const HHMM = minToHHmm
 
 .bmin.live {
   color: var(--accent);
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .stk .card.face {
@@ -930,7 +930,7 @@ const HHMM = minToHHmm
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-micro);
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .padd {

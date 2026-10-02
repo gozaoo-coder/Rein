@@ -248,6 +248,10 @@ onMounted(async () => {
   <div class="page">
     <PageHeader title="课表配置与设置" subtitle="绑定学校教务系统后自动同步课表" back />
 
+    <!-- 桌面栅格：壳层只把 .page 的**直接子项**摊成两栏，而这一页里有两张卡
+         需要通栏（见 .desk-main 那段注释），所以自带一层 .d-grid 承接。
+         手机端它只是个普通 div，块流与卡片间距都不变 -->
+    <div class="d-grid set-grid">
     <!-- ① 学校系统选择器（抽象层的 UI 出口） -->
     <section class="card">
       <div class="sec-head">
@@ -432,7 +436,7 @@ onMounted(async () => {
 
     <!-- ⑤ AI 排障：操作记录 + 救援脚本。写操作不弹确认（抢课窗口里确认就是拖延），
          那份信任必须由「事后能一条条查、且每条都能重放」来兜底。 -->
-    <section v-if="store.account" class="card">
+    <section v-if="store.account" class="card audit-card d-full">
       <div class="sec-head">
         <Sparkles :size="17" />
         <h2>AI 操作记录</h2>
@@ -461,7 +465,7 @@ onMounted(async () => {
     </section>
 
     <!-- ⑥ 账号管理 -->
-    <section v-if="store.account" class="card danger-card">
+    <section v-if="store.account" class="card danger-card d-full">
       <div class="sec-head">
         <Trash2 :size="17" />
         <h2>账号管理</h2>
@@ -471,6 +475,7 @@ onMounted(async () => {
       </p>
       <button class="danger" @click="confirmOpen = true">删除账号</button>
     </section>
+    </div>
 
     <ActionSheet
       :open="confirmOpen"
@@ -608,15 +613,18 @@ onMounted(async () => {
   gap: 2px;
 }
 
+/* 学校名带「（正式）」这类长后缀，窄卡里折行：balance 掉「式）」这类孤字尾行 */
 .sys-name {
   font-size: var(--fs-callout);
   font-weight: 600;
   color: var(--text-1);
+  text-wrap: balance;
 }
 
 .sys-vendor {
   font-size: var(--fs-micro);
   color: var(--text-3);
+  text-wrap: balance;
 }
 
 .tick {
@@ -829,6 +837,39 @@ input:focus,
 
 .danger:active {
   transform: scale(0.985);
+}
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   前四张是两两成对的短卡（学校系统 | 登录、课表同步 | 培养方案），壳层那套
+   半栏栅格正合适；两张不成对的要单独说：
+   ============================================================ */
+
+/* AI 操作记录：它是一份会随记录条数长高的日志，行内是「时刻 / 种类 / 摘要」三列 ——
+   半栏里每行的摘要都要折行，通栏才读成一张表。导出键也跟着从满宽收回自适应宽 */
+.desk-main .audit-card .mini.wide {
+  width: auto;
+  margin-bottom: 0;
+}
+
+/* 账号管理：跟着通栏，横排成「说明在左、危险动作在右」——
+   它若留在半栏，行尾会空出半个屏幕，而它本来只有一句话加一个按钮 */
+.desk-main .danger-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0 var(--desk-gap);
+  align-items: center;
+}
+
+.desk-main .danger-card > .sec-head {
+  grid-column: 1 / -1;
+}
+
+/* 通栏之后满宽的红色按钮会顶成一条 1000px 的长条：只留它自己那份宽度 */
+.desk-main .danger-card > .danger {
+  width: auto;
+  margin-top: 0;
+  padding: 11px 22px;
 }
 
 /* ---------- 账号信息 ---------- */

@@ -26,7 +26,7 @@ pub fn save_pomodoro_session(
     state: State<AppState>,
     session: PomodoroSessionInput,
 ) -> Result<PomodoroSession> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "INSERT INTO pomodoro_sessions (todo_id, started_at, ended_at, focus_min, break_min, completed) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -51,7 +51,7 @@ pub fn list_pomodoro_sessions(
     start_date: String,
     end_date: String,
 ) -> Result<Vec<PomodoroSession>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {COLS} FROM pomodoro_sessions \
          WHERE substr(started_at, 1, 10) BETWEEN ?1 AND ?2 ORDER BY started_at"

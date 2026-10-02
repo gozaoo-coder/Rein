@@ -105,8 +105,12 @@ async function attachTo(todo: Todo): Promise<void> {
   <div class="page">
     <PageHeader title="录音" subtitle="录完可附加到任意待办" back />
 
+    <!-- 桌面栅格：壳层只会把 .page 的**直接子项**摊成两栏，而这一页要的是
+         「录音台通栏 + take 区通栏（内部再摊两栏）」，所以自带一层 .d-grid 承接，
+         手机端它只是个普通 div，块流与间距都不变 -->
+    <div class="d-grid rec-grid">
     <!-- 录音台 -->
-    <section class="card hero" data-testid="record-hero">
+    <section class="card hero d-full" data-testid="record-hero">
       <button
         class="rec-btn"
         :class="{ on: recording }"
@@ -130,8 +134,8 @@ async function attachTo(todo: Todo): Promise<void> {
       <p v-if="recorder.lastError && !recording" class="err">{{ recorder.lastError }}</p>
     </section>
 
-    <!-- 未归档 take -->
-    <section class="takes" data-testid="takes">
+    <!-- 未归档 take：通栏 —— 内部的 take 列表自己会摊成多栏 -->
+    <section class="takes d-full" data-testid="takes">
       <header class="row between thead">
         <b>未归档录音</b>
         <span class="num t-3">{{ recorder.takes.length }}</span>
@@ -157,6 +161,7 @@ async function attachTo(todo: Todo): Promise<void> {
         </li>
       </ul>
     </section>
+    </div>
 
     <!-- 附加目标选择 -->
     <SheetModal :open="pickOpen" title="附加到待办" @close="pickOpen = false">
@@ -280,7 +285,7 @@ async function attachTo(todo: Todo): Promise<void> {
   background: var(--surface-2);
   color: var(--text-2);
   font-size: var(--fs-footnote);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .err {
@@ -295,6 +300,37 @@ async function attachTo(todo: Todo): Promise<void> {
 
 .takes {
   margin-top: 14px;
+}
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   手机上的录音台是「86px 圆钮 + 40px 数字」竖着堆的一张高卡；桌面半栏里
+   右边只会空出半屏，所以把它横过来当一条控制台，take 区则摊成多栏。
+   ============================================================ */
+
+/* 栅格的行距由 gap 管；.takes 自带的 14px 上边距会与它叠加，收掉 */
+.desk-main .rec-grid > .takes {
+  margin-top: 0;
+}
+
+/* 录音台：一条横排控制台（圆钮 · 计时 · 提示 · 录音中的两个动作）。
+   竖排时 86px 的圆钮 + 40px 的数字一张卡就要 250px 高，横过来只占 120px */
+.desk-main .hero {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--desk-gap);
+  padding: 18px 22px;
+}
+
+/* take 是等高条目（名字 + 两个动作 + 一条播放器），桌面上摊成多栏。
+   用 grid 而不是多栏流：每一条都要完整可点、不该被拆到两栏里；
+   minmax 用 --desk-aside（320px）当栏宽下限，窄桌面自动退回一栏 */
+.desk-main .tlist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--desk-aside), 1fr));
+  gap: var(--desk-gap);
 }
 
 .thead b {
@@ -424,7 +460,7 @@ async function attachTo(todo: Todo): Promise<void> {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-subhead);
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .pmeta {

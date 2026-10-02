@@ -556,7 +556,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
 
 .dlabel {
   font-size: var(--fs-footnote);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
 }
 
@@ -594,7 +594,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
   background: var(--surface-2);
   border: 0.5px solid var(--line);
   font-size: var(--fs-footnote);
-  font-weight: 550;
+  font-weight: 600;
   touch-action: none;
   cursor: grab;
 }

@@ -506,6 +506,43 @@ const capMeta = {
   margin-top: 6px;
 }
 
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
+   这一页的内容都挂在 .rubber-layer 这个滚动层里（壳层的 .page 栅格管不到它），
+   桌面下把它自己铺成两栏栅格：说明段落 / 在线服务卡 / 模型列表仍然通栏，
+   底部两张「语音服务」「让 AI 帮我配置语音」并排 —— 否则它们会各自占着一整行、右半屏空着。 */
+.desk-main .rubber-layer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--desk-gap);
+  align-items: start;
+}
+
+.desk-main .rubber-layer > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+/* 两张入口卡并排：它们高度一致（都是一行图标 + 两行文字），并排后读起来像一组工具 */
+.desk-main .rubber-layer > .vcfg,
+.desk-main .rubber-layer > .ai-setup {
+  grid-column: span 1;
+  margin-top: 0;
+}
+
+/* 模型清单摊成多栏。用 auto-fit 而不是定死两栏：只配了一个模型时，
+   那一条也占满整行，不会在右半边留一块空白。 */
+.desk-main .rubber-layer > .cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--desk-gap);
+}
+
+/* 间距交给栅格 gap。.cards 原本是 flex 列 + gap，卡片还各自带着 .card + .card 的 14px 外边距，
+   桌面换栅格后必须收掉，否则行距会变成 gap + 14px。 */
+.desk-main .rubber-layer > .cards > .card + .card {
+  margin-top: 0;
+}
+
 .fab {
   position: fixed;
   left: 50%;

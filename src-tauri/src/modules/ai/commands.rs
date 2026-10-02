@@ -32,7 +32,7 @@ fn cn_num(c: char) -> Option<f64> {
 /// 就近向前看 8 个字符，识别「200克」或「一个/一碗」等数量词。
 #[tauri::command]
 pub fn ai_parse_food_text(state: State<AppState>, text: String) -> Result<Vec<ParsedFoodItem>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
 
     let mut stmt =
         conn.prepare("SELECT id, name, default_unit FROM foods ORDER BY LENGTH(name) DESC")?;
@@ -467,7 +467,7 @@ fn validate_ai_model(input: &AiModelInput) -> Result<()> {
 /// 模型列表：默认模型置顶。
 #[tauri::command]
 pub fn ai_model_list(state: State<AppState>) -> Result<Vec<AiModel>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!("SELECT {AI_MODEL_COLS} FROM ai_models ORDER BY is_default DESC, id ASC");
     let mut stmt = conn.prepare(&sql)?;
     let models = stmt
@@ -481,7 +481,7 @@ pub fn ai_model_list(state: State<AppState>) -> Result<Vec<AiModel>> {
 pub fn ai_model_add(state: State<AppState>, input: AiModelInput) -> Result<AiModel> {
     validate_ai_model(&input)?;
     let now = Utc::now().to_rfc3339();
-    let mut conn = state.db.lock().unwrap();
+    let mut conn = state.db.lock();
     let tx = conn.transaction()?;
     let count: i64 = tx.query_row("SELECT COUNT(*) FROM ai_models", [], |r| r.get(0))?;
     let make_default = input.is_default || count == 0;
@@ -515,7 +515,7 @@ pub fn ai_model_add(state: State<AppState>, input: AiModelInput) -> Result<AiMod
 #[tauri::command]
 pub fn ai_model_update(state: State<AppState>, id: i64, input: AiModelInput) -> Result<()> {
     validate_ai_model(&input)?;
-    let mut conn = state.db.lock().unwrap();
+    let mut conn = state.db.lock();
     let tx = conn.transaction()?;
     let exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM ai_models WHERE id = ?1)",
@@ -558,7 +558,7 @@ pub fn ai_model_update(state: State<AppState>, id: i64, input: AiModelInput) -> 
 /// 删除模型：若删的是默认且仍有剩余，自动把最早一条提升为默认。
 #[tauri::command]
 pub fn ai_model_delete(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM ai_models WHERE id = ?1", [id])?;
     let has_default: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM ai_models WHERE is_default = 1)",
@@ -576,7 +576,7 @@ pub fn ai_model_delete(state: State<AppState>, id: i64) -> Result<()> {
 
 #[tauri::command]
 pub fn ai_model_set_default(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("UPDATE ai_models SET is_default = 0", [])?;
     let n = conn.execute("UPDATE ai_models SET is_default = 1 WHERE id = ?1", [id])?;
     if n == 0 {
@@ -589,7 +589,7 @@ pub fn ai_model_set_default(state: State<AppState>, id: i64) -> Result<()> {
 #[tauri::command]
 pub fn ai_model_save_probe(state: State<AppState>, id: i64, result: AiProbeResult) -> Result<()> {
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let n = conn.execute(
         "UPDATE ai_models SET vision = ?1, thinking = ?2, effort = ?3, last_error = ?4, \
          updated_at = ?5 WHERE id = ?6",
@@ -623,7 +623,7 @@ fn ai_chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiChat> {
 #[tauri::command]
 pub fn ai_chat_ensure(state: State<AppState>, id: String, title: Option<String>) -> Result<AiChat> {
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "INSERT INTO ai_chats (id, title, created_at, updated_at) \
          VALUES (?1, COALESCE(?2, 'AI 对话'), ?3, ?3) ON CONFLICT(id) DO NOTHING",
@@ -639,7 +639,7 @@ pub fn ai_chat_ensure(state: State<AppState>, id: String, title: Option<String>)
 /// 会话消息（按 seq 升序）。
 #[tauri::command]
 pub fn ai_chat_messages(state: State<AppState>, chat_id: String) -> Result<Vec<AiChatMessage>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT id, chat_id, seq, role, kind, text, image_base64, mime, payload, created_at \
          FROM ai_chat_messages WHERE chat_id = ?1 ORDER BY seq ASC",
@@ -672,7 +672,7 @@ pub fn ai_chat_append(
     input: AiChatMessageInput,
 ) -> Result<()> {
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "INSERT INTO ai_chats (id, created_at, updated_at) VALUES (?1, ?2, ?2) \
          ON CONFLICT(id) DO NOTHING",
@@ -714,7 +714,7 @@ pub fn ai_chat_append(
 #[tauri::command]
 pub fn ai_chat_clear(state: State<AppState>, chat_id: String) -> Result<()> {
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "DELETE FROM ai_chat_messages WHERE chat_id = ?1",
         [&chat_id],
@@ -730,7 +730,7 @@ pub fn ai_chat_clear(state: State<AppState>, chat_id: String) -> Result<()> {
 #[tauri::command]
 pub fn ai_chat_cut(state: State<AppState>, chat_id: String, message_id: String) -> Result<()> {
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let n = conn.execute(
         "DELETE FROM ai_chat_messages WHERE chat_id = ?1 AND seq >= \
            (SELECT seq FROM ai_chat_messages WHERE chat_id = ?1 AND id = ?2)",
@@ -748,7 +748,7 @@ pub fn ai_chat_cut(state: State<AppState>, chat_id: String, message_id: String) 
 /// 会话列表：按最近活动倒序（历史抽屉顶部 = 最新聊天）。
 #[tauri::command]
 pub fn ai_chat_list(state: State<AppState>) -> Result<Vec<AiChat>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT id, title, created_at, updated_at FROM ai_chats ORDER BY updated_at DESC, created_at DESC",
     )?;
@@ -766,7 +766,7 @@ pub fn ai_chat_rename(state: State<AppState>, id: String, title: String) -> Resu
         return Err(ReinError::Message("会话标题不能为空".into()));
     }
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE ai_chats SET title = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![title, now, id],
@@ -787,7 +787,7 @@ pub fn ai_chat_search(
     }
     let limit = limit.unwrap_or(8).clamp(1, 50);
     let like = format!("%{keyword}%");
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT m.chat_id, c.title, m.seq, m.role, m.kind, m.text, m.created_at \
          FROM ai_chat_messages m JOIN ai_chats c ON c.id = m.chat_id \
@@ -834,7 +834,7 @@ fn usage_totals_from_row(row: &rusqlite::Row<'_>, base: usize) -> rusqlite::Resu
 /// 记一笔用量：一轮对话一行。金额由前端按单价算好（服务端为权威口径，这里只记账）。
 #[tauri::command]
 pub fn ai_usage_record(state: State<AppState>, input: AiUsageInput) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     usage_record_on(&conn, &input)
 }
 
@@ -869,7 +869,7 @@ pub(super) fn usage_record_on(conn: &rusqlite::Connection, input: &AiUsageInput)
 /// 本机成本汇总：累计 + 今日 + 按天 + 按模型（最近 N 天，默认 30）。
 #[tauri::command]
 pub fn ai_usage_summary(state: State<AppState>, days: Option<i64>) -> Result<AiUsageSummary> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     usage_summary_on(&conn, days.unwrap_or(30).clamp(1, 365))
 }
 
@@ -928,7 +928,7 @@ pub(super) fn usage_summary_on(conn: &rusqlite::Connection, days: i64) -> Result
 /// 清空本机账本（换机 / 重新对账时用；服务端的账不受影响）。
 #[tauri::command]
 pub fn ai_usage_clear(state: State<AppState>) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM ai_usage", [])?;
     Ok(())
 }

@@ -521,7 +521,7 @@ impl SyncHub {
 
     fn capture_batch(&self, app: &AppHandle, store: &BlobStore, batch: &[Raw]) -> Result<()> {
         let state = app.state::<crate::state::AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let me = identity::ensure(&conn)?.device_id;
         for raw in batch {
             capture(&conn, store, &me, raw)?;
@@ -549,7 +549,7 @@ impl SyncHub {
 
     fn run_backfill(&self, app: &AppHandle, store: &BlobStore) -> Result<BackfillStats> {
         let state = app.state::<crate::state::AppState>();
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let me = identity::ensure(&conn)?.device_id;
         backfill(&conn, store, &me)
     }

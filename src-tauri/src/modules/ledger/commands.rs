@@ -31,7 +31,7 @@ pub fn list_ledger_entries(
     category: Option<String>,
     keyword: Option<String>,
 ) -> Result<Vec<LedgerEntry>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut sql = format!(
         "SELECT {COLS} FROM ledger_entries WHERE date BETWEEN ?1 AND ?2 ORDER BY date DESC, id DESC"
     );
@@ -58,7 +58,7 @@ pub fn create_ledger_entry(state: State<AppState>, input: LedgerEntryInput) -> R
         return Err(ReinError::Message("金额必须大于 0".into()));
     }
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "INSERT INTO ledger_entries (kind, category, amount_cents, note, date, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -82,7 +82,7 @@ pub fn update_ledger_entry(state: State<AppState>, entry: LedgerEntry) -> Result
     if entry.amount_cents <= 0 {
         return Err(ReinError::Message("金额必须大于 0".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE ledger_entries SET kind = ?1, category = ?2, amount_cents = ?3, note = ?4, date = ?5 \
          WHERE id = ?6",
@@ -101,7 +101,7 @@ pub fn update_ledger_entry(state: State<AppState>, entry: LedgerEntry) -> Result
 
 #[tauri::command]
 pub fn delete_ledger_entry(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM ledger_entries WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -116,7 +116,7 @@ fn settings_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LedgerSettings
 
 #[tauri::command]
 pub fn get_ledger_budget(state: State<AppState>) -> Result<LedgerSettings> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     Ok(conn.query_row(
         "SELECT id, monthly_budget_cents, updated_at FROM ledger_settings WHERE id = 1",
         [],
@@ -130,7 +130,7 @@ pub fn set_ledger_budget(
     monthly_budget_cents: i64,
 ) -> Result<LedgerSettings> {
     let now = Utc::now().to_rfc3339();
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "INSERT INTO ledger_settings (id, monthly_budget_cents, updated_at) VALUES (1, ?1, ?2) \
          ON CONFLICT(id) DO UPDATE SET monthly_budget_cents = ?1, updated_at = ?2",

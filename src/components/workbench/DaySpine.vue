@@ -251,13 +251,13 @@ function fmtMin(min: number | null): string {
   position: relative;
   display: flex;
   gap: 16px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .ev .time {
   position: absolute;
   left: -72px;
-  top: 16px;
+  top: 14px;
   width: 54px;
   text-align: right;
   font-size: var(--fs-footnote);
@@ -268,7 +268,7 @@ function fmtMin(min: number | null): string {
 .ev .node {
   position: absolute;
   left: -6.5px;
-  top: 20px;
+  top: 18px;
   width: 11px;
   height: 11px;
   border-radius: 50%;
@@ -283,7 +283,7 @@ function fmtMin(min: number | null): string {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 18px;
+  padding: 12px 16px;
   background: var(--surface);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
@@ -303,7 +303,7 @@ function fmtMin(min: number | null): string {
 
 .ev .ett {
   font-size: var(--fs-callout);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .ev .esb {

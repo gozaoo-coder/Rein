@@ -303,7 +303,7 @@ const dockSegs = computed(() =>
 
 .info .s {
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;

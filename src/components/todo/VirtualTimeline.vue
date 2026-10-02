@@ -37,7 +37,6 @@ const pxPerHour = ref(DEFAULT_PX)
 const scrollTop = ref(0)
 const viewH = ref(0)
 const host = ref<HTMLElement | null>(null)
-const content = ref<HTMLElement | null>(null)
 
 const today = todayStr()
 const isPreview = computed(() => !!props.preview)
@@ -257,9 +256,13 @@ onMounted(() => {
   measure()
   // 折叠态：固定锚定今天；展开态：打开后定位到"现在"附近
   scrollToNow()
-  if (isPreview.value && content.value) {
-    content.value.style.transform = `translateY(-${scrollTop.value}px)`
-  }
+  /* 这里**刻意不再**给 .content 补一条 translateY(-scrollTop)：
+     上一版这么写，是想在首帧免掉一次位置跳变，但折叠态的宿主 .vt 本身就是
+     overflow: hidden 的滚动盒（见 scroller() 的注释），setScroll 里那句
+     el.scrollTop 已经把内容滚到位了 —— 再叠一条 transform 等于**位移两次**，
+     内容被推到可视窗口外，整张日程卡在桌面（和任何视口）上是一片空白
+     （实测锚点 2368 时首个子元素落在 -1429px，卡片里什么都没有）。
+     折叠态的锚定只该有一处实现，就是 el.scrollTop。 */
 })
 
 onBeforeUnmount(() => {
@@ -298,7 +301,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div ref="content" class="content" :style="{ height: `${totalPx}px` }">
+    <div class="content" :style="{ height: `${totalPx}px` }">
       <!-- 日期分隔头 -->
       <span v-for="dh in dayHeads" :key="dh.d" class="dayhead" :class="{ today: dh.d === date }" :style="{ top: `${dh.y}px` }">
         <i class="now-dot" v-if="dh.d === date" />
@@ -367,6 +370,9 @@ onBeforeUnmount(() => {
   overflow: hidden;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  /* 顶缘渐隐：锚定「今天」后首行正好压在刻度上，不渐隐就是一行半截字
+     悬在标题下方（底缘已有 .peek 渐隐垫，这里只补上缘）。 */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
 }
 
 /* 折叠态纯展示：内容不参与命中，整卡点击统一弹抽屉 */

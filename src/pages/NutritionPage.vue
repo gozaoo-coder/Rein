@@ -55,10 +55,14 @@ const quickOpen = ref(false)
     <!-- 能量与宏量进度（复用首页卡片） -->
     <EnergySummary />
 
-    <!-- 宏量详解 / 类别打卡 / 微量元素详解 -->
+    <!-- 宏量详解：与左侧「能量与营养」配成一行（两张都是纵向长卡，高度也接近）。
+
+         类别打卡与微量元素**通栏**：微量元素卡展开后有 1300px 高，跟一张 227px 的
+         打卡卡并排，右半边会空出一整屏；它们的内容本来就是「左标签 + 右数值」的
+         宽行，铺满一行反而更好读。 -->
     <MacroDetailCard />
-    <DietChecksCard />
-    <MicrosCard />
+    <DietChecksCard class="d-full" />
+    <MicrosCard class="d-full" />
 
     <!-- 弹层 -->
     <SmartAddSheet :open="quickOpen" mode="food" :date="today" @close="quickOpen = false" />

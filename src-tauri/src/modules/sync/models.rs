@@ -63,6 +63,11 @@ pub struct SyncStatus {
 }
 
 /// 同步设置（存 `sync_meta`，与业务数据一起同步没有意义，因此只在本机）。
+///
+/// **尚未接线**：`sync_set_settings` 命令与前端设置卡都还没做（前端 `syncService` 里也没有这一项），
+/// 所以这份数据形状目前只有定义。留着是为了让「自动同步间隔 / 蜂窝媒体 / 自动落中继」
+/// 这三个已定下的语义不丢；实现那条命令时它就该被构造出来。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SyncSettings {
@@ -87,7 +92,8 @@ impl Default for SyncSettings {
     }
 }
 
-/// `sync_set_settings` 的入参：只带要改的字段。
+/// `sync_set_settings` 的入参：只带要改的字段（同上，命令尚未实现）。
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SyncSettingsPatch {

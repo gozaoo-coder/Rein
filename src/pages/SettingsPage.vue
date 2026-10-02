@@ -83,7 +83,7 @@ onMounted(() => {
     <PageHeader title="设置" back />
 
     <!-- 功能：插件开关入口 -->
-    <section class="card">
+    <section class="card d-full">
       <h2 class="gtitle">功能</h2>
       <button class="frow row" @click="router.push({ name: 'settings-features' })">
         <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
@@ -161,7 +161,7 @@ onMounted(() => {
       <h2 class="gtitle">多设备同步</h2>
       <p class="pnote t-3">
         手机、电脑之间同步记录：同一网段直接连，跨网段先用云服务器换地址打洞直连，
-        都走不通才经云服务器中转 —— 三条路上跑的**都是端到端加密**的密文，
+        都走不通才经云服务器中转 —— 三条路上跑的都是端到端加密的密文，
         服务器看不到内容，也不存业务数据。
       </p>
       <button class="frow row" @click="router.push({ name: 'settings-sync' })">
@@ -176,7 +176,7 @@ onMounted(() => {
     </section>
 
     <!-- 关于 -->
-    <section class="card">
+    <section class="card d-full">
       <h2 class="gtitle">关于</h2>
       <button class="frow row" @click="router.push({ name: 'settings-update' })">
         <i class="fic" style="background: var(--accent-soft); color: var(--accent)">

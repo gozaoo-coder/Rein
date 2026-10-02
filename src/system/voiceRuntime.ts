@@ -9,6 +9,10 @@
  * definite 句经 `voice://asr` 事件逐句上屏并落草稿（500ms 防抖，崩溃粒度=句）；
  * 「每 3 分钟自动整理」到点把未结算句结算为一段交 memoGen（录音不中断）。
  * 与录音系统经 micBus 互斥。
+ *
+ * **AI 栈按需加载**：本模块被 App 根部的语音浮条静态 import，所以它对 `stores/ai` 的
+ * 引用一律走函数内 `aiStore()`（动态 import）。静态 import 会把整个 AI 工具栈
+ * （工具注册表 + 全部工具域）钉进启动主包，而语音链路真正用到它只在「结算一段」之后。
  */
 
 import { reactive } from 'vue'
@@ -18,7 +22,6 @@ import type { AsrEventPayload, MemoSummaryItem, VoiceMemo, VoiceSentence, VoiceD
 import { toParsedItems } from '@/ai/foodMatch'
 import { suggestMeal } from '@/config/domain'
 import { todayStr } from '@/utils/date'
-import { useAiStore } from '@/stores/ai'
 import { useTodoStore } from '@/stores/todo'
 import { useToast } from '@/composables/useToast'
 import { claimMic, micOwner, releaseMic } from './micBus'
@@ -162,21 +165,32 @@ function withAudioUrl(memo: VoiceMemo): VoiceMemo {
   return { ...memo, audioPath: audioUrlFromPath(memo.audioPath) }
 }
 
+/**
+ * 取 AI store —— **动态 import**，见文件头的「AI 栈按需加载」。
+ * 三处调用都在函数体内（不是模块顶层），所以调用点只是多一次 await。
+ */
+async function aiStore(): Promise<ReturnType<typeof import('@/stores/ai').useAiStore>> {
+  const { useAiStore } = await import('@/stores/ai')
+  return useAiStore()
+}
+
 function scheduleDraftSave(): void {
   if (draftTimer != null) clearTimeout(draftTimer)
-  draftTimer = window.setTimeout(() => {
-    draftTimer = null
-    const ai = useAiStore()
-    void voiceService
-      .draftSave({
-        sessionId,
-        chatId: ai.chatId,
-        startedAt: new Date(startedAt).toISOString(),
-        sentences: voice.sentences,
-        partial: voice.partial,
-      })
-      .catch(() => undefined)
-  }, DRAFT_DEBOUNCE)
+  draftTimer = window.setTimeout(() => void saveDraft(), DRAFT_DEBOUNCE)
+}
+
+async function saveDraft(): Promise<void> {
+  draftTimer = null
+  const ai = await aiStore()
+  await voiceService
+    .draftSave({
+      sessionId,
+      chatId: ai.chatId,
+      startedAt: new Date(startedAt).toISOString(),
+      sentences: voice.sentences,
+      partial: voice.partial,
+    })
+    .catch(() => undefined)
 }
 
 /* ---------- 事件 ---------- */
@@ -450,7 +464,7 @@ async function settleSegment(auto: boolean): Promise<void> {
   voice.segmentCount++
   const lines = raw.map((s, i) => ({ idx: i, text: s.text, startMs: s.startMs, endMs: s.endMs }))
   const memoId = `vm${Date.now().toString(36)}${++seq}`
-  const ai = useAiStore()
+  const ai = await aiStore()
   await ai.init()
   voice.processingCount++
   try {
@@ -540,7 +554,7 @@ export async function writeMemoItem(memo: VoiceMemo, item: MemoSummaryItem): Pro
       const items = await toParsedItems([
         { foodName: item.food.name, grams: item.food.grams ?? 100, kcalEstimate: 0, foodId: null, nutrition: {} },
       ])
-      const r = await useAiStore().commitParsedItems(items, suggestMeal())
+      const r = await (await aiStore()).commitParsedItems(items, suggestMeal())
       if (r.written === 0) throw new Error('未能匹配到食物库')
     }
     item.written = true

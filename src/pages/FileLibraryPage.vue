@@ -752,7 +752,7 @@ onMounted(async () => {
       </div>
 
       <!-- 文件名搜索结果 -->
-      <section v-if="found !== null" class="card list">
+      <section v-if="found !== null" class="card list list-found">
         <ul v-if="found.length">
           <li v-for="f in found" :key="`${f.sourceType}-${f.id}`">
             <button class="row item" @click="openDoc(f.id)">
@@ -776,7 +776,7 @@ onMounted(async () => {
 
       <!-- 根目录：最近内容 + 命名空间 -->
       <template v-else-if="!dir">
-        <section class="card list">
+        <section class="card list list-recent">
           <h3 class="sec">最近内容</h3>
           <ul v-if="recent.length">
             <li v-for="h in recent" :key="`${h.sourceType}-${h.id}`">
@@ -794,7 +794,7 @@ onMounted(async () => {
         </section>
 
         <!-- 顶层目录：一行一个（像文件管理器左侧的「位置」栏），不做方块网格 -->
-        <section class="card list">
+        <section class="card list list-roots">
           <h3 class="sec">顶层目录</h3>
           <ul>
             <li v-for="e in rootEntries" :key="e.name">
@@ -811,7 +811,7 @@ onMounted(async () => {
           </ul>
         </section>
 
-        <section v-if="files.length" class="card list">
+        <section v-if="files.length" class="card list list-files">
           <h3 class="sec">根目录文件</h3>
           <ul>
             <li v-for="f in files" :key="`${f.sourceType}-${f.id}`">
@@ -841,7 +841,7 @@ onMounted(async () => {
           </template>
         </div>
 
-        <section class="card list">
+        <section class="card list list-dir">
           <!-- 「..」不跟着空状态走：空目录也要留一条回退的路（真实文件管理器就是这样） -->
           <ul>
             <li>
@@ -1280,5 +1280,43 @@ li + li .item {
 
 .btn:disabled {
   opacity: 0.5;
+}
+
+/* ============================================================
+   桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
+   这页是 wide 路由：主人区整宽自负，没有壳层的两栏栅格，
+   所以「宽浏览面」= 每张列表卡通栏 + 卡内列表按多栏流铺开。
+   ============================================================ */
+
+/* 宽形态页面的内容上限，超过就不再拉长行 */
+.desk-main .page {
+  max-width: var(--desk-wide);
+}
+
+/* 列表卡内部多栏流：根目录有近 20 个顶层目录、每个只有「图标 + 名词 + 计数」，
+   一列排到 970px 宽、一屏只看得下几个 —— 桌面上按栏摊开才叫文件浏览面。
+   用 columns 而不是 grid：条目高度参差（有的带日期、有的带锁标），
+   grid 会把同行撑到最高的那条，留下锯齿状空白。 */
+.desk-main .card.list > ul {
+  columns: var(--b-cols, 2);
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .card.list > ul > li {
+  break-inside: avoid;
+}
+
+/* 顶层目录条目最短（图标 + 名称 + 说明 + 项数），三栏摊得开；
+   最近内容/根目录文件带路径或日期，两栏给足宽度 */
+.desk-main .card.list.list-roots > ul {
+  --b-cols: 3;
+}
+
+/* 阅读器：正文一行 80+ 字就没人读得下去。这页没有侧栏可放元信息，
+   所以把阅读卡收成一张居中的定宽卡（≈ 820px，约 55 字/行），
+   两侧留白是对称的——看上去是「一张阅读卡」，不是「右边空着」。 */
+.desk-main .page > .card.reader {
+  max-width: 820px;
+  margin-inline: auto;
 }
 </style>

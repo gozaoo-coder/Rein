@@ -205,7 +205,7 @@ async function save(): Promise<void> {
 
     <template v-if="ready">
       <!-- 基本信息 -->
-      <section class="card">
+      <section class="card basics">
         <label class="field">
           <span class="flabel">课程名称</span>
           <input v-model="name" type="text" maxlength="20" placeholder="如：推力日" />
@@ -459,5 +459,46 @@ async function save(): Promise<void> {
 
 .save:disabled {
   opacity: 0.6;
+}
+
+/* ============================================================
+   桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
+   壳层缺省已经把 .page 铺成两栏、.card 占半栏 —— 那正是动作卡想要的排法，
+   所以这里只修两处「半栏不对」的地方，不再自铺画布。
+   ============================================================ */
+
+/* 基本信息只有名称/副标题/类型三格，半栏放不满、右半屏还会空着；
+   拉通一行后三格横排 —— 表单的「表头」在桌面上就该是一条，而不是一列拉到底。 */
+.desk-main .page > section.card.basics {
+  /* 选择器带上 section/元素名，才压得过壳层给 .page > .card 定的「占半栏」 */
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.5fr;
+  gap: 0 var(--desk-gap);
+  align-items: start;
+}
+
+/* 横排之后原来那条「字段之间的上分隔线」方向就错了，改用栅格间距分隔 */
+.desk-main .page > section.card.basics .field + .field {
+  border-top: none;
+}
+
+/* 类型分段控件在横排里吃满自己那一格：否则右边会留出一段无意义的空白 */
+.desk-main .page > section.card.basics .typeseg {
+  width: 100%;
+}
+
+/* 动作卡沿用壳层缺省的「.card 占半栏」：每张卡是一段完整表单（约 500px 高，
+   字段里是「标签 + 步进器」一路排开），479px 一行放得下，两两并排刚好。
+   这里刻意不显式声明它的栅格位，免得和壳层的规则互相覆盖。 */
+
+/* 「添加动作 / 保存修改」两枚收尾按钮并排放到底部：
+   各占半栏比两条 970px 长的通栏按钮更像一次表单提交。 */
+.desk-main .page > button.add {
+  grid-column: 1;
+}
+
+.desk-main .page > button.save {
+  grid-column: 2;
 }
 </style>

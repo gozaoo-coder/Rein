@@ -359,6 +359,8 @@ async function main() {
     // 单位换算见 MuscleMap 的 --mmap-u：SVG 里的模糊按**用户坐标**算，直接写 1px
     // 只有 0.13 个屏幕像素（等于没加），所以必须由 JS 量出缩放比再换算 ——
     // 这里同时验「模糊真的挂上了」与「换算真的做过」（--mmap-u 被量出来而不是回落默认值）。
+    // 单位是 **CSS 像素**（量出来的就是用户单位/CSS 像素，不除 dpr）：景深是视觉线索，
+    // 「1px」要在手机与桌面上是同一个观感量级，除 dpr 会让手机上的模糊缩到 1/3。
     //
     // 换档必须**真的重载**：档位是模块初始化时从 localStorage 读的，而
     // `Page.navigate` 到一个**与当前相同**的 URL 不会重新加载文档 —— 于是
@@ -388,7 +390,7 @@ async function main() {
     // 索引与 band 编号一致：0 = 后层（最远）、1 = 中层、2 = 外层（最近），
     // 上面的 order 断言已经钉住这一点，所以下面直接按这个顺序读
     ok(
-      '极致档 · 后层（最远、被盖得最实）加 2 个设备像素的模糊',
+      '极致档 · 后层（最远、被盖得最实）加 2 个 CSS 像素的模糊',
       extreme.every((v) => {
         const b = blurPx(v.filters[0])
         const u = Number(v.unit)
@@ -397,7 +399,7 @@ async function main() {
       `后层 filter=${extreme[0]?.filters[0]} · --mmap-u=${extreme[0]?.unit}`,
     )
     ok(
-      '极致档 · 中层加 1 个设备像素的模糊（正好是后层的一半）',
+      '极致档 · 中层加 1 个 CSS 像素的模糊（正好是后层的一半）',
       extreme.every((v) => {
         const mid = blurPx(v.filters[1])
         const far = blurPx(v.filters[0])

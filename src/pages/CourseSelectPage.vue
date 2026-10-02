@@ -670,6 +670,9 @@ onBeforeUnmount(() => {
           </template>
         </EmptyState>
 
+        <!-- 桌面栅格：批次卡的高度随公告长短而变，并排才看得出「哪一批开着」。
+             手机端它只是个普通 div，卡片仍是那条 margin-bottom: 14px 的一列 -->
+        <div v-if="store.turns.length" class="d-grid turn-grid">
         <section v-for="t in store.turns" :key="idOf(t.id)" class="card turn">
           <div class="turn-head">
             <h2>{{ t.name ?? '选课批次' }}</h2>
@@ -691,6 +694,7 @@ onBeforeUnmount(() => {
             {{ t.allowEnter ? '进入选课' : '尚未开放' }}
           </button>
         </section>
+        </div>
 
         <!-- 全校开课查询：**不依赖批次** —— 窗口没开的时候，这里就是他能做的规划。
              摆在批次列表之后而不是之前：批次开着时「进去选」才是主线，
@@ -921,6 +925,19 @@ onBeforeUnmount(() => {
 <style scoped>
 .page {
   padding: 0 var(--page-pad-x) var(--page-pad-bottom);
+}
+
+/* ---------- 桌面（本页是 wide 路由：壳层不套栅格，内容宽度自己负责） ----------
+   抢课面板 / 抢课计划 / 开课查询是「一段设置 + 一份名单」的内容，它们拉到
+   主人区整宽（1512 下约 1150）会把分段控件、输入框抻成一千多像素的长条 ——
+   桌面宽屏的价值是**一屏多放几块**，不是把每一块拉长。所以这三块收在 820 居中，
+   批次卡与教学班名单仍各自按 auto-fit 摊开（它们的行多，宽一点是赚的）。
+   :deep 是因为这三块的根元素在组件自己身上。 */
+.desk-main .page > :deep(.grab),
+.desk-main .page > :deep(.plan),
+.desk-main .page > :deep(.open-course) {
+  max-width: 820px;
+  margin-inline: auto;
 }
 
 .card {
@@ -1494,6 +1511,39 @@ onBeforeUnmount(() => {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   这一页是宽形态（desk: 'wide'），构图自负。
+   · 整页收到 --desk-wide；
+   · 教学班列表是这一页唯一的长列表，也是最该被并读的东西（同一门课挂 7 个班，
+     「谁在教 / 什么时候上 / 还剩几个位」本来就是要横向比的）——桌面上摊成两栏；
+   · 批次卡并排（见上面的 .d-grid）。
+   ============================================================ */
+.desk-main .page {
+  max-width: var(--desk-wide);
+  margin-inline: auto;
+}
+
+/* 一行教学班 = 课名 + 徽标 + 余量 + 一枚「配置抢课」胶囊，380px 是它的舒适下限：
+   1280 与 1512 两个验收宽度下都正好两栏（一行太长时「谁在教」与「还剩几个位」
+   就离得太远，反而比不上一列） */
+.desk-main .lessons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: var(--desk-gap);
+}
+
+/* 批次卡用 auto-fit：只有一批时它铺满整行（半栏里那个「进入选课」主按钮
+   会短得不像主操作），两批以上才并排。420px 与教学班一行的下限同源 */
+.desk-main .turn-grid {
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+}
+
+/* 栅格用 gap 管列间距，批次卡自带的那条 margin-bottom 会把它撑成两倍 */
+.desk-main .turn-grid > .turn {
+  margin-bottom: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

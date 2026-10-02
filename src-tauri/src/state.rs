@@ -1,7 +1,7 @@
 //! 全局应用状态：单个 SQLite 连接（桌面单窗口场景足够；并发瓶颈出现时再引入连接池）。
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::Connection;
 use tokio::sync::mpsc::UnboundedSender;
@@ -22,13 +22,50 @@ impl VoiceHub {
     }
 }
 
+/// 全局唯一的那条 SQLite 连接，外加一条纪律：**锁中毒不该让整个数据层瘫掉**。
+///
+/// 原先全仓写的是 `state.db.lock()`（`STANDARDS.md` §1 唯一放行 unwrap 的场景）。
+/// 问题在于 unwrap 把「持有锁时 panic」从**一次性故障**升级成**永久故障**：Mutex 一旦被标记
+/// 中毒，之后每一条命令的 `lock().unwrap()` 都会继续 panic —— 整个应用的数据层在重启前不可用，
+/// 而这条 panic 路径在库里上千处 `unwrap`（抓到的 HTML、解析出的 JSON、按列取值）之间并不罕见。
+///
+/// 所以把连接包一层，换取三件事：
+/// 1. `lock()` 直接返回 `MutexGuard`，调用点因此**不需要也不允许** unwrap ——
+///    漏改的地方是**编译错误**，不是又一个静默的 panic 点；
+/// 2. 中毒时取回连接（SQLite 连接本身没有中毒这个概念，数据仍然可用）并补一次 `ROLLBACK`；
+/// 3. 恢复正常使用。丢掉的只是「那条命令里还没提交的改动」，而这正是崩溃本来就该丢的东西。
+///
+/// 注意这不是「吞掉 panic」：panic 照旧发生、照旧由 Tauri 报给前端；变的只是**它不再带走整个应用**。
+pub struct Db(Mutex<Connection>);
+
+impl Db {
+    pub fn new(conn: Connection) -> Self {
+        Self(Mutex::new(conn))
+    }
+
+    /// 取连接。中毒时自愈（见类型注释），所以调用点不该、也不必再 unwrap。
+    pub fn lock(&self) -> MutexGuard<'_, Connection> {
+        match self.0.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                let guard = poisoned.into_inner();
+                // panic 可能落在 BEGIN 之后：把这半截事务收掉，否则后续写入会一直撞
+                // "cannot start a transaction within a transaction"。
+                // 没有活动事务时 ROLLBACK 会报错，忽略即可。
+                let _ = guard.execute_batch("ROLLBACK");
+                guard
+            }
+        }
+    }
+}
+
 pub struct AppState {
-    pub db: Mutex<Connection>,
+    pub db: Db,
 }
 
 impl AppState {
     pub fn new(db: Connection) -> Self {
-        Self { db: Mutex::new(db) }
+        Self { db: Db::new(db) }
     }
 }
 
@@ -94,5 +131,43 @@ impl CampusHub {
             None => true,
         };
         fresh.then(|| t.token.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// 中毒自愈：持锁线程 panic 之后，连接仍然可用 —— 而不是之后每一条命令都跟着 panic。
+    ///
+    /// 这条测试守的是「一次崩溃 vs 永久瘫痪」的区别，而它没有任何功能测试能覆盖到：
+    /// 没有它的话，把 `Db::lock` 改回 `self.0.lock().unwrap()` 也不会让任何用例变红。
+    #[test]
+    fn poisoned_lock_recovers_with_rollback() {
+        let db = Arc::new(Db::new(Connection::open_in_memory().unwrap()));
+        db.lock().execute_batch("CREATE TABLE t (n INTEGER)").unwrap();
+
+        let bomber = Arc::clone(&db);
+        let died = std::thread::spawn(move || {
+            let guard = bomber.lock();
+            // 事务中途 panic：留下一个已 BEGIN 未提交的连接 + 一把中毒的锁
+            guard
+                .execute_batch("BEGIN; INSERT INTO t (n) VALUES (99)")
+                .unwrap();
+            panic!("模拟持锁时的 panic");
+        })
+        .join();
+        assert!(died.is_err(), "前置条件：那个线程确实 panic 了");
+
+        // 关键断言：中毒之后照常拿锁、照常写库，且半截事务已被回滚
+        let guard = db.lock();
+        guard
+            .execute_batch("INSERT INTO t (n) VALUES (1)")
+            .expect("中毒恢复后应能重新开事务写入（否则说明 ROLLBACK 没做）");
+        let n: i64 = guard
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "只应留下恢复后写的那一行：99 属于崩溃时未提交的事务");
     }
 }

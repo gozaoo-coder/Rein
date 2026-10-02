@@ -149,7 +149,7 @@ async function nextPhase(): Promise<void> {
       </section>
 
       <!-- 开始 → 结束 -->
-      <section class="pod">
+      <section class="pod compare">
         <header class="pod-head"><b>开始 → 结束</b></header>
         <ul class="rows">
           <li>
@@ -181,7 +181,7 @@ async function nextPhase(): Promise<void> {
       </section>
 
       <!-- 徽章 -->
-      <section v-if="data.badges.length" class="pod">
+      <section v-if="data.badges.length" class="pod badges">
         <header class="pod-head">
           <b>获得 {{ data.badges.length }} 枚徽章</b>
         </header>
@@ -456,5 +456,67 @@ async function nextPhase(): Promise<void> {
   margin-top: 10px;
   font-size: var(--fs-footnote);
   line-height: 1.5;
+}
+
+/* ============================================================
+   桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
+   .pod / .callout / .primary 不是 .card，壳层缺省已经让它们通栏；
+   这里只补两件事：空态卡片也要通栏，以及把成绩单排成「通栏英雄区 + 左右两栏」。
+   选择器里带上 section/button 元素名是为了压过壳层给 .page 子项定的栅格位。
+   ============================================================ */
+
+/* 页头钉在第 1 行：它是 sticky 的，如果不显式给行号，自动排布会绕开
+   下面这些被显式占位的行，把它挤到最后一行的位置（页头跑到页脚去） */
+.desk-main .page > .page-header {
+  grid-row: 1;
+  grid-column: 1 / -1;
+}
+
+/* 单张空态卡片在半栏里右半屏全空 —— 它本来就该是整屏一句话 */
+.desk-main .page > section.card.empty {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+
+/* 完成度英雄区：一个环 + 四条数字，通栏居中才撑得住这页的气势 */
+.desk-main .page > section.pod.hero {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+
+/* 对照与报告是这页的正文：并排两栏，一屏读完「有没有用」 */
+.desk-main .page > section.pod.compare {
+  grid-row: 3;
+  grid-column: 1;
+}
+
+.desk-main .page > section.pod.report {
+  grid-row: 3 / span 2;
+  grid-column: 2;
+}
+
+/* 徽章是短列表，落在左栏对照下方 */
+.desk-main .page > section.pod.badges {
+  grid-row: 4;
+  grid-column: 1;
+}
+
+/* 下一期建议与 CTA 保持通栏：一条结论 + 一枚决定下一步的按钮，
+   横跨整屏读起来才是「结论 → 行动」的顺序 */
+.desk-main .page > section.callout {
+  grid-row: 5;
+  grid-column: 1 / -1;
+}
+
+.desk-main .page > button.primary {
+  grid-row: 6;
+  grid-column: 1 / -1;
+}
+
+/* 栅格用 gap 管行距，卡片自身那 12px 的下边距要收掉 */
+.desk-main .page > .pod,
+.desk-main .page > .callout,
+.desk-main .page > .primary {
+  margin-bottom: 0;
 }
 </style>

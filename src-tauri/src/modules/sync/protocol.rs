@@ -45,10 +45,17 @@ pub trait Link {
     fn stats(&self) -> (i64, i64);
 }
 
+/// 收方为一个正在进行的大对象攒的分块：(uuid, kind, hlc, device, deleted, 总长, 缓冲)。
+/// 按位置取用只发生在一个函数里，所以用元组而不是结构体。
+type ChunkBuf = (String, String, i64, String, i64, usize, Vec<u8>);
+
 /// 对端（配对时记下来的那台）。
 #[derive(Debug, Clone)]
 pub struct Peer {
     pub device: String,
+    /// 对端设备名（配对时从 `sync_peers` 读出来）：协议面字段，界面设备列表已直接读表，
+    /// 这里先留着 —— 删掉等于让「对端叫什么」在协议层消失。
+    #[allow(dead_code)]
     pub name: String,
     pub public: [u8; 32],
 }
@@ -430,10 +437,8 @@ fn push(
                 finish_round(link, c, conn, peer, to, &mut cursor, &pending, &mut retry)?;
                 out.applied += 0; // 应用条数由收方那一侧统计
                 let _ = applied;
-                if pending.is_empty() && cursor >= last {
-                    if rounds > 1 && retry.is_empty() {
-                        break;
-                    }
+                if pending.is_empty() && cursor >= last && rounds > 1 && retry.is_empty() {
+                    break;
                 }
                 continue;
             }
@@ -486,15 +491,17 @@ fn push(
             pending: Vec::new(),
         },
     )?;
-    match recv_msg(link, c, Duration::from_secs(30)) {
-        Ok(Msg::Ack { .. }) => {}
-        // 阶段末尾的这点迂回不值得让整次同步失败：对方已经退出它的接收循环了
-        _ => {}
-    }
+    // 阶段末尾的这点迂回不值得让整次同步失败：对方已经退出它的接收循环了，
+    // ACK 没收到、或收到别的，都直接往下走（原先写成 match 两个空臂，语义相同）。
+    let _ = recv_msg(link, c, Duration::from_secs(30));
     Ok(out)
 }
 
 /// 收方报完成：推进游标（有 pending 就退回到最早那条之前），回一条 ACK。
+///
+/// 参数刻意平铺：它们全是「这一轮的状态」，塞进一个 context 结构体只是把同样的东西
+/// 换个地方摆，却让调用点与生命周期都变复杂。
+#[allow(clippy::too_many_arguments)]
 fn finish_round(
     link: &mut dyn Link,
     c: &mut SessionCrypto,
@@ -584,7 +591,7 @@ fn pull(
         )?;
 
         // 收数据（大对象分块）
-        let mut chunks: Vec<(String, String, i64, String, i64, usize, Vec<u8>, usize)> = Vec::new();
+        let mut chunks: Vec<ChunkBuf> = Vec::new();
         let mut wanted = want.len();
         while wanted > 0 {
             match recv_msg(link, c, Duration::from_secs(60))? {
@@ -617,7 +624,7 @@ fn pull(
                             let mut buf = vec![0u8; total];
                             let end = off + bytes.len();
                             buf[off..end].copy_from_slice(&bytes);
-                            chunks.push((u.clone(), k, h, d, x, total, buf, 0));
+                            chunks.push((u.clone(), k, h, d, x, total, buf));
                             wanted -= 1;
                         }
                     }
@@ -626,7 +633,7 @@ fn pull(
                 other => return Err(ReinError::Message(format!("等数据收到 {other:?}"))),
             }
         }
-        for (u, k, h, d, x, total, buf, _) in chunks {
+        for (u, k, h, d, x, total, buf) in chunks {
             staged.push(RemoteObject {
                 uuid: u,
                 kind: k,

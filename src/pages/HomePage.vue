@@ -180,7 +180,7 @@ function runTool(t: ToolContribution): void {
           @click="runTool(t)"
         >
           <i class="tool-ic" :style="t.ic">
-            <component :is="t.icon" :size="17" />
+            <component :is="t.icon" :size="19" />
           </i>
           <span class="col tool-txt">
             <b>{{ t.title }}</b>
@@ -315,14 +315,14 @@ function runTool(t: ToolContribution): void {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .tool {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 13px;
+  gap: 11px;
+  padding: 12px 14px;
   border-radius: var(--radius-m);
   background: var(--surface);
   box-shadow: var(--shadow-card);
@@ -330,11 +330,12 @@ function runTool(t: ToolContribution): void {
   min-width: 0;
 }
 
+/* 圆章：与快捷磁贴/营养页入口同一套几何（方章是主页一家的方言） */
 .tool-ic {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   flex: none;
-  border-radius: 12px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
 }

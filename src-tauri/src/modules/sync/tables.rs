@@ -30,7 +30,7 @@ pub enum Media {
     /// 可能是 data URL 也可能是裸 base64 的列（知识库资源引用）
     DataUrl,
     /// JSON 列，值里散着 base64 / data URL（消息 payload、待办附件）
-    JsonMedia,
+    Json,
     /// 落盘音频文件的路径列（语音纪要的 wav）
     Wav,
 }
@@ -59,6 +59,8 @@ pub struct TableSpec {
     pub filter: Option<&'static str>,
 }
 
+/// 登记项构造器：参数与 `TableSpec` 字段一一对应，刻意平铺 —— 一张表因此能写成一行。
+#[allow(clippy::too_many_arguments)]
 const fn t(
     name: &'static str,
     pk: Pk,
@@ -152,7 +154,7 @@ pub const TABLES: &[TableSpec] = &[
             },
         ],
         None,
-        &[("attachments", Media::JsonMedia)],
+        &[("attachments", Media::Json)],
         &[],
         None,
     ),
@@ -228,7 +230,7 @@ pub const TABLES: &[TableSpec] = &[
         None,
         &[
             ("image_base64", Media::Base64),
-            ("payload", Media::JsonMedia),
+            ("payload", Media::Json),
         ],
         &[],
         None,

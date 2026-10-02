@@ -149,7 +149,8 @@ function onSaved(e: ExerciseRecord): void {
       </button>
     </div>
 
-    <ul class="list">
+    <!-- d-list：桌面上这条 81 条的清单摊成两栏流（栏数在下面的桌面段里给） -->
+    <ul class="list d-list">
       <li v-for="e in rows" :key="e.id">
         <div class="exrow row">
           <button type="button" class="main row" @click="openDetail(e)">
@@ -373,5 +374,28 @@ function onSaved(e: ExerciseRecord): void {
   justify-content: space-between;
   font-size: var(--fs-caption);
   color: var(--text-2);
+}
+
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
+   81 个动作在 970px 里一行一名、右边空掉大半行，是手机版被拉宽的痕迹。
+   桌面上摊成两栏流 —— 动作库是**无序清单**，分栏后「先读完左栏再读右栏」不影响理解。
+
+   为什么用多栏流（columns）而不是 grid：副标题「肌群 · 器材 · 练过几次」长短不一、
+   名字也会换行，条目高度是参差的；grid 会把同一行的两条一起撑到较高那条，
+   一屏下来全是锯齿状空白，多栏流则是自然瀑布。
+
+   分栏会带来一个副作用：`li + li` 把「第二栏的第一条」也当成接续条画了一条上边线
+   （孤零零悬在右栏顶端）。所以桌面统一改成下边线，并在栏间补一条竖线把两栏分开。 */
+.desk-main .list {
+  column-gap: var(--desk-gap);
+  column-rule: 0.5px solid var(--line);
+}
+
+.desk-main .list li + li {
+  border-top: 0;
+}
+
+.desk-main .list li {
+  border-bottom: 0.5px solid var(--line);
 }
 </style>

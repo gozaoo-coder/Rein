@@ -121,7 +121,7 @@ pub fn list_todos(
     start_date: String,
     end_date: String,
 ) -> Result<Vec<Todo>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {COLS} FROM todos \
          WHERE date IS NOT NULL AND date BETWEEN ?1 AND ?2 \
@@ -138,7 +138,7 @@ pub fn list_todos(
 /// 全部待办（含收件箱 date IS NULL），按 未完成→日期→时间→优先级 排序。
 /// 供「全部待办」页与虚拟时间线使用。
 pub fn list_all_todos(state: State<AppState>) -> Result<Vec<Todo>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {COLS} FROM todos \
          ORDER BY (status = 'done'), (date IS NULL), date, (start_min IS NULL), start_min, priority DESC, id"
@@ -164,7 +164,7 @@ pub fn query_todos(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<TodoPage> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let limit = limit.unwrap_or(20).clamp(1, 50);
     let offset = offset.unwrap_or(0).max(0);
 
@@ -215,7 +215,7 @@ pub fn query_todos(
 /// 全部日程按日分布总览（对应工具 todo_distribution）：按日计数 + 收件箱/逾期摘要。
 /// AI 先看分布再分页下钻，避免拉全量明细。
 pub fn todo_distribution(state: State<AppState>, today: String) -> Result<TodoDistribution> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT date, COUNT(*) FROM todos WHERE date IS NOT NULL GROUP BY date ORDER BY date",
     )?;
@@ -257,7 +257,7 @@ pub fn create_todo(
     subtasks: Option<Vec<TodoSubtask>>,
     attachments: Option<Vec<TodoAttachment>>,
 ) -> Result<Todo> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let now = Utc::now().to_rfc3339();
     let category = category.unwrap_or_else(|| "general".into());
     conn.execute(
@@ -294,7 +294,7 @@ pub fn create_todo(
 /// 全量更新（前端持有完整对象；避免设计 patch 合并逻辑）。
 #[tauri::command]
 pub fn update_todo(state: State<AppState>, todo: Todo) -> Result<Todo> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     // 模板改动后 rec_key 跟随自身日期，保持"模板 = 首日实例"不变式
     let rec_key: Option<String> = if todo.rec_rule.is_some() {
         todo.date.as_ref().map(|d| format!("{}:{}", todo.id, d))
@@ -328,7 +328,7 @@ pub fn update_todo(state: State<AppState>, todo: Todo) -> Result<Todo> {
 
 #[tauri::command]
 pub fn delete_todo(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM todos WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -339,7 +339,7 @@ pub fn delete_todo(state: State<AppState>, id: i64) -> Result<()> {
 /// 2) 窗口 [今天-1, 今天+7] 内缺失的实例 → 按模板补建（rec_key = "模板id:日期"）。
 /// 返回本次新增实例数。
 pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     sync_recurrences_on(&conn, &today)
 }
 

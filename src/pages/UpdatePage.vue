@@ -199,8 +199,12 @@ onMounted(async () => {
   <div class="page">
     <PageHeader title="软件更新" back />
 
+    <!-- 桌面栅格：壳层只把 .page 的**直接子项**摊成两栏，而这一页的四张主卡
+         高矮差得远，两两并排必然在行尾留下空白 —— 桌面上每张都通栏，改在
+         卡片**内部**分栏（见 .desk-main 那段注释）。手机端它只是个普通 div -->
+    <div class="d-grid upd-grid">
     <!-- 版本 -->
-    <section class="card">
+    <section class="card d-full">
       <div class="row between head">
         <span class="col">
           <b class="ver num">v{{ update.currentVersion || '—' }}</b>
@@ -218,7 +222,7 @@ onMounted(async () => {
     </section>
 
     <!-- 有更新 -->
-    <section v-if="update.hasUpdate || update.readyToInstall" class="card hl">
+    <section v-if="update.hasUpdate || update.readyToInstall" class="card hl d-full">
       <header class="row between ghead">
         <h2 class="gtitle">可更新到 v{{ check?.latestVersion }}</h2>
         <span v-if="check?.sourceName" class="t-3 tiny">{{ check.sourceName }}</span>
@@ -265,15 +269,15 @@ onMounted(async () => {
     </section>
 
     <!-- 已跳过 -->
-    <section v-if="check?.ignored" class="card">
+    <section v-if="check?.ignored" class="card d-full">
       <p class="t-3">
         已跳过 v{{ check.latestVersion }}。
         <button class="link" @click="onUnskip">恢复提示</button>
       </p>
     </section>
 
-    <!-- 更新源 -->
-    <section class="card">
+    <!-- 更新源：桌面上保持一列 —— 行里的清单地址可能很长，通栏才不折行 -->
+    <section class="card d-full">
       <header class="row between ghead">
         <h2 class="gtitle">更新源</h2>
         <button class="link" @click="showSourceEditor = !showSourceEditor">
@@ -305,7 +309,7 @@ onMounted(async () => {
     </section>
 
     <!-- 设置 -->
-    <section class="card">
+    <section class="card d-full setcard">
       <h2 class="gtitle">更新设置</h2>
       <div class="rows">
         <div class="row between frow">
@@ -366,7 +370,7 @@ onMounted(async () => {
     </section>
 
     <!-- 在线服务（更新之外的预留接口） -->
-    <section class="card">
+    <section class="card d-full onlinecard">
       <header class="row between ghead">
         <h2 class="gtitle">Rein 在线服务</h2>
         <button class="link" :disabled="update.onlineLoading" @click="update.probeOnline()">
@@ -408,6 +412,7 @@ onMounted(async () => {
       </template>
       <p v-else class="t-3 tiny">正在探测…</p>
     </section>
+    </div>
 
     <p class="note t-3">
       安装包在下载完成后会用内置公钥做 Ed25519 验签，签名不符或摘要不符的包一律不安装。
@@ -674,6 +679,51 @@ onMounted(async () => {
   margin: 14px 4px 0;
   font-size: var(--fs-caption);
   line-height: 1.6;
+}
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   这一页四张主卡的高矮差得远（版本 ~150 / 更新源 ~250 / 更新设置 ~430 /
+   在线服务 ~250），两两并排必然在行尾留下一块空白。所以桌面上每张卡都通栏，
+   把分栏挪到**卡片内部**：
+   · 版本     —— 本来就是「左版本、右按钮」的一条，通栏才是它的形状；
+   · 更新设置 —— 六行开关摊成两栏，每行约 500px，说明不必折行；
+   · 在线服务 —— 状态在左、AI 端点在右；
+   更新源刻意保持一列：行里可能挂着一条很长的清单地址，通栏才不折行。
+   ============================================================ */
+
+/* 六行开关摊成两栏。行间那条细线只该出现在**第二行起**：手机上一列时它是
+   「+ 一行」的通用规则，两栏下会让右上角凭空多出一条线 */
+.desk-main .setcard .rows {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .setcard .rows > * + * {
+  border-top: none;
+}
+
+.desk-main .setcard .rows > *:nth-child(n + 3) {
+  border-top: 0.5px solid var(--line);
+}
+
+/* 在线服务：状态（左）与 AI 端点（右）并置。ai-box 显式落在右栏第 2 行，
+   左边那几行状态文字按自动流一列排下去 */
+.desk-main .onlinecard {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--desk-gap);
+  align-items: start;
+}
+
+.desk-main .onlinecard > .ghead {
+  grid-column: 1 / -1;
+}
+
+.desk-main .onlinecard > .ai-box {
+  grid-column: 2;
+  grid-row: 2;
+  margin-top: 0;
 }
 
 .spin {

@@ -169,6 +169,8 @@ impl BlobStore {
     }
 
     /// 目录表里少一行但文件在（手工拷进来的库）时补登记；文件不在则返回大小 0。
+    /// 当前没有调用方（blob 回收还没做），保留是因为它是那条清理路径的判据。
+    #[allow(dead_code)]
     pub fn size_of(&self, conn: &Connection, hash: &str) -> Result<i64> {
         Self::check_hash(hash)?;
         let known: Option<i64> = conn

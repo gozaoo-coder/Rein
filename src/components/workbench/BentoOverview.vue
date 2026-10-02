@@ -121,7 +121,9 @@ const mealChips = computed(() =>
         <i class="qic"><Wallet :size="21" /></i>
         <div class="col" style="gap: 2px; min-width: 0">
           <b>记账</b>
-          <span class="num t-2">本月支出 ¥{{ fmtCents(ledger.monthExpenseCents) }} · 预算已用 {{ budgetPct }}%</span>
+          <!-- 支出与预算各占一行（各自 nowrap）：挤在一行时「预算」会被右栏类目拦腰折断 -->
+          <span class="num t-2" style="white-space: nowrap">本月支出 ¥{{ fmtCents(ledger.monthExpenseCents) }}</span>
+          <span class="num t-2" style="white-space: nowrap">预算已用 {{ budgetPct }}%</span>
           <div class="mtrack" style="margin-top: 8px; max-width: 300px">
             <i :style="{ width: budgetPct + '%', background: 'var(--accent)' }" />
           </div>
@@ -212,9 +214,24 @@ const mealChips = computed(() =>
 }
 
 .t-hero { grid-area: hero; }
+/* 行高由最高的那一列（side：番茄钟+AI）决定：卡面必须填满格子，否则能量/待办卡
+   下面漏出一块灰底画布，整行读成「没画完」。 */
+.t-hero > .card {
+  height: 100%;
+}
 .t-todo { grid-area: todo; min-width: 0; }
+.t-todo > .card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+/* 填满之后把汇总脚注锚到卡底：列表贴上、汇总贴下，中间留白是结构而不是洞 */
+.t-todo > .card :deep(.foot) {
+  margin-top: auto;
+  padding-top: 12px;
+}
 .t-side { grid-area: side; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.t-qa { grid-area: qa; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.t-qa { grid-area: qa; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 
 /* 运动模块关闭：抽掉 wk 区、空出的列并入记账卡，快捷入口 4 列收成 3 列（不留空洞）。
    行数必须与原布局一致（四行，含末行 diet）——少写一行会让未声明区域变成隐式轨道。 */
@@ -298,7 +315,7 @@ const mealChips = computed(() =>
   background: var(--surface-2);
   color: var(--text-2);
   font-size: var(--fs-subhead);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .inner {
@@ -307,7 +324,7 @@ const mealChips = computed(() =>
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 18px;
+  padding: 20px;
 }
 
 .qic {
@@ -379,6 +396,6 @@ const mealChips = computed(() =>
   background: var(--text-1);
   color: var(--bg);
   font-size: var(--fs-subhead);
-  font-weight: 650;
+  font-weight: 600;
 }
 </style>

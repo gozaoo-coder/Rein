@@ -18,7 +18,7 @@ pub fn list_foods(
     category: Option<String>,
     limit: Option<i64>,
 ) -> Result<Vec<Food>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let like = query
         .as_deref()
         .map(|q| format!("%{}%", q.trim()))
@@ -42,7 +42,7 @@ pub fn list_foods(
 
 #[tauri::command]
 pub fn get_food(state: State<AppState>, id: i64) -> Result<Option<Food>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     fetch_food(&conn, id)
 }
 
@@ -104,7 +104,7 @@ pub fn search_foods_fuzzy(
     query: Option<String>,
     limit: Option<i64>,
 ) -> Result<Vec<Food>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let q = query.as_deref().map(str::trim).unwrap_or("");
     let limit = limit.unwrap_or(20).clamp(1, 50) as usize;
 
@@ -199,7 +199,7 @@ pub fn create_food(state: State<AppState>, food: FoodCreateInput) -> Result<Food
     if name.is_empty() {
         return Err(ReinError::Message("食物名称不能为空".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
 
     let existing: Option<i64> = conn
         .query_row("SELECT id FROM foods WHERE name = ?1", [&name], |r| {
@@ -262,7 +262,7 @@ const MEAL_SELECT: &str = "ml.id, ml.food_id, ml.date, ml.meal_type, ml.quantity
 
 #[tauri::command]
 pub fn list_meals(state: State<AppState>, date: String) -> Result<Vec<MealLog>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {MEAL_SELECT}, {FOOD_COLS} \
          FROM meal_logs ml JOIN foods f ON f.id = ml.food_id \
@@ -282,7 +282,7 @@ pub fn list_meals_range(
     start_date: String,
     end_date: String,
 ) -> Result<Vec<MealLog>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {MEAL_SELECT}, {FOOD_COLS} \
          FROM meal_logs ml JOIN foods f ON f.id = ml.food_id \
@@ -327,7 +327,7 @@ pub fn log_meal(
     source: String,
     note: Option<String>,
 ) -> Result<MealLog> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO meal_logs (food_id, date, meal_type, quantity_mode, grams, units, unit_name, source, note, created_at) \
@@ -343,7 +343,7 @@ pub fn log_meal(
 
 #[tauri::command]
 pub fn delete_meal(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM meal_logs WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -353,7 +353,7 @@ pub fn delete_meal(state: State<AppState>, id: i64) -> Result<()> {
 /// 全部食谱偏好：喜欢/不喜欢标记，食谱库页与方案生成共用
 #[tauri::command]
 pub fn recipe_prefs_list(state: State<AppState>) -> Result<Vec<RecipePref>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT recipe_id, rating, updated_at FROM recipe_prefs ORDER BY updated_at DESC",
     )?;
@@ -380,7 +380,7 @@ pub fn recipe_prefs_set(state: State<AppState>, input: RecipePrefInput) -> Resul
             "rating 应为 1（喜欢）或 -1（不喜欢）".into(),
         ));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "INSERT INTO recipe_prefs (recipe_id, rating, updated_at) VALUES (?1, ?2, datetime('now')) \
          ON CONFLICT(recipe_id) DO UPDATE SET rating = excluded.rating, updated_at = excluded.updated_at",
@@ -402,7 +402,7 @@ pub fn recipe_prefs_set(state: State<AppState>, input: RecipePrefInput) -> Resul
 /// 清除一条食谱偏好（再次点按已选标记时取消）
 #[tauri::command]
 pub fn recipe_prefs_delete(state: State<AppState>, recipe_id: String) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM recipe_prefs WHERE recipe_id = ?1", [recipe_id])?;
     Ok(())
 }

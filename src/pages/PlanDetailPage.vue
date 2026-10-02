@@ -78,32 +78,38 @@ async function doDelete(): Promise<void> {
     />
 
     <template v-if="plan">
-      <p class="sum num t-2">
-        {{ plan.subtitle || '自定义课程' }} · {{ planTypeLabel(plan.workoutType) }} ·
-        {{ plan.exercises.length }} 个动作 · 约 {{ estimatePlanMinutes(plan) }} 分钟
-      </p>
+      <!-- 桌面画布：动作明细是这页唯一的主体，整块通栏；移动端这里只是一个普通块容器 -->
+      <div class="pd-body">
+        <p class="sum num t-2">
+          {{ plan.subtitle || '自定义课程' }} · {{ planTypeLabel(plan.workoutType) }} ·
+          {{ plan.exercises.length }} 个动作 · 约 {{ estimatePlanMinutes(plan) }} 分钟
+        </p>
 
-      <section class="card">
-        <div v-for="(e, i) in plan.exercises" :key="e.id" class="exitem">
-          <button type="button" class="row item-row" @click="detailEx = e">
-            <span class="idx num">{{ e.group ?? i + 1 }}</span>
-            <span class="mid flex-1">
-              <b class="nm">{{ lib.resolveName(e) }}</b>
-              <small class="sub">{{ exerciseSub(e) }}</small>
-            </span>
-            <span v-if="exerciseBadge(e)" class="badge">{{ exerciseBadge(e) }}</span>
-            <ChevronDown :size="16" class="chev" />
+        <section class="card">
+          <!-- 动作条目单独一层：桌面上按两栏流铺开（见样式里的 .exlist） -->
+          <div class="exlist">
+            <div v-for="(e, i) in plan.exercises" :key="e.id" class="exitem">
+              <button type="button" class="row item-row" @click="detailEx = e">
+                <span class="idx num">{{ e.group ?? i + 1 }}</span>
+                <span class="mid flex-1">
+                  <b class="nm">{{ lib.resolveName(e) }}</b>
+                  <small class="sub">{{ exerciseSub(e) }}</small>
+                </span>
+                <span v-if="exerciseBadge(e)" class="badge">{{ exerciseBadge(e) }}</span>
+                <ChevronDown :size="16" class="chev" />
+              </button>
+            </div>
+          </div>
+
+          <button type="button" class="start row center" @click="onStart">
+            <Play :size="18" /> 开始「{{ plan.name }}」
           </button>
-        </div>
+        </section>
 
-        <button type="button" class="start row center" @click="onStart">
-          <Play :size="18" /> 开始「{{ plan.name }}」
+        <button class="del row center" @click="delOpen = true">
+          <Trash2 :size="16" /> 删除课程
         </button>
-      </section>
-
-      <button class="del row center" @click="delOpen = true">
-        <Trash2 :size="16" /> 删除课程
-      </button>
+      </div>
     </template>
 
     <ActionSheet
@@ -225,5 +231,39 @@ async function doDelete(): Promise<void> {
   color: var(--danger);
   font-size: var(--fs-callout);
   font-weight: 600;
+}
+
+/* ============================================================
+   桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
+   ============================================================ */
+
+/* 这页只有「一套动作」和一枚开始钮。壳层缺省会把 .card 压进半栏（479px），
+   右半屏整块空着；动作明细本来就该通栏，所以这里自铺一张单列画布：
+   通栏是缺省，将来要塞侧栏再往这里加一列即可。 */
+.desk-main .pd-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--desk-gap);
+  align-items: start;
+}
+
+/* 行距统一交给栅格 gap：条目自身那些 2/12/14px 的纵向边距清掉，
+   否则和 gap 叠加成双倍间距 */
+.desk-main .pd-body > * {
+  min-width: 0;
+  margin-block: 0;
+}
+
+/* 动作条目摊成两栏流：一行只有「序号 + 名称 / 处方」，970px 单列读起来空荡；
+   两栏让整套课程一屏看完。用 columns 而不是 grid —— 处方文字长短不一，
+   grid 会把同行条目撑到最高的那条，columns 是按内容自然分栏。
+   条目自带序号，按栏读（先读完左栏再读右栏）顺序依然是 1→9。 */
+.desk-main .exlist {
+  columns: 2;
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .exlist > .exitem {
+  break-inside: avoid;
 }
 </style>

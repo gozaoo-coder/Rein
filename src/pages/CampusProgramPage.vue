@@ -130,7 +130,19 @@ onMounted(async () => {
       </template>
     </EmptyState>
 
+    <!-- 拉取中不能什么都不渲染：那是一页空白，读起来像页面坏了 -->
+    <EmptyState
+      v-else-if="loading"
+      :icon="BookOpen"
+      title="正在拉取培养方案…"
+      hint="正在从教务系统读取档案、学分与课程清单"
+    />
+
     <template v-else-if="info">
+      <!-- 桌面栅格：壳层只把 .page 的**直接子项**摊成两栏，而这一页要的是
+           「档案 | 学分分布 并排 + 课程清单通栏」，所以自带一层 .d-grid 承接。
+           手机端它只是个普通 div，块流与卡片间距都不变 -->
+      <div class="d-grid prog-grid">
       <!-- 档案 -->
       <section class="card">
         <div class="meta-grid">
@@ -172,8 +184,8 @@ onMounted(async () => {
         <p class="tip">按教务的模块层级逐级列出，不做跨层求和，避免重复计入学分。</p>
       </section>
 
-      <!-- 课程清单 -->
-      <section v-if="courses.length" class="card">
+      <!-- 课程清单：这一页唯一的长列表，桌面上通栏 -->
+      <section v-if="courses.length" class="card d-full">
         <h2 class="sec">课程清单 <em class="num">{{ filteredCourses.length }}/{{ courses.length }}</em></h2>
         <div class="search">
           <Search :size="15" />
@@ -186,6 +198,7 @@ onMounted(async () => {
           </li>
         </ul>
       </section>
+      </div>
 
       <p v-if="info.printedTime" class="foot">{{ info.printedTime }}</p>
     </template>
@@ -359,6 +372,26 @@ onMounted(async () => {
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   档案与学分分布用 auto-fit 而不是写死两栏：学分分布为空（creditRows 为空）时
+   只剩档案一张，它该铺满整行，而不是缩在左半栏。
+   课程清单是这一页唯一的长列表：970px 宽、每行只有「课名 + 课程号」的一列
+   是读不完的，通栏之后内部摊成两栏。**保留原来的 340px 视口 + 滚动** ——
+   课程清单可能有几百门，它不是这一页的主角，档案与学分才是。
+   ============================================================ */
+.desk-main .prog-grid {
+  grid-template-columns: repeat(auto-fit, minmax(var(--desk-aside), 1fr));
+}
+
+.desk-main .courses {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--desk-gap);
+}
+
+/* 两栏里每条都自己带下边线（原有规则），行与行之间才分得开 */
 
 .course {
   display: flex;

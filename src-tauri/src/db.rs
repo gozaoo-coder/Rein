@@ -17,8 +17,7 @@ pub fn init(app: &tauri::AppHandle) -> Result<Connection> {
     std::fs::create_dir_all(&dir)?;
 
     let conn = Connection::open(dir.join("rein.db"))?;
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "foreign_keys", "ON")?;
+    tune(&conn)?;
 
     migrate(&conn)?;
     crate::modules::seed::seed_foods(&conn)?;
@@ -27,6 +26,30 @@ pub fn init(app: &tauri::AppHandle) -> Result<Connection> {
     // 动作库必须在课程种子之后：存量课程条目与做组记录在此挂上库 id（幂等）
     crate::modules::exercise_lib::resolve::backfill_exercise_refs(&conn)?;
     Ok(conn)
+}
+
+/// 连接级 pragma —— **全应用只在这里设一次**，各域不许再各自 `pragma_update`。
+///
+/// `synchronous = NORMAL`（2026-09-30 加）是这里唯一一条与性能有关的设置，也是本仓库
+/// 写路径上最贵的一处：WAL 模式下默认的 `FULL` 意味着**每一次提交都 fsync 一次 WAL**，
+/// 而 Rein 的写是大量「单语句自动提交」（会话快照、抢课任务推进、待办勾选、同步游标），
+/// 一条命令一次 fsync。同一台机器上 2000 次这类写：`FULL` 2342.8 ms / `NORMAL` 95.5 ms，
+/// **相差 24.5 倍**（每次 1.171 ms → 0.048 ms）；真机（尤其 Android 闪存）只会更悬殊。
+///
+/// 为什么可以降：WAL 模式下的 NORMAL **不会损坏数据库**（SQLite 官方文档的口径），
+/// 代价仅限于「断电 / 内核崩溃时可能回滚最近若干次已提交事务」。Rein 的数据是本地个人数据，
+/// 丢最后几秒与每次写都等一次盘相比，后者才是用户天天能感觉到的那个。若哪天要上「写到就必须在」，
+/// 正确的做法是给那**一条**链路开 `PRAGMA synchronous=FULL` 事务，而不是把全局拖回 FULL。
+///
+/// 早先没有显式设它 = 用 SQLite 默认的 FULL（2）。`foreign_keys` 必须显式开：默认关，
+/// 关了之后 `ON DELETE CASCADE` 全部失效（级联删除是好几处表关系的依靠）。
+pub(crate) fn tune(conn: &Connection) -> Result<()> {
+    // 顺序有讲究：journal_mode 必须先设 —— synchronous 的语义由日志模式决定，
+    // 先设 synchronous 再切 WAL 会保留「按回滚日志算」的那一档。
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    Ok(())
 }
 
 /// 0001 · 初始表结构：食物库 / 记录 / 资料 / 待办 / 运动 / 番茄钟
@@ -1295,6 +1318,44 @@ mod tests {
         )
         .unwrap()
             > 0
+    }
+
+    /// 锁住 `tune()` 的三条连接级 pragma。
+    ///
+    /// 为什么值得一条测试：`synchronous` 只影响性能、不影响正确性 —— 谁把它删掉，
+    /// 没有任何功能测试会红，只有写路径悄悄慢 24 倍（实测口径见 `tune` 的注释）。
+    /// `foreign_keys` 反过来：默认是关的，漏了它级联删除会静默失效。
+    #[test]
+    fn tune_locks_connection_pragmas() {
+        let dir = std::env::temp_dir().join(format!("rein-pragma-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tune.db");
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+
+        let conn = Connection::open(&path).unwrap();
+        tune(&conn).unwrap();
+
+        let int_pragma = |p: &str| -> i64 {
+            conn.query_row(&format!("PRAGMA {p}"), [], |r| r.get::<_, i64>(0))
+                .unwrap()
+        };
+        assert_eq!(
+            int_pragma("synchronous"),
+            1,
+            "WAL 下应为 NORMAL(1)：FULL(2) 让每次写入都 fsync（实测慢 24 倍）"
+        );
+        assert_eq!(int_pragma("foreign_keys"), 1, "外键必须显式打开");
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+
+        drop(conn);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 
     #[test]

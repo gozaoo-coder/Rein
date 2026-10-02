@@ -1,20 +1,20 @@
 //! 校园教务域命令 · 命令名与前端 `campusService.ts` 对应。
 //!
 //! **一条铁律：慢网络与 DB 锁不许同时持有。**
-//! `AppState.db` 是一把全局 `Mutex<Connection>`，所有域共用；而教务系统是慢站点，
+//! `AppState.db`（`state::Db`：内裹一把全局 `Mutex<Connection>`）所有域共用；而教务系统是慢站点，
 //! 单个大响应实测可达数十秒。若把抓取和写库塞进同一个临界区，整个 App 的命令都会被卡住。
 //! 所以每个联网命令都是「短锁读 → 无锁联网 → 短锁写」三段式，
 //! 与 `modules/kb` 的「embeddings 绝不持锁」是同一条规矩。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use chrono::{Duration, Local, NaiveDate, Utc};
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager, State};
 
 use crate::error::{ReinError, Result};
-use crate::state::{AppState, CampusHub, CourseSelectToken, PendingLogin};
+use crate::state::{AppState, CampusHub, CourseSelectToken, Db, PendingLogin};
 
 use super::adapter::AnyAdapter;
 use super::course_select::CourseSelectClient;
@@ -245,11 +245,11 @@ fn forget_select_token(hub: &CampusHub) {
 /// 自愈的完整动作：静默重登（网络，**不持锁**）→ 落库 → 作废选课令牌。
 ///
 /// 重登是两三次往返的慢网络，绝不能和 DB 锁叠在一起（见文件头那条铁律）；
-/// 这个签名收 `&Mutex<Connection>` 而不是 `&Connection`，就是为了它自己决定锁的边界。
-fn recover_session(db: &Mutex<Connection>, hub: &CampusHub, account: &AccountRow) -> Result<()> {
+/// 这个签名收 `&Db`（而不是 `&Connection`），就是为了它自己决定锁的边界。
+fn recover_session(db: &Db, hub: &CampusHub, account: &AccountRow) -> Result<()> {
     let jar = relogin(account)?;
     {
-        let conn = db.lock().unwrap();
+        let conn = db.lock();
         persist_session(&conn, account.id, &jar)?;
     }
     forget_select_token(hub);
@@ -651,7 +651,7 @@ pub fn campus_systems() -> Vec<SchoolSystemInfo> {
 /// 当前激活账号（密码与 Cookie 不出 Rust）。
 #[tauri::command]
 pub fn campus_account_get(state: State<AppState>) -> Result<Option<CampusAccount>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     Ok(load_active_account(&conn)?.map(to_account))
 }
 
@@ -729,7 +729,7 @@ pub async fn campus_login(
 
     // 口令解析：优先用本次输入；没输入就回落到库里存的（重登场景）
     let plain = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let existing: Option<String> = conn
             .query_row(
                 "SELECT password FROM campus_accounts WHERE base_url = ?1 AND login_name = ?2",
@@ -781,7 +781,7 @@ pub async fn campus_login(
 
     // 登录成功：落库。该账号置为激活，其余降级 —— 时间线只投影激活账号的课表，
     // 多账号可以并存但同一时刻只有一个在生效。
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let now = now_iso();
     // 「不保存密码」要真的把旧密码清掉，不能只写个标记位
     let stored_password: Option<&str> = if want_save { Some(&plain) } else { None };
@@ -841,7 +841,7 @@ pub async fn campus_login(
 #[tauri::command]
 pub fn campus_grab_set_enabled(state: State<AppState>, hub: State<GrabHub>, enabled: bool) -> Result<()> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         meta_set(&conn, grab::ENABLED_KEY, if enabled { "1" } else { "0" })?;
     }
     hub.set_enabled_flag(enabled);
@@ -852,7 +852,7 @@ pub fn campus_grab_set_enabled(state: State<AppState>, hub: State<GrabHub>, enab
 #[tauri::command]
 pub async fn campus_session_probe(state: State<'_, AppState>) -> Result<bool> {
     let account = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         require_account(&conn)?
     };
     let spec = account.spec()?;
@@ -915,7 +915,7 @@ fn switch_semester(conn: &Connection, account_id: i64, semester_id: i64) -> Resu
 /// 想彻底清数据走 `campus_account_delete`。
 #[tauri::command]
 pub fn campus_logout(state: State<AppState>, hub: State<CampusHub>) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let account = require_account(&conn)?;
     clear_session(&conn, account.id)?;
     // 选课令牌是用会话换来的，会话没了它也就没有意义
@@ -926,7 +926,7 @@ pub fn campus_logout(state: State<AppState>, hub: State<CampusHub>) -> Result<()
 /// 删除账号：连同课表快照与全部派生日程一起清掉。
 #[tauri::command]
 pub fn campus_account_delete(state: State<AppState>) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let Some(account) = load_active_account(&conn)? else {
         return Ok(());
     };
@@ -937,7 +937,7 @@ pub fn campus_account_delete(state: State<AppState>) -> Result<()> {
 
 #[tauri::command]
 pub fn campus_semesters(state: State<AppState>) -> Result<Vec<CampusSemester>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let Some(account) = load_active_account(&conn)? else {
         return Ok(Vec::new());
     };
@@ -947,7 +947,7 @@ pub fn campus_semesters(state: State<AppState>) -> Result<Vec<CampusSemester>> {
 /// 切换当前学期 —— 只改标记，时间线由 `campus_sync` / `campus_schedule` 重新对齐。
 #[tauri::command]
 pub fn campus_set_current_semester(state: State<AppState>, semester_id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let account = require_account(&conn)?;
     // 只做存在性校验，值本身用不上
     load_semester(&conn, account.id, semester_id)?;
@@ -1065,7 +1065,7 @@ pub async fn campus_sync(
 ) -> Result<SyncOutcome> {
     // ── 短锁：取出账号，并把「本地学期 id」翻译成本次抓取要用的远端 id
     let (account, wanted_remote) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let account = require_account(&conn)?;
         let wanted = match semester_id {
             Some(local_id) => Some(load_semester(&conn, account.id, local_id)?.remote_id),
@@ -1110,7 +1110,7 @@ pub async fn campus_sync(
     .map_err(|e| ReinError::Message(format!("同步任务失败：{e}")))?;
 
     // ── 短锁：落库 + 重建时间线
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
 
     // 中途换过会话就先把它写死：这一步之后再出闪失，也不至于白换一次
     // （下一次调用——包括培养方案、选课、抢课引擎——直接就能用上新会话）。
@@ -1316,7 +1316,7 @@ pub fn campus_schedule(
     from: Option<String>,
     to: Option<String>,
 ) -> Result<ScheduleView> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let account = load_active_account(&conn)?;
     let Some(account) = account else {
         return Ok(ScheduleView {
@@ -1396,7 +1396,7 @@ pub async fn campus_program(
     refresh: Option<bool>,
 ) -> Result<serde_json::Value> {
     let (account, cache_key, cached) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let account = require_account(&conn)?;
         let key = program_cache_key(account.id);
         let cached = meta_get(&conn, &key).filter(|s| !s.is_empty());
@@ -1443,14 +1443,14 @@ pub async fn campus_program(
     .map_err(|e| ReinError::Message(format!("培养方案任务失败：{e}")))?;
 
     if let Some(jar) = &attempt.refreshed {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         persist_session(&conn, account_id, jar)?;
         forget_select_token(&hub);
     }
     let raw = attempt.raw?;
 
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         meta_set(&conn, &cache_key, &serde_json::to_string(&raw)?)?;
     }
     Ok(raw)
@@ -1480,11 +1480,11 @@ pub(crate) struct SelectContext {
 
 /// 取选课上下文。缓存命中则零网络；未命中才去门户换一张令牌。
 ///
-/// 收 `&Mutex<Connection>` 而不是 `&Connection`：这条路上有网络（换令牌、必要时重登），
+/// 收 `&Db` 而不是 `&Connection`：这条路上有网络（换令牌、必要时重登），
 /// 而网络期间绝不能攥着 DB 锁 —— 锁的进出由本函数自己安排。
-pub(crate) fn select_context(db: &Mutex<Connection>, hub: &CampusHub) -> Result<SelectContext> {
+pub(crate) fn select_context(db: &Db, hub: &CampusHub) -> Result<SelectContext> {
     let account = {
-        let conn = db.lock().unwrap();
+        let conn = db.lock();
         require_account(&conn)?
     };
     match build_select_context(hub, &account) {
@@ -1495,7 +1495,7 @@ pub(crate) fn select_context(db: &Mutex<Connection>, hub: &CampusHub) -> Result<
             recover_session(db, hub, &account)?;
             // 重新读一次账号：新会话刚写进库里，手上这份还是旧的（旧 Cookie 换不出新令牌）
             let account = {
-                let conn = db.lock().unwrap();
+                let conn = db.lock();
                 require_account(&conn)?
             };
             build_select_context(hub, &account)
@@ -1649,7 +1649,7 @@ pub async fn campus_lesson_search(
     // （抢课引擎不一样，它每 2 秒走一步，所以那里必须缓存，见 `dual_fire_plan`。）
     // 短锁读账号：探测与查询都是网络，绝不能持锁（见文件头那条铁律）。
     let account = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         require_account(&conn)?
     };
     let jar = CookieJar::from_json(account.cookies.as_deref());
@@ -2036,7 +2036,7 @@ pub fn campus_grab_state(
     state: State<'_, AppState>,
     grab: State<'_, Arc<GrabHub>>,
 ) -> Result<GrabState> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     grab::snapshot(&conn, &grab)
 }
 
@@ -2073,7 +2073,7 @@ pub async fn campus_grab_enqueue(
     let window_end = window_end_wall.as_deref().filter(|s| !s.trim().is_empty());
 
     let ids = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let account = require_account(&conn)?;
         let mut ids = Vec::with_capacity(targets.len());
         for t in &targets {
@@ -2106,7 +2106,7 @@ pub async fn campus_grab_enqueue(
         })
         .await
         {
-            let conn = state.db.lock().unwrap();
+            let conn = state.db.lock();
             for id in &ids {
                 let _ = grab::set_turn_assoc(&conn, *id, &assoc);
             }
@@ -2127,7 +2127,7 @@ pub fn campus_grab_task_action(
     action: String,
 ) -> Result<()> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         // 引擎可能正在跑这个任务，先确认它存在，免得改了个空气
         let exists: bool = conn
             .query_row(
@@ -2172,7 +2172,7 @@ pub fn campus_grab_clear_finished(
     grab: State<'_, Arc<GrabHub>>,
 ) -> Result<usize> {
     let n = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let account = require_account(&conn)?;
         grab::clear_finished(&conn, account.id)?
     };
@@ -2213,7 +2213,7 @@ pub fn campus_grab_intent_add(
         Some(other) => return Err(ReinError::Message(format!("未知的抢课模式：{other}"))),
     };
     let id = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let account = require_account(&conn)?;
         grab::insert_intent(
             &conn,
@@ -2228,7 +2228,7 @@ pub fn campus_grab_intent_add(
     // 叫醒引擎：能解析的话立刻就解析（窗口已经开着时，用户按下就该看到志愿排好）
     grab.notify();
 
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     grab::load_intent(&conn, id)?
         .ok_or_else(|| ReinError::Message("计划写入后读不回来，请重试".into()))
 }
@@ -2242,7 +2242,7 @@ pub fn campus_grab_intent_action(
     action: String,
 ) -> Result<()> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         match action.as_str() {
             "remove" => grab::delete_intent(&conn, intent_id)?,
             "now" => grab::reset_intent(&conn, intent_id)?,
@@ -2448,7 +2448,7 @@ pub fn campus_grab_preflight(
                     },
                 );
 
-                let conn = state.db.lock().unwrap();
+                let conn = state.db.lock();
                 let intents = grab::load_intents(&conn, ctx.account_id).unwrap_or_default();
                 drop(conn);
                 if intents.is_empty() {
@@ -2542,7 +2542,7 @@ pub fn campus_grab_pause_all(
     grab: State<'_, Arc<GrabHub>>,
 ) -> Result<()> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let account = require_account(&conn)?;
         conn.execute(
             "UPDATE campus_grab_tasks SET status = ?2, phase = 'idle' \
@@ -2560,7 +2560,7 @@ pub fn campus_grab_resume_all(
     grab: State<'_, Arc<GrabHub>>,
 ) -> Result<()> {
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let account = require_account(&conn)?;
         conn.execute(
             "UPDATE campus_grab_tasks SET status = ?2, phase = 'idle', next_at = ?3 \
@@ -2580,7 +2580,7 @@ pub fn campus_grab_resume_all(
 /// 读引擎节奏参数。
 #[tauri::command]
 pub fn campus_grab_settings_get(state: State<'_, AppState>) -> Result<GrabSettings> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     grab::load_settings(&conn)
 }
 
@@ -2593,7 +2593,7 @@ pub fn campus_grab_settings_set(
     settings: GrabSettings,
 ) -> Result<GrabSettings> {
     let saved = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let s = settings.sanitized();
         grab::save_settings(&conn, &s)?;
         s
@@ -2717,7 +2717,7 @@ pub async fn campus_rescue_state(
     probe: Option<bool>,
 ) -> Result<RescueState> {
     let (account, snapshot, recent_actions) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         (
             load_active_account(&conn)?,
             grab::snapshot(&conn, &grab)?,
@@ -2776,7 +2776,7 @@ pub async fn campus_http(
     let method = rescue::normalize_method(req.method.as_deref())?;
 
     let account = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         load_active_account(&conn)?
     };
     let base = account.as_ref().map(|a| a.base_url.clone()).unwrap_or_default();
@@ -2848,7 +2848,7 @@ pub async fn campus_http(
 
     // 熔断：救援工具自己不能变成新的故障（模型在一个错误上原地转圈是它最典型的失败模式）
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let since = (Utc::now() - Duration::minutes(RESCUE_WINDOW_MIN)).to_rfc3339();
         if rescue::circuit_broken(&conn, &fp, &since)? {
             return Err(ReinError::Message(format!(
@@ -2889,7 +2889,7 @@ pub async fn campus_http(
         if let Some(acc) = account.as_ref() {
             recover_session(&state.db, &hub, acc)?;
             let fresh = {
-                let conn = state.db.lock().unwrap();
+                let conn = state.db.lock();
                 require_account(&conn)?
             };
             if with_token {
@@ -2916,7 +2916,7 @@ pub async fn campus_http(
         if let Some(acc) = account.as_ref() {
             let stored = CookieJar::from_json(acc.cookies.as_deref());
             if jar_after.to_json() != stored.to_json() {
-                let conn = state.db.lock().unwrap();
+                let conn = state.db.lock();
                 persist_session(&conn, acc.id, &jar_after)?;
             }
         }
@@ -2940,7 +2940,7 @@ pub async fn campus_http(
     );
 
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         rescue::record(
             &conn,
             &now_iso(),
@@ -3001,7 +3001,7 @@ pub fn campus_rescue_note(
         return Err(ReinError::Message("summary 不能为空".into()));
     }
     let kind = rescue::normalize_kind(&kind)?;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let account_id = load_active_account(&conn)?.map(|a| a.id);
     let id = rescue::record(
         &conn,
@@ -3038,7 +3038,7 @@ pub fn campus_curl_export(
     let since = (Utc::now() - Duration::hours(hours)).to_rfc3339();
 
     let (entries, account, token) = {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         let entries = rescue::scriptable_since(&conn, &since, limit)?;
         let account = load_active_account(&conn)?;
         // 令牌缓存在进程内（见 state.rs）：换过进程就没了，脚本里那只说明「现在拿不到」
@@ -3076,7 +3076,7 @@ pub fn campus_curl_export(
     std::fs::write(&path, script.as_bytes())?;
 
     {
-        let conn = state.db.lock().unwrap();
+        let conn = state.db.lock();
         rescue::record(
             &conn,
             &generated_at,

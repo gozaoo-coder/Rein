@@ -137,10 +137,6 @@ function onMove(t: Todo, startMin: number): void {
 </template>
 
 <style scoped>
-.hcanvas {
-  margin-top: 2px;
-}
-
 .head h2 {
   font-size: var(--fs-title3);
   font-weight: 700;
@@ -151,13 +147,16 @@ function onMove(t: Todo, startMin: number): void {
   font-size: var(--fs-caption);
 }
 
-/* 未安排池：横向 chips，点卡片进编辑抽屉快排 */
+/* 未安排池：横向 chips，点卡片进编辑抽屉快排。
+   右缘 18px 渐隐宣告「还有更多、可以横滑」——否则最后一颗 chip 被滚动边缘硬裁，
+   读起来像布局坏了（低频横滚区没有滚动条可暗示）。 */
 .pool {
   display: flex;
   gap: 7px;
   overflow-x: auto;
   scrollbar-width: none;
   padding: 10px 0 2px;
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
 }
 
 .pool::-webkit-scrollbar {
@@ -192,10 +191,18 @@ function onMove(t: Todo, startMin: number): void {
   background: var(--accent);
 }
 
-/* 紧凑画布：固定视窗，内部滚动锚定「现在」 */
+/* 紧凑画布：固定视窗，内部滚动锚定「现在」。
+   上下缘 12px 渐隐：宣告「这里面还能滚」，别让 gutter 刻度和块在窗口边被硬裁成半截。 */
 .cwrap {
   height: 216px;
   margin-top: 10px;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
 }
 
 /* CanvasTimeline 的 .ctl/.scroll 都是 height:100% 链，视窗高度从这里给 */

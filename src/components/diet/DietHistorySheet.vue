@@ -398,7 +398,7 @@ async function onDelete(): Promise<void> {
 
 .rname {
   font-size: var(--fs-subhead);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-1);
   overflow: hidden;
   white-space: nowrap;

@@ -41,19 +41,20 @@ watch(targets, () => {
 
 <template>
   <div class="page">
-    <PageHeader title="饮食调整" subtitle="方案计算 · AI 建议 · 手动微调" back />
+    <!-- 桌面这几张卡要显式排一遍，所以每个根元素上都挂一个定位用的类（类会合并到组件根元素上） -->
+    <PageHeader class="lp-head" title="饮食调整" subtitle="方案计算 · AI 建议 · 手动微调" back />
 
     <!-- 方案计算器 -->
-    <TargetCalculator />
+    <TargetCalculator class="lp-calc" />
 
     <!-- 体重 · 身高追踪 -->
-    <BodyTrackerCard />
+    <BodyTrackerCard class="lp-body" />
 
     <!-- AI 智能调整 -->
-    <AiTargetAdjustCard />
+    <AiTargetAdjustCard class="lp-ai" />
 
     <!-- 手动微调 -->
-    <section class="card">
+    <section class="card lp-targets">
       <header class="head">
         <h2>手动微调</h2>
         <p class="t-3">直接修改各项数值 · 自动保存</p>
@@ -77,5 +78,59 @@ watch(targets, () => {
 .head p {
   font-size: var(--fs-caption);
   margin-top: 1px;
+}
+
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
+   壳层已经把这页四张卡铺成两栏，但它是「逐行等高」的：方案计算器 ≈735px 旁边是
+   体重·身高追踪 ≈540px，右列下方会空掉近 200px，下一行才继续。
+
+   所以这里显式排一遍：
+     · 方案计算器（最高的那张）吃掉左列两行；
+     · 右列把「体重·身高追踪 + AI 智能调整」叠起来 —— 两列收尾高度 ≈735 / ≈785，基本齐平；
+     · 「手动微调」退到最后通栏，六个步进器在桌面上摊成两列，
+       免得一行从「能量」一路拉到卡片右缘的「−/+」。
+
+   行号必须连页头一起写死：栅格一旦出现显式行，自动排布会从第一行起找空位，
+   而页头这种占满整行的子项会一路找到最后一行才落地（页头被挤到卡片下面去）。
+
+   本页是**显式排布**，所以列位置自己写死（不用 .d-full 那套缺省）。 */
+.desk-main .page > .lp-head {
+  grid-row: 1;
+}
+
+.desk-main .page > .lp-calc {
+  grid-column: 1 / 2;
+  grid-row: 2 / span 2;
+}
+
+.desk-main .page > .lp-body {
+  grid-column: 2 / 3;
+  grid-row: 2;
+}
+
+.desk-main .page > .lp-ai {
+  grid-column: 2 / 3;
+  grid-row: 3;
+}
+
+.desk-main .page > .lp-targets {
+  grid-column: 1 / -1;
+  grid-row: 4;
+}
+
+/* 手动微调通栏后，六个步进器摊成两列（NumberStepper 自己的行内布局不动，只是两两并排）。
+   分隔线只画在第二行往后：栅格是两列三行，原规则 `.grid > * + *` 会给右列顶格也画一条，
+   悬在卡片顶上很突兀。 */
+.desk-main .page > .lp-targets :deep(.grid) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .page > .lp-targets :deep(.grid > * + *) {
+  border-top: 0;
+}
+
+.desk-main .page > .lp-targets :deep(.grid > *:nth-child(n + 3)) {
+  border-top: 0.5px solid var(--line);
 }
 </style>

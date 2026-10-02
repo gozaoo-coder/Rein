@@ -15,7 +15,7 @@ use super::{plan_by_id, plan_from_row, PLAN_COLS};
 /// 内置课程种子升级状态（前端据此决定是否弹「新版本」横幅）
 #[tauri::command]
 pub fn plan_seed_status_cmd(state: State<AppState>) -> Result<PlanSeedStatus> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     plan_seed_status(&conn)
 }
 
@@ -23,7 +23,7 @@ pub fn plan_seed_status_cmd(state: State<AppState>) -> Result<PlanSeedStatus> {
 /// 仅当确实有待升级的种子时执行，否则幂等返回当前状态。
 #[tauri::command]
 pub fn apply_plan_seed_migrate(state: State<AppState>) -> Result<PlanSeedStatus> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let status = plan_seed_status(&conn)?;
     if status.current_version >= status.latest_version {
         return Ok(status);
@@ -37,7 +37,7 @@ pub fn apply_plan_seed_migrate(state: State<AppState>) -> Result<PlanSeedStatus>
 /// 使用新版本：按 id 把本地内置课内容整体替换为新种子。
 #[tauri::command]
 pub fn apply_plan_seed_override(state: State<AppState>) -> Result<PlanSeedStatus> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let status = plan_seed_status(&conn)?;
     if status.current_version >= status.latest_version {
         return Ok(status);
@@ -51,7 +51,7 @@ pub fn apply_plan_seed_override(state: State<AppState>) -> Result<PlanSeedStatus
 /// 保留我的：本版本不再刷新内置课内容，只结清版本提示。
 #[tauri::command]
 pub fn apply_plan_seed_keep(state: State<AppState>) -> Result<PlanSeedStatus> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let status = plan_seed_status(&conn)?;
     if status.current_version >= status.latest_version {
         return Ok(status);
@@ -63,7 +63,7 @@ pub fn apply_plan_seed_keep(state: State<AppState>) -> Result<PlanSeedStatus> {
 /// 课程列表：最近使用的在前（未用过的按更新时间排后）
 #[tauri::command]
 pub fn list_workout_plans(state: State<AppState>) -> Result<Vec<PlanRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!(
         "SELECT {PLAN_COLS} FROM workout_plans \
          ORDER BY (last_used_at IS NULL), last_used_at DESC, updated_at DESC"
@@ -77,7 +77,7 @@ pub fn list_workout_plans(state: State<AppState>) -> Result<Vec<PlanRecord>> {
 
 #[tauri::command]
 pub fn get_workout_plan(state: State<AppState>, id: String) -> Result<PlanRecord> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     plan_by_id(&conn, &id)
 }
 
@@ -92,7 +92,7 @@ pub fn upsert_workout_plan(state: State<AppState>, input: PlanInput) -> Result<P
     if name.is_empty() {
         return Err(ReinError::Message("课程名称不能为空".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut index = NameIndex::load(&conn)?;
     let (exercises, _) =
         resolve_plan_exercises(&conn, &mut index, &input.exercises)?;
@@ -120,7 +120,7 @@ pub fn upsert_workout_plan(state: State<AppState>, input: PlanInput) -> Result<P
 
 #[tauri::command]
 pub fn delete_workout_plan(state: State<AppState>, id: String) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM workout_plans WHERE id = ?1", [&id])?;
     Ok(())
 }
@@ -128,7 +128,7 @@ pub fn delete_workout_plan(state: State<AppState>, id: String) -> Result<()> {
 /// 标记「最近使用」：每次以该课程开始训练时调用
 #[tauri::command]
 pub fn touch_workout_plan(state: State<AppState>, id: String) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE workout_plans SET last_used_at = datetime('now'), updated_at = datetime('now') \
          WHERE id = ?1",

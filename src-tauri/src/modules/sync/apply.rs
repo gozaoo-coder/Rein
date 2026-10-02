@@ -27,7 +27,6 @@ use crate::error::Result;
 use super::blobs::BlobStore;
 use super::media;
 use super::tables::{self, Pk};
-use super::{meta_get, meta_set};
 
 /// 一条要发出去（或刚收进来）的对象。
 #[derive(Debug, Clone, Serialize)]
@@ -409,10 +408,7 @@ fn resolve_value(
                     |r| r.get(0),
                 )
                 .optional()?;
-            return Ok(match found.and_then(|s| s.parse::<i64>().ok()) {
-                Some(id) => Some(SqlValue::Integer(id)),
-                None => None,
-            });
+            return Ok(found.and_then(|s| s.parse::<i64>().ok()).map(SqlValue::Integer));
         }
         // 天然键：内置食物这类两端都有、只是 id 不同的行
         if let Some(nat) = map.get("__natural") {
@@ -461,28 +457,10 @@ fn ref_target(_spec: &'static tables::TableSpec, map: &Map<String, Value>) -> St
         .to_string()
 }
 
-/// 把本机身份与分组写进 `sync_meta`（配对成功后调用）。
-pub fn set_group(conn: &Connection, group_id: &str, peer_device: &str, peer_name: &str, peer_pub: &str) -> Result<()> {
-    meta_set(conn, "group_id", group_id)?;
-    conn.execute(
-        "INSERT INTO sync_peers (device, name, x25519_pub, group_id) VALUES (?1,?2,?3,?4) \
-         ON CONFLICT(device) DO UPDATE SET name = excluded.name, x25519_pub = excluded.x25519_pub, \
-           group_id = excluded.group_id",
-        rusqlite::params![peer_device, peer_name, peer_pub, group_id],
-    )?;
-    Ok(())
-}
-
-/// 上次同步的足迹（状态卡片上那几行）。
-pub fn record_run(conn: &Connection, path: &str, up: i64, down: i64) -> Result<()> {
-    meta_set(conn, "last_at", &chrono::Utc::now().timestamp_millis().to_string())?;
-    meta_set(conn, "last_path", path)?;
-    let prev_up: i64 = meta_get(conn, "last_up").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let prev_down: i64 = meta_get(conn, "last_down").and_then(|v| v.parse().ok()).unwrap_or(0);
-    meta_set(conn, "last_up", &(prev_up + up).to_string())?;
-    meta_set(conn, "last_down", &(prev_down + down).to_string())?;
-    Ok(())
-}
+// 这里曾有 `set_group`（写 sync_peers）与 `record_run`（写 last_at/last_path/last_up/last_down）——
+// 后者与 `runner.rs` 记结果那段是同一份键的两份写法，前者与 `runner::pair_claim` 的
+// INSERT 也是两份写法。**同一份数据两个写入点必然漂**（一个累积 up/down、一个覆盖），
+// 已于 2026-09-30 删掉重复的一份，只留 runner 那条真实链路。
 
 #[cfg(test)]
 mod tests;

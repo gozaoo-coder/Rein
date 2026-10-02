@@ -77,7 +77,7 @@ pub fn session_start(
     started_at: String,
     state_json: Value,
 ) -> Result<SessionRecord> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE workout_sessions SET status = 'aborted' WHERE status = 'active'",
         [],
@@ -102,7 +102,7 @@ pub fn session_snapshot(
     weight_kg: f64,
     state_json: Value,
 ) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE workout_sessions SET \
            ex_index = ?2, set_index = ?3, weight_kg = ?4, state_json = ?5, \
@@ -117,7 +117,7 @@ pub fn session_snapshot(
 /// 当前是否有进行中（含异常中断）的训练
 #[tauri::command]
 pub fn session_active(state: State<AppState>) -> Result<Option<SessionRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let res = conn.query_row(
         "SELECT id, plan_id, plan_name, status, started_at, updated_at, ex_index, \
          set_index, weight_kg, elapsed_sec, state_json \
@@ -152,7 +152,7 @@ pub fn session_finish(
     state: State<AppState>,
     input: FinishInput,
 ) -> Result<crate::modules::exercise::models::Workout> {
-    let mut conn = state.db.lock().unwrap();
+    let mut conn = state.db.lock();
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO workouts (name, type, date, start_min, duration_min, kcal, intensity, note, session_id, created_at) \
@@ -221,7 +221,7 @@ pub fn session_finish(
 /// 正常结束（放弃）：只关闭会话，不写训练记录。
 #[tauri::command]
 pub fn session_abort(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE workout_sessions SET status = 'aborted', updated_at = datetime('now') WHERE id = ?1",
         [id],
@@ -236,7 +236,7 @@ pub fn session_for_workout(
     state: State<AppState>,
     workout_id: i64,
 ) -> Result<Option<SessionRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let res = conn.query_row(
         "SELECT s.id, s.plan_id, s.plan_name, s.status, s.started_at, s.updated_at, \
          s.ex_index, s.set_index, s.weight_kg, s.elapsed_sec, s.state_json \
@@ -294,7 +294,7 @@ pub fn strength_history(
     state: State<AppState>,
     exercise_id: String,
 ) -> Result<Vec<StrengthSetRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let id = resolve_exercise_id(&conn, &exercise_id)?;
     let raw = exercise_id.trim().to_string();
     let mut stmt = conn.prepare(
@@ -330,7 +330,7 @@ fn strength_set_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StrengthSetR
 /// 聚合键是动作库 id；展示名优先取库内名（改名/跨课程合并都跟随）。
 #[tauri::command]
 pub fn strength_exercises(state: State<AppState>) -> Result<Vec<StrengthExerciseRef>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT COALESCE(NULLIF(s.exercise_id, ''), ''), \
                 COALESCE(e.name, MAX(s.exercise_name)) AS display_name, \
@@ -362,7 +362,7 @@ pub fn strength_last_weights(
     state: State<AppState>,
     exercise_ids: Vec<String>,
 ) -> Result<Vec<StrengthLastWeight>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut out = Vec::new();
     let mut stmt = conn.prepare(
         "SELECT s.weight_kg, s.reps, w.date, COALESCE(e.name, s.exercise_name) \
@@ -398,7 +398,7 @@ pub fn strength_recent_sets(
     state: State<AppState>,
     days: Option<i64>,
 ) -> Result<Vec<StrengthSetRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let days = days.unwrap_or(42).clamp(1, 365);
     let mut stmt = conn.prepare(
         "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \

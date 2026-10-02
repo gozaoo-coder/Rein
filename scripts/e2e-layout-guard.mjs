@@ -21,8 +21,8 @@ import { presetFeatureFlags } from './lib/features.mjs'
 const EDGE = process.env.REIN_EDGE ?? 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 const APP = process.env.REIN_E2E_URL ?? 'http://localhost:1420'
 const USER_DATA = `${process.env.TEMP}/rein-layout-guard-${Date.now()}`
-const W = 406
-const H = 904
+const W = Number(process.env.REIN_E2E_W ?? 406)
+const H = Number(process.env.REIN_E2E_H ?? 904)
 const VIEW = { w: W, h: H }
 
 const ROUTES = [

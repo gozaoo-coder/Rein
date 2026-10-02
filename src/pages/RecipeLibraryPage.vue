@@ -144,8 +144,8 @@ const aiTotal = computed(() =>
       back
     />
 
-    <!-- AI 定制入口 -->
-    <section class="card ai-card">
+    <!-- AI 定制入口（桌面上这条横幅通栏，理由见样式里的桌面段） -->
+    <section class="card d-full ai-card">
       <div class="row" style="gap: 10px">
         <i class="ai-ic center"><Sparkles :size="18" /></i>
         <div class="col flex-1" style="gap: 2px">
@@ -159,8 +159,8 @@ const aiTotal = computed(() =>
     <!-- 餐次过滤 -->
     <SegmentedControl v-model="filter" :options="MEAL_FILTERS" class="seg" />
 
-    <!-- 食谱列表 -->
-    <ul class="rlist">
+    <!-- 食谱列表（d-grid：桌面上按 2 栏摊开，栏数缺省就是 2） -->
+    <ul class="rlist d-grid">
       <li v-for="r in visible" :key="r.id" class="row rrow" :class="{ off: isRestrictedFor(r) }">
         <div class="col flex-1" style="gap: 3px; min-width: 0">
           <p class="rname">
@@ -459,6 +459,17 @@ const aiTotal = computed(() =>
   .caret {
     animation: none;
   }
+}
+
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
+   AI 定制是一条横幅（图标 + 一句话 + 生成键），占半栏只会把右半屏留给空气，所以通栏。
+   通栏由模板上的 .d-full 声明。 */
+
+/* 22 个食谱模板在桌面上摊成两栏卡片（.rlist 本来就是 grid，这里只改栏数）。
+   .d-grid 给的是 `repeat(var(--d-cols, 2), ...)`，两栏足够 —— 每张卡里是
+   名称 + 四项营养 + 过敏原标签 + 两个偏好键，再窄就会换行换得很难看。 */
+.desk-main .rlist {
+  --d-cols: 2;
 }
 
 .ai-err {

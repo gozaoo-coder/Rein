@@ -774,7 +774,7 @@ onBeforeUnmount(() => {
 }
 
 .dval.unset {
-  font-weight: 550;
+  font-weight: 600;
   color: var(--text-3);
 }
 
@@ -871,7 +871,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
   transition:
     background-color var(--dur-fast) var(--ease-standard),
@@ -900,7 +900,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
 }
 
@@ -963,7 +963,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-footnote);
-  font-weight: 550;
+  font-weight: 600;
 }
 
 .asize {
@@ -1013,7 +1013,7 @@ onBeforeUnmount(() => {
   margin-top: 2px;
   color: var(--text-3);
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .sect::before,
@@ -1073,7 +1073,7 @@ onBeforeUnmount(() => {
 
 .q-cell b {
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-1);
 }
 
@@ -1093,7 +1093,7 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 12px 0 4px;
   font-size: var(--fs-subhead);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-1);
   text-align: left;
 }

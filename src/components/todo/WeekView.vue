@@ -149,7 +149,7 @@ function onKey(e: KeyboardEvent, date: string): void {
 
 .wd-label {
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
 }
 
@@ -222,7 +222,7 @@ function onKey(e: KeyboardEvent, date: string): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--fs-footnote);
-  font-weight: 550;
+  font-weight: 600;
   color: var(--text-1);
 }
 

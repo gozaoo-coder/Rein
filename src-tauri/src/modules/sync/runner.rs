@@ -3,12 +3,10 @@
 //! 选路是**两端各自算出来的、结论必然一致**的：设备号小的那台当拨号侧（局域网广播找人、
 //! 打洞、中继都是它先动），大的那台等它上门。这样不需要任何一次额外的「谁先连」协商，
 //! 也不会出现两边同时抢连。
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rusqlite::{params, Connection};
-use serde_json::json;
 
 use crate::error::{ReinError, Result};
 
@@ -231,33 +229,7 @@ pub fn new_room() -> String {
     crypto::random_hex(16)
 }
 
-/// 给界面看的「这台设备的映射」：仅在没有 base_url 时用来判断能不能打洞。
-pub fn rendezvous_addr(base_url: &str) -> Option<SocketAddr> {
-    let host = base_url
-        .split("//")
-        .nth(1)
-        .unwrap_or(base_url)
-        .split(['/', ':'])
-        .next()
-        .unwrap_or("");
-    if host.is_empty() {
-        return None;
-    }
-    format!("{host}:{}", transport::udp::SYNC_UDP_PORT).parse().ok()
-}
-
-/// 把「最近一次结果」从库里的零散键拼回来（界面刷新时用）。
-pub fn last_run(conn: &Connection) -> serde_json::Value {
-    json!({
-        "path": meta_get(conn, "last_path"),
-        "at": meta_get(conn, "last_at").and_then(|v| v.parse::<i64>().ok()),
-        "up": meta_get(conn, "last_up").and_then(|v| v.parse::<i64>().ok()),
-        "down": meta_get(conn, "last_down").and_then(|v| v.parse::<i64>().ok()),
-        "error": meta_get(conn, "last_error"),
-    })
-}
-
-/// 还没配对时也要能报出「本机设备的公钥指纹」，界面拿它做人工核对。
-pub fn fingerprint(public: &[u8; 32]) -> String {
-    super::identity::fingerprint(public)
-}
+// 这里曾有 `rendezvous_addr`（由 base_url 推会合地址）、`last_run`（把 last_* 拼成 JSON）、
+// `fingerprint`（转手 identity::fingerprint）—— 三个都没有调用方：
+// 会合地址由 `transport::Endpoint` 自己解析，`last_run` 与 `sync_status` 现读的键重复，
+// `fingerprint` 只是换个名字转发。2026-09-30 一并删除，避免同一份逻辑留两条实现。

@@ -925,7 +925,7 @@ function adjustmentsOf(r: ProgramRecord): number {
     </template>
 
     <!-- 历史方案（归档）：点开看结营成绩单 -->
-    <section v-if="archivedList.length" class="card">
+    <section v-if="archivedList.length" class="card hist">
       <header class="row between">
         <h2>历史方案</h2>
         <span class="t-3 num">{{ archivedList.length }} 份</span>
@@ -967,6 +967,9 @@ function adjustmentsOf(r: ProgramRecord): number {
 }
 
 .empty {
+  /* 模板里与 .center 成对使用：center 只给对齐属性，display 在这里补上，
+     否则「加载中…」这类单行文案会贴在卡左上角而不是居中 */
+  display: flex;
   padding: 40px 0;
 }
 
@@ -1360,5 +1363,38 @@ function adjustmentsOf(r: ProgramRecord): number {
   background: var(--surface-2);
   font-size: var(--fs-subhead);
   color: var(--text-1);
+}
+
+/* ============================================================
+   桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
+   这页的主体是一叠 .pod（驾驶舱 / 今日菜单 / 周期地图 / 体重航道 / 参数演进），
+   它们不是 .card，壳层缺省已经让它们通栏 —— 每张卡内部都有自己的栅格，
+   再并排就会挤坏，所以桌面上保持纵向卡片流，只修三张「单独占左半栏」的卡片。
+   选择器带上 section 元素名是为了压过壳层给 .page > .card 定的半栏规则。
+   ============================================================ */
+
+/* 症状条 / 操作区 / 历史方案 / 空状态：都是「一行读到底」的整段内容，
+   半栏里右半边会整块空着，这里显式拉通 */
+.desk-main .page > section.card.warn,
+.desk-main .page > section.card.acts,
+.desk-main .page > section.card.hist,
+.desk-main .page > section.card.empty {
+  grid-column: 1 / -1;
+}
+
+/* 操作区通栏后，四个高频动作排成一行（窄屏的 2×2 是拇指够得着的版本） */
+.desk-main .acts-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* 历史方案是一份可长的清单：一行只有「目标 · 档位 · 维度 + 时间跨度」，
+   通栏后按两栏流铺开，几期方案一屏看全 */
+.desk-main .hist-list {
+  columns: 2;
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .hist-list > li {
+  break-inside: avoid;
 }
 </style>

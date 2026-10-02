@@ -206,13 +206,19 @@ const ICON_BTN = 54
       <ChevronRight :size="18" class="chev" />
     </button>
 
+    <!-- 桌面栅格：壳层不对宽形态页面做任何栅格，这一层 d-grid 负责把两块
+         「档位」并排 —— 手机端它只是个普通 div，块流与卡片间距都不变 -->
+    <div class="d-grid perf-panels">
     <section class="card">
       <h2 class="ctitle">档位</h2>
 
       <SegmentedControl v-model="mode" class="perfseg" :options="PERF_OPTIONS" />
 
+      <!-- 三组「量名 × 数值」各自 nowrap：在窄卡里折行不能把量名和数值拆开 -->
       <p class="spec t-3">
-        台上三件的尺寸：正圆按钮 54 × 54 · 胶囊按钮 156 × 54 · 底栏高 58（与主按钮同高）
+        台上三件的尺寸：<span class="nw">正圆按钮 54 × 54</span> ·
+        <span class="nw">胶囊按钮 156 × 54</span> ·
+        <span class="nw">底栏高 58</span>（与主按钮同高）
       </p>
 
       <ul class="modes">
@@ -258,6 +264,8 @@ const ICON_BTN = 54
         掉帧降级时丰富档会自动退回默认，不会一边掉帧一边加合成。
       </p>
     </section>
+
+    </div>
 
     <!-- 参数调节面板：自带暗场预览，改的就是全局那份可调参数（system/glassParams） -->
     <GlassTunerSheet :open="tunerOpen" @close="tunerOpen = false" />
@@ -552,6 +560,10 @@ const ICON_BTN = 54
   line-height: 1.6;
 }
 
+.spec .nw {
+  white-space: nowrap;
+}
+
 .modes {
   margin-top: 12px;
   display: flex;
@@ -591,5 +603,45 @@ const ICON_BTN = 54
   border-radius: var(--radius-s);
   background: var(--surface-2);
   font-size: var(--fs-micro);
+}
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   这一页是宽形态（desk: 'wide'），构图自负。
+   · 整页收到 --desk-wide：标本台与两个档位卡都不该在 2K 屏上摊成一条；
+   · 标本台内部改横排：读数在左、两块基本件靠右，装配好的底栏独占下一行 ——
+     手机上是三层竖着叠，左右两侧全是空的暗场；
+   · 两块「档位」并排（画质 / 动效是一对正交的档），对比着看才看得出区别。
+   ============================================================ */
+.desk-main .page {
+  max-width: var(--desk-wide);
+  margin-inline: auto;
+}
+
+.desk-main .rails {
+  display: grid;
+  grid-template-columns: var(--desk-aside) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--desk-gap);
+}
+
+/* 读数胶囊原本靠 align-self 收成内容宽；换成栅格后轴的语义变了，补一句同义的 */
+.desk-main .plaque {
+  justify-self: start;
+}
+
+/* 两块基本件是右手边那两枚玻璃：靠右站，与左边的读数形成一条展台横轴 */
+.desk-main .parts {
+  justify-self: end;
+}
+
+/* 装配好的底栏要整宽 —— 它要按真实 Dock 的比例铺开，塞进 320px 就走形了 */
+.desk-main .dockrow {
+  grid-column: 1 / -1;
+}
+
+/* 两块「档位」并排：阅读顺序不变（先画质后动效），只是换成了两栏 */
+.desk-main .perf-panels {
+  align-items: start;
 }
 </style>

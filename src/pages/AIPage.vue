@@ -1539,4 +1539,22 @@ async function onMenuSelect(value: string): Promise<void> {
 .send:disabled {
   opacity: 0.5;
 }
+
+/* ============================================================
+   桌面（由 .desk-main 的存在判定 —— 壳层只在 ≥ DESKTOP_MIN 渲染它）
+   对话在宽屏上仍是一条**阅读栏**：主人区整宽铺开会让每行正文长到读不下去
+   （.msg-col / .bubble 的 82% 上限是相对容器算的，容器一宽，气泡跟着一起失控）。
+   所以整块 —— 页头 + 消息区 + 输入条 —— 收到 --chat-col 宽居中：
+   滚动容器与吸顶页头照旧，只是它们的“整帧”变窄了，两侧留白正好是这条栏的呼吸。
+   ============================================================ */
+.desk-main .page {
+  --chat-col: 760px;
+  /* 整帧 = 阅读栏 + 两侧页边距；.msgs 的负外边距镜像 --page-pad-x，
+     于是滚动区仍与 .page 同宽，气泡的影子不会被裁。 */
+  max-width: calc(var(--chat-col) + 2 * var(--page-pad-x));
+  margin-inline: auto;
+  /* 桌面没有底部 Dock（TabBar 只在移动端渲染），输入条不必再让开 72px，
+     贴着窗口下缘一小段呼吸即可 */
+  padding-bottom: 26px;
+}
 </style>

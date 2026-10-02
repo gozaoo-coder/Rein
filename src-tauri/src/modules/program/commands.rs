@@ -41,7 +41,7 @@ fn program_by_id(conn: &rusqlite::Connection, id: i64) -> Result<ProgramRecord> 
 /// 方案历史（含归档），新的在前；供版本回溯与复盘参考。
 #[tauri::command]
 pub fn program_list(state: State<AppState>) -> Result<Vec<ProgramRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql = format!("SELECT {COLS} FROM programs ORDER BY id DESC LIMIT 20");
     let mut stmt = conn.prepare(&sql)?;
     let list = stmt
@@ -53,7 +53,7 @@ pub fn program_list(state: State<AppState>) -> Result<Vec<ProgramRecord>> {
 /// 当前生效方案；没有时返回 None（页面据此进入引导流）。
 #[tauri::command]
 pub fn program_get_active(state: State<AppState>) -> Result<Option<ProgramRecord>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let sql =
         format!("SELECT {COLS} FROM programs WHERE status = 'active' ORDER BY id DESC LIMIT 1");
     let res = conn.query_row(&sql, [], from_row);
@@ -76,7 +76,7 @@ pub fn program_create(state: State<AppState>, input: ProgramCreateInput) -> Resu
     if input.goal.is_empty() || input.tier.is_empty() || input.params_json.is_empty() {
         return Err(ReinError::Message("方案内容不完整".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute_batch("BEGIN")?;
     let result = (|| {
         conn.execute(
@@ -116,7 +116,7 @@ pub fn program_update_params(
     if input.params_json.is_empty() {
         return Err(ReinError::Message("方案内容不能为空".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE programs SET params_json = ?2, adjustments_json = ?3, version = version + 1, \
          updated_at = datetime('now') WHERE id = ?1",
@@ -134,7 +134,7 @@ pub fn program_archive(state: State<AppState>, id: i64, from_date: String) -> Re
     if from_date.is_empty() {
         return Err(ReinError::Message("from_date 不能为空".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute_batch("BEGIN")?;
     let result = (|| {
         conn.execute(
@@ -163,7 +163,7 @@ pub fn program_archive(state: State<AppState>, id: i64, from_date: String) -> Re
 /// 返回清除的待办条数。
 #[tauri::command]
 pub fn program_delete(state: State<AppState>, id: i64) -> Result<i64> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute_batch("BEGIN")?;
     let result = (|| {
         let removed = conn.execute(
@@ -203,7 +203,7 @@ pub fn program_schedule_replace(
     if from_date.is_empty() {
         return Err(ReinError::Message("from_date 不能为空".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     program_by_id(&conn, id)?;
     conn.execute_batch("BEGIN")?;
     let result = (|| {
@@ -253,7 +253,7 @@ pub fn program_meals_get(
     program_id: i64,
     date: String,
 ) -> Result<Option<ProgramDayMeals>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let res = conn.query_row(
         "SELECT program_id, date, meals_json, updated_at FROM program_meals \
          WHERE program_id = ?1 AND date = ?2",
@@ -282,7 +282,7 @@ pub fn program_meals_range(
     start_date: String,
     end_date: String,
 ) -> Result<Vec<ProgramDayMeals>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT program_id, date, meals_json, updated_at FROM program_meals \
          WHERE program_id = ?1 AND date BETWEEN ?2 AND ?3 ORDER BY date",
@@ -311,7 +311,7 @@ pub fn program_meals_set(
     if date.is_empty() || meals_json.is_empty() {
         return Err(ReinError::Message("date 与 meals_json 不能为空".into()));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     program_by_id(&conn, program_id)?;
     conn.execute(
         "INSERT INTO program_meals (program_id, date, meals_json, updated_at) \
@@ -343,7 +343,7 @@ pub fn program_meals_clear(
     program_id: i64,
     from_date: String,
 ) -> Result<i64> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let n = conn.execute(
         "DELETE FROM program_meals WHERE program_id = ?1 AND date >= ?2",
         rusqlite::params![program_id, from_date],
@@ -355,7 +355,7 @@ pub fn program_meals_clear(
 
 #[tauri::command]
 pub fn shopping_checks_list(state: State<AppState>) -> Result<Vec<ShoppingCheck>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let mut stmt =
         conn.prepare("SELECT item_key, checked_at FROM shopping_checks ORDER BY checked_at")?;
     let rows = stmt
@@ -372,7 +372,7 @@ pub fn shopping_checks_list(state: State<AppState>) -> Result<Vec<ShoppingCheck>
 /// 勾选/取消一个采购项：checked=true 落 upsert，false 删除
 #[tauri::command]
 pub fn shopping_check_set(state: State<AppState>, item_key: String, checked: bool) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     if checked {
         conn.execute(
             "INSERT INTO shopping_checks (item_key, checked_at) VALUES (?1, datetime('now')) \
@@ -391,7 +391,7 @@ pub fn shopping_check_set(state: State<AppState>, item_key: String, checked: boo
 /// 清空全部勾选（新一期采购前重置）；返回清除条数
 #[tauri::command]
 pub fn shopping_checks_clear(state: State<AppState>) -> Result<i64> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let n = conn.execute("DELETE FROM shopping_checks", [])?;
     Ok(n as i64)
 }

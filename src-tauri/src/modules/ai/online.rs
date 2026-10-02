@@ -114,7 +114,7 @@ fn meta_set(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<()> {
 /// 读在线服务设置；没保存过时回落内置服务地址、密钥为空。
 #[tauri::command]
 pub fn online_service_settings_get(state: State<AppState>) -> Result<OnlineServiceSettings> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let Some(raw) = meta_get(&conn, META_KEY) else {
         return Ok(OnlineServiceSettings::default());
     };
@@ -132,7 +132,7 @@ pub fn online_service_settings_save(
         api_key: settings.api_key.trim().to_string(),
         saved_at: Some(chrono::Utc::now().to_rfc3339()),
     };
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     meta_set(
         &conn,
         META_KEY,
@@ -404,7 +404,7 @@ pub async fn online_service_sync(
     let traffic = catalog.traffic_per_gb;
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut conn = state.db.lock().unwrap();
+    let mut conn = state.db.lock();
     let tx = conn.transaction()?;
     let mut added = 0usize;
     let mut updated = 0usize;

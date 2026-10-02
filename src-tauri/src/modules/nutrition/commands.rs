@@ -12,7 +12,7 @@ use super::{ensure_found, load_profile, profile_targets};
 
 #[tauri::command]
 pub fn get_daily_summary(state: State<AppState>, date: String) -> Result<DailySummary> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     daily_summary_on(&conn, &date)
 }
 
@@ -114,7 +114,7 @@ fn daily_summary_on(conn: &rusqlite::Connection, date: &str) -> Result<DailySumm
 #[tauri::command]
 pub fn get_targets(state: State<AppState>, date: Option<String>) -> Result<DailyTargets> {
     let _ = date;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     profile_targets(&conn)
 }
 
@@ -126,7 +126,7 @@ pub fn set_targets(
     date: Option<String>,
 ) -> Result<()> {
     let _ = date;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE profile SET target_kcal = ?1, target_protein = ?2, target_carb = ?3, \
          target_fat = ?4, target_sodium_mg = ?5, target_water_ml = ?6 WHERE id = 1",
@@ -144,13 +144,13 @@ pub fn set_targets(
 
 #[tauri::command]
 pub fn get_profile(state: State<AppState>) -> Result<Profile> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     ensure_found(load_profile(&conn))
 }
 
 #[tauri::command]
 pub fn update_profile(state: State<AppState>, profile: Profile) -> Result<Profile> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     // JSON 数组字段以文本列存储（NULL 保持 NULL，不写 "null"）
     let slots = profile
         .preferred_time_slots
@@ -195,7 +195,7 @@ pub fn update_profile(state: State<AppState>, profile: Profile) -> Result<Profil
 /// 方案计算器参数快照：从未保存过时返回 None，前端回落到资料推导。
 #[tauri::command]
 pub fn get_calc_state(state: State<AppState>) -> Result<Option<CalcState>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let res = conn.query_row(
         "SELECT sex, age, height_cm, weight_kg, activity_level, goal, saved_at \
          FROM calc_params WHERE id = 1",
@@ -221,7 +221,7 @@ pub fn get_calc_state(state: State<AppState>) -> Result<Option<CalcState>> {
 
 #[tauri::command]
 pub fn save_calc_state(state: State<AppState>, mut s: CalcState) -> Result<CalcState> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute(
         "UPDATE calc_params SET sex = ?1, age = ?2, height_cm = ?3, weight_kg = ?4, \
          activity_level = ?5, goal = ?6, saved_at = datetime('now') WHERE id = 1",
@@ -241,7 +241,7 @@ pub fn save_calc_state(state: State<AppState>, mut s: CalcState) -> Result<CalcS
 /// 追踪记录列表：按日期倒序，最多 `limit` 条。
 #[tauri::command]
 pub fn list_body_metrics(state: State<AppState>, limit: Option<i64>) -> Result<Vec<BodyMetric>> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let limit = limit.unwrap_or(180).clamp(1, 365);
     let mut stmt = conn.prepare(
         "SELECT id, date, weight_kg, height_cm, created_at FROM body_metrics \
@@ -270,7 +270,7 @@ pub fn record_body_metric(state: State<AppState>, metric: BodyMetricInput) -> Re
             "体重与身高至少填写一项".into(),
         ));
     }
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     let m = conn.query_row(
         "INSERT INTO body_metrics (date, weight_kg, height_cm, created_at, updated_at) \
              VALUES (?1, ?2, ?3, datetime('now'), datetime('now')) \
@@ -300,7 +300,7 @@ pub fn record_body_metric(state: State<AppState>, metric: BodyMetricInput) -> Re
 
 #[tauri::command]
 pub fn delete_body_metric(state: State<AppState>, id: i64) -> Result<()> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db.lock();
     conn.execute("DELETE FROM body_metrics WHERE id = ?1", [id])?;
     Ok(())
 }

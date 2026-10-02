@@ -90,12 +90,13 @@ function pct(r: MuscleLoadRow): number {
       </li>
     </ul>
 
-    <p class="foot">
+    <!-- 数据没回来时不渲染说明与入口：只有标题的空壳卡读起来像坏了 -->
+    <p v-if="visible.length" class="foot">
       建议区间 {{ visible[0] ? `${visible[0].mev}–${visible[0].mav}` : '' }} 组/周按肌群与训练天数缩放；
       间接刺激按激活档位折算（辅助 0.5 / 稳定 0.25 组）。
     </p>
 
-    <RouterLink class="more row center" to="/sports/exercises">
+    <RouterLink v-if="visible.length" class="more row center" to="/sports/exercises">
       动作库<ChevronRight :size="14" />
     </RouterLink>
   </section>

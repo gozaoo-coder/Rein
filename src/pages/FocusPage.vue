@@ -31,8 +31,15 @@ onMounted(() => {
     <!-- 待办（列表内联，超出 4 条收进「全部待办」抽屉） -->
     <TodoListCard :date="today" list-only :inline-limit="4" />
 
-    <!-- 今日日程（时间线预览，完整时间线在抽屉里滑动查看） -->
-    <ScheduleCard :date="today" />
+    <!-- 今日日程（时间线预览，完整时间线在抽屉里滑动查看）
+         桌面通栏：时间线是横向铺开的刻度轴，590px 的半栏会把「现在」前后压成一团。
+         **必须包一层 div**：ScheduleCard 的根是「section + TimelineSheet」两段（多根），
+         Vue 不会把外部传进来的 class 落到任何一个根上（控制台会 warn
+         "Extraneous non-props attributes"）—— 写在组件标签上的 d-full 是**静默失效**的。
+         包一层的代价是这一个 div，换来的是「通栏」真的生效。 -->
+    <div class="d-full">
+      <ScheduleCard :date="today" />
+    </div>
   </div>
 </template>
 

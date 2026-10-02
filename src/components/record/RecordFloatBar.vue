@@ -286,7 +286,7 @@ function openPage(): void {
 
 .s {
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
 }
 

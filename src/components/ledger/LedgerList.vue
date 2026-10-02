@@ -52,7 +52,10 @@ const groups = computed<DayGroup[]>(() => {
             :aria-label="`编辑：${categoryOf(e.category)?.label ?? e.category} ${fmtCents(e.amountCents)}`"
             @click="emit('edit', e)"
           >
-            <i class="ic center" :style="{ background: categoryOf(e.category)?.colorVar ?? 'var(--led-other)' }" />
+            <!-- 彩章+白图标：纯色圆点只靠色相区分分类（色弱不可辨），字形补上第二通道 -->
+            <i class="ic center" :style="{ background: categoryOf(e.category)?.colorVar ?? 'var(--led-other)' }">
+              <component v-if="categoryOf(e.category)?.icon" :is="categoryOf(e.category)!.icon" :size="16" />
+            </i>
             <div class="flex-1 meta">
               <span class="lbl">{{ categoryOf(e.category)?.label ?? e.category }}</span>
               <span v-if="e.note" class="note t-3">{{ e.note }}</span>
@@ -107,10 +110,12 @@ const groups = computed<DayGroup[]>(() => {
 }
 
 .ic {
+  display: flex;
   width: 34px;
   height: 34px;
   flex: none;
   border-radius: 50%;
+  color: var(--on-accent);
 }
 
 .meta {

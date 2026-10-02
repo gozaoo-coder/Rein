@@ -7,13 +7,18 @@ import BudgetSheet from '@/components/ledger/BudgetSheet.vue'
 import LedgerEntrySheet from '@/components/ledger/LedgerEntrySheet.vue'
 import LedgerList from '@/components/ledger/LedgerList.vue'
 import LedgerStats from '@/components/ledger/LedgerStats.vue'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import { categoryOf } from '@/config/ledger'
+import { DESKTOP_MIN } from '@/config/domain'
 import { useLedgerStore } from '@/stores/ledger'
 import { addMonths, monthKey, todayStr } from '@/utils/date'
 import type { LedgerEntry } from '@/types'
 
 /** 记账：月度统计 + 流水列表 + 记一笔 / 编辑 / 预算设置。 */
 const store = useLedgerStore()
+
+/** 桌面上主操作落进筛选条，移动端仍用那颗悬浮的「记一笔」（见模板注释） */
+const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 
 onMounted(() => {
   void store.loadMonth()
@@ -90,36 +95,53 @@ const emptyText = computed(() =>
       </template>
     </PageHeader>
 
-    <!-- 本月统计 + 预算 + 趋势 -->
-    <LedgerStats @edit-budget="budgetOpen = true" />
+    <!-- 桌面：左统计 / 右流水的主从构图。
+         .board 在移动端就是普通的一列（内容与顺序**完全不变**），桌面才分成两栏 ——
+         495px 高的统计卡独占一栏、整列流水交给右栏，省掉的是眼睛在
+         「月份数字 ↔ 流水条目」之间来回横跳的距离。 -->
+    <div class="board d-full">
+      <!-- 本月统计 + 预算 + 趋势 -->
+      <LedgerStats @edit-budget="budgetOpen = true" />
 
-    <!-- 筛选：关键词 + 分类 -->
-    <div class="filters">
-      <label class="search row center">
-        <Search :size="15" class="t-3" />
-        <input v-model="kw" type="search" placeholder="搜索备注" aria-label="搜索备注" />
-      </label>
-      <div class="chips" data-rubber-self>
-        <button class="chip" :class="{ on: filterCat === null }" @click="filterCat = null">全部</button>
-        <button
-          v-for="key in usedCats"
-          :key="key"
-          class="chip"
-          :class="{ on: filterCat === key }"
-          @click="filterCat = filterCat === key ? null : key"
-        >
-          <i class="dot" :style="{ background: categoryOf(key)?.colorVar ?? 'var(--led-other)' }" />
-          {{ categoryOf(key)?.label ?? key }}
-        </button>
+      <div class="flow">
+        <!-- 筛选：关键词 + 分类 -->
+        <div class="filters">
+          <div class="searchrow row">
+            <label class="search row center flex-1">
+              <Search :size="15" class="t-3" />
+              <input v-model="kw" type="search" placeholder="搜索备注" aria-label="搜索备注" />
+            </label>
+            <!-- 桌面的主操作落在筛选条右端：窗口底部正中的悬浮钮会压在流水上，
+                 也不是桌面习惯（那个位置本该什么都没有）。移动端仍用悬浮钮。 -->
+            <button v-if="isDesktop" class="add-inline row center pressable" @click="onAdd">
+              <Plus :size="16" :stroke-width="2.6" />
+              <span>记一笔</span>
+            </button>
+          </div>
+          <div class="chips" data-rubber-self>
+            <button class="chip" :class="{ on: filterCat === null }" @click="filterCat = null">全部</button>
+            <button
+              v-for="key in usedCats"
+              :key="key"
+              class="chip"
+              :class="{ on: filterCat === key }"
+              @click="filterCat = filterCat === key ? null : key"
+            >
+              <i class="dot" :style="{ background: categoryOf(key)?.colorVar ?? 'var(--led-other)' }" />
+              {{ categoryOf(key)?.label ?? key }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 流水 -->
+        <LedgerList v-if="filtered.length > 0" :entries="filtered" @edit="onEdit" />
+        <section v-else class="card empty t-3">{{ emptyText }}</section>
       </div>
     </div>
 
-    <!-- 流水 -->
-    <LedgerList v-if="filtered.length > 0" :entries="filtered" @edit="onEdit" />
-    <section v-else class="card empty t-3">{{ emptyText }}</section>
-
-    <!-- 记一笔（Teleport 出页面层：translate 会改 fixed 后代的包含块，留在层内拖动时会跑位） -->
-    <Teleport to="body">
+    <!-- 记一笔（Teleport 出页面层：translate 会改 fixed 后代的包含块，留在层内拖动时会跑位）。
+         桌面不挂它：桌面的主操作在筛选条右端（见上），悬浮钮只留给触屏。 -->
+    <Teleport v-if="!isDesktop" to="body">
       <button class="fab row center" aria-label="记一笔" @click="onAdd">
         <Plus :size="20" :stroke-width="2.6" />
         <span>记一笔</span>
@@ -164,12 +186,48 @@ const emptyText = computed(() =>
   font-weight: 700;
 }
 
+/* ---------- 桌面主从构图（.board 内的一切在移动端都是普通块） ---------- */
+.board {
+  display: block;
+}
+
+/* 左栏固定 360px：统计卡的内容（三栏数字 + 环形图 + 六个月柱）在 360 下刚好排得开，
+   再宽只会让它在桌面画布里显得比右边的流水更重 */
+.desk-main .board {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: var(--desk-gap);
+  align-items: start;
+}
+
 /* 筛选 */
 .filters {
   display: flex;
   flex-direction: column;
   gap: 9px;
   margin-bottom: 14px;
+}
+
+/* 桌面上搜索框与主操作同一行：搜索框吃掉余量，按钮贴右端 */
+.searchrow {
+  gap: 8px;
+}
+
+.add-inline {
+  flex: none;
+  gap: 5px;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+}
+
+/* 桌面：流水一栏里那条 .card + .card 的边距照旧，但统计卡与右栏是栅格子项，
+   不需要额外上边距 */
+.desk-main .board > .card + .card {
+  margin-top: 0;
 }
 
 .search {

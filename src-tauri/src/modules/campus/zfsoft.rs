@@ -226,8 +226,7 @@ fn options_of(html: &str, id: &str) -> Vec<SelectOption> {
     };
     let mut rest = &html[at..at + close];
     let mut out = Vec::new();
-    loop {
-        let Some(i) = rest.find("<option") else { break };
+    while let Some(i) = rest.find("<option") {
         rest = &rest[i..];
         let Some(gt) = rest.find('>') else { break };
         let tag = &rest[..gt];

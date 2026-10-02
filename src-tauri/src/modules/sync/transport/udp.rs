@@ -16,7 +16,6 @@ use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::{Duration, Instant};
 
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::json;
 
 use crate::error::{ReinError, Result};
@@ -82,6 +81,9 @@ fn parse_lan(room: &str, device: &str, body: &[u8]) -> Option<(String, u16)> {
     Some((other, v.get("port")?.as_u64()? as u16))
 }
 
+/// 一个正在收的分片消息：(起始序号, 分片总数, 各分片, 已收到的字节数)。
+type PartsBuf = (u32, usize, Vec<Option<Vec<u8>>>, usize);
+
 /// 停等式可靠 UDP 链路。`handshake` 之后再交给会话用。
 pub struct UdpLink {
     sock: UdpSocket,
@@ -89,7 +91,7 @@ pub struct UdpLink {
     kind: Path,
     seq: u32,
     pending: VecDeque<Vec<u8>>,
-    parts: Option<(u32, usize, Vec<Option<Vec<u8>>>, usize)>,
+    parts: Option<PartsBuf>,
     up: i64,
     down: i64,
     tries: u32,
@@ -108,10 +110,6 @@ impl UdpLink {
             down: 0,
             tries: 3,
         }
-    }
-
-    pub fn peer(&self) -> SocketAddr {
-        self.peer
     }
 
     fn raw(&self, buf: &[u8]) -> Result<()> {

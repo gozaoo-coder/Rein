@@ -146,12 +146,12 @@ html[data-perf='extreme'] .panel {
 }
 
 .prio {
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .tt {
   font-size: var(--fs-title3);
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: -0.01em;
   line-height: 1.3;
 }
@@ -204,7 +204,7 @@ html[data-perf='extreme'] .panel {
 .sec {
   margin-top: 4px;
   font-size: var(--fs-caption);
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-3);
 }
 
@@ -292,7 +292,7 @@ html[data-perf='extreme'] .panel {
 }
 
 .e1 {
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-2);
 }
 
