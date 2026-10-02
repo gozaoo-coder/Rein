@@ -115,19 +115,19 @@ function flipSub(i: number): void {
   min-height: 200px;
 }
 
-/* 极致档：base.css 把 .panel 归到**浮层**那一组（底部抽屉 / 锚定菜单 / 操作面板占了
-   .panel 这个名字的多数用法），于是这里的落影会拿到悬浮玻璃那份 ——
+/* 高画质及以上：base.css 把 .panel 归到**浮层**那一组（底部抽屉 / 锚定菜单 / 操作面板
+   占了 .panel 这个名字的多数用法），于是这里的落影会拿到悬浮玻璃那份 ——
    而这块面板是**在流**的（桌面右栏里的一张卡，不浮在任何东西上面），
    在一屏卡片里就它一片黑边。这里按在流内容面的那一档压回去：同一套光学内层，
    落影换成卡片那份（--glass-panel-shadow 与 --shadow-card 同值、且永远不会是 none）。 */
-html[data-perf='extreme'] .panel {
+html[data-perf]:not([data-perf='low']) .panel {
   box-shadow: var(--glass-panel-shadow), var(--glass-insets);
 }
 
 /* 上面那条比 base.css 的「减弱透明度」退化块更具体（多了本组件的 scoped 属性），
    所以要在这里再压回去一次：系统要求实底时，光学内层也不该留着。 */
 @media (prefers-reduced-transparency: reduce) {
-  html[data-perf='extreme'] .panel {
+  html[data-perf]:not([data-perf='low']) .panel {
     box-shadow: var(--shadow-card);
   }
 }

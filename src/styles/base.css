@@ -313,6 +313,37 @@ html[data-perf='low'] *::after {
   }
 }
 
+/* ---------- 高画质档：内容层也上玻璃（**不含折射**） ----------
+   这一档起「玻璃」是全局材质，缺的只有**折射**（折射只给离散小控件，名单见
+   docs/ARCHITECTURE.md）。于是高画质拿的是玻璃的**其余全部**效果：
+     ① 半透明底（--glass-panel-fill，比悬浮玻璃实：0.86）；
+     ② 光学内层（--glass-insets：两道内顶高光）；
+     ③ 落影 / 外缘层（在流面 = --glass-panel-shadow，浮层 = --glass-shadow + halo）；
+     ④ 浮层的 backdrop-filter（下面的选择器组）与页头玻璃盘（PageHeader 里扩到本档）。
+   底比悬浮玻璃实：抽屉底下是整页正文，底太薄正文对比度会随背后内容浮动。
+   内层只开两道内顶高光 —— rim-2 / caustic 在这一档仍是透明的，那是超高与高画质之间
+   的差异点；层数照旧与超高 / 极致对齐（都是四层），只是后两层还没到有值的时候。
+   模糊仍然只给浮层（见下面的选择器组），在流卡片不给：理由见那两段注释。 */
+html[data-perf='high'] {
+  --glass-panel-fill: rgba(255, 255, 255, 0.86);
+  --glass-insets:
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 12px 20px -14px var(--glass-sheen),
+    inset 0 0 0 1px var(--glass-rim-2),
+    inset 0 1px 10px -2px var(--glass-caustic);
+  --sheet-card-fill: rgba(255, 255, 255, 0.94);
+  --sheet-card-halo: 0 14px 34px -18px rgba(0, 0, 0, 0.16);
+}
+
+@media (prefers-color-scheme: dark) {
+  html[data-perf='high'] {
+    --glass-panel-fill: rgba(28, 28, 30, 0.84);
+    --sheet-card-fill: rgba(28, 28, 30, 0.92);
+    /* 暗底的「外缘层」是溢光而不是落影：暗色下没有比底色更深的影子可用 */
+    --sheet-card-halo: 0 -1px 18px -8px rgba(255, 255, 255, 0.2);
+  }
+}
+
 /* ---------- 超高材质（system/perf.ts 写入 data-perf="ultra"） ----------
    与下面的弱档块同一套机制：整份覆盖 --glass-* 令牌，于是**所有**用这套令牌的表面
    一起升级，不需要逐个组件去改。弱档不需要额外处理这些光学层 —— 它们只在
@@ -329,6 +360,14 @@ html[data-perf='ultra'] {
   /* 还没收编进 .glass-surface 的那几处手写毛玻璃（导航/工具层语义）跟着薄一档，
      否则超高档里它们会比周围的玻璃"厚"一截，一眼就看出是两套材质。 */
   --surface-translucent: rgba(255, 255, 255, 0.58);
+  /* 内容层（卡片 / 抽屉 / 白卡）也跟着铺开：底比高画质再薄一档，光学内层四层全开。 */
+  --glass-panel-fill: rgba(255, 255, 255, 0.8);
+  --glass-insets:
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 12px 20px -14px var(--glass-sheen),
+    inset 0 0 0 1px var(--glass-rim-2),
+    inset 0 1px 10px -2px var(--glass-caustic);
+  --sheet-card-fill: rgba(255, 255, 255, 0.92);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -342,6 +381,8 @@ html[data-perf='ultra'] {
     /* 暗底的「外缘层」是溢光而不是落影：暗色下没有比底色更深的影子可用 */
     --glass-halo: 0 -1px 20px -8px rgba(255, 255, 255, 0.3);
     --surface-translucent: rgba(28, 28, 30, 0.6);
+    --glass-panel-fill: rgba(28, 28, 30, 0.78);
+    --sheet-card-fill: rgba(28, 28, 30, 0.9);
   }
 }
 
@@ -349,9 +390,11 @@ html[data-perf='ultra'] {
    在超高之上做两件事：
      1. 光学层再深一档（受光边更亮、焦散更明显、外缘层更厚）——与超高拉开可感知的
         差距，但仍然**不加 blur 半径**（半径是最贵的旋钮，加大只会更糊）；
-     2. 把玻璃材质铺到更多组件：卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴（见下面的
-        扩展选择器）。这些表面承载正文，所以底用 --glass-panel-fill（比悬浮玻璃更实），
-        透光看得见材质，对比度不随背后内容浮动。
+     2. 在**高画质就已经铺开**的内容层（卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴）上
+        把光学层加深：受光边更亮、内圈描边与上缘焦散一起亮起、外缘层更厚 —— 覆盖范围
+        与高画质一致（选择器组都用 :not([data-perf='low'])），差异只在材质深度。
+        这些表面承载正文，底用 --glass-panel-fill（比悬浮玻璃更实），透光看得见材质，
+        对比度不随背后内容浮动。
    这正是苹果 Liquid Glass 的分层：导航与控件层用玻璃，内容层保持可读。
    折射走**唯一那条塌缩链**（feImage + 1×feDisplacementMap + feGaussianBlur，3 个原语），
    由 system/perf 的 glassPipeline 决定（它只会是 collapsed 或 off —— 上游那条带色散的
@@ -370,7 +413,9 @@ html[data-perf='extreme'] {
      内层。**刻意不给 backdrop-filter** —— 卡背后就是抽屉那层玻璃，再糊一次肉眼看不出，
      却给每张卡多开一个背景根、滚动逐帧重采样（同上面 .card 那段的取舍）。 */
   --sheet-card-fill: rgba(255, 255, 255, 0.92);
-  --sheet-card-shadow: var(--glass-panel-shadow), var(--glass-insets);
+  /* --sheet-card-shadow / --sheet-card-halo 不在这里拼：根令牌已经是一条完整的
+     「落影 + 外缘层 + 光学内层」列表，极致档只是把 --glass-insets / --glass-halo
+     换成更深的一档，那条列表自动跟着升级（外缘层因此在这一档变厚）。 */
   /* 极致档铺开的那些表面共用的光学内层（内顶高光 ×2 / 内圈细描边 / 上缘焦散）。
      外投影**不在**这里：在流的内容面与浮层要的是两种落影（见下面两组选择器）。 */
   --glass-insets:
@@ -396,8 +441,9 @@ html[data-perf='extreme'] {
   }
 }
 
-/* 极致档：玻璃不再只给导航 / 悬浮层，卡片、抽屉、菜单、操作面板、快捷磁贴也一起
-   用同一份 --glass-* 材质（内容层用更实的 --glass-panel-fill）。
+/* 高画质及以上：玻璃不再只给导航 / 悬浮层，卡片、抽屉、菜单、操作面板、快捷磁贴也一起
+   用同一份 --glass-* 材质（内容层用更实的 --glass-panel-fill）。极致与超高的差别只在
+   光学层的深浅（--glass-insets / --glass-halo 的取值），覆盖范围两档完全一致。
    **不改 border / padding**：切换档位时这些盒子的尺寸不能跳一下。
    卡片那条用 :where() 把选择器压回与基线 .card 同级（0,1,0）—— 凡是**自己定义了底**
    的卡片（周时间线的分类色、函数/证据面板的次级底）都在各自 scoped 样式里赢过这条，
@@ -412,40 +458,43 @@ html[data-perf='extreme'] {
 /* ① 在流的内容面（卡片 / 快捷磁贴 / 参数入口）：材质 + 光学内层，**落影沿用卡片那一档**。
    --glass-panel-shadow 与 --shadow-card 同值，但永远不会是 none（列表语法的要求，
    见 tokens.css 的注释）—— 暗色下卡片本来就没有落影，这里也照旧没有。 */
-:where(html[data-perf='extreme']) .card,
-html[data-perf='extreme'] .qa,
-html[data-perf='extreme'] .tuner {
+:where(html[data-perf]:not([data-perf='low'])) .card,
+html[data-perf]:not([data-perf='low']) .qa,
+html[data-perf]:not([data-perf='low']) .tuner {
   background: var(--glass-panel-fill);
   box-shadow: var(--glass-panel-shadow), var(--glass-insets);
 }
 
 /* ② 浮层（抽屉 / 菜单 / 操作面板）：浮在页面之上、底下有正文经过，落影用悬浮玻璃那一档
    （内容压过来时把它们托起来）。 */
-html[data-perf='extreme'] .panel,
-html[data-perf='extreme'] .sheet,
-html[data-perf='extreme'] .card-wrap {
+html[data-perf]:not([data-perf='low']) .panel,
+html[data-perf]:not([data-perf='low']) .sheet,
+html[data-perf]:not([data-perf='low']) .card-wrap {
   background: var(--glass-panel-fill);
   box-shadow: var(--glass-shadow), var(--glass-halo), var(--glass-insets);
 }
 
 /* 滤镜只给**背后真的有内容**的那三个：抽屉 / 菜单 / 操作面板浮在页面之上，
-   底下的正文会从它们背后经过，blur 有活干。
+   底下的正文会从它们背后经过，blur 有活干 —— **高画质及以上都要给**：这一档起它们
+   的底已经换成 --glass-panel-fill（半透明），不给模糊就只是一层半透明薄膜，
+   读不出玻璃的厚度（用户要求：不启用折射也要把玻璃的其余效果开起来）。
 
    在流里的内容卡 / 快捷磁贴 / 参数入口**不给** —— 它们背后永远只有页面画布那一条
    平滑渐变，没有任何内容会跑到它们下面：同一条渐变的「模糊」与「不模糊」肉眼一致，
-   而 backdrop-filter 会给每张卡开一个背景根、滚动时逐帧重采样。极致档一屏十来张卡，
+   而 backdrop-filter 会给每张卡开一个背景根、滚动时逐帧重采样。一屏十来张卡，
    那就是纯亏（用户实测：打开极致后滚动严重掉帧，来源正是这几张没有背景内容的卡）。
    要模糊一条本来就平滑的渐变，等于花钱买一个看不出来的效果。 */
-:where(html[data-perf='extreme']) .panel,
-html[data-perf='extreme'] .sheet,
-html[data-perf='extreme'] .card-wrap {
+:where(html[data-perf]:not([data-perf='low'])) .panel,
+html[data-perf]:not([data-perf='low']) .sheet,
+html[data-perf]:not([data-perf='low']) .card-wrap {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
 }
 
 /* 抽屉的固定操作区本来是不透明实底（保证按钮区不被内容透上来干扰）：
-   它的父层已经是玻璃，这里让出底色只留分隔线，否则抽屉底部会断开成两截材质。 */
-html[data-perf='extreme'] .sheet-foot {
+   它的父层已经是玻璃（高画质及以上都是），这里让出底色只留分隔线，
+   否则抽屉底部会断开成两截材质。 */
+html[data-perf]:not([data-perf='low']) .sheet-foot {
   background: transparent;
 }
 
@@ -478,10 +527,22 @@ html[data-perf='low'] .stage-dark {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  /* 抽屉白卡：系统要求「减弱透明度」时退回实底，与 .glass-surface / .panel 同一条语义 */
-  html {
+  /* 玻璃铺到内容层（高画质及以上）之后，「减弱透明度」要退化的面变多了：
+     直接把令牌顶掉，而不是逐个选择器去追 —— 之后新加的玻璃表面会自动跟着退回实底。
+       · --glass-panel-fill → 实底：卡片 / 抽屉 / 菜单 / 操作面板 / 快捷磁贴的底；
+       · --glass-insets → 空内层：光学高光一并收掉（列表语法要求占位，见 tokens.css）；
+       · --sheet-card-* → 白卡也退回实底、去掉外缘层。--sheet-card-shadow 是 var 引用，
+         会跟着这条列表重算，不必再单独写一遍。
+
+     选择器必须带 [data-perf]：上面各档的令牌块是 html[data-perf='high'|'ultra'|'extreme']
+     （0,1,1），而裸 html 只有 (0,0,1) —— 自定义属性同样按特异性级联，裸 html 会被各档
+     令牌**压过去**，于是"减弱透明度"对内容层玻璃根本不起作用。带上属性后与本块后面的
+     源码顺序一起赢（本块在 base.css 末尾，晚于所有档位块）。 */
+  html[data-perf] {
+    --glass-panel-fill: var(--surface);
+    --glass-insets: inset 0 0 0 rgba(255, 255, 255, 0);
     --sheet-card-fill: var(--surface);
-    --sheet-card-shadow: var(--glass-panel-shadow);
+    --sheet-card-halo: 0 0 0 rgba(0, 0, 0, 0);
   }
 
   .glass-surface {
@@ -496,17 +557,15 @@ html[data-perf='low'] .stage-dark {
     box-shadow: var(--shadow-float);
   }
 
-  /* 极致档新铺开的那些玻璃表面：系统要求「减弱透明度」时一并退回实底。
-     与 .glass-surface 同一语义 —— 这是苹果规范里必须尊重的一条。
-     卡片的选择器同样用 :where()（理由见上面极致档块）。 */
-  :where(html[data-perf='extreme']) .card,
-  html[data-perf='extreme'] .panel,
-  html[data-perf='extreme'] .sheet,
-  html[data-perf='extreme'] .card-wrap,
-  html[data-perf='extreme'] .qa,
-  html[data-perf='extreme'] .tuner,
-  html[data-perf='extreme'] .sheet-foot {
-    background: var(--surface);
+  /* 浮层（抽屉 / 菜单 / 操作面板）：底与光学内层已由上面的令牌顶掉，
+     这里再关掉 backdrop-filter、把落影收回常规档 —— 与 .glass-surface 同一语义，
+     这是苹果规范里必须尊重的一条。卡片那组不用列：令牌一顶就够。
+     选择器要**与 base.css 那两组同权重**（0,3,1）才能压过它们：`.panel` 在基线里
+     走的是 `html[data-perf]:not([data-perf='low']) .panel`，这里若写 :where() 就只剩
+     (0,1,0)，box-shadow 会输给基线那条、减弱透明度后浮层仍挂着玻璃外缘层。 */
+  html[data-perf]:not([data-perf='low']) .panel,
+  html[data-perf]:not([data-perf='low']) .sheet,
+  html[data-perf]:not([data-perf='low']) .card-wrap {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     box-shadow: var(--shadow-card);

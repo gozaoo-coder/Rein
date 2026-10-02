@@ -44,12 +44,12 @@ const perfChoice = computed({
 const perfHint = computed(() => {
   if (perfMode.value === 'low') return '始终流畅'
   if (perfMode.value === 'extreme') {
-    return liquidGlass.value ? '极致 · 完整折射 + 全局玻璃' : '极致 · 已铺全局玻璃（本机不支持折射）'
+    return liquidGlass.value ? '极致 · 折射 + 全局玻璃' : '极致 · 已铺全局玻璃（本机不支持折射）'
   }
   if (perfMode.value === 'ultra') {
-    return liquidGlass.value ? '超高 · 折射已开（塌缩管线）' : '超高（本机不支持折射）'
+    return liquidGlass.value ? '超高 · 折射已开（塌缩管线）' : '超高 · 已铺全局玻璃（本机不支持折射）'
   }
-  return '始终高画质'
+  return '高画质 · 全局玻璃（无折射）'
 })
 
 /** 动效档位：关闭 / 默认 / 丰富（三档在分段控件里放得下完整名字，不必再给 short） */

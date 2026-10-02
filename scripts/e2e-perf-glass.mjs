@@ -322,7 +322,7 @@ async function main() {
     await setTier('high')
     const hi = await evalJS(`({ text: document.querySelector('.plaque').textContent.trim(), tone: document.querySelector('.plaque').className, mounted: document.documentElement.dataset.perf, refracting: !!document.querySelector('.bench .glass').style.backdropFilter })`)
     await shot('tier-high')
-    ok('高画质档读数说「当前档位用普通毛玻璃」', hi.mounted === 'high' && hi.tone.includes('idle') && hi.text.includes('当前档位用普通毛玻璃'), `data-perf=${hi.mounted} ${hi.tone} · ${hi.text}`)
+    ok('高画质档读数说「全局玻璃（毛玻璃，无折射）」', hi.mounted === 'high' && hi.tone.includes('idle') && hi.text.includes('全局玻璃（毛玻璃，无折射）'), `data-perf=${hi.mounted} ${hi.tone} · ${hi.text}`)
     ok('高画质档不挂折射滤镜', hi.refracting === false, `内联 backdrop-filter=${hi.refracting}`)
 
     await setTier('low')
@@ -363,7 +363,36 @@ async function main() {
       JSON.stringify(rtSync.bench) === JSON.stringify(rtSync.dock),
       `标本 ${JSON.stringify(rtSync.bench)} · Dock ${JSON.stringify(rtSync.dock)}`,
     )
+
+    // 减弱透明度也必须管到**内容层玻璃**（高画质起铺开的卡片 / 抽屉 / 白卡）。
+    // 这一条钉的是一个曾经踩过的坑：各档令牌块是 html[data-perf='high'|'ultra'|'extreme']
+    // （0,1,1），退化块若只写裸 html（0,0,1）会被各档令牌**压过去** —— 自定义属性同样按
+    // 特异性级联，于是"减弱透明度"对卡片完全不起作用（卡片仍是 0.86 的半透明白）。
+    await setTier('high')
+    await cdp('Page.navigate', { url: `${APP}/#/nutrition` })
+    await sleep(2400)
+    if (await evalJS(dismiss)) await sleep(400)
+    const rtCard = await evalJS(`(() => {
+      const el = document.querySelector('.card')
+      if (!el) return null
+      const cs = getComputedStyle(el)
+      return {
+        tier: document.documentElement.dataset.perf,
+        bg: cs.backgroundColor,
+        backdrop: String(cs.backdropFilter || cs.webkitBackdropFilter || 'none'),
+      }
+    })()`)
+    ok(
+      '减弱透明度 · 高画质的在流卡片退回实底（令牌退化压过各档玻璃）',
+      !!rtCard && rtCard.tier === 'high' && rtCard.bg === 'rgb(255, 255, 255)' && !rtCard.backdrop.includes('blur('),
+      JSON.stringify(rtCard),
+    )
+
     await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'no-preference' }] })
+    // 回到标本台：下一段窄屏要量 .bench .dock-tab，别停在上一条用的 nutrition 上
+    await cdp('Page.navigate', { url: `${APP}/#/settings/perf` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
 
     // ---------- 5 窄屏 320 ----------
     await cdp('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true })
@@ -788,9 +817,12 @@ async function main() {
       .join(';')
     const equivCss =
       `html[data-perf='extreme']{${equivDecls}}` +
-      `,html[data-perf='extreme'] .card,html[data-perf='extreme'] .panel,` +
-      `html[data-perf='extreme'] .sheet,html[data-perf='extreme'] .card-wrap,` +
-      `html[data-perf='extreme'] .qa,html[data-perf='extreme'] .tuner,html[data-perf='extreme'] .sheet-foot{` +
+      // 铺开的表面从高画质起就是玻璃，所以「拉回实底」要覆盖所有非弱档
+      // （与 base.css 的 :not([data-perf='low']) 选择器组对齐）
+      `,html[data-perf]:not([data-perf='low']) .card,html[data-perf]:not([data-perf='low']) .panel,` +
+      `html[data-perf]:not([data-perf='low']) .sheet,html[data-perf]:not([data-perf='low']) .card-wrap,` +
+      `html[data-perf]:not([data-perf='low']) .qa,html[data-perf]:not([data-perf='low']) .tuner,` +
+      `html[data-perf]:not([data-perf='low']) .sheet-foot{` +
       `background:var(--surface);backdrop-filter:none;-webkit-backdrop-filter:none;box-shadow:var(--shadow-card)}`
     await evalJS(`(() => {
       const s = document.createElement('style')
@@ -1422,11 +1454,15 @@ async function main() {
     await sleep(2200)
     if (await evalJS(dismiss)) await sleep(400)
     const headerHigh = await evalJS(HEADER_GLASS_PROBE)
+    // 高画质起页头圆钮就是玻璃盘（半透明底 + blur + 光学内层），只是没有折射 ——
+    // 「不启用折射也要把玻璃的其余效果开起来」这条在页头上同样成立。滤镜定义不挂
+    // （GlassFilter 只在 liquidGlass 为真时渲染），所以 defs 应为 0。
     ok(
-      '高画质 · 页头圆钮退回实底：不挂滤镜、也不留一层模糊',
+      '高画质 · 页头圆钮已是玻璃盘（blur + 光学内层），只是不挂折射',
       headerHigh.btns.length >= 2 &&
         headerHigh.defs.length === 0 &&
-        headerHigh.btns.every((b) => !b.filter.includes('url(') && !b.filter.includes('blur(')),
+        headerHigh.btns.every((b) => !b.filter.includes('url(') && b.filter.includes('blur(')) &&
+        headerHigh.btns.every((b) => b.shadow.includes('inset')),
       `${headerHigh.btns.length} 颗 · 定义 ${headerHigh.defs.length} 份 · ${headerHigh.btns.map((b) => b.filter).join(' | ')}`,
     )
 
@@ -1624,7 +1660,42 @@ async function main() {
         `缺 inset 的：${inFlow.filter((s) => !s.includes('inset')).length} 块`,
       )
     }
+
+    // 高画质起玻璃就铺到内容层（不是极致专属）：卡片拿到 --glass-panel-fill 的底 +
+    // 光学内层，但在流面**仍不挂 backdrop-filter**（背后只有平滑画布，滤镜是纯亏）。
+    // 这条钉住「即便不启用折射，高画质也要有玻璃的其余效果」。
     await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
+    await setTier('high')
+    await cdp('Page.navigate', { url: `${APP}/#/nutrition` })
+    await sleep(2400)
+    if (await evalJS(dismiss)) await sleep(400)
+    const hiCard = await evalJS(`(() => {
+      const el = document.querySelector('.card')
+      if (!el) return null
+      const cs = getComputedStyle(el)
+      const probe = document.createElement('div')
+      probe.style.background = 'var(--glass-panel-fill)'
+      document.body.appendChild(probe)
+      const fill = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return {
+        tier: document.documentElement.dataset.perf,
+        bg: cs.backgroundColor,
+        fill,
+        shadow: cs.boxShadow,
+        backdrop: String(cs.backdropFilter || cs.webkitBackdropFilter),
+      }
+    })()`)
+    ok(
+      '高画质 · 在流卡片已经拿到玻璃材质（底 + 光学内层），不挂折射也不挂模糊',
+      !!hiCard &&
+        hiCard.tier === 'high' &&
+        hiCard.bg === hiCard.fill &&
+        hiCard.shadow.includes('inset') &&
+        !hiCard.backdrop.includes('blur('),
+      JSON.stringify(hiCard),
+    )
+    await shot('card-glass-high')
     await setTier('ultra')
 
     const errs = await evalJS('window.__errs ?? []')

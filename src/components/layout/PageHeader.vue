@@ -56,7 +56,8 @@ function goBack(): void {
   <header ref="root" class="page-header" :class="{ compact, scrolled, collapsed, lite: perfDegraded }">
     <!-- 页头圆钮的折射滤镜定义（与 Dock / 悬浮条同一份管线，规格固定 38×38 所以按静态
          尺寸烘一次；.back 与各页的 .hdr-btn 共用这一张贴图）。只在折射可用时挂：
-         高画质 / 流畅档下这几颗圆钮是实底，不需要任何滤镜 -->
+         高画质下这几颗圆钮是**普通玻璃**（半透明底 + blur，没有折射），流畅档是实底，
+         两种都用不上这段滤镜 -->
     <GlassFilter
       v-if="liquidGlass"
       id="glass-filter-header"
@@ -256,12 +257,18 @@ html[data-motion='rich'] .page-header :slotted(.hdr-btn):active {
   );
 }
 
-/* ---------- 超高 / 极致档：页头的圆钮也变成玻璃盘 ----------
+/* ---------- 高画质及以上：页头的圆钮也变成玻璃盘 ----------
    一份 :slotted 改动覆盖全部页面的图标钮（各页只挂 hdr-btn 类，不各自写样式 ——
    见 docs/ARCHITECTURE.md 的页头按钮规范），这是"玻璃铺到全部组件"里性价比最高的一处。
 
-   **要的是真折射，不是又一层 backdrop-filter: blur**（2026-09-25 修）：这一档叫「液态玻璃」，
-   而只挂 blur 的那一版在超高下与高画质档读起来是同一层糊 —— 名字在，材质不在。
+   分两档落地：
+   · 高画质：玻璃盘 = 半透明底 + blur + 光学内层（就是下面这一条）。这一档没有折射，
+     但圆钮仍要是玻璃 —— 与 Dock / 卡片同一份材质，不能只剩它们两颗是实底白圆
+     （用户要求：不启用折射也要把玻璃的其余效果开起来）；
+   · 超高 / 极致：把下面那层 blur 整条换成折射（再往下的 [data-glass='collapsed'] 那条）。
+
+   **超高起要的是真折射，不是又一层 backdrop-filter: blur**（2026-09-25 修）：这一档叫
+   「液态玻璃」，而只挂 blur 的那一版在超高下与高画质档读起来是同一层糊 —— 名字在，材质不在。
    位移贴图与滤镜链来自 common/GlassFilter.vue，与底部 Dock / 沉浸层控制层**同一份实现**
    （38px 静态尺寸烘一张，同页几颗圆钮共用）。
 
@@ -271,15 +278,17 @@ html[data-motion='rich'] .page-header :slotted(.hdr-btn):active {
    「折射的是一层已经糊开的底」——那正是玻璃压在毛玻璃上的正常样子，不是画不出来。
 
    底薄了会不会读不清：圆钮坐落在页头正上方，背后是已经糊过一遍的内容；亮色主题下
-   页面本身是浅的，档位给出的半透明白 + 折射合成出来仍接近白。全屏暗场页面（跑步）不走
+   页面本身是浅的，档位给出的半透明白（+ 折射）合成出来仍接近白。全屏暗场页面（跑步）不走
    PageHeader，所以不存在"白底压暗图"的组合。 */
-html:is([data-perf='ultra'], [data-perf='extreme']) .page-header .back,
-html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-btn:not(.accent)) {
+html[data-perf]:not([data-perf='low']) .page-header .back,
+html[data-perf]:not([data-perf='low']) .page-header :slotted(.hdr-btn:not(.accent)) {
   background: var(--glass-fill);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   /* 光学层与 GlassSurface 的 .glass 对齐（外缘层 / 内顶高光 / 上缘焦散都在）——
-     页头的玻璃盘与 Dock 的玻璃块在超高档下要是同一套材质，不能一处厚一处薄 */
+     页头的玻璃盘与 Dock 的玻璃块要是同一套材质，不能一处厚一处薄。
+     高画质档 halo / rim-2 / caustic 这三个令牌还是透明的，所以那几层自动缺席，
+     剩下的底 + 内顶高光就是这一档的玻璃。 */
   box-shadow:
     var(--glass-shadow),
     var(--glass-halo),
@@ -293,9 +302,15 @@ html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-b
 /* 折射可用（内核认 url() 滤镜 + 用户选了这两档，即 data-glass 不是 off）时，
    把上面那份模糊整条换成位移滤镜 —— 与 GlassSurface 的折射分支同一条做法：
    折射生效时不再叠 blur（url() 与 blur 同挂会让位移算在一层糊过的底上，白花）。
-   全程序只有一条链，所以这里判的就是那一个值（从前还有个 'full'）。 */
-html[data-glass='collapsed'] .page-header .back,
-html[data-glass='collapsed'] .page-header :slotted(.hdr-btn:not(.accent)) {
+   全程序只有一条链，所以这里判的就是那一个值（从前还有个 'full'）。
+
+   **选择器必须压过上面那条模糊规则**（2026-10-03）：模糊那条带 :not([data-perf='low'])
+   （0,5,1），而 data-glass='collapsed' 单独只有 (0,4,1) —— 不加这一截，超高 / 极致下
+   模糊会盖住折射，页头圆钮就退回"高画质那层糊"了。data-glass='collapsed' 本就只在
+   超高 / 极致出现（low 的管线恒为 off），所以 [data-perf]:not([data-perf='low'])
+   在这里只是把权重顶到 (0,6,1)、确保折射永远赢，不改变匹配范围。 */
+html[data-glass='collapsed'][data-perf]:not([data-perf='low']) .page-header .back,
+html[data-glass='collapsed'][data-perf]:not([data-perf='low']) .page-header :slotted(.hdr-btn:not(.accent)) {
   backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
   -webkit-backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
 }
@@ -303,8 +318,8 @@ html[data-glass='collapsed'] .page-header :slotted(.hdr-btn:not(.accent)) {
 /* 系统要求「减弱透明度」时退回实底 —— 与 .glass-surface 的退化同一条语义
    （排在上面两条之后、同权重，所以它赢：折射与模糊一起关掉） */
 @media (prefers-reduced-transparency: reduce) {
-  html:is([data-perf='ultra'], [data-perf='extreme']) .page-header .back,
-  html:is([data-perf='ultra'], [data-perf='extreme']) .page-header :slotted(.hdr-btn:not(.accent)) {
+  html[data-perf]:not([data-perf='low']) .page-header .back,
+  html[data-perf]:not([data-perf='low']) .page-header :slotted(.hdr-btn:not(.accent)) {
     background: var(--surface);
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;

@@ -9,7 +9,7 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import GlassTunerSheet from '@/components/perf/GlassTunerSheet.vue'
 import { usePressGlow } from '@/composables/usePressGlow'
 import { motionEffective, motionLevel, motionRich, setMotionLevel, MOTION_LEVELS, type MotionLevel } from '@/system/motion'
-import { PERF_MODES, liquidGlass, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
+import { PERF_MODES, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
 
 /**
  * 画质预览（三级页，入口在「设置 › 性能」）：**超高档的液态玻璃长什么样**。
@@ -48,19 +48,19 @@ const PERF_OPTIONS = PERF_MODES.map(({ value, label }) => ({ value, label }))
 
 /** 当前档位下这块玻璃的真实状态：能力不足就明说，别让人对着退化结果猜 */
 const glassState = computed(() => {
-  const extreme = perfMode.value === 'extreme'
-  if (!liquidGlass.value) {
-    if (!supportsSvgBackdrop()) {
-      return extreme
-        ? { tone: 'warn', text: '本机内核不支持折射：极致仍会铺全局玻璃，折射退化为普通毛玻璃' }
-        : { tone: 'warn', text: '本机内核不支持折射，已退化为普通毛玻璃' }
-    }
-    if (perfMode.value === 'low') return { tone: 'warn', text: '流畅档：玻璃顶成实底，不做折射' }
-    return { tone: 'idle', text: '当前档位用普通毛玻璃 · 切到「超高」或「极致」即开折射' }
+  const m = perfMode.value
+  if (m === 'low') return { tone: 'warn', text: '流畅档：玻璃顶成实底，不做折射' }
+  // 高画质起玻璃已铺满（卡片 / 抽屉 / 菜单 / 操作面板 / 页头圆钮），差的只有折射
+  if (m === 'high') {
+    return { tone: 'idle', text: '高画质 · 全局玻璃（毛玻璃，无折射）· 切到「超高」或「极致」即开折射' }
+  }
+  // 超高 / 极致：折射要求内核认得 url() 当背景滤镜用
+  if (!supportsSvgBackdrop()) {
+    return { tone: 'warn', text: '本机内核不支持折射：折射退化为普通毛玻璃，全局玻璃照旧' }
   }
   // 折射开着时，把**实际走的链**报出来：这一页要能验证两档到底换了什么，
-  // 而不是只看档位标签。超高与极致共用同一条塌缩链，差别只在材质铺开的范围。
-  return extreme
+  // 而不是只看档位标签。超高与极致共用同一条塌缩链，差别只在材质深浅。
+  return m === 'extreme'
     ? { tone: 'on', text: '极致 · 折射已开启 · 塌缩管线（3 个原语）+ 全局玻璃' }
     : { tone: 'on', text: '超高 · 折射已开启 · 塌缩管线（3 个原语）' }
 })

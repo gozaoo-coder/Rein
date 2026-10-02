@@ -310,8 +310,8 @@ function runTool(t: ToolContribution): void {
   color: var(--text-2);
 }
 
-/* 极致档：文字链跟着升成玻璃材质。
-   这个档位把玻璃铺到卡片 / 快捷磁贴 / 操作面板（base.css 的两组选择器），
+/* 高画质及以上：文字链跟着升成玻璃材质。
+   这两个档位都把玻璃铺到卡片 / 快捷磁贴 / 操作面板（base.css 的两组选择器），
    唯独这三颗文字链还是扁平 --surface-2 —— 一屏里就它们「没有材质」，看着像漏了。
    落影取 `--glass-panel-shadow`（= --shadow-card）而**不是** `--glass-shadow`：
    项目里这两种落影是按「在流 / 浮层」分的（见 base.css 那两组注释）——
@@ -320,7 +320,7 @@ function runTool(t: ToolContribution): void {
    当初六个表面共用一条 box-shadow 时用户报的「改极致后卡片阴影异常变深变黑」正是这个错。
    不挂 backdrop-filter 也是同一条理由的延伸：在流面背后只有画布那一条平滑渐变，
    模糊与不模糊肉眼一致，而滤镜会给每颗 chip 开一个背景根、滚动时逐帧重采样。 */
-html[data-perf='extreme'] .textlinks button {
+html[data-perf]:not([data-perf='low']) .textlinks button {
   background: var(--glass-panel-fill);
   box-shadow: var(--glass-panel-shadow), var(--glass-insets);
 }
