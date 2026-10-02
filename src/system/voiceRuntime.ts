@@ -27,7 +27,9 @@ import { useToast } from '@/composables/useToast'
 import { claimMic, micOwner, releaseMic } from './micBus'
 
 /** 自动整理窗口：每满 3 分钟把已转写内容结算一段交 AI（录音不中断） */
-const SETTLE_MS = 3 * 60 * 1000
+/** 自动整理窗口长度（3 分钟）。导出给视图画「本段进度条」——
+ *  进度条必须以它为准，否则条和「N 后整理」的文案会对不上。 */
+export const SETTLE_MS = 3 * 60 * 1000
 const DRAFT_DEBOUNCE = 500
 const AUTO_SETTLE_KEY = 'rein.voice.autoSettle.v1'
 
@@ -35,7 +37,12 @@ export interface VoiceState {
   /** closed=未打开；ready=待机；session=转写/整理；memo=纪要详情 */
   view: 'closed' | 'ready' | 'session' | 'memo'
   minimized: boolean
-  status: 'idle' | 'recording' | 'processing'
+  /**
+   * paused = 录音中但**不采音频、不走计时**（用户按了暂停）。
+   * 单独一档而不是复用 recording + 一个布尔：视图、悬浮条、自动整理、完成/取消
+   * 四条路径都要判它，分散的布尔会在某一条上漏掉（表现为「暂停了还在转写」）。
+   */
+  status: 'idle' | 'recording' | 'paused' | 'processing'
   elapsedMs: number
   /** 本次会话全部定稿句（含已结算段； settledIdx 之前属于已产出段） */
   sentences: VoiceSentence[]
@@ -59,6 +66,15 @@ export interface VoiceState {
   recovered: VoiceDraft | null
   /** TTS 朗读中 */
   speaking: boolean
+}
+
+/**
+ * 会话是否「仍在手里」—— 录音中或已暂停。
+ * 暂停不是结束：完成、取消、收起浮条、热键都要照常认它，
+ * 否则暂停之后这些操作会静默失效（用户读到的是「按钮没反应」）。
+ */
+export function isLive(): boolean {
+  return voice.status === 'recording' || voice.status === 'paused'
 }
 
 export const voice = reactive<VoiceState>({
@@ -102,6 +118,10 @@ export function setAutoSettle(v: boolean): void {
 
 let sessionId = ''
 let startedAt = 0
+/** 暂停时结存的已录音时长（毫秒）；恢复时用它回推 startedAt */
+let accumulatedMs = 0
+/** 暂停那一刻的时间戳；非 null = 当前处于暂停中 */
+let pausedAt: number | null = null
 let seq = 0
 let audioCtx: AudioContext | null = null
 let worklet: AudioWorkletNode | null = null
@@ -230,7 +250,7 @@ function onAsrEvent(e: AsrEventPayload): void {
     endedResolve?.()
     endedResolve = null
     // 出错时保留已存内容并停止采集（转写不丢）
-    if (voice.status === 'recording') void finishSpeaking()
+    if (isLive()) void finishSpeaking()
   }
 }
 
@@ -254,7 +274,7 @@ export async function openView(): Promise<boolean> {
 }
 
 export function closeView(): void {
-  if (voice.status === 'recording') {
+  if (isLive()) {
     minimize()
     return
   }
@@ -264,7 +284,7 @@ export function closeView(): void {
 
 /** 收起为浮条（录音/整理继续） */
 export function minimize(): void {
-  if (voice.status === 'recording' || voice.status === 'processing') voice.minimized = true
+  if (isLive() || voice.status === 'processing') voice.minimized = true
   else voice.view = 'closed'
 }
 
@@ -294,7 +314,7 @@ export async function recoverSubmit(): Promise<void> {
 
 /** 开始录音（幂等）；失败原因写入 voice.lastError */
 export async function startRecording(): Promise<boolean> {
-  if (voice.status === 'recording') return true
+  if (isLive()) return true
   voice.lastError = ''
   if (micOwner() === 'recorder') {
     voice.lastError = '麦克风被录音功能占用中'
@@ -322,6 +342,9 @@ export async function startRecording(): Promise<boolean> {
     await audioCtx.audioWorklet.addModule('/voice-worklet.js')
     worklet = new AudioWorkletNode(audioCtx, 'pcm-capture')
     worklet.port.onmessage = (e: MessageEvent) => {
+      // 暂停期间**丢弃**音频块（管线不拆，恢复才无感）。放在最前面：
+      // 攒进 acc 再判就晚了 —— 恢复后会把暂停前攒的半包和新音频拼成一句。
+      if (voice.status === 'paused') return
       acc.push(e.data as Int16Array)
       if (acc.length >= 2) {
         const merged = mergeInt16(acc)
@@ -342,6 +365,8 @@ export async function startRecording(): Promise<boolean> {
 
   sessionId = `vs${Date.now().toString(36)}${++seq}`
   startedAt = Date.now()
+  accumulatedMs = 0
+  pausedAt = null
   voice.elapsedMs = 0
   voice.sentences = []
   voice.partial = ''
@@ -370,7 +395,9 @@ export async function startRecording(): Promise<boolean> {
   }
 
   elapsedTimer = window.setInterval(() => {
-    voice.elapsedMs = Date.now() - startedAt
+    // 计时基于 accumulatedMs + 本段已走时间：暂停时把 accumulatedMs 冻结、
+    // 恢复时把 startedAt 回推，于是 elapsedMs（以及依赖它的自动整理窗口）自然停住。
+    voice.elapsedMs = accumulatedMs + (pausedAt != null ? 0 : Date.now() - startedAt)
     if (voice.autoSettle) {
       voice.settleRemainMs = Math.max(0, voice.nextSettleAt - voice.elapsedMs)
       if (voice.elapsedMs >= voice.nextSettleAt && voice.sentences.length > voice.settledIdx) {
@@ -381,9 +408,44 @@ export async function startRecording(): Promise<boolean> {
   return true
 }
 
+/**
+ * 暂停 / 继续录音（同一个按钮的两面）。
+ *
+ * 暂停做三件事，缺一不可：
+ *  1. **闸掉音频转发**：AudioWorklet 仍在跑（不拆管线，恢复才无感），但 onmessage 里
+ *     丢弃数据块 —— 否则暂停期间说的话照样会被转写；
+ *     同时清空 `acc` 里攒着的半包，避免恢复后把暂停前的残块和新音频拼成一句。
+ *  2. **冻住计时**：把已走时间结进 accumulatedMs，elapsedMs 不再上涨 ——
+ *     自动整理的窗口（nextSettleAt 是 elapsed 时点）也跟着一起停。
+ *  3. **不动 ASR 连接**：豆包那边保持会话，恢复即续传，不必重连（重连会丢上下文）。
+ */
+export function pauseRecording(): void {
+  if (voice.status !== 'recording') return
+  accumulatedMs = voice.elapsedMs
+  pausedAt = Date.now()
+  acc = []
+  voice.status = 'paused'
+}
+
+export function resumeRecording(): void {
+  if (voice.status !== 'paused') return
+  // 把起点回推，让「重启后已经过去的时间」不计入时长（否则暂停多久就多算多久）
+  startedAt = Date.now() - accumulatedMs
+  pausedAt = null
+  voice.status = 'recording'
+}
+
+/** 在录音中 / 已暂停之间翻转；其它状态是 no-op */
+export function togglePauseRecording(): void {
+  if (voice.status === 'recording') pauseRecording()
+  else if (voice.status === 'paused') resumeRecording()
+}
+
 /** 完成并整理纪要：停采集 → 等最终句 → 剩余内容结算为一段（前台，展示纪要） */
 export async function finishSpeaking(): Promise<void> {
-  if (voice.status !== 'recording') return
+  if (!isLive()) return
+  // 暂停中直接完成：先把计时与状态接回来，后面的停采集/结算才走同一条路
+  if (voice.status === 'paused') resumeRecording()
   if (elapsedTimer != null) {
     clearInterval(elapsedTimer)
     elapsedTimer = null
@@ -490,7 +552,7 @@ async function settleSegment(auto: boolean): Promise<void> {
 
 /** 打开一条历史纪要（全部纪要列表 / AI 页语音气泡） */
 export async function openMemoById(id: string): Promise<void> {
-  if (voice.status === 'recording') return // 转写中不打断会话视图
+  if (isLive()) return // 录音/暂停中不打断会话视图
   try {
     voice.currentMemo = withAudioUrl(await voiceService.memoGet(id))
     voice.view = 'memo'

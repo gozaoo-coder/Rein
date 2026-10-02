@@ -14,6 +14,11 @@ import { ChevronRight, MessageCircle, ListTodo, Play } from 'lucide-vue-next'
  *  - `read`：文字展开，顶部保留一条按真实比例的「你在这里」细带
  *  - `mini`：一行缩略脊，给列表 / 浮条 / 选择器用
  *
+ * 观感语汇（贯穿三形态）：**一条细轨 + 悬浮其上的发声块**。
+ * 细轨画出「整段有多长」这条底，块是「哪几段真的在说话」——
+ * 分层让它在任何尺寸下都读成一张时间图，而不是一根被填色的进度条
+ * （粗轨道 + 一整块连续色带 = 进度条，那正是这一版要摆脱的观感）。
+ *
  * 数据口径：ASR 只给每句的起始时间，没有句末时间，所以**块宽是估计的**
  * （按字数估朗读时长，且不超过到下一句的间隔，剩余部分即静默）。
  */
@@ -48,12 +53,19 @@ const props = withDefaults(
     mode?: 'structure' | 'read'
     /** 播放/录制游标（毫秒） */
     headMs?: number
+    /** 游标是否在「实时生长」（录音中）—— 决定它画不画那颗呼吸的定位点 */
+    headPulse?: boolean
     /** 当前高亮句下标 */
     activeIdx?: number
     /** 静默超过这个秒数就折叠，0 = 不折 */
     foldSilenceOver?: number
   }>(),
-  { size: 'full', mode: 'structure', foldSilenceOver: 8 },
+  {
+    size: 'full',
+    mode: 'structure',
+    headPulse: false,
+    foldSilenceOver: 8,
+  },
 )
 
 const emit = defineEmits<{
@@ -117,6 +129,12 @@ const lanes = computed(() => {
 })
 const laneOf = (who: string) => Math.max(0, lanes.value.indexOf(who))
 
+/**
+ * 只有一位说话人（ASR 的常态）时不画说话人列：
+ * 一整列「我」既不携带信息，又把每行正文往右挤了一格。
+ */
+const singleLane = computed(() => lanes.value.length <= 1)
+
 const rulerTicks = computed(() => {
   const stepChoices = [30_000, 60_000, 300_000, 600_000, 900_000]
   const step = stepChoices.find((s) => total.value / s <= 8) ?? 900_000
@@ -148,6 +166,14 @@ const pinsOnAxis = computed(() => {
     }))
 })
 
+/** 缩略脊上的纪要小点：夹在 2%~97% 之间，免得贴边被圆角切掉 */
+const miniPins = computed(() =>
+  pinsOnAxis.value.map((p) => ({
+    ...p,
+    at: `${Math.min(97, Math.max(2, (p.t / Math.max(1, total.value)) * 100))}%`,
+  })),
+)
+
 const hasTodoPins = computed(() => (props.pins ?? []).some((p) => p.kind === 'todo'))
 const headPct = computed(() => (props.headMs == null ? null : pct(props.headMs)))
 
@@ -169,14 +195,22 @@ function onAxisClick(e: MouseEvent): void {
       :class="[`lane-${laneOf(b.who)}`, { partial: b.partial }]"
       :style="{ left: pct(b.t), width: pct(b.dur) }"
     />
-    <span v-if="headPct" class="mhead" :style="{ left: headPct }" />
+    <span
+      v-for="p in miniPins"
+      :key="`mp-${p.idx}`"
+      class="mpin"
+      :class="{ todo: p.hasTodo }"
+      :style="{ left: p.at }"
+      aria-hidden="true"
+    />
+    <span v-if="headPct" class="mhead" :class="{ live: headPulse }" :style="{ left: headPct }" />
   </div>
 
   <!-- ============ 结构脊：整场压进一屏 ============ -->
-  <div v-else-if="mode === 'structure'" class="spine">
+  <div v-else-if="mode === 'structure'" class="spine" :class="{ solo: singleLane }">
     <div class="lanes">
       <div v-for="(w, li) in lanes" :key="w" class="lane-row">
-        <span v-if="lanes.length > 1" class="lane-name">{{ w }}</span>
+        <span v-if="!singleLane" class="lane-name">{{ w }}</span>
         <div class="lane-track" @click="onAxisClick">
           <button
             v-for="b in blocks.filter((x) => laneOf(x.who) === li)"
@@ -194,7 +228,7 @@ function onAxisClick(e: MouseEvent): void {
 
       <!-- 静默折叠：一条细缝 -->
       <div v-if="blocks.some((x) => x.foldBefore)" class="folds">
-        <span v-if="lanes.length > 1" class="lane-name" />
+        <span v-if="!singleLane" class="lane-name" />
         <div class="fold-track" @click="onAxisClick">
           <button
             v-for="b in blocks.filter((x) => x.foldBefore)"
@@ -211,7 +245,7 @@ function onAxisClick(e: MouseEvent): void {
 
       <!-- 坐标轴 + 纪要锚点 -->
       <div class="axis">
-        <span v-if="lanes.length > 1" class="lane-name" />
+        <span v-if="!singleLane" class="lane-name" />
         <div class="axis-track" @click="onAxisClick">
           <span v-for="tick in rulerTicks" :key="tick.ms" class="tick" :style="{ left: pct(tick.ms) }">
             <i /><em class="num">{{ tick.label }}</em>
@@ -225,7 +259,7 @@ function onAxisClick(e: MouseEvent): void {
             :aria-label="`第 ${p.idx + 1} 句处的纪要`"
             @click.stop="emit('pick', p.idx)"
           />
-          <span v-if="headPct" class="head" :style="{ left: headPct }" />
+          <span v-if="headPct" class="mhead head-axis" :class="{ live: headPulse }" :style="{ left: headPct }" />
         </div>
       </div>
     </div>
@@ -241,14 +275,15 @@ function onAxisClick(e: MouseEvent): void {
   <!-- ============ 精读：文字展开，时间仍在 ============ -->
   <div v-else class="reading">
     <div class="strip" @click="onAxisClick">
+      <span class="srail" />
       <span
         v-for="b in blocks"
         :key="b.idx"
         class="sblk"
-        :class="[`lane-${laneOf(b.who)}`, { on: b.idx === activeIdx }]"
+        :class="[`lane-${laneOf(b.who)}`, { on: b.idx === activeIdx, partial: b.partial }]"
         :style="{ left: pct(b.t), width: pct(b.dur) }"
       />
-      <span v-if="headPct" class="mhead" :style="{ left: headPct }" />
+      <span v-if="headPct" class="mhead" :class="{ live: headPulse }" :style="{ left: headPct }" />
     </div>
 
     <ol class="lines">
@@ -263,7 +298,7 @@ function onAxisClick(e: MouseEvent): void {
           @click="emit('pick', b.idx)"
         >
           <time class="num">{{ fmt(b.t) }}</time>
-          <span class="who">{{ b.who }}</span>
+          <span v-if="!singleLane" class="who">{{ b.who }}</span>
           <p>
             {{ b.text }}<span v-if="b.partial" class="caret" />
             <button
@@ -291,43 +326,113 @@ function onAxisClick(e: MouseEvent): void {
 </template>
 
 <style scoped>
+/* ============================================================
+   时间脊的语汇（三形态共用）
+   细轨画「整段有多长」，块是「哪几段真的在说话」——
+   分层的初衷见文件头：粗轨道 + 一整块连续色带会被读成进度条。
+   ============================================================ */
+.mini,
+.spine,
+.reading {
+  --spine-c: var(--led-shopping);
+  /* 竖直微渐变（上亮下实）+ 顶部内高光：小尺寸的块靠这两条才立得起来，
+     不然只是一片纯色贴纸。混的是 --on-accent（亮暗两色档恒为白），
+     所以暗色下同样是「提亮」而不是「压暗」。 */
+  --spine-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--spine-c) 78%, var(--on-accent)),
+    var(--spine-c)
+  );
+  --spine-shine: inset 0 1px 0 color-mix(in srgb, var(--on-accent) 40%, transparent);
+  /* 细轨：不写死灰，跟主题走 —— 暗色下「提亮一档」，亮色下「压深一档」 */
+  --spine-rail: color-mix(in srgb, var(--text-1) 8%, transparent);
+}
+
+/* 两说话人：域色 + 中性，避免再引入第三第四种颜色 */
+.lane-0 {
+  --spine-c: var(--led-shopping);
+}
+
+.lane-1 {
+  --spine-c: color-mix(in srgb, var(--led-shopping) 44%, var(--text-3));
+}
+
+/* 定位游标（播放头 / 录制头）：一条竖线。它是这块区域里唯一的竖线，
+   用来回答「现在在哪」。实时生长时给一点呼吸 —— 不是装饰光晕，是「它在动」。 */
+.mhead {
+  position: absolute;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--text-1);
+}
+
+.mhead.live {
+  animation: spine-head 1.6s var(--ease-standard) infinite;
+}
+
+@keyframes spine-head {
+  50% {
+    opacity: 0.45;
+  }
+}
+
 /* ===== 缩略脊 ===== */
 .mini {
   position: relative;
   width: 100%;
-  height: 18px;
-  overflow: hidden;
+  height: 20px;
+}
+
+/* 轨道是一条 3px 细线，块比它高 —— 这层高度差就是「时间图」与「进度条」的分界 */
+.mini::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
   border-radius: var(--radius-full);
-  background: var(--surface-2);
+  background: var(--spine-rail);
 }
 
 .mblk {
   position: absolute;
   top: 4px;
-  height: 10px;
-  min-width: 2px;
-  border-radius: 3px;
+  height: 12px;
+  min-width: 3px;
+  border-radius: 4px;
+  /* 右缘透明边 + padding-box 裁剪 = 相邻句之间留 1.5px 缝，
+     否则连续发声会糊成一整条色带（列表里那一版最丑的就是这一点）。 */
+  border-right: 1.5px solid transparent;
+  background: var(--spine-fill);
+  background-clip: padding-box;
+  box-shadow: var(--spine-shine);
 }
 
 .mblk.partial {
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
-.mhead {
+/* 缩略脊上的纪要锚点：悬在块上方的一颗小点（待办用分类橙） */
+.mpin {
   position: absolute;
   top: 0;
-  bottom: 0;
-  width: 1.5px;
-  background: var(--text-1);
-}
-
-/* 两说话人：域色 + 中性，避免再引入第三第四种颜色 */
-.lane-0 {
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
   background: var(--led-shopping);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-1) 22%, transparent);
 }
 
-.lane-1 {
-  background: color-mix(in srgb, var(--led-shopping) 42%, var(--surface-2));
+.mpin.todo {
+  background: var(--cat-work);
+}
+
+.mini .mhead {
+  top: 1px;
+  bottom: 1px;
 }
 
 /* ===== 结构脊 ===== */
@@ -366,31 +471,51 @@ function onAxisClick(e: MouseEvent): void {
   position: relative;
   flex: 1;
   min-width: 0;
-  height: 34px;
+  height: 36px;
   border-radius: var(--radius-s);
-  background: var(--surface-2);
+  background: color-mix(in srgb, var(--text-1) 5%, transparent);
   cursor: crosshair;
+}
+
+/* 轨道中间那条细线（与缩略脊同一语汇）：有了基准线，块才像「落在时间上」 */
+.lane-track::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-full);
+  background: var(--spine-rail);
 }
 
 .blk {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  top: 5px;
+  bottom: 5px;
   min-width: 3px;
-  padding: 0 7px;
-  border-radius: 7px;
+  padding: 0 8px;
+  border-radius: 8px;
   overflow: hidden;
   text-align: left;
   color: var(--on-accent);
+  border-right: 1.5px solid transparent;
+  background: var(--spine-fill);
+  background-clip: padding-box;
+  box-shadow: var(--spine-shine);
+  transition: outline-color var(--dur-fast) var(--ease-standard);
 }
 
+/* 当前句：域色描环。不动位置 —— 位移会让整条脊「抖」一下 */
 .blk.on {
-  outline: 2px solid var(--text-1);
-  outline-offset: 1px;
+  outline: 2px solid var(--spine-c);
+  outline-offset: 1.5px;
+  z-index: 1;
 }
 
 .blk.partial {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .btext {
@@ -456,7 +581,8 @@ function onAxisClick(e: MouseEvent): void {
   transform: translateX(-50%);
   font-style: normal;
   font-size: var(--fs-micro);
-  color: var(--text-3);
+  /* 轴标签是要读的数据，不是水印：11px 用 --text-3 只有 3.6:1，提到 --text-2 */
+  color: var(--text-2);
   white-space: nowrap;
 }
 
@@ -474,12 +600,10 @@ function onAxisClick(e: MouseEvent): void {
   background: var(--cat-work);
 }
 
-.head {
-  position: absolute;
+/* 轴上的游标比内容行的长：从轴的顶线再往上探一点，读成「指向这一刻」 */
+.head-axis {
   top: -6px;
   bottom: 0;
-  width: 1.5px;
-  background: var(--text-1);
 }
 
 .legend {
@@ -489,6 +613,10 @@ function onAxisClick(e: MouseEvent): void {
   padding-left: 44px;
   font-size: var(--fs-micro);
   color: var(--text-2);
+}
+
+.spine.solo .legend {
+  padding-left: 0;
 }
 
 .legend span {
@@ -506,6 +634,7 @@ function onAxisClick(e: MouseEvent): void {
   width: 9px;
   height: 9px;
   border-radius: 3px;
+  background: var(--spine-c);
 }
 
 .sw.pin-sw {
@@ -520,27 +649,48 @@ function onAxisClick(e: MouseEvent): void {
   flex-direction: column;
 }
 
+/* 顶带不画满宽灰底：一条细轨 + 悬在上面的块，与缩略脊/结构脊同一张脸 */
 .strip {
   position: relative;
-  height: 16px;
-  margin-bottom: 6px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  overflow: hidden;
+  height: 18px;
+  margin-bottom: 4px;
   cursor: crosshair;
+}
+
+.srail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-full);
+  background: var(--spine-rail);
 }
 
 .sblk {
   position: absolute;
-  top: 3px;
+  top: 4px;
   height: 10px;
-  min-width: 2px;
+  min-width: 3px;
   border-radius: 3px;
+  border-right: 1.5px solid transparent;
+  background: var(--spine-fill);
+  background-clip: padding-box;
+  transition:
+    top var(--dur-fast) var(--ease-standard),
+    height var(--dur-fast) var(--ease-standard);
 }
 
 .sblk.on {
+  top: 2px;
   height: 14px;
-  top: 1px;
+  box-shadow: var(--spine-shine), 0 0 0 1.5px color-mix(in srgb, var(--spine-c) 40%, transparent);
+}
+
+.strip .mhead {
+  top: 0;
+  bottom: 0;
 }
 
 .lines {
@@ -551,20 +701,21 @@ function onAxisClick(e: MouseEvent): void {
 .tl {
   display: flex;
   align-items: baseline;
-  gap: 9px;
-  padding: 10px 6px;
-  margin: 0 -6px;
-  border-bottom: 1px solid var(--line);
-  border-radius: 8px;
+  gap: 10px;
+  padding: 11px 8px;
+  margin: 0 -8px;
+  border-radius: 10px;
   cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-standard);
 }
 
-.tl:last-child {
-  border-bottom: none;
+/* 行分隔用 inset 阴影而不是 border：进/出行带背景色时不会顶出 1px 位移 */
+.tl + .tl {
+  box-shadow: inset 0 1px 0 var(--line);
 }
 
 .tl.on {
-  background: color-mix(in srgb, var(--led-shopping) 9%, transparent);
+  background: color-mix(in srgb, var(--led-shopping) 8%, transparent);
 }
 
 .tl.partial p {
@@ -573,9 +724,11 @@ function onAxisClick(e: MouseEvent): void {
 
 .tl time {
   flex: none;
-  width: 38px;
+  width: 34px;
   font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  /* 同上：时间戳是这句的读数，11px 下 --text-3 读不清 */
+  color: var(--text-2);
 }
 
 .tl .who {
@@ -599,19 +752,30 @@ function onAxisClick(e: MouseEvent): void {
 .tl .jump {
   flex: none;
   align-self: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   background: var(--surface-2);
   color: var(--text-2);
   opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard);
 }
 
-.tl:hover .jump,
+/* 触屏没有 hover：只在「当前行」露出跳转键，够用且不吵 */
 .tl.on .jump {
   opacity: 1;
+}
+
+@media (hover: hover) {
+  .tl:hover .jump {
+    opacity: 1;
+  }
+
+  .tl:hover {
+    background: var(--surface-2);
+  }
 }
 
 .ipin {
@@ -635,13 +799,13 @@ function onAxisClick(e: MouseEvent): void {
 .silence {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 5px 6px 5px 0;
+  gap: 10px;
+  padding: 5px 8px 5px 0;
 }
 
 .stime {
   flex: none;
-  width: 38px;
+  width: 34px;
   font-size: var(--fs-micro);
   color: var(--text-3);
   opacity: 0.6;
@@ -677,6 +841,20 @@ function onAxisClick(e: MouseEvent): void {
 @keyframes caret {
   50% {
     opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mhead.live,
+  .caret {
+    animation: none;
+  }
+
+  .blk,
+  .sblk,
+  .tl,
+  .tl .jump {
+    transition: none;
   }
 }
 </style>

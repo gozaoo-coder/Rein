@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   ArrowUp,
   AudioLines,
@@ -10,21 +11,29 @@ import {
   ListOrdered,
   ListTodo,
   MessageCircle,
+  MessagesSquare,
   Mic,
   Pause,
   Play,
-  Square,
+  Settings2,
+  TimerReset,
+  Trash2,
   Utensils,
   X,
 } from 'lucide-vue-next'
 
+import ActionSheet from '@/components/common/ActionSheet.vue'
+import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import MdText from '@/components/common/MdText.vue'
+import SessionGlassButton from '@/components/exercise/SessionGlassButton.vue'
 import TimeSpine from './TimeSpine.vue'
 import VoiceMemosSheet from './VoiceMemosSheet.vue'
 import type { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
 import {
+  SETTLE_MS,
   cancelSession,
+  closeView,
   discardRecovered,
   finishSpeaking,
   minimize,
@@ -32,6 +41,7 @@ import {
   setAutoSettle,
   speakMemo,
   startRecording,
+  togglePauseRecording,
   voice,
   writeMemoAll,
   writeMemoItem,
@@ -40,7 +50,12 @@ import type { MemoSummaryItem, VoiceMemo } from '@/types'
 
 /**
  * 语音会话视图（App 根部常驻挂载，单例 runtime 驱动）。
- * 四态：ready 待机 / recording 转写中 / memo 纪要详情（全览/转文字分段）/ processing 在 memo 内提示。
+ * 四态：ready 待机 / session 录音·转写 / memo 纪要详情（全览/转文字）/ processing 在 memo 内提示。
+ *
+ * 版面只有三块，从上到下：**状态 → 内容 → 操作**。
+ * 顶栏在录音态不给标题，直接就是状态（波形 + 录音中/已暂停 + 计时器）——
+ * 这一屏此刻只有一件事，标题占掉的是状态的位置。操作全部收进底栏，
+ * 形状与高度唯一，只有「有状态可表达」的那颗按钮用颜色（见下）。
  * 文本区左右 padding 用 --page-pad-x，与全应用页面栅格对齐。
  */
 
@@ -73,6 +88,8 @@ watch(
 )
 
 const toast = useToast()
+/** 「引用该对话与 AI 聊聊」要跳 AI 页 */
+const router = useRouter()
 
 /* ---------- 计时 ---------- */
 
@@ -132,15 +149,6 @@ const liveSpineSegs = computed<SpineSeg[]>(() => {
     out.push({ t: voice.elapsedMs, who: '我', text: voice.partial, partial: true })
   }
   return out
-})
-
-const liveHint = computed(() => {
-  if (voice.lastError) return voice.lastError
-  if (voice.autoSettle && voice.status === 'recording') {
-    const left = Math.ceil(voice.settleRemainMs / 1000)
-    return `✓ 已逐句保存 · 满 3:00 自动结算（剩 ${left}s），录音不中断`
-  }
-  return '✓ 已逐句保存，中断可恢复'
 })
 
 /* ---------- 纪要详情 ---------- */
@@ -216,10 +224,10 @@ function onSpineSeek(ms: number): void {
 
 /** 播放中的当前句位置（卡拉OK式跟随高亮） */
 const playingPos = computed(() => {
-  const memo = voice.currentMemo
-  if (!memo || !playing.value) return -1
+  const m = voice.currentMemo
+  if (!m || !playing.value) return -1
   let pos = -1
-  memo.sentences.forEach((s, i) => {
+  m.sentences.forEach((s, i) => {
     if (curMs.value >= s.startMs) pos = i
   })
   return pos
@@ -234,10 +242,10 @@ const spineActive = computed<number | undefined>(
 
 const writing = ref(false)
 
-async function onWriteAll(memo: VoiceMemo): Promise<void> {
+async function onWriteAll(m: VoiceMemo): Promise<void> {
   writing.value = true
   try {
-    const n = await writeMemoAll(memo)
+    const n = await writeMemoAll(m)
     toast.toast(n > 0 ? `已写入 ${n} 项` : '没有待写入的条目')
   } finally {
     writing.value = false
@@ -250,6 +258,96 @@ async function onWriteItem(memo: VoiceMemo, item: MemoSummaryItem): Promise<void
 
 function onSpeak(memo: VoiceMemo): void {
   void speakMemo(memo)
+}
+
+/* ---------- 统一操作语言：底栏 + 工具菜单 ---------- */
+
+/**
+ * 底栏的三条规矩：
+ *  1. **全部收进底栏**，高度统一（`--vbar-h`）、形状统一（正圆 / 胶囊）——
+ *     不靠大小、粗细、位置区分主次；
+ *  2. **只有暂停/继续用颜色**：它是这里唯一有「状态」的按钮（录音中 vs 已暂停），
+ *     颜色回答的是「现在录着还是停着」；其余按钮没有状态可表达，一律中性；
+ *  3. **中性按钮走高画质液态玻璃**：低画质档（data-perf=low）由 base.css 把玻璃
+ *     顶成实底 —— 那是「别在这台机器上加滤镜面」这一档的承诺，不是降级。
+ *     暂停/继续是实色按钮，不进玻璃：它靠颜色区分，玻璃反而会吃掉那层色。
+ */
+const toolOpen = ref(false)
+const toolBtn = ref<HTMLElement | null>(null)
+
+/** 完成前的二次确认（复用仓里统一的底部操作面板，与删除动作同款） */
+const confirmFinish = ref(false)
+
+/** 是否处于「录音会话中」（含暂停）—— 顶栏状态与底栏按钮都按它切换 */
+const live = computed(() => voice.status === 'recording' || voice.status === 'paused')
+
+/**
+ * 顶栏进度条 = **本段的进度**，窗口是自动整理的周期（`SETTLE_MS`，3 分钟）。
+ * 不另造一个"录音总进度"：录音没有已知总长，任何百分比都是编的。
+ * 自动整理开着时以 `nextSettleAt` 为准（与「N 后整理」的文案同源，不会一个说 2:31 一个差半分钟）；
+ * 关掉时它没有所指，整条不渲染（见模板）。
+ */
+const settleProgress = computed(() => {
+  const W = SETTLE_MS
+  if (voice.autoSettle) {
+    const start = voice.nextSettleAt - W
+    return Math.min(1, Math.max(0, (voice.elapsedMs - start) / W))
+  }
+  return (voice.elapsedMs % W) / W
+})
+
+/** 距下次自动整理还有多久（仅自动整理开启时显示 —— 关掉时它没有所指） */
+const settleRemain = computed(() => Math.max(0, voice.nextSettleAt - voice.elapsedMs))
+
+/**
+ * 录音态顶栏的副行。
+ *
+ * 自动整理开着时它就是那条进度条的注脚（与进度条同源于 `nextSettleAt`，
+ * 所以条与文字不会一个说 2:31、一个差半分钟）；关掉时进度条没有所指、整条不出现，
+ * 这一行退成一句安顿话 —— 「中断可恢复」是这条链路对用户最要紧的承诺。
+ */
+const liveNote = computed(() => {
+  if (voice.lastError) return voice.lastError
+  return voice.autoSettle ? `${fmtMs(settleRemain.value)} 后整理` : '逐句实时留档 · 中断可恢复'
+})
+
+/** 工具菜单：用户点名的三件事，都带图标（bind 式锚定底栏那颗圆钮弹出） */
+const toolActions = computed(() => {
+  const acts: MenuItem[] = [
+    { label: voice.autoSettle ? '关闭自动整理' : '启用自动整理', value: 'auto', icon: TimerReset },
+    { label: kbdOpen.value ? '收起键盘补充' : '键盘补充', value: 'kbd', icon: Keyboard },
+    { label: '引用该对话，与 AI 聊聊', value: 'ask', icon: MessagesSquare },
+  ]
+  // 取消是破坏性的，放进菜单里并要二次确认 —— 底栏是"继续用"的地方，不该常驻一颗丢弃键
+  if (live.value) acts.push({ label: '取消本次录音', value: 'cancel', icon: Trash2, danger: true })
+  return acts
+})
+
+const confirmCancel = ref(false)
+
+function onToolSelect(v: string): void {
+  if (v === 'auto') setAutoSettle(!voice.autoSettle)
+  else if (v === 'kbd') kbdOpen.value = !kbdOpen.value
+  else if (v === 'ask') void quoteToAi()
+  else if (v === 'cancel') confirmCancel.value = true
+}
+
+/**
+ * 把这段对话交给 AI：把转写拼成一段引用，走与「弱项加练 → 交给 AI」同一条路径
+ * （`ai.askFrom` + 跳 AI 页，AI 页会直接发送）。用 `takePendingPrompt` 那套而不是
+ * 自己发请求：模型选择、上下文注入、会话归属都归 AI 页管，这里再发一次等于绕开它。
+ */
+async function quoteToAi(): Promise<void> {
+  const lines = (voice.view === 'memo' ? memo.value?.sentences : voice.sentences) ?? []
+  if (!lines.length) {
+    toast.toast('这段还没有转写内容')
+    return
+  }
+  const body = lines.map((s) => s.text).join('')
+  const head = voice.view === 'memo' && memo.value ? `《${memo.value.title}》` : '这段语音'
+  void (await ensureAiStore()).askFrom(`引用${head}的转写，我来聊聊：\n\n${body}\n\n`)
+  closeView()
+  void router.push({ name: 'ai' })
 }
 
 /* ---------- 键盘输入回退 ---------- */
@@ -303,25 +401,56 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <Transition name="vs">
       <section v-if="voice.view !== 'closed' && !voice.minimized" class="vs-root" aria-label="语音对话">
-        <!-- ===== 顶栏 ===== -->
-        <header class="vs-top">
-          <button class="vs-tbtn" aria-label="收起为浮条" @click="minimize">
-            <template v-if="voice.status === 'idle'">
-              <X :size="17" />
-            </template>
-            <ChevronDown v-else :size="19" />
-          </button>
-          <span class="vs-title">
-            语音对话
-            <small v-if="voice.view === 'memo' && voice.currentMemo">{{ voice.currentMemo.title }}</small>
-            <small v-else-if="voice.status === 'recording' || voice.status === 'processing'">
-              与 AI 对话同会话{{ voice.segmentCount > 0 ? ` · 已结算 ${voice.segmentCount} 段` : '' }}
-            </small>
-            <small v-else>逐句实时留档 · 中断可恢复</small>
-          </span>
-          <button class="vs-tbtn wide" @click="memosOpen = true">
-            <ListOrdered :size="14" /> 全部纪要
-          </button>
+        <!-- ===== 顶栏 =====
+             录音（含暂停）时**不显示标题**：这一屏的唯一任务是「正在录」，
+             把「语音对话」四个字留在上面等于用标题占掉状态的位置。
+             取而代之的是状态本身 —— 波形 + 录音中/已暂停 + 计时器，下面一条进度条。
+             非录音态（待机/纪要）仍用标题：那时候用户需要知道自己在哪里。 -->
+        <header class="vs-top" :class="{ 'is-live': live }">
+          <div class="vs-toprow">
+            <button class="vs-tbtn" :aria-label="live ? '收起为浮条' : '关闭'" @click="minimize">
+              <X v-if="voice.status === 'idle'" :size="17" />
+              <ChevronDown v-else :size="19" />
+            </button>
+
+            <span v-if="live" class="vs-live">
+              <span class="wave" :class="{ off: voice.status === 'paused' }" aria-hidden="true">
+                <i v-for="i in 5" :key="i" />
+              </span>
+              <b class="vl-t">{{ voice.status === 'paused' ? '已暂停' : '录音中' }}</b>
+              <span class="vl-sep" aria-hidden="true" />
+              <span class="num vl-time">{{ fmtMs(voice.elapsedMs) }}</span>
+            </span>
+            <span v-else class="vs-title">
+              语音对话
+              <small v-if="voice.view === 'memo' && voice.currentMemo">{{ voice.currentMemo.title }}</small>
+              <small v-else-if="voice.status === 'processing'">与 AI 对话同会话{{ voice.segmentCount > 0 ? ` · 已结算 ${voice.segmentCount} 段` : '' }}</small>
+              <small v-else>逐句实时留档 · 中断可恢复</small>
+            </span>
+
+            <!-- 录音态不放「全部纪要」：那一刻没有比「正在录」更需要入口的东西 -->
+            <button v-if="!live" class="vs-tbtn wide" @click="memosOpen = true">
+              <ListOrdered :size="14" /> 全部纪要
+            </button>
+            <span v-else class="vs-tbal" aria-hidden="true" />
+          </div>
+
+          <!-- 副行：自动整理开着 = 本段进度（条 + 倒计时）；关掉 = 一句安顿话。
+               不编一个"录音总进度"——录音没有已知总长，百分比只能是假的。 -->
+          <div v-if="live" class="vs-subrow">
+            <span
+              v-if="voice.autoSettle"
+              class="vs-prog"
+              :class="{ paused: voice.status === 'paused' }"
+              role="progressbar"
+              :aria-valuenow="Math.round(settleProgress * 100)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <i :style="{ width: `${Math.round(settleProgress * 100)}%` }" />
+            </span>
+            <span class="vs-subtxt" :class="{ num: voice.autoSettle, err: !!voice.lastError }">{{ liveNote }}</span>
+          </div>
         </header>
 
         <!-- ===== 待机 ===== -->
@@ -351,18 +480,8 @@ onBeforeUnmount(() => {
 
         <!-- ===== 转写中 ===== -->
         <template v-else-if="voice.view === 'session'">
-          <div class="live">
-            <span class="wave" aria-hidden="true"><i v-for="i in 7" :key="i" /></span>
-            <span class="lv-t">
-              <b>
-                <i v-if="voice.status === 'recording'" class="rec" />
-                {{ voice.status === 'recording' ? '聆听中 · 实时转写' : '已说完' }}
-              </b>
-              <em>{{ liveHint }}</em>
-            </span>
-            <span class="num time">{{ fmtMs(voice.elapsedMs) }}</span>
-          </div>
-          <!-- 转写正文：时间脊的精读形态（顶部保留按真实比例的定位带） -->
+          <!-- 转写正文：时间脊的精读形态（顶部保留按真实比例的定位带）。
+               录音状态已经在顶栏了，这里不再重复一条状态卡 —— 内容区只放内容。 -->
           <div class="tr">
             <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 滚动框站住，只有内容位移（system/rubberScroll） -->
             <div class="rubber-layer" data-rubber-content>
@@ -371,40 +490,59 @@ onBeforeUnmount(() => {
                 mode="read"
                 :segments="liveSpineSegs"
                 :head-ms="voice.elapsedMs"
+                :head-pulse="voice.status === 'recording'"
                 :fold-silence-over="12"
               />
+              <!-- 还没有内容时给一句引导，而不是一屏空白 -->
+              <p v-if="liveSpineSegs.length === 0" class="tr-empty t-2">在听着了，直接说就行。</p>
             </div>
           </div>
           <footer class="foot">
-            <button class="mode-chip" :class="{ on: voice.autoSettle }" @click="setAutoSettle(!voice.autoSettle)">
-              每 3 分钟自动整理<span class="sw" />
-            </button>
-            <div class="btns">
-              <button class="side danger" @click="cancelSession">
-                <X :size="13" /> 取消
-              </button>
-              <button
-                v-if="voice.status === 'recording'"
-                class="mic-big rec"
-                aria-label="完成说话"
-                @click="finishSpeaking"
-              >
-                <Square :size="22" />
-              </button>
-              <span v-else class="mic-big rec dimmed"><Square :size="22" /></span>
-              <button class="side" :disabled="voice.status !== 'recording'" @click="finishSpeaking">
-                <Check :size="13" /> 完成，整理纪要
-              </button>
-            </div>
-            <button class="kbd-toggle t-3" @click="kbdOpen = !kbdOpen">
-              <Keyboard :size="13" /> {{ kbdOpen ? '收起键盘' : '键盘补充' }}
-            </button>
             <div v-if="kbdOpen" class="kbd-bar">
               <input v-model="kbdText" type="text" placeholder="改用键盘输入…" @keydown.enter="sendKbd">
               <button class="kb-send" :disabled="kbdSending" @click="sendKbd"><ArrowUp :size="16" /></button>
             </div>
             <div v-if="kbdOpen && kbdReply" class="kbd-reply">
               <MdText v-if="kbdReply.text" :text="kbdReply.text" :streaming="kbdReply.streaming" />
+            </div>
+
+            <!-- 底栏：三颗同高按钮。中性两枚（工具 / 完成）走玻璃，
+                 只有暂停/继续是实色 —— 它是这里唯一有"状态"的按钮。
+                 两颗图标字都用同一颗「暂停↔播放」的交叉淡入，随时可打断。 -->
+            <div class="vbar">
+              <SessionGlassButton w="var(--vbar-h)" h="var(--vbar-h)" radius="50%">
+                <button
+                  ref="toolBtn"
+                  class="vb ic"
+                  type="button"
+                  aria-label="工具"
+                  aria-haspopup="menu"
+                  :aria-expanded="toolOpen"
+                  @click="toolOpen = true"
+                >
+                  <Settings2 :size="19" />
+                </button>
+              </SessionGlassButton>
+
+              <button
+                class="vb ic state"
+                :class="voice.status === 'paused' ? 'go' : 'hold'"
+                type="button"
+                :aria-label="voice.status === 'paused' ? '继续录音' : '暂停录音'"
+                @click="togglePauseRecording"
+              >
+                <!-- 两颗图标常驻、只做交叉淡入：状态来回切时可打断、不闪空档 -->
+                <span class="swap" aria-hidden="true">
+                  <Pause class="s-pause" :size="19" />
+                  <Play class="s-play" :size="19" />
+                </span>
+              </button>
+
+              <SessionGlassButton h="var(--vbar-h)">
+                <button class="vb wide" type="button" :disabled="!live" @click="confirmFinish = true">
+                  <Check :size="16" /> 完成
+                </button>
+              </SessionGlassButton>
             </div>
           </footer>
         </template>
@@ -488,11 +626,11 @@ onBeforeUnmount(() => {
                   <section v-if="memo.summary.length > 0" class="ov-sec">
                     <h5>总结</h5>
                     <div v-for="(it, i) in memo.summary" :key="i" class="sum-li">
-                  <i class="ic" :class="`i-${it.kind}`">
-                    <Utensils v-if="it.kind === 'food'" :size="13" />
-                    <ListTodo v-else-if="it.kind === 'todo'" :size="13" />
-                    <MessageCircle v-else :size="13" />
-                  </i>
+                      <i class="ic" :class="`i-${it.kind}`">
+                        <Utensils v-if="it.kind === 'food'" :size="13" />
+                        <ListTodo v-else-if="it.kind === 'todo'" :size="13" />
+                        <MessageCircle v-else :size="13" />
+                      </i>
                       <span class="sum-body">
                         <span class="md-line"><MdText :text="it.text" /><button
                           v-if="it.refs.length"
@@ -555,21 +693,60 @@ onBeforeUnmount(() => {
               </template>
             </div>
           </div>
-          <!-- 底部控制：继续说（新一段，独立纪要） -->
+          <!-- 底部控制：同一套底栏语言（工具 + 继续说）。
+               全部中性 —— 这一屏没有「状态」可表达，颜色留给上一屏那颗暂停键。 -->
           <footer class="foot">
-            <div class="btns">
-              <button class="mic-big start" aria-label="开始说话" @click="startRecording">
-                <Mic :size="26" />
-              </button>
-              <button class="side" @click="kbdOpen = !kbdOpen">
-                <Keyboard :size="13" /> 键盘补充
-              </button>
+            <div class="vbar">
+              <SessionGlassButton w="var(--vbar-h)" h="var(--vbar-h)" radius="50%">
+                <button
+                  ref="toolBtn"
+                  class="vb ic"
+                  type="button"
+                  aria-label="工具"
+                  aria-haspopup="menu"
+                  :aria-expanded="toolOpen"
+                  @click="toolOpen = true"
+                >
+                  <Settings2 :size="19" />
+                </button>
+              </SessionGlassButton>
+              <SessionGlassButton h="var(--vbar-h)">
+                <button class="vb wide" type="button" @click="startRecording">
+                  <Mic :size="16" /> 继续说
+                </button>
+              </SessionGlassButton>
             </div>
             <p v-if="voice.lastError" class="err t-2">{{ voice.lastError }}</p>
           </footer>
         </template>
 
         <VoiceMemosSheet :open="memosOpen" @close="memosOpen = false" @pick="onPickMemo" />
+
+        <!-- 工具菜单（bind：锚定底栏那颗圆钮弹出，三项都带图标） -->
+        <AppMenu
+          :open="toolOpen"
+          :actions="toolActions"
+          :anchor="toolBtn"
+          title="工具"
+          @close="toolOpen = false"
+          @select="onToolSelect"
+        />
+
+        <!-- 完成 / 取消的二次确认：复用仓里统一的底部操作面板（与删除动作同一款） -->
+        <ActionSheet
+          :open="confirmFinish"
+          title="完成并整理纪要？"
+          :actions="[{ label: '完成，整理纪要', value: 'ok' }]"
+          @select="(v: string) => { if (v === 'ok') { confirmFinish = false; void finishSpeaking() } }"
+          @close="confirmFinish = false"
+        />
+        <ActionSheet
+          :open="confirmCancel"
+          title="取消本次录音？已转写的句子会一并丢弃"
+          :actions="[{ label: '取消录音', value: 'ok', danger: true }]"
+          @select="(v: string) => { if (v === 'ok') { confirmCancel = false; cancelSession() } }"
+          @close="confirmCancel = false"
+        />
         <audio
           v-if="memo?.audioPath"
           ref="audioEl"
@@ -585,6 +762,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .vs-root {
+  /* 底栏唯一的高度：形状与高度不承担主次，只有色彩承担「哪个不一样」 */
+  --vbar-h: 52px;
   position: fixed;
   inset: 0;
   z-index: 65;
@@ -612,9 +791,16 @@ onBeforeUnmount(() => {
 .vs-top {
   flex: none;
   display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: calc(var(--safe-top) + 8px) var(--page-pad-x) 8px;
+}
+
+.vs-toprow {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: calc(var(--safe-top) + 8px) 14px 6px;
+  gap: 10px;
+  min-height: 34px;
 }
 
 .vs-tbtn {
@@ -641,6 +827,12 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 
+/* 录音态右侧的占位：与左侧那颗同宽，中段的状态簇才是真的落在中轴上 */
+.vs-tbal {
+  width: 34px;
+  flex: none;
+}
+
 .vs-title {
   flex: 1;
   text-align: center;
@@ -658,6 +850,147 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--text-3);
   margin-top: 1px;
+}
+
+/* ----- 录音态的状态簇：波形 + 状态词 + 计时器 ----- */
+.vs-live {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.vs-live .vl-t {
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+.vs-live .vl-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--line-strong);
+  border-radius: 1px;
+}
+
+/* 计时器是这一刻的主角：字重轻、字距收紧、等宽数字，与波形一起读成「仪表」 */
+.vs-live .vl-time {
+  font-size: var(--fs-title3);
+  font-weight: 600;
+  letter-spacing: -0.6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.wave {
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  height: 18px;
+  flex: none;
+}
+
+.wave i {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--danger);
+  transform-origin: center;
+  animation: wv 0.9s ease-in-out infinite;
+}
+
+.wave i:nth-child(1) {
+  height: 40%;
+}
+
+.wave i:nth-child(2) {
+  height: 74%;
+  animation-delay: 0.12s;
+}
+
+.wave i:nth-child(3) {
+  height: 100%;
+  animation-delay: 0.24s;
+}
+
+.wave i:nth-child(4) {
+  height: 64%;
+  animation-delay: 0.08s;
+}
+
+.wave i:nth-child(5) {
+  height: 46%;
+  animation-delay: 0.2s;
+}
+
+/* 暂停：整簇落下成一条静态的等化器轮廓，颜色退到中性灰 ——
+   「还在，但没在动」比单纯停掉动画更准确 */
+.wave.off i {
+  animation: none;
+  background: var(--text-3);
+}
+
+@keyframes wv {
+  0%,
+  100% {
+    transform: scaleY(0.4);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* ----- 副行：本段进度 ----- */
+.vs-subrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 15px;
+}
+
+.vs-prog {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
+  overflow: hidden;
+}
+
+/* 宽度每 250ms 走一格（runtime 的计时器），300ms 的线性过渡把它接成连续生长 */
+.vs-prog i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--led-shopping) 60%, var(--on-accent)),
+    var(--led-shopping)
+  );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--on-accent) 35%, transparent);
+  transition: width 300ms linear;
+}
+
+/* 暂停时条不再生长（elapsed 冻住），颜色也一起退掉 —— 状态是同一件事 */
+.vs-prog.paused i {
+  background: var(--text-3);
+  box-shadow: none;
+}
+
+.vs-subtxt {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  /* 11px 的说明文字要能读：--text-3 在白底上只有 3.6:1，这一档提到 --text-2 */
+  color: var(--text-2);
+}
+
+.vs-subtxt.err {
+  color: var(--danger);
 }
 
 /* ===== 待机 ===== */
@@ -740,117 +1073,12 @@ onBeforeUnmount(() => {
   color: var(--danger);
 }
 
-/* ===== 声纹状态带 ===== */
-.live {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 8px var(--page-pad-x) 4px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border-radius: var(--radius-m);
-  box-shadow: var(--shadow-card);
-}
-
-.wave {
-  display: flex;
-  align-items: center;
-  gap: 2.5px;
-  height: 22px;
-  flex: none;
-}
-
-.wave i {
-  width: 3px;
-  border-radius: 2px;
-  background: var(--accent);
-  animation: wv 1s ease-in-out infinite;
-}
-
-.wave i:nth-child(odd) {
-  height: 70%;
-}
-
-.wave i:nth-child(even) {
-  height: 100%;
-}
-
-.wave i:nth-child(2) {
-  animation-delay: 0.12s;
-}
-
-.wave i:nth-child(3) {
-  animation-delay: 0.24s;
-}
-
-.wave i:nth-child(4) {
-  animation-delay: 0.08s;
-}
-
-.wave i:nth-child(6) {
-  animation-delay: 0.18s;
-}
-
-@keyframes wv {
-  0%,
-  100% {
-    transform: scaleY(0.4);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
-.lv-t {
-  flex: 1;
-  min-width: 0;
-}
-
-.lv-t b {
-  font-size: var(--fs-footnote);
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.lv-t b .rec {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  animation: wvb 1.4s ease-in-out infinite;
-  flex: none;
-}
-
-@keyframes wvb {
-  50% {
-    opacity: 0.35;
-  }
-}
-
-.lv-t em {
-  font-style: normal;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  display: block;
-  margin-top: 1px;
-}
-
-.time {
-  font-size: 15px;
-  font-weight: 300;
-  letter-spacing: -0.5px;
-  flex: none;
-}
-
 /* ===== 转写区（page padding 对齐全应用） ===== */
 .tr {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px var(--page-pad-x) 10px;
+  padding: 6px var(--page-pad-x) 10px;
   scrollbar-width: none;
 }
 
@@ -858,53 +1086,9 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-.tl {
-  display: flex;
-  gap: 10px;
-  padding: 7px 0;
-  font-size: var(--fs-callout);
-  line-height: 1.65;
-}
-
-.tl + .tl {
-  border-top: 0.5px solid var(--line);
-}
-
-.tl time {
-  flex: none;
-  width: 38px;
-  padding-top: 2px;
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
-.tl p {
-  flex: 1;
-  min-width: 0;
-  border-radius: 6px;
-  padding: 1px 4px;
-  margin: -1px -4px;
-}
-
-.tl.partial p {
-  color: var(--text-2);
-}
-
-.tl.partial .caret {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  background: var(--text-3);
-  vertical-align: -0.12em;
-  margin-left: 2px;
-  animation: blink 1s steps(2, start) infinite;
-}
-
-@keyframes blink {
-  50% {
-    opacity: 0;
-  }
+.tr-empty {
+  padding: 26px 2px;
+  font-size: var(--fs-footnote);
 }
 
 /* ===== 纪要详情 ===== */
@@ -990,20 +1174,22 @@ onBeforeUnmount(() => {
   flex: none;
 }
 
+/* 轨道走「细轨 + 实心填充 + 端头圆钮」：与时间脊同一套几何观感，
+   但用 accent 而不是域色 —— 这是音频播放，不是会话结构。 */
 .pl-bar {
+  position: relative;
   flex: 1;
   height: 4px;
   border-radius: var(--radius-full);
-  background: var(--line-strong);
-  position: relative;
+  background: color-mix(in srgb, var(--text-1) 10%, transparent);
   cursor: pointer;
 }
 
 .pl-bar i {
   position: absolute;
-  left: 0;
   top: 0;
   bottom: 0;
+  left: 0;
   border-radius: var(--radius-full);
   background: var(--accent);
 }
@@ -1014,7 +1200,8 @@ onBeforeUnmount(() => {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #fff;
+  /* 亮暗两色档同为白（iOS 规格，令牌已写明）—— 用 --surface 在暗色下会变成一颗看不见的暗钮 */
+  background: var(--switch-knob);
   box-shadow: var(--shadow-thumb);
   transform: translate(-50%, -50%);
 }
@@ -1108,6 +1295,16 @@ onBeforeUnmount(() => {
   color: var(--text-3);
   letter-spacing: 0.5px;
   margin-bottom: 2px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ov-sec > h5 em {
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
+  margin-left: auto;
 }
 
 .sum-li {
@@ -1303,78 +1500,9 @@ onBeforeUnmount(() => {
   animation-delay: 0.3s;
 }
 
-/* 转文字页：句子 + 总结 block */
+/* 转文字页 */
 .tr-sec {
   margin-top: 8px;
-}
-
-.tl.seek {
-  cursor: pointer;
-}
-
-.tl.seek:active {
-  background: var(--surface-2);
-}
-
-.tl.seek.now {
-  background: var(--accent-soft);
-  border-radius: 10px;
-}
-
-.tl.seek.flash p {
-  animation: flashhl 0.65s ease-in-out 3;
-}
-
-@keyframes flashhl {
-  0%,
-  100% {
-    background: transparent;
-  }
-  45% {
-    background: var(--accent-soft);
-  }
-}
-
-.at {
-  display: none;
-  color: var(--text-3);
-  font-size: var(--fs-micro);
-}
-
-.tl.seek:hover .at {
-  display: inline;
-}
-
-.sblock {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  margin: 6px 0 8px 48px;
-  padding: 8px 11px;
-  background: var(--accent-soft);
-  border-radius: 12px;
-  font-size: var(--fs-caption);
-  line-height: 1.6;
-}
-
-.sb-ic {
-  flex: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 5px;
-  background: var(--surface);
-  color: var(--accent);
-  font-size: 9.5px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 1px;
-}
-
-.sblock p {
-  flex: 1;
-  min-width: 0;
 }
 
 /* 11px 的说明文字用 --text-3 只有约 2.3:1，读不清；提到 --text-2（≈4.9:1） */
@@ -1384,89 +1512,111 @@ onBeforeUnmount(() => {
   margin-top: 8px;
 }
 
-/* ===== 底部控制（转写视图） ===== */
+/* ===== 底部控制（统一操作语言） ===== */
 .foot {
   flex: none;
-  padding: 10px var(--page-pad-x) calc(var(--safe-bottom) + 18px);
+  padding: 10px var(--page-pad-x) calc(var(--safe-bottom) + 14px);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
 }
 
-.mode-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  color: var(--text-2);
-}
-
-.mode-chip .sw {
-  width: 24px;
-  height: 14px;
-  border-radius: var(--radius-full);
-  background: var(--line-strong);
-  position: relative;
-}
-
-.mode-chip .sw::after {
-  content: '';
-  position: absolute;
-  top: 1.5px;
-  left: 2px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: var(--shadow-thumb);
-  transition: left var(--dur-fast) var(--ease-standard);
-}
-
-.mode-chip.on {
-  color: var(--accent);
-}
-
-.mode-chip.on .sw {
-  background: var(--accent);
-}
-
-.mode-chip.on .sw::after {
-  left: 11px;
-}
-
-.btns {
+.vbar {
   display: flex;
   align-items: center;
-  gap: 22px;
+  justify-content: center;
+  gap: 10px;
 }
 
-.side {
+.vb {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  height: 42px;
-  padding: 0 16px;
   border-radius: var(--radius-full);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   font-size: var(--fs-footnote);
   font-weight: 700;
+  letter-spacing: -0.2px;
   color: var(--text-1);
+  transition: transform var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
 
-.side:disabled {
-  opacity: 0.45;
+.vb.ic {
+  width: var(--vbar-h);
+  height: var(--vbar-h);
+  padding: 0;
 }
 
-.side.danger {
-  color: var(--danger);
+.vb.wide {
+  height: var(--vbar-h);
+  padding: 0 20px;
+}
+
+/* 玻璃里的按钮**撑满玻璃**：正圆与胶囊的几何都由玻璃那一层给。
+   玻璃自带 1px 受光描边，按钮若也按 --vbar-h 定长宽会被裁掉 2px（圆会变成椭圆）。 */
+:deep(.sgbtn) .vb.ic {
+  width: 100%;
+  height: 100%;
+}
+
+:deep(.sgbtn) .vb.wide {
+  height: 100%;
+}
+
+.vb:disabled {
+  opacity: 0.4;
+}
+
+/* 按压反馈加在玻璃里的按钮上（玻璃自身不缩放，折射才不失效） */
+.vb:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+/* 暂停/继续：全屏唯一带颜色的按钮。
+   · 录音中（显示暂停）：淡彩底 —— 它是「先停下」这个次要动作；
+   · 已暂停（显示继续）：实色 —— 此刻这是用户唯一该按的那颗。 */
+.vb.state.hold {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.vb.state.go {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* 暂停↔播放的交叉淡入：两颗图标常驻叠放，只换不透明度与缩放，
+   所以来回快切也不会出现「空档」，中断即可逆。 */
+.swap {
+  position: relative;
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+}
+
+.swap svg {
+  position: absolute;
+  transition:
+    opacity 140ms var(--ease-standard),
+    transform 140ms var(--ease-spring);
+}
+
+.swap .s-play {
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.vb.state.go .swap .s-pause {
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.vb.state.go .swap .s-play {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .mic-big {
@@ -1485,24 +1635,6 @@ onBeforeUnmount(() => {
   background: var(--accent);
   color: var(--on-accent);
   box-shadow: var(--shadow-float);
-}
-
-.mic-big.rec {
-  background: var(--danger);
-  color: var(--on-accent);
-  box-shadow: var(--shadow-float);
-}
-
-.mic-big.dimmed {
-  opacity: 0.4;
-}
-
-.kbd-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-caption);
-  background: none;
 }
 
 .kbd-bar {
@@ -1552,15 +1684,10 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ready-orb {
-    animation: none;
-  }
-
+  .ready-orb,
   .wave i,
   .mini-wave i,
-  .spin,
-  .lv-t b .rec,
-  .tl.partial .caret {
+  .spin {
     animation: none;
   }
 
@@ -1569,9 +1696,11 @@ onBeforeUnmount(() => {
     transition-duration: 150ms;
   }
 
-  .tl.seek.flash p {
-    animation: none;
-    background: var(--accent-soft);
+  .vs-prog i,
+  .swap svg,
+  .vb,
+  .seg .sthumb {
+    transition: none;
   }
 }
 </style>
