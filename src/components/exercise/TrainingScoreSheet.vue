@@ -110,7 +110,7 @@ const lowConfidenceHint = computed(
   <SheetModal :open="open" title="练够分说明" initial-snap="large" @close="emit('close')">
     <template v-if="current">
       <!-- ---------- 1. 分数 ---------- -->
-      <header class="hero">
+      <header class="scard hero">
         <div class="hero-top row between">
           <span class="hero-name">{{ current.label }}</span>
           <span class="conf" :class="`conf-${current.confidence}`">
@@ -129,7 +129,7 @@ const lowConfidenceHint = computed(
       </header>
 
       <!-- ---------- 2. 图表：100 分怎么拆出来的 ---------- -->
-      <section class="block">
+      <section class="scard">
         <div class="bhead row between">
           <h3>这 {{ current.score }} 分怎么来的</h3>
           <span class="btag">满分 100 = 运动充分</span>
@@ -177,7 +177,7 @@ const lowConfidenceHint = computed(
       </section>
 
       <!-- ---------- 3. 建议 ---------- -->
-      <section class="block">
+      <section class="scard">
         <div class="bhead row between">
           <h3>建议</h3>
           <span class="btag">短板：{{ WEAK_LABEL[current.weakest] }}</span>
@@ -191,7 +191,7 @@ const lowConfidenceHint = computed(
       </section>
 
       <!-- ---------- 4. 各肌群 ---------- -->
-      <section class="block">
+      <section class="scard">
         <div class="bhead row between">
           <h3>各肌群练够分</h3>
           <span class="btag">点一行看它的分解</span>
@@ -220,7 +220,7 @@ const lowConfidenceHint = computed(
       </section>
 
       <!-- ---------- 5. 计算体系（可展开） ---------- -->
-      <section class="block methodblock">
+      <section class="scard">
         <button class="mhead row between" type="button" :aria-expanded="showMethod" @click="showMethod = !showMethod">
           <span class="row mtit">
             <i class="micon"><Info :size="14" /></i>
@@ -295,9 +295,30 @@ const lowConfidenceHint = computed(
 </template>
 
 <style scoped>
+/* ---------- 白卡：抽屉每一段内容的载体 ----------
+   抽屉在极致档本身就是玻璃（面板底只有 0.66 的白），正文直接铺上去会把背后的页面
+   透出来 —— 顶部那圈灰带、分数与图表跟着背景浮动都是这么来的。每段内容因此落在
+   一张白卡上把正文压住；材质与档位覆盖全在令牌里（tokens.css 的 --sheet-card-*），
+   组件只负责用：档位升级这里一行都不用改，也不会挂上 svg 折射。 */
+.scard {
+  padding: 16px;
+  border-radius: var(--radius-xl);
+  background: var(--sheet-card-fill);
+  box-shadow: var(--sheet-card-shadow);
+}
+
+.scard + .scard {
+  margin-top: 12px;
+}
+
+/* 首张卡与抽屉标题之间留一点呼吸（body 自身只有 4px 顶内边距） */
+.scard:first-child {
+  margin-top: 6px;
+}
+
 /* ---------- 1. 分数 ---------- */
 .hero {
-  padding: 2px 2px 14px;
+  padding: 0;
 }
 
 .hero-name {
@@ -367,12 +388,8 @@ const lowConfidenceHint = computed(
   color: var(--warn-strong);
 }
 
-/* ---------- 通用块 ---------- */
-.block {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 0.5px solid var(--line);
-}
+/* ---------- 通用块 ----------
+   段落之间原本靠一条横线分隔；现在每段是一张白卡，间隔与分层都交给 .scard。 */
 
 .bhead h3 {
   font-size: var(--fs-subhead);
@@ -402,9 +419,10 @@ const lowConfidenceHint = computed(
   transition: width var(--dur-slow) var(--ease-standard);
 }
 
-/* 三段之间留一道极细的白缝：段色都偏饱和，紧贴会糊成一段读不出边界 */
+/* 三段之间留一道极细的缝：段色都偏饱和，紧贴会糊成一段读不出边界。
+   缝色取卡片自己的底（极致档卡片是 0.92 白，写死 --surface 这条缝就没了） */
 .seg + .seg {
-  box-shadow: -1px 0 0 0 var(--surface);
+  box-shadow: -1px 0 0 0 var(--sheet-card-fill);
 }
 
 .dim-frequency {

@@ -366,6 +366,11 @@ html[data-perf='extreme'] {
   --glass-halo: 0 22px 56px -18px rgba(0, 0, 0, 0.3);
   --glass-panel-fill: rgba(255, 255, 255, 0.66);
   --surface-translucent: rgba(255, 255, 255, 0.52);
+  /* 抽屉白卡在极致档 = 白玻璃卡：浓度给到 0.92（再薄背景就透上来了），叠一层光学
+     内层。**刻意不给 backdrop-filter** —— 卡背后就是抽屉那层玻璃，再糊一次肉眼看不出，
+     却给每张卡多开一个背景根、滚动逐帧重采样（同上面 .card 那段的取舍）。 */
+  --sheet-card-fill: rgba(255, 255, 255, 0.92);
+  --sheet-card-shadow: var(--glass-panel-shadow), var(--glass-insets);
   /* 极致档铺开的那些表面共用的光学内层（内顶高光 ×2 / 内圈细描边 / 上缘焦散）。
      外投影**不在**这里：在流的内容面与浮层要的是两种落影（见下面两组选择器）。 */
   --glass-insets:
@@ -386,6 +391,8 @@ html[data-perf='extreme'] {
     --glass-halo: 0 -1px 24px -8px rgba(255, 255, 255, 0.34);
     --glass-panel-fill: rgba(28, 28, 30, 0.68);
     --surface-translucent: rgba(28, 28, 30, 0.56);
+    /* 暗色下的白卡 = 深灰玻璃卡，浓度同样要压住背后（亮色那套 0.92 在暗底上会发灰） */
+    --sheet-card-fill: rgba(28, 28, 30, 0.9);
   }
 }
 
@@ -471,6 +478,12 @@ html[data-perf='low'] .stage-dark {
 }
 
 @media (prefers-reduced-transparency: reduce) {
+  /* 抽屉白卡：系统要求「减弱透明度」时退回实底，与 .glass-surface / .panel 同一条语义 */
+  html {
+    --sheet-card-fill: var(--surface);
+    --sheet-card-shadow: var(--glass-panel-shadow);
+  }
+
   .glass-surface {
     background: var(--surface);
     /* 带 !important：折射那一支的 `backdrop-filter` 是**内联样式**（四条悬浮条在
