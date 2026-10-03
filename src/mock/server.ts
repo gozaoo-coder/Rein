@@ -2816,21 +2816,101 @@ function campusWeekOf(anchor: Date, date: string): number | null {
 let campusHolidayCfg = { enabled: true, overrides: {} as Record<string, number> }
 
 /**
- * 演示用调休计划，锚定本周：**本周五放假**、**本周日补周三的课**。
- * 这样任何一天打开预览都能在默认的周视图里直接看到「假 / 调」两种徽标，再叠加用户的手动覆盖。
+ * 官方调休数据的 **2026 年真实快照**（`holiday-cn` 的 `days` 原样搬来）。
+ *
+ * 为什么要内嵌而不是联网：mock 是纯浏览器的内存后端，不该有网络依赖；它只影响浏览器预览，
+ * 桌面端走 Rust 的 `holiday.rs`（联网抓取 + 落 `app_meta` 缓存）。
+ * 只列非常规日：法定放假日 `isOffDay: true`、调休补班日 `isOffDay: false`，普通周末不在表里。
+ * 2027 年的安排要等国务院发文（holiday-cn 现在还是空表），公布后照抄一份即可。
+ */
+const CAMPUS_HOLIDAY_2026: { name: string; date: string; isOffDay: boolean }[] = [
+  { name: '元旦', date: '2026-01-01', isOffDay: true },
+  { name: '元旦', date: '2026-01-02', isOffDay: true },
+  { name: '元旦', date: '2026-01-03', isOffDay: true },
+  { name: '元旦', date: '2026-01-04', isOffDay: false },
+  { name: '春节', date: '2026-02-14', isOffDay: false },
+  { name: '春节', date: '2026-02-15', isOffDay: true },
+  { name: '春节', date: '2026-02-16', isOffDay: true },
+  { name: '春节', date: '2026-02-17', isOffDay: true },
+  { name: '春节', date: '2026-02-18', isOffDay: true },
+  { name: '春节', date: '2026-02-19', isOffDay: true },
+  { name: '春节', date: '2026-02-20', isOffDay: true },
+  { name: '春节', date: '2026-02-21', isOffDay: true },
+  { name: '春节', date: '2026-02-22', isOffDay: true },
+  { name: '春节', date: '2026-02-23', isOffDay: true },
+  { name: '春节', date: '2026-02-28', isOffDay: false },
+  { name: '清明节', date: '2026-04-04', isOffDay: true },
+  { name: '清明节', date: '2026-04-05', isOffDay: true },
+  { name: '清明节', date: '2026-04-06', isOffDay: true },
+  { name: '劳动节', date: '2026-05-01', isOffDay: true },
+  { name: '劳动节', date: '2026-05-02', isOffDay: true },
+  { name: '劳动节', date: '2026-05-03', isOffDay: true },
+  { name: '劳动节', date: '2026-05-04', isOffDay: true },
+  { name: '劳动节', date: '2026-05-05', isOffDay: true },
+  { name: '劳动节', date: '2026-05-09', isOffDay: false },
+  { name: '端午节', date: '2026-06-19', isOffDay: true },
+  { name: '端午节', date: '2026-06-20', isOffDay: true },
+  { name: '端午节', date: '2026-06-21', isOffDay: true },
+  { name: '国庆节', date: '2026-09-20', isOffDay: false },
+  { name: '中秋节', date: '2026-09-25', isOffDay: true },
+  { name: '中秋节', date: '2026-09-26', isOffDay: true },
+  { name: '中秋节', date: '2026-09-27', isOffDay: true },
+  { name: '国庆节', date: '2026-10-01', isOffDay: true },
+  { name: '国庆节', date: '2026-10-02', isOffDay: true },
+  { name: '国庆节', date: '2026-10-03', isOffDay: true },
+  { name: '国庆节', date: '2026-10-04', isOffDay: true },
+  { name: '国庆节', date: '2026-10-05', isOffDay: true },
+  { name: '国庆节', date: '2026-10-06', isOffDay: true },
+  { name: '国庆节', date: '2026-10-07', isOffDay: true },
+  { name: '国庆节', date: '2026-10-10', isOffDay: false },
+]
+
+/** 公历日期 → 1=周一 … 7=周日。与 Rust `holiday.rs::weekday_of` 同构。 */
+function campusWeekdayOf(date: string): number {
+  return ((new Date(`${date}T00:00:00`).getDay() + 6) % 7) + 1
+}
+
+/**
+ * 推断「补班日 → 被补的星期几」。与 Rust `holiday.rs::infer_makeups` 同构：
+ * 同一节日下，把「假期内被吃掉的工作日（周一~周五）」与补班日都按日期降序一一配对。
+ * 2026 国庆 → 10/10 补周三、9/20 补周二；配不上的补班日不做映射（宁可不显示，也不张冠李戴）。
+ */
+function campusInferMakeups(): Map<string, number> {
+  const groups = new Map<string, { offs: string[]; makeups: string[] }>()
+  for (const d of CAMPUS_HOLIDAY_2026) {
+    let g = groups.get(d.name)
+    if (!g) {
+      g = { offs: [], makeups: [] }
+      groups.set(d.name, g)
+    }
+    // 只有落在工作日的放假日才「吃掉了课时」，周末本来就是休息日，不占配位
+    if (d.isOffDay) {
+      if (campusWeekdayOf(d.date) <= 5) g.offs.push(d.date)
+    } else {
+      g.makeups.push(d.date)
+    }
+  }
+  const out = new Map<string, number>()
+  for (const g of groups.values()) {
+    g.offs.sort((a, b) => b.localeCompare(a))
+    g.makeups.sort((a, b) => b.localeCompare(a))
+    for (let i = 0; i < g.makeups.length && i < g.offs.length; i++) {
+      out.set(g.makeups[i]!, campusWeekdayOf(g.offs[i]!))
+    }
+  }
+  return out
+}
+
+/**
+ * 调休计划：放假日集合 + 补班映射。与 Rust `holiday.rs::build_plan` 同构。
+ * 关闭开关 → 空计划（不标「假」也不挂「调」）；用户覆盖优先级最高（`0` = 取消该日补课）。
  */
 function campusHolidayPlan(): { off: Set<string>; makeup: Map<string, number> } {
   const off = new Set<string>()
   const makeup = new Map<string, number>()
   if (!campusHolidayCfg.enabled) return { off, makeup }
-  const start = campusMonday()
-  const dayAt = (week: number, weekday: number): string => {
-    const d = new Date(start)
-    d.setDate(d.getDate() + (week - 1) * 7 + (weekday - 1))
-    return ymd(d)
-  }
-  off.add(dayAt(1, 5)) // 本周五
-  makeup.set(dayAt(1, 7), 3) // 本周日 → 补周三
+  for (const d of CAMPUS_HOLIDAY_2026) if (d.isOffDay) off.add(d.date)
+  for (const [date, wd] of campusInferMakeups()) makeup.set(date, wd)
   for (const [date, wd] of Object.entries(campusHolidayCfg.overrides)) {
     if (wd === 0) makeup.delete(date)
     else if (wd >= 1 && wd <= 7) makeup.set(date, wd)
