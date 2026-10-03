@@ -105,6 +105,12 @@ pub fn run() {
             modules::exercise::commands::list_all_workouts,
             modules::exercise::commands::create_workout,
             modules::exercise::commands::delete_workout,
+            // healthsync（第三方健康数据：Android Health Connect 双向同步运动记录）
+            modules::healthsync::commands::health_sync_status,
+            modules::healthsync::commands::health_sync_authorize,
+            modules::healthsync::commands::health_sync_set_push,
+            modules::healthsync::commands::health_sync_start,
+            modules::healthsync::commands::health_sync_step,
             // pomodoro
             modules::pomodoro::commands::save_pomodoro_session,
             modules::pomodoro::commands::list_pomodoro_sessions,
@@ -188,6 +194,8 @@ pub fn run() {
             // share（分享收件箱：Android 系统分享/打开的文件）
             modules::share::commands::share_poll,
             modules::share::commands::share_read,
+            // media（HEIF/HEIC → JPEG：WebView 解不了 HEVC，借系统解码器）
+            modules::media::commands::image_decode_heif,
             // sync（多设备同步：设备身份 / 状态 / 配对 / 传输）
             modules::sync::commands::sync_status,
             modules::sync::commands::sync_set_device_name,

@@ -1,24 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, NotebookPen, Plus, Search, SearchX } from 'lucide-vue-next'
 
+import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import BudgetSheet from '@/components/ledger/BudgetSheet.vue'
 import LedgerEntrySheet from '@/components/ledger/LedgerEntrySheet.vue'
 import LedgerList from '@/components/ledger/LedgerList.vue'
 import LedgerStats from '@/components/ledger/LedgerStats.vue'
-import { useMediaQuery } from '@/composables/useMediaQuery'
 import { categoryOf } from '@/config/ledger'
-import { DESKTOP_MIN } from '@/config/domain'
 import { useLedgerStore } from '@/stores/ledger'
 import { addMonths, monthKey, todayStr } from '@/utils/date'
 import type { LedgerEntry } from '@/types'
 
 /** 记账：月度统计 + 流水列表 + 记一笔 / 编辑 / 预算设置。 */
 const store = useLedgerStore()
-
-/** 桌面上主操作落进筛选条，移动端仍用那颗悬浮的「记一笔」（见模板注释） */
-const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 
 onMounted(() => {
   void store.loadMonth()
@@ -59,6 +55,13 @@ const filtered = computed(() => {
   )
 })
 
+/** 本月一条流水都没有。区别于「筛出来是空」——后者是关键词/分类的锅，筛选条得留着让人撤回来。 */
+const noEntries = computed(() => store.monthEntries.length === 0)
+const noMatch = computed(() => kw.value.trim() !== '' || filterCat.value !== null)
+/** 空月份整条收起筛选：没有东西可筛，那条孤零零的「全部」胶囊还占着 40px，
+ *  把空态卡一路顶到悬浮钮底下（用户截图里被压住的正是这一块）。 */
+const showFilters = computed(() => !noEntries.value || noMatch.value)
+
 /* ---- 弹层 ---- */
 const entryOpen = ref(false)
 const editing = ref<LedgerEntry | null>(null)
@@ -74,14 +77,21 @@ function onEdit(e: LedgerEntry): void {
   entryOpen.value = true
 }
 
-const emptyText = computed(() =>
-  kw.value.trim() || filterCat.value ? '没有匹配的流水' : '本月还没有流水，点右下角记一笔',
-)
+const emptyCopy = computed(() => {
+  if (noMatch.value) {
+    return {
+      icon: SearchX,
+      title: '没有匹配的流水',
+      hint: usedCats.value.length > 0 ? '换个关键词，或点上面的分类重新筛' : '换个关键词试试',
+    }
+  }
+  return { icon: NotebookPen, title: '本月还没有流水', hint: '点下面的「记一笔」，第一笔就落在这个月' }
+})
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="记账" subtitle="每一笔都记录，月底心中有数" back>
+    <PageHeader title="记账" subtitle="每一笔都有数" back>
       <template #action>
         <div class="month row center">
           <button class="nav" aria-label="上一个月" @click="shiftMonth(-1)">
@@ -104,21 +114,27 @@ const emptyText = computed(() =>
       <LedgerStats @edit-budget="budgetOpen = true" />
 
       <div class="flow">
-        <!-- 筛选：关键词 + 分类 -->
-        <div class="filters">
+        <!-- 筛选：关键词 + 分类（分类胶囊按本月实际用到的分类生成）。
+             本月一条流水都没有时整条收起 —— 没有东西可筛，那条孤零零的「全部」胶囊
+             还白占 40px，把空态卡一路顶到浮层底下。 -->
+        <div v-if="showFilters" class="filters">
           <div class="searchrow row">
             <label class="search row center flex-1">
               <Search :size="15" class="t-3" />
               <input v-model="kw" type="search" placeholder="搜索备注" aria-label="搜索备注" />
             </label>
-            <!-- 桌面的主操作落在筛选条右端：窗口底部正中的悬浮钮会压在流水上，
-                 也不是桌面习惯（那个位置本该什么都没有）。移动端仍用悬浮钮。 -->
-            <button v-if="isDesktop" class="add-inline row center pressable" @click="onAdd">
+            <!-- 主操作「记一笔」：**全端就这一处**（原先移动端是底部那颗 fixed 居中胶囊）。
+                 胶囊压在滚动内容上，一页里永远有一块被它盖住 —— 393×749 下是分类胶囊与
+                 搜索框，430×932 下是某行的分类名与备注，空月份下正是空态那句提示本身。
+                 补 padding-bottom 只能保证「滚到底能露出来」，静止时被压的那一行照样读不了；
+                 这一页的流水是逐行读的列表，最经不起盖，所以主操作回到流里（而不是把
+                 碰撞挪个位置）。它按 `filtered.length` 与空态卡二选一，同一屏只有一颗。 -->
+            <button v-if="filtered.length > 0" class="add-inline row center pressable" @click="onAdd">
               <Plus :size="16" :stroke-width="2.6" />
               <span>记一笔</span>
             </button>
           </div>
-          <div class="chips" data-rubber-self>
+          <div v-if="usedCats.length > 0" class="chips" data-rubber-self>
             <button class="chip" :class="{ on: filterCat === null }" @click="filterCat = null">全部</button>
             <button
               v-for="key in usedCats"
@@ -135,18 +151,21 @@ const emptyText = computed(() =>
 
         <!-- 流水 -->
         <LedgerList v-if="filtered.length > 0" :entries="filtered" @edit="onEdit" />
-        <section v-else class="card empty t-3">{{ emptyText }}</section>
+        <!-- 空态：与抢课/知识库同用 EmptyState（图标 + 标题 + 提示）。
+             没有可读的流水时，行动出口就落在这张卡里（筛选条那时也收起了，
+             不落在卡里就等于整个月没有入口记第一笔）。 -->
+        <section v-else class="card">
+          <EmptyState :icon="emptyCopy.icon" :title="emptyCopy.title" :hint="emptyCopy.hint">
+            <template #action>
+              <button class="add-inline row center pressable" @click="onAdd">
+                <Plus :size="16" :stroke-width="2.6" />
+                <span>记一笔</span>
+              </button>
+            </template>
+          </EmptyState>
+        </section>
       </div>
     </div>
-
-    <!-- 记一笔（Teleport 出页面层：translate 会改 fixed 后代的包含块，留在层内拖动时会跑位）。
-         桌面不挂它：桌面的主操作在筛选条右端（见上），悬浮钮只留给触屏。 -->
-    <Teleport v-if="!isDesktop" to="body">
-      <button class="fab row center" aria-label="记一笔" @click="onAdd">
-        <Plus :size="20" :stroke-width="2.6" />
-        <span>记一笔</span>
-      </button>
-    </Teleport>
 
     <LedgerEntrySheet :open="entryOpen" :entry="editing" @close="entryOpen = false" @saved="entryOpen = false" />
     <BudgetSheet :open="budgetOpen" @close="budgetOpen = false" @saved="budgetOpen = false" />
@@ -214,6 +233,12 @@ const emptyText = computed(() =>
 }
 
 .add-inline {
+  /* 排进筛选条时是 flex 项、落进空态卡（.act 是文本居中的块）时必须是 inline-flex，
+     否则按钮会被拉满整卡宽 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
   flex: none;
   gap: 5px;
   padding: 8px 14px;
@@ -285,32 +310,35 @@ const emptyText = computed(() =>
   border-radius: 50%;
 }
 
-.empty {
-  padding: 26px 16px;
-  text-align: center;
-  font-size: var(--fs-footnote);
-  font-weight: 500;
+/* 页头副标题：窄窗下宁可截断也不折成两行 —— 月份切换器固定占 156px，
+   390 宽时标题块只剩 132px，12 个字的副标题一折行就把页头顶到 98px，
+   切换器随之被推到第二行旁边，整条页头读起来是散的。
+   文案已按 360 宽（Android 最窄机型）收在一行内，这条只是兜底。 */
+.page-header :deep(p) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 记一笔悬浮按钮（TabBar 之上） */
-.fab {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(var(--dock-top) + 14px);
-  z-index: 50;
-  gap: 5px;
-  padding: 13px 24px;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: #fff;
-  box-shadow: var(--shadow-float);
-  font-size: var(--fs-headline);
-  font-weight: 700;
-  transition: transform var(--dur-fast) var(--ease-standard);
+/* EmptyState 自带 26px 上下内边距，而 .card 外面又给了一圈 16 —— 两层叠起来，
+   卡里上下一共 84px 的空白，空态卡因此顶到 208px 高（390 宽的下限窗口里，
+   它一路伸到 dock 底下）。组件内边距在这里收掉，外侧的卡已经提供了呼吸。 */
+.card :deep(.empty) {
+  padding: 4px 12px;
 }
 
-.fab:active {
-  transform: translateX(-50%) scale(0.95);
+/* 空态卡里那颗是当月唯一的入口（筛选条同时收起了），给它 44px 的触控高度；
+   筛选条里那颗仍留在行高内，与搜索框齐平。 */
+.card .add-inline {
+  padding: 11px 20px;
+}
+
+/* 主操作现在全端就这一处（悬浮钮已取消），命中区必须够拇指：视觉高度跟着搜索框
+   （35px），命中区按项目惯例（PageHeader 的 .back / .hdr-btn）撑到 44 —— 只上下扩，
+   不横向扩：左边就是搜索框，横向扩会把它右端那一段的点击抢走。 */
+.add-inline::after {
+  content: '';
+  position: absolute;
+  inset: -5px 0;
 }
 </style>

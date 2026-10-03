@@ -14,10 +14,14 @@ import RingProgress from '@/components/common/RingProgress.vue'
 const ExerciseDetailDrawer = defineAsyncComponent(
   () => import('@/components/exercise/ExerciseDetailDrawer.vue'),
 )
+const WeightAdviceSheet = defineAsyncComponent(
+  () => import('@/components/exercise/WeightAdviceSheet.vue'),
+)
 const MuscleMap = defineAsyncComponent(() => import('@/components/exercise/MuscleMap.vue'))
 import SessionBigNumberInput from '@/components/exercise/SessionBigNumberInput.vue'
 import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
 import SessionGlassButton from '@/components/exercise/SessionGlassButton.vue'
+import SessionSummaryPane from '@/components/exercise/SessionSummaryPane.vue'
 import ReadinessDialog from '@/components/exercise/ReadinessDialog.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
@@ -89,11 +93,9 @@ const lastRef = computed(() => s.lastWeights[s.currentEx?.exerciseId ?? ''])
 /** 今日建议：平均状态（近 3 次 e1RM 加权）× 今日状态（恢复/容量/趋势/自评） */
 const curAdvice = computed(() => (s.currentEx ? s.adviceFor(s.currentEx) : null))
 
-/** 建议依据默认收起，点一下展开（训练中不打扰，但随时可查） */
-const whyOpen = ref(false)
-
-/** 展开后逐条列出的部分：首条已经当摘要行显示了，展开时不再重复它 */
-const whyRest = computed(() => (curAdvice.value?.rationale ?? []).slice(1))
+/** 建议说明抽屉：摘要行只留一句话，RM 单位 / 完整依据 / 计算过程都收进抽屉
+ *  （从前是内联展开，会把下方次数输入整个推开，打断登记流） */
+const adviceOpen = ref(false)
 
 /** 展示名：库内名优先（动作库改名全端跟随），回落课程条目快照 */
 const displayName = computed(() => (s.currentEx ? lib.resolveName(s.currentEx) : ''))
@@ -879,17 +881,17 @@ watch(immersiveOpen, (open) => {
                 </button>
               </div>
 
-              <!-- 建议依据：一行摘要，点开看完整推导（平均状态 × 今日状态）。
-                   摘要是推导的首条，展开时从第二条开始列，不在下面重复同一句 -->
-              <template v-if="curAdvice?.hasHistory || curAdvice?.rationale.length">
-                <button class="whydis" :aria-expanded="whyOpen" @click="whyOpen = !whyOpen">
-                  <span class="whytxt">{{ curAdvice?.rationale[0] }}</span>
-                  <ChevronDown v-if="whyRest.length" :size="14" :class="{ flip: whyOpen }" />
-                </button>
-                <ul v-if="whyOpen && whyRest.length" class="whylist">
-                  <li v-for="(r, i) in whyRest" :key="i">{{ r }}</li>
-                </ul>
-              </template>
+              <!-- 建议依据：一行摘要，点开抽屉看完整推导（RM 单位 / 依据 / 计算过程）。
+                   箭头用 ›（去抽屉）而非 ⌄（原地展开），指向与行为一致 -->
+              <button
+                v-if="curAdvice?.rationale.length"
+                class="whydis"
+                aria-label="查看建议的完整依据与计算过程"
+                @click="adviceOpen = true"
+              >
+                <span class="whytxt">{{ curAdvice?.rationale[0] }}</span>
+                <ChevronRight :size="14" />
+              </button>
 
               <div class="fsep" />
 
@@ -957,16 +959,11 @@ watch(immersiveOpen, (open) => {
             </RingProgress>
           </div>
 
-          <!-- 总结：只剩庆祝与成绩，动作交给底簇（与其它阶段同槽同位） -->
-          <div v-else-if="s.phase === 'summary'" class="pane col center">
-            <span class="doneemoji">🎉</span>
-            <p class="donetitle">{{ s.plan?.name }}完成</p>
-            <p class="num donemeta">
-              {{ s.doneCount }}/{{ s.totalCount }} 组
-              <template v-if="s.totalVolume > 0"> · 总容量约 {{ s.totalVolume }} kg</template>
-              · 用时约 {{ s.durationMin }} 分钟 · 约 {{ s.estimateKcalValue }} 大卡
-            </p>
-          </div>
+          <!-- 总结：成绩单交给独立组件（完成环 / 四项指标 / 进步 / 逐动作明细 /
+               肌群 / 下次建议）。这一屏的内容量已超过一屏，逻辑与版式都不适合
+               再塞进本组件 —— 它已 1800 行，且总结的派生口径集中在
+               utils/sessionSummary，组件只做呈现。底簇仍是保存/放弃（同其它阶段）。 -->
+          <SessionSummaryPane v-else-if="s.phase === 'summary'" />
         </div>
       </main>
 
@@ -1178,6 +1175,14 @@ watch(immersiveOpen, (open) => {
 
       <!-- 全课浏览抽屉：逐组进度 / 跳至该组 / 临时换动作 -->
       <SessionCourseDrawer :open="courseOpen" @close="courseOpen = false" />
+
+      <!-- 重量建议说明抽屉：RM 单位 / 本次依据 / 四步计算过程 -->
+      <WeightAdviceSheet
+        :open="adviceOpen"
+        :advice="curAdvice"
+        :exercise-name="displayName"
+        @close="adviceOpen = false"
+      />
     </div>
   </div>
 </template>
@@ -1579,25 +1584,6 @@ watch(immersiveOpen, (open) => {
 
 .whydis svg {
   flex: none;
-  transition: transform var(--dur-fast) var(--ease-standard);
-}
-
-.whydis svg.flip {
-  transform: rotate(180deg);
-}
-
-.whylist {
-  padding: 10px 12px;
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-  text-align: left;
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-  line-height: 1.7;
-}
-
-.whylist li + li {
-  margin-top: 3px;
 }
 
 /* 热身清单步骤 chips */
@@ -1872,22 +1858,5 @@ watch(immersiveOpen, (open) => {
 .iconbtn svg {
   width: 24px;
   height: 24px;
-}
-
-/* 完成态 */
-.doneemoji {
-  font-size: 52px;
-}
-
-.donetitle {
-  font-size: var(--fs-large-title);
-  font-weight: 700;
-  letter-spacing: -0.5px;
-}
-
-.donemeta {
-  font-size: var(--fs-subhead);
-  color: var(--text-2);
-  margin-bottom: 8px;
 }
 </style>

@@ -314,6 +314,19 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     startedAtIso.value ? Math.max(1, Math.round((Date.now() - Date.parse(startedAtIso.value)) / 60_000)) : 0,
   )
 
+  /**
+   * 墙钟秒数（同一份 startedAt 推导，不另存）。
+   * 总结页要它是因为「每组耗时」是秒级的：拿 durationMin（且至少 1 分钟）
+   * 去除，会把 45 秒的快节奏课算成 60 秒/组 —— 分钟级的取整在这里是失真的。
+   * 未开始时返回 0（不是 60）：调用方据此不渲染，而不是渲染出一个假的数。
+   */
+  const durationSec = computed(() => {
+    if (!startedAtIso.value) return 0
+    const t = Date.parse(startedAtIso.value)
+    if (Number.isNaN(t)) return 0
+    return Math.max(0, Math.round((Date.now() - t) / 1000))
+  })
+
   const estimateKcalValue = computed(() =>
     plan.value
       ? estimateKcal(
@@ -1157,6 +1170,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     courseSlots,
     skippedSets,
     durationMin,
+    durationSec,
     estimateKcalValue,
     isActive,
     start,

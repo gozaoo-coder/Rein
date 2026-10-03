@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import { EQUIPMENT_LABELS, TIME_SLOT_LABELS } from '@/config/domain'
+import { DIET_RESTRICTION_PRESETS, EQUIPMENT_LABELS, TIME_SLOT_LABELS } from '@/config/domain'
 import { useNutritionStore } from '@/stores/nutrition'
 import type { ProgramStart } from '@/types'
 import type { Equipment, Profile, TimeSlot } from '@/types'
@@ -52,7 +52,7 @@ watch(
     if (!p) return
     draftDays.value = p.trainingDaysPerWeek ?? 4
     draftEquipment.value = p.equipment ?? 'gym'
-    draftSlots.value = [...(p.preferredTimeSlots ?? ['evening'])]
+    draftSlots.value = [...(p.preferredTimeSlots ?? [])]
     draftRestrictions.value = [...(p.dietRestrictions ?? [])]
   },
   { immediate: true },
@@ -71,7 +71,6 @@ const dayOptions = computed(() => {
 
 const EQUIPMENT_OPTIONS = ['gym', 'home', 'mixed']
 const SLOT_OPTIONS = ['morning', 'noon', 'evening']
-const RESTRICTION_PRESETS = ['乳制品', '麸质', '海鲜', '蛋类', '大豆', '坚果']
 
 const startDate = computed(() =>
   startMode.value === 'today'
@@ -114,7 +113,7 @@ const startOptions = computed(() => {
 
 /** 预设之外的自定义忌口（已存进 profile 的关键词） */
 const customRestrictions = computed(() =>
-  draftRestrictions.value.filter((r) => !RESTRICTION_PRESETS.includes(r)),
+  draftRestrictions.value.filter((r) => !DIET_RESTRICTION_PRESETS.includes(r)),
 )
 
 const previewText = computed(() => {
@@ -155,6 +154,9 @@ function pickStart(v: 'next' | 'today' | 'tomorrow'): void {
   startMode.value = v
   if (v === 'next') firstCourseId.value = null
 }
+
+/** 「自由安排」= 不限时段（落库 null，引擎按晚间兜底）；只在具体时段全不选时点亮 */
+const freeSlots = computed(() => draftSlots.value.length === 0)
 
 function toggleSlot(s: string): void {
   draftSlots.value = draftSlots.value.includes(s)
@@ -279,7 +281,7 @@ async function applyAndGenerate(): Promise<void> {
       <p class="glabel">忌口（点选排除，引擎会自动换掉含它们的食谱）</p>
       <div class="chips">
         <button
-          v-for="r in RESTRICTION_PRESETS"
+          v-for="r in DIET_RESTRICTION_PRESETS"
           :key="r"
           class="chip"
           :class="{ on: draftRestrictions.includes(r) }"
@@ -308,6 +310,14 @@ async function applyAndGenerate(): Promise<void> {
     <div class="group">
       <p class="glabel">常练时段</p>
       <div class="chips">
+        <button
+          class="chip"
+          :class="{ on: freeSlots }"
+          :aria-pressed="freeSlots"
+          @click="draftSlots = []"
+        >
+          自由安排
+        </button>
         <button
           v-for="s in SLOT_OPTIONS"
           :key="s"

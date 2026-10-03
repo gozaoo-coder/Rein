@@ -2,20 +2,74 @@
 
 import type { ActivationMap, MuscleKey } from '@/config/muscles'
 
+/**
+ * 运动类型枚举 · 「记运动」可选的**全部**项目。
+ *
+ * 口径：这里列的是**健身课程体系之外**的自主运动 —— 课程（workout_plans）走的是
+ * 「逐组做组」那条路，本枚举走的是「一段时间一段消耗」的粗粒度补录。
+ * 所以凡是能当课程开的（力量/自重/HIIT 器械）也在这里给一份，因为真实生活里
+ * 「今天在宿舍练了二十分钟腹肌」不会先去建一门课。
+ *
+ * 键名一律 snake_case 英文（进 IPC 与 SQLite，不随语言变）；中文名只在
+ * `config/domain.ts` 的 WORKOUT_META 里给一份。
+ */
 export const WORKOUT_TYPES = [
+  // 走路 / 日常移动
   'walk',
+  'hike',
+  'stairs',
+  'chores',
+  'dogwalk',
+  // 跑步 / 骑行 / 场馆有氧
   'run',
   'cycle',
-  'swim',
-  'strength',
   'hiit',
-  'yoga',
+  'rope',
+  'elliptical',
+  'row',
+  'dance',
+  // 球类
   'ball',
+  'basketball',
+  'badminton',
+  'tennis',
+  'pingpong',
+  'football',
+  'golf',
+  // 水上
+  'swim',
+  'kayak',
+  // 力量 / 场馆课
+  'strength',
+  'yoga',
+  'pilates',
+  'boxing',
+  'martial',
+  'climbing',
+  'skate',
+  // 户外
+  'ski',
   'other',
 ] as const
 
 export type WorkoutType = (typeof WORKOUT_TYPES)[number]
+
+/** 类型分组：「记运动」的类型选择器按这两级组织（30 个类型平铺一屏没法用） */
+export type WorkoutGroup = 'daily' | 'cardio' | 'ball' | 'water' | 'gym' | 'outdoor'
+
+/** 自动档强度：由客观数据（配速 / 逐组重量）反推，只在课程与跑步路径写入 */
 export type Intensity = 'low' | 'moderate' | 'high'
+
+/**
+ * 体感强度 1–5：用户主观「这次累不累」。
+ *
+ * 与 Intensity 的分工：Intensity 是**算出来的**（配速 5'30"/km 内 = high），
+ * 体感是**用户说的**。手动补录只认体感 —— 让一个刚跑完的人去判断自己属于
+ * 「低强度」还是「中强度」，本身就要求他先知道 MET 表；而「跑完这趟累不累」他一定答得上。
+ * 落库列 `workouts.effort`（INTEGER 1..5），课程/跑步路径为 NULL（它们有客观档位可依）。
+ */
+export const EFFORT_LEVELS = [1, 2, 3, 4, 5] as const
+export type EffortLevel = (typeof EFFORT_LEVELS)[number]
 
 /* ---------------- 动作库（迁移 0025：全部运动动作的唯一真源） ---------------- */
 
@@ -96,7 +150,14 @@ export interface Workout {
   startMin: number | null
   durationMin: number
   kcal: number
+  /**
+   * 客观档位（配速/逐组重量反推出来的「低/中/高强度」）。
+   * DB 里是 NOT NULL，所以手动补录也会写一档 —— 但那是从 effort 派生的，
+   * 不是用户的判断（旧代码与知识库派生仍读它）。有 effort 时展示以 effort 为准。
+   */
   intensity: Intensity
+  /** 体感强度 1–5：手动补录由用户口述；课程/跑步路径为 null */
+  effort: EffortLevel | null
   note: string | null
   /** 来源会话（训练课/跑步保存时落关联）；手动添加为 null */
   sessionId: number | null
@@ -109,7 +170,9 @@ export interface WorkoutInput {
   date: string
   startMin?: number | null
   durationMin: number
-  intensity: Intensity
+  /** 与 effort 二选一：手动补录给 effort，课程/跑步给 intensity */
+  intensity?: Intensity | null
+  effort?: EffortLevel | null
   kcal: number
   note?: string | null
 }

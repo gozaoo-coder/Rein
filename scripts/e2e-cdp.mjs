@@ -255,29 +255,37 @@ async function main() {
     ok('A3b 时段切换', (await clickButton('早晨', 'div')) && (await clickButton('午间', 'div')))
     // 器械切「居家徒手」（segmented 第二项）
     ok('A4 器械分段切换', await clickButton('居家徒手'))
-    // 身体数据（方案计算硬前置）：性别男 + 生日
+    // 身体数据（方案计算硬前置）：性别男 + 生日（年/月/日 三个下拉，change 驱动草稿更新）
     ok('A4b 性别选择', await clickButton('男'))
     await evalJS(`(() => {
-      const inp = document.querySelector('.cform input[type="date"]')
+      const set = (label, val) => {
+        const sel = document.querySelector('.bsel[aria-label="' + label + '"]')
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+        setter.call(sel, val)
+        sel.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      set('出生年份', '1995')
+      set('出生月份', '6')
+      set('出生日', '15')
+      return true
+    })()`)
+    // 忌口：预设点选一项 + 自定义输入回车加一项
+    ok('A5a 忌口预设点选（海鲜）', await clickButton('海鲜'))
+    await evalJS(`(() => {
+      const inp = document.querySelector('.cinput')
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-      setter.call(inp, '1995-06-15')
+      setter.call(inp, '花生')
       inp.dispatchEvent(new Event('input', { bubbles: true }))
       return true
     })()`)
-    // 忌口添加两项
-    for (const kw of ['海鲜', '花生']) {
-      await evalJS(`(() => {
-        const inp = document.querySelector('.rinput')
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-        setter.call(inp, ${JSON.stringify(kw)})
-        inp.dispatchEvent(new Event('input', { bubbles: true }))
-        return true
-      })()`)
-      await clickButton('添加')
-      await sleep(100)
-    }
-    ok('A5 忌口 chips 已加两条', await evalJS(
-      `[...document.querySelectorAll('.chips .chip')].filter(c => /×/.test(c.textContent)).length === 2`,
+    await evalJS(`(() => {
+      const inp = document.querySelector('.cinput')
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      return true
+    })()`)
+    await sleep(100)
+    ok('A5 忌口 chips 已选两条（海鲜/花生）', await evalJS(
+      `[...document.querySelectorAll('.chips .chip.on')].length === 2`,
     ))
     await clickButton('保存')
     await sleep(600)

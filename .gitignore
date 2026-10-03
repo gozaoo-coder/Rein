@@ -87,3 +87,6 @@ server/data/
 server/config.json
 server/node_modules/
 .tmp-ui-shots/
+
+# HEIC 测试样例（第三方二进制，用 `npm run heic:fixture` 拉取）
+src-tauri/resources/test/heic/

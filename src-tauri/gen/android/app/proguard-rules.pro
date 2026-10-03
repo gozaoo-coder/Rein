@@ -31,3 +31,7 @@
 # call_static_method）。漏了这条的后果实测就是「点安装并更新 → 闪退」：
 # release 包把 install 方法裁掉，JNI 调用抛 NoSuchMethodError。
 -keep class com.gozaoo.rein.UpdateBridge { *; }
+# HealthConnectBridge 同理：Rust 经 JNI 反射调 refresh / requestPermissions /
+# startRead / startWrite / deleteRecord（modules/healthsync 的 call_static_method）。
+# 漏了它的后果和前两个一样，只是触发点更靠后：点「立即同步」才闪退。
+-keep class com.gozaoo.rein.HealthConnectBridge { *; }

@@ -5,7 +5,15 @@ import { Apple, Coffee, Utensils } from 'lucide-vue-next'
 
 import type { Goal, ActivityLevel, DailyTargets } from '@/types/nutrition'
 import type { MealLog, MealType } from '@/types/diet'
-import type { Intensity, WorkoutType, ExerciseCategory, ExerciseEquipment, ExerciseKind } from '@/types/exercise'
+import type {
+  EffortLevel,
+  Intensity,
+  WorkoutGroup,
+  WorkoutType,
+  ExerciseCategory,
+  ExerciseEquipment,
+  ExerciseKind,
+} from '@/types/exercise'
 import type { TodoCategory } from '@/types/todo'
 
 export const MEAL_LABELS: Record<MealType, string> = {
@@ -120,6 +128,9 @@ export const EXPERIENCE_LABELS: Record<string, string> = {
   advanced: '进阶',
 }
 
+/** 忌口预设：方案向导与「我 › 个人约束」编辑抽屉共用一份（点选排除 + 关键词过滤食谱） */
+export const DIET_RESTRICTION_PRESETS: string[] = ['乳制品', '麸质', '海鲜', '蛋类', '大豆', '坚果']
+
 /* ---------------- 动作库展示元数据（action library：分类 / 器材 / 类型） ---------------- */
 
 /** 动作分类（动作库页分组与筛选的顺序即此数组顺序） */
@@ -164,34 +175,124 @@ export const TARGET_FIELD_META: { key: keyof DailyTargets; label: string; unit: 
   { key: 'waterMl', label: '饮水', unit: 'ml' },
 ]
 
-/** 各运动的 MET 值（Ainsworth Compendium 近似），按强度分档 */
+/**
+ * 各运动的 MET 值（Ainsworth Compendium 近似），按强度分档。
+ * `group` 决定「记运动」类型选择器的分区；顺序即选择器里的呈现顺序（常用的在前）。
+ */
 export const WORKOUT_META: Record<
   WorkoutType,
-  { label: string; met: Record<Intensity, number> }
+  { label: string; group: WorkoutGroup; met: Record<Intensity, number> }
 > = {
-  walk: { label: '快走', met: { low: 2.8, moderate: 3.5, high: 4.3 } },
-  run: { label: '跑步', met: { low: 8.0, moderate: 9.8, high: 11.5 } },
-  cycle: { label: '骑行', met: { low: 5.0, moderate: 7.5, high: 10.0 } },
-  swim: { label: '游泳', met: { low: 6.0, moderate: 8.3, high: 10.5 } },
-  strength: { label: '力量训练', met: { low: 3.5, moderate: 5.0, high: 6.5 } },
-  hiit: { label: 'HIIT', met: { low: 7.0, moderate: 10.0, high: 12.0 } },
-  yoga: { label: '瑜伽', met: { low: 2.5, moderate: 3.0, high: 4.0 } },
-  ball: { label: '球类', met: { low: 4.5, moderate: 6.5, high: 8.0 } },
-  other: { label: '其他', met: { low: 3.5, moderate: 5.0, high: 6.5 } },
+  // ---- 走路 / 日常移动 ----
+  walk: { label: '快走', group: 'daily', met: { low: 2.8, moderate: 3.5, high: 4.3 } },
+  hike: { label: '徒步', group: 'daily', met: { low: 3.5, moderate: 5.0, high: 6.5 } },
+  stairs: { label: '爬楼梯', group: 'daily', met: { low: 4.0, moderate: 8.0, high: 9.0 } },
+  chores: { label: '做家务', group: 'daily', met: { low: 2.5, moderate: 3.3, high: 4.0 } },
+  dogwalk: { label: '遛狗', group: 'daily', met: { low: 2.0, moderate: 3.0, high: 3.8 } },
+
+  // ---- 跑步 / 骑行 / 场馆有氧 ----
+  run: { label: '跑步', group: 'cardio', met: { low: 8.0, moderate: 9.8, high: 11.5 } },
+  cycle: { label: '骑行', group: 'cardio', met: { low: 5.0, moderate: 7.5, high: 10.0 } },
+  hiit: { label: 'HIIT', group: 'cardio', met: { low: 7.0, moderate: 10.0, high: 12.0 } },
+  rope: { label: '跳绳', group: 'cardio', met: { low: 8.8, moderate: 11.8, high: 12.3 } },
+  elliptical: { label: '椭圆机', group: 'cardio', met: { low: 4.6, moderate: 5.0, high: 8.0 } },
+  row: { label: '划船机', group: 'cardio', met: { low: 4.0, moderate: 7.0, high: 10.0 } },
+  dance: { label: '跳舞', group: 'cardio', met: { low: 4.5, moderate: 6.5, high: 8.5 } },
+
+  // ---- 球类 ----
+  ball: { label: '球类', group: 'ball', met: { low: 4.5, moderate: 6.5, high: 8.0 } },
+  basketball: { label: '篮球', group: 'ball', met: { low: 4.5, moderate: 6.5, high: 8.0 } },
+  badminton: { label: '羽毛球', group: 'ball', met: { low: 3.5, moderate: 5.5, high: 7.0 } },
+  tennis: { label: '网球', group: 'ball', met: { low: 4.0, moderate: 7.0, high: 9.0 } },
+  pingpong: { label: '乒乓球', group: 'ball', met: { low: 2.5, moderate: 4.0, high: 5.5 } },
+  football: { label: '足球', group: 'ball', met: { low: 5.0, moderate: 7.0, high: 9.5 } },
+  golf: { label: '高尔夫', group: 'ball', met: { low: 3.0, moderate: 4.5, high: 6.0 } },
+
+  // ---- 水上 ----
+  swim: { label: '游泳', group: 'water', met: { low: 6.0, moderate: 8.3, high: 10.5 } },
+  kayak: { label: '皮划艇', group: 'water', met: { low: 4.0, moderate: 5.5, high: 7.0 } },
+
+  // ---- 力量 / 场馆课 ----
+  strength: { label: '力量训练', group: 'gym', met: { low: 3.5, moderate: 5.0, high: 6.5 } },
+  yoga: { label: '瑜伽', group: 'gym', met: { low: 2.5, moderate: 3.0, high: 4.0 } },
+  pilates: { label: '普拉提', group: 'gym', met: { low: 2.5, moderate: 3.5, high: 5.0 } },
+  boxing: { label: '拳击', group: 'gym', met: { low: 5.0, moderate: 7.8, high: 10.0 } },
+  martial: { label: '武术散打', group: 'gym', met: { low: 4.0, moderate: 6.0, high: 8.0 } },
+  climbing: { label: '攀岩', group: 'gym', met: { low: 5.0, moderate: 8.0, high: 9.0 } },
+  skate: { label: '滑冰轮滑', group: 'gym', met: { low: 4.5, moderate: 6.5, high: 8.5 } },
+
+  // ---- 户外 ----
+  ski: { label: '滑雪', group: 'outdoor', met: { low: 5.0, moderate: 6.5, high: 8.5 } },
+  other: { label: '其他', group: 'outdoor', met: { low: 3.5, moderate: 5.0, high: 6.5 } },
+}
+
+/** 类型分组展示元数据：顺序即选择器里的分区顺序 */
+export const WORKOUT_GROUPS: { key: WorkoutGroup; label: string }[] = [
+  { key: 'daily', label: '走路日常' },
+  { key: 'cardio', label: '跑跳有氧' },
+  { key: 'ball', label: '球类' },
+  { key: 'water', label: '水上' },
+  { key: 'gym', label: '力量场馆' },
+  { key: 'outdoor', label: '户外其他' },
+]
+
+/** 按分区过滤类型（供选择器渲染；无匹配时返回空数组） */
+export function workoutTypesInGroup(group: WorkoutGroup): WorkoutType[] {
+  return (Object.keys(WORKOUT_META) as WorkoutType[]).filter((t) => WORKOUT_META[t].group === group)
+}
+
+/**
+ * 体感强度 1–5 → 客观 MET 档。
+ *
+ * 为什么不是直接给每档一个 MET：MET 表本身是按**动作类型 × 强度**二维给的，
+ * 而用户只会答「累不累」。这里把体感折算成档位（1–2 轻松 → low，3 适中 → moderate，
+ * 4–5 累 → high），复用既有的 MET 分档 —— 于是新增 30 个类型只需要各填一行 MET，
+ * 体感维度的全部科学性由这一张映射表承担，改一处即全应用生效。
+ *
+ * 刻意不做得更细（比如把 effort 线性插值进 MET）：那会让「3.5 分体感」这种不存在的输入
+ * 看起来更精确，而 MET 分档本身的误差远大于插值带来的收益。
+ */
+export function effortToIntensity(effort: EffortLevel): Intensity {
+  if (effort <= 2) return 'low'
+  if (effort === 3) return 'moderate'
+  return 'high'
+}
+
+/** 体感档位文案（选择器与记录详情共用；避免各处硬写「累不累」） */
+export const EFFORT_LABELS: Record<EffortLevel, string> = {
+  1: '毫不累',
+  2: '有点累',
+  3: '适中',
+  4: '挺累',
+  5: '累坏了',
 }
 
 /** 每日运动消耗目标（大卡），对应三环中的绿环 */
 export const EXERCISE_KCAL_GOAL = 300
 
-/** MET → 千卡估算：kcal = MET × 3.5 × 体重kg ÷ 200 × 分钟 */
+/** MET → 千卡：kcal = MET × 3.5 × 体重kg ÷ 200 × 分钟 */
+export function kcalFromMet(met: number, minutes: number, weightKg: number): number {
+  return Math.round(((met * 3.5 * weightKg) / 200) * minutes)
+}
+
+/** 按类型 + 客观档位估算（课程 / 跑步 / AI 工具的老口径） */
 export function estimateKcal(
   type: WorkoutType,
   intensity: Intensity,
   minutes: number,
   weightKg: number,
 ): number {
-  const met = WORKOUT_META[type].met[intensity]
-  return Math.round(((met * 3.5 * weightKg) / 200) * minutes)
+  return kcalFromMet(WORKOUT_META[type].met[intensity], minutes, weightKg)
+}
+
+/** 按类型 + 体感估算（手动补录口径：用户说「累不累」，不由他去挑 MET 档） */
+export function estimateKcalByEffort(
+  type: WorkoutType,
+  effort: EffortLevel,
+  minutes: number,
+  weightKg: number,
+): number {
+  return estimateKcal(type, effortToIntensity(effort), minutes, weightKg)
 }
 
 /**

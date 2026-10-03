@@ -2,12 +2,12 @@
 import { computed, onMounted } from 'vue'
 
 import { useTodoStore } from '@/stores/todo'
-import { WEEKDAY_LABELS, minToHHmm, todayStr, weekDates } from '@/utils/date'
-import type { Todo } from '@/types'
+import { WEEKDAY_LABELS, todayStr, weekDates } from '@/utils/date'
 
 /**
- * 周视图：横轴为日（一~日），窄屏横向滚动；每列展示当日具体事件
- * （已排程按时间排序，未安排置底），点列进入该日画布。完成度以顶部细进度条表达。
+ * 周视图（完成度速览）：横轴七日一排，每天只留「星期 · 日号 · 完成数 · 进度条」，
+ * 不再罗列事件标题——标题是画布（/todos）的事，这格要回答的是「哪天欠着账」。
+ * 一屏尽收七列，点列进入该日画布；顶部一行给出本周合计。
  */
 const props = defineProps<{
   selected?: string
@@ -31,18 +31,11 @@ interface DayColumn {
   isSelected: boolean
   done: number
   total: number
-  /** 已排程事件，按开始时间排序 */
-  events: Todo[]
-  /** 未安排（无时间）且未完成 */
-  pool: Todo[]
 }
 
 const columns = computed<DayColumn[]>(() =>
   dates.map((date, i) => {
     const day = store.allTodos.filter((t) => t.date === date)
-    const events = day
-      .filter((t) => t.startMin != null)
-      .sort((a, b) => a.startMin! - b.startMin! || a.id - b.id)
     return {
       date,
       label: WEEKDAY_LABELS[i] ?? '',
@@ -51,11 +44,13 @@ const columns = computed<DayColumn[]>(() =>
       isSelected: date === props.selected,
       total: day.length,
       done: day.filter((t) => t.status === 'done').length,
-      events,
-      pool: day.filter((t) => t.startMin == null && t.status !== 'done'),
     }
   }),
 )
+
+const weekDone = computed(() => columns.value.reduce((s, c) => s + c.done, 0))
+const weekTotal = computed(() => columns.value.reduce((s, c) => s + c.total, 0))
+const weekPct = computed(() => (weekTotal.value ? Math.round((weekDone.value / weekTotal.value) * 100) : 0))
 
 function onKey(e: KeyboardEvent, date: string): void {
   if (e.key === 'Enter' || e.key === ' ') {
@@ -67,65 +62,80 @@ function onKey(e: KeyboardEvent, date: string): void {
 
 <template>
   <div class="week" data-rubber-self>
-    <div
-      v-for="c in columns"
-      :key="c.date"
-      class="wcell"
-      :class="{ today: c.isToday, selected: c.isSelected }"
-      role="button"
-      tabindex="0"
-      :aria-label="`查看 ${c.date} 的画布`"
-      @click="emit('select', c.date)"
-      @keydown="onKey($event, c.date)"
-    >
-      <header class="wd-head">
-        <span class="wd-label" :class="{ today: c.isToday }">周{{ c.label }}</span>
-        <span class="num wd-date">{{ c.dayNum }}日</span>
-        <span class="num wd-count" :class="{ full: c.total > 0 && c.done >= c.total }">{{ c.done }}/{{ c.total }}</span>
-      </header>
-      <div class="wd-bar">
-        <i class="wd-fill" :class="{ full: c.total > 0 && c.done >= c.total }" :style="{ '--p': `${c.total ? (c.done / c.total) * 100 : 0}%` }" />
+    <p class="wsum num">
+      本周 <b>{{ weekDone }}</b><span class="dim">/{{ weekTotal }}</span>
+      <span class="pct" :class="{ full: weekTotal > 0 && weekDone >= weekTotal }">· 完成 {{ weekPct }}%</span>
+    </p>
+    <div class="strip">
+      <div
+        v-for="c in columns"
+        :key="c.date"
+        class="wcell"
+        :class="{ today: c.isToday, selected: c.isSelected }"
+        role="button"
+        tabindex="0"
+        :aria-label="`查看 ${c.date} 的画布，完成 ${c.done}/${c.total}`"
+        @click="emit('select', c.date)"
+        @keydown="onKey($event, c.date)"
+      >
+        <header class="wd-head">
+          <span class="wd-label" :class="{ today: c.isToday }">{{ c.label }}</span>
+          <span class="num wd-date">{{ c.dayNum }}</span>
+        </header>
+        <span class="num wd-count" :class="{ full: c.total > 0 && c.done >= c.total }">
+          {{ c.total ? `${c.done}/${c.total}` : '–' }}
+        </span>
+        <div class="wd-bar">
+          <i class="wd-fill" :class="{ full: c.total > 0 && c.done >= c.total }" :style="{ '--p': `${c.total ? (c.done / c.total) * 100 : 0}%` }" />
+        </div>
       </div>
-      <ul class="wd-events">
-        <li v-for="t in c.events" :key="t.id" class="wev" :class="{ done: t.status === 'done' }">
-          <span class="num wt">{{ minToHHmm(t.startMin!) }}</span>
-          <span class="wtt">{{ t.title }}</span>
-        </li>
-        <li v-for="t in c.pool" :key="`p-${t.id}`" class="wev pool">
-          <span class="wt">·</span>
-          <span class="wtt">{{ t.title }}</span>
-        </li>
-        <li v-if="!c.events.length && !c.pool.length" class="wempty">暂无安排</li>
-      </ul>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* 横轴为日：窄屏横向滚动（列有下限宽），宽屏 7 列均分铺满。
-   滚动条不占位也不显示（滚动可达性由被切半的下一列表达）：Windows/WebView2 的原生
-   滚动条会在列下方多出一条 10px 的槽，看着像卡片底部多了一段空白间距。 */
-.week {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  padding-bottom: 4px;
+/* 本周合计：完成度卡的小结行，数字加重、百分位随时可读 */
+.wsum {
+  margin: 0;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
-.week::-webkit-scrollbar {
-  height: 0;
+.wsum b {
+  font-weight: 800;
+  color: var(--text-1);
+}
+
+.wsum .dim {
+  color: var(--text-3);
+}
+
+.wsum .pct {
+  margin-left: 2px;
+  color: var(--text-3);
+}
+
+.wsum .pct.full {
+  color: var(--ok-strong);
+  font-weight: 700;
+}
+
+/* 七列一排：flex 均分（窄屏一列也有 ~40px，放得下「周一」「0/2」） */
+.strip {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
 }
 
 .wcell {
-  flex: 1 0 172px;
-  min-width: 172px;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 10px 11px 9px;
-  border-radius: var(--radius-m);
+  align-items: center;
+  gap: 5px;
+  padding: 8px 2px 7px;
+  border-radius: var(--radius-s);
   background: var(--surface-2);
   cursor: pointer;
   transition:
@@ -141,14 +151,17 @@ function onKey(e: KeyboardEvent, date: string): void {
   background: var(--accent-soft);
 }
 
+/* 星期收成单字 + 日号：手机标定宽度（~393px 视口）下七列一排每列只有 ~40px，
+   「周一 28」这种双字标签放不下、CJK 会在字间折行（实测踩过）；单字 + nowrap 才稳 */
 .wd-head {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 3px;
+  white-space: nowrap;
 }
 
 .wd-label {
-  font-size: var(--fs-caption);
+  font-size: var(--fs-micro);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -163,17 +176,19 @@ function onKey(e: KeyboardEvent, date: string): void {
 }
 
 .wd-count {
-  margin-left: auto;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-footnote);
+  font-weight: 700;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .wd-count.full {
-  color: var(--ok);
-  font-weight: 700;
+  color: var(--ok-strong);
 }
 
+/* 进度条占满列宽：完成度是这格的主语，条比数字更先被读到 */
 .wd-bar {
+  align-self: stretch;
   height: 3px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--text-1) 8%, transparent);
@@ -191,59 +206,5 @@ function onKey(e: KeyboardEvent, date: string): void {
 
 .wd-fill.full {
   background: var(--ok);
-}
-
-.wd-events {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.wev {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 3.5px 0;
-  min-width: 0;
-}
-
-.wt {
-  flex: none;
-  min-width: 34px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
-.wtt {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-  color: var(--text-1);
-}
-
-.wev.done .wtt {
-  color: var(--text-3);
-  text-decoration: line-through;
-}
-
-.wev.done .wt {
-  opacity: 0.7;
-}
-
-.wev.pool .wtt {
-  color: var(--text-3);
-  font-weight: 500;
-}
-
-.wempty {
-  padding: 6px 0 2px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  text-align: center;
 }
 </style>

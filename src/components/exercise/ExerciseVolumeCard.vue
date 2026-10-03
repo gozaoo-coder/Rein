@@ -87,10 +87,7 @@ function openSheet(): void {
 <template>
   <section v-if="!loaded || hasHistory" class="card">
     <header class="row between head">
-      <div class="row hleft">
-        <h2>肌肉热力图</h2>
-        <span class="sub">练够分 · 每块肌肉本周练够了没有</span>
-      </div>
+      <h2>肌肉热力图</h2>
       <!-- 「说明 ›」：与「点图上任意位置」进的是同一个抽屉（练够分说明）。
            两条路都留着 —— 按钮是**可发现**的入口（卡片上没有任何别的地方提示图能点），
            点图是**顺手**的入口（手指本来就在图上）。22px 高的胶囊不占版面。 -->
@@ -117,36 +114,22 @@ function openSheet(): void {
       <small>· {{ weak.length }} 个肌群练得不够</small>
     </button>
 
-    <RouterLink class="more row center" to="/sports/exercises">
-      动作库<ChevronRight :size="14" />
-    </RouterLink>
-
     <TrainingScoreSheet :open="sheetOpen" :result="result" @close="sheetOpen = false" />
     <MuscleCatchupSheet :open="catchupOpen" :weak="weak" @close="catchupOpen = false" />
   </section>
 </template>
 
 <style scoped>
-/* 卡头：左「标题 + 副标」、右「说明 ›」。用 between 把胶囊顶到最右 ——
-   副标是解释性的（"练够了没有"），不该把可点的入口挤在它后面。 */
+/* 卡头：左标题、右「说明 ›」。用 between 把胶囊顶到最右 ——
+   「说明」是这张卡唯一的可发现入口（卡片上没有别的地方提示图能点）。 */
 .head {
   gap: 8px;
-}
-
-.hleft {
-  gap: 8px;
-  min-width: 0;
 }
 
 .head h2 {
   font-size: var(--fs-title3);
   font-weight: 700;
   letter-spacing: -0.3px;
-}
-
-.sub {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
 }
 
 /* 「说明 ›」：与副标同一档字号，形态是胶囊（与画布卡的「详情 ›」同一套语汇）。
@@ -215,14 +198,5 @@ function openSheet(): void {
 .catchup small {
   font-weight: 500;
   opacity: 0.85;
-}
-
-.more {
-  margin-top: 10px;
-  justify-content: flex-end;
-  gap: 2px;
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--c-exercise-deep);
 }
 </style>

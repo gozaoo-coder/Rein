@@ -62,6 +62,13 @@ const maxTrend = computed(() =>
 function barH(cents: number): string {
   return `${Math.max(4, Math.round((cents / maxTrend.value) * 64))}px`
 }
+
+/** 六个月全是 0（新账本 / 长期空账）：不画柱 —— 一排 4px 的小色块浮在 72px 的空箱里，
+ *  读起来像渲染故障，而且它连着坐标标签与图例一起吃掉约 130px。
+ *  与「分类占比」同一条口径：没数据就把话说清楚，不摆空图表。 */
+const trendEmpty = computed(() =>
+  store.trend.every((t) => t.expenseCents === 0 && t.incomeCents === 0),
+)
 </script>
 
 <template>
@@ -150,7 +157,7 @@ function barH(cents: number): string {
     <!-- 近 6 月趋势 -->
     <div class="trend">
       <h3>近 6 个月</h3>
-      <div class="trend-body">
+      <div v-if="!trendEmpty" class="trend-body">
         <div class="trend-col" v-for="t in store.trend" :key="t.key">
           <button
             class="bars"
@@ -164,7 +171,8 @@ function barH(cents: number): string {
           <span class="m-lbl num" :class="{ now: t.key === month }">{{ t.label }}</span>
         </div>
       </div>
-      <p class="bmeta t-3"><i class="dot" style="background: var(--led-expense)" />支出 <i class="dot dot-in" style="background: var(--led-income)" />收入</p>
+      <p v-if="!trendEmpty" class="bmeta t-3"><i class="dot" style="background: var(--led-expense)" />支出 <i class="dot dot-in" style="background: var(--led-income)" />收入</p>
+      <p v-else class="bempty t-3">近半年还没有记录，这个月记一笔就会有趋势。</p>
     </div>
   </section>
 </template>

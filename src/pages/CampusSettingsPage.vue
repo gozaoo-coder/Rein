@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { BookOpen, CalendarClock, ChevronRight, CircleCheck, CircleAlert, FileDown, LogOut, RefreshCw, School, Sparkles, Trash2 } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import SheetModal from '@/components/common/SheetModal.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
@@ -165,6 +166,23 @@ async function onSemesterChange(id: number): Promise<void> {
   } catch (e) {
     toast.toast(e instanceof Error ? e.message : '切换学期失败')
   }
+}
+
+/* ---------------- 二级抽屉：学期 / 调休纠正 / AI 记录 ---------------- */
+
+/**
+ * 这一页的列表**不走折叠、也不走原生下拉**：学期、调休纠正、AI 记录
+ * 都收进二级抽屉（SheetModal）里摊开列举，页面本体只留入口行。
+ * 原生 `<select>` 是一份折叠起来的列表 —— 选项互相看不见、没法比较；
+ * 长列表平铺又会把设置页撑成一条望不到底的长卷。抽屉两者都避开。
+ */
+const semOpen = ref(false)
+const holidayOpen = ref(false)
+const auditOpen = ref(false)
+
+function pickSemester(id: number): void {
+  semOpen.value = false
+  void onSemesterChange(id)
 }
 
 /* ---------------- 账号管理 ---------------- */
@@ -452,17 +470,18 @@ onMounted(async () => {
         <h2>课表同步</h2>
       </div>
 
+      <!-- 学期列举在二级抽屉里（不用原生 select）：一屏放得下名字与起止周，
+           互相看得见才好比较；下拉框把其余学期全折起来，反而要靠记忆选 -->
       <label class="flabel">当前学期</label>
-      <select
-        class="sel"
-        :value="store.semester?.id ?? ''"
-        :disabled="store.syncing"
-        @change="onSemesterChange(Number(($event.target as HTMLSelectElement).value))"
-      >
-        <option v-for="s in store.semesters" :key="s.id" :value="s.id">
-          {{ s.name }}（{{ s.startDate }} ~ {{ s.endDate }}，{{ s.totalWeeks }} 周）
-        </option>
-      </select>
+      <button class="link-row" type="button" :disabled="store.syncing" @click="semOpen = true">
+        <span>
+          {{ store.semester?.name ?? '选择学期' }}
+          <em v-if="store.semester">
+            {{ store.semester.startDate }} ~ {{ store.semester.endDate }} · {{ store.semester.totalWeeks }} 周
+          </em>
+        </span>
+        <ChevronRight :size="18" />
+      </button>
 
       <p class="tip">{{ syncHint }}</p>
 
@@ -520,33 +539,17 @@ onMounted(async () => {
       </div>
       <p class="tip">
         开启后，法定放假日会在课表与时间线上标「假」，补班日会把被补那天的课一并显示并标「调」。
-        数据来自公开的 holiday-cn 校历库；补哪一天由规律推断，下面可以逐日纠正。
+        数据来自公开的 holiday-cn 校历库；补哪一天由规律推断，逐日纠正收在下面的二级页里。
       </p>
 
       <template v-if="holidayEnabled">
-        <ul v-if="holidayRows.length" class="holiday-list">
-          <li v-for="row in holidayRows" :key="row.date">
-            <span class="h-date num">{{ row.date }}</span>
-            <select
-              class="h-sel"
-              :value="row.weekday"
-              :disabled="holidayBusy"
-              @change="onHolidayWeekday(row.date, Number(($event.target as HTMLSelectElement).value))"
-            >
-              <option v-for="(label, i) in WEEKDAY_LABELS" :key="label" :value="i + 1">{{ label }}</option>
-              <option :value="0">不补课</option>
-            </select>
-          </li>
-        </ul>
-        <p v-else class="tip">当前学期内还没有可映射的调休日（数据可能还没取到）。</p>
-
-        <div class="holiday-add">
-          <input v-model="holidayDraftDate" class="h-date-input" type="date" />
-          <select v-model.number="holidayDraftWeekday" class="h-sel">
-            <option v-for="(label, i) in WEEKDAY_LABELS" :key="label" :value="i + 1">{{ label }}</option>
-          </select>
-          <button class="mini" :disabled="holidayBusy" @click="onHolidayAdd">添加</button>
-        </div>
+        <button class="link-row" type="button" @click="holidayOpen = true">
+          <span>
+            逐日纠正补班映射
+            <em>{{ holidayRows.length ? `已手动纠正 ${holidayRows.length} 天` : '还没有手动纠正过' }}</em>
+          </span>
+          <ChevronRight :size="18" />
+        </button>
       </template>
     </section>
 
@@ -568,15 +571,17 @@ onMounted(async () => {
         <FileDown :size="14" />
         {{ exportBusy ? '导出中…' : '导出救援脚本' }}
       </button>
-      <ul v-if="audit.length" class="audit">
-        <li v-for="a in audit.slice(0, 20)" :key="a.id">
-          <span class="at num">{{ shortAt(a.at) }}</span>
-          <span class="kind">{{ a.kind }}</span>
-          <span class="what" :class="{ bad: a.status === 'error' }">{{ a.summary }}</span>
-        </li>
-      </ul>
-      <p v-else class="tip">
-        还没有记录 —— AI 一旦对教务动手（探请求、重排任务、重登、导出脚本），这里会一条条出现。
+      <!-- 记录摊在二级抽屉里列举，不在卡片里切 20 条：切片是另一种折叠 ——
+           看似全列了，其实第 21 条起被悄悄收走。要查就给全量。 -->
+      <button class="link-row" type="button" @click="auditOpen = true">
+        <span>
+          查看操作记录
+          <em>{{ audit.length ? `共 ${audit.length} 条` : '还没有记录' }}</em>
+        </span>
+        <ChevronRight :size="18" />
+      </button>
+      <p v-if="!audit.length" class="tip">
+        AI 一旦对教务动手（探请求、重排任务、重登、导出脚本），这里会一条条出现。
       </p>
     </section>
 
@@ -592,6 +597,70 @@ onMounted(async () => {
       <button class="danger" @click="confirmOpen = true">删除账号</button>
     </section>
     </div>
+
+    <!-- ═══ 二级抽屉：学期列表 ═══ -->
+    <SheetModal :open="semOpen" title="选择学期" @close="semOpen = false">
+      <ul class="pick">
+        <li v-for="s in store.semesters" :key="s.id">
+          <button
+            class="pick-row"
+            type="button"
+            :class="{ on: s.id === store.semester?.id }"
+            :disabled="store.syncing"
+            @click="pickSemester(s.id)"
+          >
+            <span class="pick-main">
+              {{ s.name }}
+              <em>{{ s.startDate }} ~ {{ s.endDate }}，{{ s.totalWeeks }} 周</em>
+            </span>
+            <CircleCheck v-if="s.id === store.semester?.id" :size="18" class="tick" />
+          </button>
+        </li>
+      </ul>
+      <p class="tip">切换学期会按新课表重建时间线日程。</p>
+    </SheetModal>
+
+    <!-- ═══ 二级抽屉：逐日纠正调休 ═══ -->
+    <SheetModal :open="holidayOpen" title="逐日纠正调休" initial-snap="large" @close="holidayOpen = false">
+      <p class="tip">
+        补哪一天由规律推断，这里逐日纠正；选「不补课」可把某天的映射压掉。
+      </p>
+      <ul v-if="holidayRows.length" class="holiday-list">
+        <li v-for="row in holidayRows" :key="row.date">
+          <span class="h-date num">{{ row.date }}</span>
+          <select
+            class="h-sel"
+            :value="row.weekday"
+            :disabled="holidayBusy"
+            @change="onHolidayWeekday(row.date, Number(($event.target as HTMLSelectElement).value))"
+          >
+            <option v-for="(label, i) in WEEKDAY_LABELS" :key="label" :value="i + 1">{{ label }}</option>
+            <option :value="0">不补课</option>
+          </select>
+        </li>
+      </ul>
+      <p v-else class="tip">当前学期内还没有可映射的调休日（数据可能还没取到）。</p>
+
+      <div class="holiday-add">
+        <input v-model="holidayDraftDate" class="h-date-input" type="date" />
+        <select v-model.number="holidayDraftWeekday" class="h-sel">
+          <option v-for="(label, i) in WEEKDAY_LABELS" :key="label" :value="i + 1">{{ label }}</option>
+        </select>
+        <button class="mini" :disabled="holidayBusy" @click="onHolidayAdd">添加</button>
+      </div>
+    </SheetModal>
+
+    <!-- ═══ 二级抽屉：AI 操作记录（全量，不切片） ═══ -->
+    <SheetModal :open="auditOpen" title="AI 操作记录" initial-snap="large" @close="auditOpen = false">
+      <ul v-if="audit.length" class="audit">
+        <li v-for="a in audit" :key="a.id">
+          <span class="at num">{{ shortAt(a.at) }}</span>
+          <span class="kind">{{ a.kind }}</span>
+          <span class="what" :class="{ bad: a.status === 'error' }">{{ a.summary }}</span>
+        </li>
+      </ul>
+      <p v-else class="tip">还没有记录。</p>
+    </SheetModal>
 
     <ActionSheet
       :open="confirmOpen"
@@ -759,8 +828,7 @@ onMounted(async () => {
 
 input[type='text'],
 input[type='password'],
-input[type='url'],
-.sel {
+input[type='url'] {
   width: 100%;
   padding: 10px 12px;
   border-radius: var(--radius-m);
@@ -771,8 +839,7 @@ input[type='url'],
   transition: border-color var(--dur-fast) var(--ease-standard);
 }
 
-input:focus,
-.sel:focus {
+input:focus {
   border-color: var(--accent);
   outline: none;
 }
@@ -780,10 +847,6 @@ input:focus,
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--fs-caption);
-}
-
-.sel {
-  appearance: none;
 }
 
 .tip {
@@ -1107,11 +1170,76 @@ input:focus,
   transform: scale(0.985);
 }
 
+.link-row:disabled {
+  opacity: 0.45;
+}
+
 .link-row em {
   display: block;
   margin-top: 2px;
   font-style: normal;
   font-size: var(--fs-micro);
   color: var(--text-3);
+}
+
+/* ---------- 二级抽屉里的单选列表 ---------- */
+
+/* 与「学校系统」选择器同一套语言：surface-2 行 + 选中 accent-soft。
+   抽屉内容自带页边距（SheetModal 内容区已有 padding），这里不再加横向负边距。 */
+.pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.pick-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  text-align: left;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.pick-row:active {
+  transform: scale(0.985);
+}
+
+.pick-row:disabled {
+  opacity: 0.45;
+}
+
+.pick-row.on {
+  background: var(--accent-soft);
+}
+
+.pick-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-callout);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* 起止日期是辅助信息，随选中态换 --accent-strong：浅底上的主色文字
+   不用 --accent（压 surface-2 只有 4.27:1，够不着 4.5） */
+.pick-main em {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.pick-row.on .pick-main em {
+  color: var(--accent-strong);
 }
 </style>

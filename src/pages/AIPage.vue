@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Archive,
+  BookOpen,
   Camera,
   ChartPie,
   Check,
@@ -43,7 +44,8 @@ import { useAiStore } from '@/stores/ai'
 import { useModelsStore } from '@/stores/models'
 import { copyText } from '@/utils/clipboard'
 import { listFoodDrafts, removeFoodDraft, saveFoodDraft, type FoodDraft } from '@/utils/foodDrafts'
-import { bitmapToJpeg, decodeBitmap, DEFAULT_IMAGE_EDGE } from '@/utils/image'
+import { bitmapToJpeg, decodeBitmap, imageTypeOf, IMAGE_ACCEPT, DEFAULT_IMAGE_EDGE } from '@/utils/image'
+import { isHeifBlob } from '@/utils/heif'
 import { officeKindOf, parseOffice, parseTextFile, type ParsedDoc } from '@/utils/documentParse'
 import { shareInbox } from '@/system/shareInbox'
 import type { SendImage } from '@/stores/ai'
@@ -157,6 +159,9 @@ const galleryEl = ref<HTMLInputElement | null>(null)
 const cameraEl = ref<HTMLInputElement | null>(null)
 const listEl = ref<HTMLElement | null>(null)
 
+/** 上传文件的入口要连图片（含 HEIF）带 Office/文本一起收；图库/相机只收图 */
+const UPLOAD_ACCEPT = `${IMAGE_ACCEPT},.docx,.pptx,.xlsx,.md,.markdown,.txt,.csv`
+
 /* ---------- 「+」添加菜单（bind 式：锚定按钮弹出，带图标） ---------- */
 
 const camMenuOpen = ref(false)
@@ -236,7 +241,7 @@ const quote = ref<AiMessage | null>(null)
 /* ---------- 「历史」菜单（bind 式：锚定左上角那颗圆钮弹出，带图标） ----------
  *  原来左上角是「文件」「历史记录」两颗圆钮，功能都是「回到过去的东西」，
  *  却各占一颗 38px 圆钮 —— 一颗装一个子页面，形态上比同级动作更重。
- *  合并成一颗：点开是四项，第二项（搜索历史）按知识库当前的检索模式给副标，
+ *  合并成一颗：点开是五项，第二项（搜索历史）按知识库当前的检索模式给副标，
  *  模式名不是写死的 —— settingsGet 返回什么就显示什么（关键词 / 本地模型 / 云端）。 */
 
 /** 锚点：页头那颗「历史」圆钮 */
@@ -274,6 +279,7 @@ const embedModeLabel = computed(() => {
 const histActions = computed<MenuItem[]>(() => [
   { label: '文件', value: 'files', icon: Folder },
   { label: `搜索历史 · ${embedModeLabel.value}`, value: 'search', icon: Search },
+  { label: '知识库', value: 'knowledge', icon: BookOpen },
   {
     label: drafts.value.length ? `饮食草稿箱 · ${drafts.value.length}` : '饮食草稿箱',
     value: 'drafts',
@@ -288,6 +294,8 @@ const histActions = computed<MenuItem[]>(() => [
 function onHistSelect(value: string): void {
   if (value === 'files') {
     void router.push({ name: 'ai-files' })
+  } else if (value === 'knowledge') {
+    void router.push({ name: 'ai-knowledge' })
   } else if (value === 'search') {
     draft.value = '搜一下我的历史记录：'
     void nextTick(() => {
@@ -501,7 +509,8 @@ async function onCamera(event: Event): Promise<void> {
 
 /** 统一文件预填：Office/文本 → 文档芯片（解析+图片勾选）；图片 → 附图芯片（可多张累积） */
 async function prepareFile(file: File, mimeHint?: string): Promise<void> {
-  const mime = mimeHint || file.type || ''
+  // HEIF 在 Windows 上常常没有 MIME（File.type 是空串），推不出 image/* 就会被当成不支持的类型
+  const mime = mimeHint || imageTypeOf(file)
   const kind = officeKindOf(file.name)
   try {
     if (kind === 'text' || (!kind && (mime.startsWith('text/') || /\.(md|txt|markdown|csv)$/i.test(file.name)))) {
@@ -519,6 +528,7 @@ async function prepareFile(file: File, mimeHint?: string): Promise<void> {
         toast.toast(`附图最多 ${MAX_ATTACHMENTS} 张`)
         return
       }
+      if (await isHeifBlob(file)) toast.toast('正在转换 HEIC 图片…')
       // 压出发送视图（≤模型上限，坐标空间）与缩略图；原始文件保留给放大镜
       const bm = await decodeBitmap(file)
       const [view, small] = await Promise.all([
@@ -909,9 +919,9 @@ async function onMenuSelect(value: string): Promise<void> {
     </div>
 
     <!-- 三个隐藏入口：系统相机 / 图库多选 / 文件（图片+Office+文本/Markdown） -->
-    <input ref="fileEl" type="file" accept="image/*,.docx,.pptx,.xlsx,.md,.markdown,.txt,.csv" hidden @change="onFile">
-    <input ref="galleryEl" type="file" accept="image/*" multiple hidden @change="onGallery">
-    <input ref="cameraEl" type="file" accept="image/*" capture="environment" hidden @change="onCamera">
+    <input ref="fileEl" type="file" :accept="UPLOAD_ACCEPT" hidden @change="onFile">
+    <input ref="galleryEl" type="file" :accept="IMAGE_ACCEPT" multiple hidden @change="onGallery">
+    <input ref="cameraEl" type="file" :accept="IMAGE_ACCEPT" capture="environment" hidden @change="onCamera">
 
     <!-- 「+」添加菜单（bind 式锚定弹出：拍照 / 图库 / 上传文件） -->
     <AppMenu

@@ -16,19 +16,34 @@ const props = withDefaults(
     max?: number
     unit?: string
     label?: string
+    /** 保留小数位（0 = 整数）。小数步进（体重 0.1kg）必须给到 1：落库前的取整口径全看它 */
+    decimals?: number
   }>(),
-  { step: 1, min: 0, max: 99999, unit: '', label: '' },
+  { step: 1, min: 0, max: 99999, unit: '', label: '', decimals: 0 },
 )
 
 const emit = defineEmits<{ 'update:modelValue': [value: number] }>()
 
 const editing = ref(false)
-const draft = ref('')
+/**
+ * 输入态的草稿值。
+ *
+ * 声明成 string 但**不能假设它真是 string**：Vue 3 的 vModelText 在
+ * `el.type === 'number'` 时会做 `looseToNumber`，所以 draft 实际拿到的是 number，
+ * 草稿上一版在这里直接 `draft.value.trim()` —— 于是「点一下输入」这条路径
+ * 一旦真的敲了字就抛 `trim is not a function`，而这条组件在设置页被复用了十几处。
+ * 所以草稿一律经 `String(...)` 归一，不依赖运行时类型。
+ */
+const draft = ref<string | number>('')
 const box = ref<HTMLInputElement | null>(null)
 
+/** 按 decimals 归一：既夹区间，也消掉 0.1 步进的浮点尾巴（81.5 + 0.1 = 81.6000…01） */
+function quantize(n: number): number {
+  return Number(Math.min(props.max, Math.max(props.min, n)).toFixed(props.decimals))
+}
+
 function bump(d: number): void {
-  const next = Math.min(props.max, Math.max(props.min, props.modelValue + d))
-  emit('update:modelValue', next)
+  emit('update:modelValue', quantize(props.modelValue + d))
 }
 
 function startEdit(): void {
@@ -37,11 +52,13 @@ function startEdit(): void {
   void nextTick(() => box.value?.select())
 }
 
-/** 失焦与回车共用：越界的值夹回区间，NaN 直接丢弃（保持原值） */
+/** 失焦与回车共用：越界的值夹回区间，NaN 直接丢弃（保持原值）。
+ *  取整按 decimals 而非一律 Math.round：体重 81.5 曾被吞成 82（0.5 直接丢失） */
 function commit(): void {
-  const n = Number(draft.value)
-  if (Number.isFinite(n) && draft.value.trim() !== '') {
-    emit('update:modelValue', Math.min(props.max, Math.max(props.min, Math.round(n))))
+  const raw = String(draft.value).trim()
+  const n = Number(raw)
+  if (Number.isFinite(n) && raw !== '') {
+    emit('update:modelValue', quantize(n))
   }
   editing.value = false
 }

@@ -163,7 +163,8 @@ async function doDelete(): Promise<void> {
   min-width: 34px;
   height: 34px;
   padding: 0 8px;
-  border-radius: 50%;
+  /* 50% 在装下「超级组 A1」这类宽内容时会把圆撑成椭圆；999px 方形收敛为圆、变宽是标准胶囊 */
+  border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-2);
   display: flex;

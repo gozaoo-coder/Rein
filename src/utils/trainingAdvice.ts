@@ -156,6 +156,10 @@ export interface ExerciseAdvice {
   hasHistory: boolean
   /** 逐条中文依据（沉浸页「为什么」展开） */
   rationale: string[]
+  /** 该动作自己的今日状态四因子（建议抽屉的因子条可视化用） */
+  factors: ReadinessFactor[]
+  /** 锚定修正一句话（做满递增/状态差降载），无修正时为空 */
+  anchorNote?: string
 }
 
 export interface MuscleLoadRow {
@@ -329,6 +333,7 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
         lastDate: null,
         hasHistory: false,
         rationale: [`${item.kind === 'timed' ? '计时' : '有氧'}动作不做重量建议`],
+        factors: [],
       }
       continue
     }
@@ -398,6 +403,7 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
 
     let suggestedWeight: number | null = null
     const suggestedReps: number | null = targetReps
+    let anchorNote: string | null = null
     if (!stat || !last) {
       // 无历史：按课程/库内建议值起步
       suggestedWeight = item.weightKg ?? lib?.defaultWeightKg ?? null
@@ -419,18 +425,16 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
       let base = last.topWeight
       if (allSetsDone && weightStep > 0) {
         base += weightStep * (readiness >= 1.03 ? 2 : 1)
-        rationale.push(
-          `上次全部做满 ${targetReps} 次 → 递增${readiness >= 1.03 ? '两档（今日状态很好）' : '一个步进'}（+${fmt(
-            weightStep * (readiness >= 1.03 ? 2 : 1),
-          )}kg）`,
-        )
+        anchorNote = `上次全部做满 ${targetReps} 次 → 递增${readiness >= 1.03 ? '两档（今日状态很好）' : '一个步进'}（+${fmt(
+          weightStep * (readiness >= 1.03 ? 2 : 1),
+        )}kg）`
       }
       if (readiness < 0.95) {
         base = last.topWeight * readiness
-        rationale.push(`今日状态 ×${readiness.toFixed(2)} 明显偏低 → 主动降载（下限为上次的 85%）`)
+        anchorNote = `今日状态 ×${readiness.toFixed(2)} 明显偏低 → 主动降载（下限为上次的 85%）`
       } else if (readiness < 0.98 && !allSetsDone) {
         base = last.topWeight
-        rationale.push('今日状态略低 → 维持上次重量，不做递增')
+        anchorNote = '今日状态略低 → 维持上次重量，不做递增'
       }
       // 今日极限封顶：目标次数下的等价重量；但不低于上次实际完成过的重量（已证明可行）
       const ceilingWeight = todayCeiling / (1 + targetReps / 30)
@@ -440,22 +444,24 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
       suggestedWeight = weightStep > 0 ? roundToStep(clamped, weightStep) : Math.round(clamped * 10) / 10
       rationale.push(`建议 ${fmt(suggestedWeight)}kg × ${targetReps} × ${targetSets} 组 · 目标 RIR ${DEFAULT_TARGET_RIR}`)
     }
+    if (anchorNote) rationale.push(anchorNote)
+
+    // 该动作自己的今日状态四因子（建议抽屉的因子条用；全局因子仍取首个动作）
+    const exFactors: ReadinessFactor[] = [
+      { key: 'recovery', label: '恢复', value: recoveryFactor, note: recoveryNote },
+      { key: 'volume', label: '容量', value: volumeFactor, note: volumeNote },
+      { key: 'trend', label: '趋势', value: trendFactor, note: trendNote },
+      {
+        key: 'self',
+        label: '自评',
+        value: selfFactor,
+        note: input.selfRating ? `${input.selfRating}/5` : '未自评',
+      },
+    ]
 
     // 全局状态：今日课程各动作 readiness 的均值（页面抬头展示），分解取首个动作
     readinessList.push(readiness)
-    if (!globalFactors.length) {
-      globalFactors = [
-        { key: 'recovery', label: '恢复', value: recoveryFactor, note: recoveryNote },
-        { key: 'volume', label: '容量', value: volumeFactor, note: volumeNote },
-        { key: 'trend', label: '趋势', value: trendFactor, note: trendNote },
-        {
-          key: 'self',
-          label: '自评',
-          value: selfFactor,
-          note: input.selfRating ? `${input.selfRating}/5` : '未自评',
-        },
-      ]
-    }
+    if (!globalFactors.length) globalFactors = exFactors
 
     perExercise[key] = {
       exerciseId: key,
@@ -474,6 +480,8 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
       lastDate: last?.date ?? null,
       hasHistory: !!last,
       rationale,
+      factors: exFactors,
+      anchorNote: anchorNote ?? undefined,
     }
   }
 

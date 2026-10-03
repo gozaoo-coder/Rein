@@ -1221,6 +1221,63 @@ CREATE TABLE sync_blobs (
 );
 "#;
 
+/// 0035 · 手动补录的「体感强度」列。
+///
+/// 背景：手动补录这条路拿不到任何客观强度信号（没有配速、没有逐组重量），
+/// 过去靠让用户自选「低/中/高强度」来喂 MET —— 但那要求用户先知道自己的 MET 档，
+/// 于是绝大多数人一律选中间那档，估算值看起来有数字、实际没有信息。
+/// 改问「这次累不累」（1–5，存本列），由前端折算 MET 档（`effort_to_intensity`）。
+///
+/// 为什么不改 `intensity` 列本身：它是 `TEXT NOT NULL DEFAULT 'moderate'`，
+/// 且 `workout_sets` 与同步表都按现有形状依赖它。**加列**才是无破坏的那条路 ——
+/// `intensity` 继续由前端从 effort 派生写入（课程/跑步路径则是客观反推的真档位），
+/// 于是老代码与知识库派生照旧能读，读到的值对新记录而言已是派生结果。
+const MIGRATION_0035: &str = r#"
+ALTER TABLE workouts ADD COLUMN effort INTEGER;
+"#;
+
+/// 第三方健康数据接入（Health Connect）· 见 modules/healthsync。
+///
+/// 为什么加在 `workouts` 上而不是另立一张导入表：运动记录在 Rein 里已经有
+/// 唯一的读取路径（课表/主页/统计都查 `workouts`），导入的记录必须和本地补录
+/// 的一样出现在这些地方 —— 另立表就意味着每一处读取都要 UNION 一次。
+/// 区别只在于「谁说了算」，而那恰好就是 `source` 这一个字段的语义。
+///
+/// - `source`：`local` = Rein 自建（含本机补录、课程、跑步），**唯一权威在本机**；
+///   `health_connect` = 从系统 Health Connect 导入的**镜像**，权威在 HC 侧 ——
+///   每次同步按 HC 的记录覆盖更新，HC 里没了就跟着删。
+/// - `external_id`：HC 记录的 `metadata.id`（UUID）。导入记录必填；本地记录
+///   被导出到 HC 后回填（于是删除本地记录时能顺手收掉 HC 侧那份）。
+///   唯一索引让「同一台设备重复导入」天然幂等；跨设备靠 sync 表登记的业务键合并
+///   （见 modules/sync/tables.rs 的 workouts.natural）。
+/// - `external_updated_at`：HC 侧 `metadata.lastModifiedTime`。变化判定用它 ——
+///   比逐个字段比对更准（用户可能在小米运动健康里只改了备注），也避免每次同步
+///   都把整表重写一遍。
+/// - `external_fingerprint`：**导出方向**的变化判定。导入方向有 `lastModifiedTime`
+///   可依，回写方向没有 —— 本机 `workouts` 表压根不记「最后修改时间」。
+///   所以导出时把「写进 HC 的那几个字段」拼成一个可读字符串存下来，
+///   下次同步比对它就知道本地改没改过（选字符串而不是哈希：跨版本稳定，
+///   且出问题时肉眼能看出差异在哪一段）。
+///
+/// 导出开关与上次同步时间放 `app_meta`（键 `health_sync.*`），不另立状态表 ——
+/// 那是设备级的东西（授权本来就跟设备走），而 `app_meta` 恰好不参与多设备同步，
+/// 且已有 `meta_get`/`meta_set` 这一份唯一的读写实现，没必要为两个键再抄一遍。
+///
+/// 墓碑表**也不参与多设备同步**（未登记进 sync/tables.rs 白名单）：
+/// 它是「本机删掉的导入记录别被下次同步拉回来」的本地账。
+/// 也就是说：跨设备删除传播到 Health Connect 这件事，本期不做。
+const MIGRATION_0036: &str = r#"
+ALTER TABLE workouts ADD COLUMN source TEXT NOT NULL DEFAULT 'local';
+ALTER TABLE workouts ADD COLUMN external_id TEXT;
+ALTER TABLE workouts ADD COLUMN external_updated_at TEXT;
+ALTER TABLE workouts ADD COLUMN external_fingerprint TEXT;
+CREATE UNIQUE INDEX idx_workouts_external_id ON workouts(external_id) WHERE external_id IS NOT NULL;
+CREATE TABLE health_sync_tombstones (
+  external_id TEXT PRIMARY KEY,
+  deleted_at TEXT NOT NULL
+);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1256,6 +1313,8 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0032,
     MIGRATION_0033,
     MIGRATION_0034,
+    MIGRATION_0035,
+    MIGRATION_0036,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。
@@ -1434,6 +1493,43 @@ mod tests {
             .unwrap();
         assert_eq!(before, after);
         assert_eq!(after, MIGRATIONS.len() as i64);
+    }
+
+    /// 0035 加的体感列必须真的在，且课程路径（不传 effort）写入时为 NULL。
+    /// 列存在性靠 `migrate_is_idempotent` 兜不住 —— 它只看 schema_migrations 的行数，
+    /// 一条写错列名的 ALTER 也能「成功」并记下版本号。
+    #[test]
+    fn workouts_effort_column_is_nullable_and_defaults_to_null() {
+        let conn = legacy_db();
+        migrate_for_test(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO workouts (name, type, date, duration_min, kcal, intensity, created_at) \
+             VALUES ('课程训练', 'strength', '2026-09-10', 45, 300, 'moderate', '2026-09-10T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let effort: Option<i64> = conn
+            .query_row(
+                "SELECT effort FROM workouts WHERE name = '课程训练'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(effort, None, "课程/跑步路径不写体感，读出来应是 NULL");
+
+        // 手动补录写 1..5
+        conn.execute(
+            "INSERT INTO workouts (name, type, date, duration_min, kcal, intensity, effort, created_at) \
+             VALUES ('羽毛球', 'badminton', '2026-09-10', 50, 520, 'high', 4, '2026-09-10T20:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let effort: Option<i64> = conn
+            .query_row("SELECT effort FROM workouts WHERE name = '羽毛球'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(effort, Some(4));
     }
 
     /// 触发器不能破坏既有写入路径：插一条待办仍然成功，且只多出一行脏标记。

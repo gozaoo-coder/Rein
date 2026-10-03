@@ -138,6 +138,20 @@ const shoppingChecks: { itemKey: string; checkedAt: string }[] = []
 let workoutId = 0
 const workouts: Workout[] = []
 
+/**
+ * 第三方健康数据（Health Connect）的 mock 状态。
+ *
+ * 这里**故意模拟「在 Android 手机上已授权」的样子**，而不是照桌面端返回
+ * `supported: false`：真机上能不能用由 Rust 侧的 `supported()` 判（桌面端恒 false），
+ * 而 mock 是浏览器里迭代 UI 用的 —— 若照实返回不支持，整页只剩一句禁用说明，
+ * 没法调。要看不可用态，直接把 supported 改成 false。
+ */
+let healthPush = false
+let healthLastSync: string | null = null
+let healthImported = 12
+let healthExported = 0
+let healthSteps = 0
+
 let sessionId = 0
 interface MockSession {
   id: number
@@ -1045,6 +1059,7 @@ function addWorkout(w: Partial<Workout> & { name: string; type: Workout['type'];
     durationMin: w.durationMin,
     kcal: w.kcal,
     intensity: w.intensity ?? 'moderate',
+    effort: w.effort ?? null,
     note: w.note ?? null,
     sessionId: w.sessionId ?? null,
     createdAt: `${w.date}T20:00:00`,
@@ -1053,6 +1068,8 @@ function addWorkout(w: Partial<Workout> & { name: string; type: Workout['type'];
 
 addWorkout({ name: '夜跑', type: 'run', date: addDays(today, -2), startMin: 19 * 60 + 30, durationMin: 30, intensity: 'high', kcal: 360 })
 addWorkout({ name: '力量训练 · 下肢', type: 'strength', date: yesterday, startMin: 18 * 60 + 30, durationMin: 40, intensity: 'moderate', kcal: 245 })
+// 手动补录样例：走体感 + 用户直接给热量那条路（effort 有值、intensity 是派生档位）
+addWorkout({ name: '羽毛球 · 47分钟', type: 'badminton', date: today, startMin: 20 * 60, durationMin: 47, intensity: 'moderate', effort: 4, kcal: 412 })
 
 /** 演示会话落库（与 session_start/session_finish 同语义）：浏览器 dev 也能查看带轨迹/做组明细的详情 */
 function addDemoSession(p: {
@@ -1217,6 +1234,7 @@ function synthTrack(totalKm: number, totalSec: number, laps = 4): { lat: number;
       durationMin: 55,
       kcal: 320,
       intensity: 'moderate',
+      effort: null,
       note: null,
       sessionId: null,
       createdAt: new Date().toISOString(),
@@ -4593,6 +4611,10 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'share_read':
       throw new Error('浏览器开发环境没有分享收件箱')
 
+    // media（HEIF→JPEG）：纯浏览器没有原生解码器，报错让前端降级到内置软件解码
+    case 'image_decode_heif':
+      throw new Error('浏览器开发环境没有原生 HEIF 解码')
+
     case 'get_food': {
       const f = foods.find((x) => x.id === Number(args.id)) ?? null
       return delay((f ? structuredClone(f) : null) as T)
@@ -4953,7 +4975,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         startMin: (args.startMin as number | null) ?? null,
         durationMin: Number(args.durationMin),
         kcal: Number(args.kcal),
-        intensity: args.intensity as Workout['intensity'],
+        // intensity 在 Rust 侧是 Option（NOT NULL 由 DEFAULT/前端兜底），effort 仅手动补录有
+        intensity: (args.intensity as Workout['intensity'] | null) ?? 'moderate',
+        effort: (args.effort as Workout['effort'] | null) ?? null,
         note: (args.note as string | null) ?? null,
         sessionId: null,
         createdAt: new Date().toISOString(),
@@ -4971,6 +4995,57 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       }
       saveSets()
       return delay(undefined as T)
+    }
+
+    /* ---------------- 第三方健康数据（Health Connect） ---------------- */
+
+    case 'health_sync_status': {
+      return delay({
+        supported: true,
+        availability: 'available',
+        readGranted: true,
+        // 写授权跟着回写开关走，好让「打开开关 → 提示去补授权」这条路在 mock 里也能走一遍
+        writeGranted: healthPush,
+        pushEnabled: healthPush,
+        lastSyncAt: healthLastSync,
+        importedCount: healthImported,
+        exportedCount: healthExported,
+      } as T)
+    }
+
+    case 'health_sync_authorize':
+      return delay(undefined as T)
+
+    case 'health_sync_set_push': {
+      healthPush = Boolean(args.enabled)
+      return delay(undefined as T)
+    }
+
+    case 'health_sync_start': {
+      healthSteps = 0
+      return delay({ phase: 'pending', report: null, message: null } as T)
+    }
+
+    case 'health_sync_step': {
+      healthSteps += 1
+      // 真实现是「等原生侧把文件写出来」，这里给两拍 pending 模拟同样的时序
+      if (healthSteps <= 2) return delay({ phase: 'pending', report: null, message: null } as T)
+      const first = healthSteps === 3
+      const report = {
+        imported: first ? 3 : 0,
+        updated: 0,
+        removed: 0,
+        exported: healthPush ? (first ? 2 : 0) : 0,
+        reExported: 0,
+        unexported: 0,
+        skipped: 0,
+        scanned: healthImported,
+        pushed: healthPush,
+      }
+      healthImported += report.imported
+      healthExported += report.exported
+      healthLastSync = new Date().toISOString()
+      return delay({ phase: 'done', report, message: null } as T)
     }
 
     case 'save_pomodoro_session': {
@@ -5063,6 +5138,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         durationMin: input.durationMin,
         kcal: input.kcal,
         intensity: input.intensity as Workout['intensity'],
+        effort: null, // 课程会话无体感输入（见 db.rs MIGRATION_0035）
         note: input.note,
         sessionId: input.id,
         createdAt: new Date().toISOString(),

@@ -14,7 +14,7 @@ import { useAiStore } from '@/stores/ai'
 import { useModelsStore } from '@/stores/models'
 import { useTodoStore } from '@/stores/todo'
 import { minToHHmm, parseDate } from '@/utils/date'
-import { resizeImageAsJpeg, DEFAULT_IMAGE_EDGE } from '@/utils/image'
+import { fileToJpegBase64, IMAGE_ACCEPT, DEFAULT_IMAGE_EDGE } from '@/utils/image'
 import { useToast } from '@/composables/useToast'
 import type { MealType, ParsedFoodItem, Todo, TodoCategory, TodoDraft } from '@/types'
 
@@ -131,15 +131,6 @@ async function runGenerate(): Promise<void> {
   }
 }
 
-function readAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const fr = new FileReader()
-    fr.onload = () => resolve(String(fr.result))
-    fr.onerror = () => reject(new Error('图片读取失败'))
-    fr.readAsDataURL(file)
-  })
-}
-
 /** 选图 → 先进草稿区（不立即解析），可继续粘贴文字；发送视图按视觉模型上限压缩 */
 async function onPickImage(e: Event): Promise<void> {
   const file = (e.target as HTMLInputElement).files?.[0]
@@ -147,10 +138,9 @@ async function onPickImage(e: Event): Promise<void> {
   if (!file) return
   await ensureModels()
   const cap = models.bestVisionModel()?.imageMaxEdge ?? DEFAULT_IMAGE_EDGE
-  const dataUrl = await readAsDataURL(file)
   const [full, small] = await Promise.all([
-    resizeImageAsJpeg(dataUrl, cap, 0.85),
-    resizeImageAsJpeg(dataUrl, 240, 0.6).catch(() => null),
+    fileToJpegBase64(file, cap, 0.85),
+    fileToJpegBase64(file, 240, 0.6).catch(() => null),
   ])
   attachment.value = { full, small }
   error.value = ''
@@ -317,7 +307,7 @@ function clearAll(): void {
             <template v-else>生成</template>
           </button>
         </div>
-        <input ref="fileRef" type="file" accept="image/*" hidden @change="onPickImage">
+        <input ref="fileRef" type="file" :accept="IMAGE_ACCEPT" hidden @change="onPickImage">
       </div>
 
       <!-- 忙碌（流式：工具活动 + 食物行预览）/ 错误 -->

@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Health Connect 客户端库自己声明了 minSdk 26，而本应用是 24。
+         合并清单默认会因此直接报错，overrideLibrary 是官方给的例外口子：
+         老系统照样装得上，能不能用由运行时判断（getSdkStatus + MainActivity 的版本闸）。 -->
+    <uses-sdk tools:overrideLibrary="androidx.health.connect.client" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 录音附件 / 录音页：WebView RustWebChromeClient 将 AUDIO_CAPTURE 映射为这两个运行时权限请求 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -18,6 +23,21 @@
          Android 8+ 还需用户在系统设置里允许 Rein「安装未知应用」，
          未授权时 UpdateBridge 会跳转设置页并让前端提示。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- 第三方健康数据（见 modules/healthsync + HealthConnectBridge.kt）：
+         从系统 Health Connect 读取运动记录，并按用户开关回写。
+         这几项**不是**运行时权限 —— 系统不弹窗，只能在 Health Connect 自己的界面上授予，
+         所以声明在这里只是「声明意图」，真正拿到授权要走 HC 的授权页。
+         口径与小米运动健康写入 HC 时声明的那套一致（它是写入方，我们多一份读）。 -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
+
+    <!-- Health Connect 只在 Android 9+ 且系统带 HC 模块（Android 14+）时存在。
+         声明成 required=false：老机器照样装得上，装上一看就知道这功能不可用。 -->
+    <uses-feature android:name="android.software.health.connect" android:required="false" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -82,6 +102,25 @@
             android:name=".RunTrackingService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- 健康数据用途说明（见 HealthRationaleActivity.kt）。
+             **权限能否使用的前提**：android.permission.health.* 在 Android 14+ 要求
+             应用声明一个处理 VIEW_PERMISSION_USAGE + HEALTH_PERMISSIONS 的页面，
+             否则 HC 判定「健康权限状态不完整」—— 授权页秒退、读写全被拒。
+             两个 intent-filter 对应两套机制：VIEW_PERMISSION_USAGE 是 Android 14+ 的
+             系统健康权限口径；ACTION_SHOW_PERMISSIONS_RATIONALE 是 androidx
+             connect-client 走 Play 版 HC 时用的旧口径。两个都给，两端都能走。 -->
+        <activity
+            android:name=".HealthRationaleActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
 
         <provider
           android:name="androidx.core.content.FileProvider"

@@ -10,7 +10,7 @@ use models::Workout;
 
 /// workouts 表列清单（SELECT 时必须使用，保证行映射下标稳定）
 pub(crate) const WORKOUT_COLS: &str =
-    "id, name, type, date, start_min, duration_min, kcal, intensity, note, session_id, created_at";
+    "id, name, type, date, start_min, duration_min, kcal, intensity, effort, note, session_id, created_at";
 
 pub(crate) fn workout_from_row(row: &Row<'_>) -> rusqlite::Result<Workout> {
     Ok(Workout {
@@ -22,9 +22,10 @@ pub(crate) fn workout_from_row(row: &Row<'_>) -> rusqlite::Result<Workout> {
         duration_min: row.get(5)?,
         kcal: row.get(6)?,
         intensity: row.get(7)?,
-        note: row.get(8)?,
-        session_id: row.get(9)?,
-        created_at: row.get(10)?,
+        effort: row.get(8)?,
+        note: row.get(9)?,
+        session_id: row.get(10)?,
+        created_at: row.get(11)?,
     })
 }
 

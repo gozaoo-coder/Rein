@@ -63,6 +63,10 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     // 注册跑步保活桥的权限弹窗回调（ActivityResultLauncher 必须在 Activity 创建后注册）
     TrackingBridge.register(this)
+    // 注册 Health Connect 授权界面的回调（同上，必须在 onCreate 注册）。
+    // 版本闸：Health Connect 是 API 26+ 才有的东西，Android 7 的机器连这个类都别去碰
+    // （它引用的 java.time 靠 desugaring 兜着，能不加载就不加载）。
+    if (android.os.Build.VERSION.SDK_INT >= 26) HealthConnectBridge.register(this)
     // 系统分享/打开的文件（冷启动 intent 可能自带）：落收件箱 + 通知前端
     ShareReceiver.handle(this, intent)
     ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { _, insets ->

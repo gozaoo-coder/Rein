@@ -3,27 +3,50 @@
 import { Type } from '@earendil-works/pi-ai'
 
 import { normalizeActivation } from '@/config/muscles'
-import { estimateKcal, WORKOUT_META } from '@/config/domain'
+import {
+  WORKOUT_GROUPS,
+  WORKOUT_META,
+  estimateKcal,
+  estimateKcalByEffort,
+  effortToIntensity,
+  workoutTypesInGroup,
+} from '@/config/domain'
 import { exerciseService } from '@/services/exerciseService'
 import { exerciseLibService } from '@/services/exerciseLibService'
 import { nutritionService } from '@/services/nutritionService'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
-import type { Intensity, WorkoutType } from '@/types'
+import type { EffortLevel, Intensity, WorkoutType } from '@/types'
 import { endOfMonth, startOfMonth, todayStr } from '@/utils/date'
 import { MUSCLES } from './muscleSchema'
 import { defineTool, hhmmToMin, resolveDate, type AppTool } from './types'
 
 const TYPE_KEYS = Object.keys(WORKOUT_META) as WorkoutType[]
+/** 分区列出类型：平铺 30 项模型容易挑错（把「爬山」塞进 run），按语义分区它对得上 */
+const TYPE_HELP = WORKOUT_GROUPS.map(
+  (g) => `${g.label}：${workoutTypesInGroup(g.key).map((k) => `${k}=${WORKOUT_META[k].label}`).join('、')}`,
+).join('\n')
 const WORKOUT_TYPE = Type.Union(
   TYPE_KEYS.map((k) => Type.Literal(k)),
   {
-    description: `运动类型：${TYPE_KEYS.map((k) => `${k}=${WORKOUT_META[k].label}`).join(' / ')}`,
+    description: `运动类型（按语义分区）：\n${TYPE_HELP}\n\n挑最贴近的一项；用户说的项目不在表里时用 other。`,
   },
 )
 const INTENSITY = Type.Union(
   [Type.Literal('low'), Type.Literal('moderate'), Type.Literal('high')],
   { description: '强度：low=低 / moderate=中 / high=高' },
 )
+
+/**
+ * 体感强度 1–5（用户说「累不累」）。用户能答的只有这个 —— 他不知道自己配速多少、
+ * 也不知道自己的 MET 档，所以凡是问得到用户的地方都优先问这个，别去推导 intensity。
+ */
+const EFFORT = Type.Number({
+  description:
+    '体感强度 1–5（用户自己说「这次累不累」）：1=毫不累 2=有点累 3=适中 4=挺累 5=累坏了。' +
+    '用户能答这个，别要求他给 MET 档位或配速；没提到体感时省略（按 3 适中处理）。',
+  minimum: 1,
+  maximum: 5,
+})
 
 /* ---- 动作库（0025）的写入 schema：与 src/types/exercise.ts 的枚举一一对应 ---- */
 
@@ -65,6 +88,32 @@ async function currentWeightKg(): Promise<number | null> {
   return profile.weightKg
 }
 
+/**
+ * 热量口径：体感优先，其次客观档位，都没有按适中算。
+ * 前端手动补录是同一条路（`AddWorkoutSheet` → `estimateKcalByEffort`），
+ * 所以「AI 里记一笔」和「自己点一下记一笔」得到的估算值是一致的 ——
+ * 这两条路分叉会让同一件事有两个数。
+ */
+function kcalFromArgs(
+  type: WorkoutType,
+  effort: number | undefined,
+  intensity: Intensity | undefined,
+  durationMin: number,
+  weightKg: number,
+): number {
+  if (effort != null) {
+    const e = Math.min(5, Math.max(1, Math.round(effort))) as EffortLevel
+    return estimateKcalByEffort(type, e, durationMin, weightKg)
+  }
+  return estimateKcal(type, intensity ?? 'moderate', durationMin, weightKg)
+}
+
+/**
+ * 体感 → 落库用的客观档位（workouts.intensity 是 NOT NULL，见 db.rs MIGRATION_0035）。
+ * 直接复用前端那条映射，别在这里另写一份。
+ */
+const effortToIntensityLocal = effortToIntensity
+
 export const exerciseTools: AppTool[] = [
   defineTool({
     name: 'list_workouts',
@@ -99,10 +148,13 @@ export const exerciseTools: AppTool[] = [
     name: 'estimate_kcal',
     group: 'exercise',
     label: '估算运动消耗',
-    description: '按 MET 表与用户最新体重估算一次运动的千卡消耗。create_workout 不传 kcal 时会自动用它。',
+    description:
+      '按 MET 表与用户最新体重估算一次运动的千卡消耗。create_workout 不传 kcal 时会自动用它。' +
+      '用户给了实测数字（手表/体脂秤/运动 App）就直接用他的，别用这个估算值覆盖 —— 实测比 MET 表准。',
     parameters: Type.Object({
       workoutType: WORKOUT_TYPE,
-      intensity: INTENSITY,
+      effort: Type.Optional(EFFORT),
+      intensity: Type.Optional(INTENSITY),
       durationMin: Type.Number({ description: '时长（分钟）' }),
     }),
     async execute(args) {
@@ -110,7 +162,7 @@ export const exerciseTools: AppTool[] = [
       if (weight == null) throw new Error('缺少体重（先 record_body_metric 或 update_profile 提供）')
       return {
         weightKg: weight,
-        kcal: estimateKcal(args.workoutType as WorkoutType, args.intensity as Intensity, args.durationMin, weight),
+        kcal: kcalFromArgs(args.workoutType as WorkoutType, args.effort, args.intensity, args.durationMin, weight),
       }
     },
   }),
@@ -120,37 +172,50 @@ export const exerciseTools: AppTool[] = [
     group: 'exercise',
     label: '写入运动记录',
     description:
-      '新增一条运动记录。kcal 不传时按最新体重自动估算；date 不传默认今天；startTime 用 HH:mm。',
+      '新增一条运动记录。用户口述的运动一律走这里：他说「刚跑了 40 分钟，累但不算累坏了」' +
+      '→ workoutType=run, durationMin=40, effort=3；他说「手表上 420 大卡」→ 一并传 kcal，' +
+      '**实测值优先于估算**（kcal 传了就不要自己再算）。' +
+      'kcal 不传时按最新体重 × MET × 体感估算；date 不传默认今天；startTime 用 HH:mm。' +
+      '不知道具体类型就选最接近的，别硬套成 run。',
     parameters: Type.Object({
-      name: Type.String({ description: '名称，如「晨跑」「胸肩训练」' }),
+      name: Type.Optional(
+        Type.String({ description: '名称；缺省按「类型 · 时长」自动生成（如「羽毛球 · 50分钟」）' }),
+      ),
       workoutType: WORKOUT_TYPE,
-      intensity: INTENSITY,
-      durationMin: Type.Number({ description: '时长（分钟）' }),
-      kcal: Type.Optional(Type.Number({ description: '消耗（大卡）；缺省自动按 MET×体重估算' })),
+      effort: Type.Optional(EFFORT),
+      intensity: Type.Optional(INTENSITY),
+      durationMin: Type.Number({ description: '时长（分钟）；用户说了实际数字就用他的' }),
+      kcal: Type.Optional(Type.Number({ description: '消耗（大卡）。用户报了实测值就传；缺省自动估算' })),
       date: Type.Optional(Type.String({ description: 'YYYY-MM-DD，缺省为今天' })),
       startTime: Type.Optional(Type.String({ description: '开始时间 HH:mm' })),
       note: Type.Optional(Type.String({ description: '备注' })),
     }),
     async execute(args) {
-      let { kcal } = args
-      if (kcal == null) {
-        const weight = await currentWeightKg()
-        kcal =
-          weight == null
-            ? 0
-            : estimateKcal(args.workoutType as WorkoutType, args.intensity as Intensity, args.durationMin, weight)
-      }
+      const weight = await currentWeightKg()
+      const kcal =
+        args.kcal != null
+          ? args.kcal
+          : kcalFromArgs(
+              args.workoutType as WorkoutType,
+              args.effort,
+              args.intensity,
+              args.durationMin,
+              weight ?? 70,
+            )
+      const effort = args.effort != null ? (Math.min(5, Math.max(1, Math.round(args.effort))) as EffortLevel) : null
       const row = await exerciseService.createWorkout({
-        name: args.name.trim(),
+        name: args.name?.trim() || `${WORKOUT_META[args.workoutType as WorkoutType].label} · ${args.durationMin}分钟`,
         type: args.workoutType as WorkoutType,
         date: resolveDate(args.date),
         startMin: args.startTime ? hhmmToMin(args.startTime) : null,
         durationMin: args.durationMin,
-        intensity: args.intensity as Intensity,
+        // 体感在场时 intensity 写派生档位（NOT NULL 列，老代码与知识库仍读它）；否则用客观档位
+        intensity: effort != null ? effortToIntensityLocal(effort) : ((args.intensity as Intensity | undefined) ?? 'moderate'),
+        effort,
         kcal,
-        note: args.note ?? null,
+        note: args.note ?? (args.kcal != null ? `用户输入消耗 ${args.kcal} 大卡` : null),
       })
-      return { ok: true, id: row.id, kcal }
+      return { ok: true, id: row.id, kcal, estimated: args.kcal == null }
     },
   }),
 

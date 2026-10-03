@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import { sessionService } from '@/services/sessionService'
-import { WORKOUT_META } from '@/config/domain'
+import { EFFORT_LABELS, WORKOUT_META } from '@/config/domain'
 import { SCORE_GROUP_LABELS, SCORE_GROUP_OF, type Level, type MuscleKey, type ScoreGroupKey } from '@/config/muscles'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useNutritionStore } from '@/stores/nutrition'
@@ -194,9 +194,17 @@ const typeLabel = computed(() =>
 
 const INTENSITY_LABELS = { low: '低强度', moderate: '中等强度', high: '高强度' } as const
 
-const intensityLabel = computed(() =>
-  props.workout ? INTENSITY_LABELS[props.workout.intensity] ?? props.workout.intensity : '',
-)
+/**
+ * 强度格展示：有体感就显示体感（那是用户自己说的），没有才退回客观档位。
+ * 键名也跟着换 —— 「强度：挺累」读起来别扭，而这一格在手动补录的记录上
+ * 本来就不该再讲 MET 档位（那是内部折算用的中间量）。
+ */
+const effortCell = computed(() => {
+  const w = props.workout
+  if (!w) return { value: '', key: '强度' }
+  if (w.effort != null) return { value: EFFORT_LABELS[w.effort], key: '体感' }
+  return { value: INTENSITY_LABELS[w.intensity] ?? w.intensity, key: '强度' }
+})
 
 /** 开始时刻：手动记录用 startMin，会话记录用 startedAt */
 function startTimeText(startedAt: string): string {
@@ -515,7 +523,7 @@ const courseTotals = computed(() => {
         <div class="dgrid">
           <div class="cell"><div class="v num">{{ workout.durationMin }}</div><div class="k">时长 分钟</div></div>
           <div class="cell"><div class="v num">{{ workout.kcal }}</div><div class="k">消耗 大卡</div></div>
-          <div class="cell"><div class="v">{{ intensityLabel }}</div><div class="k">强度</div></div>
+          <div class="cell"><div class="v">{{ effortCell.value }}</div><div class="k">{{ effortCell.key }}</div></div>
           <div class="cell"><div class="v">{{ typeLabel }}</div><div class="k">类型</div></div>
         </div>
         <p v-if="detail.fromSession" class="hint">

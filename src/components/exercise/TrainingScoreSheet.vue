@@ -11,10 +11,10 @@ import { CONFIDENCE_LABEL, WEAK_LABEL, type GroupScore, type TrainingScoreResult
  *
  * 用户的问题是「这个 84 分是怎么来的、我该改什么」，所以这里分四段回答：
  *  1. **分数**：当前肌群的大字分数 + 档名 + 置信度 + 短板；
- *  2. **图表**：一条**构成条**把 100 分拆成三段 —— 每段的宽度就是该维度
- *     「原始分 × 权重」实际贡献的分数，剩下的灰底就是"还没拿到的分"。
- *     这比三个独立进度条更贴题：它一眼回答"我的分主要来自哪、丢在哪"。
- *     强度那一段下面再展开 组数/次数/重量 三个子项（规范规定的 40/30/30 权重）。
+ *  2. **图表**：一条**数字节点链**（与重量建议抽屉同一语言）—— 频率/强度/体感三个节点，
+ *     右侧是各自贡献分，说明行给「原始分 × 权重」；强度节点下再用三条细条展开
+ *     组数/次数/重量（规范规定的 40/30/30 权重，条长 = 该项原始分完成度）；
+ *     末尾「合计」节点把构成条挂上去：彩段 = 拿到的分，灰底 = 还没拿到的分。
  *  3. **建议**：规范第 10 节按最低分项给的话术，直说下一步做什么；
  *  4. **各肌群**：10 个评估组的分数与档位，点一行就切到那行的分解图。
  *     末尾「计算体系」可展开，逐条列出公式、权重表、数据来源与两处按本软件实况的适配。
@@ -68,6 +68,11 @@ function pts(v: number): number {
 /** 权重显示：0.3 → 30% */
 function pctW(w: number): string {
   return `${Math.round(w * 100)}%`
+}
+
+/** 子项满额贡献分：0.4 → 40（满分 100 的原始分 × 权重） */
+function subMax(w: number): number {
+  return Math.round(w * 100)
 }
 
 /** 分数条宽（%），夹在 0..100 */
@@ -128,52 +133,61 @@ const lowConfidenceHint = computed(
         </p>
       </header>
 
-      <!-- ---------- 2. 图表：100 分怎么拆出来的 ---------- -->
+      <!-- ---------- 2. 图表：100 分怎么拆出来的（数字节点链，与重量建议抽屉同一语言） ---------- -->
       <section class="scard">
         <div class="bhead row between">
           <h3>这 {{ current.score }} 分怎么来的</h3>
           <span class="btag">满分 100 = 运动充分</span>
         </div>
 
-        <!-- 构成条：每段宽 = 该维度「原始分 × 权重」的贡献分；灰底 = 还没拿到的分 -->
         <div
-          class="comp"
+          class="chain"
           role="img"
           :aria-label="`练够分构成：频率 ${pts(current.frequency.contribution)} 分、强度 ${pts(current.intensity.contribution)} 分、体感 ${pts(current.feeling.contribution)} 分，共 ${current.score} 分`"
         >
-          <span
-            v-for="d in dims"
-            :key="d.key"
-            class="seg"
-            :class="d.cls"
-            :style="{ width: `${pts(d.contribution)}%` }"
-          />
-        </div>
-
-        <!-- 逐维度：原始分 × 权重 = 贡献分 -->
-        <ul class="dims">
-          <li v-for="d in dims" :key="d.key" class="dim">
-            <i class="swatch" :class="d.cls" />
-            <div class="dflex flex-1">
-              <div class="dline row between">
-                <span class="dname">{{ d.label }}</span>
-                <span class="dcal num">{{ d.score }} × {{ pctW(d.weight) }} = {{ pts(d.contribution) }}</span>
-              </div>
-              <p class="dnote">{{ d.note }}</p>
-
-              <!-- 强度分再展开三项（规范第 5 节：组数 40% / 次数 30% / 重量 30%） -->
-              <ul v-if="d.key === 'intensity'" class="subs">
-                <li v-for="s in subs" :key="s.key" class="sub row between">
-                  <span class="sname">{{ s.label }}</span>
-                  <span class="scal num">{{ s.score }} × {{ pctW(s.weight) }} = {{ pts(s.contribution) }}</span>
-                </li>
-              </ul>
-              <p v-if="d.key === 'intensity'" class="dnote sub-note">
-                强度分 = 组数 × 40% + 次数 × 30% + 重量 × 30%
-              </p>
+          <div v-for="(d, i) in dims" :key="d.key" class="cnode">
+            <i class="ndot num">{{ i + 1 }}</i>
+            <div class="ntop row between">
+              <span class="ntit"><i class="chip" :class="d.cls" />{{ d.label }}</span>
+              <span class="nval num">{{ pts(d.contribution) }} 分</span>
             </div>
-          </li>
-        </ul>
+            <p class="ncap">{{ d.score }} × {{ pctW(d.weight) }} · {{ d.note }}</p>
+
+            <!-- 强度分再展开三项（规范第 5 节：组数 40% / 次数 30% / 重量 30%）：
+                 条长 = 该项原始分的完成度，右侧给「拿到 / 满额」的贡献分 -->
+            <ul v-if="d.key === 'intensity'" class="subs">
+              <li v-for="s in subs" :key="s.key" class="sub">
+                <div class="subtop row between">
+                  <span class="sname">{{ s.label }}</span>
+                  <span class="scal num">{{ pts(s.contribution) }} / {{ subMax(s.weight) }} 分</span>
+                </div>
+                <span class="subtrack"><i class="subfill" :style="{ width: `${s.score}%` }" /></span>
+              </li>
+            </ul>
+            <p v-if="d.key === 'intensity'" class="ncap sub-note">
+              强度分 = 组数 × 40% + 次数 × 30% + 重量 × 30%
+            </p>
+          </div>
+
+          <!-- 合计节点：构成条挂在这 —— 彩段 = 三个维度实际贡献的分，灰底 = 还没拿到的分 -->
+          <div class="cnode final">
+            <i class="ndot num">4</i>
+            <div class="ntop row between">
+              <span class="ntit">合计 = 练够分</span>
+              <span class="nval final num">{{ current.score }} 分</span>
+            </div>
+            <div class="comp">
+              <span
+                v-for="d in dims"
+                :key="d.key"
+                class="seg"
+                :class="d.cls"
+                :style="{ width: `${pts(d.contribution)}%` }"
+              />
+            </div>
+            <p class="ncap">彩段是各维度实际拿到的分，灰底是还没拿到的分。</p>
+          </div>
+        </div>
       </section>
 
       <!-- ---------- 3. 建议 ---------- -->
@@ -317,10 +331,6 @@ const lowConfidenceHint = computed(
 }
 
 /* ---------- 1. 分数 ---------- */
-.hero {
-  padding: 0;
-}
-
 .hero-name {
   font-size: var(--fs-subhead);
   font-weight: 700;
@@ -437,56 +447,111 @@ const lowConfidenceHint = computed(
   background: var(--accent-strong);
 }
 
-.dims {
+/* ---------- 节点链：与重量建议抽屉（WeightAdviceSheet）同一套视觉语言 ----------
+   三个维度各是一个彩色节点，点色 = 构成条的段色，图与链同色呼应；末尾合计节点
+   把构成条挂上去当结论。 */
+.chain {
   margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
-.dflex {
-  min-width: 0;
+.cnode {
+  position: relative;
+  padding: 0 0 18px 34px;
 }
 
-.dline {
+/* 节点间连线：最后一个节点不画 */
+.cnode::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 24px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--line);
+}
+
+.cnode:last-child {
+  padding-bottom: 2px;
+}
+
+.cnode:last-child::before {
+  display: none;
+}
+
+.ndot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+/* 终点节点：合计是整条链的结论，绿底白字（与重量建议抽屉的「今天建议」同款） */
+.cnode.final .ndot {
+  background: var(--c-exercise-deep);
+  color: #fff;
+}
+
+/* 标题前的小色点：把节点和构成条的段色对上号（点本身回归编号，不再承担配色） */
+.chip {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+}
+
+.ntop {
+  align-items: baseline;
   gap: 8px;
 }
 
-.dname {
+.ntit {
   font-size: var(--fs-footnote);
   font-weight: 700;
   color: var(--text-1);
 }
 
-.dcal {
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-2);
+.nval {
+  font-size: var(--fs-callout);
+  font-weight: 700;
+  color: var(--text-1);
+  white-space: nowrap;
 }
 
-.dnote {
+.nval.final {
+  font-size: var(--fs-title3);
+  color: var(--c-exercise-deep);
+}
+
+.ncap {
   margin-top: 2px;
   font-size: var(--fs-caption);
   line-height: 1.6;
   color: var(--text-3);
 }
 
-.swatch {
-  width: 10px;
-  height: 10px;
-  flex: none;
-  margin-top: 4px;
-  border-radius: 3px;
-}
-
-/* 强度子项：挂在强度行下面，用一条左细线表示"属于上一行"（缩进比加标题省地方） */
+/* 强度子项：与重量建议抽屉的因子条同款 —— 行内标签+右侧「拿到/满额」，下面一条细条，
+   条长就是该项原始分的完成度，不再用左框线列表 */
 .subs {
   margin-top: 8px;
-  padding-left: 10px;
-  border-left: 1.5px solid var(--line);
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
+}
+
+.subtop {
+  align-items: baseline;
+  gap: 8px;
 }
 
 .sub .sname {
@@ -496,12 +561,28 @@ const lowConfidenceHint = computed(
 
 .sub .scal {
   font-size: var(--fs-caption);
+  font-weight: 600;
   color: var(--text-2);
+}
+
+.subtrack {
+  display: block;
+  height: 4px;
+  margin-top: 3px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.subfill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--c-exercise-deep);
 }
 
 .sub-note {
   margin-top: 6px;
-  padding-left: 10px;
 }
 
 /* ---------- 3. 建议 ---------- */

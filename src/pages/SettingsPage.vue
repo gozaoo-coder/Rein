@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronRight, RefreshCw, Sparkles, ToggleLeft } from 'lucide-vue-next'
+import { ChevronRight, HeartPulse, RefreshCw, Sparkles, ToggleLeft } from 'lucide-vue-next'
 
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
@@ -97,7 +97,7 @@ onMounted(() => {
       </button>
     </section>
 
-    <!-- 番茄钟：完整配置（「我」页只保留格内快捷调整） -->
+    <!-- 番茄钟：完整配置（专注 / 短休 / 长休 / 轮数都在这一处调） -->
     <section class="card">
       <header class="row between ghead">
         <h2 class="gtitle">番茄钟</h2>
@@ -171,6 +171,24 @@ onMounted(() => {
         <span class="col ftxt">
           <b>多设备同步</b>
           <em class="t-3">配一台新设备、看上次走的哪条路、处理冲突</em>
+        </span>
+      </button>
+    </section>
+
+    <!-- 第三方数据管理 -->
+    <section class="card">
+      <h2 class="gtitle">第三方数据管理</h2>
+      <p class="pnote t-3">
+        手机上的运动 App（小米运动健康等）把数据写进系统的 Health Connect，
+        Rein 从这里读进来，也可以把自己的运动回写出去。
+      </p>
+      <button class="frow row" @click="router.push({ name: 'settings-health' })">
+        <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
+          <HeartPulse :size="18" />
+        </i>
+        <span class="col ftxt">
+          <b>第三方数据管理</b>
+          <em class="t-3">健康数据授权、同步手环/运动 App 的记录</em>
         </span>
       </button>
     </section>

@@ -8,6 +8,8 @@ import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
 import GlassThumb from '@/components/common/GlassThumb.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useRunStore, fmtClock, fmtPace } from '@/stores/run'
+import { buildRunSummary, fmtDuration, type SplitRow } from '@/utils/runSummary'
+import { fmtDateCn, todayStr } from '@/utils/date'
 import { motionRich } from '@/system/motion'
 import { usePressGlow } from '@/composables/usePressGlow'
 import { workoutRuntime } from '@/system/workoutRuntime'
@@ -28,8 +30,19 @@ const { toast } = useToast()
 const endOpen = ref(false)
 const conflictOpen = ref(false)
 const countdownOpen = ref(false)
-/** 总结页距离输入（字符串便于空值表示「未填」） */
-const manualKmText = ref('')
+/**
+ * 总结页距离输入。
+ *
+ * 类型是 `string | number` 而不是 `string`：`<input type="number" v-model>`
+ * 在 Vue 里会把用户输入**写成数字**（"4.50" → 4.5），只有程序赋值
+ * （syncManualKm 写 toFixed 串）时才是字符串。
+ * 从前注释写着「字符串便于空值表示未填」，于是每个读它的地方都直接
+ * `.trim()` —— 用户一改距离（变数字）computed 就抛 TypeError，
+ * 界面静默停在旧状态（踩过：症状是「输入框改了、界面没反应」，
+ * 控制台只有一条看起来无关的 render 错）。
+ * 所以：**读它一律先 String(...) 归一**，别再加字符串方法。
+ */
+const manualKmText = ref<string | number>('')
 
 onMounted(async () => {
   // 先等运动系统运行时的启动接管（冷开直达本页时防竞态）；
@@ -55,6 +68,60 @@ const instPaceText = computed(() =>
   r.paceInstantSecPerKm != null ? fmtPace(r.paceInstantSecPerKm) : '—',
 )
 const kmText = computed(() => (r.km > 0.005 ? r.km.toFixed(2) : '—'))
+
+/* ---------- 总结派生（口径见 utils/runSummary） ---------- */
+
+/**
+ * 距离是否被用户改过：改过分段配速整体失效（轨迹距离与填入值对不上）。
+ *
+ * ⚠ `manualKmText` **不能当字符串用**：`<input type="number" v-model>` 在
+ * Vue 里会把它写成**数字**（"4.50" → 4.5），所以 `.trim()` / `.toFixed()`
+ * 这类字符串方法会在用户输入小数时抛 TypeError。
+ * 症状很隐蔽：computed 抛错 → 渲染回退到上一次的 vnode →
+ * 界面看起来「改了距离但什么都没变」，而控制台只有一条无关的 render 错。
+ * 所以这里一律先 `String(...)` 归一，两个读它的地方都这么处理。
+ */
+const kmOverridden = computed(() => {
+  const t = String(manualKmText.value ?? '').trim()
+  if (!t) return false
+  const v = Number(t)
+  if (!Number.isFinite(v)) return false
+  return Math.abs(v - r.km) > 0.005
+})
+
+const runSummary = computed(() => {
+  const t = String(manualKmText.value ?? '').trim()
+  const v = Number(t)
+  const manual = kmOverridden.value && Number.isFinite(v) ? v : null
+  return buildRunSummary(r.trackPoints, { manualKm: manual })
+})
+const runSplits = computed(() => runSummary.value.splits)
+const runSplitsAvailable = computed(() => runSummary.value.splitsAvailable)
+const runAscent = computed(() => runSummary.value.ascentM)
+const runPaceSpread = computed(() => runSummary.value.paceSpread)
+
+const isFastest = (sp: SplitRow): boolean => runSummary.value.fastestKm?.index === sp.index
+const isSlowest = (sp: SplitRow): boolean => runSummary.value.slowestKm?.index === sp.index
+const fastestPace = computed(() =>
+  runSummary.value.fastestKm ? fmtPace(runSummary.value.fastestKm.paceSecPerKm) : '—',
+)
+const slowestPace = computed(() =>
+  runSummary.value.slowestKm ? fmtPace(runSummary.value.slowestKm.paceSecPerKm) : '—',
+)
+
+/** 分段不可用时的那句说明：必须说清是「哪一档不可用」，不能只说「无数据」 */
+const splitsHint = computed(() => {
+  if (kmOverridden.value) return '距离已手动改填 · 分段配速按 GPS 原始轨迹计算，与改填值不一致，故不显示'
+  if (r.trackPoints.length < 2) return '本次没有定位轨迹（GPS 不可用）· 分段配速需要轨迹'
+  return `本次不足 1 公里（${kmText.value === '—' ? '无距离' : kmText.value + ' km'}）· 满 1 公里后才有分段`
+})
+
+const runSub = computed(() => {
+  const parts = [fmtDateCn(todayStr())]
+  parts.push(r.goalKind === 'time' ? `目标 ${r.goalTimeMin} 分钟` : r.goalKind === 'distance' ? `目标 ${r.goalDistanceKm.toFixed(2)} km` : '自由跑')
+  parts.push(r.gpsStatus === 'unavailable' ? '无 GPS' : '全程完成')
+  return parts.join(' · ')
+})
 
 const gpsChip = computed(() => {
   if (r.phase !== 'running' && r.phase !== 'paused') return ''
@@ -444,7 +511,10 @@ async function doDiscard(): Promise<void> {
 }
 
 async function doSave(): Promise<void> {
-  const parsed = Number.parseFloat(manualKmText.value)
+  // String(...) 归一：type=number 的 v-model 给回的是**数字**而非字符串
+  // （理由见 kmOverridden 的注释）。parseFloat 对数字虽能工作，
+  // 但那依赖隐式转字符串，属于「碰巧对」，与上面两处保持同一写法。
+  const parsed = Number.parseFloat(String(manualKmText.value ?? ''))
   const manualKm = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null
   const result = await r.save(manualKm)
   const parts = [`已保存跑步 ${result.durationMin} 分钟 · ${result.kcal} 大卡`]
@@ -614,16 +684,63 @@ function bumpKm(delta: number): void {
         </div>
       </div>
 
-      <!-- 总结页：核对（可修正距离）后保存 -->
-      <div v-else-if="r.phase === 'summary'" class="pane col center">
-        <!-- 超范围平移层：同上（item 超伸） -->
-        <div class="rubber-layer" data-rubber-content>
+      <!-- 总结页：成绩单（分段配速 / 爬升）+ 距离核对（可修正）后保存 -->
+      <div v-else-if="r.phase === 'summary'" class="pane col center sumpane">
+        <!-- 超范围平移层：同上（item 超伸）。总结屏内容比其它阶段长，
+             所以这一屏取消居中（align-items/justify-content 覆盖回 flex-start）——
+             居中会把顶部一截顶出可滚范围，用户以为没有更多内容。 -->
+        <div class="rubber-layer sumlayer" data-rubber-content>
           <span class="doneemoji">🏃</span>
           <p class="donetitle">跑步完成</p>
-          <p class="num donemeta">
-            {{ clockText }}<template v-if="kmText !== '—'"> · {{ kmText }} km · {{ paceText }}/km</template>
-            · 约 {{ r.kcal }} 大卡
-          </p>
+          <p class="donemeta">{{ runSub }}</p>
+
+          <!-- 四项指标：总时长 / 距离 / 平均配速 / 消耗。
+               配速与距离在 GPS 丢失时是「—」而不是 0 —— 那一格要如实说"没测到"，
+               画成 0 会被读成"跑了个零"。 -->
+          <div class="sumgrid">
+            <div class="sumstat">
+              <span class="sslabel">总时长</span>
+              <b class="ssval num">{{ clockText }}</b>
+            </div>
+            <div class="sumstat">
+              <span class="sslabel">距离</span>
+              <b class="ssval num">{{ kmText }}<i v-if="kmText !== '—'" class="ssunit">km</i></b>
+            </div>
+            <div class="sumstat">
+              <span class="sslabel">平均配速</span>
+              <b class="ssval num">{{ paceText }}<i v-if="paceText !== '—'" class="ssunit">/km</i></b>
+            </div>
+            <div class="sumstat">
+              <span class="sslabel">消耗</span>
+              <b class="ssval num">{{ r.kcal }}<i class="ssunit">kcal</i></b>
+            </div>
+          </div>
+
+          <!-- 逐公里分段：跑步这一边唯一能回答「为什么这次这么快/这么慢」的地方。
+               不可用时（手动补填距离 / 不足 1km）说清为什么，而不是画一张空表。 -->
+          <section v-if="runSplitsAvailable" class="sumcard">
+            <h3>逐公里分段</h3>
+            <div class="splitrow">
+              <span v-for="sp in runSplits" :key="sp.index" class="splitcell" :class="{ fast: isFastest(sp), slow: isSlowest(sp) }">
+                <span class="spidx num">{{ sp.index }}</span>
+                <span class="sppace num">{{ fmtPace(sp.paceSecPerKm) }}</span>
+                <span v-if="sp.ascentM > 0" class="spup num">↑{{ sp.ascentM }}</span>
+              </span>
+            </div>
+            <p v-if="runPaceSpread" class="hint left">
+              最快 {{ fastestPace }} · 最慢 {{ slowestPace }} · 相差 {{ fmtDuration(runPaceSpread) }}
+            </p>
+          </section>
+          <section v-else class="sumcard">
+            <h3>逐公里分段</h3>
+            <p class="hint left">{{ splitsHint }}</p>
+          </section>
+
+          <!-- 爬升：只计正增量（GPS 高程噪声向下也算会把平路跑出几十米假爬升） -->
+          <section v-if="runAscent != null" class="sumcard">
+            <h3>累计爬升</h3>
+            <p class="sumbig num">{{ runAscent }}<span class="ssunit"> m</span></p>
+          </section>
 
           <label class="distfield row between">
             <span>距离（公里）</span>
@@ -1321,6 +1438,163 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   font-size: var(--fs-subhead);
   color: var(--text-2);
   margin-bottom: 4px;
+}
+
+/* ---------- 总结屏 ----------
+   卡片用**亮色面**（--surface / --surface-2 一族），不是 --hero-chip-bg。
+   理由：总结屏的底是 .run-page 的 var(--bg)（亮色 #f5f5f7），
+   轨迹剧场（.hero，绝对定位满屏）只在它**下面**当背景纹理透出来。
+   早先按「这是暗区」用了半透明深色卡片，结果一块块深灰压在浅底上，
+   整屏像蒙了层脏 —— 半透明的深色压在浅底上必然发灰，与它下层是什么无关。 */
+
+.sumpane {
+  padding-bottom: calc(30px + var(--safe-bottom));
+}
+
+/* 取消居中：内容长，居中会把顶部一截顶出可滚范围（用户以为没有更多）。
+   保留 .pane 自己的 flex:1，让内容不足一屏时仍占满（滚动终点才确定）。 */
+.sumlayer {
+  justify-content: flex-start;
+  align-items: stretch;
+  max-width: 360px;
+  text-align: left;
+}
+
+/* 四项指标 */
+.sumgrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.sumstat {
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  border-radius: var(--radius-m);
+  padding: 8px 6px;
+  min-width: 0;
+  text-align: center;
+}
+
+.sslabel {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.ssval {
+  display: block;
+  font-size: 17px;
+  font-weight: 600;
+  margin-top: 2px;
+  color: var(--text-1);
+  letter-spacing: -0.3px;
+}
+
+.ssunit {
+  font-size: var(--fs-micro);
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text-3);
+  margin-left: 2px;
+}
+
+/* 分段 / 爬升卡 */
+.sumcard {
+  width: 100%;
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-card);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sumcard h3 {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--text-2);
+  text-align: left;
+}
+
+.sumbig {
+  font-size: var(--fs-display-s);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.1;
+}
+
+/* 逐公里分段：横向一排等宽格，横向滚。
+   `flex: none` 要加在**格子**上而不是里面的文字上 —— flex 项是格子，
+   只钉内部文字的话格子仍会被压缩，配速数字就会折行。 */
+.splitrow {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.splitrow::-webkit-scrollbar {
+  display: none;
+}
+
+.splitcell {
+  flex: none;
+  min-width: 62px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 7px 8px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.spidx {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.sppace {
+  font-size: var(--fs-headline);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.15;
+}
+
+.spup {
+  font-size: 10px;
+  /* 用 --ok-strong 而不是 --c-exercise-deep：
+     后者的注释写着「亮底上的文字绿」，但**暗色档把它覆写成亮绿 #a4f04b**，
+     于是它在亮色档压 --surface-2 只有 2.67:1、暗色档压 --surface-2 只有 1.24:1
+     —— 两边都不够（实测）。--ok-strong 是真正为「底上的绿字」留的一档
+     （亮 #248a3d / 暗 #30d158），三级门槛 3:1 两边都过。
+     上箭头「↑」本身已经说明了「爬升」，颜色不承担语义。 */
+  color: var(--ok-strong);
+}
+
+/* 最快 / 最慢：靠底色 + 左侧色条区分，文字色保持 --text-1 ——
+   绿字压绿底在任何组合下都到不了 4.5:1（实测最好 3.7:1），
+   所以「哪公里最快」由底色说，不让文字去承担。 */
+.splitcell.fast {
+  background: color-mix(in srgb, var(--c-exercise) 24%, var(--surface));
+  box-shadow: inset 2px 0 0 var(--c-exercise-deep);
+}
+
+.splitcell.slow {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--text-3);
+}
+
+.sumcard .hint {
+  text-align: left;
+  color: var(--text-2);
 }
 
 .distfield {

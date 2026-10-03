@@ -70,6 +70,14 @@ android {
     kotlinOptions {
         jvmTarget = "1.8"
     }
+    // core library desugaring：minSdk 24 上也要能用 java.time ——
+    // HealthConnectBridge 到处在用 Instant/ZoneId，而 java.time 是 API 26 才进系统的。
+    // 不开这个，Android 7 的机器一碰这段代码就 NoClassDefFoundError。
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
     buildFeatures {
         buildConfig = true
     }
@@ -85,6 +93,11 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    // 第三方健康数据：Health Connect 客户端（见 modules/healthsync）。
+    // 1.1.0 是当前稳定版（1.2.0 还是 alpha），它自带底层的 health-platform-client，
+    // 依赖 kotlinx-coroutines-android 会一起进来，不必单独声明。
+    implementation("androidx.health.connect:connect-client:1.1.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")

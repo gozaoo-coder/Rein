@@ -84,6 +84,14 @@ export const routes = [
     meta: { title: '多设备同步' },
   },
   {
+    path: '/settings/health',
+    name: 'settings-health',
+    component: () => import('@/pages/HealthDataPage.vue'),
+    // 三级页：第三方数据管理（入口在「设置 › 第三方数据管理」）。
+    // 只有 Android 有 Health Connect，桌面端进得来但整页是说明性的禁用态。
+    meta: { title: '第三方数据管理' },
+  },
+  {
     path: '/settings/update',
     name: 'settings-update',
     component: () => import('@/pages/UpdatePage.vue'),

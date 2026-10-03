@@ -9,7 +9,7 @@ import { useToast } from '@/composables/useToast'
 import { useTodoStore } from '@/stores/todo'
 import { recorder, startRecording, stopRecording } from '@/system/recorderRuntime'
 import { minToHHmm, todayStr } from '@/utils/date'
-import { resizeImageAsJpeg } from '@/utils/image'
+import { fileToJpegBase64, IMAGE_ACCEPT } from '@/utils/image'
 import { TODO_CATEGORIES } from '@/types'
 import type {
   RecRule,
@@ -282,7 +282,7 @@ async function onPickImage(e: Event): Promise<void> {
   if (!f) return
   try {
     // 压到最长边 1600px 内联存储，兼顾清晰度与库体积
-    const b64 = await resizeImageAsJpeg(await readAsDataURL(f), 1600, 0.82)
+    const b64 = await fileToJpegBase64(f, 1600, 0.82)
     form.attachments.push({
       kind: 'image',
       name: f.name,
@@ -415,7 +415,7 @@ onBeforeUnmount(() => {
             {{ recMine ? `停止 ${fmtDur(recorder.elapsedSec)}` : '录音' }}
           </button>
         </div>
-        <input ref="imgRef" type="file" accept="image/*" hidden @change="onPickImage">
+        <input ref="imgRef" type="file" :accept="IMAGE_ACCEPT" hidden @change="onPickImage">
         <input ref="fileRef" type="file" hidden @change="onPickFile">
 
         <div v-if="textDraftOpen" class="atch-text">

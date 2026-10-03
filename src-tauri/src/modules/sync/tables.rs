@@ -305,6 +305,11 @@ pub const TABLES: &[TableSpec] = &[
         None,
     ),
     // workouts.session_id 指向 workout_sessions（nullable）
+    //
+    // 业务键取 `external_id`（迁移 0036）：从 Health Connect 导入的记录带着 HC 的
+    // 记录 UUID，两台设备各自导入**同一条** HC 记录时靠它并成一条，而不是插两条
+    // 撞唯一索引。本地记录该列为 NULL —— 同步层的业务键只在值是字符串时才参与合并
+    // （见 apply.rs），所以这一条不会改变 Rein 自建记录的既有行为。
     t(
         "workouts",
         Pk::Local,
@@ -313,7 +318,7 @@ pub const TABLES: &[TableSpec] = &[
             column: "session_id",
             target: Some("workout_sessions"),
         }],
-        None,
+        Some("external_id"),
         &[],
         &[],
         None,

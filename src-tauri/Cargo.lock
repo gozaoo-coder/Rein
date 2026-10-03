@@ -3532,6 +3532,7 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
+ "windows",
  "x25519-dalek",
 ]
 

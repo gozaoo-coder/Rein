@@ -843,6 +843,7 @@ function adjustmentsOf(r: ProgramRecord): number {
             v-model="patchProtein"
             label="蛋白质（g/kg 体重）"
             :step="0.1"
+            :decimals="1"
             :min="ADJUSTMENT_LIMITS.proteinPerKgMin"
             :max="ADJUSTMENT_LIMITS.proteinPerKgMax"
           />

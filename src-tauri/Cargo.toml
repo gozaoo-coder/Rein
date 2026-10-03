@@ -66,3 +66,14 @@ strip = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
+
+# HEIF/HEIC 解码（modules/media）：Windows 侧经影像组件（WIC）把 HEIC 转成 JPEG。
+# 版本锁 0.61.3 —— 与 Cargo.lock 里 webview2-com 已经引入的那份同一个版本，
+# 免得为了几行解码代码再编译一整套 windows bindings。
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61.3", features = [
+  "Win32_Graphics_Imaging",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Memory",
+] }
