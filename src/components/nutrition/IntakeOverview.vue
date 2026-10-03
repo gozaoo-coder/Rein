@@ -134,11 +134,14 @@ const coreMacros = computed(() => n.macros.filter((m) => m.key !== 'sodiumMg'))
   min-width: 0;
 }
 
+/* 卡片标题：与「今日画布」「宏量营养素」等全站 36 个卡片同一规格
+   （即各卡 `.head h2` 那套：--fs-title3 / 700 / 字距 -0.3px）。
+   此前这里是 14px 的小标签，与同级卡片标题排在一屏里明显矮一截。 */
 .eyebrow {
-  font-size: var(--fs-subhead);
+  font-size: var(--fs-title3);
   font-weight: 700;
-  letter-spacing: 0.2px;
-  color: var(--text-2);
+  letter-spacing: -0.3px;
+  color: var(--text-1);
 }
 
 /* 右侧动作（桌面卡的「详情」角标）：推到行尾，不受标题宽度影响 */
@@ -350,17 +353,13 @@ const coreMacros = computed(() => n.macros.filter((m) => m.key !== 'sodiumMg'))
 /* ── 窄卡（桌面便当 hero 格）降一档 ──
    注意选择器必须写成 `.ov.dense …`：`dense` 与 `ov` 是**同一个元素上的两个类**，
    写成 `.dense .ov` 是后代选择器，永远匹配不到（这里踩过一次）。
-   桌面那张卡是独立卡片、需要卡片级标题，所以标题反而「升」到卡片字号；
-   而大数字必须降下来，否则 4/12 列宽装不下。
+   标题两处一致（都是卡片标题规格），所以这里不再覆写它；
+   要降的是大数字，否则 4/12 列宽装不下。
    另外那张卡被 bento 拉满整格高（不填满就会漏出灰底，整行读成没画完），
    所以让内容在卡内均匀铺开，用 `min-height` 而不是 `height`：内容变多时照常往下长。 */
 .ov.dense {
   min-height: 100%;
   justify-content: space-between;
-}
-
-.ov.dense .eyebrow {
-  font-size: var(--fs-title3);
 }
 
 .ov.dense .hero {

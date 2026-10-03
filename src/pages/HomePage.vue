@@ -6,6 +6,7 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import HomeCanvas from '@/components/home/HomeCanvas.vue'
 import AddWorkoutSheet from '@/components/exercise/AddWorkoutSheet.vue'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import IntakeOverview from '@/components/nutrition/IntakeOverview.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import DietHistorySheet from '@/components/diet/DietHistorySheet.vue'
@@ -153,11 +154,11 @@ function runTool(t: ToolContribution): void {
         </div>
       </section>
 
-      <!-- 查阅类入口：低频，文字链 -->
+      <!-- 查阅类入口：低频，中性 chip -->
       <div class="textlinks">
-        <button class="pressable" @click="router.push('/nutrition/foods')">饮食库</button>
-        <button class="pressable" @click="router.push('/nutrition/recipes')">食谱库</button>
-        <button class="pressable" @click="historyOpen = true">饮食历史</button>
+        <PillChip as="button" tone="muted" @click="router.push('/nutrition/foods')">饮食库</PillChip>
+        <PillChip as="button" tone="muted" @click="router.push('/nutrition/recipes')">食谱库</PillChip>
+        <PillChip as="button" tone="muted" @click="historyOpen = true">饮食历史</PillChip>
       </div>
 
       <!-- 常用工具栏：移动便当风格（图标章 + 标题 + 副标），条目来自插件层 -->
@@ -220,10 +221,12 @@ function runTool(t: ToolContribution): void {
   line-height: 1.5;
 }
 
+/* 白字压 --danger(#ff3b30) 实测只有 3.55:1 —— 14px 粗体够不着 4.5:1 的门槛。
+   --danger-strong 是「危险色的文字/实底档」，压白字 5.87:1，肉眼仍是同一支红。 */
 .warn-go {
   padding: 8px 16px;
   border-radius: var(--radius-full);
-  background: var(--danger);
+  background: var(--danger-strong);
   color: var(--on-accent);
   font-size: var(--fs-subhead);
   font-weight: 700;
@@ -238,7 +241,7 @@ function runTool(t: ToolContribution): void {
   color: var(--text-2);
 }
 
-/* 查阅文字链 */
+/* 查阅文字链：居中一排中性 chip（尺寸/语气见 PillChip.vue，这里只管排版） */
 .textlinks {
   display: flex;
   justify-content: center;
@@ -246,35 +249,27 @@ function runTool(t: ToolContribution): void {
   margin: 14px 0;
 }
 
-.textlinks button {
-  padding: 7px 13px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-  color: var(--text-2);
-}
-
 /* 高画质及以上：文字链跟着升成玻璃材质。
-   这两个档位都把玻璃铺到卡片 / 快捷磁贴 / 操作面板（base.css 的两组选择器），
-   唯独这三颗文字链还是扁平 --surface-2 —— 一屏里就它们「没有材质」，看着像漏了。
-   落影取 `--glass-panel-shadow`（= --shadow-card）而**不是** `--glass-shadow`：
+   chip 本体由 PillChip.vue 渲染，所以这里必须用 `:deep(button)` 穿透作用域 ——
+   同理，落影取 `--glass-panel-shadow`（= --shadow-card）而**不是** `--glass-shadow`：
    项目里这两种落影是按「在流 / 浮层」分的（见 base.css 那两组注释）——
    在流的内容面用前者、浮在正文之上的浮层才用后者（更重的那份）。
    这些 chip 坐在页面流里、底下没有内容经过，用浮层那份会凭空浮起来；
    当初六个表面共用一条 box-shadow 时用户报的「改极致后卡片阴影异常变深变黑」正是这个错。
    不挂 backdrop-filter 也是同一条理由的延伸：在流面背后只有画布那一条平滑渐变，
    模糊与不模糊肉眼一致，而滤镜会给每颗 chip 开一个背景根、滚动时逐帧重采样。 */
-html[data-perf]:not([data-perf='low']) .textlinks button {
+html[data-perf]:not([data-perf='low']) .textlinks :deep(button) {
   background: var(--glass-panel-fill);
   box-shadow: var(--glass-panel-shadow), var(--glass-insets);
 }
 
-/* 常用工具栏（移动便当风格） */
+/* 常用工具栏：与桌面便当的 QuickTile 同一套几何 ——
+   圆角都是 --radius-l、网格间距都是 14px。此前主页这里是 --radius-m(14px) 与 10px，
+   同一屏里两种「图标章 + 文字」的磁贴却有两种圆角，且比别处更挤。 */
 .tools {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 14px;
   margin-top: 0;
 }
 
@@ -283,7 +278,7 @@ html[data-perf]:not([data-perf='low']) .textlinks button {
   align-items: center;
   gap: 11px;
   padding: 12px 14px;
-  border-radius: var(--radius-m);
+  border-radius: var(--radius-l);
   background: var(--surface);
   box-shadow: var(--shadow-card);
   text-align: left;
@@ -315,7 +310,9 @@ html[data-perf]:not([data-perf='low']) .textlinks button {
   font-style: normal;
   font-size: var(--fs-micro);
   font-weight: 500;
-  color: var(--text-3);
+  /* --text-2 而不是 --text-3：这行副标是「点下去会发生什么」的说明，属于要读的信息，
+     而 --text-3 在白底上只有 3.6:1（够不着 4.5:1）。三级灰阶的用法契约见 tokens.css。 */
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

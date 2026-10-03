@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ChevronRight } from 'lucide-vue-next'
 
 import CanvasTimeline from '@/components/todo/CanvasTimeline.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import CourseDetailSheet from '@/components/campus/CourseDetailSheet.vue'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
 import { MEAL_LABELS, MEAL_META, mealKcal } from '@/config/domain'
@@ -80,30 +81,33 @@ function onMove(t: Todo, startMin: number): void {
     <header class="row between head">
       <h2>今日画布</h2>
       <div class="row center hright">
-        <span class="num t-3 meta">{{ scheduled.length }} 个安排 · {{ pool.length }} 条未安排</span>
+        <span class="num t-2 meta">{{ scheduled.length }} 个安排 · {{ pool.length }} 条未安排</span>
         <!-- 「详情 ›」胶囊：取代卡片底部原来那行「打开完整画布 N 条未完成 ›」。
              它本来就是同一件事（进 /todos 看全部），但那一行占了整条卡片宽度、
              还要一条分隔线把它与正文切开，而它承载的只有一个去处的入口 ——
              挪到卡头右侧、收成一枚胶囊，卡片底部就干净了。
              放卡头而不是别处：页头右侧是全应用「进下一层」的位置（各详情卡都在这儿）。 -->
-        <button class="detail row center" @click="router.push('/todos')">
+        <PillChip as="button" tone="action" class="detail" @click="router.push('/todos')">
           详情 <ChevronRight :size="13" :stroke-width="2.6" />
-        </button>
+        </PillChip>
       </div>
     </header>
 
-    <!-- 未安排池：点卡片快排（编辑抽屉里落时间） -->
+    <!-- 未安排池：点卡片快排（编辑抽屉里落时间）。
+         横滑与右缘渐隐的说明在下方 .pool 的样式注释里。 -->
     <div v-if="pool.length" class="pool" data-rubber-self>
-      <button
+      <PillChip
         v-for="t in pool"
         :key="t.id"
+        as="button"
+        tone="label"
         class="pchip"
         :data-title="t.title"
         @click="onSelect(t)"
       >
-        <i class="pdot" />{{ t.title }}
-        <em v-if="t.durationMin" class="num">{{ t.durationMin }} 分钟</em>
-      </button>
+        <i class="dot" style="background: var(--accent)" />{{ t.title }}
+        <em v-if="t.durationMin" class="trail num">{{ t.durationMin }} 分钟</em>
+      </PillChip>
     </div>
 
     <!-- 紧凑画布：现在线 / 打勾 / 拖拽改位，与 /todos 画布同一组件同一数据。
@@ -122,13 +126,14 @@ function onMove(t: Todo, startMin: number): void {
 
     <!-- 餐次摘要行 -->
     <div v-if="meals.length" class="meals">
-      <span
+      <PillChip
         v-for="m in meals"
         :key="m.mealType"
+        size="sm"
         class="mchip num"
       >
-        <i class="mdot" :style="{ background: m.colorVar }" />{{ m.label }} {{ minToHHmm(m.timeMin) }} · {{ Math.round(m.kcal) }} 大卡
-      </span>
+        <i class="dot" :style="{ background: m.colorVar }" />{{ m.label }} {{ minToHHmm(m.timeMin) }} · {{ Math.round(m.kcal) }} 大卡
+      </PillChip>
     </div>
 
     <TodoEditorSheet :open="editorOpen" :todo="editorTarget" :date="date" @close="editorOpen = false" />
@@ -157,7 +162,7 @@ function onMove(t: Todo, startMin: number): void {
    读起来像布局坏了（低频横滚区没有滚动条可暗示）。 */
 .pool {
   display: flex;
-  gap: 7px;
+  gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
   padding: 10px 0 2px;
@@ -168,32 +173,12 @@ function onMove(t: Todo, startMin: number): void {
   width: 0;
 }
 
-.pchip {
+/* chip 本体（尺寸 / 语气 / 圆点 / 尾部注）全在 PillChip.vue，这里只留版式。
+   ⚠️ 选择器必须写成 `.pool .pchip`：`pchip` 与 Chip 自己的 `chip` 落在**同一个元素**上，
+   两个选择器的特异性相同时胜负取决于样式注入顺序；多一层 .pool 才稳定压得住。 */
+.pool .pchip {
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
   max-width: 72%;
-  padding: 7px 12px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-1);
-}
-
-.pchip em {
-  font-style: normal;
-  font-weight: 500;
-  color: var(--text-3);
-}
-
-.pdot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--accent);
 }
 
 /* 紧凑画布：固定视窗，高度从这里给（.ctl / .scroll 都是 height:100% 链）。
@@ -213,30 +198,12 @@ function onMove(t: Todo, startMin: number): void {
   height: 100%;
 }
 
-/* 餐次摘要 */
+/* 餐次摘要：chip 本体在 PillChip.vue（size="sm"），这里只留排布 */
 .meals {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
-}
-
-.mchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.mdot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
 }
 
 /* 卡头右侧：计数 + 「详情 ›」胶囊。
@@ -247,22 +214,8 @@ function onMove(t: Todo, startMin: number): void {
   flex: none;
 }
 
-.detail {
-  gap: 1px;
-  padding: 5px 10px 5px 12px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  /* `--accent-strong` 而不是 `--accent`：后者压在 `--surface-2` 上实测只有
-     4.27:1（亮）/ 3.82:1（暗），够不着 4.5 的门槛 —— 这两个数字是量出来的，不是估的。
-     `--accent-strong` 这个令牌存在的理由就是「浅底上的文字蓝」（见 tokens.css 注释）。 */
-  color: var(--accent-strong);
-  font-size: var(--fs-caption);
-  font-weight: 700;
+/* 语气与尺寸在 PillChip.vue（tone="action" = 强调色 + 700），这里只留「不被压扁」 */
+.hright .detail {
   flex: none;
-  transition: opacity var(--dur-fast) var(--ease-standard);
-}
-
-.detail:active {
-  opacity: 0.6;
 }
 </style>
