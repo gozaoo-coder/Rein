@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ChevronRight, CircleCheck, CircleAlert, FileDown, LogOut, RefreshCw, School, Sparkles, Trash2 } from 'lucide-vue-next'
+import { BookOpen, CalendarClock, ChevronRight, CircleCheck, CircleAlert, FileDown, LogOut, RefreshCw, School, Sparkles, Trash2 } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { campusService } from '@/services/campusService'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
 import { useFeaturesStore } from '@/stores/features'
-import type { AiAction, SchoolSystemInfo } from '@/types'
+import type { AiAction, HolidayConfigView, SchoolSystemInfo } from '@/types'
 
 const store = useCampusStore()
 const router = useRouter()
@@ -231,9 +232,78 @@ async function onExportScript(): Promise<void> {
   }
 }
 
+/* ---------------- 官方调休映射 ---------------- */
+
+/**
+ * 开关 + 按日期的手动覆盖。这里**不做前端推断** —— 后端才是映射的唯一真源
+ * （课表页与首页时间线都要生效），前端只负责把用户的纠正回写。
+ */
+const holidayView = ref<HolidayConfigView | null>(null)
+const holidayEnabled = ref(true)
+const holidayBusy = ref(false)
+/** 新增覆盖用的草稿：日期 + 补星期几 */
+const holidayDraftDate = ref('')
+const holidayDraftWeekday = ref(3)
+
+const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+
+/** 当前生效的补班映射，按日期升序（含被覆盖为「不补课」的行） */
+const holidayRows = computed(() =>
+  Object.entries(holidayView.value?.makeups ?? {})
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, weekday]) => ({ date, weekday })),
+)
+
+async function loadHoliday(): Promise<void> {
+  try {
+    const v = await campusService.holidayConfigGet()
+    holidayView.value = v
+    holidayEnabled.value = v.enabled
+  } catch {
+    // 数据源不可达不该打断设置页：保留上一次的值，用户仍可改开关
+  }
+}
+
+async function persistHoliday(patch: { enabled?: boolean; overrides?: Record<string, number> }): Promise<void> {
+  if (holidayBusy.value) return
+  holidayBusy.value = true
+  try {
+    await campusService.holidayConfigSet({
+      enabled: patch.enabled ?? holidayEnabled.value,
+      overrides: patch.overrides ?? holidayView.value?.overrides ?? {},
+    })
+    await loadHoliday()
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : '保存调休映射失败')
+  } finally {
+    holidayBusy.value = false
+  }
+}
+
+function onHolidayToggle(v: boolean): void {
+  holidayEnabled.value = v
+  void persistHoliday({ enabled: v })
+}
+
+/** 改某一天补星期几；`0` = 该日不补课 */
+function onHolidayWeekday(date: string, weekday: number): void {
+  void persistHoliday({ overrides: { ...(holidayView.value?.overrides ?? {}), [date]: weekday } })
+}
+
+function onHolidayAdd(): void {
+  const date = holidayDraftDate.value.trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    toast.toast('请先选择日期')
+    return
+  }
+  void persistHoliday({ overrides: { ...(holidayView.value?.overrides ?? {}), [date]: holidayDraftWeekday.value } })
+  holidayDraftDate.value = ''
+}
+
 onMounted(async () => {
   await store.init()
   void loadAudit()
+  void loadHoliday()
   const a = store.account
   if (a) {
     loginName.value = a.loginName
@@ -434,7 +504,53 @@ onMounted(async () => {
       </p>
     </section>
 
-    <!-- ⑤ AI 排障：操作记录 + 救援脚本。写操作不弹确认（抢课窗口里确认就是拖延），
+    <!-- ⑤ 官方调休映射：默认开。关掉即不显示「假 / 调」标记，也不做任何映射 -->
+    <section v-if="store.account" class="card">
+      <div class="sec-head">
+        <CalendarClock :size="17" />
+        <h2>官方调休映射</h2>
+        <div class="head-switch">
+          <ToggleSwitch
+            :model-value="holidayEnabled"
+            label="根据官方调休数据进行映射"
+            :disabled="holidayBusy"
+            @update:model-value="onHolidayToggle"
+          />
+        </div>
+      </div>
+      <p class="tip">
+        开启后，法定放假日会在课表与时间线上标「假」，补班日会把被补那天的课一并显示并标「调」。
+        数据来自公开的 holiday-cn 校历库；补哪一天由规律推断，下面可以逐日纠正。
+      </p>
+
+      <template v-if="holidayEnabled">
+        <ul v-if="holidayRows.length" class="holiday-list">
+          <li v-for="row in holidayRows" :key="row.date">
+            <span class="h-date num">{{ row.date }}</span>
+            <select
+              class="h-sel"
+              :value="row.weekday"
+              :disabled="holidayBusy"
+              @change="onHolidayWeekday(row.date, Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option v-for="(label, i) in WEEKDAY_LABELS" :key="label" :value="i + 1">{{ label }}</option>
+              <option :value="0">不补课</option>
+            </select>
+          </li>
+        </ul>
+        <p v-else class="tip">当前学期内还没有可映射的调休日（数据可能还没取到）。</p>
+
+        <div class="holiday-add">
+          <input v-model="holidayDraftDate" class="h-date-input" type="date" />
+          <select v-model.number="holidayDraftWeekday" class="h-sel">
+            <option v-for="(label, i) in WEEKDAY_LABELS" :key="label" :value="i + 1">{{ label }}</option>
+          </select>
+          <button class="mini" :disabled="holidayBusy" @click="onHolidayAdd">添加</button>
+        </div>
+      </template>
+    </section>
+
+    <!-- ⑥ AI 排障：操作记录 + 救援脚本。写操作不弹确认（抢课窗口里确认就是拖延），
          那份信任必须由「事后能一条条查、且每条都能重放」来兜底。 -->
     <section v-if="store.account" class="card audit-card d-full">
       <div class="sec-head">
@@ -464,7 +580,7 @@ onMounted(async () => {
       </p>
     </section>
 
-    <!-- ⑥ 账号管理 -->
+    <!-- ⑦ 账号管理 -->
     <section v-if="store.account" class="card danger-card d-full">
       <div class="sec-head">
         <Trash2 :size="17" />
@@ -675,6 +791,67 @@ input:focus,
   font-size: var(--fs-micro);
   color: var(--text-3);
   line-height: 1.45;
+}
+
+/* ---------- 官方调休映射 ---------- */
+.head-switch {
+  margin-left: auto;
+  display: flex;
+}
+
+.holiday-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.holiday-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.h-date {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.h-sel {
+  margin-left: auto;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-caption);
+}
+
+.holiday-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.h-date-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-caption);
+}
+
+.holiday-add .h-sel {
+  margin-left: 0;
+}
+
+.holiday-add .mini {
+  margin-left: 0;
+  flex: none;
 }
 
 .check {

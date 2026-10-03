@@ -159,12 +159,14 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
           <div v-if="cellEntries(d, slot).length" class="blocks">
             <button
               v-for="e in visible(cellEntries(d, slot))"
-              :key="e.session.id + d"
+              :key="e.session.id + d + (e.holiday ?? '')"
               class="blk"
+              :class="{ 'has-hd': e.holiday }"
               :style="{ '--blk': colorOf(e) }"
               :title="`${e.session.courseName} · ${e.session.building ?? ''}${e.session.room ?? ''}`"
               @click="emit('select', e)"
             >
+              <span v-if="e.holiday" class="hd" :class="e.holiday">{{ e.holiday === 'off' ? '假' : '调' }}</span>
               <span class="name">{{ e.session.courseName }}</span>
               <span class="meta">{{ e.session.room ?? e.session.building ?? '' }}</span>
             </button>
@@ -372,6 +374,7 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 .blk {
   flex: 1;
   min-width: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -384,6 +387,33 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   overflow: hidden;
   cursor: pointer;
   transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* 「假 / 调」角标：钉在右上角，不占正文的排版流 */
+.hd {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  padding: 0 3px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.hd.off {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+}
+
+.hd.makeup {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 有角标时给课名留出右边距，避免长课名的首行压到角标上 */
+.blk.has-hd .name {
+  padding-right: 13px;
 }
 
 .blk:focus-visible {

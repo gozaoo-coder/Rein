@@ -83,11 +83,11 @@ const stats = computed(() => {
           <span class="chips">
             <span
               v-for="e in entriesOn(c.date).slice(0, 2)"
-              :key="e.session.id"
+              :key="e.session.id + (e.holiday ?? '')"
               class="chip"
               :style="{ '--blk': colorOf(e) }"
             >
-              {{ e.session.courseName }}
+              <span v-if="e.holiday" class="hd" :class="e.holiday">{{ e.holiday === 'off' ? '假' : '调' }}</span>{{ e.session.courseName }}
             </span>
             <span v-if="entriesOn(c.date).length > 2" class="more">
               +{{ entriesOn(c.date).length - 2 }}
@@ -189,6 +189,20 @@ const stats = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 「假 / 调」：直接缀在课名前面（色条太窄，放不下独立角标） */
+.hd {
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.hd.off {
+  color: var(--warn);
+}
+
+.hd.makeup {
+  color: var(--accent);
 }
 
 .more {

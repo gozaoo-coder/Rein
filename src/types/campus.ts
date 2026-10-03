@@ -120,6 +120,9 @@ export interface CampusSession {
   color: string | null
 }
 
+/** 某一天的调休性质。`off` = 法定放假日（课照上，打「假」标）；`makeup` = 补班日额外挂上的课（打「调」标）。 */
+export type HolidayKind = 'off' | 'makeup'
+
 /** 一节课在某个公历日期上的一次发生 */
 export interface ScheduleEntry {
   /** `YYYY-MM-DD` */
@@ -127,6 +130,24 @@ export interface ScheduleEntry {
   /** 教学周序号 */
   week: number
   session: CampusSession
+  /** 调休性质；普通日 / 功能关闭时为 null */
+  holiday: HolidayKind | null
+}
+
+/** 调休映射配置（`campus_holiday_config_set` 的入参） */
+export interface HolidayConfig {
+  /** 总开关，默认开 */
+  enabled: boolean
+  /** 按日期手动覆盖：日期 → 补星期几（1=周一…7=周日）；值 `0` 表示该日不补课 */
+  overrides: Record<string, number>
+}
+
+/** 调休映射全貌（`campus_holiday_config_get` 的出参） */
+export interface HolidayConfigView extends HolidayConfig {
+  /** 当前生效的补班映射（含被覆盖为 `0` 的日期，好让设置页那一行仍在、可改回） */
+  makeups: Record<string, number>
+  /** 已缓存到本地数据的年份 */
+  years: number[]
 }
 
 /**

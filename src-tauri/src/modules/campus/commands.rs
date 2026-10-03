@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{Duration, Local, NaiveDate, Utc};
+use chrono::{Datelike, Duration, Local, NaiveDate, Utc};
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager, State};
 
@@ -20,6 +20,7 @@ use super::adapter::AnyAdapter;
 use super::course_select::CourseSelectClient;
 use super::dates;
 use super::grab::{self, GrabHub};
+use super::holiday::{self, HolidayConfig, HolidayConfigView, HolidayPlan};
 use super::http::{CookieJar, HttpResponse, Session};
 use super::lesson_search::{self, LessonSearchClient};
 use super::matcher;
@@ -421,9 +422,28 @@ fn load_courses(conn: &Connection, account_id: i64, semester_id: i64) -> Result<
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// `occurrence_date` 的逆运算：一个公历日期落在第几教学周（1 起）。
+/// 早于学期锚点就没有值。`week_start_on_sunday` 两种口径下都成立 —— 锚点本身就是该周第一天。
+fn week_of(anchor: NaiveDate, d: NaiveDate) -> Option<i64> {
+    let days = (d - anchor).num_days();
+    if days < 0 {
+        return None;
+    }
+    Some(days / 7 + 1)
+}
+
 /// 把课表展开成「日期 → 当天发生的课」。Rust 侧唯一一处做周次换算的地方，视图与
 /// 时间线物化共用它，避免两边公式漂移。
-fn expand_entries(sem: &CampusSemester, sessions: &[CampusSession]) -> Vec<ScheduleEntry> {
+///
+/// `plan` 是官方调休计划（开关关闭或数据未就绪时为空，等价于旧行为）：
+/// - 放假日：当天原本的课照常展开，只加一枚「假」标；
+/// - 补班日：**额外**挂上「被补那天的星期几」在本教学周的课，并标「调」。
+///   补班日自己原本的课（如周六本就排的课）不打标 —— 标只说明「这节是被挪过来的」。
+fn expand_entries(
+    sem: &CampusSemester,
+    sessions: &[CampusSession],
+    plan: &HolidayPlan,
+) -> Vec<ScheduleEntry> {
     let Some(anchor) = semester_anchor(sem) else {
         return Vec::new();
     };
@@ -433,13 +453,46 @@ fn expand_entries(sem: &CampusSemester, sessions: &[CampusSession]) -> Vec<Sched
             let Some(d) = occurrence_date(anchor, w, s.weekday, sem.week_start_on_sunday) else {
                 continue;
             };
+            let date = d.format("%Y-%m-%d").to_string();
+            // 只有放假日给标；补班日的标留给下面额外挂上的那些
+            let holiday = if plan.kind(&date) == Some(HolidayKind::Off) {
+                Some(HolidayKind::Off)
+            } else {
+                None
+            };
             out.push(ScheduleEntry {
-                date: d.format("%Y-%m-%d").to_string(),
+                date,
                 week: w,
                 session: s.clone(),
+                holiday,
             });
         }
     }
+
+    // 调休补课：补班日额外挂上「被补星期几」的课
+    for (date, weekday) in plan.makeups() {
+        let Some(d) = dates::parse_ymd(date) else {
+            continue;
+        };
+        let Some(w) = week_of(anchor, d) else {
+            continue;
+        };
+        if w < 1 || w > sem.total_weeks {
+            continue;
+        }
+        for s in sessions {
+            if s.weekday != *weekday || !s.weeks.contains(&w) {
+                continue;
+            }
+            out.push(ScheduleEntry {
+                date: date.clone(),
+                week: w,
+                session: s.clone(),
+                holiday: Some(HolidayKind::Makeup),
+            });
+        }
+    }
+
     out.sort_by(|a, b| {
         a.date
             .cmp(&b.date)
@@ -519,6 +572,7 @@ fn materialize_todos(
     account_id: i64,
     sem: &CampusSemester,
     sessions: &[CampusSession],
+    plan: &HolidayPlan,
 ) -> Result<i64> {
     conn.execute(
         "DELETE FROM todos WHERE status != 'done' AND course_session_id IN \
@@ -547,7 +601,7 @@ fn materialize_todos(
     let now = now_iso();
     let mut written = 0i64;
 
-    for entry in expand_entries(sem, sessions) {
+    for entry in expand_entries(sem, sessions, plan) {
         let Some(d) = dates::parse_ymd(&entry.date) else {
             continue;
         };
@@ -971,6 +1025,9 @@ struct Fetched {
 struct SyncAttempt {
     fetched: Result<Fetched>,
     refreshed: Option<CookieJar>,
+    /// 同一次无锁窗口里顺带抓到的官方调休原始 JSON（年 → 原始文本）。
+    /// 失败的年份直接缺席，不影响课表本身。
+    holidays: Vec<(i64, String)>,
 }
 
 /// 一次完整的课表抓取：课表页面变量 → 选定学期 → 课表数据。
@@ -1063,15 +1120,24 @@ pub async fn campus_sync(
     hub: State<'_, CampusHub>,
     semester_id: Option<i64>,
 ) -> Result<SyncOutcome> {
-    // ── 短锁：取出账号，并把「本地学期 id」翻译成本次抓取要用的远端 id
-    let (account, wanted_remote) = {
+    // ── 短锁：取出账号，并把「本地学期 id」翻译成本次抓取要用的远端 id；
+    //    顺带算清「官方调休数据缺哪几年」—— 这次的网络窗口一并把它抓回来
+    let (account, wanted_remote, missing_holiday_years) = {
         let conn = state.db.lock();
         let account = require_account(&conn)?;
-        let wanted = match semester_id {
-            Some(local_id) => Some(load_semester(&conn, account.id, local_id)?.remote_id),
-            None => None,
+        let target = match semester_id {
+            Some(local_id) => Some(load_semester(&conn, account.id, local_id)?),
+            None => current_semester(&conn)?,
         };
-        (account, wanted)
+        let wanted = target.as_ref().map(|s| s.remote_id);
+        let missing: Vec<i64> = target
+            .as_ref()
+            .map(|s| holiday::years_of(&s.start_date, &s.end_date))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|y| holiday::cached_raw(&conn, *y).is_none())
+            .collect();
+        (account, wanted, missing)
     };
     let spec = account.spec()?;
     // account 马上要被搬进闭包，写库阶段还要用 id，所以先取出来
@@ -1104,6 +1170,11 @@ pub async fn campus_sync(
                 target_remote_id,
             }),
             refreshed,
+            // 同一个无锁窗口把缺的调休数据也抓回来：公开 CDN，失败静默
+            holidays: missing_holiday_years
+                .into_iter()
+                .filter_map(|y| holiday::fetch_raw(y).ok().map(|raw| (y, raw)))
+                .collect(),
         }
     })
     .await
@@ -1117,6 +1188,10 @@ pub async fn campus_sync(
     if let Some(jar) = &attempt.refreshed {
         persist_session(&conn, account_id, jar)?;
         forget_select_token(&hub);
+    }
+    // 顺带抓到的官方调休数据在这一并落缓存。放在 `fetched?` 之前读，避免 `attempt` 被部分移动。
+    for (year, raw) in &attempt.holidays {
+        let _ = holiday::cache_raw(&conn, *year, raw);
     }
     let fetched = attempt.fetched?;
 
@@ -1289,7 +1364,11 @@ pub async fn campus_sync(
 
     let semester = load_semester(&conn, account_id, semester_local_id)?;
     let sessions = load_sessions(&conn, account_id, semester_local_id)?;
-    let todos_written = materialize_todos(&conn, account_id, &semester, &sessions)?;
+    // 调休数据刚在上面并入缓存，这里就地组装计划（纯本地、无网络），全程持锁同步完成 ——
+    // 锁绝不跨 await（三段式铁律）。
+    let years = holiday::years_of(&semester.start_date, &semester.end_date);
+    let plan = holiday::plan_from_cache(&conn, &years, &HolidayConfig::load(&conn));
+    let todos_written = materialize_todos(&conn, account_id, &semester, &sessions, &plan)?;
 
     Ok(SyncOutcome {
         courses: course_ids.len() as i64,
@@ -1343,7 +1422,10 @@ pub fn campus_schedule(
 
     let sem = load_semester(&conn, account.id, sem_id)?;
     let sessions = load_sessions(&conn, account.id, sem_id)?;
-    materialize_todos(&conn, account.id, &sem, &sessions)?;
+    // 调休计划**只从缓存组装**：打开课表这条路上不该出现网络请求（联网补缓存见 `campus_sync`）
+    let years = holiday::years_of(&sem.start_date, &sem.end_date);
+    let plan = holiday::plan_from_cache(&conn, &years, &HolidayConfig::load(&conn));
+    materialize_todos(&conn, account.id, &sem, &sessions, &plan)?;
 
     let today = Local::now().date_naive();
     let lo = from
@@ -1359,7 +1441,7 @@ pub fn campus_schedule(
         hi.format("%Y-%m-%d").to_string(),
     );
 
-    let entries = expand_entries(&sem, &sessions)
+    let entries = expand_entries(&sem, &sessions, &plan)
         .into_iter()
         .filter(|e| e.date >= lo_s && e.date <= hi_s)
         .collect();
@@ -1373,6 +1455,152 @@ pub fn campus_schedule(
         time_slots,
         courses,
     })
+}
+
+/* ─────────────────────────── 官方调休映射 ─────────────────────────── */
+
+/// 当前激活账号的当前学期。
+fn current_semester(conn: &Connection) -> Result<Option<CampusSemester>> {
+    let Some(account) = load_active_account(conn)? else {
+        return Ok(None);
+    };
+    let Some(sem_id) = current_semester_id(conn, account.id)? else {
+        return Ok(None);
+    };
+    Ok(Some(load_semester(conn, account.id, sem_id)?))
+}
+
+/// 重建时间线所需的全部输入；没绑账号 / 没选学期时为 None。
+fn timeline_inputs(conn: &Connection) -> Result<Option<(i64, CampusSemester, Vec<CampusSession>)>> {
+    let Some(account) = load_active_account(conn)? else {
+        return Ok(None);
+    };
+    let Some(sem_id) = current_semester_id(conn, account.id)? else {
+        return Ok(None);
+    };
+    let sem = load_semester(conn, account.id, sem_id)?;
+    let sessions = load_sessions(conn, account.id, sem_id)?;
+    Ok(Some((account.id, sem, sessions)))
+}
+
+/// 该关心的年份：当前学期覆盖到的那些；没有学期时退到今年（设置页总得能看到点什么）。
+fn holiday_years(conn: &Connection) -> Vec<i64> {
+    if let Ok(Some(sem)) = current_semester(conn) {
+        let ys = holiday::years_of(&sem.start_date, &sem.end_date);
+        if !ys.is_empty() {
+            return ys;
+        }
+    }
+    vec![Local::now().year() as i64]
+}
+
+/// 补齐官方调休数据缓存。**三段式**：短锁读缺哪些年 → 无锁联网 → 短锁写回。
+///
+/// 全程失败静默：调休只是锦上添花，数据源不可达时课表照常，不该连累同步。
+async fn holiday_ensure_cached(db: &Db, years: &[i64]) {
+    let missing: Vec<i64> = {
+        let conn = db.lock();
+        years
+            .iter()
+            .copied()
+            .filter(|y| holiday::cached_raw(&conn, *y).is_none())
+            .collect()
+    };
+    if missing.is_empty() {
+        return;
+    }
+
+    let fetched = tauri::async_runtime::spawn_blocking(move || {
+        missing
+            .into_iter()
+            .filter_map(|y| holiday::fetch_raw(y).ok().map(|raw| (y, raw)))
+            .collect::<Vec<(i64, String)>>()
+    })
+    .await
+    .unwrap_or_default();
+    if fetched.is_empty() {
+        return;
+    }
+
+    let conn = db.lock();
+    for (year, raw) in fetched {
+        let _ = holiday::cache_raw(&conn, year, &raw);
+    }
+}
+
+/// 带上调休映射地重建时间线派生行（`campus_sync` 与配置页改开关后都走它）。
+async fn materialize_with_holiday(
+    db: &Db,
+    account_id: i64,
+    sem: &CampusSemester,
+    sessions: &[CampusSession],
+) -> Result<i64> {
+    let years = holiday::years_of(&sem.start_date, &sem.end_date);
+    let cfg = {
+        let conn = db.lock();
+        HolidayConfig::load(&conn)
+    };
+    if cfg.enabled {
+        holiday_ensure_cached(db, &years).await;
+    }
+    let conn = db.lock();
+    let plan = holiday::plan_from_cache(&conn, &years, &cfg);
+    materialize_todos(&conn, account_id, sem, sessions, &plan)
+}
+
+/// 调休映射配置：开关 + 按日期的手动覆盖 + 当前生效的映射（供设置页展示/纠正）。
+///
+/// 顺带把缺失的年份补进缓存（联网），这样「进设置页」就等于「数据已就绪」，
+/// 之后打开课表只读缓存、不发请求。
+#[tauri::command]
+pub async fn campus_holiday_config_get(state: State<'_, AppState>) -> Result<HolidayConfigView> {
+    let (cfg, years) = {
+        let conn = state.db.lock();
+        (HolidayConfig::load(&conn), holiday_years(&conn))
+    };
+    if cfg.enabled {
+        holiday_ensure_cached(&state.db, &years).await;
+    }
+
+    let conn = state.db.lock();
+    let tables: Vec<holiday::HolidayYear> = years
+        .iter()
+        .filter_map(|y| holiday::cached_raw(&conn, *y))
+        .filter_map(|raw| holiday::parse(&raw).ok())
+        .collect();
+    // 生效映射 = 推断 ∪ 覆盖；覆盖值原样带出（含 `0` = 不补），好让那一行留在列表里可再改回
+    let mut makeups = holiday::infer_makeups(&tables);
+    for (date, wd) in &cfg.overrides {
+        makeups.insert(date.clone(), *wd);
+    }
+
+    Ok(HolidayConfigView {
+        enabled: cfg.enabled,
+        overrides: cfg.overrides,
+        makeups,
+        years,
+    })
+}
+
+/// 写调休映射配置。开关或覆盖一变，时间线里的派生行要立刻跟着变。
+#[tauri::command]
+pub async fn campus_holiday_config_set(
+    state: State<'_, AppState>,
+    config: HolidayConfig,
+) -> Result<()> {
+    {
+        let conn = state.db.lock();
+        config.save(&conn)?;
+    }
+    let inputs = {
+        let conn = state.db.lock();
+        timeline_inputs(&conn)?
+    };
+    let Some((account_id, sem, sessions)) = inputs else {
+        return Ok(());
+    };
+    materialize_with_holiday(&state.db, account_id, &sem, &sessions).await?;
+    Ok(())
 }
 
 /* ─────────────────────────── 培养方案 ─────────────────────────── */
@@ -3313,11 +3541,80 @@ mod tests {
             course_type: Some("通识必修".into()),
             color: None,
         }];
-        let entries = expand_entries(&sem("2026-09-14", false), &sessions);
+        let entries = expand_entries(&sem("2026-09-14", false), &sessions, &HolidayPlan::default());
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].date, "2026-10-02");
         assert_eq!(entries[0].week, 3);
         assert_eq!(entries[2].date, "2026-10-16");
+    }
+
+    /// 调休映射的端到端语义：放假日打「假」、补班日额外挂「调」，补班日自己的课不打标。
+    #[test]
+    fn holiday_plan_marks_off_days_and_adds_makeup_classes() {
+        // 2026 国庆：10/07（第 4 周周三）放假、10/10（第 4 周周六）补被吃掉那天的课
+        let tables = vec![holiday::HolidayYear {
+            year: 2026,
+            days: vec![
+                holiday::HolidayDay {
+                    name: "国庆节".into(),
+                    date: "2026-10-07".into(),
+                    is_off_day: true,
+                },
+                holiday::HolidayDay {
+                    name: "国庆节".into(),
+                    date: "2026-10-10".into(),
+                    is_off_day: false,
+                },
+            ],
+        }];
+        let plan = holiday::build_plan(&tables, &std::collections::BTreeMap::new());
+        assert_eq!(plan.makeups().get("2026-10-10").copied(), Some(3), "10/10 补周三");
+
+        let mk = |id: i64, weekday: i64| CampusSession {
+            id,
+            course_id: 1,
+            weekday,
+            start_unit: 1,
+            end_unit: 2,
+            start_time: "08:00".into(),
+            end_time: "09:35".into(),
+            weeks: vec![4],
+            weeks_str: None,
+            room: None,
+            building: None,
+            campus: None,
+            course_name: format!("课{id}"),
+            course_code: None,
+            teachers: vec![],
+            credits: None,
+            course_type: None,
+            color: None,
+        };
+        // 1 = 周三、2 = 周六，都只排在第 4 教学周
+        let sessions = vec![mk(1, 3), mk(2, 6)];
+        let entries = expand_entries(&sem("2026-09-14", false), &sessions, &plan);
+
+        let off = entries.iter().find(|e| e.date == "2026-10-07").unwrap();
+        assert_eq!(off.session.id, 1);
+        assert_eq!(off.holiday, Some(HolidayKind::Off), "放假当天仍上课，打「假」标");
+
+        let own = entries
+            .iter()
+            .find(|e| e.date == "2026-10-10" && e.session.id == 2)
+            .unwrap();
+        assert_eq!(own.holiday, None, "补班日自己的课不打标");
+
+        let added = entries
+            .iter()
+            .find(|e| e.date == "2026-10-10" && e.session.id == 1)
+            .unwrap();
+        assert_eq!(added.holiday, Some(HolidayKind::Makeup), "额外挂上的课打「调」标");
+        assert_eq!(added.week, 4);
+
+        // 关掉映射（空计划）就该退回旧行为：不补课、不打标
+        let plain = expand_entries(&sem("2026-09-14", false), &sessions, &HolidayPlan::default());
+        assert_eq!(plain.len(), 2);
+        assert!(plain.iter().all(|e| e.holiday.is_none()));
     }
 
     #[test]
@@ -3442,12 +3739,12 @@ mod tests {
         };
 
         // 学期起始日 = 今天，星期取今天 → 第 1 周就是今天；第 20 周落在窗口外
-        let first = materialize_todos(&conn, 1, &sem, &sessions).unwrap();
+        let first = materialize_todos(&conn, 1, &sem, &sessions, &HolidayPlan::default()).unwrap();
         assert_eq!(first, 6, "只物化窗口内的 6 周，第 20 周必须被裁掉");
         assert_eq!(count_todos(&conn), 6);
 
         // 幂等：重复执行不累积
-        let second = materialize_todos(&conn, 1, &sem, &sessions).unwrap();
+        let second = materialize_todos(&conn, 1, &sem, &sessions, &HolidayPlan::default()).unwrap();
         assert_eq!(second, 6);
         assert_eq!(count_todos(&conn), 6, "先删后建，不该越跑越多");
 
@@ -3458,7 +3755,7 @@ mod tests {
         conn.execute("UPDATE todos SET status = 'done' WHERE id = ?1", [done_id])
             .unwrap();
 
-        let third = materialize_todos(&conn, 1, &sem, &sessions).unwrap();
+        let third = materialize_todos(&conn, 1, &sem, &sessions, &HolidayPlan::default()).unwrap();
         assert_eq!(third, 5, "已打卡的那一次不再重建");
         assert_eq!(count_todos(&conn), 6, "历史行 + 5 条未完成");
         let kept: String = conn
@@ -3492,7 +3789,7 @@ mod tests {
         crate::db::migrate_for_test(&conn).unwrap();
         let sem = seed_account(&conn);
         let sessions = load_sessions(&conn, 1, 1).unwrap();
-        materialize_todos(&conn, 1, &sem, &sessions).unwrap();
+        materialize_todos(&conn, 1, &sem, &sessions, &HolidayPlan::default()).unwrap();
 
         let done_id: i64 = conn
             .query_row("SELECT id FROM todos ORDER BY date LIMIT 1", [], |r| {
@@ -3526,7 +3823,7 @@ mod tests {
         assert_eq!(sessions_left, 0);
 
         // 未完成的派生行随后由物化清空
-        let written = materialize_todos(&conn, 1, &sem, &[]).unwrap();
+        let written = materialize_todos(&conn, 1, &sem, &[], &HolidayPlan::default()).unwrap();
         assert_eq!(written, 0);
         let left: i64 = conn
             .query_row("SELECT COUNT(*) FROM todos", [], |r| r.get(0))
@@ -3545,7 +3842,7 @@ mod tests {
             [],
         )
         .unwrap();
-        materialize_todos(&conn, 1, &sem, &load_sessions(&conn, 1, 1).unwrap()).unwrap();
+        materialize_todos(&conn, 1, &sem, &load_sessions(&conn, 1, 1).unwrap(), &HolidayPlan::default()).unwrap();
 
         clear_session(&conn, 1).unwrap();
 
@@ -3578,7 +3875,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         crate::db::migrate_for_test(&conn).unwrap();
         let sem = seed_account(&conn);
-        materialize_todos(&conn, 1, &sem, &load_sessions(&conn, 1, 1).unwrap()).unwrap();
+        materialize_todos(&conn, 1, &sem, &load_sessions(&conn, 1, 1).unwrap(), &HolidayPlan::default()).unwrap();
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM todos", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
@@ -3620,7 +3917,7 @@ mod tests {
         crate::db::migrate_for_test(&conn).unwrap();
         let sem = seed_account(&conn);
         // 第一学期（旧）：物化出一批未完成派生行
-        materialize_todos(&conn, 1, &sem, &load_sessions(&conn, 1, 1).unwrap()).unwrap();
+        materialize_todos(&conn, 1, &sem, &load_sessions(&conn, 1, 1).unwrap(), &HolidayPlan::default()).unwrap();
 
         // 第二学期（新）+ 一条属于它的时段与派生行（模拟刚同步完的当前学期）
         conn.execute(

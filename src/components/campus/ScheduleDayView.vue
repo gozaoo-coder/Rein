@@ -77,7 +77,7 @@ function place(e: ScheduleEntry): string {
     <ul v-else class="list">
       <li
         v-for="(e, i) in list"
-        :key="e.session.id"
+        :key="e.session.id + (e.holiday ?? '')"
         class="row"
         :class="{ now: i === activeIndex, next: isNext(e, i) }"
         :style="{ '--blk': colorOf(e) }"
@@ -98,6 +98,7 @@ function place(e: ScheduleEntry): string {
 
         <div class="card">
           <div class="top">
+            <span v-if="e.holiday" class="hd-tag" :class="e.holiday">{{ e.holiday === 'off' ? '假' : '调' }}</span>
             <span class="name">{{ e.session.courseName }}</span>
             <span v-if="i === activeIndex" class="badge">进行中</span>
             <span v-else-if="isNext(e, i)" class="badge soft">下一节</span>
@@ -249,6 +250,25 @@ function place(e: ScheduleEntry): string {
 }
 
 .badge.soft {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* 「假 / 调」标记：排在课名之前，一眼看出这天被调过 */
+.hd-tag {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  border-radius: var(--radius-full);
+  padding: 1px 7px;
+}
+
+.hd-tag.off {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+}
+
+.hd-tag.makeup {
   color: var(--accent);
   background: var(--accent-soft);
 }

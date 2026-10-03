@@ -613,6 +613,17 @@ pub struct CampusSession {
     pub color: Option<String>,
 }
 
+/// 一个发生日的**官方调休性质**（见 `holiday.rs`）。
+///
+/// `off` = 法定放假日（那天仍上原本的课，只是打「假」标）；
+/// `makeup` = 调休补班日额外挂上的课（打「调」标）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HolidayKind {
+    Off,
+    Makeup,
+}
+
 /// 一节课在**某个公历日期**上的一次发生。
 ///
 /// 课表要按日/周/月浏览，而教务只给「第 N 教学周 + 星期几」，所以展开这一步放在
@@ -624,6 +635,8 @@ pub struct ScheduleEntry {
     pub date: String,
     pub week: i64,
     pub session: CampusSession,
+    /// 该日在官方调休口径下的性质；普通日为 `null`。总开关关闭时恒为 `null`。
+    pub holiday: Option<HolidayKind>,
 }
 
 /// 左侧时间轴的一行 —— 由当天实际排课的节次去重得到。

@@ -16,6 +16,8 @@ import type {
   GrabSettings,
   GrabState,
   GrabTargetInput,
+  HolidayConfig,
+  HolidayConfigView,
   LessonQuery,
   LessonSearchOutcome,
   LoginOutcome,
@@ -97,6 +99,18 @@ export const campusService = {
       weekday: input.weekday ?? null,
       startUnit: input.startUnit ?? null,
     }),
+
+  /* ---------------- 官方调休映射（课表 / 时间线共用） ---------------- */
+
+  /**
+   * 读调休映射配置与当前生效的映射。顺带补齐缺失年份的官方数据缓存（联网），
+   * 所以「进设置页」就等于「数据已就绪」，之后打开课表只读缓存、不发请求。
+   */
+  holidayConfigGet: () => invoke<HolidayConfigView>('campus_holiday_config_get'),
+
+  /** 写调休映射配置。开关或覆盖一变，后端会立刻重建时间线里的派生行。 */
+  holidayConfigSet: (config: HolidayConfig) =>
+    invoke<void>('campus_holiday_config_set', { config }),
 
   /* ---------------- 选课（令牌走 EAMS 会话换取的 SSO JWT） ---------------- */
 

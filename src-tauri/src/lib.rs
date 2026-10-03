@@ -264,6 +264,9 @@ pub fn run() {
             modules::campus::commands::campus_schedule,
             modules::campus::commands::campus_program,
             modules::campus::commands::campus_course_detail,
+            // campus（官方调休映射：放假日打「假」标、补班日补被吃掉那天的课）
+            modules::campus::commands::campus_holiday_config_get,
+            modules::campus::commands::campus_holiday_config_set,
             // campus（选课：令牌走 EAMS 会话换取的 SSO JWT）
             modules::campus::commands::campus_lesson_search_probe,
             modules::campus::commands::campus_lesson_search,

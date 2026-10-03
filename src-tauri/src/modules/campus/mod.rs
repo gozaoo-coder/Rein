@@ -30,6 +30,7 @@ pub mod dates;
 pub mod detail;
 pub mod grab;
 pub mod guet;
+pub mod holiday;
 pub mod http;
 pub mod lesson_search;
 pub mod matcher;

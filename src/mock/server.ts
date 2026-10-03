@@ -2768,11 +2768,12 @@ const CAMPUS_SESSIONS: CampusSessionDemo[] = [
 ]
 
 function campusExpand(
-  sem: { startDate: string; weekStartOnSunday: boolean },
+  sem: { startDate: string; weekStartOnSunday: boolean; totalWeeks: number },
   from: string,
   to: string,
 ): unknown[] {
   const anchor = new Date(`${sem.startDate}T00:00:00`)
+  const plan = campusHolidayPlan()
   const out: unknown[] = []
   for (const s of CAMPUS_SESSIONS) {
     for (const w of s.weeks) {
@@ -2781,7 +2782,18 @@ function campusExpand(
       d.setDate(d.getDate() + (w - 1) * 7 + offset)
       const date = ymd(d)
       if (date < from || date > to) continue
-      out.push({ date, week: w, session: s })
+      // 放假日：课照上，只打一枚「假」标
+      out.push({ date, week: w, session: s, holiday: plan.off.has(date) ? 'off' : null })
+    }
+  }
+  // 调休补课：补班日额外挂上「被补星期几」在本教学周的课，并打「调」标
+  for (const [date, weekday] of plan.makeup) {
+    const w = campusWeekOf(anchor, date)
+    if (w == null || w < 1 || w > sem.totalWeeks) continue
+    if (date < from || date > to) continue
+    for (const s of CAMPUS_SESSIONS) {
+      if (s.weekday !== weekday || !s.weeks.includes(w)) continue
+      out.push({ date, week: w, session: s, holiday: 'makeup' })
     }
   }
   out.sort((a, b) => {
@@ -2791,6 +2803,41 @@ function campusExpand(
   })
   return out
 }
+
+/** 公历日期落在第几教学周（1 起）；早于学期锚点返回 null。与 Rust 的 `week_of` 同构 */
+function campusWeekOf(anchor: Date, date: string): number | null {
+  const d = new Date(`${date}T00:00:00`)
+  const days = Math.round((d.getTime() - anchor.getTime()) / 86400000)
+  if (days < 0) return null
+  return Math.floor(days / 7) + 1
+}
+
+/** 调休映射的演示配置（mock 内存态；刷新页面即回到默认「开启」）。 */
+let campusHolidayCfg = { enabled: true, overrides: {} as Record<string, number> }
+
+/**
+ * 演示用调休计划，锚定本周：**第 2 周周五放假**、**第 2 周周日补周三的课**。
+ * 这样任何一天打开预览都能看到「假 / 调」两种徽标，再叠加用户的手动覆盖。
+ */
+function campusHolidayPlan(): { off: Set<string>; makeup: Map<string, number> } {
+  const off = new Set<string>()
+  const makeup = new Map<string, number>()
+  if (!campusHolidayCfg.enabled) return { off, makeup }
+  const start = campusMonday()
+  const dayAt = (week: number, weekday: number): string => {
+    const d = new Date(start)
+    d.setDate(d.getDate() + (week - 1) * 7 + (weekday - 1))
+    return ymd(d)
+  }
+  off.add(dayAt(2, 5)) // 第 2 周周五
+  makeup.set(dayAt(2, 7), 3) // 第 2 周周日 → 补周三
+  for (const [date, wd] of Object.entries(campusHolidayCfg.overrides)) {
+    if (wd === 0) makeup.delete(date)
+    else if (wd >= 1 && wd <= 7) makeup.set(date, wd)
+  }
+  return { off, makeup }
+}
+
 
 const campusSemester = () => ({
   id: 1,
@@ -7032,6 +7079,33 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         timeSlots: CAMPUS_SLOTS,
         courses: campusCourses,
       } as T)
+    }
+
+    case 'campus_holiday_config_get': {
+      const plan = campusHolidayPlan()
+      const makeups: Record<string, number> = {}
+      for (const [date, wd] of plan.makeup) makeups[date] = wd
+      // 覆盖值原样带出（含 0 = 不补），好让设置页那一行仍在、可改回
+      for (const [date, wd] of Object.entries(campusHolidayCfg.overrides)) makeups[date] = wd
+      const sem = campusSemester()
+      const years = [...new Set([Number(sem.startDate.slice(0, 4)), Number(sem.endDate.slice(0, 4))])]
+      return delay({
+        enabled: campusHolidayCfg.enabled,
+        overrides: { ...campusHolidayCfg.overrides },
+        makeups,
+        years,
+      } as T)
+    }
+
+    case 'campus_holiday_config_set': {
+      const cfg = args.config as { enabled?: boolean; overrides?: Record<string, number> } | undefined
+      campusHolidayCfg = {
+        enabled: cfg?.enabled ?? true,
+        overrides: { ...(cfg?.overrides ?? {}) },
+      }
+      // 开关/覆盖一变，时间线派生行立刻跟着变（与 Rust 的 campus_holiday_config_set 同语义）
+      if (campusAccount) campusMaterializeTodos()
+      return delay(undefined as T)
     }
 
     case 'campus_course_detail': {
