@@ -660,7 +660,10 @@ onBeforeUnmount(() => {
    但背景同样铺满这 40px，结果胶囊 40px 宽、文字被推到右缘，左内边距 18px、右 0。
    定位改为「右缘贴住刻度栏右缘」：`right: 100%` 把右缘放到 .nowline 的左缘（= 48px），
    再退 8px 就是刻度栏的右缘 40px —— 与 .hlab 同一列，且宽度不定也能对上。
-   垂直用 translateY(-50%) 锚在 .nowline（高 2px）的中心，与字号无关。 */
+   垂直用 translateY(-50%) 锚在 .nowline（高 2px）的中心，与字号无关。
+
+   实底红 + 白字：白字压 `--danger`(#ff3b30) 实测只有 3.55:1，11px 够不着 4.5 的门槛，
+   所以底色取 `--danger-strong`（白字 5.87:1）—— 与主页「去复盘」按钮是同一对配色。 */
 .nowtag {
   position: absolute;
   right: 100%;
@@ -672,8 +675,8 @@ onBeforeUnmount(() => {
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
-  color: var(--danger);
-  background: var(--surface);
+  color: var(--on-accent);
+  background: var(--danger-strong);
   border-radius: var(--radius-full);
 }
 
