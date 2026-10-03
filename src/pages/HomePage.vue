@@ -6,7 +6,7 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import HomeCanvas from '@/components/home/HomeCanvas.vue'
 import AddWorkoutSheet from '@/components/exercise/AddWorkoutSheet.vue'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
-import ActivityRings from '@/components/common/ActivityRings.vue'
+import IntakeOverview from '@/components/nutrition/IntakeOverview.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import DietHistorySheet from '@/components/diet/DietHistorySheet.vue'
 import BentoOverview from '@/components/workbench/BentoOverview.vue'
@@ -136,20 +136,10 @@ function runTool(t: ToolContribution): void {
     <template v-else>
       <PageHeader title="今天" :subtitle="fmtDateCn(today)" />
 
-      <!-- 状态条：无卡片壳，环 + 数字（详情进营养全览） -->
-      <button class="strip pressable" aria-label="能量与营养详情" @click="router.push('/nutrition')">
-        <ActivityRings :rings="nutrition.rings" :size="62" />
-        <span class="col strip-nums">
-          <span class="row big">
-            <b class="num">{{ nutrition.kcalIntake }}</b>
-            <span class="num">/ {{ nutrition.kcalTarget }} 大卡</span>
-          </span>
-          <span class="row subs num">
-            <span class="row"><i class="dot" style="background: var(--c-exercise)" />运动 +{{ nutrition.exerciseKcal }}</span>
-            <span class="row"><i class="dot" style="background: var(--c-balance)" />剩余 {{ nutrition.kcalRemaining }}</span>
-          </span>
-        </span>
-        <span class="strip-more t-3">详情 ›</span>
+      <!-- 摄入总览：挂卡片壳（.card 自带的 20px 内边距与材质），
+           这样它与「今日画布」等卡片落在同一条竖线上；贴着页面底色时整块会散掉。 -->
+      <button class="card strip pressable" aria-label="摄入总览详情" @click="router.push('/nutrition')">
+        <IntakeOverview />
       </button>
 
       <HomeCanvas :date="today" />
@@ -211,58 +201,13 @@ function runTool(t: ToolContribution): void {
   --ph-bleed: 34px;
 }
 
-/* 状态条：无壳贴页面，整条可点进营养全览 */
+/* 摄入总览：整条是按钮、壳交给 .card（内边距 20px 与全站卡片一致，别在这里再叠一层），
+   这里只管「占满宽度、左对齐」——按钮默认居中文本，得掰回左对齐。
+   与下方 HomeCanvas 的间距由全局 `.card + .card`（14px）负责。 */
 .strip {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+  display: block;
   width: 100%;
-  padding: 4px 2px 14px;
   text-align: left;
-}
-
-.strip-nums {
-  gap: 0;
-  min-width: 0;
-}
-
-.strip-nums .big {
-  align-items: baseline;
-  gap: 6px;
-}
-
-.strip-nums .big b {
-  font-size: var(--fs-display-m);
-  font-weight: 200;
-  letter-spacing: -1.2px;
-  line-height: 1;
-  color: var(--c-intake);
-}
-
-.strip-nums .big span {
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-}
-
-.subs {
-  margin-top: 7px;
-  gap: 12px;
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-}
-
-.subs .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  margin-right: 5px;
-  flex: none;
-}
-
-.strip-more {
-  margin-left: auto;
-  flex: none;
-  font-size: var(--fs-caption);
 }
 
 /* 体重趋势提醒 */

@@ -1,0 +1,382 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+
+import { useNutritionStore, type MacroStat } from '@/stores/nutrition'
+
+/**
+ * 「目标线」的落点（条宽比例）＝ 目标的 100%。
+ *
+ * 条的总量程取 `目标 ÷ 此值`，于是右边天然空出 `1 - 此值` 一条超标区：
+ * 色条越过这条线就是吃超了，不必读数字。调小 = 更早预警，但「还没吃满」时条看着更空。
+ * 这是本版式的产品口径，目前只由这一个组件消费，所以就近放在这里；
+ * 若将来别处也要画同款条，再提到 config 里共用。
+ */
+const CAL_LINE_RATIO = 0.7
+
+/**
+ * 摄入总览：热量与三大宏量共用一套版式，四根条上都立着一枚「目标线」小胶囊。
+ *
+ * **线为什么在 70%**：条的总量程取 `目标 ÷ 0.7`，于是目标的 100% 恒落在条宽的 70% 处，
+ * 右侧空出来的三成就是超标区 —— 越没越线一眼可见，不必去读数字。改 `CAL_LINE_RATIO`
+ * 就是改这条线的宽容度：调小则更早预警，代价是「还没吃满」阶段条看着更空。
+ *
+ * **两种语义别混**（同一根线，含义相反）：
+ *   · 热量是**上限**（目标 + 运动加回）：越线 = 吃超了，主数字与「已超」转危险色；
+ *   · 宏量是**目标**：越线 = 达标了，是好事，所以不上任何危险色。
+ * 线本身恒为中性灰、不随超标变色 —— 把「超了」交给数据本身（色条压过灰线）去表达，
+ * 比让参考线变色更克制，也避免四根条上出现四根红柱子。
+ *
+ * **为什么用 span 而不是 ul/li**：本组件要嵌进移动端那枚整条可点的 `<button>`，
+ * 而 button 只允许短语内容，`ul` 会构成非法 HTML。版式全部由 flex/grid 承担，语义无损失。
+ */
+defineProps<{
+  /** 窄卡（桌面便当的 hero 格只有 4/12 列宽）降一档字号，否则数字会把卡撑破 */
+  dense?: boolean
+}>()
+
+const n = useNutritionStore()
+
+/** 目标线位置（条宽 %）＝ 目标的 100% */
+const LINE = CAL_LINE_RATIO * 100
+
+/** 热量上限 = 目标 + 运动加回（与 store 的 `剩余可吃` 同一口径，不会自相矛盾） */
+const ceiling = computed(() => n.kcalTarget + n.exerciseKcal)
+/** 条的量程：上限 ÷ 0.7 */
+const calDomain = computed(() => Math.max(1, ceiling.value / CAL_LINE_RATIO))
+
+/** 比例 → 条宽 %，并钳到 [0,100]：吃爆时条不该冲出容器 */
+const pctOf = (ratio: number): number => Math.max(0, Math.min(1, ratio)) * 100
+
+const eatPct = computed(() => pctOf(n.kcalIntake / calDomain.value))
+/** 运动加回：把上限从「目标」抬到「上限」的那一段，正好贴在线前 */
+const exLeft = computed(() => pctOf(n.kcalTarget / calDomain.value))
+const exWidth = computed(() => pctOf(n.exerciseKcal / calDomain.value))
+
+/** 超出上限的大卡数；0 = 没超 */
+const overKcal = computed(() => Math.max(0, n.kcalIntake - ceiling.value))
+/** 越线的那一小段（条宽 %）。已封顶在超标区的三成里 */
+const overWidth = computed(() => Math.max(0, eatPct.value - LINE))
+
+/** 宏量条与热量条同一套几何：目标恒落在同一根线上 */
+function macroPct(m: MacroStat): number {
+  return m.target <= 0 ? 0 : pctOf((CAL_LINE_RATIO * m.current) / m.target)
+}
+
+/** 顶栏只放三大宏量；钠是限量项、单位不同，留在营养全览里 */
+const coreMacros = computed(() => n.macros.filter((m) => m.key !== 'sodiumMg'))
+</script>
+
+<template>
+  <div class="ov" :class="{ dense }">
+    <div class="head">
+      <span class="eyebrow">摄入总览</span>
+      <span class="head-act"><slot name="action" /></span>
+    </div>
+
+    <div class="hero">
+      <b class="big num" :class="{ over: overKcal > 0 }">{{ n.kcalIntake }}</b>
+      <span class="target num">/ {{ n.kcalTarget }} 大卡</span>
+      <span class="rest" :class="{ over: overKcal > 0 }">
+        <span class="rest-k">{{ overKcal > 0 ? '已超' : '剩余可吃' }}</span>
+        <b class="rest-v num">{{ overKcal > 0 ? overKcal : n.kcalRemaining }}</b>
+      </span>
+    </div>
+
+    <div class="bar lg">
+      <div class="track">
+        <span class="seg ex" :style="{ left: `${exLeft}%`, width: `${exWidth}%` }" />
+        <span class="seg eat" :style="{ width: `${eatPct}%` }" />
+        <span v-if="overKcal > 0" class="seg over" :style="{ left: `${LINE}%`, width: `${overWidth}%` }" />
+      </div>
+      <span class="ref" :style="{ left: `${LINE}%` }" />
+    </div>
+
+    <div class="legend">
+      <span class="li"><i class="dot" style="background: var(--c-intake)" />已吃<b class="num">{{ n.kcalIntake }}</b></span>
+      <span v-if="n.exerciseKcal > 0" class="li">
+        <i class="dot" style="background: var(--c-exercise)" />运动加回<b class="num">+{{ n.exerciseKcal }}</b>
+      </span>
+      <span class="li"><span class="glyph" />目标线</span>
+    </div>
+
+    <div class="hr" />
+
+    <div class="macros">
+      <div v-for="m in coreMacros" :key="m.key" class="mc">
+        <span class="m-label">{{ m.label }}</span>
+        <div class="bar sm">
+          <div class="track">
+            <span class="seg" :style="{ width: `${macroPct(m)}%`, background: `var(${m.colorVar})` }" />
+          </div>
+          <span class="ref" :style="{ left: `${LINE}%` }" />
+        </div>
+        <span class="m-val">
+          <b class="m-cur num">{{ Math.round(m.current) }}</b>
+          <span class="m-tgt num">/{{ Math.round(m.target) }}{{ m.unit }}</span>
+        </span>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.ov {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ── 标头 ── */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.eyebrow {
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--text-2);
+}
+
+/* 右侧动作（桌面卡的「详情」角标）：推到行尾，不受标题宽度影响 */
+.head-act {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── 主数字 ── */
+.hero {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.big {
+  font-size: var(--fs-display-s);
+  font-weight: 800;
+  letter-spacing: -1.2px;
+  line-height: 1;
+  color: var(--c-intake);
+  font-variant-numeric: tabular-nums;
+}
+
+.big.over {
+  color: var(--danger);
+}
+
+.target {
+  font-size: var(--fs-callout);
+  color: var(--text-2);
+}
+
+.rest {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.rest-k {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.rest-v {
+  font-size: var(--fs-title2);
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.rest.over .rest-k,
+.rest.over .rest-v {
+  color: var(--danger);
+}
+
+/* ── 条 + 目标线 ──
+   线要上下探出条身，所以它必须待在裁切容器（.track）之外，
+   否则会被 overflow:hidden 切平，120% 的高度就白给了。 */
+.bar {
+  position: relative;
+  height: 12px;
+  margin-top: 12px;
+}
+
+.bar.sm {
+  height: 8px;
+  margin-top: 0;
+}
+
+/* 空槽必须用**半透明深色薄涂**，不能用 --surface-2：
+   移动端这条 banner 没有卡片壳、直接贴页面底色，而 --surface-2 (#f2f2f4) 与页面底
+   几乎同一个灰 —— 空条会整根隐形（0 摄入时只剩目标线那几枚胶囊浮着，像贴歪的装饰）。
+   半透明涂会按底下是什么自动加深：贴浅灰页面一档、落白卡里又一档，两处都立得住。 */
+.track {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-1) 18%, transparent);
+  overflow: hidden;
+}
+
+.seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+}
+
+.bar.lg .seg.eat {
+  left: 0;
+  background: var(--c-intake);
+}
+
+.bar.lg .seg.ex {
+  background: var(--c-exercise);
+}
+
+/* 越线那一小段：红条压在灰线上的部分，语义即「吃超了」 */
+.bar.lg .seg.over {
+  background: var(--danger);
+}
+
+.ref {
+  position: absolute;
+  top: -10%;
+  height: 120%;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-1) 34%, transparent);
+  transform: translateX(-50%);
+}
+
+/* ── 图例 ── */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.li b {
+  font-weight: 800;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.glyph {
+  position: relative;
+  width: 3px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-1) 34%, transparent);
+  flex: none;
+}
+
+.hr {
+  height: 1px;
+  background: color-mix(in srgb, var(--text-1) 10%, transparent);
+  margin: 14px 0 12px;
+}
+
+/* ── 三大宏量 ── */
+.macros {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mc {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.m-label {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-3);
+}
+
+.m-val {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+/* 宏量数字走中性色，**不**用各自的指标色：
+   四个指标色都是给「色块」设计的，当文字用在浅底上全部不达标
+   （#34C759 ≈1.7:1、#FF9F0A ≈2.0:1、#FFCC00 ≈1.4:1，AA 要 4.5:1），脂肪那档几乎糊没。
+   颜色留在条上，数字回中性 —— 顺带让热量那个红数字成为全屏唯一的高饱和数字。 */
+.m-cur {
+  font-size: var(--fs-title2);
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.m-tgt {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* ── 窄卡（桌面便当 hero 格）降一档 ──
+   注意选择器必须写成 `.ov.dense …`：`dense` 与 `ov` 是**同一个元素上的两个类**，
+   写成 `.dense .ov` 是后代选择器，永远匹配不到（这里踩过一次）。
+   桌面那张卡是独立卡片、需要卡片级标题，所以标题反而「升」到卡片字号；
+   而大数字必须降下来，否则 4/12 列宽装不下。
+   另外那张卡被 bento 拉满整格高（不填满就会漏出灰底，整行读成没画完），
+   所以让内容在卡内均匀铺开，用 `min-height` 而不是 `height`：内容变多时照常往下长。 */
+.ov.dense {
+  min-height: 100%;
+  justify-content: space-between;
+}
+
+.ov.dense .eyebrow {
+  font-size: var(--fs-title3);
+}
+
+.ov.dense .hero {
+  margin-top: 6px;
+}
+
+.ov.dense .big {
+  font-size: var(--fs-title2);
+  letter-spacing: -0.8px;
+}
+
+.ov.dense .rest-v {
+  font-size: var(--fs-headline);
+}
+
+.ov.dense .m-cur {
+  font-size: var(--fs-headline);
+}
+</style>

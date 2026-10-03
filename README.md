@@ -6,7 +6,7 @@
 Tauri 2 + Vue 3 + Rust（SQLite），单机优先、数据留在本地；Windows 与 Android 同一份代码。
 观感对齐 Apple 的 Liquid Glass —— 四档画质可选，最高档（极致）把折射与多层光学铺到内容层。
 
-![Rein 桌面工作台](docs/design/desktop-2026-10/_workbench-home.png)
+![Rein 桌面工作台](docs/screens/desktop-home.png)
 
 ## 为什么叫「助理」而不是「工具箱」
 
@@ -32,18 +32,23 @@ Rein 的差别在于**它们共享同一份数据与同一条时间线**，而 A
 
 ![知识库](docs/design/desktop-2026-10/_workbench-knowledge.png)
 
-## 界面预览
+## 多平台适配
 
-桌面端视口 ≥ 1100px 会切成三窗格工作台（导航轨 + 主人区 + 右侧信息栏），
-并可 `Ctrl+K` 唤起命令面板直达任意页面；窄窗口与手机则回到底部页签的移动版。
+**同一份代码同时跑在手机与电脑上**，靠视口宽度切换两副形态，而不是两套工程：
 
-| 今天（能量 / 待办 / 番茄钟 / 记账） | 运动（课程 / 肌群练够分 / 重量曲线） |
+- **电脑端**（视口 ≥ 1100px）：切成三窗格工作台 —— 导航轨 + 主人区 + 右侧信息栏，
+  `Ctrl+K`（macOS `⌘K`）唤起命令面板直达任意页面；主人区首页还可在「便当总览 / 一日脊柱」之间切换。
+- **手机端**（430×932，也是桌面窗口的出厂尺寸）：底部页签 + 单列卡片流，
+  下拉回弹、手势跟随、抽屉式半模态；桌面端能做的操作手机端一样不少。
+- 视口介于两者之间（平板 / 窄窗口）时退回单列，但保留全部功能，不做阉割版。
+
+| 手机端 · 今天 | 手机端 · 记账 |
 | --- | --- |
-| ![今天](docs/design/desktop-2026-10/_workbench-home.png) | ![运动](docs/design/desktop-2026-10/_workbench-sports.png) |
+| <img src="docs/screens/mobile-home.png" alt="手机端 · 今天" width="300" /> | <img src="docs/screens/mobile-ledger.png" alt="手机端 · 记账" width="300" /> |
 
-| 记账（预算 / 分类占比 / 近六月） | 知识库（检索 / 长期记忆 / AI 工具） |
+| 电脑端 · 营养全览 | 电脑端 · 记账 |
 | --- | --- |
-| ![记账](docs/design/desktop-2026-10/_workbench-ledger.png) | ![知识库](docs/design/desktop-2026-10/_workbench-knowledge.png) |
+| <img src="docs/screens/desktop-nutrition.png" alt="电脑端 · 营养全览" width="480" /> | <img src="docs/screens/desktop-ledger.png" alt="电脑端 · 记账" width="480" /> |
 
 ## 快速开始
 

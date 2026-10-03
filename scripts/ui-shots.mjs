@@ -15,6 +15,11 @@ const DARK = process.env.DARK === '1'
 const ALL = process.env.ALL === '1'
 /** 全页截图（captureBeyondViewport），ALL 模式默认开 */
 const FULL = process.env.FULL !== '0'
+/**
+ * PERF=extreme 时把画质档钉死（`system/perf.ts` 的 `rein.perf.v1`）。
+ * 出 README / 宣传图要固定材质档时才用；不传就沿用浏览器里的档，与平时肉眼审查一致。
+ */
+const PERF = process.env.PERF
 
 /** ALL 模式的路由清单（router.ts 静态路由；带参路由取 mock 种子的 id=1） */
 const ROUTES = [
@@ -175,6 +180,12 @@ async function main() {
     // FEATURES_JSON='{"campus-grab":true}'：需要开启默认关闭的功能模块时先写开关再重载
     if (process.env.FEATURES_JSON) {
       await evalJS(`localStorage.setItem('rein.features.v1', ${JSON.stringify(process.env.FEATURES_JSON)})`)
+      await cdp('Page.reload')
+      await sleep(2200)
+    }
+    // PERF=extreme：把液态玻璃钉在某一档上再拍（材质随档位变，截图必须可复现）
+    if (PERF) {
+      await evalJS(`localStorage.setItem('rein.perf.v1', ${JSON.stringify(PERF)})`)
       await cdp('Page.reload')
       await sleep(2200)
     }
