@@ -117,6 +117,7 @@ function onMove(t: Todo, startMin: number): void {
         :date="date"
         :todos="scheduled"
         compact
+        bare
         @select="onSelect"
         @edit="onSelect"
         @toggle="onToggle"

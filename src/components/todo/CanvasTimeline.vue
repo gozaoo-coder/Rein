@@ -33,8 +33,17 @@ const props = withDefaults(
     dropMin?: number | null
     selectedId?: number | null
     compact?: boolean
+    /**
+     * 画布已嵌在一张现成的卡片里（主页「今日画布」卡）：**不画自己的壳**。
+     *
+     * 为什么不干脆删掉 `.ctl` 的底色与描边：`/todos` 页的 `.tlwrap` 没有任何卡片样式，
+     * 画布自己就是那一层表面 —— 删了它那边就只剩刻度线浮在页面渐变上。
+     * 所以「要不要自带表面」必须由**放在哪里**决定，交给父级声明，而不是写死在组件里。
+     * 顺带消掉的是「卡片套卡片」：主页那张卡里本不该再套一个带边框的盒子。
+     */
+    bare?: boolean
   }>(),
-  { ghosts: () => [], dropMin: null, selectedId: null, compact: false },
+  { ghosts: () => [], dropMin: null, selectedId: null, compact: false, bare: false },
 )
 
 const emit = defineEmits<{
@@ -97,6 +106,14 @@ const nowTop = computed(() => nowMin_.value * pxPerMin.value)
 function labelMasked(min: number): boolean {
   return isToday.value && Math.abs(min * pxPerMin.value - nowTop.value) < 16
 }
+
+/*
+ * 关于「块的起止时间标会不会撞上刻度」：不会，也不需要因此隐藏。
+ * 刻度栏在 `.inner` 的 0–40px，而块区从 56px 起（见 .blocks），所以两者的文字是**两列**、
+ * 横向根本不相交（实测首页与 /todos 的 32 枚标签零重叠）。
+ * 曾经试过「落在整点上就不写」的规则来消重影，但那只隐掉信息（12:00–13:00 这类整块两端
+ * 都会消失）而没有任何碰撞可修，故撤掉。
+ */
 
 /* ---------- 布局：重叠贪心分列；≥3 列收成叠层卡 ---------- */
 
@@ -402,7 +419,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="ctl" :class="{ compact }" :style="lineVars" @wheel="onWheel">
+  <div class="ctl" :class="{ compact, bare }" :style="lineVars" @wheel="onWheel">
     <div ref="scroller" class="scroll" data-testid="canvas-scroll">
       <div class="inner" :style="{ height: `${totalPx}px` }" data-rubber-content>
         <template v-for="h in hours" :key="h.min">
@@ -561,6 +578,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* 嵌在现成卡片里（主页「今日画布」）：不画自己的壳，让刻度线与上下缘渐隐充当结构 ——
+   与「摄入总览」把条直接铺在卡面上是同一种做法。方形圆角一并归零，免得留下看不见的内圆角。 */
+.ctl.bare {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
 .scroll {
   height: 100%;
   overflow-y: auto;
@@ -582,30 +607,39 @@ onBeforeUnmount(() => {
   margin: 0 10px 0 0;
 }
 
+/* 刻度标签：与「摄入总览」里 `.m-label`（蛋白质 / 碳水 / 脂肪 那排）同一规格 ——
+   小号、半粗、最浅一档灰。「刻度」是标签角色，不是要读的数字。 */
 .hlab {
   position: absolute;
   left: 0;
   width: 40px;
   text-align: right;
   transform: translateY(-6px);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
+  font-weight: 700;
   color: var(--text-3);
 }
 
+/* 刻度线：与「摄入总览」的 `.hr` 同规格（1px / --text-1 10%）。
+   原先是 0.5px 的 `--line`（7% 黑），在白卡上淡到几乎看不见；嵌卡（bare）之后刻度线
+   就是画布唯一的结构，所以升到项目里「分隔」这一角色真正在用的那一档。 */
 .hline {
   position: absolute;
   left: 48px;
   right: 0;
-  height: 0.5px;
-  background: var(--line);
+  height: 1px;
+  background: color-mix(in srgb, var(--text-1) 10%, transparent);
 }
 
 .nowline {
   position: absolute;
   left: 48px;
   right: 0;
-  height: 0;
-  border-top: 1.5px solid var(--danger);
+  /* 实底 + 满圆角：直接引用「摄入总览」那枚参考线胶囊的几何（细、实、全圆）。
+     从前是 1.5px 上边框 —— 零高度盒子描边既不能圆角，也细得几乎看不见。 */
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--danger);
   z-index: 2;
 }
 
@@ -613,25 +647,34 @@ onBeforeUnmount(() => {
   content: '';
   position: absolute;
   left: -4px;
-  top: -3.5px;
+  top: -2.5px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--danger);
 }
 
+/* 「现在」胶囊：
+   宽度**随文字收缩**，左右内边距对称 —— 于是文字天生居中。
+   从前写死 `width: 40px; text-align: right`：那 40px 本来只是为了与左侧刻度栏右对齐，
+   但背景同样铺满这 40px，结果胶囊 40px 宽、文字被推到右缘，左内边距 18px、右 0。
+   定位改为「右缘贴住刻度栏右缘」：`right: 100%` 把右缘放到 .nowline 的左缘（= 48px），
+   再退 8px 就是刻度栏的右缘 40px —— 与 .hlab 同一列，且宽度不定也能对上。
+   垂直用 translateY(-50%) 锚在 .nowline（高 2px）的中心，与字号无关。 */
 .nowtag {
   position: absolute;
-  left: -44px;
-  top: -9px;
-  width: 40px;
-  text-align: right;
-  font-size: 10px;
+  right: 100%;
+  margin-right: 8px;
+  top: 1px;
+  transform: translateY(-50%);
+  padding: 2px 6px;
+  font-size: var(--fs-micro);
   font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
   color: var(--danger);
   background: var(--surface);
   border-radius: var(--radius-full);
-  padding: 1px 0;
 }
 
 .dropline {
@@ -707,14 +750,17 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-/* 起止时间标记：上方起点、下方终点；拖拽中高亮为实时时间 */
+/* 起止时间标记：上方起点、下方终点；拖拽中高亮为实时时间。
+   这是要读的**数字**，按「摄入总览」的规矩给足待遇 ——
+   中性深色 `--text-2`（白底 5.07:1）而不是最浅的 `--text-3`（3.6:1），字重 700 配 tabular
+   （模板上的 `.num`）。从前是 10px / 600 / `--text-3`，紧凑档更只有 9px —— 比字号阶梯最低档还小。 */
 .bmin {
   position: absolute;
   left: 2px;
-  font-size: 10px;
+  font-size: var(--fs-caption);
   line-height: 1;
-  font-weight: 600;
-  color: var(--text-3);
+  font-weight: 700;
+  color: var(--text-2);
   pointer-events: none;
   white-space: nowrap;
   /* 起止标记拖拽中高亮为实时时间：颜色跟上抬起节奏 */
@@ -722,11 +768,11 @@ onBeforeUnmount(() => {
 }
 
 .bmin-start {
-  top: -13px;
+  top: -15px;
 }
 
 .bmin-end {
-  top: calc(100% + 2px);
+  top: calc(100% + 3px);
 }
 
 .bmin.live {
@@ -1041,7 +1087,13 @@ onBeforeUnmount(() => {
   font-size: var(--fs-caption);
 }
 
+/* 紧凑档：降到 --fs-micro（11px）并抬高一点 —— 每小时只有 48px（`/todos` 在窄视口
+   也用这一档），字号再大就该压到邻块上了。 */
 .compact .bmin {
-  font-size: 9px;
+  font-size: var(--fs-micro);
+}
+
+.compact .bmin-start {
+  top: -13px;
 }
 </style>
