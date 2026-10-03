@@ -6,11 +6,11 @@
 //! 而它正是 provider 存在的理由。这里收口成一处：命令层只说
 //! 「登录 / 拿学期 / 拿课表」，谁来干由本模块决定。
 
-use crate::error::Result;
+use crate::error::{ReinError, Result};
 
 use super::guet::GuetAdapter;
 use super::http::Session;
-use super::models::{LoginOutcome, PageVars, TimetableSnapshot};
+use super::models::{CourseDetail, LoginOutcome, PageVars, TimetableSnapshot};
 use super::provider::{LoginStrategy, SchoolSystemSpec};
 use super::zfsoft::ZfsoftAdapter;
 
@@ -85,6 +85,26 @@ impl<'a> AnyAdapter<'a> {
         match self {
             Self::Guet(a) => a.fetch_timetable(semester_id),
             Self::Zfsoft(a) => a.fetch_timetable(semester_id),
+        }
+    }
+
+    /// 课程详情。树维那套有完整的教学班档案（考试类别 / 学时构成 / 容量…），
+    /// 正方课表里没有这些字段 —— 明确报错而不是给一张空表，空表会被读成「教务没数据」。
+    pub fn fetch_course_detail(
+        &mut self,
+        semester_id: i64,
+        semester_name: &str,
+        lesson_id: i64,
+        weekday: Option<i64>,
+        start_unit: Option<i64>,
+    ) -> Result<CourseDetail> {
+        match self {
+            Self::Guet(a) => {
+                a.fetch_course_detail(semester_id, semester_name, lesson_id, weekday, start_unit)
+            }
+            Self::Zfsoft(_) => Err(ReinError::Message(
+                "广西科技大学的正方教务系统暂不支持查看课程详情".into(),
+            )),
         }
     }
 

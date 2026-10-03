@@ -795,3 +795,78 @@ export interface LessonSearchOutcome {
   semesters: CampusSemester[]
 }
 
+/* ─────────────────────────── 课程详情 ───────────────────────────
+ * 课表上点开一门课看到的完整档案（对应教务网页的「课程详情」页）。
+ * 数据由 Rust `modules/campus/detail.rs` 从一次实时拉取的课表组装而成，
+ * 字段与教务页面一一对应；教务当前部署不返回的项（说明 / 实验批次号 / 实验名称）为 null。 */
+
+/** 学时构成。各栏缺失即 null，界面按「—」显示 */
+export interface CoursePeriod {
+  total: number | null
+  weeks: number | null
+  theory: number | null
+  practice: number | null
+  test: number | null
+  experiment: number | null
+  machine: number | null
+  design: number | null
+  extra: number | null
+}
+
+export interface CourseDetail {
+  courseName: string
+  /** 课程代码（培养方案口径） */
+  courseCode: string | null
+  /** 课号（教学班代码） */
+  lessonCode: string | null
+  /** 教学班名（合班时是一长串班级列表） */
+  lessonName: string | null
+  /** 课程说明。教务当前部署不返回，恒为 null */
+  description: string | null
+  room: string | null
+  /** 教室别名 / 楼名 */
+  roomAlias: string | null
+  campus: string | null
+  /** 1=周一 … 7=周日 */
+  weekday: number
+  startUnit: number
+  endUnit: number
+  startTime: string
+  endTime: string
+  /** 大节节次（2 小节 = 1 大节） */
+  bigSection: number
+  weeksStr: string | null
+  startWeek: number | null
+  endWeek: number | null
+  teachers: string[]
+  credits: number | null
+  /** 课程类型代码（如 `BG`） */
+  courseTypeCode: string | null
+  /** 类型名称（如 `通识必修`） */
+  courseTypeName: string | null
+  /** 考试类别（如 `考试` / `考查`） */
+  examCategory: string | null
+  /** 考试方式（如 `统一考试`） */
+  examType: string | null
+  /** 课程属性（如 `必修`） */
+  courseProperty: string | null
+  /** 开课院系 */
+  openDepartment: string | null
+  major: string | null
+  grade: string | null
+  semesterName: string
+  /** 课程容量 */
+  capacity: number | null
+  /** 已选人数 */
+  enrolled: number | null
+  hasExperiment: boolean
+  /** 实验批次 */
+  experimentBatch: number | null
+  /** 实验批次号。教务当前部署不返回，恒为 null */
+  experimentBatchNo: string | null
+  /** 实验名称。教务当前部署不返回，恒为 null */
+  experimentName: string | null
+  remark: string | null
+  period: CoursePeriod | null
+}
+

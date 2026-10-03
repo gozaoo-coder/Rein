@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { CalendarOff, CalendarX2, ChevronLeft, ChevronRight, GraduationCap, RefreshCw, Settings2, Zap } from 'lucide-vue-next'
 
+import CampusCourseDetailSheet from '@/components/campus/CampusCourseDetailSheet.vue'
 import ScheduleDayView from '@/components/campus/ScheduleDayView.vue'
 import ScheduleMonthView from '@/components/campus/ScheduleMonthView.vue'
 import ScheduleWeekView from '@/components/campus/ScheduleWeekView.vue'
@@ -12,6 +13,7 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
 import { useFeaturesStore } from '@/stores/features'
+import type { ScheduleEntry } from '@/types'
 import { addDays, addMonths, endOfMonth, fmtDateCn, startOfMonth, todayStr, weekDates } from '@/utils/date'
 
 type ViewKey = 'day' | 'week' | 'month'
@@ -90,6 +92,33 @@ function goToday(): void {
 function goDay(date: string): void {
   anchor.value = date
   view.value = 'day'
+}
+
+/**
+ * 打开某一格的教务课程详情。
+ *
+ * 关键映射：课表格子带的是**本地课程 id**（`campus_courses.id`），而详情命令要的是
+ * **远端教学班 id**（`campus_courses.remote_lesson_id`）。两者不是一套编号，
+ * 不做这一步映射就会拿着本地自增 id 去教务里问课。
+ *
+ * `weekday`/`startUnit` 一起带上：同一门课一周上多次时，用它定位到用户点的这一格。
+ */
+const detail = ref<{ lessonId: number; weekday: number; startUnit: number; name: string } | null>(null)
+
+function openDetail(e: ScheduleEntry): void {
+  const remote = store.courses.find((c) => c.id === e.session.courseId)?.remoteLessonId
+  if (remote == null) {
+    toast.toast('这门课还没同步到教务信息', {
+      action: { label: '同步', run: () => void onSync() },
+    })
+    return
+  }
+  detail.value = {
+    lessonId: remote,
+    weekday: e.session.weekday,
+    startUnit: e.session.startUnit,
+    name: e.session.courseName,
+  }
 }
 
 async function onSync(): Promise<void> {
@@ -177,12 +206,18 @@ watch([view, anchor], reload)
         </template>
       </EmptyState>
 
-      <ScheduleDayView v-else-if="view === 'day'" :entries="store.entries" :date="anchor" />
+      <ScheduleDayView
+        v-else-if="view === 'day'"
+        :entries="store.entries"
+        :date="anchor"
+        @select="openDetail"
+      />
       <ScheduleWeekView
         v-else-if="view === 'week'"
         :entries="store.entries"
         :time-slots="store.timeSlots"
         :anchor="anchor"
+        @select="openDetail"
       />
       <ScheduleMonthView v-else :entries="store.entries" :anchor="anchor" @select="goDay" />
 
@@ -214,6 +249,18 @@ watch([view, anchor], reload)
         </button>
       </nav>
     </template>
+
+    <!-- 课程详情抽屉。挂在页面根下而不是 v-else 里：空态/有数据的切换不该让它
+         跟着卸载重建 —— 关闭是滑出动画，重建会把「滑到一半的面板」直接抹掉。 -->
+    <CampusCourseDetailSheet
+      :open="detail !== null"
+      :semester-id="store.currentSemesterId"
+      :lesson-id="detail?.lessonId ?? null"
+      :weekday="detail?.weekday ?? null"
+      :start-unit="detail?.startUnit ?? null"
+      :fallback-course-name="detail?.name ?? ''"
+      @close="detail = null"
+    />
   </div>
 </template>
 

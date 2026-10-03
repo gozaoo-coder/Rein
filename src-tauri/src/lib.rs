@@ -263,6 +263,7 @@ pub fn run() {
             modules::campus::commands::campus_sync,
             modules::campus::commands::campus_schedule,
             modules::campus::commands::campus_program,
+            modules::campus::commands::campus_course_detail,
             // campus（选课：令牌走 EAMS 会话换取的 SSO JWT）
             modules::campus::commands::campus_lesson_search_probe,
             modules::campus::commands::campus_lesson_search,

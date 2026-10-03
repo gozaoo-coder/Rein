@@ -1456,6 +1456,79 @@ pub async fn campus_program(
     Ok(raw)
 }
 
+/* ─────────────────────────── 课程详情 ─────────────────────────── */
+
+/// 课程详情一次拉取的结果 + 「中途换过会话」的痕迹（与 [`SyncAttempt`] 同理）。
+struct DetailAttempt {
+    out: Result<CourseDetail>,
+    refreshed: Option<CookieJar>,
+}
+
+/// 课程详情：实时拉一次课表，把一门课拼成完整档案（容量 / 考试类别 / 学时构成 / 周次…）。
+///
+/// **每次实时拉而不读库**：容量与已选人数会随选课进程变化，库里缓存的「已选 51/52」
+/// 下一秒就可能变成「52/52」—— 而那正是用户点开详情最想知道的一件事。
+///
+/// `weekday` / `start_unit` 用于同一门课一周上多次时定位到用户点的那一格；
+/// 都传 `None` 时给该课的第一个时段。
+#[tauri::command]
+pub async fn campus_course_detail(
+    state: State<'_, AppState>,
+    hub: State<'_, CampusHub>,
+    semester_id: i64,
+    lesson_id: i64,
+    weekday: Option<i64>,
+    start_unit: Option<i64>,
+) -> Result<CourseDetail> {
+    // ── 短锁：取账号 + 本地学期 id → 远端 id + 学期显示名
+    let (account, remote_id, semester_name) = {
+        let conn = state.db.lock();
+        let account = require_account(&conn)?;
+        let semester = load_semester(&conn, account.id, semester_id)?;
+        (account, semester.remote_id, semester.name)
+    };
+    let spec = account.spec()?;
+    let account_id = account.id;
+
+    // ── 无锁：网络拉取（会话过期就自愈一次，与 `campus_program` 同款）
+    let attempt = tauri::async_runtime::spawn_blocking(move || -> DetailAttempt {
+        let mut session = account.session();
+        let mut refreshed: Option<CookieJar> = None;
+
+        let fetch = |session: &mut Session| -> Result<CourseDetail> {
+            AnyAdapter::new(spec, session).fetch_course_detail(
+                remote_id,
+                &semester_name,
+                lesson_id,
+                weekday,
+                start_unit,
+            )
+        };
+
+        let mut out = fetch(&mut session);
+        if matches!(&out, Err(e) if is_session_lost(e)) {
+            match relogin(&account) {
+                Ok(jar) => {
+                    session = Session::new(&account.base_url, jar.clone());
+                    refreshed = Some(jar);
+                    out = fetch(&mut session);
+                }
+                Err(e) => out = Err(e),
+            }
+        }
+        DetailAttempt { out, refreshed }
+    })
+    .await
+    .map_err(|e| ReinError::Message(format!("课程详情任务失败：{e}")))?;
+
+    if let Some(jar) = &attempt.refreshed {
+        let conn = state.db.lock();
+        persist_session(&conn, account_id, jar)?;
+        forget_select_token(&hub);
+    }
+    attempt.out
+}
+
 /* ─────────────────────────── 选课（course-selection-api） ─────────────────────────── */
 
 /// 一次选课调用的全套上下文：客户端 + 学生 id + 账号 id。

@@ -3,6 +3,7 @@ import type {
   CampusAccount,
   CampusLoginInput,
   CampusSemester,
+  CourseDetail,
   CourseSelectLesson,
   CourseSelectPoll,
   CourseSelectStatus,
@@ -76,6 +77,26 @@ export const campusService = {
   /** 培养方案原始 JSON（响应很大，后端落 app_meta 缓存；refresh 强制重拉） */
   program: (refresh?: boolean) =>
     invoke<ProgramPayload>('campus_program', { refresh: refresh ?? false }),
+
+  /**
+   * 课程详情。**每次实时拉一次课表**组装，不是读库 ——
+   * 容量 / 已选人数会随选课进程变化，缓存下来的「已选 51/52」下一秒就可能变成「52/52」。
+   *
+   * `weekday` / `startUnit` 用于同一门课一周上多次时定位到用户点的那一格；
+   * 都省略时给该课的第一个时段。
+   */
+  courseDetail: (input: {
+    semesterId: number
+    lessonId: number
+    weekday?: number | null
+    startUnit?: number | null
+  }) =>
+    invoke<CourseDetail>('campus_course_detail', {
+      semesterId: input.semesterId,
+      lessonId: input.lessonId,
+      weekday: input.weekday ?? null,
+      startUnit: input.startUnit ?? null,
+    }),
 
   /* ---------------- 选课（令牌走 EAMS 会话换取的 SSO JWT） ---------------- */
 

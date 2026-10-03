@@ -25,6 +25,9 @@ const props = defineProps<{
   anchor: string
 }>()
 
+/** 点某格课程 → 交给课表页拉该时段的教务课程详情 */
+const emit = defineEmits<{ select: [entry: ScheduleEntry] }>()
+
 const today = todayStr()
 
 /** 行标识：节次区间就是行身份（同一区间的时间必然一致） */
@@ -160,6 +163,7 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
               class="blk"
               :style="{ '--blk': colorOf(e) }"
               :title="`${e.session.courseName} · ${e.session.building ?? ''}${e.session.room ?? ''}`"
+              @click="emit('select', e)"
             >
               <span class="name">{{ e.session.courseName }}</span>
               <span class="meta">{{ e.session.room ?? e.session.building ?? '' }}</span>
@@ -378,7 +382,13 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   background: color-mix(in srgb, var(--blk) 14%, var(--surface));
   text-align: left;
   overflow: hidden;
+  cursor: pointer;
   transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.blk:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .blk:active {

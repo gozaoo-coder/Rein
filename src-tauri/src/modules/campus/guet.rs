@@ -8,7 +8,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use crate::error::{ReinError, Result};
 
 use super::http::{guard, rsa_encrypt_password, Session};
-use super::models::{LoginOutcome, PageVars, RemoteSemester, TimetableResponse, TimetableSnapshot};
+use super::models::{
+    CourseDetail, LoginOutcome, PageVars, RemoteSemester, StudentTableVm, TimetableResponse,
+    TimetableSnapshot,
+};
 use super::provider::SchoolSystemSpec;
 
 /// 课表页面里学期列表的入口。真实形状（2026-09 实测）：
@@ -322,8 +325,10 @@ impl<'a> GuetAdapter<'a> {
         Ok(PageVars { semesters })
     }
 
-    /// 课表数据（主数据源）。路径里只有 semesterId，不需要额外的 dataId，最稳。
-    pub fn fetch_timetable(&mut self, semester_id: i64) -> Result<TimetableSnapshot> {
+    /// 课表原始 vm（未归一化）。**课表与课程详情共用这一份响应** ——
+    /// 同步走 [`Self::fetch_timetable`]，点开某门课看详情走 [`Self::fetch_course_detail`]，
+    /// 两者看到的是同一次 `print-data` 的数据，不会出现「课表说 51 人、详情说 50 人」。
+    pub fn fetch_course_table_vm(&mut self, semester_id: i64) -> Result<StudentTableVm> {
         let path = self.endpoints()?.course_table_print_for(semester_id);
         let resp = self.session.get(&path)?;
         guard(&resp, "获取课表数据")?;
@@ -333,12 +338,16 @@ impl<'a> GuetAdapter<'a> {
         let parsed: TimetableResponse = serde_json::from_value(raw)
             .map_err(|e| ReinError::Message(format!("课表数据解析失败：{e}")))?;
 
-        let vm = parsed
+        parsed
             .student_table_vms
             .into_iter()
             .next()
-            .ok_or_else(|| ReinError::Message("课表数据为空：该学期可能没有排课".into()))?;
+            .ok_or_else(|| ReinError::Message("课表数据为空：该学期可能没有排课".into()))
+    }
 
+    /// 课表数据（主数据源）。路径里只有 semesterId，不需要额外的 dataId，最稳。
+    pub fn fetch_timetable(&mut self, semester_id: i64) -> Result<TimetableSnapshot> {
+        let vm = self.fetch_course_table_vm(semester_id)?;
         Ok(TimetableSnapshot {
             student_id: vm.id.map(|v| v.to_string()),
             student_code: vm.code,
@@ -350,6 +359,22 @@ impl<'a> GuetAdapter<'a> {
             total_credits: vm.credits,
             activities: vm.activities,
         })
+    }
+
+    /// 课程详情：拉一次课表 vm，交给 [`super::detail::build_course_detail`] 组装。
+    ///
+    /// 之所以**每次实时拉**而不是从库里读：容量 / 已选人数会随选课进程变化，
+    /// 缓存下来的「已选 51/52」下一秒就可能变成「52/52」——那正是用户最想知道的。
+    pub fn fetch_course_detail(
+        &mut self,
+        semester_id: i64,
+        semester_name: &str,
+        lesson_id: i64,
+        weekday: Option<i64>,
+        start_unit: Option<i64>,
+    ) -> Result<CourseDetail> {
+        let vm = self.fetch_course_table_vm(semester_id)?;
+        super::detail::build_course_detail(&vm, semester_name, lesson_id, weekday, start_unit)
     }
 
     /// 培养方案。响应可达 900KB+，调用方负责缓存。

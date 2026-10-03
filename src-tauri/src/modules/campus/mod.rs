@@ -10,6 +10,8 @@
 //!   前者是桂电（树维 Supwisdom EAMS5），后者是广西科技大学（正方 ZFSoft zftal）。
 //! - [`course_select`] —— 选课/抢课子系统（`/course-selection-api`）客户端，鉴权走门户发的 SSO 令牌。
 //! - [`models`] —— 远端 JSON 映射 + 本地落库形状 + IPC 契约。
+//! - [`detail`] —— **课程详情组装**：把一次课表拉取的原始 `vm` 压成前端要的 `CourseDetail`
+//!   （纯函数、零 IO，可脱离网络单测）。仅树维那套系统有这条路。
 //! - [`lesson_search`] —— **全校开课查询**（与选课批次无关）+ 两个域名分别探测。
 //!   批次没开的时候靠它看清开课时间地点，再去排志愿。仅树维那套系统有这条路。
 //! - [`grab`] —— **自动抢课引擎**（课表的子模块，默认关闭，见 `plugins/builtin/campusGrab.ts`）
@@ -25,6 +27,7 @@ pub mod adapter;
 pub mod commands;
 pub mod course_select;
 pub mod dates;
+pub mod detail;
 pub mod grab;
 pub mod guet;
 pub mod http;

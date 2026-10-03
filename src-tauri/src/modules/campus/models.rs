@@ -36,12 +36,44 @@ pub struct RemoteSemester {
 
 // ─────────────────────────── 远端：课表 ───────────────────────────
 
-/// `courseType` 只需要中文名
+/// `courseType` / `examMode` 这类「带名字的引用对象」只需要中文名与代码。
+///
+/// `code` 是给「课程类型」用的（如 `BG` = 通识必修）—— 课表活动里它落在
+/// `courseType.code`，正是教务网页上「课程类型」那一栏显示的值。
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteNamed {
     #[serde(default)]
     pub name_zh: Option<String>,
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// 课表活动里的 `periodInfo`：这门课一学期的**学时构成**。
+///
+/// 教务会给理论/实践/测试/实验/上机/设计/其它各项学时，用 `null` 表示「没有这项」。
+/// 取 `Option<f64>` 而不是 `i64`：实测 `weeks` 会给 `16.0` 这种小数形态。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodInfo {
+    #[serde(default)]
+    pub total: Option<f64>,
+    #[serde(default)]
+    pub weeks: Option<f64>,
+    #[serde(default)]
+    pub theory: Option<f64>,
+    #[serde(default)]
+    pub practice: Option<f64>,
+    #[serde(default)]
+    pub test: Option<f64>,
+    #[serde(default)]
+    pub experiment: Option<f64>,
+    #[serde(default)]
+    pub machine: Option<f64>,
+    #[serde(default)]
+    pub design: Option<f64>,
+    #[serde(default)]
+    pub extra: Option<f64>,
 }
 
 /// `print-data` → `studentTableVms[0].activities[]`，一个元素 = **一门课的一个上课时段**。
@@ -93,6 +125,23 @@ pub struct TimetableActivity {
     /// 教务自带的课程配色（如 `#3B73B6`）。用它能让 App 里的课表和学生网页上看到的一致。
     #[serde(default)]
     pub bgc: Option<String>,
+
+    // ── 以下仅课程详情使用（课表渲染不读） ─────────────────────────────
+    /// 课程备注，教务对多数课给 `null`（界面上显示成「无备注」）
+    #[serde(default)]
+    pub lesson_remark: Option<String>,
+    /// 课程容量（教学班上限）
+    #[serde(default)]
+    pub limit_count: Option<i64>,
+    /// 已选人数
+    #[serde(default)]
+    pub std_count: Option<i64>,
+    /// 分组号（合班 / 分组教学时才有）
+    #[serde(default)]
+    pub group_num: Option<i64>,
+    /// 一门课的学时构成
+    #[serde(default)]
+    pub period_info: Option<PeriodInfo>,
 }
 
 /// `studentTableVms[0]`：一次课表拉取的完整结果。
@@ -118,6 +167,191 @@ pub struct StudentTableVm {
     pub credits: Option<f64>,
     #[serde(default)]
     pub activities: Vec<TimetableActivity>,
+    /// **已排课**的教学班详情。与 `activities` 是两份数据：
+    /// `activities` 是「上课时段」（时间/地点/学时构成），这里才是「教学班」的教务档案
+    /// （考试类别、课程属性、开课院系、实验/上机学时、容量、备注……）。课程详情的主要来源。
+    ///
+    /// 只建模详情页真正会读的字段 —— 教务这个对象有 80+ 个键，serde 会忽略未知键，
+    /// 多映射一份没人读的字段只是维护负担。
+    #[serde(default)]
+    pub arranged_lesson_search_vms: Vec<ArrangedLessonSearchVm>,
+}
+
+/// `arrangedLessonSearchVms[]` —— 已排课教学班的**教务档案**（只映射详情页要用的键）。
+///
+/// 字段名逐字对齐教务：`id` = 教学班 id（与 `activity.lessonId` 同源），
+/// `code` = 课号（与 `activity.lessonCode` 同源）。
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArrangedLessonSearchVm {
+    /// 教学班 id。教务给数字，但不能假设（`lesson_search` 就见过字符串形态）
+    #[serde(default)]
+    pub id: serde_json::Value,
+    #[serde(default)]
+    pub code: Option<String>,
+    /// 教学班备注（多数课为空）
+    #[serde(default)]
+    pub remark: Option<String>,
+    #[serde(default)]
+    pub std_count: Option<i64>,
+    #[serde(default)]
+    pub limit_count: Option<i64>,
+    /// 考试方式（`EXAM_MODE_UNIFICATION` → 「统一考试」）
+    #[serde(default)]
+    pub arrange_exam_type_zh: Option<String>,
+    /// 考试类别（「考试」/「考查」）。**详情页「考试类别」那一栏就是它。**
+    #[serde(default)]
+    pub exam_mode: Option<RemoteNamed>,
+    /// 课程类别（与 activity 上那份同源，这里信息更全）
+    #[serde(default)]
+    pub course_type: Option<RemoteNamed>,
+    /// 课程属性（必修/选修…）
+    #[serde(default)]
+    pub course_property: Option<RemoteNamed>,
+    /// 开课院系
+    #[serde(default)]
+    pub open_department: Option<RemoteNamed>,
+    /// 实际实验 / 上机学时 —— 判断「是不是实验课」就看这两个
+    #[serde(default)]
+    pub actual_experiment_period: Option<f64>,
+    #[serde(default)]
+    pub actual_machine_period: Option<f64>,
+}
+
+impl ArrangedLessonSearchVm {
+    /// 教学班 id 的数字形态（教务给数字；给不出当没有）。
+    pub fn numeric_id(&self) -> Option<i64> {
+        match &self.id {
+            serde_json::Value::Number(n) => n.as_i64(),
+            serde_json::Value::String(s) => s.trim().parse().ok(),
+            _ => None,
+        }
+    }
+
+    /// 是不是「实验课」：实验或上机学时大于 0。
+    ///
+    /// 判据用**实际学时**而不是课程名里有没有「实验」二字 —— 桂电有一类
+    /// 「独立设置的实验课程」，看名字认不出来，看学时一认一个准。
+    pub fn has_experiment(&self) -> bool {
+        self.actual_experiment_period.unwrap_or(0.0) > 0.0
+            || self.actual_machine_period.unwrap_or(0.0) > 0.0
+    }
+}
+
+// ─────────────────────── 本地：课程详情（IPC 契约） ───────────────────────
+
+/// 课程详情。**字段与教务网页「课程详情」页一一对应**，供前端整页展示。
+///
+/// 数据来自 `print-data` 的两处：`activities[]`（时段：时间/地点/周次）与
+/// `arrangedLessonSearchVms[]`（教学班：容量/考试类别/学时…），外加学生的
+/// `major` / `grade` 与学期名。组装逻辑集中在 `super::detail`，便于单测。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseDetail {
+    /// 课程名称
+    pub course_name: String,
+    /// 课程代码（培养方案口径，如 `000011`）
+    pub course_code: Option<String>,
+    /// 课号（教学班代码，如 `2612316`）。教务网页「课号」一栏用的是它。
+    pub lesson_code: Option<String>,
+    /// 教学班名（合班时是一长串班级列表）
+    pub lesson_name: Option<String>,
+    /// 课程说明。教务当前部署不返回，字段留在这里以免前端缺列。
+    pub description: Option<String>,
+    /// 教室（如 `17204新`）
+    pub room: Option<String>,
+    /// 教室别名 / 楼名（如 `花江校区第十七教学楼`）
+    pub room_alias: Option<String>,
+    pub campus: Option<String>,
+    /// 1=周一 … 7=周日
+    pub weekday: i64,
+    pub start_unit: i64,
+    pub end_unit: i64,
+    pub start_time: String,
+    pub end_time: String,
+    /// 大节节次（2 小节 = 1 大节，由起始小节推导）
+    pub big_section: i64,
+    pub weeks_str: Option<String>,
+    pub start_week: Option<i64>,
+    pub end_week: Option<i64>,
+    pub teachers: Vec<String>,
+    pub credits: Option<f64>,
+    /// 课程类型代码（如 `BG`）
+    pub course_type_code: Option<String>,
+    /// 类型名称（如 `通识必修`）
+    pub course_type_name: Option<String>,
+    /// 考试类别（如 `考试` / `考查`）
+    pub exam_category: Option<String>,
+    /// 考试方式（如 `统一考试`）
+    pub exam_type: Option<String>,
+    /// 课程属性（如 `必修`）
+    pub course_property: Option<String>,
+    /// 开课院系
+    pub open_department: Option<String>,
+    pub major: Option<String>,
+    pub grade: Option<String>,
+    pub semester_name: String,
+    /// 课程容量
+    pub capacity: Option<i64>,
+    /// 已选人数
+    pub enrolled: Option<i64>,
+    /// 是否实验课
+    pub has_experiment: bool,
+    /// 实验批次（教务的「实验实际排课时数」，没有就是 0）
+    pub experiment_batch: Option<i64>,
+    /// 实验批次号（当前部署不返回）
+    pub experiment_batch_no: Option<String>,
+    /// 实验名称（当前部署不返回）
+    pub experiment_name: Option<String>,
+    /// 课程备注
+    pub remark: Option<String>,
+    /// 学时构成
+    pub period: Option<CoursePeriod>,
+}
+
+/// 课程详情里的学时构成（各栏缺失即 `null`，前端按「—」显示）。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CoursePeriod {
+    pub total: Option<f64>,
+    pub weeks: Option<f64>,
+    pub theory: Option<f64>,
+    pub practice: Option<f64>,
+    pub test: Option<f64>,
+    pub experiment: Option<f64>,
+    pub machine: Option<f64>,
+    pub design: Option<f64>,
+    pub extra: Option<f64>,
+}
+
+impl CoursePeriod {
+    /// 从远端 `PeriodInfo` 搬运；全空时返回 `None`，前端就不渲染这一块。
+    pub fn from_remote(p: &PeriodInfo) -> Option<Self> {
+        let out = Self {
+            total: p.total,
+            weeks: p.weeks,
+            theory: p.theory,
+            practice: p.practice,
+            test: p.test,
+            experiment: p.experiment,
+            machine: p.machine,
+            design: p.design,
+            extra: p.extra,
+        };
+        let any = [
+            out.total,
+            out.theory,
+            out.practice,
+            out.test,
+            out.experiment,
+            out.machine,
+            out.design,
+            out.extra,
+        ]
+        .iter()
+        .any(|v| v.is_some());
+        any.then_some(out)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

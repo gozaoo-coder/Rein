@@ -720,13 +720,16 @@ fn to_activity(row: &ZfsoftKbRow, slots: &HashMap<i64, (String, String)>) -> Tim
         start_time,
         end_time,
         teachers: split_teachers(row.xm.as_deref()),
-        course_type: row
-            .kclbmc
-            .clone()
-            .map(|name| RemoteNamed { name_zh: Some(name) }),
+        course_type: row.kclbmc.clone().map(|name| RemoteNamed {
+            name_zh: Some(name),
+            code: None,
+        }),
         credits: row.xf.as_ref().and_then(lenient_f64),
         // 正方不给每门课的配色（树维给 `bgc`），由前端按课程类别取默认色
         bgc: None,
+        // 详情字段（备注/容量/已选/分组/大节/学时构成）正方课表里没有，
+        // 且正方本就不支持课程详情，一律留空
+        ..Default::default()
     }
 }
 

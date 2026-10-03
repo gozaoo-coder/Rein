@@ -7034,6 +7034,68 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       } as T)
     }
 
+    case 'campus_course_detail': {
+      if (!campusAccount) throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      const lessonId = Number(args.lessonId)
+      const weekday = args.weekday == null ? null : Number(args.weekday)
+      const startUnit = args.startUnit == null ? null : Number(args.startUnit)
+      const mine = CAMPUS_SESSIONS.filter((s) => s.courseId === lessonId)
+      if (!mine.length) throw new Error(`课表里找不到课程 ${lessonId} 的上课时段`)
+      const s =
+        mine.find(
+          (x) => (weekday == null || x.weekday === weekday) && (startUnit == null || x.startUnit === startUnit),
+        ) ?? mine[0]!
+      const weeks = [...s.weeks].sort((a, b) => a - b)
+      return delay({
+        courseName: s.courseName,
+        courseCode: s.courseCode,
+        lessonCode: null,
+        lessonName: null,
+        description: null,
+        room: s.room,
+        roomAlias: s.building,
+        campus: s.campus,
+        weekday: s.weekday,
+        startUnit: s.startUnit,
+        endUnit: s.endUnit,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        bigSection: s.startUnit > 0 ? Math.ceil(s.startUnit / 2) : 0,
+        weeksStr: s.weeksStr,
+        startWeek: weeks[0] ?? null,
+        endWeek: weeks[weeks.length - 1] ?? null,
+        teachers: s.teachers,
+        credits: s.credits,
+        courseTypeCode: null,
+        courseTypeName: s.courseType,
+        examCategory: '考试',
+        examType: '统一考试',
+        courseProperty: '必修',
+        openDepartment: '计算机与信息安全学院',
+        major: (campusAccount.major as string | null) ?? null,
+        grade: (campusAccount.grade as string | null) ?? null,
+        semesterName: campusSemester().name,
+        capacity: 60,
+        enrolled: 52,
+        hasExperiment: false,
+        experimentBatch: 0,
+        experimentBatchNo: null,
+        experimentName: null,
+        remark: null,
+        period: {
+          total: 48,
+          weeks: 16,
+          theory: 48,
+          practice: null,
+          test: null,
+          experiment: null,
+          machine: null,
+          design: null,
+          extra: null,
+        },
+      } as T)
+    }
+
     /* ---- 选课（演示批次是「开放中」，好让整套流程能在浏览器里走通） ---- */
 
 

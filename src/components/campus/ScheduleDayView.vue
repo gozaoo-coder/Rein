@@ -17,6 +17,9 @@ const props = defineProps<{
   date: string
 }>()
 
+/** 点某一行 → 交给课表页拉该时段的教务课程详情 */
+const emit = defineEmits<{ select: [entry: ScheduleEntry] }>()
+
 const now = nowMin()
 const isToday = computed(() => props.date === todayStr())
 
@@ -78,6 +81,12 @@ function place(e: ScheduleEntry): string {
         class="row"
         :class="{ now: i === activeIndex, next: isNext(e, i) }"
         :style="{ '--blk': colorOf(e) }"
+        role="button"
+        tabindex="0"
+        :aria-label="`${e.session.courseName} 课程详情`"
+        @click="emit('select', e)"
+        @keydown.enter.prevent="emit('select', e)"
+        @keydown.space.prevent="emit('select', e)"
       >
         <!-- 左侧时间柱：实际上课时间 + 节次 -->
         <div class="rail">
@@ -148,7 +157,13 @@ function place(e: ScheduleEntry): string {
   box-shadow: var(--shadow-card);
   border-left: 3px solid var(--blk);
   padding: 12px 14px 12px 10px;
+  cursor: pointer;
   transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .row.now {
