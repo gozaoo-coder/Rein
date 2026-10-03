@@ -2816,8 +2816,8 @@ function campusWeekOf(anchor: Date, date: string): number | null {
 let campusHolidayCfg = { enabled: true, overrides: {} as Record<string, number> }
 
 /**
- * 演示用调休计划，锚定本周：**第 2 周周五放假**、**第 2 周周日补周三的课**。
- * 这样任何一天打开预览都能看到「假 / 调」两种徽标，再叠加用户的手动覆盖。
+ * 演示用调休计划，锚定本周：**本周五放假**、**本周日补周三的课**。
+ * 这样任何一天打开预览都能在默认的周视图里直接看到「假 / 调」两种徽标，再叠加用户的手动覆盖。
  */
 function campusHolidayPlan(): { off: Set<string>; makeup: Map<string, number> } {
   const off = new Set<string>()
@@ -2829,8 +2829,8 @@ function campusHolidayPlan(): { off: Set<string>; makeup: Map<string, number> } 
     d.setDate(d.getDate() + (week - 1) * 7 + (weekday - 1))
     return ymd(d)
   }
-  off.add(dayAt(2, 5)) // 第 2 周周五
-  makeup.set(dayAt(2, 7), 3) // 第 2 周周日 → 补周三
+  off.add(dayAt(1, 5)) // 本周五
+  makeup.set(dayAt(1, 7), 3) // 本周日 → 补周三
   for (const [date, wd] of Object.entries(campusHolidayCfg.overrides)) {
     if (wd === 0) makeup.delete(date)
     else if (wd >= 1 && wd <= 7) makeup.set(date, wd)
