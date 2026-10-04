@@ -183,7 +183,7 @@ const chipsOf = (keys: string[], labels: Record<string, string>) =>
 .clear {
   margin-left: 8px;
   font-size: var(--fs-micro);
-  color: var(--c-exercise-deep);
+  color: var(--accent);
 }
 
 .rowline {
@@ -197,22 +197,30 @@ const chipsOf = (keys: string[], labels: Record<string, string>) =>
 }
 
 .chips {
-  gap: 8px;
+  gap: 7px;
   flex-wrap: wrap;
 }
 
+/* 与动作库页/方案向导同一套 chips：描边白底，选中实底 accent */
 .chip {
-  padding: 6px 12px;
+  padding: 7px 13px;
   border-radius: var(--radius-full);
-  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   font-size: var(--fs-caption);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
 }
 
 .chip.on {
-  background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
 }
 
 .mgroup + .mgroup {
@@ -232,26 +240,28 @@ const chipsOf = (keys: string[], labels: Record<string, string>) =>
   margin-top: 14px;
 }
 
+/* 重置 = 程序页 .cap 胶囊；完成 = .primary 主按钮（accent 实底） */
 .reset {
-  padding: 13px 18px;
-  border-radius: var(--radius-l);
-  background: var(--surface-2);
-  font-size: var(--fs-callout);
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
 }
 
 .reset:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
 }
 
 .done {
   flex: 1;
   padding: 13px 0;
-  border-radius: var(--radius-l);
-  background: var(--c-exercise);
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: var(--on-accent);
   font-size: var(--fs-callout);
   font-weight: 700;
-  color: #fff;
 }
 </style>

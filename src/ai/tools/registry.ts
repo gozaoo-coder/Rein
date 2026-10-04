@@ -93,7 +93,7 @@ export const GROUP_POLICY: Record<ToolGroup, GroupPolicy> = {
   context: { label: '历史检索', hint: '在过去的对话里找原话', always: true },
   web: { label: '联网', hint: '搜索与抓取网页正文', always: true },
   image: { label: '看图', hint: '按像素坐标放大图片局部细节', always: true },
-  session: { label: '训练会话', hint: '当前进行中的训练课（只读）', always: true },
+  session: { label: '训练会话', hint: '当前进行中的训练课（查看、热身处方规则与现场调整）', always: true },
   system: { label: '工具装载', hint: '装载其它工具分组（元工具）', always: true },
   ledger: {
     label: '记账',

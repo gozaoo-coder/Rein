@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronRight, Layers, Pencil } from 'lucide-vue-next'
+import { ChevronRight, Layers, Pencil, Target } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import { CATEGORY_META } from '@/config/domain'
@@ -446,6 +446,7 @@ onBeforeUnmount(() => {
               sel: selectedId === b.t.id,
               past: isToday && b.t.startMin! + durOf(b.t) < nowMin_ && b.t.status !== 'done',
               dragging: drag?.armed && drag.todo.id === b.t.id,
+              prog: b.t.programId != null,
             }"
             :style="blkStyle(b)"
             :data-title="b.t.title"
@@ -464,7 +465,7 @@ onBeforeUnmount(() => {
                 @click.stop="emit('toggle', b.t)"
               />
               <div class="body">
-                <span class="tt">{{ b.t.title }}</span>
+                <span class="tt"><Target v-if="b.t.programId != null" :size="9" :stroke-width="3" class="src" aria-label="来自健康方案" />{{ b.t.title }}</span>
               </div>
               <button
                 class="edit"
@@ -501,7 +502,7 @@ onBeforeUnmount(() => {
             />
             <div
               class="stk-card"
-              :class="{ done: s.front.status === 'done', sel: selectedId === s.front.id }"
+              :class="{ done: s.front.status === 'done', sel: selectedId === s.front.id, prog: s.front.programId != null }"
             >
               <button
                 class="ck"
@@ -510,7 +511,7 @@ onBeforeUnmount(() => {
                 @click.stop="emit('toggle', s.front)"
               />
               <div class="body">
-                <span class="tt">{{ s.front.title }}</span>
+                <span class="tt"><Target v-if="s.front.programId != null" :size="9" :stroke-width="3" class="src" aria-label="来自健康方案" />{{ s.front.title }}</span>
               </div>
               <div class="card-acts">
                 <button class="stk-more" :aria-label="`展开同时段 ${s.items.length} 项日程`" @pointerdown.stop @click.stop="openStack(s)">
@@ -751,6 +752,20 @@ onBeforeUnmount(() => {
 
 .blk.sel .blk-card {
   box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* 来自健康方案的条目：分类色之外再加一道强调色左棱 + 标题前的方案标记，
+   与普通待办一眼可分（方案日程是「课表」，不是随手记的待办）；
+   颜色仍走分类色 + 一个强调色棱，不新增一套颜色语义 */
+.blk.prog .blk-card,
+.stk.prog .stk-card {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.src {
+  vertical-align: -1px;
+  margin-right: 3px;
+  color: var(--accent);
 }
 
 /* 起止时间标记：上方起点、下方终点；拖拽中高亮为实时时间。

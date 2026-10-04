@@ -1,37 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Archive,
   CheckCircle2,
   ChevronRight,
   Circle,
-  FileText,
   Info,
-  MoreHorizontal,
   ShoppingBag,
   Sparkles,
   Trash2,
   Wand2,
 } from 'lucide-vue-next'
 
-import AppMenu from '@/components/common/AppMenu.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
-import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import ProgramCompare from '@/components/program/ProgramCompare.vue'
 import ProgramConstraints from '@/components/program/ProgramConstraints.vue'
-import ProgramCycleMap from '@/components/program/ProgramCycleMap.vue'
-import ProgramDashboard from '@/components/program/ProgramDashboard.vue'
-import ProgramEvolutionChart from '@/components/program/ProgramEvolutionChart.vue'
 import ProgramEvidenceSheet from '@/components/program/ProgramEvidenceSheet.vue'
-import ProgramNutritionCompass from '@/components/program/ProgramNutritionCompass.vue'
 import ProgramReviewSheet from '@/components/program/ProgramReviewSheet.vue'
-import ProgramWeightChannel from '@/components/program/ProgramWeightChannel.vue'
-import { nutritionService } from '@/services/nutritionService'
 import { planService } from '@/services/planService'
-import { todoService } from '@/services/todoService'
 import { copyText } from '@/utils/clipboard'
 import {
   amountText,
@@ -39,7 +28,7 @@ import {
   shoppingListText,
   type CheckedRow,
 } from '@/utils/shoppingList'
-import { GOAL_LABELS, mealTypeOfSlot } from '@/config/domain'
+import { GOAL_LABELS } from '@/config/domain'
 import { useModelsStore } from '@/stores/models'
 import { useNutritionStore } from '@/stores/nutrition'
 import {
@@ -47,28 +36,16 @@ import {
   defaultStartDate,
   useProgramStore,
 } from '@/stores/program'
+import { markReviewed, programStatus } from '@/utils/programCycle'
 import type {
-  BodyMetric,
-  MealType,
   ProgramAdjustment,
-  ProgramBlob,
-  ProgramMeal,
   ProgramPlan,
   ProgramRecord,
   ProgramStart,
   ProgramTier,
-  Todo,
 } from '@/types'
-import type { AiMenuMeal } from '@/ai/recipeGen'
 import { recordCardOutcome } from '@/ai/cardOutcomes'
-import { diffDays, fmtDateCn, todayStr } from '@/utils/date'
-import {
-  ADJUSTMENT_LIMITS,
-  parseBlob,
-  programEndDate,
-  type AdjustmentPatch,
-} from '@/utils/programEngine'
-import { buildDayCells, cycleStats } from '@/utils/programProgress'
+import { ADJUSTMENT_LIMITS, parseBlob, type AdjustmentPatch } from '@/utils/programEngine'
 import { constraintSnapshotOf, sameConstraint, type ConstraintSnapshot } from '@/utils/programSetup'
 import {
   buildReviewPayload,
@@ -80,7 +57,12 @@ import {
 /**
  * 健康方案：程序计算三档基线方案（保守/均衡/进取），展开到日程级；
  * AI 只负责基于执行数据的参数复盘，且必须经用户确认、引擎钳制后生效。
+ *
+ * 页面只做两件事：无方案时「制定」（约束向导 + 三档对比），
+ * 有方案时「一屏管理」（状态条 + 复盘 / 采购 / 调参 + 历史）。
+ * 执行发生在日常界面：训练在画布（点课程块直接开课），菜单与目标在营养页。
  */
+const route = useRoute()
 const router = useRouter()
 const store = useProgramStore()
 const n = useNutritionStore()
@@ -92,8 +74,6 @@ const phase = ref<Phase>('loading')
 onMounted(async () => {
   await Promise.all([store.load(), n.loadProfile()])
   phase.value = store.active ? 'active' : 'setup'
-  await loadSchedule()
-  loadBodyMetrics()
   // 课程名（首练选择的展示用），失败不影响主流程
   planService
     .list()
@@ -101,26 +81,19 @@ onMounted(async () => {
       courseNames.value = Object.fromEntries(ps.map((x) => [x.id, x.name]))
     })
     .catch(() => undefined)
+  maybeAutoReview()
 })
 
-/* ---------------- 方案日程待办（周期地图 / 今日完成态的数据来源） ---------------- */
-
-const scheduleTodos = ref<Todo[]>([])
-
-/** 只取当前方案的日程待办；失败时退化为空数组（地图按「无记录」渲染，不阻塞页面） */
-async function loadSchedule(): Promise<void> {
-  const id = store.active?.id
-  if (id == null) {
-    scheduleTodos.value = []
-    return
-  }
-  try {
-    const all = await todoService.listAllTodos()
-    scheduleTodos.value = all.filter((t) => t.programId === id)
-  } catch {
-    scheduleTodos.value = []
-  }
+/** 主页状态卡 / 桌面右栏的「本周复盘」深链：进入即发起；已在页时只变 query，
+ *  也要能触发——所以挂在 watcher 上，而不是只在 onMounted 里读一次。
+ *  发起后立刻摘掉 query，避免回退或刷新时重跑（一次复盘要调模型）。 */
+function maybeAutoReview(): void {
+  if (!store.active || route.query.review !== '1') return
+  void router.replace({ name: 'program' })
+  void startReview()
 }
+
+watch(() => route.query.review, () => maybeAutoReview())
 
 /* ---------------- 生成流 ---------------- */
 
@@ -195,7 +168,7 @@ async function activate(): Promise<void> {
  * 崩在 computed 里，降级成明确的错误提示；解析成功与失败成对返回，避免在
  * computed 内写 ref 造成副作用。
  */
-const parsedBlob = computed<{ blob: ProgramBlob | null; error: string }>(() => {
+const parsedBlob = computed<{ blob: ReturnType<typeof parseBlob> | null; error: string }>(() => {
   if (!store.active) return { blob: null, error: '' }
   try {
     return { blob: parseBlob(store.active), error: '' }
@@ -204,145 +177,31 @@ const parsedBlob = computed<{ blob: ProgramBlob | null; error: string }>(() => {
   }
 })
 const blob = computed(() => parsedBlob.value.blob)
+const blobError = computed(() => parsedBlob.value.error)
 
-/** 状态条展开（静态参数详情）与页头「⋯」操作菜单 */
+/** 周期口径：起止 / 周次 / 进度 / 是否结束（主页状态卡同源） */
+const status = computed(() =>
+  store.active && blob.value ? programStatus(store.active, blob.value) : null,
+)
+const isEnded = computed(() => status.value?.ended ?? false)
+
+/** 状态条展开（静态参数详情） */
 const stripOpen = ref(false)
-const moreOpen = ref(false)
-/** 菜单锚点：页头那颗「⋯」——bind 菜单要贴着它弹 */
-const moreBtn = ref<HTMLElement | null>(null)
 
 const activeTierLabel = computed(() =>
   store.active?.tier === 'conservative' ? '保守' : store.active?.tier === 'aggressive' ? '进取' : '均衡',
 )
 
-/** ⋯ 菜单项：方案结束后归档项让位给成绩单；删除保留「再点一次」的二次确认语义 */
-const moreActions = computed(() => {
-  if (!store.active) return []
-  return [
-    isEnded.value
-      ? { label: '生成本期成绩单', value: 'wrapup', icon: FileText }
-      : { label: '归档方案', value: 'archive', icon: Archive },
-    {
-      label: deleteArmed.value ? '再点一次确认删除' : '删除方案',
-      value: 'delete',
-      icon: Trash2,
-      danger: true,
-    },
-  ]
-})
-
-function onMore(value: string): void {
-  moreOpen.value = false
-  if (value === 'wrapup' && store.active) openWrapup(store.active)
-  else if (value === 'archive') void archiveCurrent()
-  else if (value === 'delete') void deleteCurrent()
-}
-const blobError = computed(() => parsedBlob.value.error)
-const startDate = computed(() => blob.value?.days[0]?.date ?? null)
-const endDate = computed(() => (blob.value ? programEndDate(blob.value) : null))
-const isEnded = computed(() => endDate.value != null && endDate.value < todayStr())
-const currentWeek = computed(() => {
-  if (!blob.value || !startDate.value || !store.active) return 0
-  const passed = diffDays(startDate.value, todayStr())
-  return Math.max(1, Math.min(store.active.weeks, Math.floor(passed / 7) + 1))
-})
-
-/** 聚焦日：用户点选 > 今天（若在周期内） > 第一个即将到来的方案日。
- * 方案从下周一开跑时，生效态也能预览第一天的完整安排而不是空白。 */
-const focusedDay = ref<string | null>(null)
-const focusDay = computed(() => {
-  const b = blob.value
-  if (!b) return null
-  return (
-    b.days.find((d) => d.date === focusedDay.value) ??
-    b.days.find((d) => d.date === todayStr()) ??
-    b.days.find((d) => d.date >= todayStr()) ??
-    null
-  )
-})
-const focusIsToday = computed(() => focusDay.value?.date === todayStr())
+/** 调整历史（倒序展示，最近一次在前） */
 const adjustments = computed<ProgramAdjustment[]>(() => {
   if (!store.active) return []
   try {
-    return JSON.parse(store.active.adjustmentsJson || '[]') as ProgramAdjustment[]
+    const arr = JSON.parse(store.active.adjustmentsJson || '[]') as ProgramAdjustment[]
+    return Array.isArray(arr) ? [...arr].reverse() : []
   } catch {
     // 调整历史损坏只影响历史列表，不应连带整页白屏
     return []
   }
-})
-
-/* ---------------- 周期进度 · 驾驶舱 ---------------- */
-
-/** 周期地图格子：方案日 × 日程待办 左连接（统计口径与 programReport 一致） */
-const dayCells = computed(() => {
-  const b = blob.value
-  const rec = store.active
-  if (!b || !rec) return []
-  return buildDayCells(b, scheduleTodos.value, rec.id, todayStr())
-})
-
-const cycle = computed(() => cycleStats(dayCells.value))
-
-/* ---------------- 体重航道 ---------------- */
-
-const bodyMetrics = ref<BodyMetric[]>([])
-
-async function loadBodyMetrics(): Promise<void> {
-  try {
-    bodyMetrics.value = await nutritionService.listBodyMetrics(100)
-  } catch {
-    bodyMetrics.value = []
-  }
-}
-
-/** 方案区间内的体重点（时间正序）；起点缺记录时用档案体重兜底 */
-const weightPoints = computed<{ date: string; kg: number }[]>(() => {
-  if (!startDate.value) return []
-  const end = endDate.value ?? todayStr()
-  return bodyMetrics.value
-    .filter((m) => m.weightKg != null && m.date >= startDate.value! && m.date <= end)
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((m) => ({ date: m.date, kg: m.weightKg as number }))
-})
-
-const weightChannel = computed(() => {
-  const start = startDate.value
-  if (!start) return null
-  const startWeight = weightPoints.value[0]?.kg ?? n.profile?.weightKg ?? null
-  if (startWeight == null) return null
-  return {
-    startWeight,
-    targetWeight: n.profile?.targetWeightKg ?? null,
-    /** 档位预期速率：缺口 × 7 ÷ 7700（kg/周） */
-    weeklyRateKg: Math.round(((blob.value?.params.kcalDelta ?? 0) * 7) / 7700 * 100) / 100,
-    endDate: endDate.value && endDate.value > todayStr() ? endDate.value : todayStr(),
-  }
-})
-
-/** 今日训练待办是否已完成（驱动驾驶舱的训练进度条） */
-const trainingDone = computed(() => {
-  const t = todayStr()
-  return scheduleTodos.value.some(
-    (x) => x.date === t && x.category === 'workout' && x.status === 'done',
-  )
-})
-
-/** 驾驶舱的当日菜单：AI 菜单优先，未生成时回落模板菜单 */
-const dashboardMenu = computed<ProgramMeal[]>(() => {
-  const ai = dayMenu.value
-  if (ai) {
-    return ai.map((m) => ({
-      mealType: mealTypeOfSlot(m.slot),
-      slot: m.slot,
-      name: m.name,
-      items: m.items.map((it) => `${it.label} ${it.grams}g`),
-      kcal: m.kcal,
-      protein: m.protein,
-      carb: m.carb,
-      fat: m.fat,
-    }))
-  }
-  return focusDay.value?.meals ?? []
 })
 
 /** 科学依据（三条研究曲线）弹层 */
@@ -354,73 +213,6 @@ const evidenceTier = computed<ProgramTier>(() => {
   const sel = selectedTier.value
   return sel === 'conservative' || sel === 'aggressive' ? sel : 'balanced'
 })
-
-/** 驾驶舱「开始」：进课程详情，那里有成熟的开始训练流程 */
-function startCourse(courseId: string): void {
-  void router.push(`/sports/plans/${courseId}`)
-}
-
-/** 驾驶舱「记一笔」：打开智能添加（可带下一餐的餐次预选） */
-function quickLog(mealType: MealType | null = null): void {
-  openSmartAdd(mealType)
-}
-
-/** 「记一笔」：打开智能添加（food 模式）；下一餐入口会带餐次预选 */
-const smartAddOpen = ref(false)
-const smartAddMeal = ref<MealType | null>(null)
-
-function openSmartAdd(mealType: MealType | null): void {
-  smartAddMeal.value = mealType
-  smartAddOpen.value = true
-}
-
-/* ---------------- 聚焦日的 AI 菜单（未生成回落模板菜单） ---------------- */
-
-const dayMenu = ref<AiMenuMeal[] | null>(null)
-const dayMenuLoading = ref(false)
-const dayMenuError = ref('')
-/** 逐日菜单生成中的流式活动摘要（匹配食材…） */
-const dayMenuStatus = ref('')
-
-watch(
-  () => focusDay.value?.date,
-  async (d, _prev, onCleanup) => {
-    // 快速切换日期时旧请求的响应可能后到并覆盖新日期的菜单，
-    // 用 watch 自带的 cleanup 标记过期结果并丢弃
-    let stale = false
-    onCleanup(() => {
-      stale = true
-    })
-    dayMenu.value = null
-    dayMenuError.value = ''
-    if (!d || !store.active) return
-    try {
-      const meals = await store.loadDayMeals(store.active, d)
-      if (!stale) dayMenu.value = meals
-    } catch {
-      /* 缓存读取失败按未生成处理 */
-    }
-  },
-  { immediate: true },
-)
-
-async function genDayMenu(): Promise<void> {
-  if (!store.active || !focusDay.value) return
-  dayMenuLoading.value = true
-  dayMenuError.value = ''
-  dayMenuStatus.value = ''
-  try {
-    dayMenu.value = await store.generateDayMeals(store.active, focusDay.value.date, (s) => {
-      // 流式：匹配食材等活动摘要实时上屏
-      dayMenuStatus.value = s
-    })
-  } catch (e) {
-    dayMenuError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    dayMenuLoading.value = false
-    dayMenuStatus.value = ''
-  }
-}
 
 /* ---------------- 手动调整 ---------------- */
 
@@ -476,7 +268,7 @@ async function startReview(): Promise<void> {
   review.value = { phase: 'running', diagnosis: '', advice: [], proposed: {}, error: '' }
   // 数据先行区与 AI 请求并行：模型慢的时候对比条已经在了
   reviewCompare.value = null
-  const comparePromise = buildWeekCompare(store.active).then(
+  const comparePromise = buildWeekCompare().then(
     (c) => (reviewCompare.value = c),
     () => undefined,
   )
@@ -496,6 +288,8 @@ async function startReview(): Promise<void> {
       proposed: sug.changes,
       error: '',
     }
+    // 复盘完成即重新计时，主页的「本周复盘」提醒满 7 天后再出现
+    markReviewed(store.active.id)
   } catch (e) {
     review.value = { ...review.value, phase: 'error', error: e instanceof Error ? e.message : String(e) }
   }
@@ -648,17 +442,15 @@ function adjustmentsOf(r: ProgramRecord): number {
     return 0
   }
 }
+
+function changesText(a: ProgramAdjustment): string {
+  return a.changes.map((c) => `${c.label} ${c.before} → ${c.after}`).join(' · ')
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="健康方案" subtitle="程序算基线 · 日程级安排 · AI 只复盘调参" back>
-      <template v-if="phase === 'active'" #action>
-        <button ref="moreBtn" class="hdr-btn" aria-label="更多方案操作" @click="moreOpen = true">
-          <MoreHorizontal :size="19" />
-        </button>
-      </template>
-    </PageHeader>
+    <PageHeader title="健康方案" subtitle="程序算基线 · 日程级安排 · AI 只复盘调参" back />
 
     <!-- 加载 -->
     <section v-if="phase === 'loading'" class="card center empty">
@@ -705,11 +497,11 @@ function adjustmentsOf(r: ProgramRecord): number {
           <div v-if="selectedPlan" class="form">
             <p class="t-2">「{{ selectedPlan.tierLabel }}」· {{ DEFAULT_PROGRAM_WEEKS }} 周，从{{ startLabel }}（{{ start.startDate }}）开始。</p>
             <ul class="confirm-list t-2">
-              <li>未来 {{ DEFAULT_PROGRAM_WEEKS }} 周的训练课与每日饮食安排将写入日程表；</li>
+              <li>未来 {{ DEFAULT_PROGRAM_WEEKS }} 周的训练课写入日程表（画布上点课块直接开练）；</li>
+              <li>每日营养目标同步为方案值（主页摄入条与营养页同源）；</li>
               <li v-if="start.startMode !== 'next' || start.firstCourseId">
                 从{{ startLabel }}起按你选的节奏循环{{ start.firstCourseId ? `，首个训练日是「${courseNames[start.firstCourseId] ?? ''}」` : '' }}{{ start.startMode !== 'next' ? '；今天若已练过，直接勾掉当天课程即可' : '' }}；
               </li>
-              <li>每日营养目标同步为方案值（能量环与记录页同源）；</li>
               <li>已有生效方案会被自动归档，可随时手动调整或让 AI 复盘微调。</li>
             </ul>
             <button class="primary" :disabled="activating" @click="activate">
@@ -720,15 +512,16 @@ function adjustmentsOf(r: ProgramRecord): number {
       </template>
     </template>
 
-    <!-- 生效中 -->
-    <template v-else-if="blob && store.active && startDate && endDate">
-      <!-- 方案状态条：一行概要（目标·档位·周次·截止），静态参数点开展开（example 对齐） -->
+    <!-- 生效中：一屏管理（状态条 + 操作 + 调整历史） -->
+    <template v-else-if="blob && store.active && status">
+      <!-- 状态条：一行概要（目标·档位·周次·截止），点开展开静态参数 -->
       <section class="head-strip">
         <button class="strip" :aria-expanded="stripOpen" @click="stripOpen = !stripOpen">
-          <span class="grow">{{ GOAL_LABELS[store.active.goal] }} · {{ activeTierLabel }} v{{ store.active.version }} · 第 {{ currentWeek }} 周 / {{ store.active.weeks }}</span>
-          <span class="end num">{{ endDate!.slice(5) }} 结束</span>
+          <span class="grow">{{ GOAL_LABELS[store.active.goal] }} · {{ activeTierLabel }} v{{ store.active.version }} · 第 {{ status.week }} 周 / {{ status.weeks }}</span>
+          <span class="end num">{{ status.endDate.slice(5) }} 结束</span>
           <ChevronRight :size="12" class="chev" :class="{ open: stripOpen }" />
         </button>
+        <div class="strip-bar" aria-hidden="true"><i :style="{ transform: `scaleX(${status.progress})` }" /></div>
         <div class="strip-detail" :class="{ open: stripOpen }">
           <ul class="stats num">
             <li><em>每日热量</em><b>{{ Math.round(blob.params.targets.kcal) }}<i>大卡</i></b></li>
@@ -736,70 +529,15 @@ function adjustmentsOf(r: ProgramRecord): number {
             <li><em>热量偏移</em><b>{{ blob.params.kcalDelta > 0 ? '+' : '' }}{{ blob.params.kcalDelta }}</b></li>
             <li><em>BMR/TDEE</em><b>{{ blob.params.bmr }}/{{ blob.params.tdee }}</b></li>
           </ul>
-          <p class="strip-meta num">{{ startDate }} ~ {{ endDate }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</p>
+          <p class="strip-meta num">{{ status.startDate }} ~ {{ status.endDate }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</p>
         </div>
       </section>
-
-      <!-- 今日驾驶舱：进度 + 训练 + 下一餐，回答「我今天还差什么」 -->
-      <ProgramDashboard
-        v-if="focusDay"
-        :day="focusDay"
-        :date-label="focusIsToday ? '今天' : fmtDateCn(focusDay.date)"
-        :day-no="focusDay.dayIndex + 1"
-        :total-days="blob.days.length"
-        :training-done="trainingDone"
-        :today-menu="dashboardMenu"
-        @start="startCourse"
-        @log="quickLog"
-      />
-
-      <!-- 今日菜单：供能结构 + 餐次列表一张卡（罗盘与全天菜单合并，消除双环与菜单双写） -->
-      <ProgramNutritionCompass
-        v-if="focusDay && dashboardMenu.length"
-        :meals="dashboardMenu"
-        :target-protein="Math.round(blob.params.targets.protein)"
-        :training-day="!focusDay.rest"
-        :title="focusIsToday ? '今日菜单' : fmtDateCn(focusDay.date)"
-        :subtitle="!focusIsToday && focusDay.date > todayStr() ? '该日尚未到来 · 提前查看当日安排' : ''"
-        :ai-generated="!!dayMenu"
-        :ai-loading="dayMenuLoading"
-        :ai-status="dayMenuStatus"
-        :ai-error="dayMenuError"
-        :loggable="focusIsToday"
-        @regenerate="genDayMenu"
-        @log="openSmartAdd(null)"
-      />
-
-      <!-- 全周期地图：已经走过的日子同样在场，长周期需要「已坚持」的实感；
-           点格子即把上方驾驶舱 / 今日菜单切到那一天 -->
-      <ProgramCycleMap
-        :cells="dayCells"
-        :stats="cycle"
-        :focused-date="focusedDay ?? focusDay?.date ?? null"
-        :today="todayStr()"
-        @focus="focusedDay = $event"
-      />
-
-      <!-- 体重航道：方案唯一的真相指标，走廊按档位速率铺出 -->
-      <ProgramWeightChannel
-        v-if="weightChannel"
-        :points="weightPoints"
-        :goal="store.active.goal"
-        :weekly-rate-kg="weightChannel.weeklyRateKg"
-        :start-weight="weightChannel.startWeight"
-        :target-weight="weightChannel.targetWeight"
-        :start-date="startDate"
-        :end-date="weightChannel.endDate"
-      />
 
       <section class="card acts">
         <button v-if="isEnded" class="primary" @click="openWrapup(store.active!)">
           生成本期成绩单<span class="t-3">方案期已结束 · 对照与下一期建议</span>
         </button>
         <div class="acts-grid">
-          <button class="act" @click="evidenceOpen = true">
-            <Info :size="17" />为什么是这样<span>3 条研究曲线</span>
-          </button>
           <button class="act" @click="startReview">
             <Wand2 :size="17" />AI 本周复盘<span>看数据调下一周</span>
           </button>
@@ -808,6 +546,9 @@ function adjustmentsOf(r: ProgramRecord): number {
           </button>
           <button class="act" @click="openAdjust">
             <Sparkles :size="17" />手动调参<span>缺口 / 蛋白 / 频率</span>
+          </button>
+          <button class="act" @click="evidenceOpen = true">
+            <Info :size="17" />为什么是这样<span>3 条研究曲线</span>
           </button>
         </div>
         <div class="acts-minor">
@@ -821,12 +562,23 @@ function adjustmentsOf(r: ProgramRecord): number {
         </div>
       </section>
 
-      <!-- 参数演进：调整历史画成双泳道图，点节点看 diff -->
-      <ProgramEvolutionChart
-        v-if="adjustments.length"
-        :adjustments="adjustments"
-        :goal="store.active.goal"
-      />
+      <!-- 调整历史：复盘闭环的账本（最近在前），点开看每次改了哪些参数 -->
+      <section v-if="adjustments.length" class="card log">
+        <header class="row between">
+          <h2>调整历史</h2>
+          <span class="t-3 num">{{ adjustments.length }} 次</span>
+        </header>
+        <ul class="log-list">
+          <li v-for="a in adjustments" :key="a.version">
+            <p class="log-head">
+              <b class="num">v{{ a.version }}</b>
+              <span class="t-3">{{ a.source === 'ai' ? 'AI 复盘' : '手动' }} · {{ a.at.slice(0, 10) }}</span>
+            </p>
+            <p class="log-sum t-2">{{ a.summary }}</p>
+            <p v-if="a.changes.length" class="log-changes t-3 num">{{ changesText(a) }}</p>
+          </li>
+        </ul>
+      </section>
 
       <!-- 手动调参 -->
       <SheetModal :open="adjustOpen" title="手动调参" @close="adjustOpen = false">
@@ -900,29 +652,13 @@ function adjustmentsOf(r: ProgramRecord): number {
             </ul>
           </div>
           <p v-if="shoppingRows.length && shoppingHasTemplate" class="shop-hint t-3">
-            含模板菜单的估算份量 · 在对应日期点「AI 生成这一天的菜单」可按目标校准
+            含模板菜单的估算份量 · 在营养页生成当天菜单后可按目标校准
           </p>
           <button v-if="shoppingRows.length" class="primary shop-copy" @click="copyShopping">
             {{ shoppingCopyErr || (shoppingCopied ? '已复制到剪贴板' : '复制全文') }}
           </button>
         </template>
       </SheetModal>
-
-      <!-- 智能添加（food 模式）：文字/图片描述 → 食物卡确认写入；餐次可由下一餐预选 -->
-      <SmartAddSheet :open="smartAddOpen" mode="food" :date="todayStr()" :default-meal="smartAddMeal" @close="smartAddOpen = false" />
-
-      <!-- 页头「⋯」：低频方案操作的收纳入口（胶囊快捷钮的双通道备份）。
-           用 bind 菜单贴着触发钮弹 —— 动作之间平级、没有需要遮罩压场的破坏性确认
-           （删除本身还有「再点一次」的第二道闸） -->
-      <AppMenu
-        :open="moreOpen"
-        :anchor="moreBtn"
-        title="方案操作"
-        :actions="moreActions"
-        @select="onMore"
-        @close="moreOpen = false"
-      />
-
     </template>
 
     <!-- 历史方案（归档）：点开看结营成绩单 -->
@@ -954,7 +690,7 @@ function adjustmentsOf(r: ProgramRecord): number {
 </template>
 
 <style scoped>
-/* flex + gap 统一卡片间距：生效页的卡片来自多个子组件（.card / .pod 混排），
+/* flex + gap 统一卡片间距：卡片来自多个子组件（.card / .pod 混排），
    全局 .card + .card 的相邻选择器跨组件会断链，这里由页面容器统一负责 */
 .page {
   padding: 10px var(--page-pad-x) var(--page-pad-bottom);
@@ -1051,7 +787,7 @@ function adjustmentsOf(r: ProgramRecord): number {
   margin-left: 1px;
 }
 
-/* 状态条：一行概要 + 可展开参数详情（example 对齐） */
+/* 状态条：一行概要 + 周期进度 + 可展开参数详情 */
 .head-strip {
   flex: none;
 }
@@ -1092,6 +828,23 @@ function adjustmentsOf(r: ProgramRecord): number {
   transform: rotate(90deg);
 }
 
+/* 周期进度：细条替代被删掉的周期地图，「走到哪了」一眼可见 */
+.strip-bar {
+  height: 3px;
+  margin-top: 7px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.strip-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transform-origin: left center;
+}
+
 .strip-detail {
   overflow: hidden;
   max-height: 0;
@@ -1126,7 +879,7 @@ function adjustmentsOf(r: ProgramRecord): number {
   }
 }
 
-/* 操作区：高频操作 2 列网格，归档 / 删除降级为文字链 */
+/* 操作区：高频操作 2 列网格，归档 / 删除降级为胶囊 */
 .acts {
   display: grid;
   gap: 12px;
@@ -1214,6 +967,34 @@ function adjustmentsOf(r: ProgramRecord): number {
   font-size: var(--fs-micro);
   font-weight: 400;
   opacity: 0.8;
+}
+
+/* 调整历史 */
+.log-list li {
+  padding: 10px 0;
+  border-top: 0.5px solid var(--line);
+}
+
+.log-list li:first-child {
+  border-top: none;
+}
+
+.log-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-subhead);
+}
+
+.log-sum {
+  margin-top: 2px;
+  font-size: var(--fs-caption);
+}
+
+.log-changes {
+  margin-top: 3px;
+  font-size: var(--fs-micro);
+  line-height: 1.5;
 }
 
 /* 采购清单弹层 */
@@ -1368,33 +1149,32 @@ function adjustmentsOf(r: ProgramRecord): number {
 
 /* ============================================================
    桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
-   这页的主体是一叠 .pod（驾驶舱 / 今日菜单 / 周期地图 / 体重航道 / 参数演进），
-   它们不是 .card，壳层缺省已经让它们通栏 —— 每张卡内部都有自己的栅格，
-   再并排就会挤坏，所以桌面上保持纵向卡片流，只修三张「单独占左半栏」的卡片。
-   选择器带上 section 元素名是为了压过壳层给 .page > .card 定的半栏规则。
+   这页在桌面上是「通栏状态条 + 通栏操作区 + 两条并排清单」，每块内部都有自己的
+   栅格，不需要壳层再分栏；选择器带上 section 元素名压过 .page > .card 的半栏规则。
    ============================================================ */
 
-/* 症状条 / 操作区 / 历史方案 / 空状态：都是「一行读到底」的整段内容，
-   半栏里右半边会整块空着，这里显式拉通 */
 .desk-main .page > section.card.warn,
 .desk-main .page > section.card.acts,
 .desk-main .page > section.card.hist,
-.desk-main .page > section.card.empty {
+.desk-main .page > section.card.log,
+.desk-main .page > section.card.empty,
+.desk-main .page > section.head-strip {
   grid-column: 1 / -1;
 }
 
-/* 操作区通栏后，四个高频动作排成一行（窄屏的 2×2 是拇指够得着的版本） */
+/* 操作区通栏后，高频动作排成一行（窄屏的 2×2 是拇指够得着的版本） */
 .desk-main .acts-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-/* 历史方案是一份可长的清单：一行只有「目标 · 档位 · 维度 + 时间跨度」，
-   通栏后按两栏流铺开，几期方案一屏看全 */
+/* 调整历史与历史方案都是可长清单：通栏后按两栏流铺开 */
+.desk-main .log-list,
 .desk-main .hist-list {
   columns: 2;
   column-gap: var(--desk-gap);
 }
 
+.desk-main .log-list > li,
 .desk-main .hist-list > li {
   break-inside: avoid;
 }

@@ -10,20 +10,28 @@ import EnergySummary from '@/components/nutrition/EnergySummary.vue'
 import MacroDetailCard from '@/components/nutrition/MacroDetailCard.vue'
 import DietChecksCard from '@/components/nutrition/DietChecksCard.vue'
 import MicrosCard from '@/components/nutrition/MicrosCard.vue'
+import ProgramMenuCard from '@/components/nutrition/ProgramMenuCard.vue'
 import { useDietStore } from '@/stores/diet'
+import { useFeaturesStore } from '@/stores/features'
 import { useNutritionStore } from '@/stores/nutrition'
+import { useProgramStore } from '@/stores/program'
 import { todayStr } from '@/utils/date'
 
-/** 营养全览 · 二级页：能量总览 + 宏量/微量元素详解 + 记饮食/改目标快捷入口。 */
+/** 营养全览 · 二级页：能量总览 + 宏量/微量元素详解 + 记饮食/改目标快捷入口。
+ *  方案生效时多一张「今日菜单」卡（菜单归营养，方案页只管方案）。 */
 const router = useRouter()
 const today = todayStr()
 
 const nutrition = useNutritionStore()
 const diet = useDietStore()
+const program = useProgramStore()
+const features = useFeaturesStore()
 
 onMounted(() => {
   void nutrition.loadSummary(today)
   void diet.load(today)
+  // 关掉方案模块时不产生请求（与主页同一条纪律）
+  if (features.isEnabled('program')) void program.load()
 })
 
 const quickOpen = ref(false)
@@ -54,6 +62,9 @@ const quickOpen = ref(false)
 
     <!-- 能量与宏量进度（复用首页卡片） -->
     <EnergySummary />
+
+    <!-- 方案生效时的今日菜单：吃什么归营养页；生成按需，未生成回落模板 -->
+    <ProgramMenuCard @log="quickOpen = true" />
 
     <!-- 宏量详解：与左侧「能量与营养」配成一行（两张都是纵向长卡，高度也接近）。
 

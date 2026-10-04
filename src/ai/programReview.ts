@@ -1,9 +1,12 @@
 /**
- * AI 方案周复盘：汇总最近 7 天的执行数据（饮食达成 / 训练完成 / 体重趋势 /
- * 日程执行率），交给模型做偏差分析，产出「下一周怎么调」的结构化建议。
+ * AI 方案周复盘：汇总最近 7 天的执行数据（饮食记录 / 训练兑现 / 体重趋势），
+ * 交给模型做偏差分析，产出「下一周怎么调」的结构化建议。
+ *
+ * 执行口径：训练兑现 = 计划训练日里「有真实运动记录（课程/补录/手环）∪ 日程已勾」
+ * 的并集——只看待办勾选会把实际练了的人误判为缺勤。
  *
  * 边界（对应产品原则）：AI 只输出参数级建议（缺口/蛋白配比/训练天数），
- * 不生成新计划；建议必须经用户在方案页确认、由引擎钳制后才生效。
+ * 不生成新计划；建议必须经用户确认、由引擎钳制后才生效。
  */
 
 import type { AiModel, ProgramRecord } from '@/types'
@@ -12,6 +15,7 @@ import { nutritionService } from '@/services/nutritionService'
 import { todoService } from '@/services/todoService'
 import { addDays, todayStr } from '@/utils/date'
 import { parseBlob } from '@/utils/programEngine'
+import { aggregateWorkouts, trainingExec, type WorkoutAgg } from '@/utils/programExec'
 import { extractJsonObject, lastAssistantText } from './json'
 import { jsonStringField } from './streamExtract'
 import { buildRuntime } from './runtime'
@@ -29,12 +33,18 @@ export interface ProgramReviewPayload {
   }
   /** 最近 7 天逐日：目标热量 / 实际摄入 / 运动消耗 */
   daily: { date: string; kcalTarget: number; intake: number; exercise: number }[]
-  /** 实际运动记录（区别于日程完成率）：条数与总消耗 */
-  workouts: { count: number; kcal: number }
-  /** 训练完成情况：计划条数与已完成条数 */
-  training: { planned: number; done: number }
-  /** 饮食锚点完成情况 */
-  dietTodos: { planned: number; done: number }
+  /** 计划 vs 兑现（并集口径）；missedDates 是计划了但没有任何执行痕迹的日子 */
+  training: { planned: number; done: number; doneByRecord: number; missedDates: string[] }
+  /** 真实运动记录（含课程会话 / 补录 / 手环同步） */
+  workouts: WorkoutAgg
+  /** 饮食记录：有记录天数与日均（仅记录日参与平均，无记录日为 0） */
+  diet: {
+    loggedDays: number
+    avgIntake: number
+    avgProtein: number
+    targetKcal: number
+    targetProtein: number
+  }
   /** 近期体重记录（时间正序） */
   weights: { date: string; kg: number }[]
 }
@@ -51,7 +61,7 @@ export interface ReviewSuggestion {
   advice: string[]
 }
 
-/** 汇总最近 7 天执行数据（饮食/训练/体重/方案日程完成率）为复盘输入 */
+/** 汇总最近 7 天执行数据（饮食/训练/体重/训练兑现率）为复盘输入 */
 export async function buildReviewPayload(record: ProgramRecord): Promise<ProgramReviewPayload> {
   const blob = parseBlob(record)
   const today = todayStr()
@@ -60,12 +70,12 @@ export async function buildReviewPayload(record: ProgramRecord): Promise<Program
   const summaries = await Promise.all(days.map((d) => nutritionService.getDailySummary(d)))
   const workouts = await exerciseService.listWorkouts(days[0]!, today)
   const allTodos = await todoService.listAllTodos()
-  const mine = allTodos.filter(
-    (t) => t.programId === record.id && t.date != null && t.date >= days[0]! && t.date <= today,
-  )
-  const trainingTodos = mine.filter((t) => t.category === 'workout')
-  const dietAnchorTodos = mine.filter((t) => t.category === 'health')
+  const exec = trainingExec(blob, days[0]!, today, workouts, allTodos, record.id)
   const metrics = await nutritionService.listBodyMetrics(10)
+
+  const intakeVals = summaries.map((s) => Math.round(s.intake.kcal)).filter((x) => x > 0)
+  const proteinVals = summaries.map((s) => Math.round(s.intake.protein)).filter((x) => x > 0)
+  const avg = (xs: number[]): number => (xs.length ? Math.round(xs.reduce((s, x) => s + x, 0) / xs.length) : 0)
 
   return {
     today,
@@ -84,17 +94,19 @@ export async function buildReviewPayload(record: ProgramRecord): Promise<Program
       intake: Math.round(s.intake.kcal),
       exercise: Math.round(s.exerciseKcal),
     })),
-    workouts: {
-      count: workouts.length,
-      kcal: Math.round(workouts.reduce((s, w) => s + w.kcal, 0)),
-    },
     training: {
-      planned: trainingTodos.length,
-      done: trainingTodos.filter((t) => t.status === 'done').length,
+      planned: exec.planned,
+      done: exec.done,
+      doneByRecord: exec.doneByRecord,
+      missedDates: exec.missedDates,
     },
-    dietTodos: {
-      planned: dietAnchorTodos.length,
-      done: dietAnchorTodos.filter((t) => t.status === 'done').length,
+    workouts: aggregateWorkouts(workouts, days[0]!, today),
+    diet: {
+      loggedDays: intakeVals.length,
+      avgIntake: avg(intakeVals),
+      avgProtein: avg(proteinVals),
+      targetKcal: Math.round(blob.params.targets.kcal),
+      targetProtein: Math.round(blob.params.targets.protein),
     },
     weights: metrics
       .filter((m) => m.weightKg != null)
@@ -110,9 +122,15 @@ function systemPrompt(): string {
 - kcalDelta：每日相对消耗的热量偏移（大卡），减脂为负、增肌为正；参考范围 -600 ~ +500；
 - proteinPerKg：蛋白质 g/kg 体重，1.2 ~ 2.2；
 - trainingDays：每周训练天数，0 ~ 6。
+数据口径：
+- training.planned/done 是训练兑现率；done 同时包含「勾了日程」与「有真实运动记录」两种情况，
+  workouts 里的课程会话、手动补录、手环同步都算真实执行，不要误判为缺勤；
+  missedDates 是计划了却没有任何执行痕迹的日子，重点分析这些日子的模式（比如总是周几）。
+- diet.loggedDays 是有饮食记录的天数，avgIntake/avgProtein 只按有记录的日子平均；
+  记录天数太少时不要对摄入下强结论。
 判断要点：
 - 摄入长期明显低于目标且体重掉太快（>1% 体重/周）→ 收小缺口或下调训练频率；
-- 执行率低（训练/饮食完成度差）→ 降低档位而不是加大强度；
+- 兑现率低（training.done/planned 差）→ 降低档位而不是加大强度；
 - 体重纹丝不动连续两周且执行良好 → 加大缺口 50~100 大卡；
 - 数据不足时保持参数不变（changes 给 {}），在 diagnosis 里说明原因。
 只能输出一个 JSON 对象（不要 markdown 代码块、不要解释文字）：
@@ -184,21 +202,21 @@ export interface WeekCompare {
 
 const avgOf = (xs: number[]): number => (xs.length ? Math.round(xs.reduce((s, x) => s + x, 0) / xs.length) : 0)
 
-/** 汇总最近两周的执行对比：日均摄入 / 训练完成次数 / 日均蛋白（仅记录日参与平均） */
-export async function buildWeekCompare(record: ProgramRecord): Promise<WeekCompare> {
+/** 汇总最近两周的执行对比：日均摄入 / 实际训练天数 / 日均蛋白（仅记录日参与平均） */
+export async function buildWeekCompare(): Promise<WeekCompare> {
   const today = todayStr()
   const weeks = [
     Array.from({ length: 7 }, (_, i) => addDays(today, -6 + i)), // 本周
     Array.from({ length: 7 }, (_, i) => addDays(today, -13 + i)), // 上周
   ]
-  const [thisSum, lastSum] = await Promise.all(
-    weeks.map((days) => Promise.all(days.map((d) => nutritionService.getDailySummary(d)))),
-  )
-  const all = await todoService.listAllTodos()
-  const mine = all.filter((t) => t.programId === record.id && t.date != null)
+  const [thisSum, lastSum, thisWorkouts, lastWorkouts] = await Promise.all([
+    Promise.all(weeks[0]!.map((d) => nutritionService.getDailySummary(d))),
+    Promise.all(weeks[1]!.map((d) => nutritionService.getDailySummary(d))),
+    exerciseService.listWorkouts(weeks[0]![0]!, weeks[0]![6]!),
+    exerciseService.listWorkouts(weeks[1]![0]!, weeks[1]![6]!),
+  ])
 
-  const trainDone = (days: string[]): number =>
-    mine.filter((t) => t.category === 'workout' && t.date != null && days.includes(t.date) && t.status === 'done').length
+  const trainDays = (ws: typeof thisWorkouts): number => new Set(ws.map((w) => w.date)).size
 
   const intake = (sum: typeof thisSum): number[] => sum.map((s) => Math.round(s.intake.kcal)).filter((x) => x > 0)
   const protein = (sum: typeof thisSum): number[] => sum.map((s) => Math.round(s.intake.protein)).filter((x) => x > 0)
@@ -206,7 +224,7 @@ export async function buildWeekCompare(record: ProgramRecord): Promise<WeekCompa
   return {
     points: [
       { label: '日均摄入', unit: '大卡', now: avgOf(intake(thisSum)), prev: avgOf(intake(lastSum)) },
-      { label: '训练完成', unit: '次', now: trainDone(weeks[0]!), prev: trainDone(weeks[1]!) },
+      { label: '训练天数', unit: '天', now: trainDays(thisWorkouts), prev: trainDays(lastWorkouts) },
       { label: '日均蛋白', unit: 'g', now: avgOf(protein(thisSum)), prev: avgOf(protein(lastSum)) },
     ],
   }

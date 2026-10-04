@@ -12,10 +12,10 @@ import { defineStore } from 'pinia'
 import { planService } from '@/services/planService'
 import { programService } from '@/services/programService'
 import { dietService } from '@/services/dietService'
-import { todoService } from '@/services/todoService'
 import { useNutritionStore } from '@/stores/nutrition'
 import { useTodoStore } from '@/stores/todo'
 import { addDays, fmtDateCn, startOfWeek, todayStr } from '@/utils/date'
+import { calcTargets } from '@/utils/nutritionCalc'
 import seedRecipes from '@resources/recipe_templates.json'
 import {
   buildProgramPlans,
@@ -23,6 +23,7 @@ import {
   clampAdjustment,
   makeAdjustmentEntry,
   parseBlob,
+  profileCalcParams,
   programEndDate,
   rebuildBlob,
   type AdjustmentPatch,
@@ -39,6 +40,9 @@ import type { AiMenuMeal } from '@/ai/recipeGen'
 import type { ProgramAdjustment, ProgramChange, ProgramPlan, ProgramRecord } from '@/types'
 
 export const DEFAULT_PROGRAM_WEEKS = 4
+
+/** 日程格式迁移标记：v1 会把每日饮食锚点铺成待办，v2 只落训练日课程条目 */
+const SCHEDULE_V2_KEY = 'rein.program.sched2'
 
 /** 默认从下周一开跑（周模板以周一为起点对齐） */
 export function defaultStartDate(): string {
@@ -77,6 +81,49 @@ export const useProgramStore = defineStore('program', () => {
     active.value = await programService.getActiveProgram()
     history.value = await programService.listPrograms()
     loaded.value = true
+    await migrateScheduleOnce()
+  }
+
+  /**
+   * 一次性迁移：旧版把每日饮食锚点铺成待办，v2 只落训练日课程条目。
+   * 用新规则重排今日起的日程（重排本身会清掉未来的旧锚点），完成后写标记；
+   * 失败不写标记、不阻塞加载，下次 load 再试。
+   */
+  async function migrateScheduleOnce(): Promise<void> {
+    try {
+      if (localStorage.getItem(SCHEDULE_V2_KEY) === '1') return
+    } catch {
+      return /* 存储不可用：不做迁移也不写标记 */
+    }
+    try {
+      if (active.value) {
+        // 重排要用用户的常练时段（profile 可能还没被别的入口拉过）
+        const n = useNutritionStore()
+        if (!n.profile) await n.loadProfile()
+        await scheduleTodos(active.value.id, parseBlob(active.value), todayStr())
+      }
+      try {
+        localStorage.setItem(SCHEDULE_V2_KEY, '1')
+      } catch {
+        /* 标记写不进去也不影响本次迁移结果 */
+      }
+    } catch {
+      /* 方案数据损坏等：保持未迁移状态，下次再试 */
+    }
+  }
+
+  /** 归档/删除当前方案后，把每日目标还原为档案目标的默认公式值
+   * （方案期内的档位目标是显式同步进去的，撤销方案时一并撤销） */
+  async function restoreGoalTargets(): Promise<void> {
+    const n = useNutritionStore()
+    try {
+      if (!n.profile) await n.loadProfile()
+      const body = n.profile ? profileCalcParams(n.profile) : null
+      if (!body) return
+      await n.saveTargets(calcTargets(body).targets)
+    } catch {
+      /* 还原失败不阻塞归档/删除主流程 */
+    }
   }
 
   /** 引擎需要的课程元信息（名称/时长）；workout_plans 全量很小，直接拉取 */
@@ -188,11 +235,14 @@ export const useProgramStore = defineStore('program', () => {
     return { changes, record: updated }
   }
 
-  /** 归档方案：今天（含）起未完成的日程一并回收，已完成项保留为执行历史 */
+  /** 归档方案：今天（含）起未完成的日程一并回收，已完成项保留为执行历史；
+   * 归档的是当前生效方案时，每日目标还原为档案默认值 */
   async function archive(id: number): Promise<void> {
+    const wasActive = active.value?.id === id
     await programService.archiveProgram(id, todayStr())
     await useTodoStore().loadAll()
     await load()
+    if (wasActive) await restoreGoalTargets()
   }
 
   /** 读取某天的 AI 菜单缓存；未生成时返回 null（页面回落模板菜单） */
@@ -270,27 +320,17 @@ export const useProgramStore = defineStore('program', () => {
     )
 
     await programService.setProgramMeals(record.id, date, JSON.stringify(res.meals))
-
-    // 日程里的饮食锚点与生成结果保持一致
-    const t = useTodoStore()
-    if (!t.allTodos.length) await t.loadAll()
-    const anchor = t.allTodos.find(
-      (x) => x.programId === record.id && x.date === date && x.category === 'health',
-    )
-    if (anchor) {
-      const menuText = res.meals
-        .map((m) => `${m.slot}｜${m.name}（约${m.kcal}大卡）\n${m.items.map((i) => `${i.label} ${i.grams}g`).join('、')}`)
-        .join('\n')
-      await todoService.updateTodo({ ...anchor, notes: `${menuText}\n注意：${day.rules.join('；')}` })
-    }
     return res.meals
   }
 
-  /** 删除方案（其未完成日程一并清除）；返回清除条数 */
+  /** 删除方案（其未完成日程一并清除）；返回清除条数。
+   * 删除的是当前生效方案时，每日目标还原为档案默认值 */
   async function remove(id: number): Promise<number> {
+    const wasActive = active.value?.id === id
     const removed = await programService.deleteProgram(id)
     await useTodoStore().loadAll()
     await load()
+    if (wasActive) await restoreGoalTargets()
     return removed
   }
 

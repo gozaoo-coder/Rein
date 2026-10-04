@@ -20,6 +20,7 @@ import { useNutritionStore } from '@/stores/nutrition'
 import { usePlanStore } from '@/stores/plan'
 import { todayStr } from '@/utils/date'
 import { computeTrainingAdvice, type ExerciseAdvice, type TrainingAdvice } from '@/utils/trainingAdvice'
+import { warmupPrescription } from '@/utils/warmup'
 import { RUN_PLAN_ID } from '@/types'
 import type {
   DoneSet,
@@ -31,6 +32,7 @@ import type {
   StrengthLastWeight,
   StrengthSetRow,
   SwapCandidate,
+  WarmupSet,
   WorkoutPlan,
 } from '@/types'
 
@@ -172,7 +174,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   /** 该动作是否还有待做的激活热身组 */
   function warmupPending(e: PlanExercise): boolean {
-    return e.kind === 'strength' && !!e.warmups?.length && warmupDone(e) < e.warmups.length
+    const rx = warmupsFor(e)
+    return rx.length > 0 && warmupDone(e) < rx.length
   }
 
   const doneCount = computed(() => {
@@ -266,12 +269,13 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
    * 已经越过该动作（或热身已跳过 / 已结束）仍未做的热身组记为 skipped——不再补做。
    */
   function warmupSlotsFor(ex: PlanExercise, exIdx: number): SessionSetSlot[] {
-    if (ex.kind !== 'strength' || !ex.warmups?.length) return []
+    const rx = warmupsFor(ex)
+    if (ex.kind !== 'strength' || !rx.length) return []
     const wd = warmupDone(ex)
     const recs = (doneSets.value[ex.id] ?? []).filter((d) => d.warmup)
     const isCur = exIdx === exIndex.value
     const inWarmup = isCur && (phase.value === 'warmup' || (phase.value === 'rest' && restWarmup.value))
-    return ex.warmups.map((def, i): SessionSetSlot => {
+    return rx.map((def, i): SessionSetSlot => {
       let state: SessionSetSlot['state'] = 'pending'
       if (i < wd) state = 'done'
       else if (inWarmup) state = i === wd ? 'current' : 'pending'
@@ -381,7 +385,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   /** 今日状态自评：写入后重算建议（引擎里自评是 readiness 的一个乘项） */
   function setReadiness(v: number | null): void {
     readiness.value = v
-    if (plan.value) void loadAdvice()
+    // 自评会改变推荐重量 → 热身处方随之变化；还没开做的热身要把预填对齐过去
+    if (plan.value) void loadAdvice().then(() => resyncWarmupPrefill())
     touch()
   }
 
@@ -412,13 +417,48 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   }
 
   /**
-   * 进入某动作时的重量预填：还在做激活热身 → 取当前热身组的定义重量，
+   * 当前动作的工作重量（正式组那一档）——与 weightFor 同源，单独暴露给界面
+   * 与 AI 工具：热身处方的换算说明要显示「按多少 kg 算的」。
+   */
+  function workingWeightFor(e: PlanExercise): number {
+    return weightFor(e)
+  }
+
+  /**
+   * 某动作的激活热身处方：以「当天推荐重量」为基准实时换算（见 `utils/warmup.ts`）。
+   *
+   * 这里是热身重量的**唯一真源** —— 推荐重量一变（渐进超负荷加档 / 低状态日降载 /
+   * 用户改今日自评），热身就跟着变，不再是课程里按旧重量编死的两档。
+   * 课程条目里的 `warmups` 只在拿不到工作重量（无建议引擎 / 无历史 / 无计划重量）时
+   * 作回落，保证首次训练与离线场景仍能热身。
+   */
+  function warmupsFor(e: PlanExercise): WarmupSet[] {
+    if (e.kind !== 'strength') return []
+    const w = weightFor(e)
+    if (w > 0) return warmupPrescription(w)
+    return e.warmups ?? []
+  }
+
+  /**
+   * 进入某动作时的重量预填：还在做激活热身 → 取当前热身组的处方重量，
    * 否则用正式组重量（上次实际 / 计划建议）。热身态与正式态共用同一个 weight 状态，
    * 两个阶段都支持现场调整，切换阶段时必须重新预填，否则热身的小重量会带进正式组。
    */
   function weightForPhase(e: PlanExercise): number {
-    if (warmupPending(e)) return e.warmups![warmupDone(e)]?.weightKg ?? weightFor(e)
+    if (warmupPending(e)) return warmupsFor(e)[warmupDone(e)]?.weightKg ?? weightFor(e)
     return e.kind === 'strength' ? weightFor(e) : 0
+  }
+
+  /**
+   * 建议变化后（今日自评重算 / 恢复会话异步取到建议）把预填重量对齐到新处方。
+   * 只在「还一组热身都没做」时动 —— 已经做过热身再改预填会把现场登记值抹掉。
+   */
+  function resyncWarmupPrefill(): void {
+    const ex = currentEx.value
+    if (!ex || phase.value !== 'warmup') return
+    if (warmupDone(ex) > 0) return
+    weight.value = weightForPhase(ex)
+    touch()
   }
 
   /** 现场次数回落：新动作取课程定义，非力量动作无次数 */
@@ -508,7 +548,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     const ex = currentEx.value
     if (!ex || phase.value !== 'warmup') return
     const idx = warmupDone(ex)
-    const def = ex.warmups?.[idx]
+    const def = warmupsFor(ex)[idx]
     if (!def) return
     ;(doneSets.value[ex.id] ??= []).push({
       weight: weight.value,
@@ -940,7 +980,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
           setNo: d.warmup ? warmNo : setNo,
           weightKg: d.weight,
           // 逐组登记值优先：课程可能事后被编辑或删除，回读定义会让已保存的记录失真
-          reps: d.reps ?? (d.warmup ? (ex.warmups?.[warmNo - 1]?.reps ?? null) : ex.reps),
+          reps: d.reps ?? (d.warmup ? (warmupsFor(ex)[warmNo - 1]?.reps ?? null) : ex.reps),
           sec: d.sec,
           warmup: !!d.warmup,
         })
@@ -1077,7 +1117,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     timedTotal.value = rec.state.timedTotal ?? 0
     timedElapsed.value = 0
     readiness.value = rec.state.readiness ?? null
-    void loadAdvice() // 恢复后重算建议（自评随快照一起恢复）
+    // 恢复后重算建议（自评随快照一起恢复）；建议是异步的，到了再对齐热身预填
+    void loadAdvice().then(() => resyncWarmupPrefill())
     void loadLastWeights(p.exercises.map((e) => e.exerciseId)) // 供后续动作的重量预填
 
     const st = rec.state
@@ -1106,10 +1147,21 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       case 'summary':
         phase.value = 'summary'
         break
-      case 'warmup':
-        // 激活热身中被打断：原地续做（已完成的组保留在 doneSets）
-        phase.value = 'warmup'
+      case 'warmup': {
+        // 激活热身中被打断：原地续做（已完成的组保留在 doneSets）。
+        // ⚠️ 处方按推荐重量实时换算，隔一段时间回来重量可能已经变了 ——
+        // 该动作此刻可能已经没有热身（重量降到 <12kg）或热身已做完，
+        // 这时绝不能再停在热身相位，否则用户会卡在一个没有可完成组的界面里。
+        const cur = currentEx.value
+        if (cur && warmupPending(cur)) {
+          phase.value = 'warmup'
+        } else {
+          phase.value = cur && cur.kind !== 'strength' ? 'timed-ready' : 'exercise'
+          // 快照里的重量是热身的小重量，切回正式组必须重新预填
+          if (cur && phase.value === 'exercise') weight.value = weightFor(cur)
+        }
         break
+      }
       default: {
         // 快照阶段必须与当前动作类型一致：旧版快照（或课程中途被改成计时）
         // 可能把计时动作记成做组态 —— 回准备页重做该组，别留在力量界面
@@ -1179,6 +1231,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     skipWarmup,
     warmupDone,
     warmupPending,
+    warmupsFor,
+    workingWeightFor,
     addRest,
     skipRest,
     startTempRest,

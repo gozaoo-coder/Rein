@@ -94,7 +94,7 @@ async function onDelete(m: VoiceMemo): Promise<void> {
       <input v-model="keyword" type="text" placeholder="搜索标题或内容…">
     </div>
     <p v-if="!loading && filtered.length === 0" class="empty t-3">
-      还没有纪要。打开语音对话说一段话，完成后会出现在这里。
+      还没有纪要。打开录音纪要说一段话，完成后会出现在这里。
     </p>
     <ul v-else class="list">
       <li v-for="m in filtered" :key="m.id" class="row" @click="emit('pick', m)">

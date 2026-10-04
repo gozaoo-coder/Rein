@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronRight, Settings2 } from 'lucide-vue-next'
+import { ChevronRight, Settings2, Target } from 'lucide-vue-next'
 
 import ConstraintsSheet from '@/components/profile/ConstraintsSheet.vue'
 import MonthView from '@/components/todo/MonthView.vue'
@@ -11,8 +11,10 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import WeekView from '@/components/todo/WeekView.vue'
 import { EQUIPMENT_LABELS, EXPERIENCE_LABELS, GOAL_LABELS, TIME_SLOT_LABELS } from '@/config/domain'
 import { fmtCents } from '@/config/ledger'
+import { useFeaturesStore } from '@/stores/features'
 import { useLedgerStore } from '@/stores/ledger'
 import { useNutritionStore } from '@/stores/nutrition'
+import { useProgramStore } from '@/stores/program'
 import { bmiBand, bmiOf } from '@/utils/health'
 import { todayStr } from '@/utils/date'
 
@@ -25,12 +27,16 @@ import { todayStr } from '@/utils/date'
 const router = useRouter()
 const n = useNutritionStore()
 const ledger = useLedgerStore()
+const program = useProgramStore()
+const features = useFeaturesStore()
 
 onMounted(() => {
   void n.loadProfile()
   void n.loadSummary(todayStr())
   void ledger.loadMonth()
   void ledger.loadBudget()
+  // 「有方案 / 没方案」决定约束卡上那条链路的文案，只有开着模块时才拉
+  if (features.isEnabled('program')) void program.load()
 })
 
 const avatarChar = computed(() => (n.profile?.nickname ?? 'R').slice(0, 1))
@@ -166,6 +172,12 @@ function openEdit(): void {
           <b>{{ c.value }}</b>
         </li>
       </ul>
+      <!-- 约束是方案的计算依据，这里给方案一条直达（无方案=去制定，有方案=去看执行） -->
+      <button v-if="features.isEnabled('program')" class="plan-link" @click="router.push('/program')">
+        <Target :size="14" />
+        <span class="grow">{{ program.active ? '方案执行中 · 查看与复盘' : '按这些约束制定健康方案' }}</span>
+        <ChevronRight :size="14" />
+      </button>
       <p class="hint t-3">健康方案按这些约束计算日程与食谱；也可在「健康方案」向导中临时调整</p>
     </section>
 
@@ -367,6 +379,27 @@ function openEdit(): void {
   padding-top: 10px;
   border-top: 0.5px solid color-mix(in srgb, var(--text-1) 10%, transparent);
   font-size: var(--fs-micro);
+}
+
+/* 约束 → 方案 的直达链路：一行，强调色文字（约束是方案的输入，去向要显眼但别抢编辑胶囊） */
+.plan-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-m);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  text-align: left;
+}
+
+.plan-link .grow {
+  flex: 1;
+  min-width: 0;
 }
 
 /* 设置入口行 */

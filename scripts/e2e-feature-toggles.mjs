@@ -137,9 +137,12 @@ const clickText = (selector, text) =>
     return true
   })()`)
 
-/** 工具格里的卡片标题清单（主页移动端工具格） */
+/** 主页页脚的入口文案：记录域成员 chip + 状态格标签 + 工具 chip（HomeFooter.vue） */
 const toolTitles = () =>
-  evalJS(`[...document.querySelectorAll('.tools .tool-txt b')].map((e) => e.textContent.trim())`)
+  evalJS(`[...document.querySelectorAll('.hf-member, .hf-chip, .hf-fk, .hf-zk')].map((e) => e.textContent.trim())`)
+
+/** 课表条在不在（连了教务且模块开着才渲染；未连接 = 整条不出现） */
+const courseStrip = () => evalJS(`!!document.querySelector('[data-testid="hf-course"]')`)
 
 /** 底栏页签文案清单（底栏根类名是 `.dock`，页签类是 `.dock-tab`） */
 const tabLabels = () => evalJS(`[...document.querySelectorAll('.dock .dock-tab')].map((e) => e.textContent.trim())`)
@@ -197,14 +200,14 @@ async function main() {
     // 每次从干净状态开跑：清掉上一轮的开关
     await evalJS(`localStorage.removeItem('rein.features.v1')`)
     await evalJS(`location.hash = '#/'`)
-    await waitFor(`document.querySelectorAll('.tools .tool').length > 0`, 8000, '主页工具格挂载')
+    await waitFor(`document.querySelectorAll('.hf-member, .hf-chip').length > 0`, 8000, '主页页脚挂载')
     await sleep(400)
 
     /* ---- 1. 我 › 设置 ---- */
     const beforeTools = await toolTitles()
     ok(
-      '默认工具格含运动 / 课表 / 健康方案三张卡',
-      ['记运动', '课表', '健康方案'].every((t) => beforeTools.includes(t)),
+      '默认页脚含 记运动 / 健康方案 成员；未连教务时课表条不出现',
+      ['记运动', '健康方案'].every((t) => beforeTools.includes(t)) && !(await courseStrip()),
       beforeTools.join(' · '),
     )
     ok('默认底栏含运动页签', (await tabLabels()).includes('运动'), (await tabLabels()).join(' · '))
@@ -361,11 +364,11 @@ async function main() {
     /* ---- 3. 关掉「运动」 ---- */
     ok('关闭「运动」开关', (await setToggle('运动', false)) === 'clicked')
     await evalJS(`location.hash = '#/'`)
-    await waitFor(`document.querySelectorAll('.tools .tool').length > 0`, 8000, '回主页')
+    await waitFor(`document.querySelectorAll('.hf-member, .hf-chip').length > 0`, 8000, '回主页')
     await sleep(400)
     const afterSports = await toolTitles()
-    ok('工具格不再有「记运动」', !afterSports.includes('记运动'), afterSports.join(' · '))
-    ok('工具格其余卡片仍在', afterSports.includes('记饮食') && afterSports.includes('课表'))
+    ok('页脚不再有「记运动」', !afterSports.includes('记运动'), afterSports.join(' · '))
+    ok('页脚其余入口仍在（记饮食）', afterSports.includes('记饮食'))
     const tabsAfter = await tabLabels()
     ok('底栏不再有「运动」页签', !tabsAfter.includes('运动'), tabsAfter.join(' · '))
     await shot('3-home-sports-off')
@@ -408,8 +411,13 @@ async function main() {
     await sleep(700)
     const afterAll = await toolTitles()
     ok(
-      '三张模块卡全部消失，内核卡仍在',
-      !afterAll.includes('记运动') && !afterAll.includes('课表') && !afterAll.includes('健康方案') && afterAll.includes('记账'),
+      '模块成员全部消失，内核事实仍在（吃卡 / 专注 / 钱）',
+      !afterAll.includes('记运动') &&
+        !afterAll.includes('健康方案') &&
+        !(await courseStrip()) &&
+        afterAll.includes('记饮食') &&
+        afterAll.includes('钱') &&
+        afterAll.includes('专注'),
       afterAll.join(' · '),
     )
     const dockNoCampus = await dockParts()
@@ -436,12 +444,12 @@ async function main() {
 
     /* ---- 6. 持久化 ---- */
     await evalJS(`location.reload()`)
-    await waitFor(`document.querySelectorAll('.tools .tool').length > 0`, 12000, '刷新后工具格挂载')
+    await waitFor(`document.querySelectorAll('.hf-member, .hf-chip').length > 0`, 12000, '刷新后页脚挂载')
     await sleep(500)
     const afterReload = await toolTitles()
     ok(
       '刷新后开关状态保持（运动开、课表 / 健康方案关）',
-      afterReload.includes('记运动') && !afterReload.includes('课表') && !afterReload.includes('健康方案'),
+      afterReload.includes('记运动') && !afterReload.includes('健康方案') && !(await courseStrip()),
       afterReload.join(' · '),
     )
 

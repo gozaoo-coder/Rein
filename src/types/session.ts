@@ -8,7 +8,7 @@ export type PlanExerciseKind = 'strength' | 'timed' | 'cardio'
 
 /** 力量动作的激活热身组：小重量找发力感 / 复合动作渐进 ramp-up */
 export interface WarmupSet {
-  /** 热身重量 kg（约为正式组的一半起步） */
+  /** 热身重量 kg（按工作重量的 50% / 75% 换算，见 `utils/warmup.ts`） */
   weightKg: number
   reps: number
 }
@@ -33,7 +33,12 @@ export interface PlanExercise {
   weightKg: number | null
   /**
    * 激活热身组（strength 用，可选）：正式组前依次完成；不计入组数进度与总容量。
-   * 约定：≥30kg 复合项两段 ramp（50%×8 + 75%×4）；12~30kg 单组激活（50%×12）；<12kg 不配。
+   *
+   * ⚠️ 会话运行时**不再直接吃这个字段**：热身重量按当天推荐重量实时换算
+   * （`utils/warmup.ts::warmupPrescription`，store 的 `warmupsFor`）。
+   * 这里存的只是**回落值** —— 拿不到工作重量（无建议引擎 / 无历史 / 无计划重量）
+   * 时才会用到，保证首次训练与离线场景仍能热身。
+   * 规则：≥30kg 复合项两段 ramp（50%×8 + 75%×4）；12~30kg 单组激活（50%×12）；<12kg 不配。
    */
   warmups?: WarmupSet[]
   /** 计时动作：每组目标秒 */

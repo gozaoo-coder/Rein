@@ -10,7 +10,10 @@ import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
 import { MEAL_LABELS, MEAL_META, mealKcal } from '@/config/domain'
 import { useScheduleUndo } from '@/composables/useScheduleUndo'
 import { useDietStore } from '@/stores/diet'
+import { useProgramStore } from '@/stores/program'
 import { useTodoStore } from '@/stores/todo'
+import { parseBlob } from '@/utils/programEngine'
+import { courseOnDate } from '@/utils/programCycle'
 import { minToHHmm } from '@/utils/date'
 import type { Todo } from '@/types'
 
@@ -18,12 +21,16 @@ import type { Todo } from '@/types'
  * 主页画布：把「今日画布」带上主页——未安排池 + 紧凑时间轴（现在线 / 打勾 / 拖拽改位），
  * 主页从「看今天」升级为「排今天」。餐次记录以摘要行的形式保持在卡片底部，
  * 与状态条（热量）互补。完整编辑（周视图 / AI 排程 / 快排）仍在 /todos 画布。
+ *
+ * 方案日程的训练条目点块 = 去课程详情开练（那才是它的主行动），
+ * 移动 / 编辑仍走拖拽与块上的铅笔钮。
  */
 const props = defineProps<{ date: string }>()
 
 const router = useRouter()
 const diet = useDietStore()
 const todo = useTodoStore()
+const program = useProgramStore()
 const { applyMove } = useScheduleUndo()
 
 onMounted(() => {
@@ -63,6 +70,28 @@ function onSelect(t: Todo): void {
     courseOpen.value = true
     return
   }
+  // 方案日程的训练条目：点块 = 去课程详情开练（编辑仍走块上的铅笔钮 → onEdit）
+  if (t.programId != null && t.category === 'workout' && t.date) {
+    const course = programCourseOn(t.date)
+    if (course) {
+      void router.push(`/sports/plans/${course.courseId}`)
+      return
+    }
+  }
+  openEditor(t)
+}
+
+/** 方案里某天的课程（方案未加载 / 数据损坏 / 该日无课都返回 null，回落普通编辑） */
+function programCourseOn(date: string): { courseId: string } | null {
+  if (!program.active) return null
+  try {
+    return courseOnDate(parseBlob(program.active), date)
+  } catch {
+    return null
+  }
+}
+
+function openEditor(t: Todo): void {
   editorTarget.value = t
   editorOpen.value = true
 }
@@ -119,7 +148,7 @@ function onMove(t: Todo, startMin: number): void {
         compact
         bare
         @select="onSelect"
-        @edit="onSelect"
+        @edit="openEditor"
         @toggle="onToggle"
         @move="onMove"
       />

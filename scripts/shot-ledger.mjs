@@ -33,6 +33,9 @@ const SIZES = process.env.W
       [1280, 860],
     ]
 
+/** 端口可配（1420/1430 常入 Windows 排除段报 EACCES）：REIN_E2E_URL 指向已起服的实例 */
+const APP = process.env.REIN_E2E_URL ?? 'http://localhost:1430'
+
 const browser = await chromium.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: true,
@@ -43,7 +46,7 @@ let failed = 0
 for (const [width, height] of SIZES) {
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 2 })
   if (dark) await page.emulateMedia({ colorScheme: 'dark' })
-  await page.goto('http://localhost:1430/#/ledger', { waitUntil: 'networkidle' })
+  await page.goto(`${APP}/#/ledger`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1100)
   await hideOverlays(page)
 
@@ -93,7 +96,7 @@ if (!process.env.W) await smoke()
 
 async function smoke() {
   const page = await browser.newPage({ viewport: { width: 393, height: 749 }, deviceScaleFactor: 2 })
-  await page.goto('http://localhost:1430/#/ledger', { waitUntil: 'networkidle' })
+  await page.goto(`${APP}/#/ledger`, { waitUntil: 'networkidle' })
   await page.waitForTimeout(1100)
   await hideOverlays(page)
   await page.evaluate(async () => {

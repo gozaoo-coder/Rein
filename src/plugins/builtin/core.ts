@@ -1,4 +1,4 @@
-import { Camera, ListTodo, Mic, PiggyBank, Sparkles, Timer, Utensils, Wallet } from 'lucide-vue-next'
+import { BookOpen, Camera, ChefHat, History, ListTodo, Mic, PiggyBank, Sparkles, Timer, Utensils, Wallet } from 'lucide-vue-next'
 
 import { definePlugin } from '../registry'
 import { fmtCents } from '@/config/ledger'
@@ -30,6 +30,44 @@ export const nutritionPlugin = definePlugin({
       order: 10,
       action: 'smart-add',
     },
+    // 查阅三件套：主页页脚的「吃」卡把它们与记饮食并列成同权成员（此前是页脚边上的
+    // 三颗小 chip，低到近乎看不见）。声明在插件层，关掉营养模块时四件一起消失。
+    {
+      id: 'nutrition.foods',
+      title: '饮食库',
+      sub: '按食物查营养',
+      icon: BookOpen,
+      ic: {
+        background: 'color-mix(in srgb, var(--c-intake) 12%, transparent)',
+        color: 'var(--c-intake)',
+      },
+      order: 11,
+      to: { name: 'nutrition-foods' },
+    },
+    {
+      id: 'nutrition.recipes',
+      title: '食谱库',
+      sub: '按菜谱做一顿',
+      icon: ChefHat,
+      ic: {
+        background: 'color-mix(in srgb, var(--c-intake) 12%, transparent)',
+        color: 'var(--c-intake)',
+      },
+      order: 12,
+      to: { name: 'nutrition-recipes' },
+    },
+    {
+      id: 'nutrition.history',
+      title: '饮食历史',
+      sub: '往日吃了什么',
+      icon: History,
+      ic: {
+        background: 'color-mix(in srgb, var(--c-intake) 12%, transparent)',
+        color: 'var(--c-intake)',
+      },
+      order: 13,
+      action: 'diet-history',
+    },
   ],
 })
 
@@ -42,7 +80,7 @@ export const voicePlugin = definePlugin({
   tools: [
     {
       id: 'voice.session',
-      title: '语音对话',
+      title: '录音纪要',
       sub: '实时转写 · AI 纪要',
       icon: Mic,
       ic: {

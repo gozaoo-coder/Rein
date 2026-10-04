@@ -7,8 +7,18 @@
 
 import { EQUIPMENT_LABELS } from '@/config/domain'
 import type { Goal, ProgramPlan, ProgramTier } from '@/types'
+import { dowOf } from './recurrence'
 import { pickWeekTemplate, weekMuscleFreq } from './programEngine'
-import { weekLead } from './programProgress'
+
+/**
+ * 强度预览首行需要在「周一」列之前留空的格数。
+ *
+ * 周切片是从第 0 天起每 7 天一片（见 weekPreview），而表头固定是「一…日」——
+ * 方案支持「今天/明天开跑」，首日未必是周一，不留空会让每一格与表头错位。
+ */
+export function weekLead(firstDate: string | undefined): number {
+  return firstDate ? dowOf(firstDate) : 0
+}
 
 /** 约束快照：判断「草稿生成后约束又改过」用（含开始日与首练选择——同样要求重算） */
 export interface ConstraintSnapshot {

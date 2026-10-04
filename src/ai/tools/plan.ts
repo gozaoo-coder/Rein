@@ -45,7 +45,8 @@ const EXERCISE = Type.Object({
   warmups: Type.Optional(
     Type.Array(WARMUP_SET, {
       description:
-        '激活热身组（strength 用，最多 2 组）：≥30kg 的复合动作配两段渐进 [50%×8, 75%×4]；12~30kg 配单组激活 [50%×12]；<12kg 不配。热身重量取整到 2.5 的倍数',
+        '激活热身组（strength 用，最多 2 组）：≥30kg 的复合动作配两段渐进 [50%×8, 75%×4]；12~30kg 配单组激活 [50%×12]；<12kg 不配。热身重量取整到 2.5 的倍数。' +
+        '注意：会话运行时热身会按当天推荐重量重新换算（见 get_warmup_rule），这里填的是**回落值**（拿不到推荐重量时用），因此仍需按规则填对',
       maxItems: 2,
     }),
   ),

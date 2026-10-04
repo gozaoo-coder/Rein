@@ -261,8 +261,8 @@ async function save(): Promise<void> {
 .field input,
 .field textarea {
   width: 100%;
-  padding: 11px 14px;
-  border-radius: var(--radius-m);
+  padding: 10px 12px;
+  border-radius: var(--radius-s);
   background: var(--surface-2);
   font-size: var(--fs-body);
   color: var(--text-1);
@@ -279,25 +279,33 @@ async function save(): Promise<void> {
 }
 
 .chips {
-  gap: 8px;
+  gap: 7px;
   flex-wrap: wrap;
 }
 
+/* 与动作库页/方案向导同一套 chips：描边白底，选中实底 accent */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 7px 13px;
   border-radius: var(--radius-full);
-  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   font-size: var(--fs-caption);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
 }
 
 .chip.on {
-  background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
 }
 
 .chip b {
@@ -310,15 +318,15 @@ async function save(): Promise<void> {
   width: 100%;
   margin-top: 16px;
   gap: 7px;
-  padding: 15px 0;
-  border-radius: var(--radius-l);
-  background: var(--text-1);
-  color: var(--bg);
-  font-size: var(--fs-body);
+  padding: 13px 0;
+  border-radius: var(--radius-s);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-callout);
   font-weight: 700;
 }
 
 .save:disabled {
-  opacity: 0.6;
+  opacity: 0.45;
 }
 </style>

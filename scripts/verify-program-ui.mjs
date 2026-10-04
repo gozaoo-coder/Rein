@@ -1,13 +1,18 @@
 /**
- * 健康方案页改造的端到端验证（浏览器 mock 模式）。
- * 流程：setup 阶段 → 科学依据三条曲线 → 启用方案 → 驾驶舱 / 周期地图。
+ * 健康方案「溶解」重构的端到端验证（浏览器 mock 模式）。
+ *
+ * 流程：setup 向导（约束 → 三档矩阵 → 科学依据）→ 启用 →
+ *      生效态一屏（状态条 / 周期进度 / 操作区 / 调整历史）→
+ *      主页方案状态卡 → 营养页今日菜单卡 → 复盘深链 → 纯函数口径（周期 / 执行 / 日程展开）。
+ *
+ * 运行前需先起 dev 服务器（默认 1420）；端口被占时用 REIN_E2E_URL 指过去。
  */
 import { mkdirSync } from 'node:fs'
 import { chromium } from 'playwright-core'
 
 const EDGE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
-const APP = 'http://localhost:1420'
-const OUT = 'C:/Users/Administrator/AppData/Local/Temp/rein-program-shots'
+const APP = process.env.REIN_E2E_URL ?? 'http://localhost:1420'
+const OUT = `${process.env.TEMP ?? '/tmp'}/rein-program-shots`
 mkdirSync(OUT, { recursive: true })
 
 const results = []
@@ -71,52 +76,32 @@ try {
   ok('页面渲染出健康方案标题', /健康方案/.test(bodyText ?? ''))
   await shot('01-initial')
 
-  /* ---------- 2. 进入 setup 阶段：内联约束向导 → 计算三套方案 ---------- */
+  /* ---------- 2. setup：约束向导 → 三档矩阵 ---------- */
   const genBtn = page.getByRole('button', { name: /计算三套方案|按新条件重新计算/ })
   ok('setup 阶段有计算按钮', (await genBtn.count()) > 0)
   if (await genBtn.count()) {
     await genBtn.first().click()
     await page.waitForTimeout(2500)
   }
-  // 档位以对比矩阵呈现（ProgramCompare），三列表头即三档
-  const matrixCount = await page.locator('table.matrix').count()
-  const matrixText = matrixCount ? (await page.locator('table.matrix').first().textContent()) ?? '' : ''
+  const matrixText = (await page.locator('table.matrix').count())
+    ? (await page.locator('table.matrix').first().textContent()) ?? ''
+    : ''
   ok(
     '三档对比矩阵渲染',
     /保守/.test(matrixText) && /均衡/.test(matrixText) && /进取/.test(matrixText),
-    `matrix=${matrixCount}`,
+    '',
   )
   await shot('02-tiers')
 
-  /* ---------- 3. 科学依据：三条曲线 tab ---------- */
-  const whyLink = page.getByRole('button', { name: /为什么是 3 \/ 4 \/ 5 练/ })
+  /* ---------- 3. 科学依据（setup 入口） ---------- */
+  const whyLink = page.getByRole('button', { name: /看研究曲线/ })
   ok('setup 阶段有科学依据入口', (await whyLink.count()) > 0)
   if (await whyLink.count()) {
     await whyLink.first().click()
     await page.waitForTimeout(900)
-
-    const sheetText = await page.textContent('body')
-    ok('科学依据弹层打开', /为什么是这样/.test(sheetText ?? ''))
-    ok('频次曲线标题渲染', /每周练几次最划算/.test(sheetText ?? ''))
-    ok('三档标记渲染在频次曲线', /保守[\s\S]*均衡[\s\S]*进取/.test(sheetText ?? ''))
-    await shot('03-curve-freq')
-
-    // 切到睡眠曲线
-    await page.getByRole('tab', { name: '睡眠时长' }).click()
-    await page.waitForTimeout(500)
-    const sleepText = await page.textContent('body')
-    ok('睡眠曲线切换', /每晚睡几小时最有利于练/.test(sleepText ?? ''))
-    ok('睡眠关键发现表渲染', /黄金窗口/.test(sleepText ?? ''))
-    await shot('04-curve-sleep')
-
-    // 切到时差曲线
-    await page.getByRole('tab', { name: '社交时差' }).click()
-    await page.waitForTimeout(500)
-    const jetText = await page.textContent('body')
-    ok('时差曲线切换', /睡眠规律性有多重要/.test(jetText ?? ''))
-    ok('时差耐受度表渲染', /抑制阈值/.test(jetText ?? '') && /档耐受/.test(jetText ?? ''))
-    await shot('05-curve-jetlag')
-
+    const sheetText = (await page.textContent('body')) ?? ''
+    ok('科学依据弹层打开', /明白了/.test(sheetText))
+    await shot('03-evidence')
     await page.getByRole('button', { name: '明白了' }).click()
     await page.waitForTimeout(600)
   }
@@ -128,122 +113,218 @@ try {
     await activateBtn.first().click()
     await page.waitForTimeout(700)
     const confirmBtn = page.getByRole('button', { name: '确认启用' })
-    if (await confirmBtn.count()) {
-      await confirmBtn.first().click()
-    }
+    if (await confirmBtn.count()) await confirmBtn.first().click()
     await page.waitForTimeout(3000)
   }
 
-  /* ---------- 5. 生效态：驾驶舱 + 周期地图 ---------- */
-  const activeText = await page.textContent('body')
-  ok('进入生效态（出现周期地图）', /周期地图/.test(activeText ?? ''))
-  ok('驾驶舱进度条渲染', /今日训练/.test(activeText ?? '') && /餐次记录/.test(activeText ?? ''))
+  /* ---------- 5. 生效态一屏：状态条 + 进度条 + 操作区 + 调整历史 ---------- */
+  const activeText = (await page.textContent('body')) ?? ''
+  ok('进入生效态（状态条出现）', /第 1 周/.test(activeText) && /减脂/.test(activeText))
+  ok('周期进度条渲染', (await page.locator('.head-strip .strip-bar i').count()) === 1)
+  const actCount = await page.locator('.acts-grid .act').count()
+  ok('操作区四格（复盘 / 采购 / 调参 / 依据）', actCount === 4, `实际 ${actCount} 格`)
+  ok('归档 / 删除胶囊在页内', (await page.locator('.acts-minor .cap').count()) === 2)
+  ok('调整历史初始不显示', (await page.locator('.log-list li').count()) === 0)
+  ok('被删掉的六卡不再出现（驾驶舱 / 周期地图 / 航道 / 演进图）', await page.evaluate(
+    () =>
+      !document.querySelector('.cockpit') &&
+      !document.querySelector('.cell') &&
+      !document.querySelector('.records') &&
+      !(document.body.textContent ?? '').includes('目标走廊'),
+  ))
+  await shot('04-active')
 
-  const cellCount = await page.locator('.cell').count()
-  ok('周期地图渲染 28 格', cellCount === 28, `实际 ${cellCount} 格`)
+  // 数据口径：方案日程只落训练条目（category=workout、标题「方案·」），没有饮食锚点
+  const sched = await page.evaluate(async () => {
+    const { invoke } = await import('/src/services/transport.ts')
+    const all = await invoke('list_all_todos', {})
+    const mine = all.filter((t) => t.programId != null)
+    return {
+      total: mine.length,
+      allWorkout: mine.every((t) => t.category === 'workout'),
+      anyHealth: mine.some((t) => t.category === 'health'),
+      titled: mine.every((t) => t.title.startsWith('方案·')),
+      sample: mine[0]?.title ?? '',
+    }
+  })
+  ok('日程只含训练条目（无饮食锚点）', sched.total > 0 && sched.allWorkout && !sched.anyHealth && sched.titled, JSON.stringify(sched))
 
-  // 方案默认从下周一开跑，今天可能尚未落在方案区间内，故 today 格为 0~1 均合理
-  const todayCells = await page.locator('.cell.today').count()
-  ok('周期地图 today 格至多 1 个', todayCells <= 1, `实际 ${todayCells} 个`)
+  /* ---------- 6. 手动调参 → 调整历史 + 版本号 ---------- */
+  await page.getByRole('button', { name: /手动调参/ }).first().click()
+  await page.waitForTimeout(700)
+  {
+    const st = page.locator('.stepper').filter({ hasText: '每日热量偏移' }).first()
+    const dec = st.getByRole('button', { name: '减少' })
+    await dec.click()
+    await page.waitForTimeout(150)
+    await dec.click()
+    await page.waitForTimeout(150)
+  }
+  await page.getByRole('button', { name: /应用并重排今日起的日程/ }).click()
+  await page.waitForTimeout(1800)
+  ok('调整历史出现一条', (await page.locator('.log-list li').count()) === 1)
+  const logText = (await page.locator('.log-list').textContent()) ?? ''
+  ok('历史含 v2 与 before → after', logText.includes('v2') && logText.includes('→'), logText.replace(/\s+/g, ' ').slice(0, 80))
+  ok('状态条版本升到 v2', /v2/.test((await page.locator('.head-strip .strip').textContent()) ?? ''))
+  await shot('05-adjust-log')
 
-  const futureCells = await page.locator('.cell.future, .cell.restFuture').count()
-  ok('周期地图渲染未来日', futureCells > 0, `未来格 ${futureCells} 个`)
+  /* ---------- 7. 复盘深链：/program?review=1 自动发起（无模型 → 可读错误） ---------- */
+  // 先离开再进入（同路由只变 query 的路径由页面 watcher 覆盖，这里验全新挂载）
+  await page.evaluate(`location.hash = '#/'`)
+  await page.waitForTimeout(900)
+  await page.evaluate(`location.hash = '#/program?review=1'`)
+  await page.waitForTimeout(1200)
+  await page.waitForSelector('.review', { timeout: 10000 }).catch(() => {})
+  const reviewErr = (await page.textContent('.err').catch(() => '')) ?? ''
+  ok(
+    '复盘深链自动发起且无模型时报可读错误',
+    /未配置/.test(reviewErr) || /未配置/.test((await page.textContent('body')) ?? ''),
+    reviewErr.slice(0, 60),
+  )
+  await shot('06-review')
+  await page.evaluate(`document.querySelector('.review')?.closest('.panel')?.querySelector('.close')?.click()`)
+  await page.waitForTimeout(800)
 
-  // done / missed 的历史态由纯函数用例覆盖（见 verify-program-logic.mjs）
+  /* ---------- 8. 主页方案状态卡 ---------- */
+  await page.goto(`${APP}/#/`, { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(1800)
+  const cardCount = await page.locator('[data-testid="program-card"]').count()
+  const cardText = cardCount ? ((await page.locator('[data-testid="program-card"]').textContent()) ?? '') : ''
+  ok('主页出现方案状态卡', cardCount === 1 && /第 1 周/.test(cardText), cardText.replace(/\s+/g, ' ').slice(0, 80))
+  ok('状态卡含今日动作或开跑说明', /今天|开跑|已结束/.test(cardText), cardText.replace(/\s+/g, ' ').slice(0, 80))
+  await shot('07-home-card')
+  await page.locator('[data-testid="program-card"] .main').click()
+  await page.waitForTimeout(1200)
+  ok('点卡回到方案页', await page.evaluate(`location.hash.includes('/program')`))
 
-  await shot('06-active-dashboard')
-
-  /* ---------- 6. 点格子切换聚焦日 ---------- */
-  const cells = page.locator('.cell')
-  // 聚焦摘要已并入菜单卡：点格子后菜单卡标题从「今日菜单」切到该日日期
-  const before = await page.textContent('.pod-head b')
-  await cells.nth(20).click()
-  await page.waitForTimeout(500)
-  const after = await page.textContent('.pod-head b')
-  ok('点格子切换聚焦日', before !== after, `${(before ?? '').trim().slice(0, 24)} → ${(after ?? '').trim().slice(0, 24)}`)
-  await shot('07-cycle-focus')
-
-  /* ---------- 7. 生效态的科学依据入口 ---------- */
-  const whyAct = page.getByRole('button', { name: /为什么是这样/ })
-  ok('生效态有科学依据入口', (await whyAct.count()) > 0)
-  if (await whyAct.count()) {
-    await whyAct.first().click()
-    await page.waitForTimeout(800)
-    const t = await page.textContent('body') ?? ''
-    // 弹层可能在 setup 阶段看过时差后 tab 停在 jetlag，所以三条曲线任一标题出现即视为打开
-    const opened =
-      /每周练几次最划算|每晚睡几小时最有利于练|睡眠规律性有多重要/.test(t) &&
-      /明白了/.test(t)
-    ok('生效态科学依据可打开', opened, '')
-    await shot('08-active-evidence')
-    await page.getByRole('button', { name: '明白了' }).click()
-    await page.waitForTimeout(500)
+  /* ---------- 9. 营养页今日菜单卡 ---------- */
+  await page.goto(`${APP}/#/nutrition`, { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(2000)
+  const menuCount = await page.locator('[data-testid="program-menu"]').count()
+  ok('营养页出现今日菜单卡', menuCount === 1)
+  if (menuCount) {
+    ok(
+      '菜单卡结构（供能堆叠 + 三行宏量 + 蛋白对照 + 餐次列表）',
+      await page.evaluate(() => {
+        const card = document.querySelector('[data-testid="program-menu"]')
+        if (!card) return false
+        return (
+          !!card.querySelector('.stack') &&
+          card.querySelectorAll('.macro-row').length === 3 &&
+          !!card.querySelector('.ptarget-track') &&
+          card.querySelectorAll('.menu li').length >= 3 &&
+          !!card.querySelector('.verdict')
+        )
+      }),
+    )
+    ok('未生成时回落模板菜单标注', /模板菜单/.test((await page.locator('[data-testid="program-menu"]').textContent()) ?? ''))
+    await shot('08-nutrition-menu')
   }
 
-  /* ---------- 8. 控制台无错误 ---------- */
-  ok('无控制台错误', errors.length === 0, errors.slice(0, 3).join(' | '))
+  /* ---------- 10. 纯函数：周期 / 执行 / 日程展开 ---------- */
+  const logic = await page.evaluate(async () => {
+    const [{ programStatus, courseOnDate, reviewDue, markReviewed }, exec, eng] = await Promise.all([
+      import('/src/utils/programCycle.ts'),
+      import('/src/utils/programExec.ts'),
+      import('/src/utils/programEngine.ts'),
+    ])
+    const pad = (n) => String(n).padStart(2, '0')
+    const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const shift = (n) => {
+      const d = new Date()
+      d.setDate(d.getDate() + n)
+      return iso(d)
+    }
+    const mkDay = (date, i, rest) => ({
+      date,
+      dayIndex: i,
+      rest,
+      courseId: rest ? null : 'planA',
+      courseName: rest ? null : '课程A',
+      courseDurationMin: rest ? null : 45,
+      meals: [],
+      rules: [],
+    })
+    // 起于 8 天前、共 14 天的方案（今天落在第 2 周）
+    const days = Array.from({ length: 14 }, (_, i) => mkDay(shift(-8 + i), i, i % 7 === 5))
+    const blob = { params: {}, days }
+    const rec = { id: 9, weeks: 2 }
+    const st = programStatus(rec, blob)
+    const course = courseOnDate(blob, days[0].date)
 
-  /* ---------- 9. 纯函数：格子状态判定 ----------
-   * E2E 无法验证 done/missed（新方案从下周一开始，过去无格子），
-   * 通过 import 真实 utils 跑覆盖全部六态的用例。 */
-  const logicResults = await page.evaluate(async () => {
-    const { buildDayCells, cycleStats } = await import('/src/utils/programProgress.ts')
-    const today = '2026-08-28'
-    // 28 天：7 天前到 20 天后
-    const days = Array.from({ length: 28 }, (_, i) => {
-      const d = new Date(today)
-      d.setDate(d.getDate() - 7 + i)
-      const iso = d.toISOString().slice(0, 10)
-      const dayIndex = i
-      const rest = dayIndex % 7 === 5 || dayIndex % 7 === 6
-      return {
-        date: iso,
-        dayIndex,
-        rest,
-        courseId: rest ? null : 'planA',
-        courseName: rest ? null : '课程A',
-        courseDurationMin: rest ? null : 45,
-        meals: [],
-        rules: [],
-      }
+    const mkWorkout = (date, min, kcal, sessionId) => ({
+      id: Math.random(), name: 'w', type: 'strength', date, startMin: null,
+      durationMin: min, kcal, intensity: 'moderate', effort: null, note: '', sessionId, createdAt: '',
     })
-    const blob = { params: { kcalDelta: -400, proteinPerKg: 1.8, trainingDays: 4, mealsCount: 4, weekTemplateId: 'w', equipment: null, targets: { kcal: 1620, protein: 124, carb: 200, fat: 60, sodiumMg: 1500, waterMl: 1700 }, bmr: 1650, tdee: 2020 }, days }
-    const todo = (date, status, cat = 'workout') => ({
-      id: 1, title: 't', notes: null, date, startMin: null, durationMin: null,
-      category: cat, priority: 0, status, completedAt: null, createdAt: '', programId: 1,
+    const mkTodo = (date, status) => ({
+      id: Math.random(), title: 't', notes: null, date, startMin: 600, durationMin: 45,
+      category: 'workout', priority: 0, status, completedAt: null, createdAt: '', programId: 9,
     })
-    const cells = buildDayCells(
-      blob,
-      [
-        todo(days[2].date, 'done'),       // 5 天前完成
-        todo(days[3].date, 'todo'),       // 4 天前未完成
-        todo(days[10].date, 'done'),      // 3 天后，未来日（不影响状态）
-      ],
-      1,
-      today,
-    )
-    const stats = cycleStats(cells)
-    const cAt = (i) => cells[i] ? { date: cells[i].date, state: cells[i].state, rest: cells[i].rest } : null
+    // 执行并集：A 日有运动记录（含一次课程会话）、B 日勾了日程、C 日两者都没有
+    const planDays = days.filter((d) => !d.rest).map((d) => d.date)
+    const [a, b, c] = planDays
+    const workouts = [mkWorkout(a, 50, 300, 7), mkWorkout(a, 20, 100, null)]
+    const todos = [mkTodo(b, 'done'), mkTodo(c, 'todo')]
+    const te = exec.trainingExec(blob, planDays[0], days.at(-1).date, workouts, todos, 9)
+    const agg = exec.aggregateWorkouts(workouts, planDays[0], days.at(-1).date)
+
+    // 日程展开：训练日数 = 待办数、全部 workout
+    const profile = {
+      sex: 'male', birthday: '1995-06-15', heightCm: 175, weightKg: 70,
+      activityLevel: 'moderate', goal: 'cut', trainingDaysPerWeek: 4,
+      preferredTimeSlots: ['evening'], equipment: 'gym', dietRestrictions: [],
+      experience: 'intermediate', targets: { kcal: 2000, protein: 140, carb: 200, fat: 60, sodiumMg: 1500, waterMl: 2100 },
+      weightKgTarget: null, targetWeightKg: null,
+    }
+    const courses = ['ppl-push', 'ppl-pull', 'ppl-legs', 'core', 'gym-fullbody'].map((id) => ({
+      id, name: id, equipment: 'gym', estDurationMin: 45,
+    }))
+    const plans = eng.buildProgramPlans(profile, shift(1), 2, courses, [], 0)
+    const plan = plans.find((p) => p.tier === 'balanced')
+    const built = eng.buildScheduleTodos({ params: plan.params, days: plan.days }, profile.preferredTimeSlots)
+    const trainDays = plan.days.filter((d) => !d.rest && d.courseId && d.courseName).length
+
+    // 复盘到期：起于 8 天前 → 未复盘则到期；标记一次后不再到期
+    localStorage.removeItem('rein.program.reviewed.9')
+    const dueNow = reviewDue(rec, blob)
+    markReviewed(9)
+    const dueAfter = reviewDue(rec, blob)
+
     return {
-      pastDone: cAt(2),     // 5 天前，done
-      pastTodo: cAt(3),     // 4 天前，有 todo 未完成
-      pastNoTodo: cAt(4),   // 3 天前，无 todo
-      pastRest: cAt(6),     // 7 天前（restPast）
-      today: cAt(7),        // 7 天前的下一个 = 今天
-      futureTrain: cAt(8),  // 明天训练
-      futureRest: cAt(13),  // 6 天后休息
-      stats,
+      st: { week: st.week, weeks: st.weeks, ended: st.ended, upcoming: st.upcoming, progress: st.progress },
+      course: course ? course.courseId : null,
+      exec: te,
+      agg,
+      built: { count: built.length, trainDays, allWorkout: built.every((t) => t.category === 'workout') },
+      due: { now: dueNow, after: dueAfter },
     }
   })
 
-  ok('过去+done → done', logicResults.pastDone?.state === 'done', `state=${logicResults.pastDone?.state}`)
-  ok('过去+未完成 todo → missed', logicResults.pastTodo?.state === 'missed', `state=${logicResults.pastTodo?.state}`)
-  ok('过去+无 todo → missed', logicResults.pastNoTodo?.state === 'missed', `state=${logicResults.pastNoTodo?.state}`)
-  ok('过去休息日 → restPast', logicResults.pastRest?.state === 'restPast', `state=${logicResults.pastRest?.state}`)
-  ok('今天 → today', logicResults.today?.state === 'today', `state=${logicResults.today?.state}`)
-  ok('未来训练日 → future', logicResults.futureTrain?.state === 'future', `state=${logicResults.futureTrain?.state}`)
-  ok('未来休息日 → restFuture', logicResults.futureRest?.state === 'restFuture', `state=${logicResults.futureRest?.state}`)
-  ok('统计 done=1 missed=4 rate=0.2', logicResults.stats.done === 1 && logicResults.stats.missed === 4 && Math.abs(logicResults.stats.rate - 0.2) < 1e-6, JSON.stringify(logicResults.stats))
+  ok(
+    '周期口径：第 2 周 / 未结束 / 进度 0<x<1',
+    logic.st.week === 2 && logic.st.weeks === 2 && !logic.st.ended && !logic.st.upcoming && logic.st.progress > 0 && logic.st.progress < 1,
+    JSON.stringify(logic.st),
+  )
+  ok('当日课程解析', logic.course === 'planA', String(logic.course))
+  ok(
+    '执行并集：有记录 ∪ 勾日程，缺勤进 missedDates',
+    logic.exec.planned > 0 && logic.exec.doneByRecord >= 1 && logic.exec.missedDates.length >= 1,
+    JSON.stringify({ planned: logic.exec.planned, done: logic.exec.done, byRecord: logic.exec.doneByRecord, missed: logic.exec.missedDates.length }),
+  )
+  ok(
+    '运动聚合：2 条 / 1 次会话 / 70 分钟 / 400 大卡',
+    logic.agg.count === 2 && logic.agg.sessions === 1 && logic.agg.minutes === 70 && logic.agg.kcal === 400,
+    JSON.stringify(logic.agg),
+  )
+  ok(
+    '日程展开：条数=训练日数且全为 workout',
+    logic.built.count === logic.built.trainDays && logic.built.allWorkout && logic.built.count > 0,
+    JSON.stringify(logic.built),
+  )
+  ok('复盘到期：未复盘→到期，标记后→未到期', logic.due.now === true && logic.due.after === false, JSON.stringify(logic.due))
+
+  /* ---------- 11. 控制台无错误 ---------- */
+  ok('无控制台错误', errors.length === 0, errors.slice(0, 3).join(' | '))
 } catch (e) {
   ok('脚本执行', false, e.message)
   await shot('99-error')

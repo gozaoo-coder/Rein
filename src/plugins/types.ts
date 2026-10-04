@@ -9,7 +9,7 @@ export type NavSurface = 'tabbar' | 'rail'
  * 这样插件保持纯声明（不持有组件状态、不 import router），页面保留自己的弹层与路由。
  * 新增动作 = 这里加一个字面量 + 承载页面在 ACTIONS 里实现。
  */
-export type ToolAction = 'smart-add' | 'add-workout' | 'voice-session'
+export type ToolAction = 'smart-add' | 'add-workout' | 'voice-session' | 'diet-history'
 
 /** 导航贡献：一个条目可同时出现在两种容器里（surfaces 决定落点） */
 export interface NavContribution {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { Eye, EyeOff, Pencil, Star, Trash2 } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import ExerciseHistoryPanel from '@/components/exercise/ExerciseHistoryPanel.vue'
@@ -102,25 +103,28 @@ const metaLine = computed(() => {
   return bits.join(' · ')
 })
 
-const stats = computed<{ k: string; v: string }[]>(() => {
+/** 训练参数：值与单位拆开，给程序页 stats 同款「标签在上 / 值+单位在下」的排法 */
+const stats = computed<{ k: string; v: string; unit?: string }[]>(() => {
   const e = props.exercise
   if (!e) return []
   if (e.kind === 'strength') {
     return [
-      { k: '默认组数', v: `${e.defaultSets} 组` },
-      { k: '每组次数', v: e.defaultReps != null ? `${e.defaultReps} 次` : '—' },
-      { k: '默认重量', v: e.defaultWeightKg != null ? `${fmtKg(e.defaultWeightKg)} kg` : '自重' },
-      { k: '组间休息', v: `${e.defaultRestSec} 秒` },
+      { k: '默认组数', v: `${e.defaultSets}`, unit: '组' },
+      { k: '每组次数', v: e.defaultReps != null ? `${e.defaultReps}` : '—', unit: e.defaultReps != null ? '次' : undefined },
+      { k: '默认重量', v: e.defaultWeightKg != null ? fmtKg(e.defaultWeightKg) : '自重', unit: e.defaultWeightKg != null ? 'kg' : undefined },
+      { k: '组间休息', v: `${e.defaultRestSec}`, unit: '秒' },
     ]
   }
   if (e.kind === 'timed') {
     return [
-      { k: '默认组数', v: `${e.defaultSets} 组` },
-      { k: '每组时长', v: e.defaultTargetSec != null ? `${e.defaultTargetSec} 秒` : '—' },
-      { k: '组间休息', v: `${e.defaultRestSec} 秒` },
+      { k: '默认组数', v: `${e.defaultSets}`, unit: '组' },
+      { k: '每组时长', v: e.defaultTargetSec != null ? `${e.defaultTargetSec}` : '—', unit: e.defaultTargetSec != null ? '秒' : undefined },
+      { k: '组间休息', v: `${e.defaultRestSec}`, unit: '秒' },
     ]
   }
-  return [{ k: '默认时长', v: e.defaultDurationMin != null ? `${e.defaultDurationMin} 分钟` : '—' }]
+  return [
+    { k: '默认时长', v: e.defaultDurationMin != null ? `${e.defaultDurationMin}` : '—', unit: e.defaultDurationMin != null ? '分钟' : undefined },
+  ]
 })
 
 const lastSetLine = computed(() => {
@@ -226,8 +230,8 @@ async function removeCustom(): Promise<void> {
       <p class="sec">训练参数</p>
       <div class="stats">
         <div v-for="s in stats" :key="s.k" class="cell">
-          <div class="v num">{{ s.v }}</div>
-          <div class="k">{{ s.k }}</div>
+          <em>{{ s.k }}</em>
+          <b class="num">{{ s.v }}<i v-if="s.unit">{{ s.unit }}</i></b>
         </div>
       </div>
 
@@ -243,16 +247,20 @@ async function removeCustom(): Promise<void> {
         </ol>
       </template>
 
-      <div class="ops col">
+      <div class="ops row">
         <button class="op" @click="void toggleFavorite()">
-          {{ exercise.favorite ? '取消收藏' : '收藏这个动作' }}
+          <Star :size="14" />{{ exercise.favorite ? '取消收藏' : '收藏这个动作' }}
         </button>
         <template v-if="exercise.isCustom">
-          <button class="op" @click="emit('edit', exercise)">编辑动作</button>
-          <button class="op danger" @click="confirmDelete = true">删除动作</button>
+          <button class="op" @click="emit('edit', exercise)"><Pencil :size="14" />编辑动作</button>
+          <button class="op danger" @click="confirmDelete = true"><Trash2 :size="14" />删除动作</button>
         </template>
-        <button v-else-if="exercise.hidden" class="op" @click="void restoreToLibrary()">恢复显示</button>
-        <button v-else class="op" @click="void hideFromLibrary()">从库中隐藏</button>
+        <button v-else-if="exercise.hidden" class="op" @click="void restoreToLibrary()">
+          <Eye :size="14" />恢复显示
+        </button>
+        <button v-else class="op" @click="void hideFromLibrary()">
+          <EyeOff :size="14" />从库中隐藏
+        </button>
       </div>
     </template>
   </SheetModal>
@@ -282,14 +290,14 @@ async function removeCustom(): Promise<void> {
   flex: none;
   font-size: var(--fs-micro);
   font-weight: 700;
-  padding: 3px 9px;
-  border-radius: 8px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
   background: var(--c-exercise-soft);
   color: var(--c-exercise-deep);
 }
 
 .badge.muted {
-  background: var(--surface-3);
+  background: var(--surface-2);
   color: var(--text-3);
 }
 
@@ -351,7 +359,7 @@ async function removeCustom(): Promise<void> {
 .mapcard,
 .advicecard,
 .curvebox {
-  border-radius: var(--radius-l);
+  border-radius: var(--radius-m);
   background: var(--surface-2);
   padding: 14px 12px 10px;
 }
@@ -378,6 +386,7 @@ async function removeCustom(): Promise<void> {
   color: var(--text-2);
 }
 
+/* 训练参数：程序页 stats 语言——micro 标签在上，subhead 加粗值在下（单位降级为 micro） */
 .stats {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -386,20 +395,31 @@ async function removeCustom(): Promise<void> {
 
 .cell {
   background: var(--surface-2);
-  border-radius: 14px;
-  padding: 12px 14px;
+  border-radius: var(--radius-m);
+  padding: 11px 14px;
 }
 
-.cell .v {
-  font-size: var(--fs-title2);
-  font-weight: 300;
-  letter-spacing: -0.5px;
-}
-
-.cell .k {
+.cell em {
+  display: block;
+  font-style: normal;
   font-size: var(--fs-micro);
   color: var(--text-3);
-  margin-top: 2px;
+  white-space: nowrap;
+}
+
+.cell b {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+}
+
+.cell i {
+  font-style: normal;
+  font-weight: 400;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-left: 1px;
 }
 
 .tips {
@@ -409,19 +429,25 @@ async function removeCustom(): Promise<void> {
   white-space: pre-line;
 }
 
+/* 操作区：程序页 .cap 胶囊语言（描边白底、危险项红字），居中收成一排 */
 .ops {
   margin-top: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 10px;
 }
 
 .op {
-  width: 100%;
-  padding: 13px 0;
-  border-radius: var(--radius-l);
-  background: var(--surface-2);
-  font-size: var(--fs-callout);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  font-size: var(--fs-caption);
   font-weight: 600;
-  color: var(--text-1);
+  color: var(--text-2);
 }
 
 .op.danger {

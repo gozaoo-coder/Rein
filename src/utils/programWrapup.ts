@@ -1,7 +1,7 @@
 /**
  * 结营成绩单：把一份方案的执行数据聚合成「有没有用、改变了什么、下一步」。
  *
- * 复用 buildProgramReport 的口径（同一份 schedule/training/recordedDays），
+ * 复用 buildProgramReport 的口径（同一份 training/actual/recordedDays/trainedDates），
  * 在其上补齐：起点对照（体重 / 摄入 / 训练频率）、最长连续打卡、徽章判定、
  * 下一期档位建议——全部纯前端规则，不引入新表。
  */
@@ -9,7 +9,6 @@
 import { dietService } from '@/services/dietService'
 import { exerciseService } from '@/services/exerciseService'
 import { nutritionService } from '@/services/nutritionService'
-import { todoService } from '@/services/todoService'
 import { GOAL_LABELS, mealKcal } from '@/config/domain'
 import { addDays } from '@/utils/date'
 import { parseBlob } from '@/utils/programEngine'
@@ -37,9 +36,9 @@ export interface WrapupCompare {
 
 export interface WrapupData {
   report: ProgramReport
-  /** 完成度 0-1（日程 done/planned；planned=0 时 null） */
+  /** 完成度 0-1（计划训练兑现率：有运动记录或勾了日程都算；无计划训练日时 null） */
   completion: number | null
-  /** 最长连续打卡天数（方案日程任一条目完成记 1 天） */
+  /** 最长连续打卡天数（当天有运动记录或完成方案日程记 1 天） */
   streakDays: number
   compare: WrapupCompare
   badges: WrapupBadge[]
@@ -76,12 +75,8 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
 
   const [report, metrics] = await Promise.all([buildProgramReport(record), nutritionService.listBodyMetrics(100)])
 
-  /* 连续打卡：方案日程任一条目完成即算当天打卡 */
-  const all = await todoService.listAllTodos()
-  const doneDates = all
-    .filter((t) => t.programId === record.id && t.status === 'done' && t.date)
-    .map((t) => t.date as string)
-  const streakDays = longestStreak(doneDates)
+  /* 连续打卡：当天有运动记录或完成方案日程即算打卡（并集口径，与报告一致） */
+  const streakDays = longestStreak(report.trainedDates)
 
   /* 起点对照：方案开始前 7 天（基线窗口）vs 方案全期。
      两侧必须同口径，否则对照不成立：摄入都按「有记录的自然日」日均（不是按餐平均），
@@ -95,10 +90,10 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
   const intakeBefore = beforeDays > 0
     ? Math.round(beforeMeals.reduce((s, m) => s + (mealKcal(m) ?? 0), 0) / beforeDays)
     : null
-  // 基线窗口正好一周，窗口内次数即周均；全期次数需除以周数
+  // 基线窗口正好一周，窗口内次数即周均；全期次数需除以周数（都是「记录条数」口径）
   const weeks = Math.max(reportSpanDays(startDate, endDate), 1) / BASELINE_DAYS
   const trainingBefore = beforeWorkouts.length
-  const trainingAfter = round1(report.training.done / weeks)
+  const trainingAfter = round1(report.actual.count / weeks)
 
   const weights = metrics
     .filter((m) => m.weightKg != null && m.date >= startDate && m.date <= endDate)
@@ -108,7 +103,7 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
   const weightBefore = weights.length ? weights[0]! : null
 
   const completion =
-    report.schedule.planned > 0 ? report.schedule.done / report.schedule.planned : null
+    report.training.planned > 0 ? report.training.done / report.training.planned : null
 
   /* 徽章（纯前端规则） */
   const badges: WrapupBadge[] = []
@@ -118,6 +113,9 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
   const recordRate = report.plannedDays > 0 ? report.recordedDays / report.plannedDays : 0
   if (report.recordedDays > 0 && recordRate >= 0.8) {
     badges.push({ emoji: '🥗', title: `饮食记录 ${report.recordedDays} 天`, sub: `记录率 ${Math.round(recordRate * 100)}%，数据完整是复盘的前提` })
+  }
+  if (report.actual.sessions >= 3) {
+    badges.push({ emoji: '🏋️', title: `跟课训练 ${report.actual.sessions} 次`, sub: '沉浸训练课完整走下来的次数' })
   }
   const trainingRate = report.training.planned > 0 ? report.training.done / report.training.planned : 0
   if (report.training.planned > 0 && trainingRate >= 0.9) {
@@ -136,14 +134,15 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
   const rate = completion ?? 0.7
   const nextTier: ProgramTier = rate < 0.6 ? 'conservative' : rate < 0.85 ? 'balanced' : 'aggressive'
   const tierLabel = { conservative: '保守', balanced: '均衡', aggressive: '进取' }[nextTier]
+  const trainRateText = fmtRate(report.training.done, report.training.planned)
   const nextTierText =
     completion == null
-      ? '这份方案没有日程记录，下一期建议从保守档起步，先把「完成」建立起来。'
+      ? '这份方案没有计划训练日，下一期建议从保守档起步，先把「完成」建立起来。'
       : rate < 0.6
-        ? `完成率 ${fmtRate(report.schedule.done, report.schedule.planned)} 是唯一短板。下一期降为 ${tierLabel}档但保证完成，比高配只做一半更有效。`
+        ? `训练兑现率 ${trainRateText} 是唯一短板。下一期降为 ${tierLabel}档但保证完成，比高配只做一半更有效。`
         : rate < 0.85
-          ? `完成率 ${fmtRate(report.schedule.done, report.schedule.planned)}，节奏可以稳住。下一期维持 ${tierLabel}档，在执行质量上做提升。`
-          : `完成率 ${fmtRate(report.schedule.done, report.schedule.planned)}，执行力有富余。下一期可以上 ${tierLabel}档试试更高的目标。`
+          ? `训练兑现率 ${trainRateText}，节奏可以稳住。下一期维持 ${tierLabel}档，在执行质量上做提升。`
+          : `训练兑现率 ${trainRateText}，执行力有富余。下一期可以上 ${tierLabel}档试试更高的目标。`
 
   return {
     report,

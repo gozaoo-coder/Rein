@@ -1,43 +1,65 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Sparkles } from 'lucide-vue-next'
 
+import { mealTypeOfSlot } from '@/config/domain'
+import { useModelsStore } from '@/stores/models'
+import { useProgramStore } from '@/stores/program'
+import { parseBlob } from '@/utils/programEngine'
+import { todayStr } from '@/utils/date'
 import type { ProgramMeal } from '@/types'
+import type { AiMenuMeal } from '@/ai/recipeGen'
 
 /**
- * 今日菜单：聚焦日的宏量供能结构（堆叠条 + 三行）+ 完整餐次列表，一张卡。
+ * 方案今日菜单卡（营养页）：聚焦「今天按方案吃什么」。
  *
- * 原是「营养结构罗盘（三色大环）+ 全天菜单」两张卡：同一份菜单在相邻两卡
- * 各渲染一遍。合并后供能结构用横向堆叠条替代大环（驾驶舱已有三环，避免
- * 双环隐喻），餐次列表是唯一事实源；AI 菜单与模板回落共用同一渲染。
+ * 从方案页搬来——菜单是饮食决策，归营养页；方案页只管方案本身。
+ * 供能结构用横向堆叠条（不画大环），餐次列表是唯一事实源，
+ * AI 菜单与模板回落共用同一渲染；AI 生成按需触发，生成一次落库稳定。
  */
-const props = defineProps<{
-  meals: ProgramMeal[]
-  /** 方案的每日蛋白目标（g），对照刻度用 */
-  targetProtein: number
-  /** 训练日 / 休息日（影响结论文案与 pill） */
-  trainingDay: boolean
-  /** 卡题：今天显示「今日菜单」，聚焦其他天显示日期 */
-  title: string
-  /** 非今天的附加提示（如「该日尚未到来」） */
-  subtitle: string
-  /** 菜单是否由 AI 生成（决定来源标注与按钮文案） */
-  aiGenerated: boolean
-  aiLoading: boolean
-  /** 生成中的流式活动摘要（匹配食材…）；空串不显示 */
-  aiStatus?: string
-  aiError: string
-  /** 是否展示「记一笔」入口（仅聚焦今天时展示，写入恒落今天） */
-  loggable: boolean
-}>()
+const emit = defineEmits<{ log: [] }>()
 
-const emit = defineEmits<{
-  regenerate: []
-  log: []
-}>()
+const program = useProgramStore()
+const models = useModelsStore()
+
+const parsed = computed(() => {
+  if (!program.active) return null
+  try {
+    return parseBlob(program.active)
+  } catch {
+    return null
+  }
+})
+
+/** 今天在方案周期内的那一天；不在周期内（未开跑 / 已结束）整卡不渲染 */
+const day = computed(() => parsed.value?.days.find((d) => d.date === todayStr()) ?? null)
+
+const aiMeals = ref<AiMenuMeal[] | null>(null)
+const aiLoading = ref(false)
+const aiStatus = ref('')
+const aiError = ref('')
+
+/** AI 菜单优先、未生成时回落模板菜单；统一成 ProgramMeal 展示结构 */
+const meals = computed<ProgramMeal[]>(() => {
+  if (aiMeals.value) {
+    return aiMeals.value.map((m) => ({
+      mealType: mealTypeOfSlot(m.slot),
+      slot: m.slot,
+      name: m.name,
+      items: m.items.map((it) => `${it.label} ${it.grams}g`),
+      kcal: m.kcal,
+      protein: m.protein,
+      carb: m.carb,
+      fat: m.fat,
+    }))
+  }
+  return day.value?.meals ?? []
+})
+
+const targetProtein = computed(() => Math.round(parsed.value?.params.targets.protein ?? 0))
 
 const totals = computed(() => {
-  const sum = (k: 'kcal' | 'protein' | 'carb' | 'fat') => props.meals.reduce((s, m) => s + m[k], 0)
+  const sum = (k: 'kcal' | 'protein' | 'carb' | 'fat') => meals.value.reduce((s, m) => s + m[k], 0)
   const kcal = sum('kcal')
   const protein = sum('protein')
   const carb = sum('carb')
@@ -59,19 +81,15 @@ const totals = computed(() => {
   }
 })
 
-/* ---------------- 供能堆叠条（三色，替代大环） ---------------- */
-
 const macroBars = computed(() => [
   { key: 'p', label: '蛋白质', color: 'var(--c-protein)', v: totals.value.share.p, g: Math.round(totals.value.protein) },
   { key: 'c', label: '碳水', color: 'var(--c-carb)', v: totals.value.share.c, g: Math.round(totals.value.carb) },
   { key: 'f', label: '脂肪', color: 'var(--c-fat)', v: totals.value.share.f, g: Math.round(totals.value.fat) },
 ])
 
-/* ---------------- 蛋白目标对照刻度 ---------------- */
-
 /** 目标区间 = 目标 ±10%；刻度右端 = 区间上界 × 1.25，点超出即顶格 */
 const proteinScale = computed(() => {
-  const target = props.targetProtein
+  const target = targetProtein.value
   if (target <= 0) return null
   const lo = Math.round(target * 0.9)
   const hi = Math.round(target * 1.1)
@@ -82,31 +100,69 @@ const proteinScale = computed(() => {
   return { lo, hi, pos, loPct, hiPct, inRange: totals.value.protein >= lo && totals.value.protein <= hi }
 })
 
-/* ---------------- 结论一句话 ---------------- */
-
 const verdict = computed(() => {
   const s = totals.value.share
   if (totals.value.kcal <= 0) return ''
+  const training = !(day.value?.rest ?? true)
   const pText =
     s.p >= 25 && s.p <= 40
-      ? `蛋白供能 ${s.p}%，处于${props.trainingDay ? '训练日' : '休息日'}的推荐区间`
+      ? `蛋白供能 ${s.p}%，处于${training ? '训练日' : '休息日'}的推荐区间`
       : s.p < 25
         ? `蛋白供能只占 ${s.p}%，偏低——优先补足蛋白质再谈其他`
         : `蛋白供能 ${s.p}% 偏高，碳水不足会影响训练表现`
-  const cText = props.trainingDay
+  const cText = training
     ? '碳水集中在练前练后两餐，与训练时间匹配。'
     : '休息日碳水自然回落，属正常安排。'
   return `${pText}；${cText}`
 })
+
+/** 读取当天 AI 菜单缓存（未生成返回 null，回落模板） */
+async function loadCached(): Promise<void> {
+  aiMeals.value = null
+  aiError.value = ''
+  if (!program.active || !day.value) return
+  try {
+    aiMeals.value = await program.loadDayMeals(program.active, todayStr())
+  } catch {
+    /* 缓存读取失败按未生成处理 */
+  }
+}
+
+async function regenerate(): Promise<void> {
+  if (!program.active || !day.value) return
+  aiLoading.value = true
+  aiError.value = ''
+  aiStatus.value = ''
+  try {
+    await models.load()
+    aiMeals.value = await program.generateDayMeals(program.active, todayStr(), (s) => {
+      aiStatus.value = s
+    })
+  } catch (e) {
+    aiError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    aiLoading.value = false
+    aiStatus.value = ''
+  }
+}
+
+onMounted(() => {
+  void loadCached()
+})
+
+// 方案切换 / 调整重建后，当天菜单缓存可能已作废，重新读一次
+watch(
+  () => [program.active?.id, program.active?.version],
+  () => void loadCached(),
+)
 </script>
 
 <template>
-  <section class="pod">
-    <header class="pod-head">
-      <b>{{ title }}</b>
-      <span class="pill" :class="{ ghost: !trainingDay }">{{ trainingDay ? '训练日' : '休息日' }}</span>
+  <section v-if="program.active && day" class="card menu-card" data-testid="program-menu">
+    <header class="head">
+      <b class="title">今日菜单</b>
+      <span class="pill" :class="{ ghost: day.rest }">{{ day.rest ? '休息日' : '训练日' }}</span>
     </header>
-    <p v-if="subtitle" class="sub-note">{{ subtitle }}</p>
 
     <!-- 供能结构：横向堆叠条 + 三行宏量 -->
     <div class="stack-head">
@@ -148,7 +204,7 @@ const verdict = computed(() => {
     <div class="split" />
 
     <!-- 餐次列表：AI 菜单与模板回落共用一行式渲染 -->
-    <p v-if="!aiGenerated" class="menu-fallback">模板菜单 · 配置模型后可按偏好生成</p>
+    <p v-if="!aiMeals" class="menu-fallback">模板菜单 · 配置模型后可按你的偏好生成</p>
     <p v-else class="ai-tag"><Sparkles :size="12" style="vertical-align:-1px;margin-right:3px" />AI 菜单 · 数值来自食物库实算</p>
     <ul class="menu">
       <li v-for="m in meals" :key="m.slot">
@@ -161,12 +217,12 @@ const verdict = computed(() => {
     </ul>
 
     <div class="menu-acts">
-      <button v-if="loggable" class="linkbtn" @click="emit('log')">＋ 记一笔</button>
-      <button class="linkbtn" :disabled="aiLoading" @click="emit('regenerate')">
+      <button class="linkbtn" @click="emit('log')">＋ 记一笔</button>
+      <button class="linkbtn" :disabled="aiLoading" @click="regenerate">
         <template v-if="aiLoading">正在按你的目标与偏好生成…</template>
         <template v-else>
-          <Sparkles v-if="!aiGenerated" :size="13" style="margin-right:3px" />
-          {{ aiGenerated ? '换一批' : 'AI 生成这一天的菜单' }}
+          <Sparkles v-if="!aiMeals" :size="13" style="margin-right:3px" />
+          {{ aiMeals ? '换一批' : 'AI 生成今日菜单' }}
         </template>
       </button>
       <span v-if="aiLoading && aiStatus" class="ai-status num">{{ aiStatus }}</span>
@@ -176,21 +232,15 @@ const verdict = computed(() => {
 </template>
 
 <style scoped>
-.pod {
-  padding: 15px 16px;
-  border-radius: var(--radius-l);
-  background: var(--surface);
-}
-
-.pod-head {
+.head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.pod-head b {
-  font-size: var(--fs-headline);
+.title {
+  font-size: var(--fs-title3);
   font-weight: 700;
   letter-spacing: -0.3px;
 }
@@ -207,12 +257,6 @@ const verdict = computed(() => {
 
 .pill.ghost {
   background: var(--surface-2);
-  color: var(--text-3);
-}
-
-.sub-note {
-  margin-top: 5px;
-  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -417,5 +461,4 @@ const verdict = computed(() => {
   font-size: var(--fs-micro);
   color: var(--text-3);
 }
-
 </style>

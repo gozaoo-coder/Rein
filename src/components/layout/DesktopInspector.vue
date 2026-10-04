@@ -116,6 +116,7 @@ function load(g: AsideGroup): void {
     void pomo.loadToday()
     void todo.loadDay(today)
     void ledger.loadMonth()
+    if (features.isEnabled('program')) void loadProgramAside()
   } else if (g === 'sports') {
     void exercise.loadWeek(today)
     void todo.loadDay(today)
@@ -126,8 +127,53 @@ function load(g: AsideGroup): void {
   } else if (g === 'account') {
     void nutrition.loadSummary(today)
     void pomo.loadToday()
+    if (features.isEnabled('program')) void loadProgramAside()
   }
   /* ai / campus 不需要数据：它们给的是入口 */
+}
+
+/* ---- 方案信息栏卡：右栏是桌面端的常驻入口（动态 import，见文件头纪律②） ---- */
+
+interface ProgramAside {
+  id: number
+  heading: string
+  today: string
+  due: boolean
+}
+
+const programAside = ref<ProgramAside | null>(null)
+
+async function loadProgramAside(): Promise<void> {
+  try {
+    const [{ useProgramStore }, { parseBlob }, { programStatus, courseOnDate, reviewDue }] =
+      await Promise.all([
+        import('@/stores/program'),
+        import('@/utils/programEngine'),
+        import('@/utils/programCycle'),
+      ])
+    const store = useProgramStore()
+    if (!store.loaded) await store.load()
+    const rec = store.active
+    if (!rec) {
+      programAside.value = null
+      return
+    }
+    const blob = parseBlob(rec)
+    const st = programStatus(rec, blob)
+    if (!st) {
+      programAside.value = null
+      return
+    }
+    const course = st.ended || st.upcoming ? null : courseOnDate(blob, today)
+    programAside.value = {
+      id: rec.id,
+      heading: `第 ${st.week} 周 / ${st.weeks}`,
+      today: st.ended ? '本期已结束' : st.upcoming ? `${st.startDate.slice(5)} 开跑` : course ? `今天 ${course.courseName}` : '今天休息',
+      due: reviewDue(rec, blob),
+    }
+  } catch {
+    programAside.value = null /* 方案数据损坏只让这一卡消失，不拖累信息栏 */
+  }
 }
 
 onMounted(() => load(group.value))
@@ -209,6 +255,23 @@ function askQuick(q: string): void {
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- ============ 健康方案：执行期的常驻状态（今天练什么 / 该复盘了） ============ -->
+    <section v-if="programAside && (group === 'today' || group === 'account')" class="card">
+      <header class="c-head">
+        <h2>健康方案</h2>
+        <RouterLink class="c-more" :to="{ name: 'program' }">方案<ArrowRight :size="13" /></RouterLink>
+      </header>
+      <p class="p-head num">{{ programAside.heading }}</p>
+      <p class="p-today">{{ programAside.today }}</p>
+      <button
+        v-if="programAside.due"
+        class="due pressable"
+        @click="router.push({ name: 'program', query: { review: '1' } })"
+      >
+        本周复盘可做
+      </button>
     </section>
 
     <!-- ============ 运动：本周负荷 + 最近记录 + 直达 ============ -->
@@ -524,6 +587,30 @@ function askQuick(q: string): void {
   font-weight: 600;
   color: var(--text-3);
   white-space: nowrap;
+}
+
+/* 方案卡：一行周期 + 一行今天，复盘到期时多一条行动条 */
+.p-head {
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+}
+
+.p-today {
+  margin-top: 3px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.due {
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  text-align: center;
 }
 
 /* ---------- 大数字三联（运动 / 收支） ---------- */

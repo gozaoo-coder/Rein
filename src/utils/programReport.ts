@@ -6,6 +6,7 @@ import { nutritionService } from '@/services/nutritionService'
 import { todoService } from '@/services/todoService'
 import { diffDays } from '@/utils/date'
 import { parseBlob } from '@/utils/programEngine'
+import { aggregateWorkouts, trainedDates, trainingExec, type WorkoutAgg } from '@/utils/programExec'
 import type { ProgramRecord, Todo } from '@/types'
 import { mealKcal } from '@/config/domain'
 
@@ -15,15 +16,18 @@ export interface ProgramReport {
   plannedDays: number
   targetKcal: number
   adjustmentsCount: number
-  /** 方案日程待办：计划 / 完成 */
+  /** 方案日程待办：计划 / 完成（原始条目口径，保留供追溯） */
   schedule: { planned: number; done: number }
+  /** 计划训练日 vs 兑现（有运动记录或勾了日程的并集口径） */
   training: { planned: number; done: number }
-  dietAnchor: { planned: number; done: number }
+  /** 区间内真实运动记录（含课程会话 / 补录 / 手环同步） */
+  actual: WorkoutAgg
+  /** 方案期内训练打卡日（运动记录 ∪ 日程完成，升序去重） */
+  trainedDates: string[]
   /** 有记录日内的平均摄入；完全没有记录时为 null */
   avgIntake: number | null
   recordedDays: number
   weightDeltaKg: number | null
-  workoutKcal: number
 }
 
 function countStatus(todos: Todo[]): { planned: number; done: number } {
@@ -48,15 +52,15 @@ export async function buildProgramReport(record: ProgramRecord): Promise<Program
   const all = await todoService.listAllTodos()
   const mine = all.filter((t) => t.programId === record.id)
   const schedule = countStatus(mine)
-  const training = countStatus(mine.filter((t) => t.category === 'workout'))
-  const dietAnchor = countStatus(mine.filter((t) => t.category === 'health'))
 
   const [workouts, mealsRange, metrics] = await Promise.all([
     exerciseService.listWorkouts(startDate, endDate),
     dietService.listMealsRange(startDate, endDate),
     nutritionService.listBodyMetrics(100),
   ])
-  const workoutKcal = Math.round(workouts.reduce((s, w) => s + w.kcal, 0))
+  const actual = aggregateWorkouts(workouts, startDate, endDate)
+  const exec = trainingExec(blob, startDate, endDate, workouts, all, record.id)
+  const training = { planned: exec.planned, done: exec.done }
 
   const recordedDays = new Set(mealsRange.map((m) => m.date)).size
   const intakeSum = mealsRange.reduce((s, m) => s + (mealKcal(m) ?? 0), 0)
@@ -78,11 +82,11 @@ export async function buildProgramReport(record: ProgramRecord): Promise<Program
     adjustmentsCount,
     schedule,
     training,
-    dietAnchor,
+    actual,
+    trainedDates: trainedDates(startDate, endDate, workouts, all, record.id),
     avgIntake,
     recordedDays,
     weightDeltaKg,
-    workoutKcal,
   }
 }
 

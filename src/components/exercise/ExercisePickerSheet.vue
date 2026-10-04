@@ -141,12 +141,13 @@ function onCreated(e: ExerciseRecord): void {
 </template>
 
 <style scoped>
+/* 搜索行/筛选入口/计数徽章与动作库页同款（白卡 finder + cap 胶囊 + accent pill） */
 .searchrow {
-  gap: 7px;
-  height: 38px;
-  padding: 0 12px;
+  gap: 8px;
+  padding: 11px 14px;
   border-radius: var(--radius-m);
-  background: var(--surface-2);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
   color: var(--text-3);
 }
 
@@ -159,9 +160,10 @@ function onCreated(e: ExerciseRecord): void {
 
 .filterbtn {
   gap: 4px;
-  padding: 4px 9px;
+  padding: 6px 11px;
   border-radius: var(--radius-full);
-  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   color: var(--text-2);
   flex: none;
 }
@@ -169,33 +171,42 @@ function onCreated(e: ExerciseRecord): void {
 .fcount {
   min-width: 15px;
   height: 15px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--c-exercise);
-  color: #fff;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: var(--fs-micro);
+  font-weight: 700;
   line-height: 15px;
   text-align: center;
 }
 
 .chips {
-  gap: 8px;
+  gap: 7px;
   flex-wrap: wrap;
   margin-top: 10px;
 }
 
+/* 与动作库页同一套 chips：描边白底，选中实底 accent */
 .chip {
-  padding: 6px 13px;
+  padding: 7px 13px;
   border-radius: var(--radius-full);
-  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   font-size: var(--fs-caption);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
 }
 
 .chip.on {
-  background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
 }
 
 .list {
@@ -213,7 +224,8 @@ function onCreated(e: ExerciseRecord): void {
 }
 
 .rowitem.on {
-  background: var(--c-exercise-soft);
+  /* 已选高亮：选中态与程序对比矩阵同用 accent-soft（不再是绿 tint） */
+  background: var(--accent-soft);
 }
 
 .list li + li {
@@ -224,14 +236,15 @@ function onCreated(e: ExerciseRecord): void {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-callout);
-  font-weight: 600;
+  font-size: var(--fs-subhead);
+  font-weight: 700;
 }
 
+/* 自建标签：胶囊几何（程序 .pill），域内幽灵配色 */
 .tag {
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--surface-3);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
   font-size: var(--fs-micro);
   font-weight: 700;
   color: var(--text-3);

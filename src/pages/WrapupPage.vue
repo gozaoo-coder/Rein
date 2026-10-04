@@ -176,7 +176,7 @@ async function nextPhase(): Promise<void> {
           </li>
         </ul>
         <p class="t-3 span-note num">
-          {{ data.report.startDate }} ~ {{ data.report.endDate }} · 共 {{ reportSpanDays(data.report.startDate, data.report.endDate) }} 天 · 运动消耗 {{ data.report.workoutKcal }} 大卡
+          {{ data.report.startDate }} ~ {{ data.report.endDate }} · 共 {{ reportSpanDays(data.report.startDate, data.report.endDate) }} 天 · 运动 {{ data.report.actual.count }} 次（{{ data.report.actual.minutes }} 分钟）· 消耗 {{ data.report.actual.kcal }} 大卡
         </p>
       </section>
 
@@ -210,12 +210,12 @@ async function nextPhase(): Promise<void> {
         <header class="pod-head"><b>完整报告</b><span class="t-3 num">{{ GOAL_LABELS[record.goal] }} · {{ tierLabel }} · v{{ record.version }}</span></header>
         <ul class="rstats num">
           <li><em>平均摄入</em><b>{{ data.report.avgIntake ?? '—' }}</b><i>目标 {{ data.report.targetKcal }} 大卡</i></li>
-          <li><em>训练完成</em><b>{{ fmtRate(data.report.training.done, data.report.training.planned) }}</b><i>{{ data.report.training.done }}/{{ data.report.training.planned }} 次</i></li>
-          <li><em>饮食锚点</em><b>{{ fmtRate(data.report.dietAnchor.done, data.report.dietAnchor.planned) }}</b><i>有记录 {{ data.report.recordedDays }} 天</i></li>
-          <li><em>体重变化</em><b>{{ fmtWeightDelta(data.report.weightDeltaKg) }}</b><i>运动消耗 {{ data.report.workoutKcal }} 大卡</i></li>
+          <li><em>训练兑现</em><b>{{ fmtRate(data.report.training.done, data.report.training.planned) }}</b><i>{{ data.report.training.done }}/{{ data.report.training.planned }} 次（含运动记录与日程勾选）</i></li>
+          <li><em>真实运动</em><b>{{ data.report.actual.count }} 次</b><i>含跟课 {{ data.report.actual.sessions }} 次 · 有记录 {{ data.report.recordedDays }} 天饮食</i></li>
+          <li><em>体重变化</em><b>{{ fmtWeightDelta(data.report.weightDeltaKg) }}</b><i>消耗 {{ data.report.actual.kcal }} 大卡</i></li>
         </ul>
         <p class="t-3 rnote">
-          记录 {{ data.report.schedule.done }}/{{ data.report.schedule.planned }} 项方案日程 ·
+          方案日程勾选 {{ data.report.schedule.done }}/{{ data.report.schedule.planned }} 项 ·
           期间调整 {{ data.report.adjustmentsCount }} 次；未记录的饮食日不参与平均摄入统计。
         </p>
       </section>

@@ -117,7 +117,7 @@ const view = computed<WorkoutBarView | null>(() => {
     let blob = ''
     switch (s.phase) {
       case 'warmup':
-        stat = ex ? `${exName} · 激活热身 ${s.warmupDone(ex)}/${ex.warmups?.length ?? 0}` : ''
+        stat = ex ? `${exName} · 激活热身 ${s.warmupDone(ex)}/${s.warmupsFor(ex).length}` : ''
         blob = '热身'
         break
       case 'exercise':

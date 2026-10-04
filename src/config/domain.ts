@@ -53,6 +53,20 @@ export function mealKcal(log: MealLog): number | null {
   return Math.round((log.food.kcal * log.grams) / 100)
 }
 
+/** 单笔记录克重文案：份模式带份数与换算克重，克模式只给克重 */
+export function mealQtyText(log: MealLog): string {
+  if (log.quantityMode === 'unit' && log.units != null && log.unitName) {
+    return `${log.units} ${log.unitName}（${Math.round(log.grams)} g）`
+  }
+  return `${Math.round(log.grams)} g`
+}
+
+/** 营养克数展示：≥10 取整，<10 保留一位小数（历史行与详情页共用同一口径） */
+export function fmtGrams(n: number): string {
+  if (!n) return '0'
+  return n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
+}
+
 /** 桌面工作台断点：视口 ≥ 此宽度启用三窗格壳（导航轨）与主页双视图（便当总览/一日脊柱） */
 export const DESKTOP_MIN = 1100
 

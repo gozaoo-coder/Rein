@@ -368,6 +368,20 @@ function expandDays(
   return days
 }
 
+/** 从档案构造营养计算输入；身体数据不全时返回 null（调用方决定降级方式） */
+export function profileCalcParams(profile: Profile): CalcParams | null {
+  const age = ageFromBirthday(profile.birthday)
+  if (!profile.sex || age == null || !profile.heightCm || !profile.weightKg) return null
+  return {
+    sex: profile.sex,
+    age,
+    heightCm: profile.heightCm,
+    weightKg: profile.weightKg,
+    activityLevel: profile.activityLevel,
+    goal: profile.goal,
+  }
+}
+
 /** 三档方案草稿：确定性生成，同输入必得同输出（平均线基线）。
  * phase = 周模板序列相位（0-6）：startDate 当天取模板第 phase 位，
  * 支持从今天/明天开始并接续当前训练节奏（默认 0 + 下周一 = 经典对齐）。 */
@@ -379,18 +393,7 @@ export function buildProgramPlans(
   prefs: RecipePref[] = [],
   phase = 0,
 ): ProgramPlan[] {
-  const body: CalcParams | null = (() => {
-    const age = ageFromBirthday(profile.birthday)
-    if (!profile.sex || age == null || !profile.heightCm || !profile.weightKg) return null
-    return {
-      sex: profile.sex,
-      age,
-      heightCm: profile.heightCm,
-      weightKg: profile.weightKg,
-      activityLevel: profile.activityLevel,
-      goal: profile.goal,
-    }
-  })()
+  const body: CalcParams | null = profileCalcParams(profile)
 
   const courseMap = new Map(courses.map((c) => [c.id, c]))
   const issues = missingDataIssues(profile)
@@ -482,44 +485,23 @@ function trainStartMin(slots: TimeSlot[] | null): number {
   return 18 * 60
 }
 
-function breakfastStartMin(slots: TimeSlot[] | null): number {
-  return slots?.includes('morning') ? 7 * 60 : 7 * 60 + 40
-}
-
-/** 把方案内容铺成日程待办（饮食锚点 + 有课日的训练条目）。
- * 训练日的饮食锚点排在课程结束之后——方案规则本身就是「练后 30 分钟内补充
- * 蛋白质 + 快碳」，也让两条固定日程不再同刻度常态化重叠；休息日按早餐时间。 */
+/** 把方案内容铺成日程待办：只落训练日的课程条目。
+ * 每日菜单与当日注意留在方案 blob（营养页「今日菜单」与复盘消费），
+ * 不再作为饮食锚点写进日程——日程只留用户真正要动手的事。 */
 export function buildScheduleTodos(blob: ProgramBlob, preferredSlots: TimeSlot[] | null): ScheduleTodoInput[] {
   const trainMin = trainStartMin(preferredSlots)
-  const dietMin = breakfastStartMin(preferredSlots)
   const out: ScheduleTodoInput[] = []
   for (const day of blob.days) {
-    const kcalSum = day.meals.reduce((s, m) => s + m.kcal, 0)
-    const menuLines = day.meals
-      .map((m) => `${m.slot}｜${m.name}（约${m.kcal}大卡）\n${m.items.join('、')}`)
-      .join('\n')
-    const hasCourse = !!(day.courseId && day.courseName && !day.rest)
-    const anchorMin = hasCourse ? trainMin + (day.courseDurationMin ?? 45) : dietMin
+    if (day.rest || !day.courseId || !day.courseName) continue
     out.push({
-      title: `方案饮食 · 约${kcalSum}大卡`,
-      notes: `${menuLines}\n注意：${day.rules.join('；')}`,
+      title: `方案·${day.courseName}`,
+      notes: day.rules.join('；'),
       date: day.date,
-      startMin: anchorMin,
-      durationMin: 15,
-      category: 'health',
+      startMin: trainMin,
+      durationMin: day.courseDurationMin ?? 45,
+      category: 'workout',
       priority: 1,
     })
-    if (hasCourse) {
-      out.push({
-        title: `方案·${day.courseName}`,
-        notes: day.rules.join('；'),
-        date: day.date,
-        startMin: trainMin,
-        durationMin: day.courseDurationMin ?? 45,
-        category: 'workout',
-        priority: 1,
-      })
-    }
   }
   return out
 }
@@ -562,18 +544,7 @@ export function clampAdjustment(
   current: ProgramParams,
   patch: AdjustmentPatch,
 ): { next: ProgramParams; changes: ProgramChange[] } {
-  const body = (() => {
-    const age = ageFromBirthday(profile.birthday)
-    if (!profile.sex || age == null || !profile.heightCm || !profile.weightKg) return null
-    return {
-      sex: profile.sex,
-      age,
-      heightCm: profile.heightCm,
-      weightKg: profile.weightKg,
-      activityLevel: profile.activityLevel,
-      goal: profile.goal,
-    } satisfies CalcParams
-  })()
+  const body = profileCalcParams(profile)
   if (!body) throw new Error('缺少身体数据（性别/生日/身高/体重），无法重算目标')
 
   const nextDelta = clampNum(finiteOr(patch.kcalDelta, current.kcalDelta), ADJUSTMENT_LIMITS.kcalDeltaMin, ADJUSTMENT_LIMITS.kcalDeltaMax)

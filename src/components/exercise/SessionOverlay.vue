@@ -105,11 +105,33 @@ const exTips = computed(() => (s.currentEx ? lib.tipsOf(s.currentEx) : ''))
 
 const WEIGHT_STEP = 2.5
 
-/** 当前待做的激活热身组定义（热身页据此预填并展示建议值） */
+/**
+ * 当前动作的激活热身处方：按**今日推荐重量**实时换算（见 stores/session::warmupsFor）。
+ * 课程里写死的 warmups 只在拿不到工作重量（无建议 / 无历史 / 无计划重量）时作回落，
+ * 所以推荐重量一变（加档 / 降载 / 改自评），这里的重量与组数立刻跟着变。
+ */
+const curWarmups = computed(() => (s.currentEx ? s.warmupsFor(s.currentEx) : []))
+
+/** 当前待做的激活热身组（热身页据此预填并展示处方值） */
 const curWarmup = computed(() => {
   const ex = s.currentEx
-  if (!ex?.warmups?.length) return null
-  return ex.warmups[Math.min(s.warmupDone(ex), ex.warmups.length - 1)] ?? null
+  const rx = curWarmups.value
+  if (!ex || !rx.length) return null
+  return rx[Math.min(s.warmupDone(ex), rx.length - 1)] ?? null
+})
+
+/** 热身换算依据（热身页脚注）：写清「按哪个重量、什么比例、算出来多少」 */
+const warmupNote = computed(() => {
+  const ex = s.currentEx
+  const rx = curWarmups.value
+  if (!ex || !rx.length) return ''
+  const w = s.workingWeightFor(ex)
+  if (w <= 0) return ''
+  // 实测比例会因取整偏离标称值（如 62.5kg 的 50% = 31.25 → 32.5），
+  // 所以标称规则与换算结果一起给，免得用户以为算错了
+  const nominal = rx.length > 1 ? '50% / 75%' : '50%'
+  const out = rx.map((d) => `${fmtKg(d.weightKg)}×${d.reps}`).join(' → ')
+  return `按推荐重量 ${fmtKg(w)} kg 换算（${nominal}，取整到 2.5kg）：${out} · 不计入组数与总容量`
 })
 
 /** 一键填入的重量候选：同一个重量的三个出处（今日建议 / 上次 / 计划），点一下即填入 */
@@ -385,10 +407,10 @@ const TEMP_REST_ACTIONS: MenuItem[] = [
   { label: '10 分钟', value: '10', icon: Timer },
 ]
 
-/** 详解抽屉用的动作：组数展示为「计划 + 加练」后的实际值 */
+/** 详解抽屉用的动作：组数展示为「计划 + 加练」后的实际值，热身也换成实时处方 */
 const detailExercise = computed(() => {
   const e = s.currentEx
-  return e ? { ...e, sets: s.effSets(e) } : null
+  return e ? { ...e, sets: s.effSets(e), warmups: s.warmupsFor(e) } : null
 })
 
 function onMorePick(value: string): void {
@@ -777,12 +799,12 @@ watch(immersiveOpen, (open) => {
         <div class="rubber-layer" data-rubber-content>
           <!-- 激活热身：小重量找发力感 / 复合动作渐进 ramp-up -->
           <div v-if="s.phase === 'warmup' && s.currentEx" class="pane col center">
-            <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ s.currentEx.warmups!.length }} 组</p>
+            <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ curWarmups.length }} 组</p>
             <h1 class="actname">{{ displayName }}</h1>
             <p class="meta">先用小重量激活目标肌群与动作模式，找发力感后再上正式重量</p>
             <div class="wlist">
               <span
-                v-for="(wd, i) in s.currentEx.warmups"
+                v-for="(wd, i) in curWarmups"
                 :key="i"
                 class="wstep num"
                 :class="{ done: i < s.warmupDone(s.currentEx!), cur: i === s.warmupDone(s.currentEx!) }"
@@ -825,7 +847,7 @@ watch(immersiveOpen, (open) => {
                 </button>
               </div>
 
-              <p class="whint">热身组不计入组数与总容量，重量可按需调整</p>
+              <p class="whint">{{ warmupNote || '热身组不计入组数与总容量，重量可按需调整' }}</p>
             </div>
 
             <div v-if="activation" class="blockcard">
@@ -1012,7 +1034,7 @@ watch(immersiveOpen, (open) => {
           <div class="tiles">
             <template v-if="dockMode === 'warmup'">
               <button
-                v-for="(wd, i) in s.currentEx!.warmups"
+                v-for="(wd, i) in curWarmups"
                 :key="i"
                 type="button"
                 class="dtile wtile num"

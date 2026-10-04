@@ -219,16 +219,21 @@ function onSaved(e: ExerciseRecord): void {
 </template>
 
 <style scoped>
+/* 布局与方案页同构：flex 容器统一管纵向间距（14px），块内不再各写 margin-top */
 .page {
   padding: 10px var(--page-pad-x) var(--page-pad-bottom);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
+/* 搜索行是页面级独立控件：白卡 + 卡片落影（与食物库 finder 同款），不再是灰底内嵌 */
 .searchrow {
-  gap: 7px;
-  height: 40px;
-  padding: 0 13px;
+  gap: 8px;
+  padding: 11px 14px;
   border-radius: var(--radius-m);
-  background: var(--surface-2);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
   color: var(--text-3);
 }
 
@@ -239,25 +244,29 @@ function onSaved(e: ExerciseRecord): void {
   color: var(--text-1);
 }
 
+/* 筛选入口：程序页 .cap 胶囊同款（描边 + 白底） */
 .filterbtn {
   gap: 4px;
-  padding: 5px 10px;
+  padding: 6px 11px;
   border-radius: var(--radius-full);
-  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
   flex: none;
 }
 
+/* 计数徽章：程序 .pill 的 accent-soft 语言 */
 .fcount {
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--c-exercise);
-  color: #fff;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: var(--fs-micro);
+  font-weight: 700;
   line-height: 16px;
   text-align: center;
 }
@@ -269,27 +278,30 @@ function onSaved(e: ExerciseRecord): void {
 }
 
 .chips {
-  gap: 8px;
+  gap: 7px;
   flex-wrap: wrap;
-  margin-top: 12px;
 }
 
+/* chips 用程序向导的描边语言：未选中描边白底，选中实底 accent（不再是绿 tint） */
 .chip {
-  padding: 7px 14px;
+  padding: 7px 13px;
   border-radius: var(--radius-full);
-  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
   font-size: var(--fs-caption);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-2);
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard);
 }
 
 .chip.on {
-  background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
-}
-
-.list {
-  margin-top: 14px;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
 }
 
 .exrow {
@@ -331,13 +343,14 @@ function onSaved(e: ExerciseRecord): void {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-callout);
-  font-weight: 600;
+  font-size: var(--fs-subhead);
+  font-weight: 700;
 }
 
+/* 自建/隐藏标签：程序 .pill 几何（胶囊），自建保留运动域色 */
 .tag {
-  padding: 1px 6px;
-  border-radius: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
   background: var(--c-exercise-soft);
   font-size: var(--fs-micro);
   font-weight: 700;
@@ -358,7 +371,6 @@ function onSaved(e: ExerciseRecord): void {
 
 .newrow {
   width: 100%;
-  margin-top: 16px;
   gap: 6px;
   padding: 14px 0;
   border-radius: var(--radius-l);
@@ -369,7 +381,6 @@ function onSaved(e: ExerciseRecord): void {
 }
 
 .hiddenrow {
-  margin-top: 16px;
   padding: 12px 2px 0;
   justify-content: space-between;
   font-size: var(--fs-caption);

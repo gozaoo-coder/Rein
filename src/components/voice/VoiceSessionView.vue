@@ -400,10 +400,10 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <Transition name="vs">
-      <section v-if="voice.view !== 'closed' && !voice.minimized" class="vs-root" aria-label="语音对话">
+      <section v-if="voice.view !== 'closed' && !voice.minimized" class="vs-root" aria-label="录音纪要">
         <!-- ===== 顶栏 =====
              录音（含暂停）时**不显示标题**：这一屏的唯一任务是「正在录」，
-             把「语音对话」四个字留在上面等于用标题占掉状态的位置。
+             把「录音纪要」四个字留在上面等于用标题占掉状态的位置。
              取而代之的是状态本身 —— 波形 + 录音中/已暂停 + 计时器，下面一条进度条。
              非录音态（待机/纪要）仍用标题：那时候用户需要知道自己在哪里。 -->
         <header class="vs-top" :class="{ 'is-live': live }">
@@ -422,7 +422,7 @@ onBeforeUnmount(() => {
               <span class="num vl-time">{{ fmtMs(voice.elapsedMs) }}</span>
             </span>
             <span v-else class="vs-title">
-              语音对话
+              录音纪要
               <small v-if="voice.view === 'memo' && voice.currentMemo">{{ voice.currentMemo.title }}</small>
               <small v-else-if="voice.status === 'processing'">与 AI 对话同会话{{ voice.segmentCount > 0 ? ` · 已结算 ${voice.segmentCount} 段` : '' }}</small>
               <small v-else>逐句实时留档 · 中断可恢复</small>

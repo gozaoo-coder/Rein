@@ -1,5 +1,5 @@
 /**
- * 语音对话端到端：无头 Edge + 原生 CDP（浏览器 mock 模式）。
+ * 录音纪要端到端：无头 Edge + 原生 CDP（浏览器 mock 模式）。
  * 运行：E2E_CDP_PORT=9444 REIN_E2E_URL=http://localhost:1740 node scripts/e2e-voice.mjs
  *
  * mock 侧伪造豆包 ASR 事件流（4 句压缩到 ~3.4s）与 TTS 音频，
@@ -138,11 +138,11 @@ async function main() {
     })()`)
 
     /* ---------- A. 主页入口与未配置引导 ---------- */
-    ok('A1 主页工具格有语音对话小卡', await evalJS(
-      `[...document.querySelectorAll('.tool')].some(t => t.textContent.includes('语音对话'))`,
+    ok('A1 主页页脚有「录音纪要」工具 chip', await evalJS(
+      `[...document.querySelectorAll('.hf-chip')].some(t => t.textContent.includes('录音纪要'))`,
     ))
-    ok('A2 点语音对话 → 未配置引导进模型页', await (async () => {
-      await clickButton('语音对话')
+    ok('A2 点录音纪要 → 未配置引导进模型页', await (async () => {
+      await clickButton('录音纪要')
       await sleep(900)
       const hash = await evalJS('location.hash')
       const toastHit = await evalJS(`[...document.querySelectorAll('.toast')].some(t => t.textContent.includes('豆包语音服务'))`)
@@ -166,8 +166,8 @@ async function main() {
     /* ---------- C. 录音转写 → 完成整理 ---------- */
     await goto('/')
     await sleep(600)
-    ok('C1 点语音对话 → 会话视图待机态', await (async () => {
-      await clickButton('语音对话')
+    ok('C1 点录音纪要 → 会话视图待机态', await (async () => {
+      await clickButton('录音纪要')
       await waitFor(`!!document.querySelector('.vs-root')`, 5000, '语音会话视图')
       return evalJS(`!!document.querySelector('.ready-orb') && !!document.querySelector('[aria-label="开始说话"]')`)
     })())
@@ -266,7 +266,7 @@ async function main() {
     ok('G1 录音后取消 → 不落纪要', await (async () => {
       await goto('/')
       await sleep(600)
-      await clickButton('语音对话')
+      await clickButton('录音纪要')
       await waitFor(`!!document.querySelector('.vs-root')`, 5000, '语音视图')
       await clickButton('开始说话')
       await waitFor(`!!document.querySelector('.vs-root .live')`, 5000, '转写态')

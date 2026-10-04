@@ -23,7 +23,7 @@ export type ToolGroup =
   | 'plan' // 训练课程
   | 'program' // 健康方案（程序计算 + AI 调参）
   | 'pomodoro' // 番茄钟
-  | 'session' // 进行中的训练课会话（只读）
+  | 'session' // 进行中的训练课会话（查看、热身处方规则与现场调整）
   | 'context' // 历史聊天检索
   | 'knowledge' // 知识库混合检索（跨来源）
   | 'memory' // 长期记忆（用户认知）
