@@ -387,6 +387,16 @@ watch(
   () => void scrollToBottom(),
 )
 
+// 回合结束后再跟一次：定稿会把流式占位气泡 morph 成食物卡 / 分析卡，**卡片是在最后一条
+// 流式事件之后才长高的** —— 那一次事件已经滚过了，这里不补一刀，卡片就停在视口下方。
+// （用户报的「AI 已经出卡，切页回来才弹出来」：回来时 onMounted 的 scrollToBottom 把它带进视野。）
+watch(
+  () => ai.busy,
+  (busy) => {
+    if (!busy) void scrollToBottom()
+  },
+)
+
 async function scrollToBottom(): Promise<void> {
   await nextTick()
   listEl.value?.scrollTo({ top: listEl.value.scrollHeight })

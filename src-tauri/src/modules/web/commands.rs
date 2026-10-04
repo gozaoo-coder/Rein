@@ -14,6 +14,8 @@ use std::time::Duration;
 use serde::Serialize;
 use url::Url;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
 use crate::error::{ReinError, Result};
 
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
@@ -169,27 +171,42 @@ fn fetch_following_redirects(
     )))
 }
 
-/// 抓取（含校验过的重定向）→ HTML→纯文本 → 截断
-fn fetch_and_convert(raw_url: &str, max_chars: usize) -> Result<WebFetchResult> {
-    let agent = ureq::AgentBuilder::new()
+/// 建一个抓取代理（超时 / UA / 手动跟重定向）
+fn new_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(15))
         .user_agent(USER_AGENT)
         .redirects(0)
-        .build();
+        .build()
+}
+
+/// 抓取（含校验过的重定向）→ (最终地址, content-type, HTML)
+fn fetch_html(raw_url: &str) -> Result<(String, String, String)> {
+    let agent = new_agent();
     let (url, resp) = fetch_following_redirects(&agent, raw_url)?;
     let content_type = resp.header("content-type").unwrap_or("").to_string();
     let mut bytes = Vec::new();
     resp.into_reader().take(MAX_BYTES).read_to_end(&mut bytes)?;
-    let html = String::from_utf8_lossy(&bytes).to_string();
+    Ok((url, content_type, String::from_utf8_lossy(&bytes).to_string()))
+}
 
-    let plain = html2text::from_read(Cursor::new(html.as_bytes()), 100)
-        .map_err(|e| ReinError::Message(format!("网页转文本失败：{e}")))?;
+/// 按上限截断，并给模型留一句「怎么拿更多」的提示
+fn clip_text(plain: String, max_chars: usize) -> (String, bool, usize) {
     let chars = plain.chars().count();
     let truncated = chars > max_chars;
     let mut text: String = plain.chars().take(max_chars).collect();
     if truncated {
         text.push_str("\n\n…（内容已截断，如需更多请用更具体的关键词搜索或换更短的页面 URL）");
     }
+    (text, truncated, chars)
+}
+
+/// 抓取 → HTML→纯文本 → 截断（web_fetch 用）
+fn fetch_and_convert(raw_url: &str, max_chars: usize) -> Result<WebFetchResult> {
+    let (url, content_type, html) = fetch_html(raw_url)?;
+    let plain = html2text::from_read(Cursor::new(html.as_bytes()), 100)
+        .map_err(|e| ReinError::Message(format!("网页转文本失败：{e}")))?;
+    let (text, truncated, chars) = clip_text(plain, max_chars);
     Ok(WebFetchResult {
         url,
         content_type,
@@ -197,6 +214,115 @@ fn fetch_and_convert(raw_url: &str, max_chars: usize) -> Result<WebFetchResult> 
         truncated,
         chars,
     })
+}
+
+/* ---------------- 搜索结果结构化 ----------------
+ * 搜索页整页转文本会掺进大量导航/广告噪音，而且结果链接常被必应包成
+ * `…/ck/a?…&u=a1<base64url>` 这种跳转地址 —— 模型据此没法直接 web_fetch。
+ * 这里把结果块抽成「标题 / 真实链接 / 摘要」，抽不到就回退整页转文本（见 web_search）。 */
+
+/// 第一段 `<tag …>…</tag>` 的内容与结束位置（`from` 起找）
+fn first_tag_inner<'a>(s: &'a str, tag: &str, from: usize) -> Option<(&'a str, usize)> {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let start = s.get(from..)?.find(&open)? + from;
+    let body = s.get(start..)?.find('>')? + start + 1;
+    let end = s.get(body..)?.find(&close)? + body;
+    Some((&s[body..end], end))
+}
+
+/// 开标签 `<tag …>` 里某个属性的值
+fn first_tag_attr(s: &str, tag: &str, attr: &str) -> Option<String> {
+    let open = format!("<{tag}");
+    let start = s.find(&open)? + open.len();
+    let end = s.get(start..)?.find('>')? + start;
+    let head = &s[start..end];
+    let pat = format!("{attr}=\"");
+    let v = head.find(&pat)? + pat.len();
+    let ve = head.get(v..)?.find('"')? + v;
+    Some(head[v..ve].to_string())
+}
+
+/// 片段 HTML → 单行纯文本（实体解码与标签剥离都交给 html2text）
+fn fragment_text(frag: &str) -> String {
+    let plain = html2text::from_read(Cursor::new(frag.as_bytes()), 200).unwrap_or_default();
+    plain.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// 必应的跳转链接（`…/ck/a?…&u=a1<base64url>`）解回真实地址；解不开就原样返回
+fn real_link(href: &str) -> String {
+    if !href.contains("/ck/a") {
+        return href.to_string();
+    }
+    let Some((_, tail)) = href.split_once("u=a1") else {
+        return href.to_string();
+    };
+    let b64: String = tail
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if b64.is_empty() {
+        return href.to_string();
+    }
+    match URL_SAFE_NO_PAD.decode(b64.as_bytes()) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(u) if u.starts_with("http") => u,
+            _ => href.to_string(),
+        },
+        Err(_) => href.to_string(),
+    }
+}
+
+/// 结果页 → 「标题 / 链接 / 摘要」清单；一条都没抽到返回空串
+fn extract_search_results(html: &str, limit: usize) -> String {
+    let mut out: Vec<(String, String, String)> = Vec::new();
+    let mut from = 0usize;
+    while out.len() < limit {
+        // 认 `class="b_algo…` 前缀：必应偶尔把它写成 b_algo b_algoBigWiki 这类组合
+        let Some(rel) = html[from..].find("class=\"b_algo") else {
+            break;
+        };
+        let block_start = from + rel;
+        let block_end = html[block_start..]
+            .find("</li>")
+            .map(|i| block_start + i)
+            .unwrap_or(html.len());
+        from = block_end;
+        let block = &html[block_start..block_end];
+
+        let Some((h2, h2_end)) = first_tag_inner(block, "h2", 0) else {
+            continue;
+        };
+        let Some((anchor, _)) = first_tag_inner(h2, "a", 0) else {
+            continue;
+        };
+        let Some(href) = first_tag_attr(h2, "a", "href") else {
+            continue;
+        };
+        let title = fragment_text(anchor);
+        let link = real_link(&href);
+        if title.is_empty() || !link.starts_with("http") {
+            continue;
+        }
+        if out.iter().any(|(_, l, _)| *l == link) {
+            continue;
+        }
+        let snippet = first_tag_inner(block, "p", h2_end)
+            .map(|(frag, _)| {
+                let t = fragment_text(frag);
+                t.chars().take(300).collect::<String>()
+            })
+            .unwrap_or_default();
+        out.push((title, link, snippet));
+    }
+    let mut text = String::new();
+    for (i, (title, link, snippet)) in out.iter().enumerate() {
+        text.push_str(&format!("{}. {title}\n   {link}\n", i + 1));
+        if !snippet.is_empty() {
+            text.push_str(&format!("   {snippet}\n"));
+        }
+    }
+    text
 }
 
 fn clamp_chars(v: Option<usize>) -> usize {
@@ -212,7 +338,7 @@ pub async fn web_fetch(url: String, max_chars: Option<usize>) -> Result<WebFetch
         .map_err(|e| ReinError::Message(format!("网络任务执行失败：{e}")))?
 }
 
-/// 网络搜索（默认必应）：拼搜索 URL 后走同一抓取管道
+/// 网络搜索（必应）：结果页抽成「标题 / 链接 / 摘要」，抽不到时回退整页转文本
 #[tauri::command]
 pub async fn web_search(query: String, max_chars: Option<usize>) -> Result<WebFetchResult> {
     let q = query.trim();
@@ -221,10 +347,30 @@ pub async fn web_search(query: String, max_chars: Option<usize>) -> Result<WebFe
     }
     let encoded = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("q", q)
+        .append_pair("setmkt", "zh-CN")
+        .append_pair("setlang", "zh-Hans")
         .finish();
     let url = format!("https://www.bing.com/search?{encoded}");
     let max = clamp_chars(max_chars);
-    tauri::async_runtime::spawn_blocking(move || fetch_and_convert(&url, max))
-        .await
-        .map_err(|e| ReinError::Message(format!("网络任务执行失败：{e}")))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let (final_url, content_type, html) = fetch_html(&url)?;
+        let hits = extract_search_results(&html, 12);
+        let plain = if hits.is_empty() {
+            // 结构解析落空（必应改版等）：退回整页转文本，宁可噪音多也不能没有结果
+            html2text::from_read(Cursor::new(html.as_bytes()), 100)
+                .map_err(|e| ReinError::Message(format!("网页转文本失败：{e}")))?
+        } else {
+            format!("搜索结果（要读某条的正文，把它的链接交给 web_fetch）：\n{hits}")
+        };
+        let (text, truncated, chars) = clip_text(plain, max);
+        Ok(WebFetchResult {
+            url: final_url,
+            content_type,
+            text,
+            truncated,
+            chars,
+        })
+    })
+    .await
+    .map_err(|e| ReinError::Message(format!("网络任务执行失败：{e}")))?
 }

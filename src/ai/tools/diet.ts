@@ -16,7 +16,7 @@ export const dietTools: AppTool[] = [
     name: 'search_food',
     group: 'diet',
     label: '搜索食物库',
-    description: '按名称模糊搜索 Rein 食物库（按字包含/顺序相似度排序），返回 id 与每 100g 营养。记录饮食前先用它确认 foodId。',
+    description: '按名称模糊搜索 Rein 食物库（按字包含/顺序相似度排序），返回 id 与每 100g 营养。记录饮食前先用它确认 foodId；换几个通用关键词再搜（别名、同类）往往能命中。库里确实没有时不要放弃这条记录：先按构成处理（web_search 查配料与营养，或拆成库内已有食材），再用 create_food 补录。',
     parameters: Type.Object({
       query: Type.Optional(Type.String({ description: '名称关键词，如「米饭」「无糖可乐」；不传返回常见食物' })),
       limit: Type.Optional(Type.Number({ description: '最多返回条数，默认 15，最大 30' })),
@@ -121,7 +121,7 @@ export const dietTools: AppTool[] = [
     group: 'diet',
     label: '新增食物到库',
     description:
-      '把食物库没有的食品新建进 Rein 食物库，营养按每 100g 估算。search_food 确认库里没有时直接调用补录（无需先征求用户同意），建完用返回的 id 继续后续动作；同名已存在时直接返回已有记录（不重复建）。',
+      '把食物库没有的食品新建进 Rein 食物库，营养按每 100g 估算。**估算要有依据**：优先用它的构成换算（配料/菜谱配比；品牌与包装食品可先用 web_search 查配料表与营养成分），或参考库内最接近的同类食品；拿不准构成就先问用户，不要凭空填数字。search_food 确认库里没有时可直接调用补录（无需先征求用户同意），建完用返回的 id 继续后续动作；同名已存在时直接返回已有记录（不重复建）。',
     parameters: Type.Object({
       name: Type.String({ description: '食品通用名称，不带品牌/规格后缀，如「杨枝甘露」' }),
       kcal: Type.Number({ description: '每 100g 热量（大卡）' }),

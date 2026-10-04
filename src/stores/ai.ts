@@ -645,18 +645,27 @@ export const useAiStore = defineStore('ai', () => {
     }
   }
 
+  /** 入列后取回消息的**响应式代理**再交给调用方。
+   *
+   * 为什么必须取回来：`messages.value` 是 ref 数组，元素读出来才是 Proxy，直接写原始对象
+   * 绕过了 set 拦截器 —— 数据变了、依赖不触发、界面不动。用户报的「AI 已经出卡，切到别的
+   * 页面再回来才弹出」就是这条：定稿时改的正是刚 push 进去的原始对象。 */
+  function reactiveMsg(m: AiMessage): AiMessage {
+    return messages.value.find((x) => x.id === m.id) ?? m
+  }
+
   function pushAssistant(msg: Partial<AiMessage>, persistNow = true): AiMessage {
     const m: AiMessage = { id: uid(), role: 'assistant', kind: 'text', at: new Date().toISOString(), ...msg }
     messages.value.push(m)
     if (persistNow) persist(m)
-    return m
+    return reactiveMsg(m)
   }
 
   function pushUser(msg: Partial<AiMessage>): AiMessage {
     const m: AiMessage = { id: uid(), role: 'user', kind: 'text', at: new Date().toISOString(), ...msg }
     messages.value.push(m)
     persist(m)
-    return m
+    return reactiveMsg(m)
   }
 
   /* ---------- 流式气泡聚合 ----------
@@ -677,7 +686,10 @@ export const useAiStore = defineStore('ai', () => {
       streaming: true,
     }
     messages.value.push(msg)
-    streamCreated.push(msg)
+    // 与 pushAssistant 同理：入列后一律用响应式代理往下传（streamCreated 会被
+    // settleStreamMessages / applyLlmReply 就地改写，写原始对象同样不触发渲染）
+    const bubble = reactiveMsg(msg)
+    streamCreated.push(bubble)
     streamSeq.value++
     // 入场动画仅 opacity + scale，不动 height（思考/工具占位气泡跳过；
     // 掉帧降级期同样跳过——每个气泡一次合成在弱机上是纯负担。
@@ -705,7 +717,7 @@ export const useAiStore = defineStore('ai', () => {
         })
       })
     }
-    return msg
+    return bubble
   }
 
   const agg = createStreamAggregator<AiMessage>({
@@ -733,10 +745,11 @@ export const useAiStore = defineStore('ai', () => {
   function settleStreamMessages(finalBubble: AiMessage | null): void {
     for (const m of streamCreated) {
       m.streaming = false
-      // 认 id 不认对象：finalBubble 多半来自 messages.value.find(...)（响应式代理），
-      // 而 streamCreated 里存的是原始对象，身份比对恒不相等 —— 那会把定稿气泡当「无正文
-      // 也无过程的空占位」摘掉，于是「模型没思考没工具、直接出 food 卡」时卡片落在一个
-      // 已脱列的对象上，界面上什么都不显示（定稿数据还在，只是没人渲染它）。
+      // 认 id 不认对象：finalBubble 可能是 messages.value.find(...) 取出的代理，
+      // 也可能是 pushAssistant 新建的那条 —— 对象身份不作为判据，id 才是。
+      // （历史上这里吃过亏：定稿气泡被当「无正文也无过程的空占位」摘掉，
+      //  于是「模型没思考没工具、直接出 food 卡」时卡片落在一个已脱列的对象上，
+      //  界面上什么都不显示。）
       if (finalBubble && m.id === finalBubble.id) continue
       const meta = agg.getMeta(m.id)
       if (!m.text && meta && (meta.reasoning || meta.toolCalls.length)) {

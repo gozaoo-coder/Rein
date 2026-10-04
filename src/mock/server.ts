@@ -4590,7 +4590,8 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'web_fetch': {
       const url =
         cmd === 'web_search'
-          ? `https://www.bing.com/search?q=${encodeURIComponent(String(args.query ?? '').trim())}`
+          ? // 与 Rust 侧同一组参数（zh 市场/语言），免得开发态与真机的搜索质量不一致
+            `https://www.bing.com/search?q=${encodeURIComponent(String(args.query ?? '').trim())}&setmkt=zh-CN&setlang=zh-Hans`
           : String(args.url ?? '')
       if (!url) throw new Error('搜索关键词或 URL 不能为空')
       const maxChars = Number(args.maxChars ?? 6000)
