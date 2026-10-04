@@ -39,26 +39,58 @@ html {
   touch-action: pan-x pan-y;
 }
 
+/* 中性底画在 <html> 上（= 画布底色），**不画在 body 上**：
+   body 一旦自己画背景，它就压在负 z 层之上（层叠顺序：负 z 后代 → 在流块级背景），
+   壳里那两层环境光（见下）会被整块盖住 —— 2026-10-04 踩过一次。
+   画在 html 上，光就正好落在「画布底色」与「内容」之间。 */
+html {
+  background: var(--bg);
+}
+
 body {
   font-family: var(--font);
   font-size: var(--fs-body);
   line-height: 1.45;
   color: var(--text-1);
-  background:
-    radial-gradient(1200px 700px at 18% -10%, #ffffff 0%, #eef0f4 48%, #e6e8ee 100%)
-    var(--bg);
-  /* 渐变相对视口定位，不随页面滚动（body 背景默认相对文档画布） */
-  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-@media (prefers-color-scheme: dark) {
-  body {
-    background:
-      radial-gradient(1200px 700px at 18% -10%, #16161a 0%, #0b0b0d 52%, #000000 100%);
-    background-attachment: fixed;
-  }
+/* ---------- 环境光：画在壳上 ----------
+   两个壳把 `--app-ambient` 铺进自己的盒子，百分位按**壳自己**算 —— 栏在哪，光就在哪。
+   从前这条渐变挂在 body 上 + `background-attachment: fixed`：渐变按**视口**定位，
+   于是窗口比内容栏宽多少，光就偏出去多少（宽窗口里窗口左上角发亮、居中那栏反倒平平的）。
+
+   手机壳（< DESKTOP_MIN）：固定层与栏同宽、居中。视口比 --frame-max 窄时它就是整屏，
+   与手机上逐像素一致；更宽时窗口两侧留给中性底 —— 那栏才读得出是「一块屏」。
+   `position: fixed` 让它不随文档滚：「光钉在屏幕左上、内容从它下面滚过去」与从前相同。
+   层挂在 .app-frame 上、**不在** [data-rubber-page] 里：超范围平移只动内容，光不动。
+   桌面壳：整窗一块光，与从前一致。
+
+   z-index: -1 落在根层叠上下文的负数层 —— 盖住画布底色、被一切在流内容盖住
+   （壳自己没有背景，也不构成层叠上下文）。 */
+.app-frame::before,
+.desk-frame::before {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  z-index: -1;
+  background: var(--app-ambient) var(--bg);
+}
+
+.app-frame::before {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  /* 100% 的包含块是初始包含块（视口），与 .app-frame 的宽度基准同一个 ——
+     #app / body 都没有内边距，所以这一层与栏严丝合缝 */
+  width: 100%;
+  max-width: var(--frame-max);
+  transform: translateX(-50%);
+}
+
+.desk-frame::before {
+  inset: 0;
 }
 
 button {

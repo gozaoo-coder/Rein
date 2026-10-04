@@ -861,8 +861,13 @@ onMounted(() => {
 }
 
 /* 高画质及以上：这排跟着升成玻璃材质。落影取 --glass-panel-shadow（= --shadow-card）而
-   不是 --glass-shadow —— 在流的内容面用前者、浮层才用后者（base.css 那两组注释的约定）。 */
-:global(html[data-perf]:not([data-perf='low'])) .hf-tools .hf-chip {
+   不是 --glass-shadow —— 在流的内容面用前者、浮层才用后者（base.css 那两组注释的约定）。
+
+   **不要写 `:global(html[…])`**：scoped 编译器只认「整条选择器都包在 :global() 里」这一种
+   用法，`:global(甲) 乙 丙` 会被它截成 `甲` 一条 —— 这条规则 2026-10-04 就是这么变成了
+   挂在 <html> 上的 `background: var(--glass-panel-fill)`（整页被压一层半透明白，
+   footer 这两枚 chip 反倒没拿到材质）。前缀交给编译器自己加：它只给末段挂 data-v。 */
+html[data-perf]:not([data-perf='low']) .hf-tools .hf-chip {
   background: var(--glass-panel-fill);
   box-shadow: var(--glass-panel-shadow), var(--glass-insets);
 }

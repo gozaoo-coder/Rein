@@ -260,7 +260,8 @@ onMounted(() => {
   max-width: var(--frame-max);
   min-height: 100dvh;
   margin: 0 auto;
-  /* 避开手机状态栏/刘海；背景渐变铺满 body，内容在其下方滚动 */
+  /* 避开手机状态栏/刘海；环境光是这一栏自己的 ::before 固定层（base.css「环境光」段），
+     内容从它上面滚过去 —— 它不铺到窗口两侧去 */
   padding-top: var(--safe-top);
 }
 

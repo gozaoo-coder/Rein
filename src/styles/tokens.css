@@ -9,6 +9,10 @@
 
   /* ---------- 画布与表面 ---------- */
   --bg: #f5f5f7;
+  /* App 自己的环境光（左上角一点光，往下化开）。它画在**壳上**、不画在 body 上
+     （规则见 base.css「环境光」段）：渐变按壳自己的盒子定百分位，所以窗口比手机那条
+     栏宽多少都不影响光落在栏里；画布只留 --bg 当中性底。 */
+  --app-ambient: radial-gradient(1200px 700px at 18% -10%, #ffffff 0%, #eef0f4 48%, #e6e8ee 100%);
   --surface: #ffffff;
   --surface-2: #f2f2f4; /* 分段控件、次级按钮、内嵌灰底 */
   --surface-translucent: rgba(255, 255, 255, 0.72); /* 导航 / 标签栏毛玻璃 */
@@ -319,6 +323,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #000000;
+    --app-ambient: radial-gradient(1200px 700px at 18% -10%, #16161a 0%, #0b0b0d 52%, #000000 100%);
     --surface: #1c1c1e;
     --surface-2: #2c2c2e;
     --surface-translucent: rgba(28, 28, 30, 0.72);
