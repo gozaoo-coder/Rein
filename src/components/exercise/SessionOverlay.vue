@@ -545,8 +545,6 @@ let morphTo: MorphState | null = null
 let morphT0 = 0
 let morphDur = 0
 let morphDone: (() => void) | null = null
-/** 本次形变是否挂了丰富档内容编舞（stepMorph 据此让画布全程可见） */
-let richMorph = false
 
 /** M3 emphasized 近似：起始快、收尾缓。二分求解 cubic-bezier 的进度映射 */
 const easeAt = ((): ((x: number) => number) => {
@@ -570,14 +568,20 @@ const easeAt = ((): ((x: number) => number) => {
   }
 })()
 
-function writeMorph(m: MorphState): void {
+/** 最近一次写入的圆角（null=未知，''=已归零）——避免重复写同值触发无谓重绘 */
+let writtenRadius: string | null = null
+
+function writeMorph(m: MorphState, opts?: { skipRadius?: boolean }): void {
   const el = layerEl.value
   const fade = fadeEl.value
   if (!el || !fade) return
   cur = m
   if (m.sx === 1 && m.sy === 1 && m.tx === 0 && m.ty === 0 && m.r === 0) {
     el.style.transform = ''
-    el.style.borderRadius = ''
+    if (writtenRadius !== '') {
+      el.style.borderRadius = ''
+      writtenRadius = ''
+    }
   } else {
     el.style.transform = `translate3d(${m.tx}px, ${m.ty}px, 0) scale(${m.sx}, ${m.sy})`
     // 圆角补偿：层被各向异性缩放，把目标圆角原样写在壳上，绘制出来会被
@@ -585,7 +589,16 @@ function writeMorph(m: MorphState): void {
     // 途中屏幕四角还会豁出底页。这里反除以当前 scale 写成椭圆半径，绘制
     // 出来的视觉圆角恒等于 r；布局盒是全屏的，小锚点反算出的大写值装得
     // 下，不会被钳制。r≈0（全屏端）归零成方角，与屏幕边缘对齐。
-    el.style.borderRadius = m.r <= 0.01 ? '0px' : `${(m.r / m.sx).toFixed(2)}px / ${(m.r / m.sy).toFixed(2)}px`
+    // 圆角是**绘制属性**：每写一次就整层重绘一次。真机实测这是手机掉帧的
+    // 大头之一，所以逐帧写改成节拍写（stepMorph 每 N 帧放行一次，末帧精确
+    // 补写），肉眼读不出 1/3 频率的圆角步进，代价却是 1/3。
+    if (!opts?.skipRadius) {
+      const radius = m.r <= 0.01 ? '0px' : `${(m.r / m.sx).toFixed(2)}px / ${(m.r / m.sy).toFixed(2)}px`
+      if (radius !== writtenRadius) {
+        el.style.borderRadius = radius
+        writtenRadius = radius
+      }
+    }
   }
   fade.style.opacity = String(m.fade)
   fade.style.visibility = m.fade <= 0.001 ? 'hidden' : 'visible'
@@ -619,17 +632,19 @@ function debugMorph(label: string, data: Record<string, unknown>): void {
   console.warn(`[morph] ${label}`, JSON.stringify({ ...data, layer: rect(layerEl.value), dockPos: rect(document.querySelector('.dock-pos')) }))
 }
 
+let morphTick = 0
+const RADIUS_WRITE_EVERY = 3
+
 function stepMorph(now: number): void {
   if (!morphFrom || !morphTo) return
   const p = easeAt(Math.min(1, (now - morphT0) / morphDur))
+  morphTick += 1
   const lp = (a: number, b: number) => a + (b - a) * p
   // 收起方向的内容淡出走前段加速的独立进度：壳还在收缩早期就把内容
-  // 淡干净，避免「微缩快照」残影。展开向分两套：丰富档画布快速跟上来
-  //（内容块由 animejs layout 编舞入场，画布不能还黑着）；默认档延后到
-  // 末段 25% 才浮现——壳先长到位内容再出现，半程的拉伸文字不会暴露。
-  const pf = morphTo.fade < morphFrom.fade || richMorph
-    ? Math.min(1, p * 2.5)
-    : Math.max(0, (p - 0.75) / 0.25)
+  // 淡干净，避免「微缩快照」残影。展开向延后到末段 8% 才浮现——壳先长到
+  // 近 1:1 内容再出现（阈值同见 contentThreshold）：内容在非 1:1 缩放下
+  // 每帧都会被重新栅格化，真机实测这是开合掉到 15fps 的最大一笔。
+  const pf = morphTo.fade < morphFrom.fade ? Math.min(1, p * 2.5) : Math.max(0, (p - 0.92) / 0.08)
   const lpf = (a: number, b: number) => a + (b - a) * pf
   writeMorph({
     sx: lp(morphFrom.sx, morphTo.sx),
@@ -640,10 +655,11 @@ function stepMorph(now: number): void {
     // 悬浮条圆角，绘制值由 writeMorph 做 scale 补偿
     r: lp(morphFrom.r, morphTo.r),
     fade: lpf(morphFrom.fade, morphTo.fade),
-  })
-  // 可见性阈值与展开向的淡入起点对齐（0.75）；丰富档内容显隐归编舞管，
-  // 画布全程可见。收起向沿用「恒隐藏」快速淡出。
-  const contentThreshold = richMorph ? 0 : morphTo.fade > morphFrom.fade ? 0.75 : 2
+  }, { skipRadius: p < 1 && morphTick % RADIUS_WRITE_EVERY !== 1 })
+  // 可见性阈值与展开向的淡入起点对齐（0.92 ≈ 壳长到 99% 缩放的时刻）；
+  // 收起向沿用「恒隐藏」快速淡出。丰富档的内容块另有编舞（CONTENT_ENTER_AT
+  // 同样锚在这个时刻之后），画布走同一套阈值。
+  const contentThreshold = morphTo.fade > morphFrom.fade ? 0.92 : 2
   fadeEl.value!.style.visibility = p < contentThreshold ? 'hidden' : 'visible'
   if (!morphFrameLogged) {
     morphFrameLogged = true
@@ -672,7 +688,7 @@ function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => vo
     return
   }
   morphFrameLogged = false
-  richMorph = motionRich.value && !!fadeEl.value
+  morphTick = 0
   prepareMorphShell()
   if (to.fade <= from.fade) fadeEl.value!.style.visibility = 'hidden'
   morphFrom = { ...from }
@@ -715,8 +731,9 @@ const CONTENT_SELECTORS = ['.ctrl-top', '.pane', '.ctrl-dock']
 let contentTimers: number[] = []
 let contentAnims: { cancel?: () => void }[] = []
 
-/** 展开向：内容块在壳形变大半后逐个入场（早于 70% 会被未长成的壳压扁） */
-const CONTENT_ENTER_AT = 340
+/** 展开向：内容块等壳长到近 1:1 才逐个入场（既是防压扁，也是防内容在
+ *  非等比缩放下被逐帧重栅格——430ms 时形变已到 ~99.7%，内容栅格一笔不亏） */
+const CONTENT_ENTER_AT = 430
 const CONTENT_ENTER_MS = 260
 const CONTENT_ENTER_GAP = 50
 /** 收起向：内容块先逐个汇出，壳体随后才收缩 */
@@ -775,21 +792,35 @@ function choreoContentEnter(): void {
   })
 }
 
+/** 收起向：三块依次轻微下移＋淡出（20ms 交错）。这里刻意**不走 animejs
+ *  layout**：离场没有 FLIP 可言（块只是原地淡出），而 layout.update 的记录/
+ * 测量会在肌群图那棵大子树上强制一次布局——真机实测单帧 ~50ms×倍率，就是
+ * 收起开头的卡顿帧。WAAPI 直写只动合成属性，代价落在合成器。 */
 function choreoContentLeave(): void {
-  CONTENT_SELECTORS.forEach((sel, i) => {
-    contentTimers.push(
-      window.setTimeout(() => {
-        if (!immersiveClosing.value) return
-        const el = fadeEl.value?.querySelector<HTMLElement>(sel)
-        if (!el) return
-        try {
-          const anim = layoutFor(el).update(() => { el.style.display = 'none' }, { duration: CONTENT_LEAVE_MS })
-          if (anim) contentAnims.push(anim as { cancel?: () => void })
-        } catch {
-          el.style.display = 'none'
-        }
-      }, i * CONTENT_LEAVE_GAP),
-    )
+  const els = contentEls()
+  els.forEach((el, i) => {
+    try {
+      const anim = el.animate(
+        [
+          { opacity: 1, transform: 'translateY(0)' },
+          { opacity: 0, transform: 'translateY(10px)' },
+        ],
+        {
+          duration: CONTENT_LEAVE_MS,
+          delay: i * CONTENT_LEAVE_GAP,
+          easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+          fill: 'backwards',
+        },
+      )
+      contentAnims.push(anim as unknown as { cancel?: () => void })
+      const hide = () => {
+        el.style.display = 'none'
+      }
+      anim.addEventListener('finish', hide)
+      anim.addEventListener('cancel', hide)
+    } catch {
+      el.style.display = 'none'
+    }
   })
 }
 

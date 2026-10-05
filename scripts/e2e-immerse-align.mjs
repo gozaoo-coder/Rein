@@ -74,6 +74,7 @@ const layerVisible = `(() => { const el = document.querySelector('.session-layer
 /** 逐帧采样器：页面内 rAF 记录器，window.__alignSamples 供断言读取 */
 const SAMPLER = (span) => `(() => {
   window.__alignSamples = []
+  window.__paneSeq = 0
   const t0 = performance.now()
   const sample = (now) => {
     const cs = (el) => (el ? getComputedStyle(el) : null)
@@ -82,7 +83,9 @@ const SAMPLER = (span) => `(() => {
     const D = cs(document.querySelector('.dock'))
     const C = cs(document.querySelector('.session-page'))
     const T = cs(document.querySelector('.ctrl-top'))
-    const P = cs(document.querySelector('.pane'))
+    const paneEl = document.querySelector('.pane')
+    const P = cs(paneEl)
+    if (paneEl && !paneEl.__pid) paneEl.__pid = 'pane' + (++window.__paneSeq)
     window.__alignSamples.push({
       t: Math.round(now - t0),
       state: document.documentElement.dataset.immersive,
@@ -100,6 +103,7 @@ const SAMPLER = (span) => `(() => {
       ctrlTopTransform: T ? T.transform : 'none',
       paneDisplay: P ? P.display : 'missing',
       paneOpacity: P ? Number(P.opacity) : -1,
+      paneId: paneEl ? paneEl.__pid : 'none',
     })
     if (now - t0 < ${span}) requestAnimationFrame(sample)
   }
@@ -235,9 +239,10 @@ try {
   const minCtrl = Math.min(...a3.map((s) => s.ctrlTopOpacity).filter((v) => v >= 0))
   ok('A3 内容块被编舞驱动（opacity 被拉低再回满）', minCtrl < 0.4, `ctrl-top 最低 opacity ${minCtrl.toFixed(2)}`)
   ok('A3 内容块入场带位移（transform 被驱动）', a3.some((s) => s.ctrlTopTransform !== 'none' && s.layerOpacity > 0.02), JSON.stringify(a3.find((s) => s.ctrlTopTransform !== 'none')?.ctrlTopTransform))
-  const settled = a3.at(-1)
-  const paneTimeline = a3.filter((s, i, arr) => i === 0 || arr[i - 1].paneDisplay !== s.paneDisplay).map((s) => `${s.t}:${s.paneDisplay}@${s.paneOpacity?.toFixed?.(2)}`)
-  ok('A3 内容块最终就位可见', settled && settled.ctrlTopDisplay !== 'none' && settled.ctrlTopOpacity > 0.95 && settled.paneDisplay !== 'none' && settled.paneOpacity > 0.95, JSON.stringify({ ctrl: `${settled?.ctrlTopDisplay}/${settled?.ctrlTopOpacity.toFixed(2)}`, pane: `${settled?.paneDisplay}/${settled?.paneOpacity.toFixed(2)}`, paneTimeline }))
+  const paneTimeline = a3.filter((s, i, arr) => i === 0 || arr[i - 1].paneDisplay !== s.paneDisplay || arr[i - 1].paneId !== s.paneId).map((s) => `${s.t}:${s.paneId}/${s.paneDisplay}@${s.paneOpacity?.toFixed?.(2)}`)
+  await sleep(900) // 等编舞与可能的会话水合重渲染完全落定
+  const a3live = await evalJS(`(() => { const g = (sel) => { const el = document.querySelector(sel); return el ? { d: getComputedStyle(el).display, o: Number(getComputedStyle(el).opacity) } : null }; return { ctrl: g('.ctrl-top'), pane: g('.pane'), dock: g('.ctrl-dock') } })()`)
+  ok('A3 内容块最终就位可见（落定后实时读）', !!a3live.ctrl && a3live.ctrl.d !== 'none' && a3live.ctrl.o > 0.95 && !!a3live.pane && a3live.pane.d !== 'none' && a3live.pane.o > 0.95 && (!a3live.dock || (a3live.dock.d !== 'none' && a3live.dock.o > 0.95)), JSON.stringify({ ...a3live, paneTimeline }))
 
   /* ---------- A4. 丰富档收起：内容先汇出、壳后收缩、落位溶解一致 ---------- */
   await evalJS(SAMPLER(1100))
