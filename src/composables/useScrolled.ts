@@ -28,6 +28,7 @@ function bindScroller(
 ): () => void {
   let target: Scroller = window
   let bound = false
+  let raf = 0
 
   function handler(): void {
     onScroll()
@@ -43,7 +44,22 @@ function bindScroller(
     return window
   }
 
+  /**
+   * 解析与首读**整体推迟到 rAF**：这一步做两件强制同步的事——沿父链逐个
+   * getComputedStyle（逼样式重算）与读 scrollTop（逼布局），而 bind 的触发
+   * 时机（onMounted / watch el 的微任务 flush）正落在页面挂载任务里，等于把
+   * 样式重算与布局硬塞进挂载微任务。桌面实测这一笔不大（切页长任务的主因是
+   * 路由 scrollTo 与页面自身挂载），但它的代价随 DOM 深度 × 页头数量放大，
+   * 正是手机上要躲的那一类。推迟一帧的代价只是页头状态晚一帧入位（肉眼不可辨，
+   * 且首帧本来也读不到真实滚动位置）；滚动监听同理——挂载瞬间用户不可能已在滚动。
+   */
   function bind(): void {
+    if (raf) return
+    raf = requestAnimationFrame(apply)
+  }
+
+  function apply(): void {
+    raf = 0
     const next = resolve()
     // 初值也是 window：不能只比对象，否则「解析结果就是 window」会一次都不挂监听
     if (bound && next === target) return
@@ -58,6 +74,7 @@ function bindScroller(
   onMounted(bind)
 
   return () => {
+    if (raf) cancelAnimationFrame(raf)
     if (bound) target.removeEventListener('scroll', handler)
   }
 }
