@@ -36,6 +36,8 @@ const results = []
 let ws
 let msgId = 0
 const pending = new Map()
+/** 页面运行时异常/报错（白屏类问题的主要线索，测试末尾统一打印） */
+const pageErrors = []
 
 function ok(name, pass, detail = '') {
   results.push({ name, pass })
@@ -131,6 +133,12 @@ try {
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data)
+    if (m.method === 'Runtime.exceptionThrown') {
+      const d = m.params?.exceptionDetails
+      pageErrors.push(`[异常] ${d?.exception?.description ?? d?.text ?? JSON.stringify(m.params).slice(0, 300)}`)
+    } else if (m.method === 'Runtime.consoleAPICalled' && m.params?.type === 'error') {
+      pageErrors.push(`[console.error] ${(m.params.args ?? []).map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300)}`)
+    }
     if (m.id && pending.has(m.id)) {
       pending.get(m.id).resolve(m.result ?? m)
       pending.delete(m.id)
@@ -158,7 +166,12 @@ try {
   ok('A1 closing 期壳（TabBar）就位可见', closing.length > 0 && closing.every((s) => s.dockOpacity === 1), JSON.stringify([...new Set(closing.map((s) => s.dockOpacity))]))
   ok('A1 closing 期悬浮条原位可见（落点底）', closing.length > 0 && closing.every((s) => s.barOpacity === 1 && s.barTranslate === 'none' && s.barAnim === 'none'), JSON.stringify([...new Set(closing.map((s) => `${s.barOpacity}/${s.barAnim}`))]))
   ok('A1 圆角走椭圆补偿（含 " / " 形态）', ellipses.length > 2, `椭圆采样 ${ellipses.length}`)
-  const plain = a1.filter((s) => s.layerRadius && s.layerRadius !== '0px' && !ELLIPSE.test(s.layerRadius))
+  const plain = a1.filter((s) => {
+    if (!s.layerRadius || s.layerRadius === '0px' || ELLIPSE.test(s.layerRadius)) return false
+    // 早期帧 scale≈1 时写入的相等椭圆半径会被 Chromium 折叠成普通形式（如 "0.3px"），
+    // 那是合法的；只有「明显圆角却走裸半径」才是旧的全屏豁底 bug
+    return parseFloat(s.layerRadius) > 8
+  })
   ok('A1 无「裸圆角」帧（全屏方角豁底已除）', plain.length === 0, JSON.stringify(plain.slice(0, 2).map((s) => s.layerRadius)))
   // 末帧视觉圆角 = 写入值 × 当前 scale，应贴回悬浮条圆角（matrix 与 matrix3d 都认）
   const scaleOf = (tf) => {
@@ -223,7 +236,8 @@ try {
   ok('A3 内容块被编舞驱动（opacity 被拉低再回满）', minCtrl < 0.4, `ctrl-top 最低 opacity ${minCtrl.toFixed(2)}`)
   ok('A3 内容块入场带位移（transform 被驱动）', a3.some((s) => s.ctrlTopTransform !== 'none' && s.layerOpacity > 0.02), JSON.stringify(a3.find((s) => s.ctrlTopTransform !== 'none')?.ctrlTopTransform))
   const settled = a3.at(-1)
-  ok('A3 内容块最终就位可见', settled && settled.ctrlTopDisplay !== 'none' && settled.ctrlTopOpacity > 0.95 && settled.paneDisplay !== 'none' && settled.paneOpacity > 0.95, JSON.stringify(settled && { ctrl: `${settled.ctrlTopDisplay}/${settled.ctrlTopOpacity.toFixed(2)}`, pane: `${settled.paneDisplay}/${settled.paneOpacity.toFixed(2)}` }))
+  const paneTimeline = a3.filter((s, i, arr) => i === 0 || arr[i - 1].paneDisplay !== s.paneDisplay).map((s) => `${s.t}:${s.paneDisplay}@${s.paneOpacity?.toFixed?.(2)}`)
+  ok('A3 内容块最终就位可见', settled && settled.ctrlTopDisplay !== 'none' && settled.ctrlTopOpacity > 0.95 && settled.paneDisplay !== 'none' && settled.paneOpacity > 0.95, JSON.stringify({ ctrl: `${settled?.ctrlTopDisplay}/${settled?.ctrlTopOpacity.toFixed(2)}`, pane: `${settled?.paneDisplay}/${settled?.paneOpacity.toFixed(2)}`, paneTimeline }))
 
   /* ---------- A4. 丰富档收起：内容先汇出、壳后收缩、落位溶解一致 ---------- */
   await evalJS(SAMPLER(1100))
@@ -238,9 +252,13 @@ try {
   ok('A4 收尾浮条零位移零动画', a4.every((s) => s.barAnim === 'none' && s.barTranslate === 'none'), JSON.stringify([...new Set(a4.map((s) => s.barAnim))]))
   ok('A4 最终回到 ready', a4.slice(-3).some((s) => s.state === 'ready'), `末态 ${a4.at(-1)?.state}`)
 
+  if (pageErrors.length) {
+    console.log(`\n页面运行时报错 ${pageErrors.length} 条：`)
+    for (const e of pageErrors.slice(0, 10)) console.log('  ' + e)
+  }
   const pass = results.filter((r) => r.pass).length
   console.log(`\n${pass}/${results.length} 通过`)
-  process.exitCode = pass === results.length ? 0 : 1
+  process.exitCode = pass === results.length && pageErrors.length === 0 ? 0 : 1
 } finally {
   proc.kill()
   ws?.close()

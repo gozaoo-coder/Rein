@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { createLayout, stagger } from 'animejs'
+import { createLayout } from 'animejs'
 import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
@@ -672,7 +672,7 @@ function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => vo
     return
   }
   morphFrameLogged = false
-  richMorph = motionRich.value && !!ensureContentLayout()
+  richMorph = motionRich.value && !!fadeEl.value
   prepareMorphShell()
   if (to.fade <= from.fade) fadeEl.value!.style.visibility = 'hidden'
   morphFrom = { ...from }
@@ -702,45 +702,95 @@ function prepareMorphShell(): void {
    不经 Vue（record→mutate→animate 的契约要求 DOM 变更同步发生在回调里）。 */
 type ContentLayout = ReturnType<typeof createLayout>
 
-let contentLayout: ContentLayout | null = null
-let contentTimer = 0
-let contentAnim: { cancel?: () => void } | null = null
+/** 每个内容块一个独立 layout 实例，**root = 块自身**。两个源码级约束：
+ *  ① 实例的 inline-style 捕获/恢复会横扫 root 子树全部节点（newState.forEachRootNode），
+ *  root 同为画布的多实例会互相把别人的块恢复成捕获时的 display:none（0.5.8 白屏的
+ *  第二根因：pane 反复「显形→被藏」）；root 收窄到块自身后互不越界。
+ *  ② root 本身恒为 target（源码 "Root node are always targets"），块 display none→''
+ *  即触发 enter/leave，enterFrom/leaveTo 直接作用于块。
+ *  另外动画终点是 update 回调后的**自然态**——绝不能预先垫 opacity/transform
+ *  内联值，否则终点被毒化成初值（0.5.8 白屏的第一根因：内容停在 opacity:0）。 */
+const contentLayouts = new WeakMap<HTMLElement, ContentLayout>()
+const CONTENT_SELECTORS = ['.ctrl-top', '.pane', '.ctrl-dock']
+let contentTimers: number[] = []
+let contentAnims: { cancel?: () => void }[] = []
 
-/** 展开向：内容块在壳形变过半后入场（早于 70% 会被未长成的壳压扁） */
+/** 展开向：内容块在壳形变大半后逐个入场（早于 70% 会被未长成的壳压扁） */
 const CONTENT_ENTER_AT = 340
 const CONTENT_ENTER_MS = 260
 const CONTENT_ENTER_GAP = 50
-/** 收起向：内容块先交错汇出，壳体随后才收缩 */
+/** 收起向：内容块先逐个汇出，壳体随后才收缩 */
 const CONTENT_LEAVE_MS = 140
 const CONTENT_LEAVE_GAP = 20
 const CONTENT_SHELL_DELAY = 130
 
-function ensureContentLayout(): ContentLayout | null {
-  const root = fadeEl.value
-  if (!root) return null
-  contentLayout ??= createLayout(root, {
-    children: ['.ctrl-top', '.ctrl-dock', '.pane'],
-    ease: 'out(3)',
-    enterFrom: { opacity: 0, translateY: 16 },
-    leaveTo: { opacity: 0, translateY: 10 },
-  })
-  return contentLayout
+function layoutFor(el: HTMLElement): ContentLayout {
+  let layout = contentLayouts.get(el)
+  if (!layout) {
+    layout = createLayout(el, {
+      ease: 'out(3)',
+      enterFrom: { opacity: 0, translateY: 16 },
+      leaveTo: { opacity: 0, translateY: 10 },
+    })
+    contentLayouts.set(el, layout)
+  }
+  return layout
 }
 
 function contentEls(): HTMLElement[] {
   const root = fadeEl.value
   if (!root) return []
-  return Array.from(root.querySelectorAll<HTMLElement>('.ctrl-top, .ctrl-dock, .pane'))
+  const els: HTMLElement[] = []
+  for (const sel of CONTENT_SELECTORS) els.push(...root.querySelectorAll<HTMLElement>(sel))
+  return els
 }
 
-/** 打断内容编舞：方向反打时先停掉在飞的 enter/leave 与待触发的入场 */
+/** 打断内容编舞：方向反打时先停掉在飞的 enter/leave 与待触发的调度 */
 function cancelContentChoreo(): void {
-  if (contentTimer) {
-    clearTimeout(contentTimer)
-    contentTimer = 0
-  }
-  contentAnim?.cancel?.()
-  contentAnim = null
+  for (const t of contentTimers) clearTimeout(t)
+  contentTimers = []
+  for (const a of contentAnims) a?.cancel?.()
+  contentAnims = []
+}
+
+/** 丰富档内容块逐个入场：槽位将启前才按选择器**现查元素**——开课时 pane/底坞
+ *  会晚于 prep 随会话水合才挂载，调度期捕获的引用会变成死元素（0.5.8 白屏的
+ *  第三根因）。只接管**被 prep 藏过**的块（display none→'' 才是 enter）；晚挂载
+ *  的块走自身 fadeUp，不拉进编舞。编舞失败就立刻显形：宁缺动画，不能白屏。 */
+function choreoContentEnter(): void {
+  CONTENT_SELECTORS.forEach((sel, i) => {
+    contentTimers.push(
+      window.setTimeout(() => {
+        if (!immersiveOpen.value || immersiveClosing.value) return
+        const el = fadeEl.value?.querySelector<HTMLElement>(sel)
+        if (!el || el.style.display !== 'none') return
+        try {
+          const anim = layoutFor(el).update(() => { el.style.display = '' }, { duration: CONTENT_ENTER_MS })
+          if (anim) contentAnims.push(anim as { cancel?: () => void })
+        } catch {
+          el.style.display = ''
+        }
+      }, CONTENT_ENTER_AT + i * CONTENT_ENTER_GAP),
+    )
+  })
+}
+
+function choreoContentLeave(): void {
+  CONTENT_SELECTORS.forEach((sel, i) => {
+    contentTimers.push(
+      window.setTimeout(() => {
+        if (!immersiveClosing.value) return
+        const el = fadeEl.value?.querySelector<HTMLElement>(sel)
+        if (!el) return
+        try {
+          const anim = layoutFor(el).update(() => { el.style.display = 'none' }, { duration: CONTENT_LEAVE_MS })
+          if (anim) contentAnims.push(anim as { cancel?: () => void })
+        } catch {
+          el.style.display = 'none'
+        }
+      }, i * CONTENT_LEAVE_GAP),
+    )
+  })
 }
 
 /* ---- 落位溶解 ----
@@ -778,9 +828,9 @@ function playExpand(): void {
   }
   cancelContentChoreo()
   morphDebugOn = !!localStorage.getItem('reinMorphDebug')
-  const richExpand = motionRich.value && !!ensureContentLayout()
+  const richExpand = motionRich.value && !!fadeEl.value
   // 内容块显形权归各档编舞：默认档恒可见；丰富档先收起（display:none），
-  // 由 layout 的 enter 动画接手显形。清一遍再收，保证从任何前一态出发都干净。
+  // 由各块自己的 layout enter 动画接手显形。清一遍再收，保证从任何前一态出发都干净。
   const els = contentEls()
   for (const el of els) el.style.display = richExpand ? 'none' : ''
   const presetSnap = immersiveOriginSnapshot()
@@ -813,27 +863,7 @@ function playExpand(): void {
     const from = morphStateOf(rect, radius)
     from.fade = cur.fade < 1 ? cur.fade : 0
     morphRun(from, IDENTITY(), perfDegraded.value ? EXPAND_MS_LOW : EXPAND_MS)
-    if (richExpand) {
-      // 内容块交错入场。用 setTimeout 而不是 update 的 delay：子元素必须
-      // 保持 display:none 到 enter 动画将启，否则会在延迟段以自然态露出、
-      // 被尚未长成的壳压扁。
-      contentTimer = window.setTimeout(() => {
-        contentTimer = 0
-        if (!immersiveOpen.value || immersiveClosing.value) return
-        contentAnim = ensureContentLayout()?.update(
-          () => {
-            for (const el of contentEls()) {
-              // 垫上 enterFrom 的内联初值：交错延迟段（50ms/个）里还没轮到的
-              // 子元素不能以自然态露出，否则会在长成的壳上先闪一帧再动起来
-              el.style.opacity = '0'
-              el.style.transform = 'translateY(16px)'
-              el.style.display = ''
-            }
-          },
-          { duration: CONTENT_ENTER_MS, delay: stagger(CONTENT_ENTER_GAP) },
-        ) as { cancel?: () => void } | null
-      }, CONTENT_ENTER_AT)
-    }
+    if (richExpand) choreoContentEnter()
   })
 }
 
@@ -859,7 +889,7 @@ function morphStateOf(rect: DOMRect, radius: number): MorphState {
 function playCollapse(): void {
   if (!layerEl.value || !fadeEl.value) return
   cancelContentChoreo()
-  const rich = motionRich.value && !!ensureContentLayout()
+  const rich = motionRich.value && !!fadeEl.value
   // closing 驱动的浮窗 v-show 可能晚一拍才 patch 生效：先等一帧再量锚点，
   // 否则量到 display:none 的零矩形会掉进中央卡片兜底（轨迹跳向屏幕中部）。
   // 层在等待帧内保持全屏静止，视觉无感；若期间状态被打断则静默放弃。
@@ -876,15 +906,10 @@ function playCollapse(): void {
     const to = { ...morphStateOf(rect, radius), fade: 0 }
     const dur = perfDegraded.value ? COLLAPSE_MS_LOW : COLLAPSE_MS
     if (rich) {
-      // 丰富档：内容块先交错汇出，壳体稍后才收缩——内容不会跟着壳一起被
-      // 压成微缩快照。壳的启动用 setTimeout 推迟（children 的离场动画需要
-      // 它们留在原布局里），期间被打断则静默放弃（展开已在跑）。
-      contentAnim = ensureContentLayout()!.update(
-        () => {
-          for (const el of contentEls()) el.style.display = 'none'
-        },
-        { duration: CONTENT_LEAVE_MS, delay: stagger(CONTENT_LEAVE_GAP) },
-      ) as { cancel?: () => void } | null
+      // 丰富档：内容块先逐个汇出，壳体稍后才收缩——内容不会跟着壳一起被
+      // 压成微缩快照。壳的启动用 setTimeout 推迟，期间被打断则静默放弃
+      //（展开已在跑）。
+      choreoContentLeave()
       window.setTimeout(() => {
         if (!immersiveClosing.value || !layerEl.value || !fadeEl.value) return
         morphRun({ ...cur }, to, dur, () => settleWithFade())
