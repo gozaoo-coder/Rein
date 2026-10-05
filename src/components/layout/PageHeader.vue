@@ -7,6 +7,7 @@ import GlassFilter from '@/components/common/GlassFilter.vue'
 import ProgressiveBlur from '@/components/common/ProgressiveBlur.vue'
 import { usePressGlow } from '@/composables/usePressGlow'
 import { useScrolled, useScrollCollapsed } from '@/composables/useScrolled'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import { liquidGlass, perfDegraded } from '@/system/perf'
 
 /** iOS 大标题页头；back = 二级页返回键（有来路则返回，直链进入回首页）。
@@ -36,6 +37,13 @@ const root = ref<HTMLElement | null>(null)
 const scrolled = useScrolled(root)
 /** 丰富档的滚动边缘：向下滚收起、向上滚还原（判定与理由见 composables/useScrolled） */
 const collapsed = useScrollCollapsed(root)
+
+/** 粗指针（手机 / 平板）＝ 合成预算最紧的一档：渐进模糊收成 2 层。
+ *  实测（2026-10-05 主页滚动卡顿报告，scripts/.tmp-perf-attribute.mjs，**滚动态**）：
+ *  5 层在软件合成下每帧 5.15ms，成本随层数线性，2 层 ≈ 2ms（复测粗指针滚动态
+ *  4.28ms/帧，基线 6.9）。94px 高的条带靠 mask 渐变补平滑，两段看不出分层；
+ *  桌面细指针保持 5 层原画质。 */
+const coarsePointer = useMediaQuery('(pointer: coarse)')
 
 /** 按压定向光晕（丰富档）：页头这两处圆钮是控制层里按得最多的。
  *  `.hdr-btn` 在各页的插槽里（挂类不写样式，见 docs/ARCHITECTURE.md 的页头按钮规范），
@@ -73,7 +81,15 @@ function goBack(): void {
            渐变，标题的落点更明确。垫在模糊**之下**（DOM 在前 = 先画），所以它是
            "内容褪成底色、再被糊开"，而不是"在模糊上又糊一层色"。纯渐变，零合成成本。 -->
       <span class="ph-scrim" />
-      <ProgressiveBlur v-if="!perfDegraded" direction="down" />
+      <!-- 渐进模糊：粗指针（手机 / 平板）收 2 层 × 4px —— 实测 5 层每帧 5.15ms 且
+           opacity:0 也不会被合成器剔除（见下方 coarsePointer 的注释与 useMediaQuery）；
+           桌面细指针保留 5 层 × 1.6px 原画质。 -->
+      <ProgressiveBlur
+        v-if="!perfDegraded"
+        direction="down"
+        :layers="coarsePointer ? 2 : 5"
+        :step="coarsePointer ? 4 : 1.6"
+      />
     </div>
 
     <slot name="lead" />
@@ -138,6 +154,13 @@ function goBack(): void {
 
 .page-header.scrolled .ph-mask :deep(.pblur span) {
   opacity: 1;
+}
+
+/* 未滚起时整条 backdrop-filter 摘掉：顶端时背后只有页面底色，糊与不糊像素相同，
+   顶端的合成成本归零；回到顶部的切换发生在 opacity≈0 的那一帧，肉眼不可见。 */
+.page-header:not(.scrolled) .ph-mask :deep(.pblur span) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* 降级档（system/perf 判定掉帧）：不做毛玻璃，改用「画布底色 → 透明」的渐变遮罩。

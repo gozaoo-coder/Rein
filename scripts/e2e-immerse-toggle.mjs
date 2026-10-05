@@ -113,7 +113,7 @@ try {
   const hash1 = await evalJS('location.hash')
   ok('T1 开始课程开沉浸层且 hash 不变', !hash1.includes('session'), hash1)
 
-  /* ---------- T2. 收起 → 形变期间 Dock 只测量不抢镜，随后按方向渐入 ---------- */
+  /* ---------- T2. 收起 → 壳与 Dock 落点侧先就位，收尾零位移（落位溶解） ---------- */
   await evalJS(`(() => {
     window.__reinMorphFrames = []
     let last = 0
@@ -131,32 +131,32 @@ try {
   const t2mid = await evalJS(`(() => {
     const bar = document.querySelector('.wdock-root')
     return {
+      state: document.documentElement.dataset.immersive,
       measuring: bar?.classList.contains('immersive-measuring') ?? false,
-      opacity: bar ? Number(getComputedStyle(bar).opacity) : -1,
-      tabbarOpacity: document.querySelector('.dock') ? Number(getComputedStyle(document.querySelector('.dock')).opacity) : -1,
+      barOpacity: bar ? Number(getComputedStyle(bar).opacity) : -1,
+      dockOpacity: document.querySelector('.dock') ? Number(getComputedStyle(document.querySelector('.dock')).opacity) : -1,
       reserve: getComputedStyle(document.documentElement).getPropertyValue('--wbar-reserve').trim(),
       pad: parseFloat(getComputedStyle(document.querySelector('.page')).paddingBottom),
     }
   })()`)
-  ok('T2 收起前半程 Dock 透明且只用于测量', t2mid.measuring && t2mid.opacity === 0, JSON.stringify(t2mid))
-  ok('T2 收起前半程 Dock 不抢镜', t2mid.tabbarOpacity === 0 && !!t2mid.reserve, JSON.stringify(t2mid))
-  await waitFor(`document.querySelector('.wdock-root')?.classList.contains('returning')`, 2000, '收起完成进入 Dock 渐入段', 16)
-  await sleep(70)
-  const t2return = await evalJS(`(() => {
+  ok('T2 收起前半程进入 closing 态', t2mid.state === 'closing', JSON.stringify(t2mid))
+  ok('T2 收起前半程 Dock 与壳就位可见（被形变壳盖住，落点侧先就位）', t2mid.measuring && t2mid.barOpacity === 1 && t2mid.dockOpacity === 1 && !!t2mid.reserve, JSON.stringify(t2mid))
+  await sleep(LOW_TIER ? 420 : 580) // 等形变收尾 + 落位溶解
+  const t2end = await evalJS(`(() => {
     const bar = document.querySelector('.wdock-root')
+    const dock = document.querySelector('.dock')
     return {
-      opacity: bar ? Number(getComputedStyle(bar).opacity) : -1,
-      translate: bar ? getComputedStyle(bar).translate : 'none',
-      tabbarDisplay: document.querySelector('.dock') ? getComputedStyle(document.querySelector('.dock')).display : 'missing',
-      tabbarOpacity: document.querySelector('.dock') ? Number(getComputedStyle(document.querySelector('.dock')).opacity) : -1,
+      state: document.documentElement.dataset.immersive,
+      barOpacity: bar ? Number(getComputedStyle(bar).opacity) : -1,
+      barTranslate: bar ? getComputedStyle(bar).translate : 'none',
+      barAnim: bar ? getComputedStyle(bar).animationName : 'none',
+      dockOpacity: dock ? Number(getComputedStyle(dock).opacity) : -1,
+      dockAnim: dock ? getComputedStyle(dock).animationName : 'none',
       pad: parseFloat(getComputedStyle(document.querySelector('.page')).paddingBottom),
     }
   })()`)
-  const dockReturnOk = LOW_TIER
-    ? t2return.opacity === 1 && t2return.translate === '0px'
-    : t2return.opacity > 0 && t2return.opacity < 1 && t2return.translate !== 'none'
-  ok(LOW_TIER ? 'T2 流畅档 Dock 瞬时落位' : 'T2 收起完成后 Dock 沿停靠方向渐入', dockReturnOk, JSON.stringify(t2return))
-  ok('T2 收起后 Dock 与页面安全区同段恢复', t2return.tabbarOpacity > 0 && t2return.pad >= t2mid.pad, JSON.stringify({ mid: t2mid, return: t2return }))
+  ok('T2 收起完成后 Dock 原位显形（无滑入动画）', (t2end.state === 'ready' || t2end.state === 'returning') && t2end.barOpacity === 1 && t2end.barTranslate === 'none' && t2end.barAnim === 'none' && t2end.dockOpacity === 1 && t2end.dockAnim === 'none', JSON.stringify(t2end))
+  ok('T2 收起后页面安全区同段恢复', t2end.pad >= t2mid.pad, JSON.stringify({ mid: t2mid.pad, end: t2end.pad }))
   const frameStats = await evalJS(`(() => {
     const values = window.__reinMorphFrames.filter((v) => v < 1000)
     values.sort((a,b) => a-b)
@@ -165,7 +165,6 @@ try {
   })()`)
   const collapseFrameOk = frameStats.p95 <= 40 && frameStats.dropped / Math.max(1, frameStats.frames) <= 0.1
   ok(LOW_TIER ? 'T2 4× CPU 低功耗档收起 p95 ≤ 40ms 且掉帧率 ≤ 10%' : 'T2 收起 p95 ≤ 40ms 且掉帧率 ≤ 10%', collapseFrameOk, JSON.stringify(frameStats))
-  await sleep(LOW_TIER ? 260 : 360)
   const t2layer = await evalJS(layerVisible)
   const t2barOpacity = await evalJS(`Number(getComputedStyle(document.querySelector('.wdock-root')).opacity)`)
   ok('T2 收起后沉浸层关闭', !t2layer)

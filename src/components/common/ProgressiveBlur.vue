@@ -23,7 +23,9 @@ import { computed } from 'vue'
 const props = withDefaults(
   defineProps<{
     direction?: 'down' | 'up'
-    /** 层数：5 层在手机上是「够顺滑且几乎看不出分层」的甜点 */
+    /** 层数：5 层是桌面细指针的原画质档；成本随层数线性（实测 2026-10-05 主页滚动
+     *  报告，滚动态：软件合成下 5 层每帧 5.15ms）。粗指针（手机 / 平板）由调用方
+     *  收 2 层 × 大步长（见 PageHeader），mask 渐变补平滑 */
     layers?: number
     /** 每层递增量（px）：总模糊 ≈ layers × step */
     step?: number

@@ -5,6 +5,9 @@
  * `session.start()` 直接开练，**不写进课程库** —— 它是「今天补一下」而不是
  * 「我的训练计划」，混进课程列表只会污染那份清单。
  *
+ * 另含主页「练」卡的焦点推荐（`lapsedIdleGroups` / `focusGroup`）：
+ * 回答「现在最该练谁」，与加练共用同一份练够分口径。
+ *
  * 四条口径（都可复核，沿用本文件的既有纪律，只把判据从旧「容量」换成练够分）：
  *  1. **弱项 = 本周有记录（!idle）且练够分 < 60**，即规范里的「不够 / 明显不足」。
  *     刻意排除本周完全没练的组（idle）：那更可能是「这个肌群我根本不专门练」，
@@ -56,6 +59,35 @@ export function weakGroups(groups: GroupScore[], limit = 6): GroupScore[] {
 export function gapOf(g: GroupScore): number {
   const gap = Math.ceil(g.setsTarget[0] - g.sets)
   return Math.min(GAP_MAX, Math.max(GAP_MIN, gap))
+}
+
+/* ---------------- 练卡焦点（主页「练」卡推荐谁） ---------------- */
+
+/**
+ * 「断练」组：本周没练（idle）但 4 周基线窗里常练 —— 该捡回来。
+ * 从未练过的 idle 组不在此列：那更可能是「这个肌群我根本不专门练」，
+ * 排进推荐只会每周空喊（与上面 weakGroups 排除 idle 的理由同源，判据见 trainingScore.baseSets）。
+ */
+export function lapsedIdleGroups(groups: GroupScore[]): GroupScore[] {
+  return groups.filter((g) => g.idle && g.baseSets > 0)
+}
+
+/**
+ * 练卡焦点组：现在最该练谁，**未练优先于分低**。
+ *
+ *  · covered 非空（今天的课主攻了这些组）：主攻里先找未练的（分化定的课正好把没练的补上），
+ *    再找弱项（「正好补它」）；主攻组都练够了 → null —— 其他部位分化自会安排，卡上不多嘴。
+ *  · covered 为 null（今天没课 / 无方案）：先说断练未练的，再退到弱项。
+ *  · covered 为空数组：有课但还没解析出主攻组（课程库未就绪）→ null，不猜。
+ */
+export function focusGroup(groups: GroupScore[], covered: ScoreGroupKey[] | null): GroupScore | null {
+  if (!groups.length) return null
+  if (covered === null) return lapsedIdleGroups(groups)[0] ?? weakGroups(groups)[0] ?? null
+  if (!covered.length) return null
+  const byKey = new Map(groups.map((g) => [g.group, g] as const))
+  const idleHit = covered.map((k) => byKey.get(k)).find((g) => g?.idle)
+  if (idleHit) return idleHit
+  return weakGroups(groups).find((g) => covered.includes(g.group)) ?? null
 }
 
 /**

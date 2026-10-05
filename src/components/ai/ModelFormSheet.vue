@@ -404,7 +404,7 @@ async function save(): Promise<void> {
   height: 27px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-thumb);
   transition: transform var(--dur-fast) var(--ease-spring);
 }
 

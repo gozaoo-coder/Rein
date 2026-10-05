@@ -75,6 +75,11 @@ export function openImmersive(from?: HTMLElement | null): void {
 export function closeImmersive(): void {
   if (!immersiveOpen.value || immersiveClosing.value) return
   immersiveClosing.value = true
+  // closing 态把壳（TabBar / 各悬浮件）提前放回可见：收缩中的形变壳会逐渐
+  // 让出屏幕，露出来的必须是**已经就位**的完整页面（落点侧先就位是 container
+  // transform 的一半），而不是等动画收尾再滑入——后者正是「返回动画对不上」
+  // 的来源。壳此刻被不透明的形变壳整个盖住，显形本身不可见，交互随态禁用。
+  document.documentElement.dataset.immersive = 'closing'
 }
 
 /** 立即关闭（不播动画）：会话已结束 / 作废，浮窗随之消失时用 */

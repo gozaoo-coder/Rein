@@ -75,7 +75,8 @@ onMounted(() => {
   })
 })
 
-/* 沉浸收起完成后的显形由 returning 状态类直接驱动 */
+/* 沉浸收起的显形不在这里播动画：closing 期浮条就保持在原位（被形变壳盖住），
+   壳贴落后由 SessionOverlay 的落位溶解露出——浮条自己始终没动过。 */
 
 /** 移动端是文档级滚动；桌面三窗格壳滚在 .desk-main 上 */
 function activeScroller(): HTMLElement | null {
@@ -86,17 +87,12 @@ function activeScroller(): HTMLElement | null {
 
 watch([immersiveOpen, immersiveClosing, immersiveReturning], ([open, closing, returning]) => {
   const root = rootEl.value
+  document.documentElement.dataset.immersive = returning ? 'returning' : closing ? 'closing' : open ? 'open' : 'ready'
   if (!root) return
-  document.documentElement.dataset.immersive = returning ? 'returning' : open ? 'open' : 'ready'
   root.classList.toggle('immersive-hidden', open && !closing)
+  // closing 期浮条保持**可见**（被不透明的形变壳盖住，仅作收起锚点与落位底）：
+  // 形变壳贴到它的 rect 上后由落位溶解露出，不再另播滑入动画。
   root.classList.toggle('immersive-measuring', closing)
-  if (!returning) {
-    root.classList.remove('returning')
-    return
-  }
-  root.classList.remove('returning')
-  void root.offsetWidth
-  root.classList.add('returning')
 }, { immediate: true })
 
 watch(
@@ -316,51 +312,22 @@ async function onEndPick(value: string): Promise<void> {
   transform: scale(0.97);
 }
 
-@keyframes dock-return-bottom {
-  from { opacity: 0; translate: 0 24px; }
-}
-
-@keyframes dock-return-top {
-  from { opacity: 0; translate: 0 -24px; }
-}
-
-@keyframes dock-return-left {
-  from { opacity: 0; translate: -18px 0; }
-}
-
-@keyframes dock-return-right {
-  from { opacity: 0; translate: 18px 0; }
-}
-
 .wdock-root.immersive-hidden {
   opacity: 0;
   pointer-events: none;
 }
 
+/* 收起形变期（closing）：浮条保持可见充当落位底——被不透明的形变壳整个盖住，
+   只摘掉折射与交互（折射采样在壳底下无人看见，白付一次全条重采样）。
+   落位由 SessionOverlay 的壳面溶解完成显形，这里**没有**入场动画：
+   浮条从未离开过自己的位置，任何位移都会让形变落点对不上。 */
 .wdock-root.immersive-measuring {
-  opacity: 0 !important;
   pointer-events: none;
 }
 
 .wdock-root.immersive-measuring .dock-body {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-}
-
-.wdock-root.returning {
-  animation: dock-return-bottom 240ms var(--ease-out) both;
-}
-
-.wdock-root.dock-top.returning {
-  animation-name: dock-return-top;
-}
-
-.wdock-root.dock-left.returning {
-  animation-name: dock-return-left;
-}
-
-.wdock-root.dock-right.returning {
-  animation-name: dock-return-right;
 }
 
 /* 条形态：宽度沿用旧悬浮条的视口窄栏（居中由弹簧坐标负责，不靠 margin） */

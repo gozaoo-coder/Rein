@@ -85,6 +85,19 @@ function weekNoOf(d: string): number | null {
   return null
 }
 
+/** 「第 N 周」只标在周界上（第一天 / 周次变化处）：七列重复同一个数字是噪音，
+ *  页头副标题里本来就有当前周次 */
+const wkShown = computed(() => {
+  const flags: boolean[] = []
+  let prev: number | null = null
+  for (const d of days.value) {
+    const w = weekNoOf(d)
+    flags.push(w !== null && w !== prev)
+    prev = w
+  }
+  return flags
+})
+
 const scroller = ref<HTMLElement | null>(null)
 
 /**
@@ -140,7 +153,7 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
       >
         <span class="dow">{{ dayLabel(d) }}</span>
         <span class="dnum">{{ monthDay(d) }}</span>
-        <span v-if="weekNoOf(d)" class="wk">第{{ weekNoOf(d) }}周</span>
+        <span v-if="wkShown[i]" class="wk">第{{ weekNoOf(d) }}周</span>
       </div>
 
       <!-- 主体：每行 = 一个节次区间 -->
@@ -302,6 +315,20 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   padding: 6px 2px;
 }
 
+/* 「今天」的定位器：一条 accent 短线钉在表头顶缘。表头是冻结的，横滚到哪它都跟着 ——
+   代价只是一条 3px 的线。曾经给今天整列刷 --accent-soft：空格子也填成一块实色板，
+   看起来像课程块渲染丢了（每帧还多 7~8 个混合层）；线条在语义相同的前提下两个都省了。 */
+.day.today::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
 .dow {
   font-size: var(--fs-footnote);
   font-weight: 700;
@@ -317,7 +344,7 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 }
 
 .wk {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   line-height: 1.1;
 }
@@ -348,7 +375,7 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 }
 
 .unit {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   opacity: 0.75;
   line-height: 1.1;
@@ -358,10 +385,6 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 .slot {
   padding: 2px;
   display: flex;
-}
-
-.slot.today {
-  background: var(--accent-soft);
 }
 
 .blocks {
@@ -394,11 +417,11 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   position: absolute;
   top: 2px;
   right: 2px;
-  padding: 0 3px;
-  border-radius: 4px;
-  font-size: 9px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-micro);
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .hd.off {
@@ -438,7 +461,7 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 }
 
 .meta {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   line-height: 1.15;
   overflow: hidden;

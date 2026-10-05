@@ -201,7 +201,7 @@ function openDetail(c: ProcessToolCall): void {
 .tool-desc {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-caption);
   line-height: 1.5;
   color: var(--text-3);
   overflow-wrap: anywhere;
@@ -221,7 +221,7 @@ function openDetail(c: ProcessToolCall): void {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10.5px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 

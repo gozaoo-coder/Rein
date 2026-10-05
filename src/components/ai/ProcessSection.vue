@@ -315,7 +315,7 @@ const titleText = computed(() => {
    左侧缩进与正文形成明确的层级区分 */
 .process-section {
   padding-left: 2px;
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   color: var(--text-3);
 }
 
@@ -345,7 +345,7 @@ const titleText = computed(() => {
 
 .process-title {
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-caption);
   font-weight: 500;
   color: var(--text-3);
   white-space: nowrap;
@@ -422,7 +422,7 @@ const titleText = computed(() => {
 .process-reasoning {
   padding: 2px 6px 2px 0;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-caption);
   line-height: 1.6;
   color: var(--text-3);
   white-space: pre-wrap;

@@ -1102,7 +1102,7 @@ async function onMenuSelect(value: string): Promise<void> {
 /* 照片气泡 */
 .photo-bubble {
   max-width: 74%;
-  border-radius: 20px;
+  border-radius: var(--radius-l);
   overflow: hidden;
   background: var(--surface);
   box-shadow: var(--shadow-card);
@@ -1146,14 +1146,14 @@ async function onMenuSelect(value: string): Promise<void> {
 
 .dc-name {
   font-weight: 500;
-  font-size: 13px;
+  font-size: var(--fs-footnote);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dc-meta {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 
@@ -1253,7 +1253,7 @@ async function onMenuSelect(value: string): Promise<void> {
 .bubble {
   max-width: 82%;
   padding: 9px 14px;
-  border-radius: 20px;
+  border-radius: var(--radius-l);
   font-size: var(--fs-subhead);
   line-height: 1.5;
   white-space: pre-line;
@@ -1262,7 +1262,7 @@ async function onMenuSelect(value: string): Promise<void> {
 .msg.user .bubble {
   background: var(--accent);
   color: #fff;
-  border-bottom-right-radius: 6px;
+  border-bottom-right-radius: var(--radius-xs);
 }
 
 .msg.assistant .bubble {
@@ -1499,7 +1499,7 @@ async function onMenuSelect(value: string): Promise<void> {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: 14px;
+  border-radius: var(--radius-m);
   background: var(--surface-2);
 }
 
@@ -1562,7 +1562,7 @@ async function onMenuSelect(value: string): Promise<void> {
 
 .doc-img small {
   display: block;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--text-2);
   text-align: center;
   padding: 2px 0 3px;
@@ -1592,7 +1592,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .doc-hint {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 
@@ -1600,8 +1600,8 @@ async function onMenuSelect(value: string): Promise<void> {
 .voice-bub {
   max-width: 82%;
   padding: 9px 13px;
-  border-radius: 16px;
-  border-bottom-right-radius: 6px;
+  border-radius: var(--radius-l);
+  border-bottom-right-radius: var(--radius-xs);
   background: var(--accent);
   color: #fff;
   text-align: left;
@@ -1614,7 +1614,7 @@ async function onMenuSelect(value: string): Promise<void> {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 800;
   opacity: 0.92;
 }
@@ -1625,7 +1625,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .voice-bub .vb-go {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   opacity: 0.8;
 }

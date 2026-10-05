@@ -65,36 +65,41 @@ const stats = computed(() => {
       {{ monthLabel }} · 上课 {{ stats.days }} 天 / {{ stats.count }} 节
     </p>
 
-    <div class="head">
-      <span v-for="w in ['一', '二', '三', '四', '五', '六', '日']" :key="w">{{ w }}</span>
-    </div>
+    <!-- 单一卡面承载整月：42 个格子各自背 --shadow-card（亮色三层、每帧参与合成）
+         曾经是这一页最贵的光栅负载，而「一月 42 张迷你卡」在日历语义里也不成立 ——
+         一个月本来就是一张表。格子退成透明 + 细分隔，卡面阴影只画一份。 -->
+    <div class="board">
+      <div class="head">
+        <span v-for="w in ['一', '二', '三', '四', '五', '六', '日']" :key="w">{{ w }}</span>
+      </div>
 
-    <div class="grid">
-      <button
-        v-for="(c, i) in cells"
-        :key="i"
-        class="cell"
-        :class="{ blank: !c.date, today: c.date === today }"
-        :disabled="!c.date"
-        @click="c.date && emit('select', c.date)"
-      >
-        <template v-if="c.date">
-          <span class="d">{{ c.day }}</span>
-          <span class="chips">
-            <span
-              v-for="e in entriesOn(c.date).slice(0, 2)"
-              :key="e.session.id + (e.holiday ?? '')"
-              class="chip"
-              :style="{ '--blk': colorOf(e) }"
-            >
-              <span v-if="e.holiday" class="hd" :class="e.holiday">{{ e.holiday === 'off' ? '假' : '调' }}</span>{{ e.session.courseName }}
+      <div class="grid">
+        <button
+          v-for="(c, i) in cells"
+          :key="i"
+          class="cell"
+          :class="{ blank: !c.date, today: c.date === today }"
+          :disabled="!c.date"
+          @click="c.date && emit('select', c.date)"
+        >
+          <template v-if="c.date">
+            <span class="d">{{ c.day }}</span>
+            <span class="chips">
+              <span
+                v-for="e in entriesOn(c.date).slice(0, 2)"
+                :key="e.session.id + (e.holiday ?? '')"
+                class="chip"
+                :style="{ '--blk': colorOf(e) }"
+              >
+                <span v-if="e.holiday" class="hd" :class="e.holiday">{{ e.holiday === 'off' ? '假' : '调' }}</span>{{ e.session.courseName }}
+              </span>
+              <span v-if="entriesOn(c.date).length > 2" class="more">
+                +{{ entriesOn(c.date).length - 2 }}
+              </span>
             </span>
-            <span v-if="entriesOn(c.date).length > 2" class="more">
-              +{{ entriesOn(c.date).length - 2 }}
-            </span>
-          </span>
-        </template>
-      </button>
+          </template>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -116,7 +121,7 @@ const stats = computed(() => {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 4px;
-  padding: 0 1px;
+  padding: 2px 6px 6px;
 }
 
 .head span {
@@ -126,10 +131,17 @@ const stats = computed(() => {
   color: var(--text-3);
 }
 
+.board {
+  background: var(--surface);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-card);
+  padding: 8px 6px;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
+  gap: 2px;
 }
 
 .cell {
@@ -139,24 +151,27 @@ const stats = computed(() => {
   gap: 3px;
   padding: 5px 4px;
   border-radius: var(--radius-s);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
   text-align: left;
   overflow: hidden;
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 
-.cell:active {
-  transform: scale(0.96);
+/* 空档（上月/下月补位格）与悬停底色：透明格子上给一个可感知的按压态 */
+.cell:not(.blank):active {
+  background: color-mix(in srgb, var(--text-3) 8%, transparent);
+  transform: scale(0.97);
 }
 
-.cell.blank {
-  background: transparent;
-  box-shadow: none;
-}
-
-.cell.today {
-  outline: 1.5px solid var(--accent);
+/* 「今天」= 日期落进 accent 实心圆（iOS 日历语义），不再描整个格子 */
+.cell.today .d {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  width: 22px;
+  height: 22px;
+  line-height: 22px;
+  text-align: center;
+  font-weight: 700;
 }
 
 .d {
@@ -164,11 +179,6 @@ const stats = computed(() => {
   font-weight: 600;
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
-}
-
-.cell.today .d {
-  color: var(--accent);
-  font-weight: 700;
 }
 
 .chips {
@@ -179,10 +189,10 @@ const stats = computed(() => {
 }
 
 .chip {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   line-height: 1.3;
-  padding: 1px 3px;
-  border-radius: 4px;
+  padding: 1px 4px;
+  border-radius: var(--radius-s);
   border-left: 2px solid var(--blk);
   background: color-mix(in srgb, var(--blk) 16%, transparent);
   color: var(--text-1);
@@ -206,7 +216,7 @@ const stats = computed(() => {
 }
 
 .more {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   font-weight: 600;
   padding-left: 3px;

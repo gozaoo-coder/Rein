@@ -88,5 +88,11 @@ server/config.json
 server/node_modules/
 .tmp-ui-shots/
 
+# 一次性性能探针/截屏脚本与产物（.tmp-perf-* / .tmp-shot-* / .tmp-vid-* / .tmp-glass-*），
+# 与上面的 probe-* 同一性质：定位单个问题时临时写，不入库
+scripts/.tmp-*
+dist-verify/
+docs/shots/
+
 # HEIC 测试样例（第三方二进制，用 `npm run heic:fixture` 拉取）
 src-tauri/resources/test/heic/

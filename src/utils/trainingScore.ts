@@ -227,6 +227,12 @@ export interface GroupScore {
   freqCount: number
   /** 本周加权正式组数（激活折算） */
   sets: number
+  /**
+   * 基线窗（本周之前的 4 周）里「真练到」（激活 ≥2）的组数。
+   * 断练判据用：本周没练（idle）但 baseSets > 0 = 最近常练、这周断掉的，
+   * 该捡回来；baseSets = 0 的未练组更可能是「本来就不专门练」，不该拿去推荐。
+   */
+  baseSets: number
   /** 组数分的满分区间（补弱加练按它的下沿算缺口） */
   setsTarget: [number, number]
   /** 本周平均每组次数；null = 本周没有可用的次数数据 */
@@ -319,10 +325,10 @@ export function computeTrainingScore(input: TrainingScoreInput): TrainingScoreRe
   const baseStart = addDays(weekStart, -SCORE_BASE_DAYS)
 
   const week = new Map<ScoreGroupKey, Acc>()
-  const base = new Map<ScoreGroupKey, { sum: number; n: number }>()
+  const base = new Map<ScoreGroupKey, { sum: number; n: number; sets: number }>()
   for (const g of SCORE_GROUPS) {
     week.set(g.key, emptyAcc())
-    base.set(g.key, { sum: 0, n: 0 })
+    base.set(g.key, { sum: 0, n: 0, sets: 0 })
   }
 
   for (const s of input.sets) {
@@ -366,10 +372,14 @@ export function computeTrainingScore(input: TrainingScoreInput): TrainingScoreRe
           acc.days.add(s.date)
           acc.sessionFeel.set(s.workoutId, s.readiness ?? null)
         }
-      } else if (s.weightKg != null && s.weightKg > 0) {
+      } else if (inBase) {
         const b = base.get(g)!
-        b.sum += s.weightKg
-        b.n += 1
+        // 断练判据只认「真练到」（辅助及以上，与频率同口径）；重量基线保持不滤激活档
+        if (lv >= 2) b.sets += 1
+        if (s.weightKg != null && s.weightKg > 0) {
+          b.sum += s.weightKg
+          b.n += 1
+        }
       }
     }
   }
@@ -408,6 +418,7 @@ function idleGroup(
   label: string,
   goal: ScoreGoal,
   weights: { frequency: number; intensity: number; feeling: number },
+  baseSets: number,
 ): GroupScore {
   const dim = (k: Dimension['key'], l: string, note: string): Dimension => ({
     key: k,
@@ -434,6 +445,7 @@ function idleGroup(
     level: 0,
     freqCount: 0,
     sets: 0,
+    baseSets,
     setsTarget: SETS_SWEET[goal],
     avgReps: null,
     avgWeight: null,
@@ -460,7 +472,7 @@ function scoreGroup(
   goal: ScoreGoal,
   weights: { frequency: number; intensity: number; feeling: number },
   acc: Acc,
-  baseW: { sum: number; n: number },
+  baseW: { sum: number; n: number; sets: number },
 ): GroupScore {
   const idle = acc.sets <= 0
   const sets = round1(acc.sets)
@@ -468,7 +480,7 @@ function scoreGroup(
 
   // 未练：不给任何「中性默认值」留幻觉空间 —— 分数就是 0，档位就是未练。
   // （否则 0 组 + 次数/重量的占位分会让一个从没练过的肌群显示成 29 分）
-  if (idle) return idleGroup(key, label, goal, weights)
+  if (idle) return idleGroup(key, label, goal, weights, baseW.sets)
 
   const avgReps = acc.repsW > 0 ? round1(acc.repsSum / acc.repsW) : null
   const avgWeight = acc.weightW > 0 ? round1(acc.weightSum / acc.weightW) : null
@@ -578,6 +590,7 @@ function scoreGroup(
     level: heatLevelOf(total, acc.sets),
     freqCount,
     sets,
+    baseSets: baseW.sets,
     setsTarget: SETS_SWEET[goal],
     avgReps,
     avgWeight,

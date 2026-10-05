@@ -8,25 +8,30 @@
  *     各自的实时事实格。事实的数据源一律是各域 store，这里不做第二份口径。
  *   · 饮食一族扶正：「饮食库 / 食谱库 / 饮食历史」与「记饮食」同权，一起住进「吃」卡；
  *     「练」卡同理（记运动 + 健康方案）。归属关系替代了边角位置。
- *   · 练卡的事实由**练够分**驱动：最弱的肌群 + 今天的安排合起来给一句推荐 ——
- *     「背的练够分最低（48）· 今天正好补它」，方案里没有今天的课时则建议排哪一节。
+ *   · 练卡的事实由**练够分**驱动，但「未练」优先于「分低」：本周没练、4 周内常练的部位
+ *     先说（断练该捡回来），从没练过的组不凑热闹；分化今天定的课主攻了谁，就顺着它说。
+ *   · 「立刻练」直接开练：有今天的课就开课，休息日排一节能补上未练/弱项的课，
+ *     都没有就给弱项加练组一节临时课 —— 不让用户再去训练页翻。
  *
  * 插件层契约不变：成员全部从 `features.tools` 按 id 取，关掉模块 = 对应的卡/成员消失；
  * 没有落进任何区的工具（未来的插件）会落到末尾的工具行，不会凭空消失。
- * 就地动作（开抽屉）仍由页面实现：这里持有三张抽屉与 ACTIONS 表（从 HomePage 迁来）。
+ * 就地动作（开抽屉）仍由页面实现：这里持有抽屉与 ACTIONS 表（从 HomePage 迁来）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Dumbbell, Plus, Timer, Utensils, Wallet } from 'lucide-vue-next'
+import { Dumbbell, Play, Plus, Timer, Utensils, Wallet } from 'lucide-vue-next'
 
+import ActionSheet from '@/components/common/ActionSheet.vue'
 import AddWorkoutSheet from '@/components/exercise/AddWorkoutSheet.vue'
 import DietHistorySheet from '@/components/diet/DietHistorySheet.vue'
+import MuscleCatchupSheet from '@/components/exercise/MuscleCatchupSheet.vue'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import { MEAL_LABELS, MEAL_ORDER } from '@/config/domain'
 import { fmtCents } from '@/config/ledger'
 import { SCORE_GROUPS, type ScoreGroupKey } from '@/config/muscles'
 import type { ToolContribution } from '@/plugins'
 import type { ToolAction } from '@/plugins/types'
+import type { WorkoutPlanRecord } from '@/types'
 import { defaultRange, useCampusStore } from '@/stores/campus'
 import { useDietStore } from '@/stores/diet'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
@@ -36,15 +41,17 @@ import { useNutritionStore } from '@/stores/nutrition'
 import { usePlanStore } from '@/stores/plan'
 import { usePomodoroStore } from '@/stores/pomodoro'
 import { useProgramStore } from '@/stores/program'
+import { useSessionStore } from '@/stores/session'
 import { useTodoStore } from '@/stores/todo'
 import { useToast } from '@/composables/useToast'
 import { sessionService } from '@/services/sessionService'
+import { openImmersive } from '@/system/sessionImmersive'
 import { openView as openVoiceView } from '@/system/voiceRuntime'
-import { todayStr } from '@/utils/date'
+import { diffDays, todayStr } from '@/utils/date'
 import { courseOnDate, programStatus } from '@/utils/programCycle'
 import { parseBlob } from '@/utils/programEngine'
-import { computeTrainingScore, type TrainingScoreResult } from '@/utils/trainingScore'
-import { weakGroups } from '@/utils/weakMuscles'
+import { computeTrainingScore, type GroupScore, type TrainingScoreResult } from '@/utils/trainingScore'
+import { focusGroup, lapsedIdleGroups, weakGroups } from '@/utils/weakMuscles'
 
 const props = defineProps<{ date: string }>()
 
@@ -227,7 +234,7 @@ const eatNote = computed(() => {
   return parts.join(' · ')
 })
 
-/* ---- 练：练够分找弱项，方案里找今天该练哪节 ---- */
+/* ---- 练：未练优先于分低，分化定的课一步开练 ---- */
 const trainOn = computed(() => features.isEnabled('sports') || features.isEnabled('program'))
 
 const score = ref<TrainingScoreResult | null>(null)
@@ -242,34 +249,61 @@ const parsed = computed(() => {
 const status = computed(() => (program.active && parsed.value ? programStatus(program.active, parsed.value) : null))
 const todayCourse = computed(() => (parsed.value ? courseOnDate(parsed.value, props.date) : null))
 
-/** 弱项 = 本周有记录且练够分 < 60（与弱项加练同口径），最弱的排最前 */
-const weakest = computed(() => (score.value ? (weakGroups(score.value.groups)[0] ?? null) : null))
+/** 练过但练够分 < 60 的组（与弱项加练同口径），最弱的排最前 */
+const weakList = computed<GroupScore[]>(() => (score.value ? weakGroups(score.value.groups) : []))
 
-const SCORE_MEMBERS = new Map(SCORE_GROUPS.map((g) => [g.key, g.members]))
+/** 本周没练但 4 周内常练 = 断练，该捡回来；从未练过的组不凑热闹 */
+const lapsedIdle = computed<GroupScore[]>(() => (score.value ? lapsedIdleGroups(score.value.groups) : []))
 
-/** 这节课是否以某评估组为主攻（任一细肌群 3 档）—— 与 weakMuscles 的 isPrimaryFor 同口径 */
-function courseCovers(courseId: string, group: ScoreGroupKey): boolean {
-  const members = SCORE_MEMBERS.get(group)
-  if (!members) return false
-  return planStore.byId(courseId)?.exercises.some((e) => members.some((m) => e.muscles?.[m] === 3)) ?? false
+/** 课程主攻的评估组（组内任一细肌群 3 档）—— 与 weakMuscles 的 isPrimaryFor 同口径 */
+function courseGroupKeys(courseId: string): ScoreGroupKey[] {
+  const exs = planStore.byId(courseId)?.exercises
+  if (!exs?.length) return []
+  return SCORE_GROUPS.filter((g) => exs.some((e) => g.members.some((m) => e.muscles?.[m] === 3))).map((g) => g.key)
 }
 
-/** 方案里主攻最弱项的那节课（「背不够 → 推荐拉日」） */
-const recommendedCourse = computed(() => {
-  const w = weakest.value
+function courseCovers(courseId: string, group: ScoreGroupKey): boolean {
+  return courseGroupKeys(courseId).includes(group)
+}
+
+/** 练卡焦点组：现在最该练谁（未练优先于分低，优先级口径见 weakMuscles.focusGroup） */
+const focus = computed<GroupScore | null>(() => {
+  const gs = score.value?.groups ?? []
+  if (!gs.length) return null
+  const c = todayCourse.value
+  return focusGroup(gs, c ? courseGroupKeys(c.courseId) : null)
+})
+
+/** 方案里主攻焦点组的那节课（「腿还没练 → 腿日」） */
+const recommendedCourse = computed<{ courseId: string; courseName: string } | null>(() => {
+  const f = focus.value
   const blob = parsed.value
-  if (!w || !blob) return null
+  if (!f || !blob) return null
   const seen = new Set<string>()
   for (const d of blob.days) {
-    if (!d.courseId || seen.has(d.courseId)) continue
+    if (!d.courseId || !d.courseName || seen.has(d.courseId)) continue
     seen.add(d.courseId)
-    if (courseCovers(d.courseId, w.group)) return d.courseName
+    if (courseCovers(d.courseId, f.group)) return { courseId: d.courseId, courseName: d.courseName }
   }
   return null
 })
 
+/** 焦点组的课下一次排在哪天（分化每周一轮）——文案好说「明天腿日」 */
+const nextCourseDate = computed<string | null>(() => {
+  const rec = recommendedCourse.value
+  const blob = parsed.value
+  if (!rec || !blob) return null
+  return blob.days.find((d) => d.date >= props.date && d.courseId === rec.courseId && !d.rest)?.date ?? null
+})
+
+function dayLabel(date: string): string {
+  if (diffDays(props.date, date) === 1) return '明天'
+  const wd = '日一二三四五六'[new Date(`${date}T00:00:00`).getDay()] ?? ''
+  return wd ? `周${wd}` : date.slice(5)
+}
+
 /** 练卡的主事实：有方案 = 今天的课程（或休息 / 未开跑 / 已结束）；无方案 = 未排训练。
- *  最弱项的分数不管有没有方案都直接跟在值里（「拉日 · 背 48」），模板里按档位着色 ——
+ *  焦点组的状态跟在值里（「拉日 · 背未练」「拉日 · 背 48」），模板里按档位着色 ——
  *  所以这里的文案不再重复分数。 */
 const trainMain = computed(() => {
   if (!program.active) return '未排训练'
@@ -279,25 +313,88 @@ const trainMain = computed(() => {
 })
 
 const trainNote = computed(() => {
-  const w = weakest.value
+  const f = focus.value
   if (status.value?.upcoming) {
     const first = status.value.startDate && parsed.value ? courseOnDate(parsed.value, status.value.startDate) : null
     return `${status.value.startDate.slice(5)} 开跑${first ? ` · 首日 ${first.courseName}` : ''}`
   }
   if (status.value?.ended) return '本期已结束 · 去生成成绩单'
   if (!program.active) {
-    return w ? `本周${w.label}练得不够 · 排一份方案跟着练` : '排一份健康方案 · 训练跟着日程走'
+    if (f?.idle) return `${f.label}本周还没练 · 加练一次补上`
+    if (f) return `本周${f.label}练得不够 · 排一份方案跟着练`
+    return '排一份健康方案 · 训练跟着日程走'
   }
   const c = todayCourse.value
   if (!c) {
-    if (w && recommendedCourse.value) return `建议排「${recommendedCourse.value}」· 想练就来一次加练`
-    return w ? '今天不排训练 · 想练就来一次加练' : '今天不排训练 · 想动就去运动页'
+    const rec = recommendedCourse.value
+    if (f?.idle && rec) {
+      const day = nextCourseDate.value
+      return day
+        ? `${f.label}还没练 · ${dayLabel(day)}「${rec.courseName}」正好补上`
+        : `${f.label}还没练 · 排「${rec.courseName}」正好补上`
+    }
+    if (f?.idle) return `${f.label}还没练 · 想练就来一次加练`
+    if (f && rec) return `建议排「${rec.courseName}」· 想练就来一次加练`
+    return f ? '今天不排训练 · 想练就来一次加练' : '今天不排训练 · 想动就去运动页'
   }
   const n = planStore.byId(c.courseId)?.exercises.length
-  if (w && courseCovers(c.courseId, w.group)) return `正好补它 · ${n ?? '—'} 个动作 · 约 ${c.durationMin} 分钟`
-  if (w && recommendedCourse.value) return `建议排「${recommendedCourse.value}」· ${n ?? '—'} 个动作 · 约 ${c.durationMin} 分钟`
-  return w ? `${w.label}这周练得不够 · ${n ?? '—'} 个动作 · 约 ${c.durationMin} 分钟` : `${n ?? '—'} 个动作 · 约 ${c.durationMin} 分钟`
+  const suffix = `${n ?? '—'} 个动作 · 约 ${c.durationMin} 分钟`
+  if (f && courseCovers(c.courseId, f.group)) {
+    return f.idle ? `正好补上未练的${f.label} · ${suffix}` : `正好补它 · ${suffix}`
+  }
+  return suffix
 })
+
+/* ---- 立刻练：卡上一步开练，不让用户去训练页翻 ---- */
+const session = useSessionStore()
+const startBusy = ref(false)
+const conflictOpen = ref(false)
+const catchupOpen = ref(false)
+
+/** 开练目标：今天的课优先；休息日排一节能补上焦点组的课；都没有就落到弱项加练 */
+const startPlan = computed<WorkoutPlanRecord | null>(() => {
+  const c = todayCourse.value
+  if (c) return planStore.byId(c.courseId) ?? null
+  const rec = recommendedCourse.value
+  return rec ? (planStore.byId(rec.courseId) ?? null) : null
+})
+
+const startReady = computed(() => startPlan.value != null || focus.value != null)
+
+const startLabel = computed(() => {
+  const p = startPlan.value
+  return p ? `立刻开练「${p.name}」` : '开练弱项加练'
+})
+
+/** 弱项加练的候选：断练未练的组在前，弱项随后（从未练过的不进加练） */
+const catchupWeak = computed<GroupScore[]>(() => [...lapsedIdle.value, ...weakList.value])
+
+async function startNow(e: MouseEvent): Promise<void> {
+  if (startBusy.value) return
+  const plan = startPlan.value
+  if (!plan) {
+    catchupOpen.value = true /* 没有现成的课 → 组一节临时加练课 */
+    return
+  }
+  const origin = e.currentTarget as HTMLElement | null /* await 后 currentTarget 已置 null，同步先抓 */
+  startBusy.value = true
+  try {
+    const r = await session.start(plan)
+    if (r === 'conflict') {
+      conflictOpen.value = true
+      return
+    }
+    openImmersive(origin)
+  } finally {
+    startBusy.value = false
+  }
+}
+
+function goConflict(): void {
+  conflictOpen.value = false
+  if (session.foreignRoute) void router.push(session.foreignRoute)
+  else openImmersive()
+}
 
 /* ---- 专注 / 钱 ---- */
 const focusTool = computed(() => toolById('focus.open'))
@@ -425,26 +522,43 @@ onMounted(() => {
       </div>
     </section>
 
-    <!-- 练：练够分找弱项，方案里找今天该练哪节 -->
+    <!-- 练：未练优先于分低，分化定的课一步开练 -->
     <section v-if="trainMembers.length" class="hf-zone" data-testid="hf-zone-train" style="--tint: var(--accent)">
       <header class="hf-z1">
         <i class="hf-zk"><Dumbbell :size="14" :stroke-width="2.2" />练</i>
-        <!-- 得分状态点：五档与肌肉热力图同一份颜色（MuscleMap 图例），颜色粗分、档名仍在文字里 -->
-        <i v-if="weakest" class="hf-heat" :class="`hs${weakest.level}`" aria-hidden="true" />
+        <!-- 得分状态点：五档与肌肉热力图同一份颜色（MuscleMap 图例），未练=灰档、颜色粗分 -->
+        <i v-if="focus" class="hf-heat" :class="`hs${focus.level}`" aria-hidden="true" />
         <b class="hf-zv">
-          <!-- 值 = 主事实 · 最弱项分数（有方案：「拉日 · 背 48」；无方案：分数就是主事实） -->
-          <template v-if="program.active && weakest">
-            {{ trainMain }}<span class="hf-zsep">·</span>{{ weakest.label }}
-            <span class="hf-score" :class="`hs${weakest.level}`">{{ weakest.score }}</span>
+          <!-- 值 = 主事实 · 焦点组状态（有方案：「拉日 · 背未练」/「拉日 · 背 48」；无方案：焦点组就是主事实） -->
+          <template v-if="program.active && focus">
+            {{ trainMain }}<span class="hf-zsep">·</span>{{ focus.label }}
+            <span v-if="focus.idle" class="hf-idle">未练</span>
+            <span v-else class="hf-score" :class="`hs${focus.level}`">{{ focus.score }}</span>
           </template>
-          <template v-else-if="weakest">
-            {{ weakest.label }} <span class="hf-score" :class="`hs${weakest.level}`">{{ weakest.score }}</span> 分
+          <template v-else-if="focus">
+            {{ focus.label }}
+            <span v-if="focus.idle" class="hf-idle">未练</span>
+            <template v-else>
+              <span class="hf-score" :class="`hs${focus.level}`">{{ focus.score }}</span> 分
+            </template>
           </template>
           <template v-else>{{ trainMain }}</template>
         </b>
         <span class="hf-zn">{{ trainNote }}</span>
       </header>
       <div class="hf-members">
+        <!-- 立刻练：今天的课 / 能补上未练的那节课 / 弱项加练 —— 卡上唯一的实底动作 -->
+        <button
+          v-if="startReady"
+          type="button"
+          class="hf-member is-start pressable"
+          data-testid="hf-start"
+          :aria-label="startLabel"
+          :disabled="startBusy"
+          @click="startNow"
+        >
+          <Play :size="13" :stroke-width="2.6" />立刻练
+        </button>
         <button
           v-for="m in trainMembers"
           :key="m.id"
@@ -505,6 +619,15 @@ onMounted(() => {
     <SmartAddSheet :open="quickOpen" mode="food" :date="props.date" @close="quickOpen = false" />
     <AddWorkoutSheet :open="workoutOpen" @close="workoutOpen = false" />
     <DietHistorySheet :open="historyOpen" @close="historyOpen = false" />
+    <!-- 立刻练没有现成的课可开时，落到弱项加练（断练未练的组也进候选） -->
+    <MuscleCatchupSheet :open="catchupOpen" :weak="catchupWeak" @close="catchupOpen = false" />
+    <ActionSheet
+      :open="conflictOpen"
+      title="已有进行中的训练，请先接续"
+      :actions="[{ label: '前往继续', value: 'go' }]"
+      @select="goConflict"
+      @close="conflictOpen = false"
+    />
   </div>
 </template>
 
@@ -682,6 +805,14 @@ onMounted(() => {
   color: var(--text-3);
 }
 
+/* 「未练」没有分数可给 —— 一枚中性小字即可，灰点（hs0）已经表过态 */
+.hf-idle {
+  margin-left: 1px;
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-3);
+}
+
 .hf-zn {
   margin-left: auto;
   min-width: 0;
@@ -769,6 +900,21 @@ onMounted(() => {
 
 .hf-member.is-add svg {
   color: var(--tint);
+}
+
+/* 立刻练：卡上唯一的实底动作（成员仍走同一种胶囊的约定只约束成员之间 ——
+   它不是「成员」，是这张卡的动作本身）。形变锚点在按钮上，沉浸层从这长出来。 */
+.hf-member.is-start {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.hf-member.is-start svg {
+  color: var(--on-accent);
+}
+
+.hf-member.is-start:disabled {
+  opacity: 0.45;
 }
 
 /* ---------- 状态格 ---------- */

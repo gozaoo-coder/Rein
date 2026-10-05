@@ -223,7 +223,7 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
 .ic {
   width: 36px;
   height: 36px;
-  border-radius: 12px;
+  border-radius: var(--radius-s);
   flex: none;
   background: linear-gradient(135deg, #2f6bff, #5ac8fa);
   color: #fff;
@@ -256,7 +256,7 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
 
 .chip {
   font-style: normal;
-  font-size: 9px;
+  font-size: var(--fs-micro);
   font-weight: 800;
   border-radius: var(--radius-full);
   padding: 2px 7px;
@@ -280,7 +280,7 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
 .go {
   flex: none;
   color: var(--text-3);
-  font-size: 16px;
+  font-size: var(--fs-headline);
 }
 
 .body {
@@ -325,9 +325,9 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
 
 .hint code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   background: var(--surface-2);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 4px;
 }
 
@@ -366,7 +366,7 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
 }
 
 .mini {
-  font-size: 11px;
+  font-size: var(--fs-micro);
   font-weight: 700;
   color: var(--accent);
 }
@@ -410,7 +410,7 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
   width: 17px;
   height: 17px;
   flex: none;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   border: 1.5px solid var(--text-3);
   color: transparent;
   display: flex;
@@ -437,7 +437,7 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
 
 .mt em {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 
@@ -468,7 +468,7 @@ const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) 
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   margin-bottom: 4px;
 }

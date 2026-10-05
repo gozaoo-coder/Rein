@@ -223,6 +223,7 @@
   --led-other: #8e8e93;
 
   /* ---------- 圆角 ---------- */
+  --radius-xs: 6px;
   --radius-s: 10px;
   --radius-m: 14px;
   --radius-l: 22px;

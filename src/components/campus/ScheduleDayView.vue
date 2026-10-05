@@ -211,7 +211,7 @@ function place(e: ScheduleEntry): string {
 }
 
 .unit {
-  font-size: 9px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
   margin-top: 2px;
   white-space: nowrap;

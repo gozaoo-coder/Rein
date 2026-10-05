@@ -299,12 +299,14 @@ async function main() {
   try {
     await sleep(1500)
     await connect(`${APP}/#/ai`, seed)
-    await waitFor(`document.querySelector('h1')?.textContent === 'AI'`, 12000, 'AI 页挂载')
+    // AI 页是「无标题页」（PageHeader compact 不传 title，无 h1）——挂载判据用它的主操作圆钮
+    await waitFor(`!!document.querySelector('.page-header button[aria-label="历史"]')`, 12000, 'AI 页挂载')
 
-    // 欢迎语由 init() 异步落库后上屏，等它出现再记录基线
-    await waitFor(`document.querySelectorAll('.msg.assistant').length >= 1`, 8000, '欢迎语上屏')
+    // 空会话的「开场」已由 AiBoard 呈现（旧版文字欢迎语按设计移除，见 stores/ai.greet）
+    await waitFor(`!!document.querySelector('.board')`, 8000, 'AiBoard 上屏')
+    // 空会话没有任何助手气泡；后面「+2」断言的基线从这里取
     const before = await evalJS(`document.querySelectorAll('.msg.assistant').length`)
-    ok('0 AI 页挂载且欢迎语就位', before >= 1, `已有助手气泡 ${before}`)
+    ok('0 AI 页挂载且空会话为空', before === 0, `已有助手气泡 ${before}`)
 
     /* ---------- 发送一轮会触发工具调用的提问 ---------- */
     const typed = await evalJS(`(() => {
@@ -420,8 +422,9 @@ async function main() {
     await sleep(500)
     ok('22 点击标题可手动展开', await evalJS(`!document.querySelector('.process-section').classList.contains('collapsed')`))
     await sleep(400)
+    // 过程内容包了一层 .rubber-layer（超范围回弹的位移层），段落在它里面
     const order = await evalJS(
-      `[...document.querySelector('.process-body').children].map(c => c.className.split(' ')[0]).join(',')`,
+      `[...(document.querySelector('.process-body .rubber-layer') ?? document.querySelector('.process-body')).children].map(c => c.className.split(' ')[0]).join(',')`,
     )
     ok('23 思考文字与工具行按到达顺序穿插', order === 'process-reasoning,tool-list,process-reasoning', order)
 

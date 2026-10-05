@@ -239,15 +239,12 @@ html[data-immersive='open'] [data-immersive-shell] {
   pointer-events: none;
 }
 
-html[data-immersive='returning'] [data-immersive-shell] {
-  animation: rein-shell-return 220ms var(--ease-out) both;
-}
-
-@keyframes rein-shell-return {
-  from {
-    opacity: 0;
-    translate: 0 22px;
-  }
+/* closing：收起形变进行中。壳提前回到可见（此刻被不透明的形变壳整个盖住，
+   随收缩逐渐露出的是已就位的页面），只禁交互。刻意**不再**有滑入动画：
+   壳从头到尾没动过，形变壳贴到悬浮条上时页面各就各位，不存在第二次位移——
+   「壳消失 → 壳元素再滑进来」的两段式正是返回动画对不上的根源。 */
+html[data-immersive='closing'] [data-immersive-shell] {
+  pointer-events: none;
 }
 
 html[data-perf='low'] {

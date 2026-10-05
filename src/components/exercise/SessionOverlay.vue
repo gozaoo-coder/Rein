@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { createLayout, stagger } from 'animejs'
 import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
@@ -27,7 +28,7 @@ import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import { usePressGlow } from '@/composables/usePressGlow'
 import { useScrolled } from '@/composables/useScrolled'
-import { motionOn } from '@/system/motion'
+import { motionOn, motionRich } from '@/system/motion'
 import { perfDegraded } from '@/system/perf'
 import { workoutRuntime } from '@/system/workoutRuntime'
 import { useToast } from '@/composables/useToast'
@@ -498,7 +499,10 @@ const fadeEl = ref<HTMLElement | null>(null)
    事件走整层委托，:active 决定亮不亮 —— 即时反馈等不得一个事件回调。 */
 usePressGlow(layerEl, '.glow-layer')
 
-/* 滚动边缘（丰富档）：内容滚离顶部即置位，CSS 据此浮起底坞的暗带 */
+/* 滚动边缘（丰富档）：内容滚离顶部即置位，CSS 据此浮起底坞的暗带。
+ *  解析走 useScrolled 的就近链：关闭态整层 opacity:0，可滚祖先会一路解析到文档 ——
+ *  主页一滚它也跟着翻（类的写显隐在模板处与 immersiveOpen 相与，见 .session-page）。
+ *  这里只负责读：rAF 合并、值不变不写，开着时判定照旧。 */
 const scrollEl = ref<HTMLElement | null>(null)
 const bodyScrolled = useScrolled(scrollEl)
 
@@ -541,6 +545,8 @@ let morphTo: MorphState | null = null
 let morphT0 = 0
 let morphDur = 0
 let morphDone: (() => void) | null = null
+/** 本次形变是否挂了丰富档内容编舞（stepMorph 据此让画布全程可见） */
+let richMorph = false
 
 /** M3 emphasized 近似：起始快、收尾缓。二分求解 cubic-bezier 的进度映射 */
 const easeAt = ((): ((x: number) => number) => {
@@ -574,6 +580,12 @@ function writeMorph(m: MorphState): void {
     el.style.borderRadius = ''
   } else {
     el.style.transform = `translate3d(${m.tx}px, ${m.ty}px, 0) scale(${m.sx}, ${m.sy})`
+    // 圆角补偿：层被各向异性缩放，把目标圆角原样写在壳上，绘制出来会被
+    // scale 压成扁椭圆——收起落位瞬间壳的四角与悬浮条的圆角对不上，展开
+    // 途中屏幕四角还会豁出底页。这里反除以当前 scale 写成椭圆半径，绘制
+    // 出来的视觉圆角恒等于 r；布局盒是全屏的，小锚点反算出的大写值装得
+    // 下，不会被钳制。r≈0（全屏端）归零成方角，与屏幕边缘对齐。
+    el.style.borderRadius = m.r <= 0.01 ? '0px' : `${(m.r / m.sx).toFixed(2)}px / ${(m.r / m.sy).toFixed(2)}px`
   }
   fade.style.opacity = String(m.fade)
   fade.style.visibility = m.fade <= 0.001 ? 'hidden' : 'visible'
@@ -585,10 +597,10 @@ function stopMorph(): void {
   morphFrom = null
   morphTo = null
   morphDone = null
-  // 无论正常收尾还是中途打断，都恢复毛玻璃材质
-  const layer = layerEl.value
-  layer?.classList.remove('is-morphing')
-  if (layer) layer.style.borderRadius = ''
+  // 无论正常收尾还是中途打断，都恢复毛玻璃材质。圆角不在这里清：它归
+  // writeMorph 逐帧管——落位溶解期壳还要带着悬浮条的圆角淡出，在这里清了
+  // 会在溶解段变回方角；恒等归位统一走 writeMorph(IDENTITY())。
+  layerEl.value?.classList.remove('is-morphing')
 }
 
 /* ---- 形变调试日志（默认静默）：控制台执行
@@ -612,18 +624,26 @@ function stepMorph(now: number): void {
   const p = easeAt(Math.min(1, (now - morphT0) / morphDur))
   const lp = (a: number, b: number) => a + (b - a) * p
   // 收起方向的内容淡出走前段加速的独立进度：壳还在收缩早期就把内容
-  // 淡干净，避免「微缩快照」残影；展开方向保持全程淡入（壳先长内容后现）
-  const pf = morphTo.fade < morphFrom.fade ? Math.min(1, p * 2.5) : p
+  // 淡干净，避免「微缩快照」残影。展开向分两套：丰富档画布快速跟上来
+  //（内容块由 animejs layout 编舞入场，画布不能还黑着）；默认档延后到
+  // 末段 25% 才浮现——壳先长到位内容再出现，半程的拉伸文字不会暴露。
+  const pf = morphTo.fade < morphFrom.fade || richMorph
+    ? Math.min(1, p * 2.5)
+    : Math.max(0, (p - 0.75) / 0.25)
   const lpf = (a: number, b: number) => a + (b - a) * pf
   writeMorph({
     sx: lp(morphFrom.sx, morphTo.sx),
     sy: lp(morphFrom.sy, morphTo.sy),
     tx: lp(morphFrom.tx, morphTo.tx),
     ty: lp(morphFrom.ty, morphTo.ty),
-    r: morphFrom.r,
+    // 圆角与几何同步插值（从前冻结在起点值上）：全屏端为 0，锚点端为
+    // 悬浮条圆角，绘制值由 writeMorph 做 scale 补偿
+    r: lp(morphFrom.r, morphTo.r),
     fade: lpf(morphFrom.fade, morphTo.fade),
   })
-  const contentThreshold = morphTo.fade > morphFrom.fade ? (perfDegraded.value ? 0.9 : 0.95) : 2
+  // 可见性阈值与展开向的淡入起点对齐（0.75）；丰富档内容显隐归编舞管，
+  // 画布全程可见。收起向沿用「恒隐藏」快速淡出。
+  const contentThreshold = richMorph ? 0 : morphTo.fade > morphFrom.fade ? 0.75 : 2
   fadeEl.value!.style.visibility = p < contentThreshold ? 'hidden' : 'visible'
   if (!morphFrameLogged) {
     morphFrameLogged = true
@@ -645,14 +665,15 @@ function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => vo
   const brief = (m: MorphState) => ({ sx: +m.sx.toFixed(4), sy: +m.sy.toFixed(4), tx: +m.tx.toFixed(1), ty: +m.ty.toFixed(1), r: +m.r.toFixed(1), fade: +m.fade.toFixed(3) })
   debugMorph('run', { from: brief(from), to: brief(to), dur })
   if (!motionOn.value) {
-    prepareMorphShell(to.r)
+    prepareMorphShell()
     writeMorph(to)
     stopMorph()
     done?.()
     return
   }
   morphFrameLogged = false
-  prepareMorphShell(from.r || to.r)
+  richMorph = motionRich.value && !!ensureContentLayout()
+  prepareMorphShell()
   if (to.fade <= from.fade) fadeEl.value!.style.visibility = 'hidden'
   morphFrom = { ...from }
   morphTo = { ...to }
@@ -662,18 +683,108 @@ function morphRun(from: MorphState, to: MorphState, dur: number, done?: () => vo
   morphRaf = requestAnimationFrame(stepMorph)
 }
 
-function prepareMorphShell(radius: number): void {
+function prepareMorphShell(): void {
   const layer = layerEl.value
   if (!layer) return
+  // 圆角不在这里预写（从前预写成锚点圆角，全屏壳会先以圆角态露一帧，四角
+  // 豁出底页）——起始帧就该是全屏方角，之后每帧由 writeMorph 按 scale 补偿。
   layer.classList.add('is-open', 'is-morphing')
-  layer.style.borderRadius = perfDegraded.value ? '0px' : `${radius}px`
+}
+
+/* ---- 丰富档 · 内容编舞（animejs layout 的 modal-dialog 用法）----
+   默认档的内容进出是画布一次性淡入淡出（成本最低）。丰富档按 animejs
+   modal-dialog 的那套方法换掉它：顶栏 / 底坞 / 内容屏作为布局子元素登记进
+   createLayout，进出各走一次 update()——子元素从 enterFrom（下移＋透明）
+   逐个交错入场，离场反向汇出。它动画的是每个子元素自己的位置与透明度
+   （FLIP），没有整屏缩放带来的文字拉伸，这就是文档里「子元素的位置与
+   透明度自动动画」的细节来源。子元素必须先离场（display:none）再由
+   update 的回调放回，enter/leave 状态才会生效；显隐全部走命令式直改，
+   不经 Vue（record→mutate→animate 的契约要求 DOM 变更同步发生在回调里）。 */
+type ContentLayout = ReturnType<typeof createLayout>
+
+let contentLayout: ContentLayout | null = null
+let contentTimer = 0
+let contentAnim: { cancel?: () => void } | null = null
+
+/** 展开向：内容块在壳形变过半后入场（早于 70% 会被未长成的壳压扁） */
+const CONTENT_ENTER_AT = 340
+const CONTENT_ENTER_MS = 260
+const CONTENT_ENTER_GAP = 50
+/** 收起向：内容块先交错汇出，壳体随后才收缩 */
+const CONTENT_LEAVE_MS = 140
+const CONTENT_LEAVE_GAP = 20
+const CONTENT_SHELL_DELAY = 130
+
+function ensureContentLayout(): ContentLayout | null {
+  const root = fadeEl.value
+  if (!root) return null
+  contentLayout ??= createLayout(root, {
+    children: ['.ctrl-top', '.ctrl-dock', '.pane'],
+    ease: 'out(3)',
+    enterFrom: { opacity: 0, translateY: 16 },
+    leaveTo: { opacity: 0, translateY: 10 },
+  })
+  return contentLayout
+}
+
+function contentEls(): HTMLElement[] {
+  const root = fadeEl.value
+  if (!root) return []
+  return Array.from(root.querySelectorAll<HTMLElement>('.ctrl-top, .ctrl-dock, .pane'))
+}
+
+/** 打断内容编舞：方向反打时先停掉在飞的 enter/leave 与待触发的入场 */
+function cancelContentChoreo(): void {
+  if (contentTimer) {
+    clearTimeout(contentTimer)
+    contentTimer = 0
+  }
+  contentAnim?.cancel?.()
+  contentAnim = null
+}
+
+/* ---- 落位溶解 ----
+   收起伏贴到悬浮条 rect 后（含补偿过的同款圆角），壳面原地短淡出让位给
+   底下原位的悬浮条——closing 起浮条就已就位，壳与浮窗同位同角，视觉上是
+   同一块材质交棒。取代「壳凭空消失 → 浮窗/壳元素再各自滑入」的两段式：
+   那两段位移正是返回动画对不上的根源。 */
+const SETTLE_FADE_MS = 130
+let settleTimer = 0
+
+function settleWithFade(): void {
+  const layer = layerEl.value
+  if (!layer || !motionOn.value) {
+    writeMorph(IDENTITY())
+    settleClosed()
+    return
+  }
+  layer.classList.add('is-settling')
+  settleClosed()
+  settleTimer = window.setTimeout(() => {
+    settleTimer = 0
+    writeMorph(IDENTITY())
+    layer.classList.remove('is-settling')
+  }, SETTLE_FADE_MS + 30)
 }
 
 function playExpand(): void {
   if (!layerEl.value || !fadeEl.value) return
+  // 打断落位溶解 / 内容编舞：清掉待执行的归位与在飞的 enter/leave，
+  // 从当前（悬浮条 rect）直接接续展开
+  if (settleTimer) {
+    clearTimeout(settleTimer)
+    settleTimer = 0
+    layerEl.value.classList.remove('is-settling')
+  }
+  cancelContentChoreo()
   morphDebugOn = !!localStorage.getItem('reinMorphDebug')
+  const richExpand = motionRich.value && !!ensureContentLayout()
+  // 内容块显形权归各档编舞：默认档恒可见；丰富档先收起（display:none），
+  // 由 layout 的 enter 动画接手显形。清一遍再收，保证从任何前一态出发都干净。
+  const els = contentEls()
+  for (const el of els) el.style.display = richExpand ? 'none' : ''
   const presetSnap = immersiveOriginSnapshot()
-  prepareMorphShell(presetSnap?.radius ?? anchorFrom(presetSnap).radius)
+  prepareMorphShell()
   fadeEl.value.style.visibility = 'hidden'
   debugMorph('expand:req', {
     explicit: presetSnap?.explicit ?? false,
@@ -702,6 +813,27 @@ function playExpand(): void {
     const from = morphStateOf(rect, radius)
     from.fade = cur.fade < 1 ? cur.fade : 0
     morphRun(from, IDENTITY(), perfDegraded.value ? EXPAND_MS_LOW : EXPAND_MS)
+    if (richExpand) {
+      // 内容块交错入场。用 setTimeout 而不是 update 的 delay：子元素必须
+      // 保持 display:none 到 enter 动画将启，否则会在延迟段以自然态露出、
+      // 被尚未长成的壳压扁。
+      contentTimer = window.setTimeout(() => {
+        contentTimer = 0
+        if (!immersiveOpen.value || immersiveClosing.value) return
+        contentAnim = ensureContentLayout()?.update(
+          () => {
+            for (const el of contentEls()) {
+              // 垫上 enterFrom 的内联初值：交错延迟段（50ms/个）里还没轮到的
+              // 子元素不能以自然态露出，否则会在长成的壳上先闪一帧再动起来
+              el.style.opacity = '0'
+              el.style.transform = 'translateY(16px)'
+              el.style.display = ''
+            }
+          },
+          { duration: CONTENT_ENTER_MS, delay: stagger(CONTENT_ENTER_GAP) },
+        ) as { cancel?: () => void } | null
+      }, CONTENT_ENTER_AT)
+    }
   })
 }
 
@@ -726,6 +858,8 @@ function morphStateOf(rect: DOMRect, radius: number): MorphState {
 
 function playCollapse(): void {
   if (!layerEl.value || !fadeEl.value) return
+  cancelContentChoreo()
+  const rich = motionRich.value && !!ensureContentLayout()
   // closing 驱动的浮窗 v-show 可能晚一拍才 patch 生效：先等一帧再量锚点，
   // 否则量到 display:none 的零矩形会掉进中央卡片兜底（轨迹跳向屏幕中部）。
   // 层在等待帧内保持全屏静止，视觉无感；若期间状态被打断则静默放弃。
@@ -737,17 +871,27 @@ function playCollapse(): void {
       radius: anchor?.radius ?? null,
     })
     const { rect, radius } = anchorFrom(anchor)
-    // 收缩到悬浮条 rect：内容快速淡出，材质壳滑回原位与浮窗同位接续
-    morphRun(
-      { ...cur },
-      { ...morphStateOf(rect, radius), fade: 0 },
-      perfDegraded.value ? COLLAPSE_MS_LOW : COLLAPSE_MS,
-      () => {
-        // 恒等基态写入与置 closed 隐藏在同一任务帧，无中间渲染
-        writeMorph(IDENTITY())
-        settleClosed()
-      },
-    )
+    // 收缩到悬浮条 rect：内容快速淡出，材质壳滑回原位与浮窗同位接续；
+    // 收尾走落位溶解（壳面原地淡出、交棒给底下原位的浮条），不再凭空消失
+    const to = { ...morphStateOf(rect, radius), fade: 0 }
+    const dur = perfDegraded.value ? COLLAPSE_MS_LOW : COLLAPSE_MS
+    if (rich) {
+      // 丰富档：内容块先交错汇出，壳体稍后才收缩——内容不会跟着壳一起被
+      // 压成微缩快照。壳的启动用 setTimeout 推迟（children 的离场动画需要
+      // 它们留在原布局里），期间被打断则静默放弃（展开已在跑）。
+      contentAnim = ensureContentLayout()!.update(
+        () => {
+          for (const el of contentEls()) el.style.display = 'none'
+        },
+        { duration: CONTENT_LEAVE_MS, delay: stagger(CONTENT_LEAVE_GAP) },
+      ) as { cancel?: () => void } | null
+      window.setTimeout(() => {
+        if (!immersiveClosing.value || !layerEl.value || !fadeEl.value) return
+        morphRun({ ...cur }, to, dur, () => settleWithFade())
+      }, CONTENT_SHELL_DELAY)
+    } else {
+      morphRun({ ...cur }, to, dur, () => settleWithFade())
+    }
   })
 }
 
@@ -774,7 +918,7 @@ watch(immersiveOpen, (open) => {
     <div
       ref="fadeEl"
       class="session-page"
-      :class="{ 'is-scrolled': bodyScrolled }"
+      :class="{ 'is-scrolled': bodyScrolled && immersiveOpen }"
       :style="{
         '--dock-h': `${dockHeight}px`,
         '--top-h': `${topHeight}px`,
@@ -1233,6 +1377,14 @@ watch(immersiveOpen, (open) => {
 .session-layer.is-open {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* 落位溶解：收起到位后壳面原地短淡出（层还停在悬浮条的 rect 上），交棒给
+   底下原位的悬浮条。过渡只在这一态声明——is-open 的摘除在其余场合都必须
+   瞬时（展开起点、打断接续），不能被这里的过渡拖出渐隐。130ms 与脚本里
+   SETTLE_FADE_MS 同源，改时两处一起动。 */
+.session-layer.is-settling {
+  transition: opacity 130ms var(--ease-out);
 }
 
 /* 形变进行中：控制层的玻璃退成**近材质**而不是纯透明——令牌换成实底 + 常规描边，

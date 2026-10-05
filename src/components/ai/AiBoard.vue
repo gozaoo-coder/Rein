@@ -273,7 +273,7 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
 }
 
 .t-row b {
-  font-size: 30px;
+  font-size: var(--fs-large-title);
   font-weight: 200;
   letter-spacing: -1px;
   line-height: 1;
