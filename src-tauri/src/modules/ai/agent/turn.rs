@@ -5,8 +5,9 @@
 //!   口径不变 —— `ai_chat_messages` 存 UI 记录，工具中间轮不跨会话回放）；
 //! - 工具执行走 [`ToolExecutor`] 缝：过渡期实现为「事件回前端、命令回传结果」的
 //!   桥接（session 域常驻），工具迁移完成后换成 Rust 注册表；
-//! - 保留 EffiBuddy 的两条硬纪律：工具并发上限 4；子任务 panic / 取消时**对账补齐
-//!   错误结果**（否则下一步 prompt 缺 tool 消息，provider 直接 400）。
+//! - 保留 EffiBuddy 的硬纪律：子任务 panic / 取消时**对账补齐错误结果**（否则下一步
+//!   prompt 缺 tool 消息，provider 直接 400）。工具并发不设上限（用户要求去掉
+//!   EffiBuddy 的 4 并发闸）：执行器各自有超时与取消语义，徒增排队延迟。
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -24,8 +25,6 @@ use super::retry::{plan_retry, RetryPlan};
 
 /// 单次 run 的步数上限（防模型陷入工具循环）
 pub const MAX_STEPS: u32 = 32;
-/// 工具并发上限（对齐 EffiBuddy `tool_concurrency(4)`）
-pub const TOOL_CONCURRENCY: usize = 4;
 
 /// run 级上下文：每步 completion 前读取一次。
 ///
@@ -212,7 +211,7 @@ fn add_usage(acc: &mut Option<LlmUsage>, u: &LlmUsage) {
     a.total += u.total;
 }
 
-/// 并发执行一批工具调用（上限 [`TOOL_CONCURRENCY`]），按调用顺序返回结果。
+/// 并发执行一批工具调用（不设并发上限），按调用顺序返回结果。
 ///
 /// 子任务 panic / 取消时其结果永不抵达通道 —— 此处对账补一条错误结果，
 /// 保证「assistant 的每个 tool_call 都有配对 tool 消息」这一 provider 硬要求
@@ -221,17 +220,14 @@ async fn execute_tools(
     executor: &Arc<dyn ToolExecutor>,
     calls: &[LlmToolCall],
 ) -> Vec<(LlmToolCall, ToolOutcome)> {
-    let permits = Arc::new(tokio::sync::Semaphore::new(TOOL_CONCURRENCY));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(usize, ToolOutcome)>();
     let mut set = tokio::task::JoinSet::new();
 
     for (idx, tc) in calls.iter().enumerate() {
         let executor = Arc::clone(executor);
         let tc = tc.clone();
-        let permit = Arc::clone(&permits);
         let tx = tx.clone();
         set.spawn(async move {
-            let _permit = permit.acquire_owned().await.expect("信号量不会关闭");
             let outcome = executor.execute(&tc.id, &tc.name, &tc.arguments).await;
             let _ = tx.send((idx, outcome));
         });
@@ -460,7 +456,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_concurrency_is_capped_but_parallel() {
+    async fn tools_run_fully_parallel_without_cap() {
         let calls: Vec<LlmToolCall> = (0..6)
             .map(|i| LlmToolCall {
                 id: format!("c{i}"),
@@ -495,8 +491,7 @@ mod tests {
         assert_eq!(res.tools, 6);
         assert_eq!(exec.calls.load(Ordering::SeqCst), 6);
         let peak = exec.limit_seen.load(Ordering::SeqCst);
-        assert!(peak <= TOOL_CONCURRENCY, "并发不得超过上限: {peak}");
-        assert!(peak >= 2, "6 个慢工具应有并行（实测峰值 {peak}）");
+        assert_eq!(peak, 6, "不设并发上限：6 个慢工具应全部同时跑（实测峰值 {peak}）");
     }
 
     #[tokio::test]

@@ -24,3 +24,7 @@ pub mod turn;
 pub mod models;
 pub mod probe;
 pub mod retry;
+
+/// 真实 provider 冒烟（默认跳过）：见 smoke.rs 头注释的运行方式
+#[cfg(test)]
+mod smoke;

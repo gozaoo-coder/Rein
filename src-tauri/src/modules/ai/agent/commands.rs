@@ -114,6 +114,7 @@ impl TurnHooks for EmitHooks {
     }
 
     fn on_usage(&self, usage: &LlmUsage) {
+        eprintln!("[ai-agent] step usage in={} out={} total={}", usage.input, usage.output, usage.total);
         self.emit(AgentEvent::Usage { run_id: self.run_id.clone(), usage: *usage });
     }
 }
@@ -127,7 +128,9 @@ pub async fn ai_agent_run(
     hub: State<'_, Arc<AgentHub>>,
     params: AgentRunParams,
 ) -> Result<String> {
+    eprintln!("[ai-agent] run requested model_id={}", params.model_id);
     let config = load_model(&state, params.model_id)?;
+    eprintln!("[ai-agent] run start id={} base={} model={}", config.id, config.base_url, config.model_id);
     let backend: Arc<dyn LlmBackend> = Arc::new(OpenAiCompatBackend::new(
         config.base_url,
         config.api_key,
@@ -194,6 +197,7 @@ pub async fn ai_agent_run(
         .await;
         match result {
             Ok(res) => {
+                eprintln!("[ai-agent] run done steps={} tools={} err={:?}", res.steps, res.tools, res.stop_reason);
                 let _ = task_app.emit(
                     AGENT_EVENT,
                     AgentEvent::Done {
@@ -209,6 +213,7 @@ pub async fn ai_agent_run(
                 );
             }
             Err(e) => {
+                eprintln!("[ai-agent] run error: {e}");
                 let _ = task_app.emit(
                     AGENT_EVENT,
                     AgentEvent::Error { run_id: task_run_id.clone(), message: e.to_string() },

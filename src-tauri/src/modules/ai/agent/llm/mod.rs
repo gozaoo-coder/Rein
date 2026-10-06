@@ -37,6 +37,7 @@ pub enum LlmRole {
 
 /// LLM 工具调用块（挂在 assistant 消息内）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmToolCall {
     pub id: String,
     pub name: String,
@@ -59,6 +60,7 @@ pub struct ImageData {
 ///   （线格式层会拆成 tool 文本 + 延迟落位的 user 多模态消息，防 DeepSeek 400）
 /// - `reasoning` 是 assistant 的思考链，DeepSeek 回灌历史时转 `reasoning_content`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmMessage {
     pub role: LlmRole,
     #[serde(default)]
@@ -136,6 +138,7 @@ impl LlmMessage {
 
 /// 工具定义（发给 LLM 的 JSON Schema 形状，对齐 OpenAI `tools[].function`）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmToolDef {
     pub name: String,
     pub description: String,
@@ -165,6 +168,7 @@ pub struct LlmRequest {
 /// token 用量统计。`input` 口径对齐 pi-ai：prompt_tokens 扣除缓存命中/写入
 /// （成本记账 `ai_usage` 的输入侧不重复计缓存 token）
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmUsage {
     pub input: u64,
     pub output: u64,

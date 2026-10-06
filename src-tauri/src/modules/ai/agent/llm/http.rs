@@ -71,7 +71,13 @@ impl OpenAiCompatBackend {
         install_crypto_provider();
         let base_url = base_url.into();
         Self {
-            http: reqwest::Client::new(),
+            // 不设总超时（流式可以很長）；连接与「块间空闲」给死线，
+            // 防止端点挂起把 ai_probe / agent run 无限吊住
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .read_timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("reqwest Client 构建失败"),
             compat: Compat::detect(&base_url),
             base_url,
             api_key: api_key.into(),

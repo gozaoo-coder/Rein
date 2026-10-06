@@ -58,9 +58,11 @@ impl ToolOutcome {
     }
 }
 
-/// 流式事件（`app.emit("ai://agent", …)`）
+/// 流式事件（`app.emit("ai://agent", …)`）。
+/// `rename_all` 管变体名，`rename_all_fields` 管字段名（run_id → runId 等）——
+/// 漏掉后者时前端按 runId 认领会全数丢弃（真机联调踩过的坑）。
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum AgentEvent {
     /// run 已启动（前端据此把气泡切到流式态）
     Started { run_id: String },
