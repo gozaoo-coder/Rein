@@ -781,13 +781,22 @@ pub fn ai_chat_search(
     keyword: String,
     limit: Option<i64>,
 ) -> Result<Vec<ChatSearchHit>> {
+    let conn = state.db.lock();
+    chat_search_conn(&conn, &keyword, limit)
+}
+
+/// 连接级实现（AI 内核的工具 `search_history` 直接调用；测试用 migrate_for_test 覆盖）
+pub(crate) fn chat_search_conn(
+    conn: &rusqlite::Connection,
+    keyword: &str,
+    limit: Option<i64>,
+) -> Result<Vec<ChatSearchHit>> {
     let keyword = keyword.trim();
     if keyword.is_empty() {
         return Ok(Vec::new());
     }
     let limit = limit.unwrap_or(8).clamp(1, 50);
     let like = format!("%{keyword}%");
-    let conn = state.db.lock();
     let mut stmt = conn.prepare(
         "SELECT m.chat_id, c.title, m.seq, m.role, m.kind, m.text, m.created_at \
          FROM ai_chat_messages m JOIN ai_chats c ON c.id = m.chat_id \
