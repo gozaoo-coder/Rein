@@ -28,7 +28,6 @@ import { exerciseTools } from './exercise'
 import { imageTools } from './image'
 import { modelTools } from './models'
 import { planTools } from './plan'
-import { pomodoroTools } from './pomodoro'
 import { programTools } from './program'
 import { sessionTools } from './session'
 import { defineTool, type AppTool, type ToolGroup } from './types'
@@ -39,7 +38,6 @@ const DOMAIN_TOOLS: AppTool[] = [
   ...exerciseTools,
   ...planTools,
   ...programTools,
-  ...pomodoroTools,
   ...sessionTools,
   ...modelTools,
   ...voiceTools,
