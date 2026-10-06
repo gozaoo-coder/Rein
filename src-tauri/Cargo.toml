@@ -23,6 +23,15 @@ thiserror = "2"
 chrono = "0.4"
 # AI web 工具（web_search / web_fetch）：服务端抓取避免 WebView CORS 限制
 ureq = "2"
+# AI agent 内核（modules/ai/agent）：LLM 流式请求。reqwest 已由 tauri 传入依赖图。
+# 必须 default-features = false + rustls-no-provider —— reqwest 0.13 的 `rustls`
+# 特性等于 aws-lc-rs（C 代码 + cmake，毒化 Android 交叉编译）；no-provider 复用
+# 依赖图里既有的 ring provider（tokio-tungstenite 的语音 WS 已在生产用它）。
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream", "json"] }
+# rustls 的 ring provider：reqwest 走 no-provider 后由我们在建 Client 前 install_default
+# （见 modules/ai/agent/llm/http.rs）。ring 是纯 Rust 实现，Android 交叉编译零原生依赖。
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+async-trait = "0.1"
 url = "2"
 html2text = "0.17"
 # 分享收件箱（share_read 返回文件内容给前端）

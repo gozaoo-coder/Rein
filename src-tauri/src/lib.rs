@@ -171,6 +171,7 @@ pub fn run() {
             modules::ai::commands::ai_model_delete,
             modules::ai::commands::ai_model_set_default,
             modules::ai::commands::ai_model_save_probe,
+            modules::ai::agent::commands::ai_probe,
             modules::ai::commands::ai_chat_ensure,
             modules::ai::commands::ai_chat_messages,
             modules::ai::commands::ai_chat_append,
