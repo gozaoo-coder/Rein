@@ -4,14 +4,13 @@
  * JSON 对象（food 卡片 / 纯聊天文本），由调用方（store）解析展示。
  */
 
-import type { AgentMessage } from '@earendil-works/pi-agent-core'
-import type { Message } from '@earendil-works/pi-ai'
-
 import type { AiModel } from '@/types'
+import type { AgentFinalMessage } from '@/types'
+
 import { lastAssistantText } from './json'
+import { RustAgent } from './rustAgent'
 import { buildAgentToolsForGroups, resolveToolPlan, toolGroupCatalog } from './tools/registry'
 import type { ToolGroup } from './tools/types'
-import { buildRuntime } from './runtime'
 import { estimateRequestBytes, estimateResponseBytes, recordTurn } from './usageLedger'
 
 export interface ChatTurn {
@@ -128,9 +127,9 @@ ${cardBlock}${catalog}【约定】今天是 ${today}（周${week}）。日期一
 - 其余一切情况（聊天 / 问答 / 建议 / 信息不够的追问 / 已经用工具直接写完的记录）：{"kind":"chat","text":"你的回复"}。已通过工具完成的操作（含 create_food 新增的食品）要在 text 里简要确认结果。字段名严格用 foodName / grams / kcalEstimate / foodId / nutrition，不要发明其他键名。`
 }
 
-/** 最后一条 assistant 消息的真实 token 用量（pi-ai 流式结束后写入），用于记账 */
+/** 最后一条 assistant 消息的真实 token 用量（内核每步 completion 回传），用于记账 */
 function lastAssistantUsage(
-  messages: AgentMessage[],
+  messages: AgentFinalMessage[],
 ): { promptTokens: number; completionTokens: number } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
@@ -143,31 +142,22 @@ function lastAssistantUsage(
   return null
 }
 
-function assistantThink(messages: AgentMessage[]): string | null {
+function assistantThink(messages: AgentFinalMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
     if (m.role !== 'assistant' || !Array.isArray(m.content)) continue
-    const parts = m.content
-      .filter((c) => c.type === 'thinking' && typeof (c as { thinking?: unknown }).thinking === 'string')
-      .map((c) => (c as { thinking: string }).thinking)
+    const parts = (m.content as { type?: string; thinking?: string }[])
+      .filter((c) => c.type === 'thinking' && typeof c.thinking === 'string')
+      .map((c) => c.thinking as string)
     if (parts.length > 0) return parts.join('\n')
   }
   return null
 }
 
-/** 历史轮次 → AgentMessage：assistant 回复以文本块表达（agent 的 convertToLlm 原样透传）；
- * 必须带零值 usage —— pi-ai 估算上下文时会读 assistant.usage.totalTokens，缺失即抛 TypeError。 */
-const EMPTY_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-}
-
-function toAgentMessages(history: ChatTurn[]): Message[] {
-  return history.map((h) => {
+/** 历史轮次 → 内核消息形状（user 文本/图片块、assistant 文本块）。
+ * 内核不需要 pi 的零值 usage（那是 pi-ai 估算上下文的历史包袱）。 */
+function toAgentMessages(history: ChatTurn[]): AgentFinalMessage[] {
+  return history.map((h): AgentFinalMessage => {
     if (h.role === 'user') {
       // 有图时用块数组（文本 + 图片块）；DeepSeek 只允许 user 消息带图
       const imgs = h.images ?? (h.image ? [h.image] : [])
@@ -184,10 +174,8 @@ function toAgentMessages(history: ChatTurn[]): Message[] {
       role: 'assistant',
       content: [{ type: 'text', text: h.text }],
       timestamp: Date.now(),
-      usage: EMPTY_USAGE,
-      stopReason: 'stop',
     }
-  }) as unknown as Message[]
+  })
 }
 
 /** 工具结果首段文本截断为过程卡摘要 */
@@ -248,10 +236,6 @@ export async function chatWithModel(
     cardState?: string
   },
 ): Promise<ChatResult> {
-  const { models, byId } = buildRuntime([config])
-  const entry = byId.get(config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-
   const outgoing: ChatOutgoing = typeof message === 'string' ? { text: message } : message
 
   const plan = resolveToolPlan({
@@ -273,17 +257,16 @@ export async function chatWithModel(
       opts?.cardState,
     )
 
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: opts?.systemPrompt ?? promptFor(loaded),
-      model: entry.model,
+      modelPk: config.id,
       thinkingLevel: 'low',
       tools: buildAgentToolsForGroups(loaded),
       messages: toAgentMessages(history),
     },
-    streamFn: models.streamSimple.bind(models),
     // 模型调过 load_tools 就换掉 context：工具与提示词段落一起换，下一轮立刻可用
+    // （壳在执行完装载工具后调用它，把新清单经 ai_agent_update_context 推给内核）
     prepareNextTurnWithContext: (ctx) => {
       const want = groupsLoadedBy(ctx.toolResults).filter((g) => plan.available.includes(g))
       if (want.length === 0) return undefined

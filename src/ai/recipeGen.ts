@@ -13,7 +13,7 @@ import { dietService } from '@/services/dietService'
 import { mealLayoutFor } from '@/utils/programEngine'
 import { extractJsonObject, lastAssistantText } from './json'
 import { jsonArrayItems } from './streamExtract'
-import { buildRuntime } from './runtime'
+import { RustAgent } from './rustAgent'
 import { buildAppAgentTools, findAppTool } from './tools/registry'
 
 export interface AiMenuItem {
@@ -112,20 +112,14 @@ export async function generateDayMenu(
   ctx: DayMenuContext,
   stream?: MenuStreamHandlers,
 ): Promise<AiMenuResult> {
-  const { models, byId } = buildRuntime([config])
-  const entry = byId.get(config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: systemPrompt(ctx),
-      model: entry.model,
+      modelPk: config.id,
       thinkingLevel: 'off',
       tools: buildAppAgentTools(['search_food', 'get_food']),
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
   })
 
   if (stream) {

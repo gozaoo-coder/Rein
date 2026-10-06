@@ -13,7 +13,7 @@
 import type { AiModel, KbMemory, KbMemoryType, MemoryCandidate } from '@/types'
 import type { ChatTurn } from './chat'
 import { lastAssistantText } from './json'
-import { buildRuntime } from './runtime'
+import { RustAgent } from './rustAgent'
 
 /** 单次抽取允许的最大变更条数。防止模型把整段对话逐句复述成记忆。 */
 const MAX_OPS = 8;
@@ -166,21 +166,15 @@ export async function extractMemories(input: ExtractMemoriesInput): Promise<Memo
   const userTurns = input.turns.filter((t) => t.role === 'user' && t.text.trim())
   if (userTurns.length === 0) return []
 
-  const { models, byId } = buildRuntime([input.config])
-  const entry = byId.get(input.config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: systemPrompt(),
-      model: entry.model,
+      modelPk: input.config.id,
       thinkingLevel: 'off',
       // 抽取是纯文本变形，不需要任何工具；挂工具反而会诱使模型去查数据
       tools: [],
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
   })
 
   await agent.prompt(userPrompt(input.turns, input.existing), undefined)

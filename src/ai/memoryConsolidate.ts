@@ -13,7 +13,7 @@
 
 import type { AiModel, KbMemory, MemoryCandidate } from '@/types'
 import { lastAssistantText } from './json'
-import { buildRuntime } from './runtime'
+import { RustAgent } from './rustAgent'
 import { toCandidates } from './memoryExtract'
 
 /** 单次整理允许的最大变更条数。整理只该动少数条目，开太大反而容易误伤。 */
@@ -81,21 +81,15 @@ export async function consolidateMemories(
 ): Promise<MemoryCandidate[]> {
   if (input.memories.length < 4) return []
 
-  const { models, byId } = buildRuntime([input.config])
-  const entry = byId.get(input.config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: systemPrompt(),
-      model: entry.model,
+      modelPk: input.config.id,
       thinkingLevel: 'off',
       // 整理是纯文本变形，不需要任何工具
       tools: [],
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
   })
 
   await agent.prompt(userPrompt(input.memories), undefined)

@@ -18,7 +18,7 @@ import { parseBlob } from '@/utils/programEngine'
 import { aggregateWorkouts, trainingExec, type WorkoutAgg } from '@/utils/programExec'
 import { extractJsonObject, lastAssistantText } from './json'
 import { jsonStringField } from './streamExtract'
-import { buildRuntime } from './runtime'
+import { RustAgent } from './rustAgent'
 
 export interface ProgramReviewPayload {
   today: string
@@ -144,20 +144,14 @@ export async function reviewProgram(
   payload: ProgramReviewPayload,
   onDiagnosis?: (partial: string) => void,
 ): Promise<ReviewSuggestion> {
-  const { models, byId } = buildRuntime([config])
-  const entry = byId.get(config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: systemPrompt(),
-      model: entry.model,
+      modelPk: config.id,
       thinkingLevel: 'low',
       tools: [],
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
   })
 
   if (onDiagnosis) {

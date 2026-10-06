@@ -8,7 +8,7 @@ import type { AiModel, TodoCategory, TodoDraft } from '@/types'
 import { TODO_CATEGORIES } from '@/types'
 import { todayStr } from '@/utils/date'
 import { extractJsonArray, lastAssistantText } from './json'
-import { buildRuntime } from './runtime'
+import { RustAgent } from './rustAgent'
 
 const CATEGORY_SET = new Set<string>(TODO_CATEGORIES)
 
@@ -72,19 +72,13 @@ async function runParse(
   image?: { data: string; mimeType: string },
 ): Promise<TodoDraft[]> {
   const today = todayStr()
-  const { models, byId } = buildRuntime([config])
-  const entry = byId.get(config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: systemPrompt(today),
-      model: entry.model,
+      modelPk: config.id,
       thinkingLevel: 'off',
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
   })
 
   if (image) {

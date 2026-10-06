@@ -12,6 +12,8 @@
 
 import type { AssistantMessage, ImageContent, TextContent, ThinkingLevel } from '@earendil-works/pi-ai'
 
+import { agentService } from '@/services/agentService'
+import { isTauri } from '@/services/transport'
 import type { AiModel, AiProbeResult } from '@/types'
 import { buildRuntime } from './runtime'
 
@@ -100,6 +102,10 @@ function capability(outs: Outcome[]): { value: boolean | null; abort: boolean; n
 
 /** 执行整轮探测（6 个 max_tokens=1 请求） */
 export async function probeModel(config: AiModel): Promise<AiProbeResult> {
+  // Tauri（桌面 / Android）：请求在 Rust 内核发起（ai_probe，同一套隐藏判定语义）。
+  // 浏览器直连 dev 仍是 pi-ai 路径（Phase 5 删依赖后由 mock 兜底）。
+  if (isTauri) return agentService.probe(config.id)
+
   // ① 基础连通（纯文本）
   const text = await probeOnce(config, 'hi')
   if (!text.ok && text.cls === 'auth') {

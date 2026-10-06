@@ -12,7 +12,7 @@ import { todayStr } from '@/utils/date'
 import { extractJsonObject, lastAssistantText } from './json'
 import { jsonArrayItems } from './streamExtract'
 import { toParsedItems, type ModelFoodRow } from './foodMatch'
-import { buildRuntime } from './runtime'
+import { RustAgent } from './rustAgent'
 import { buildAppAgentTools, findAppTool } from './tools/registry'
 import { toDrafts, type RawTodoRow } from './todoGen'
 
@@ -52,20 +52,14 @@ async function runGenerate(
   stream?: SmartStreamHandlers,
 ): Promise<SmartResult> {
   const today = todayStr()
-  const { models, byId } = buildRuntime([config])
-  const entry = byId.get(config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: systemPrompt(today),
-      model: entry.model,
+      modelPk: config.id,
       thinkingLevel: 'off',
       tools: buildAppAgentTools(['search_food', 'create_food', 'get_food']),
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
   })
 
   if (stream) {

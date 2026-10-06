@@ -13,7 +13,7 @@ import { minToHHmm } from '@/utils/date'
 import { busyIntervals, freeGaps, overlaps, SCHEDULE_BUFFER, type Interval } from '@/utils/schedule'
 import { extractJsonObject, lastAssistantText } from './json'
 import { jsonArrayItems } from './streamExtract'
-import { buildRuntime } from './runtime'
+import { RustAgent } from './rustAgent'
 
 export interface Placement {
   id: number
@@ -104,19 +104,14 @@ export async function aiSchedule(
     : '无'
   const poolLine = pool.map((t) => `${t.id}|${t.title}|${t.durationMin ?? 30}|${t.priority}`).join('；')
 
-  const { models, byId } = buildRuntime([config])
-  const entry = byId.get(config.id)
-  if (!entry) throw new Error('模型运行时构建失败')
-  const { Agent } = await import('@earendil-works/pi-agent-core')
-  const agent = new Agent({
+  const agent = new RustAgent({
     initialState: {
       systemPrompt: systemPrompt(date, minToHHmm(fromMin), busyLine ?? '无', poolLine),
-      model: entry.model,
+      modelPk: config.id,
       thinkingLevel: 'off',
       tools: [],
       messages: [],
     },
-    streamFn: models.streamSimple.bind(models),
   })
 
   if (onProgress) {

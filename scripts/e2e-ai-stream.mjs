@@ -1,11 +1,13 @@
 /**
- * e2e-ai-stream —— AI 流式输出体验 E2E（无头 Edge + 原生 CDP + 本地假 provider）
+ * e2e-ai-stream —— AI 流式输出体验 E2E（无头 Edge + 原生 CDP + mock 脚本化内核）
  *
- * 为什么要假 provider：浏览器 mock 模式下聊天是前端直连 provider 的（pi-ai streamSimple），
- * 所以只要把模型 baseUrl 指向本脚本起的本地 SSE 服务，就能让「真实全链路」跑起来——
- * pi-ai 解析 → chat.ts 回调 → streamBubbles 聚合 → ProcessSection 渲染，且节奏完全可编排。
+ * 为什么不发真实请求：AI 内核已下沉 Rust（src-tauri/src/modules/ai/agent），浏览器直连
+ * 模式没有 Rust，由 mock 的脚本化内核（src/mock/server.ts 的 mockAgent）驱动同一套事件契约
+ * （ai://agent）与同一条工具执行链（toolStarted → 前端注册表执行 → ai_agent_tool_result 回传）。
+ * 覆盖的仍是「事件 → RustAgent 壳 → chat.ts 回调 → streamBubbles 聚合 → ProcessSection 渲染」。
+ * 真实「SSE 解析 → 循环」链路由 Rust 单测覆盖（sse/wire/loop，含 std-only 假 provider）。
  *
- * 剧本：第 1 轮吐思考（3 块）→ list_todos 工具调用；第 2 轮（请求里带 tool 结果）吐思考 + 正文 JSON。
+ * 剧本：第 1 步吐思考 → list_todos 工具调用；第 2 步（工具结果回传后）吐思考 + 正文 JSON。
  * 覆盖：合并标题（思考中 N 秒 → 已思考 N 秒 · 使用了工具）、进行中自动展开 + 跳动圆点、
  *       思考文字与工具行按到达顺序穿插、工具行状态（执行中→完成）、
  *       工具行只描述「做了什么」且不横向溢出、点击工具行弹出详情抽屉（行内不再展开）、
@@ -15,7 +17,6 @@
  * 运行：node scripts/e2e-ai-stream.mjs
  */
 import { spawn } from 'node:child_process'
-import { createServer } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { writeFileSync } from 'node:fs'
 
@@ -46,114 +47,21 @@ function ok(name, pass, detail = '') {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
-/* ---------------- 本地假 provider（OpenAI 兼容 SSE） ---------------- */
+/* ---------------- mock 剧本（由 mock 的脚本化内核播放） ---------------- */
 
-/** 剧本台词 */
-const R1_THINK = ['用户想知道', '今天的待办，', '先查一下再回答。']
-const R2_THINK = ['拿到结果了，', '整理成一句话。']
+/** 剧本台词（节奏由 chunkMs 控制，e2e 需要观察中间态） */
+const R1_THINK = '用户想知道今天的待办，先查一下再回答。'
+const R2_THINK = '拿到结果了，整理成一句话。'
 const R2_TEXT = '{"kind":"chat","text":"今天有 3 条待办，最要紧的是跑步。"}'
-const CHUNK_MS = 260
 
-function sse(res, delta) {
-  res.write(
-    `data: ${JSON.stringify({
-      id: 'chatcmpl-e2e',
-      object: 'chat.completion.chunk',
-      created: 0,
-      model: 'e2e-model',
-      choices: [{ index: 0, delta, finish_reason: null }],
-    })}\n\n`,
-  )
-}
-
-async function startFakeProvider(port) {
-  const rounds = []
-  const server = createServer((req, res) => {
-    const cors = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    }
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, cors)
-      res.end()
-      return
-    }
-    let body = ''
-    req.on('data', (c) => (body += c))
-    req.on('end', async () => {
-      let parsed = {}
-      try {
-        parsed = JSON.parse(body)
-      } catch {
-        /* 空体 */
-      }
-      const hasToolResult = (parsed.messages ?? []).some((m) => m.role === 'tool')
-      rounds.push(hasToolResult ? 2 : 1)
-
-      res.writeHead(200, {
-        ...cors,
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      })
-      const task = hasToolResult ? round2(res) : round1(res)
-      await task
-      res.end()
-    })
-  })
-  await new Promise((r) => server.listen(port, '127.0.0.1', r))
-
-  /** 第 1 轮：思考 → 调 list_todos（args 分块，验证增量拼接） */
-  async function round1(res) {
-    for (const t of R1_THINK) {
-      sse(res, { reasoning_content: t })
-      await sleep(CHUNK_MS)
-    }
-    sse(res, {
-      tool_calls: [{ index: 0, id: 'call_e2e_1', type: 'function', function: { name: 'list_todos', arguments: '' } }],
-    })
-    await sleep(120)
-    sse(res, { tool_calls: [{ index: 0, function: { arguments: '{"limit":20}' } }] })
-    await sleep(120)
-    res.write(
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-e2e',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'e2e-model',
-        choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
-      })}\n\n`,
-    )
-    res.write('data: [DONE]\n\n')
-  }
-
-  /** 第 2 轮：思考补充 → 正文（JSON 协议，逐块） */
-  async function round2(res) {
-    for (const t of R2_THINK) {
-      sse(res, { reasoning_content: t })
-      await sleep(CHUNK_MS)
-    }
-    // 正文按 3 块吐，验证 chatStreamView 增量解出 text 字段
-    const step = Math.ceil(R2_TEXT.length / 3)
-    for (let i = 0; i < R2_TEXT.length; i += step) {
-      sse(res, { content: R2_TEXT.slice(i, i + step) })
-      await sleep(CHUNK_MS)
-    }
-    res.write(
-      `data: ${JSON.stringify({
-        id: 'chatcmpl-e2e',
-        object: 'chat.completion.chunk',
-        created: 0,
-        model: 'e2e-model',
-        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-      })}\n\n`,
-    )
-    res.write('data: [DONE]\n\n')
-  }
-
-  return { server, rounds }
-}
+/**
+ * 脚本：第 1 步思考 → 调 list_todos（由前端壳执行真实注册表工具、经
+ * ai_agent_tool_result 回传）；第 2 步思考 + 正文 JSON。
+ */
+const MOCK_SCRIPT = [
+  { thinking: R1_THINK, chunkMs: 260, tools: [{ name: 'list_todos', args: { limit: 20 } }] },
+  { thinking: R2_THINK, chunkMs: 260, text: R2_TEXT },
+]
 
 /* ---------------- CDP 驱动 ---------------- */
 
@@ -256,13 +164,12 @@ async function connect(url, seedScript) {
 
 async function main() {
   DEBUG_PORT = await freePort()
-  const providerPort = await freePort()
-  const provider = await startFakeProvider(providerPort)
   const model = {
     id: 1,
     name: 'E2E 假模型',
     provider: 'openai-compatible',
-    baseUrl: `http://127.0.0.1:${providerPort}/v1`,
+    // mock 模式下不会真的发请求；基址仅作占位（Tauri 下由 Rust 内核使用）
+    baseUrl: 'http://127.0.0.1:9/v1',
     apiKey: 'sk-e2e',
     modelId: 'e2e-model',
     isDefault: true,
@@ -277,8 +184,10 @@ async function main() {
   const seed = `
     localStorage.setItem('rein.mock.ai_models.v1', ${JSON.stringify(JSON.stringify([model]))});
     localStorage.removeItem('rein.mock.ai_chats.v1');
+    window.__REIN_MOCK_AGENT__ = { script: ${JSON.stringify(MOCK_SCRIPT)} };
+    window.__REIN_MOCK_AGENT_LOG__ = [];
   `
-  console.log(`假 provider: http://127.0.0.1:${providerPort}/v1 · CDP ${DEBUG_PORT}`)
+  console.log(`mock 脚本化内核（${MOCK_SCRIPT.length} 步）· CDP ${DEBUG_PORT}`)
 
   const edge = spawn(
     EDGE,
@@ -471,17 +380,27 @@ async function main() {
     /* ---------- 运行期异常 ---------- */
     const errs = await evalJS(`window.__errs`)
     ok('32 运行期无未捕获异常', Array.isArray(errs) && errs.length === 0, (errs ?? []).join(' | '))
+    // 内核侧的事件序列：思考增量 → 工具请求 → 工具完成 → 末轮正文 → 结束。
+    // 这是「工具后二次调用」在新架构下的等价断言（原断言看假 provider 收到的轮次）。
+    const eventSeq = await evalJS(
+      `(window.__REIN_MOCK_AGENT_LOG__ ?? []).map(e => e.type).filter(t => t !== 'thinkingDelta' && t !== 'textDelta').join(',')`,
+    )
     ok(
-      '33 provider 恰好收到 2 轮请求（工具后二次调用）',
-      provider.rounds.join(',') === '1,2',
-      provider.rounds.join(','),
+      '33 内核事件序列（工具请求 → 执行 → 完成 → 定稿）',
+      String(eventSeq) === 'started,thinkingEnd,toolStarted,toolCompleted,thinkingEnd,usage,done',
+      String(eventSeq),
     )
   } catch (e) {
     ok('EXCEPTION', false, e instanceof Error ? e.message : String(e))
     // 失败诊断：把当时的真实状态打出来，省得盲猜
     try {
       console.log('--- 诊断 ---')
-      console.log('provider 收到的轮次:', provider.rounds.join(',') || '(无)')
+      console.log(
+        '内核事件序列:',
+        await evalJS(
+          `(window.__REIN_MOCK_AGENT_LOG__ ?? []).map(e => e.type).join(',') || '(无)'`,
+        ),
+      )
       console.log('过程标题:', await evalJS(`document.querySelector('.process-title')?.textContent ?? '(无)'`))
       console.log('过程区类名:', await evalJS(`document.querySelector('.process-section')?.className ?? '(无)'`))
       console.log(
@@ -494,7 +413,6 @@ async function main() {
     }
   } finally {
     edge.kill()
-    provider.server.close()
   }
 
   if (shots.length) console.log('截图:', shots.join(' , '))

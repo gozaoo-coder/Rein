@@ -202,6 +202,95 @@ export interface AiProbeResult {
   error: string | null
 }
 
+/* ---------- AI 内核（Rust agent，见 src-tauri/src/modules/ai/agent） ---------- */
+
+/** 消息里的图片（base64 无 data: 前缀） */
+export interface AgentImage {
+  data: string
+  mime: string
+}
+
+/** 发给内核的 LlmMessage（历史回灌与本轮输入共用形状） */
+export interface AgentMessageInput {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  toolCallId?: string | null
+  toolCalls?: { id: string; name: string; arguments: unknown }[]
+  images?: AgentImage[]
+  reasoning?: string | null
+}
+
+/** 工具定义（JSON Schema；过渡期由前端注册表提供，Phase 4 起内核自带） */
+export interface AgentToolDef {
+  name: string
+  description: string
+  parameters: unknown
+}
+
+/** ai_agent_run 入参 */
+export interface AgentRunParams {
+  /** ai_models 主键（baseUrl / apiKey / modelId 由 Rust 读库） */
+  modelId: number
+  systemPrompt: string | null
+  messages: AgentMessageInput[]
+  prompt: string
+  images?: AgentImage[]
+  tools?: AgentToolDef[]
+  thinkingLevel?: string | null
+  temperature?: number | null
+  maxTokens?: number | null
+}
+
+/** 工具执行结果（过渡期由前端回传） */
+export interface AgentToolOutcome {
+  content: string
+  isError: boolean
+  images?: AgentImage[]
+}
+
+/** 内核流式事件（ai://agent） */
+export type AgentEvent =
+  | { type: 'started'; runId: string }
+  | { type: 'textDelta'; runId: string; delta: string }
+  | { type: 'thinkingDelta'; runId: string; delta: string }
+  | { type: 'thinkingEnd'; runId: string; content: string }
+  | { type: 'stepRetry'; runId: string; attempt: number; delayMs: number }
+  | { type: 'toolStarted'; runId: string; callId: string; name: string; args: unknown }
+  | { type: 'toolCompleted'; runId: string; callId: string; name: string; isError: boolean; content: string }
+  | { type: 'usage'; runId: string; usage: AgentUsage }
+  | {
+      type: 'done'
+      runId: string
+      text: string
+      thinking: string | null
+      usage: AgentUsage | null
+      stopReason: string
+      steps: number
+      tools: number
+      durationMs: number
+    }
+  | { type: 'error'; runId: string; message: string }
+
+/** 终稿 assistant 消息（入口读 content 块与 usage；形状对齐 pi 的 AssistantMessage） */
+export interface AgentFinalMessage {
+  role: string
+  content: unknown
+  /** 历史回灌时携带的时间戳（内核忽略，保留以兼容既有历史构造代码） */
+  timestamp?: number
+  usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number }
+  stopReason?: string
+}
+
+/** token 用量（input 已扣除缓存命中/写入，口径与 pi-ai 一致） */
+export interface AgentUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  reasoning: number
+  total: number
+}
+
 /* ---------- Rein 在线服务（模型由服务端下发 · 密钥 · 成本） ---------- */
 
 export interface OnlineServiceSettings {

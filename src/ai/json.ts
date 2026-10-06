@@ -1,15 +1,18 @@
+import type { AgentFinalMessage } from '@/types'
+
 /** pi-ai Agent 输出解析公共工具：从消息流取最后一条 assistant 文本，并从中抽出 JSON 数组。 */
 
-import type { AgentMessage } from '@earendil-works/pi-agent-core'
-
 /** 与 Agent 原始输出解析（包装 JSON 提取与容错）无关，仅取文本 */
-export function lastAssistantText(messages: AgentMessage[]): string {
+export function lastAssistantText(messages: AgentFinalMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
     if (m.role === 'assistant') {
-      return m.content
-        .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-        .map((c) => c.text)
+      const blocks = Array.isArray(m.content)
+        ? (m.content as { type?: string; text?: string }[])
+        : []
+      return blocks
+        .filter((c) => c?.type === 'text' && typeof c.text === 'string')
+        .map((c) => c.text as string)
         .join('')
     }
   }

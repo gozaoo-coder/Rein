@@ -1597,6 +1597,128 @@ async function mockWebFetch(url: string, maxChars: number) {
   }
 }
 
+/* ---------------- AI 内核（modules/ai/agent 同契约） ---------------- */
+
+/** 浏览器 mock 的事件出口：agentService 在非 Tauri 环境把 onEvent 挂到这里 */
+export const mockAgent: { onEvent: ((e: unknown) => void) | null } = { onEvent: null }
+
+/** 浏览器 mock 的脚本化内核：e2e / 调试用 window.__REIN_MOCK_AGENT__ = { script } 覆盖 */
+export interface MockAgentStep {
+  thinking?: string
+  text?: string
+  /** 该步模型请求的工具（由前端壳执行并回传结果，与 Rust 桥接期同构） */
+  tools?: { name: string; args?: unknown }[]
+  /** 每个增量块之间的间隔（毫秒，默认 4）；e2e 需要观察中间态时调大 */
+  chunkMs?: number
+}
+
+interface MockAgentRun {
+  cancelled: boolean
+  pending: Map<string, (outcome: { content: string; isError: boolean }) => void>
+}
+
+const mockAgentRuns = new Map<string, MockAgentRun>()
+
+function mockAgentEmit(e: Record<string, unknown>): void {
+  // e2e 观测：脚本设置 window.__REIN_MOCK_AGENT_LOG__ = [] 即可收到全部事件
+  ;(
+    window as unknown as { __REIN_MOCK_AGENT_LOG__?: Record<string, unknown>[] }
+  ).__REIN_MOCK_AGENT_LOG__?.push({ ...e })
+  mockAgent.onEvent?.({ ...e })
+}
+
+function mockAgentSleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+/** 默认脚本：一句说明性回复（不触网） */
+function defaultAgentScript(): MockAgentStep[] {
+  return [{ text: '（浏览器 mock）我是脚本化内核，没有调用真实模型。设置 window.__REIN_MOCK_AGENT__ 可以编排回复与工具。' }]
+}
+
+function splitChunks(text: string): string[] {
+  if (text.length <= 3) return [text]
+  const size = Math.max(1, Math.ceil(text.length / 4))
+  const out: string[] = []
+  for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size))
+  return out
+}
+
+function waitMockToolResult(run: MockAgentRun, callId: string, timeoutMs: number): Promise<{ content: string; isError: boolean }> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      run.pending.delete(callId)
+      resolve({ content: '工具执行超时（浏览器 mock）', isError: true })
+    }, timeoutMs)
+    run.pending.set(callId, (o) => {
+      clearTimeout(timer)
+      run.pending.delete(callId)
+      resolve(o)
+    })
+  })
+}
+
+async function playMockRun(runId: string, script: MockAgentStep[]): Promise<void> {
+  const run = mockAgentRuns.get(runId)
+  if (!run) return
+  let lastText = ''
+  let lastThinking: string | null = null
+  let toolCount = 0
+  for (const step of script) {
+    if (run.cancelled) return
+    const chunkMs = step.chunkMs ?? 4
+    if (step.thinking) {
+      for (const c of splitChunks(step.thinking)) {
+        if (run.cancelled) return
+        mockAgentEmit({ type: 'thinkingDelta', runId, delta: c })
+        await mockAgentSleep(chunkMs)
+      }
+      mockAgentEmit({ type: 'thinkingEnd', runId, content: step.thinking })
+      lastThinking = step.thinking
+    }
+    if (step.text) {
+      for (const c of splitChunks(step.text)) {
+        if (run.cancelled) return
+        mockAgentEmit({ type: 'textDelta', runId, delta: c })
+        await mockAgentSleep(chunkMs)
+      }
+      lastText = step.text
+    }
+    for (const call of step.tools ?? []) {
+      if (run.cancelled) return
+      const callId = `mock-${Math.random().toString(36).slice(2, 10)}`
+      toolCount += 1
+      mockAgentEmit({ type: 'toolStarted', runId, callId, name: call.name, args: call.args ?? {} })
+      const outcome = await waitMockToolResult(run, callId, 8000)
+      if (run.cancelled) return
+      mockAgentEmit({
+        type: 'toolCompleted',
+        runId,
+        callId,
+        name: call.name,
+        isError: outcome.isError,
+        content: outcome.content,
+      })
+      // 工具后文本重新起算（与内核一致：最终文本 = 最后一步的正文）
+      lastText = ''
+    }
+  }
+  if (run.cancelled) return
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0 }
+  mockAgentEmit({ type: 'usage', runId, usage })
+  mockAgentEmit({
+    type: 'done',
+    runId,
+    text: lastText,
+    thinking: lastThinking,
+    usage,
+    stopReason: 'stop',
+    steps: script.length,
+    tools: toolCount,
+    durationMs: 0,
+  })
+}
+
 /* ---------------- 语音对话（modules/voice 同契约） ---------------- */
 
 /** 浏览器 mock 的事件出口：voiceService 在非 Tauri 环境把 onAsr 挂到这里 */
@@ -5862,6 +5984,54 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       }
       return delay(undefined as T)
     }
+
+    case 'ai_probe': {
+      // 浏览器 mock 没有真实网络链路：如实返回「未探测」，由 UI 展示为待探测
+      const m = aiModels.find((x) => x.id === Number(args.modelId))
+      if (!m) throw new Error('模型不存在')
+      return delay(
+        plain({ vision: null, thinking: null, effort: null, error: '浏览器 mock 环境不执行真实探测' }) as T,
+      )
+    }
+
+    case 'ai_agent_run': {
+      const params = plain(args.params as Record<string, unknown>)
+      const modelId = Number(params.modelId)
+      if (!aiModels.some((m) => m.id === modelId)) throw new Error('模型不存在或已删除')
+      const runId = `mock-run-${Math.random().toString(36).slice(2, 10)}`
+      mockAgentRuns.set(runId, { cancelled: false, pending: new Map() })
+      const hook = (window as unknown as { __REIN_MOCK_AGENT__?: { script?: MockAgentStep[] } }).__REIN_MOCK_AGENT__
+      const script = hook?.script?.length ? hook.script : defaultAgentScript()
+      // 先返回 runId（微任务），脚本在下一个宏任务开始播 —— 让前端壳先认领 runId
+      setTimeout(() => {
+        mockAgentEmit({ type: 'started', runId })
+        void playMockRun(runId, script)
+      }, 0)
+      return delay(runId as T)
+    }
+
+    case 'ai_agent_cancel': {
+      const run = mockAgentRuns.get(String(args.runId))
+      if (!run) return delay(false as T)
+      run.cancelled = true
+      run.pending.clear()
+      mockAgentRuns.delete(String(args.runId))
+      return delay(true as T)
+    }
+
+    case 'ai_agent_tool_result': {
+      const run = mockAgentRuns.get(String(args.runId))
+      const callId = String(args.callId)
+      const waiter = run?.pending.get(callId)
+      if (!waiter) return delay(false as T)
+      waiter({ content: String(args.content ?? ''), isError: Boolean(args.isError) })
+      return delay(true as T)
+    }
+
+    case 'ai_agent_update_context':
+      // 浏览器 mock 不跑真实循环；上下文热更新只需受理（load_tools 的装载逻辑
+      // 在工具执行侧仍是真实 TS 代码）
+      return delay(Boolean(mockAgentRuns.has(String(args.runId))) as T)
 
     case 'ai_chat_search': {
       const keyword = String(args.keyword ?? '').trim().toLowerCase()
