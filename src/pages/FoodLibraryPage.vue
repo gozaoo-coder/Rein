@@ -1,19 +1,126 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ChevronRight, Pencil, Search } from 'lucide-vue-next'
+import { ArrowDownUp, ChevronRight, Pencil, Search, SlidersHorizontal } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import FoodDetailDrawer from '@/components/diet/FoodDetailDrawer.vue'
 import FoodPickerSheet from '@/components/diet/FoodPickerSheet.vue'
+import FoodFilterSheet, { EMPTY_FOOD_FILTER, countFoodFilter } from '@/components/diet/FoodFilterSheet.vue'
 import { dietService } from '@/services/dietService'
-import type { Food } from '@/types'
+import type { Food, FoodFilter } from '@/types'
 
-/** 饮食库：全部食物浏览（搜索 + 分类筛选），点行进详情抽屉；右下角「记录」悬浮按钮直接记一笔。 */
+/**
+ * 饮食库：全部食物浏览（搜索 + 分类 + 营养素筛选 + 排序），点行进详情抽屉；右下角「记录」悬浮按钮直接记一笔。
+ * 条件面板全走弹层（排序 = AppMenu 菜单，筛选 = SheetModal 抽屉）且抽屉内是草稿态，
+ * 列表只依赖已应用的 query/category/sort/applied —— 面板操作期间列表 DOM 零变化；
+ * 列表项 v-memo 按 id 记忆，重排/重筛时复用节点跳过 patch。
+ */
 const all = ref<Food[]>([])
 const ready = ref(false)
 const query = ref('')
 const category = ref<string | null>(null)
+
+/* ---------- 排序（AppMenu bind 式锚定菜单） ---------- */
+type SortKey =
+  | 'default'
+  | 'kcal_desc'
+  | 'kcal_asc'
+  | 'protein_desc'
+  | 'protein_asc'
+  | 'carb_desc'
+  | 'carb_asc'
+  | 'fat_desc'
+  | 'fat_asc'
+
+const SORT_LABELS: Record<Exclude<SortKey, 'default'>, string> = {
+  kcal_desc: '热量 高→低',
+  kcal_asc: '热量 低→高',
+  protein_desc: '蛋白质 高→低',
+  protein_asc: '蛋白质 低→高',
+  carb_desc: '碳水 高→低',
+  carb_asc: '碳水 低→高',
+  fat_desc: '脂肪 高→低',
+  fat_asc: '脂肪 低→高',
+}
+
+const SORTERS: Record<Exclude<SortKey, 'default'>, (a: Food, b: Food) => number> = {
+  kcal_desc: (a, b) => b.kcal - a.kcal,
+  kcal_asc: (a, b) => a.kcal - b.kcal,
+  protein_desc: (a, b) => b.protein - a.protein,
+  protein_asc: (a, b) => a.protein - b.protein,
+  carb_desc: (a, b) => b.carb - a.carb,
+  carb_asc: (a, b) => a.carb - b.carb,
+  fat_desc: (a, b) => b.fat - a.fat,
+  fat_asc: (a, b) => a.fat - b.fat,
+}
+
+const sortKey = ref<SortKey>('default')
+const sortOpen = ref(false)
+const sortBtn = ref<HTMLElement | null>(null)
+
+const sortActions: MenuItem[] = [
+  { label: '默认（按库序）', value: 'default' },
+  {
+    label: '热量',
+    value: 'g-kcal',
+    children: [
+      { label: '高 → 低', value: 'kcal_desc' },
+      { label: '低 → 高', value: 'kcal_asc' },
+    ],
+  },
+  {
+    label: '蛋白质',
+    value: 'g-protein',
+    children: [
+      { label: '高 → 低', value: 'protein_desc' },
+      { label: '低 → 高', value: 'protein_asc' },
+    ],
+  },
+  {
+    label: '碳水化合物',
+    value: 'g-carb',
+    children: [
+      { label: '高 → 低', value: 'carb_desc' },
+      { label: '低 → 高', value: 'carb_asc' },
+    ],
+  },
+  {
+    label: '脂肪',
+    value: 'g-fat',
+    children: [
+      { label: '高 → 低', value: 'fat_desc' },
+      { label: '低 → 高', value: 'fat_asc' },
+    ],
+  },
+]
+
+function openSort(e: MouseEvent): void {
+  sortBtn.value = e.currentTarget as HTMLElement
+  sortOpen.value = true
+}
+
+function onSortSelect(v: string): void {
+  sortKey.value = v as SortKey
+}
+
+const sortLabel = computed(() =>
+  sortKey.value === 'default' ? '排序' : SORT_LABELS[sortKey.value],
+)
+
+/* ---------- 筛选（SheetModal 抽屉 + 草稿态） ---------- */
+const appliedFilter = ref<FoodFilter>({ ...EMPTY_FOOD_FILTER })
+const filterOpen = ref(false)
+const filterCount = computed(() => countFoodFilter(appliedFilter.value))
+
+function onApplyFilter(f: FoodFilter): void {
+  appliedFilter.value = f
+}
+
+function onResetFilter(): void {
+  appliedFilter.value = { ...EMPTY_FOOD_FILTER }
+}
 
 const detailOpen = ref(false)
 const detailFood = ref<Food | null>(null)
@@ -40,7 +147,7 @@ function onRecord(): void {
 /* 库量级数千：默认只渲染首屏一批，避免一次性建几千个 DOM 节点 */
 const CAP = 150
 const expanded = ref(false)
-watch([query, category], () => (expanded.value = false))
+watch([query, category, sortKey, appliedFilter], () => (expanded.value = false))
 
 onMounted(async () => {
   all.value = await dietService.listFoods(undefined, null, 9999)
@@ -51,14 +158,42 @@ const categories = computed(() => [...new Set(all.value.map((f) => f.category ??
 
 const list = computed(() => {
   const q = query.value.trim().toLowerCase()
-  return all.value.filter(
-    (f) =>
-      (!category.value || (f.category ?? '其他') === category.value) &&
-      (!q || f.name.toLowerCase().includes(q) || (f.category ?? '').toLowerCase().includes(q)),
-  )
+  const fl = appliedFilter.value
+  const res = all.value.filter((f) => {
+    if (category.value && (f.category ?? '其他') !== category.value) return false
+    if (q && !f.name.toLowerCase().includes(q) && !(f.category ?? '').toLowerCase().includes(q))
+      return false
+    if (fl.kcalMin !== null && f.kcal < fl.kcalMin) return false
+    if (fl.kcalMax !== null && f.kcal > fl.kcalMax) return false
+    if (fl.proteinMin !== null && f.protein < fl.proteinMin) return false
+    if (fl.carbMax !== null && f.carb > fl.carbMax) return false
+    if (fl.fatMax !== null && f.fat > fl.fatMax) return false
+    if (fl.sodiumMax !== null && f.sodiumMg > fl.sodiumMax) return false
+    return true
+  })
+  return sortKey.value === 'default' ? res : [...res].sort(SORTERS[sortKey.value])
 })
 
 const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, CAP)))
+
+/* 宏量供能占比（蛋白/碳水 ×4、脂肪 ×9）：三段迷你条，配色同详情抽屉 */
+function macroSegs(f: Food): { color: string; pct: number }[] {
+  const p = f.protein * 4
+  const c = f.carb * 4
+  const t = f.fat * 9
+  const total = p + c + t
+  if (total <= 0) return []
+  return [
+    { color: 'var(--c-protein)', pct: (p / total) * 100 },
+    { color: 'var(--c-carb)', pct: (c / total) * 100 },
+    { color: 'var(--c-fat)', pct: (t / total) * 100 },
+  ].filter((s) => s.pct > 0.5)
+}
+
+function fmtG(n: number): string {
+  if (!n) return '0'
+  return n >= 100 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
+}
 </script>
 
 <template>
@@ -80,16 +215,40 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
       </li>
     </ul>
 
+    <!-- 排序 / 筛选工具行：面板本身都是弹层，这里只留两颗触发 chip -->
+    <div class="tools row">
+      <button class="chip tool" :class="{ on: sortKey !== 'default' }" @click="openSort">
+        <ArrowDownUp :size="13" :stroke-width="2.2" />
+        {{ sortLabel }}
+      </button>
+      <button class="chip tool" :class="{ on: filterCount > 0 }" @click="filterOpen = true">
+        <SlidersHorizontal :size="13" :stroke-width="2.2" />
+        筛选<template v-if="filterCount"> · {{ filterCount }}</template>
+      </button>
+      <span v-if="filterCount > 0" class="meta num t-3">符合 {{ list.length }} 项</span>
+    </div>
+
     <!-- d-full：这张卡通栏（壳层默认把 .page 的直接子级 .card 压成半栏）；列表在卡**内部**摊成多栏 -->
     <section class="card d-full foods-card">
       <ul v-if="list.length" class="foods d-list">
-        <li v-for="f in shown" :key="f.id">
+        <!-- v-memo：条目内容只依赖 f，重排/重筛时同 id 节点直接复用、跳过 patch -->
+        <li v-for="f in shown" :key="f.id" v-memo="[f.id]">
           <button class="row item" @click="openFood(f)">
             <span class="flex-1">
               <b>{{ f.name }}</b>
               <small>{{ f.category ?? '其他' }}<template v-if="f.units.length"> · 1{{ f.defaultUnit ?? f.units[0]!.name }}≈{{ f.units[0]!.grams }}g</template></small>
             </span>
-            <span class="num kcal">{{ f.kcal }}<em>/100g</em></span>
+            <span class="nutr">
+              <span class="num kcal">{{ Math.round(f.kcal) }}<em>大卡</em></span>
+              <span v-if="macroSegs(f).length" class="mbar">
+                <i v-for="(s, i) in macroSegs(f)" :key="i" :style="{ flex: s.pct, background: s.color }" />
+              </span>
+              <span class="num mline">
+                <span><i class="dot" style="background: var(--c-protein)" />{{ fmtG(f.protein) }}g</span>
+                <span><i class="dot" style="background: var(--c-carb)" />{{ fmtG(f.carb) }}g</span>
+                <span><i class="dot" style="background: var(--c-fat)" />{{ fmtG(f.fat) }}g</span>
+              </span>
+            </span>
             <ChevronRight :size="16" class="t-3 chev" />
           </button>
         </li>
@@ -97,8 +256,27 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
       <button v-if="list.length > shown.length" class="more t-2" @click="expanded = true">
         显示全部 {{ list.length }} 条（当前前 {{ shown.length }} 条，可先搜索/筛选）
       </button>
-      <EmptyState v-else-if="ready" :icon="Search" title="没有匹配的食物" hint="换个关键词或分类试试" />
+      <EmptyState v-else-if="ready" :icon="Search" title="没有匹配的食物" hint="换个关键词或筛选条件试试" />
     </section>
+
+    <!-- 排序菜单：bind 式锚定弹出（Teleport 到 body），选中后 AppMenu 自行收起 -->
+    <AppMenu
+      :open="sortOpen"
+      :actions="sortActions"
+      :anchor="sortBtn"
+      title="排序方式"
+      @close="sortOpen = false"
+      @select="onSortSelect"
+    />
+
+    <!-- 筛选抽屉：草稿态，「应用」才写回 appliedFilter（列表一次性重算） -->
+    <FoodFilterSheet
+      :open="filterOpen"
+      :filter="appliedFilter"
+      @apply="onApplyFilter"
+      @reset="onResetFilter"
+      @close="filterOpen = false"
+    />
 
     <!-- 右下角悬浮按钮：快速记一笔（Teleport 出页面层：translate 会改 fixed 后代的包含块） -->
     <Teleport to="body">
@@ -155,6 +333,23 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
   color: #fff;
 }
 
+.tools {
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.meta {
+  margin-left: auto;
+  font-size: var(--fs-caption);
+}
+
 .card {
   margin-top: 14px;
   padding: 6px 20px;
@@ -182,9 +377,19 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
   font-size: var(--fs-caption);
 }
 
+/* 右侧营养块：大卡 + 供能占比迷你条 + 宏量点阵，纵向右对齐 */
+.nutr {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
 .kcal {
   font-weight: 700;
   font-size: var(--fs-callout);
+  line-height: 1;
 }
 
 .kcal em {
@@ -192,6 +397,41 @@ const shown = computed(() => (expanded.value ? list.value : list.value.slice(0, 
   font-size: var(--fs-micro);
   font-weight: 400;
   color: var(--text-3);
+  margin-left: 3px;
+}
+
+.mbar {
+  display: flex;
+  gap: 1px;
+  width: 84px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.mbar i {
+  display: block;
+  height: 100%;
+}
+
+.mline {
+  display: flex;
+  gap: 8px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.mline span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
 }
 
 .chev {

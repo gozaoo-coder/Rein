@@ -9,6 +9,7 @@
 //! - [`SyncReport`] / [`SyncStatus`]：给前端的回执。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /* ---------------- Kotlin → Rust：读到的 HC 记录 ---------------- */
 
@@ -45,6 +46,22 @@ pub struct HcExerciseRecord {
 #[serde(rename_all = "camelCase")]
 pub struct HcReadPayload {
     pub records: Vec<HcExerciseRecord>,
+    /// 按天聚合的体征指标行（Kotlin 侧逐项按授权放行读取后聚合）。
+    /// 旧桥只写 records，`default` 让旧文件照样能解析。
+    #[serde(default)]
+    pub metrics: Vec<HcMetricRow>,
+}
+
+/// Health Connect 按天聚合好的一条体征值（Kotlin 产出，见 Kotlin `readMetrics`）。
+///
+/// `metric` id 与 Kotlin 桥、前端 `src/config/healthMetrics.ts` 三方同名——
+/// 改一处就得改三处；`day` 是**记录自己时区**的本地日期（睡眠归「醒来那天」）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HcMetricRow {
+    pub metric: String,
+    pub day: String,
+    pub value: f64,
 }
 
 /* ---------------- Rust → Kotlin：要写进 HC 的记录 ---------------- */
@@ -134,6 +151,9 @@ pub struct SyncReport {
     pub skipped: i64,
     /// 读到的 HC 记录总数（含未变化的），用于区分「没数据」和「没授权」
     pub scanned: i64,
+    /// 本次落库的体征指标行数（按天聚合后的行，不是 HC 原始记录数）
+    #[serde(default)]
+    pub metrics_imported: i64,
     /// 本次同步是否跑了导出方向（开关关着就是 false）
     pub pushed: bool,
 }
@@ -150,6 +170,10 @@ pub struct SyncStatus {
     pub read_granted: bool,
     /// Rein 是否已拿到写授权
     pub write_granted: bool,
+    /// 四组读权限各自是否齐全（exercise / activity / body / vitals）。
+    /// 键由 Kotlin 桥定（`grantedCategories`），旧桥没有这份时是空表 ——
+    /// 前端对「缺键」按未授权处理，引导用户去补。
+    pub granted_categories: HashMap<String, bool>,
     /// 是否把本地记录回写进 HC（用户在管理页开的开关）
     pub push_enabled: bool,
     pub last_sync_at: Option<String>,
@@ -157,4 +181,25 @@ pub struct SyncStatus {
     pub imported_count: i64,
     /// 已导出到 HC 的本地记录数
     pub exported_count: i64,
+}
+
+/* ---------------- 预览查询（health_metrics_recent） ---------------- */
+
+/// 一个指标在回看窗口里某一天的值
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthMetricPoint {
+    pub day: String,
+    pub value: f64,
+}
+
+/// 一个指标的预览序列：窗口内全部有值的天 + 由它们推出的最新值。
+/// `latest` 取窗口内**最晚一天**的值（ISO 日期串排序即时间序）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthMetricSeries {
+    pub metric: String,
+    pub latest_day: String,
+    pub latest_value: f64,
+    pub points: Vec<HealthMetricPoint>,
 }

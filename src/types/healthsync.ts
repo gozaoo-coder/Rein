@@ -12,14 +12,19 @@
  */
 export type HealthAvailability = 'available' | 'unavailable' | 'update_required' | 'unknown'
 
+/** 授权分组 key：与 Kotlin 桥的 `CATEGORY_*`、`src/config/healthMetrics.ts` 同名 */
+export type HealthCategoryKey = 'exercise' | 'activity' | 'body' | 'vitals'
+
 export interface HealthSyncStatus {
   /** 当前平台是否可能支持（桌面端恒 false） */
   supported: boolean
   availability: HealthAvailability
-  /** Rein 是否已拿到读授权（在 Health Connect 界面上授予的） */
+  /** Rein 是否已拿到核心读授权（READ_EXERCISE，能导入运动记录） */
   readGranted: boolean
   /** 是否已拿到写授权（只有开了「回写 HC」才需要） */
   writeGranted: boolean
+  /** 四组读权限各自是否齐全；旧桥没有这份 → 空对象，按未授权处理 */
+  grantedCategories: Partial<Record<HealthCategoryKey, boolean>>
   /** 是否把本地记录回写进 Health Connect */
   pushEnabled: boolean
   lastSyncAt: string | null
@@ -57,6 +62,8 @@ export interface HealthSyncReport {
   skipped: number
   /** 读到的 HC 记录总数（含未变化的） */
   scanned: number
+  /** 本次落库的体征指标行数（按天聚合后的行） */
+  metricsImported: number
   /** 本轮是否跑了导出方向 */
   pushed: boolean
 }
@@ -65,4 +72,18 @@ export interface HealthSyncStep {
   phase: HealthSyncPhase
   report: HealthSyncReport | null
   message: string | null
+}
+
+/** 预览：一个指标在回看窗口里某一天的值 */
+export interface HealthMetricPoint {
+  day: string
+  value: number
+}
+
+/** 预览：一个指标近 14 天的序列 + 由它们推出的最新值 */
+export interface HealthMetricSeries {
+  metric: string
+  latestDay: string
+  latestValue: number
+  points: HealthMetricPoint[]
 }

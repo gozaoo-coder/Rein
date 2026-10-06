@@ -1278,6 +1278,28 @@ CREATE TABLE health_sync_tombstones (
 );
 "#;
 
+/// 0037 · 第三方体征指标镜像：Health Connect 按天聚合值的本地落点
+/// （步数 / 睡眠 / 体重 / 体脂 / 静息心率 / HRV / 血氧 / 血压 …，
+/// 指标 id 由 Kotlin 桥产出、前端 `src/config/healthMetrics.ts` 解读，三方同名）。
+///
+/// 每次**同步整表替换**而不是增量合并：Kotlin 每轮都全窗口（90 天）重读，
+/// 收到的集合本身就是 HC 侧「现在该有什么」的完整答案 —— 直接替换，
+/// 撤销授权的那组、用户在 HC 里删掉的某天数据，下一次同步自然消失。
+///
+/// 这张表是**设备本地镜像**（与 0036 的墓碑同理，不进 sync/tables.rs 白名单）：
+/// 只服务预览与将来的健康状态计算，刻意不碰用户手填的 body_metrics/profile
+/// —— 自动覆写用户自己记的体重，等于替用户改了账。
+const MIGRATION_0037: &str = r#"
+CREATE TABLE health_metrics (
+  metric TEXT NOT NULL,
+  day TEXT NOT NULL,
+  value REAL NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (metric, day)
+);
+CREATE INDEX idx_health_metrics_day ON health_metrics(day);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1315,6 +1337,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0034,
     MIGRATION_0035,
     MIGRATION_0036,
+    MIGRATION_0037,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

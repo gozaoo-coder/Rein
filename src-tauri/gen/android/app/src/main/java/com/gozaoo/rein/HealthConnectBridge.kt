@@ -9,11 +9,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
+import androidx.health.connect.client.records.BodyFatRecord
+import androidx.health.connect.client.records.BloodPressureRecord
+import androidx.health.connect.client.records.BasalMetabolicRateRecord
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.HeartRateVariabilityRmssdRecord
+import androidx.health.connect.client.records.HeightRecord
+import androidx.health.connect.client.records.OxygenSaturationRecord
 import androidx.health.connect.client.records.Record
+import androidx.health.connect.client.records.RespiratoryRateRecord
+import androidx.health.connect.client.records.RestingHeartRateRecord
+import androidx.health.connect.client.records.SleepSessionRecord
+import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
+import androidx.health.connect.client.records.BodyTemperatureRecord
+import androidx.health.connect.client.records.Vo2MaxRecord
+import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ReadRecordsRequest
@@ -25,13 +38,14 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlin.reflect.KClass
 
 /**
- * Rust(JNI) ↔ Kotlin 的 Health Connect 桥。**只做 HC 的读/写/授权**，
+ * Rust(JNI) ↔ Kotlin 的 Health Connect 桥。**只做 HC 的读/写/授权与时间窗聚合**，
  * 不懂 Rein 的业务字段 —— 两侧语义的翻译全在 Rust 的 modules/healthsync/adapter.rs。
  *
  * 为什么数据走文件而不是 JNI 返回值：`jni_handle().exec` 是发后不管的，
@@ -51,6 +65,12 @@ import kotlin.reflect.KClass
  * 授权：HC 的权限**没有**系统运行时弹窗那条路，只能在 HC 自己的界面上授予，
  * 所以这里注册 `PermissionController.createRequestPermissionResultContract()`。
  * 那个 launcher 必须在 Activity 创建时注册（见 MainActivity.onCreate）。
+ *
+ * 权限分四组（运动 / 活动与睡眠 / 身体成分 / 身体机能，见 CATEGORY_*）：
+ * - 用户可以只授其中几组；授权页由前端按组发起（`requestPermissions` 的 mode）；
+ * - 读取按权限**逐项放行** —— 没授权的类型不读（HC 对未授权类型的 readRecords
+ *   直接抛 SecurityException，逐项放行才能让「只授运动组」的用户正常同步）；
+ * - state.json 带回每组是否齐全（`grantedCategories`），前端据此引导补授权。
  */
 object HealthConnectBridge {
   private const val TAG = "HealthConnectBridge"
@@ -62,24 +82,57 @@ object HealthConnectBridge {
   private const val PUSH_REQUEST_FILE = "push-request.json"
   private const val PUSH_RESULT_FILE = "push-result.json"
 
-  /** 数据起点：读「有记录以来」。HC 里不可能有 2000 年以前的运动记录。 */
+  /** 数据起点：运动会话读「有记录以来」。HC 里不可能有 2000 年以前的运动记录。 */
   private val EPOCH: Instant = Instant.parse("2000-01-01T00:00:00Z")
 
+  /** 体征指标的回看窗口：按天聚合的镜像值，90 天对预览与状态计算都够用 */
+  private val METRICS_WINDOW = Duration.ofDays(90)
+
   /**
-   * 读权限：运动会话 + 配它用的三类记录。
-   *
-   * 直接写权限串而不是 `HealthPermission.getReadPermission(KClass)`：
+   * 读权限，按四组组织。权限串直接写常量而不是 `HealthPermission.getReadPermission(KClass)`：
    * 常量值就是 `android.permission.health.READ_<RECORD>`（HC 的 PERMISSION_PREFIX
    * + 记录类型名），小米运动健康在它的清单里声明的也是这几个同名字符串，
    * 写死比多引一层 API 更清楚。
    */
-  private val READ_PERMS =
+
+  /** 运动：导入课程与记录的根基（缺它整个同步不开工，见 startRead 与 Rust 侧门禁） */
+  private val CATEGORY_EXERCISE =
     setOf(
       "android.permission.health.READ_EXERCISE",
       "android.permission.health.READ_TOTAL_CALORIES_BURNED",
       "android.permission.health.READ_DISTANCE",
       "android.permission.health.READ_HEART_RATE",
     )
+
+  /** 活动与睡眠：每日步数、睡眠时长与深睡/REM 明细 */
+  private val CATEGORY_ACTIVITY =
+    setOf(
+      "android.permission.health.READ_STEPS",
+      "android.permission.health.READ_SLEEP",
+    )
+
+  /** 身体成分：体重、体脂、身高、基础代谢（用真实测量替代手填档案） */
+  private val CATEGORY_BODY =
+    setOf(
+      "android.permission.health.READ_WEIGHT",
+      "android.permission.health.READ_BODY_FAT",
+      "android.permission.health.READ_HEIGHT",
+      "android.permission.health.READ_BASAL_METABOLIC_RATE",
+    )
+
+  /** 身体机能：心肺与恢复状态（静息心率、HRV、血氧、呼吸率、体温、摄氧量、血压） */
+  private val CATEGORY_VITALS =
+    setOf(
+      "android.permission.health.READ_RESTING_HEART_RATE",
+      "android.permission.health.READ_HEART_RATE_VARIABILITY",
+      "android.permission.health.READ_OXYGEN_SATURATION",
+      "android.permission.health.READ_RESPIRATORY_RATE",
+      "android.permission.health.READ_BODY_TEMPERATURE",
+      "android.permission.health.READ_VO2_MAX",
+      "android.permission.health.READ_BLOOD_PRESSURE",
+    )
+
+  private val READ_PERMS = CATEGORY_EXERCISE + CATEGORY_ACTIVITY + CATEGORY_BODY + CATEGORY_VITALS
 
   private val WRITE_PERMS = setOf("android.permission.health.WRITE_EXERCISE")
 
@@ -114,11 +167,26 @@ object HealthConnectBridge {
     scope.launch { writeState(app) }
   }
 
-  /** 拉起 HC 的授权页。mode = "write" 时连写权限一起要。 */
+  /**
+   * 拉起 HC 的授权页。
+   *
+   * `mode` 决定这次要哪些权限：
+   * - `read`：全部读权限；`write`：全部读 + 写；
+   * - `exercise` / `activity` / `body` / `vitals`：只要那一组（前端按组引导补授权），
+   *   分组口径与前端 `src/config/healthMetrics.ts` 的 HEALTH_CATEGORIES 一一对应。
+   */
   @JvmStatic
   fun requestPermissions(context: Context, mode: String) {
     val app = context.applicationContext
-    val wanted = if (mode == "write") READ_PERMS + WRITE_PERMS else READ_PERMS
+    val wanted =
+      when (mode) {
+        "write" -> READ_PERMS + WRITE_PERMS
+        "exercise" -> CATEGORY_EXERCISE
+        "activity" -> CATEGORY_ACTIVITY
+        "body" -> CATEGORY_BODY
+        "vitals" -> CATEGORY_VITALS
+        else -> READ_PERMS
+      }
     Log.i(TAG, "requestPermissions(mode=$mode, perms=${wanted.size}, launcher=${launcher != null})")
     main.post {
       val l = launcher
@@ -170,7 +238,7 @@ object HealthConnectBridge {
       false
     }
 
-  /** 读 HC 的全部运动会话（含配对出的消耗/距离/心率），写 pull.json */
+  /** 读 HC 的运动会话（含配对出的消耗/距离/心率）+ 体征指标，写 pull.json */
   @JvmStatic
   fun startRead(context: Context) {
     val app = context.applicationContext
@@ -178,17 +246,35 @@ object HealthConnectBridge {
       try {
         val client = clientOrNull(app) ?: return@launch fail(app, "Health Connect 不可用")
         val now = Instant.now()
-        val sessions = readAll(client, ExerciseSessionRecord::class, EPOCH, now)
+        // 授权集合一次取齐，后面每个读取按自己的权限独立放行：
+        // 只授了「运动」组的用户照常导课，体征部分留空 —— 而不是让一个
+        // SecurityException 炸掉整轮同步。
+        val granted =
+          try {
+            client.permissionController.getGrantedPermissions()
+          } catch (e: Exception) {
+            Log.w(TAG, "读取授权集合失败，按空集处理", e)
+            emptySet<String>()
+          }
+        val sessions =
+          if ("android.permission.health.READ_EXERCISE" in granted) {
+            readAll(client, ExerciseSessionRecord::class, EPOCH, now)
+          } else {
+            emptyList()
+          }
 
         // 三类附加记录：HC 里它们与运动会话没有外键，只能按时间重叠配对
         val from = sessions.minOfOrNull { it.startTime } ?: now
         val to = sessions.maxOfOrNull { it.endTime } ?: now
-        val energy = if (sessions.isEmpty()) emptyList()
-        else readAll(client, TotalCaloriesBurnedRecord::class, from, to)
-        val distance = if (sessions.isEmpty()) emptyList()
-        else readAll(client, DistanceRecord::class, from, to)
-        val heart = if (sessions.isEmpty()) emptyList()
-        else readAll(client, HeartRateRecord::class, from, to)
+        val energy =
+          if ("android.permission.health.READ_TOTAL_CALORIES_BURNED" !in granted || sessions.isEmpty()) emptyList()
+          else readAll(client, TotalCaloriesBurnedRecord::class, from, to)
+        val distance =
+          if ("android.permission.health.READ_DISTANCE" !in granted || sessions.isEmpty()) emptyList()
+          else readAll(client, DistanceRecord::class, from, to)
+        val heart =
+          if ("android.permission.health.READ_HEART_RATE" !in granted || sessions.isEmpty()) emptyList()
+          else readAll(client, HeartRateRecord::class, from, to)
 
         val kcal = assignByOverlap(sessions, energy) { _, r -> r.energy.inKilocalories }
         val meters = assignByOverlap(sessions, distance) { _, r -> r.distance.inMeters }
@@ -212,13 +298,194 @@ object HealthConnectBridge {
           obj.put("avgHeartRate", avgHr[index] ?: JSONObject.NULL)
           records.put(obj)
         }
-        writeFile(app, PULL_FILE, JSONObject().put("records", records).toString())
+        val metrics = readMetrics(client, granted, now)
+        writeFile(
+          app,
+          PULL_FILE,
+          JSONObject().put("records", records).put("metrics", metrics).toString(),
+        )
         writeState(app)
       } catch (e: Exception) {
         Log.e(TAG, "读取健康数据失败", e)
         fail(app, "读取健康数据失败：${e.message}")
       }
     }
+  }
+
+  /**
+   * 体征指标：近 [`METRICS_WINDOW`]，按天聚合成 `(metric, day, value)` 行。
+   *
+   * 每个类型只在自己授权到位时才读（见 startRead 顶部的说明）。聚合口径：
+   * - 累加类：步数（手环一小时同步一次，一天几十条）、睡眠（分段时长求和）；
+   * - 当天最后一次：体重/体脂/身高（「这天上秤值」）、血压（两条成对取同一末值）、
+   *   最大摄氧量与基础代谢（写入方按天给估计值）；
+   * - 平均：静息心率、HRV、血氧、呼吸率、体温（一晚打几十个点的密集采样，
+   *   平均才是「这一天的状态」）。
+   *
+   * metric id 与前端 `src/config/healthMetrics.ts` 的 `HEALTH_METRICS` 一一对应，
+   * 两边改一边就得改另一边。
+   */
+  private suspend fun readMetrics(
+    client: HealthConnectClient,
+    granted: Set<String>,
+    now: Instant,
+  ): JSONArray {
+    val from = now.minus(METRICS_WINDOW)
+    val metrics = JSONArray()
+    fun put(metric: String, day: String, value: Double) {
+      metrics.put(JSONObject().put("metric", metric).put("day", day).put("value", value))
+    }
+
+    // 瞬时类指标的统一通道：读 → (时刻, 时区, 数值) → 按天聚合。
+    // `lastWins` = 当天多次读数取最后一次（上秤体重以最新一次为准），
+    // 否则取平均（一晚几十个心率点，平均才是「这一天的状态」）。
+    fun daily(
+      metric: String,
+      rows: List<Triple<Instant, ZoneOffset?, Double>>,
+      lastWins: Boolean,
+    ) {
+      val perDay = LinkedHashMap<String, MutableList<Double>>()
+      rows.sortedBy { it.first }.forEach { (time, offset, value) ->
+        val day = time.atZone(offset ?: ZoneId.systemDefault()).toLocalDate().toString()
+        perDay.getOrPut(day) { mutableListOf() }.add(value)
+      }
+      perDay.forEach { (day, values) ->
+        put(metric, day, if (lastWins) values.last() else values.average())
+      }
+    }
+
+    if ("android.permission.health.READ_STEPS" in granted) {
+      val byDay = HashMap<String, Long>()
+      readAll(client, StepsRecord::class, from, now).forEach { s ->
+        val day =
+          s.startTime.atZone(s.startZoneOffset ?: ZoneId.systemDefault()).toLocalDate().toString()
+        byDay[day] = (byDay[day] ?: 0L) + s.count
+      }
+      byDay.forEach { (day, count) -> put("steps", day, count.toDouble()) }
+    }
+
+    if ("android.permission.health.READ_SLEEP" in granted) {
+      // 归属日按「醒来那天」算：23 点睡、早上 7 点起，这一晚属于 7 点那天
+      val byDay = HashMap<String, LongArray>() // [总睡眠, 深睡, REM]
+      val asleepStages =
+        setOf(
+          SleepSessionRecord.STAGE_TYPE_SLEEPING,
+          SleepSessionRecord.STAGE_TYPE_LIGHT,
+          SleepSessionRecord.STAGE_TYPE_DEEP,
+          SleepSessionRecord.STAGE_TYPE_REM,
+        )
+      readAll(client, SleepSessionRecord::class, from, now).forEach { s ->
+        val day =
+          s.endTime.atZone(s.endZoneOffset ?: ZoneId.systemDefault()).toLocalDate().toString()
+        val bucket = byDay.getOrPut(day) { LongArray(3) }
+        val minutes = { a: Instant, b: Instant -> Duration.between(a, b).toMinutes().coerceAtLeast(0) }
+        if (s.stages.isEmpty()) {
+          // 有的写入方不给分段，只有整段会话 —— 那就把整段时长当睡眠时长
+          bucket[0] += minutes(s.startTime, s.endTime)
+        } else {
+          bucket[0] += s.stages.filter { it.stage in asleepStages }.sumOf { minutes(it.startTime, it.endTime) }
+          bucket[1] += s.stages.filter { it.stage == SleepSessionRecord.STAGE_TYPE_DEEP }.sumOf { minutes(it.startTime, it.endTime) }
+          bucket[2] += s.stages.filter { it.stage == SleepSessionRecord.STAGE_TYPE_REM }.sumOf { minutes(it.startTime, it.endTime) }
+        }
+      }
+      byDay.forEach { (day, b) ->
+        if (b[0] > 0) put("sleep_min", day, b[0].toDouble())
+        if (b[1] > 0) put("sleep_deep_min", day, b[1].toDouble())
+        if (b[2] > 0) put("sleep_rem_min", day, b[2].toDouble())
+      }
+    }
+
+    if ("android.permission.health.READ_WEIGHT" in granted) {
+      daily(
+        "weight_kg",
+        readAll(client, WeightRecord::class, from, now).map { Triple(it.time, it.zoneOffset, it.weight.inKilograms) },
+        lastWins = true,
+      )
+    }
+    if ("android.permission.health.READ_BODY_FAT" in granted) {
+      daily(
+        "body_fat_pct",
+        readAll(client, BodyFatRecord::class, from, now).map { Triple(it.time, it.zoneOffset, it.percentage.value) },
+        lastWins = true,
+      )
+    }
+    if ("android.permission.health.READ_HEIGHT" in granted) {
+      // HC 的身高是米，Rein 全库口径是厘米
+      daily(
+        "height_cm",
+        readAll(client, HeightRecord::class, from, now).map { Triple(it.time, it.zoneOffset, it.height.inMeters * 100.0) },
+        lastWins = true,
+      )
+    }
+    if ("android.permission.health.READ_BASAL_METABOLIC_RATE" in granted) {
+      daily(
+        "bmr_kcal",
+        readAll(client, BasalMetabolicRateRecord::class, from, now)
+          .map { Triple(it.time, it.zoneOffset, it.basalMetabolicRate.inKilocaloriesPerDay) },
+        lastWins = true,
+      )
+    }
+    if ("android.permission.health.READ_RESTING_HEART_RATE" in granted) {
+      daily(
+        "resting_hr_bpm",
+        readAll(client, RestingHeartRateRecord::class, from, now)
+          .map { Triple(it.time, it.zoneOffset, it.beatsPerMinute.toDouble()) },
+        lastWins = false,
+      )
+    }
+    if ("android.permission.health.READ_HEART_RATE_VARIABILITY" in granted) {
+      daily(
+        "hrv_rmssd_ms",
+        readAll(client, HeartRateVariabilityRmssdRecord::class, from, now)
+          .map { Triple(it.time, it.zoneOffset, it.heartRateVariabilityMillis) },
+        lastWins = false,
+      )
+    }
+    if ("android.permission.health.READ_OXYGEN_SATURATION" in granted) {
+      daily(
+        "spo2_pct",
+        readAll(client, OxygenSaturationRecord::class, from, now).map { Triple(it.time, it.zoneOffset, it.percentage.value) },
+        lastWins = false,
+      )
+    }
+    if ("android.permission.health.READ_RESPIRATORY_RATE" in granted) {
+      daily(
+        "resp_rate_bpm",
+        readAll(client, RespiratoryRateRecord::class, from, now).map { Triple(it.time, it.zoneOffset, it.rate) },
+        lastWins = false,
+      )
+    }
+    if ("android.permission.health.READ_BODY_TEMPERATURE" in granted) {
+      daily(
+        "temp_c",
+        readAll(client, BodyTemperatureRecord::class, from, now)
+          .map { Triple(it.time, it.zoneOffset, it.temperature.inCelsius) },
+        lastWins = false,
+      )
+    }
+    if ("android.permission.health.READ_VO2_MAX" in granted) {
+      daily(
+        "vo2max_ml_kg_min",
+        readAll(client, Vo2MaxRecord::class, from, now)
+          .map { Triple(it.time, it.zoneOffset, it.vo2MillilitersPerMinuteKilogram) },
+        lastWins = true,
+      )
+    }
+    if ("android.permission.health.READ_BLOOD_PRESSURE" in granted) {
+      // 收缩压/舒张压来自同一条记录：各自聚合成两行指标
+      val bp = readAll(client, BloodPressureRecord::class, from, now)
+      daily(
+        "bp_sys_mmhg",
+        bp.map { Triple(it.time, it.zoneOffset, it.systolic.inMillimetersOfMercury) },
+        lastWins = true,
+      )
+      daily(
+        "bp_dia_mmhg",
+        bp.map { Triple(it.time, it.zoneOffset, it.diastolic.inMillimetersOfMercury) },
+        lastWins = true,
+      )
+    }
+    return metrics
   }
 
   /**
@@ -439,12 +706,23 @@ object HealthConnectBridge {
       }
     var readGranted = false
     var writeGranted = false
+    var categories = JSONObject()
     if (availability == "available") {
       try {
         val granted =
           HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
-        readGranted = granted.containsAll(READ_PERMS)
+        // readGranted 只看 READ_EXERCISE：它是「能不能导入运动记录」的门禁
+        // （Rust 的 start 拿它做闸）。逐项放行后，缺消耗/距离/心率的授权不再
+        // 阻塞同步 —— 旧口径的 containsAll 会把「只差心率」的用户整个挡在门外。
+        readGranted = "android.permission.health.READ_EXERCISE" in granted
         writeGranted = granted.containsAll(WRITE_PERMS)
+        // 每组是否齐全：前端据此在数据源卡里逐组显示「已授权 / 去授权」
+        categories =
+          JSONObject()
+            .put("exercise", granted.containsAll(CATEGORY_EXERCISE))
+            .put("activity", granted.containsAll(CATEGORY_ACTIVITY))
+            .put("body", granted.containsAll(CATEGORY_BODY))
+            .put("vitals", granted.containsAll(CATEGORY_VITALS))
       } catch (e: Exception) {
         Log.w(TAG, "读取授权状态失败", e)
       }
@@ -454,6 +732,7 @@ object HealthConnectBridge {
         .put("availability", availability)
         .put("readGranted", readGranted)
         .put("writeGranted", writeGranted)
+        .put("grantedCategories", categories)
         .put("error", error ?: JSONObject.NULL)
     writeFile(context, STATE_FILE, obj.toString())
   }

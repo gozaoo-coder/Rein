@@ -357,18 +357,19 @@ const READINESS_ACTIONS: MenuItem[] = [
   { label: '清除自评（纯自动推断）', value: 'clear', icon: Gauge },
 ]
 
-/** 首次进入力量训练时的一次性自评入口（跳过即纯自动推断） */
+/** 首次进入力量训练时的一次性自评入口（跳过即纯自动推断）：热身做完、第一正式组开做前才弹 */
 const showReadinessPrompt = computed(
   () =>
     s.readiness === null &&
     !!s.currentEx &&
     s.currentEx.kind === 'strength' &&
-    (s.phase === 'exercise' || s.phase === 'warmup') &&
+    s.phase === 'exercise' &&
     s.doneCount === 0,
 )
 
 /* ---------- 今日状态对话框 ----------
- * 出现时机完全由 showReadinessPrompt 决定（首次进入力量训练、还没自评、还没做第一组）：
+ * 出现时机完全由 showReadinessPrompt 决定（首次进入力量训练、热身做完、还没自评、还没做第一组）：
+ * 热身中不弹 —— 自评本就该在身体活动开之后答才准，也不打断热身节奏。
  *  · 一旦完成第一组（doneCount > 0）或离开该阶段，computed 变 false → 对话框自动收起。
  *    这是"打断"路径 —— 不强迫作答，但也不让它一直悬着挡视线；
  *  · 答过（选档或跳过）就记 readinessAsked，本次训练不再自动弹；
@@ -1017,7 +1018,7 @@ watch(immersiveOpen, (open) => {
             <div class="setcard">
               <!-- 今日状态自评已升格为「今日状态」对话框（ReadinessDialog）：它会改
                    建议重量与练够分，代价说不清就不该藏在卡片里当一行小字。
-                   要改也仍在「更多 → 今日状态」。 -->
+                   自动弹窗等热身做完（第一正式组前）才出现；要改也仍在「更多 → 今日状态」。 -->
 
               <div class="field">
                 <span class="flabel">重量</span>
@@ -1070,7 +1071,7 @@ watch(immersiveOpen, (open) => {
                  这两行是同一组记录的两个字段，之前分开在两处（重量在卡里、次数裸在卡外当大字），
                  视觉上像两件不相干的事，中间还夹着今日状态那张卡，谁主谁次读不出来 -->
             <div class="setcard">
-              <!-- 今日状态自评见 ReadinessDialog（首次进入力量训练时的那张对话框）；
+              <!-- 今日状态自评见 ReadinessDialog（首次进入力量训练、热身做完后的那张对话框）；
                    这里只留重量与次数，两者是同一组记录的两个字段 -->
               <div class="field">
                 <span class="flabel">重量</span>

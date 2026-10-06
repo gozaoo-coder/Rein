@@ -37,7 +37,8 @@ use crate::state::AppState;
 
 use super::adapter;
 use super::models::{
-    Change, HcReadPayload, HcWritePayload, LocalWorkout, SyncReport, SyncStatus, WorkoutDraft,
+    Change, HcMetricRow, HcReadPayload, HcWritePayload, HealthMetricPoint, HealthMetricSeries,
+    LocalWorkout, SyncReport, SyncStatus, WorkoutDraft,
 };
 use super::{
     read_json, remove_file, write_json, Pending, Stage, PENDING, PULL_FILE, PUSH_FILE, STATE_FILE,
@@ -61,6 +62,10 @@ struct BridgeState {
     availability: String,
     read_granted: bool,
     write_granted: bool,
+    /// 四组读权限各自是否齐全（exercise/activity/body/vitals）。
+    /// 旧桥没有这份 → 空表，前端按「未授权」引导。
+    #[serde(default)]
+    granted_categories: HashMap<String, bool>,
     /// 上一轮操作的失败原因（Kotlin 每次开新操作会清掉）
     #[serde(default)]
     error: Option<String>,
@@ -135,6 +140,10 @@ pub fn health_sync_status(
             .unwrap_or_else(|| "unknown".into()),
         read_granted: bridge.as_ref().map(|b| b.read_granted).unwrap_or(false),
         write_granted: bridge.as_ref().map(|b| b.write_granted).unwrap_or(false),
+        granted_categories: bridge
+            .as_ref()
+            .map(|b| b.granted_categories.clone())
+            .unwrap_or_default(),
         push_enabled: push_enabled(&conn),
         last_sync_at: meta_get(&conn, LAST_SYNC_KEY),
         imported_count,
@@ -266,14 +275,17 @@ pub fn health_sync_step(
                 };
                 remove_file(&app, PULL_FILE);
                 // 这一步之后 report 里已经有 imported/updated/removed/scanned
-                let counts = {
+                let (counts, metrics_imported) = {
                     let conn = state.db.lock();
-                    apply_pull(&conn, &payload, pending.max_hr)?
+                    let counts = apply_pull(&conn, &payload, pending.max_hr)?;
+                    let metrics = apply_metrics(&conn, &payload.metrics)?;
+                    (counts, metrics)
                 };
                 pending.report.imported = counts.imported;
                 pending.report.updated = counts.updated;
                 pending.report.removed = counts.removed;
                 pending.report.scanned = payload.records.len() as i64;
+                pending.report.metrics_imported = metrics_imported;
 
                 if pending.push {
                     let (payload, exported, re_exported, skipped) = {
@@ -348,6 +360,49 @@ pub fn health_sync_step(
     Ok(outcome)
 }
 
+/// 健康数据查询：每个指标的**全量**镜像序列（近 90 天窗口、含空天）。
+///
+/// 预览卡与指标详情抽屉共用这一份：前者自己切最近 14 天的窗口画条形，
+/// 后者把全部行当 raw 数据列表展示。行数 = 指标数 × 有值的天数（≤ 16×90），
+/// 量级很小，不分页。
+#[tauri::command]
+pub fn health_metrics_all(state: State<AppState>) -> Result<Vec<HealthMetricSeries>> {
+    let conn = state.db.lock();
+    let mut stmt = conn.prepare(
+        "SELECT metric, day, value FROM health_metrics ORDER BY metric, day",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, f64>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+
+    // ORDER BY metric, day → 同一指标必然连续出现，按「相邻同 metric」分桶；
+    // latest 取最晚一天（ISO 日期串排序即时间序）
+    let mut series: Vec<HealthMetricSeries> = Vec::new();
+    for (metric, day, value) in rows {
+        match series.last_mut() {
+            Some(s) if s.metric == metric => {
+                s.latest_day = day.clone();
+                s.latest_value = value;
+                s.points.push(HealthMetricPoint { day, value });
+            }
+            _ => series.push(HealthMetricSeries {
+                metric,
+                latest_day: day.clone(),
+                latest_value: value,
+                points: vec![HealthMetricPoint { day, value }],
+            }),
+        }
+    }
+    Ok(series)
+}
+
 /// 移除传播：删掉某条导出记录的 HC 副本（由 `delete_workout` 调用）
 pub(crate) fn propagate_delete(webview: &tauri::Webview<tauri::Wry>, record_id: &str) {
     super::dispatch(webview, "deleteRecord", Some(record_id.to_string()));
@@ -369,6 +424,26 @@ pub(crate) fn add_tombstone(conn: &rusqlite::Connection, external_id: &str) -> R
 }
 
 /* ---------------- 算法 ---------------- */
+
+/// 体征镜像整表替换：表的内容 = 本次 pull 里按天聚合的行。
+///
+/// 为什么不做增量合并：Kotlin 每轮都全窗口（90 天）重读，收到的集合就是
+/// HC 侧「现在该有什么」的完整答案 —— 直接替换，撤销授权的那组、用户在
+/// HC 里删掉的某天数据，下一次同步自然消失，不必另立一套墓碑。
+/// 表里也可能有 `metric`/`day` 相同的重复行（Kotlin 聚合的兜底），upsert 收口。
+fn apply_metrics(conn: &rusqlite::Connection, rows: &[HcMetricRow]) -> Result<i64> {
+    conn.execute("DELETE FROM health_metrics", [])?;
+    let now = chrono::Utc::now().to_rfc3339();
+    for row in rows {
+        conn.execute(
+            "INSERT INTO health_metrics (metric, day, value, updated_at) VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(metric, day) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            rusqlite::params![row.metric, row.day, row.value, now],
+        )?;
+    }
+    Ok(rows.len() as i64)
+}
+
 
 fn supported() -> bool {
     cfg!(target_os = "android")
@@ -750,5 +825,52 @@ mod tests {
         add_tombstone(&conn, "hc-9").unwrap();
         let set = load_tombstones(&conn).unwrap();
         assert!(set.contains("hc-9"));
+    }
+
+    /// 体征镜像是整表替换：上一轮的行不能混进下一轮
+    /// （撤销授权的组、HC 侧删掉的某天，靠替换自然收敛）
+    #[test]
+    fn metrics_mirror_fully_replaces_each_sync() {
+        let conn = db();
+        let round1 = vec![
+            HcMetricRow { metric: "steps".into(), day: "2026-10-05".into(), value: 8421.0 },
+            HcMetricRow { metric: "sleep_min".into(), day: "2026-10-05".into(), value: 432.0 },
+        ];
+        apply_metrics(&conn, &round1).unwrap();
+        // 第二轮只读到体重（其余被撤销/删除）
+        let round2 = vec![
+            HcMetricRow { metric: "weight_kg".into(), day: "2026-10-05".into(), value: 72.5 },
+        ];
+        apply_metrics(&conn, &round2).unwrap();
+
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM health_metrics", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "上一轮的两行不该留下来");
+
+        let (metric, value): (String, f64) = conn
+            .query_row(
+                "SELECT metric, value FROM health_metrics WHERE day = '2026-10-05'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(metric, "weight_kg");
+        assert!((value - 72.5).abs() < f64::EPSILON);
+    }
+
+    /// 旧桥的 pull.json 没有 metrics 字段，serde default 必须兜住
+    #[test]
+    fn pull_payload_metrics_are_optional() {
+        let payload: HcReadPayload = serde_json::from_str(r#"{"records":[]}"#).unwrap();
+        assert!(payload.records.is_empty());
+        assert!(payload.metrics.is_empty());
+
+        let with: HcReadPayload = serde_json::from_str(
+            r#"{"records":[],"metrics":[{"metric":"steps","day":"2026-10-05","value":100.0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(with.metrics.len(), 1);
+        assert_eq!(with.metrics[0].metric, "steps");
     }
 }

@@ -25,14 +25,33 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- 第三方健康数据（见 modules/healthsync + HealthConnectBridge.kt）：
-         从系统 Health Connect 读取运动记录，并按用户开关回写。
+         从系统 Health Connect 读取运动记录与每日体征，并按用户开关回写。
          这几项**不是**运行时权限 —— 系统不弹窗，只能在 Health Connect 自己的界面上授予，
          所以声明在这里只是「声明意图」，真正拿到授权要走 HC 的授权页。
-         口径与小米运动健康写入 HC 时声明的那套一致（它是写入方，我们多一份读）。 -->
+         分四组（口径见 HealthConnectBridge.kt 的 CATEGORY_*，与前端 healthMetrics.ts 对应）：
+         运动 / 活动与睡眠 / 身体成分 / 身体机能 —— 用户可以只授其中几组，
+         未授权的组在读取侧被逐项跳过，不影响其它组。 -->
     <uses-permission android:name="android.permission.health.READ_EXERCISE" />
     <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
     <uses-permission android:name="android.permission.health.READ_DISTANCE" />
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
+
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_BODY_FAT" />
+    <uses-permission android:name="android.permission.health.READ_HEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_BASAL_METABOLIC_RATE" />
+
+    <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE_VARIABILITY" />
+    <uses-permission android:name="android.permission.health.READ_OXYGEN_SATURATION" />
+    <uses-permission android:name="android.permission.health.READ_RESPIRATORY_RATE" />
+    <uses-permission android:name="android.permission.health.READ_BODY_TEMPERATURE" />
+    <uses-permission android:name="android.permission.health.READ_VO2_MAX" />
+    <uses-permission android:name="android.permission.health.READ_BLOOD_PRESSURE" />
+
     <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
 
     <!-- Health Connect 只在 Android 9+ 且系统带 HC 模块（Android 14+）时存在。

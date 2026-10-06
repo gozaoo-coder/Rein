@@ -1,0 +1,4 @@
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index 279f636..61d759e 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs

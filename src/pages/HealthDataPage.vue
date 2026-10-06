@@ -1,13 +1,42 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { AlertTriangle, Check, HeartPulse, RefreshCw, ShieldCheck } from 'lucide-vue-next'
+import { computed, onMounted, onUnmounted, ref, type Component } from 'vue'
+import {
+  AlertTriangle,
+  Check,
+  ChevronRight,
+  Footprints,
+  HeartPulse,
+  RefreshCw,
+  Scale,
+  ShieldCheck,
+  Stethoscope,
+} from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import MetricDetailSheet from '@/components/health/MetricDetailSheet.vue'
 import { useToast } from '@/composables/useToast'
 import { healthSyncService } from '@/services/healthSyncService'
 import { nutritionService } from '@/services/nutritionService'
-import type { HealthSyncReport, HealthSyncStatus } from '@/types'
+import {
+  HEALTH_CATEGORIES,
+  HEALTH_METRIC_BY_KEY,
+  HEALTH_METRICS,
+  formatMetricDay,
+  formatMetricValue,
+  lastLocalDays,
+  type HealthCategoryKey,
+  type HealthMetricMeta,
+} from '@/config/healthMetrics'
+import type { HealthMetricSeries, HealthSyncReport, HealthSyncStatus } from '@/types'
+
+/** 每组数据源行的图标（config 里的 key → lucide 组件） */
+const CATEGORY_ICONS: Record<HealthCategoryKey, Component> = {
+  exercise: HeartPulse,
+  activity: Footprints,
+  body: Scale,
+  vitals: Stethoscope,
+}
 
 /**
  * 第三方数据管理（三级页，入口在「设置 › 第三方数据管理」）。
@@ -17,18 +46,23 @@ import type { HealthSyncReport, HealthSyncStatus } from '@/types'
  * 厂商差异在系统那一层就被抹平了，所以这一页只跟 Health Connect 打交道，
  * 不去对接任何厂商私有接口（原理见 Rust `modules/healthsync`）。
  *
- * 页面结构就三张卡，顺序是用户要回答的三个问题：
- *   1. 现在是什么状态（能不能用 / 授权到哪一步）
+ * 页面结构是用户要回答的四个问题：
+ *   1. 现在是什么状态 —— Health Connect 可不可用、四组读权限各授到哪一步
+ *      （运动 / 活动与睡眠 / 身体成分 / 身体机能，分组见 `config/healthMetrics.ts`）
  *   2. 同步一次会发生什么（以及上一次发生了什么）
- *   3. 这套「谁能改谁」的规则是什么（双向同步必须有明确的所有权，否则用户不敢点）
+ *   3. 读到了什么 —— 每个指标最近 14 天的形状 + 最新值
+ *   4. 这套「谁能改谁」的规则是什么（双向同步必须有明确的所有权，否则用户不敢点）
  *
- * 授权说明：Health Connect 的权限**不是**系统运行时弹窗，点按钮会跳到它自己的界面。
- * 所以这里的每个「去授权」按钮后面都跟着「回来会自己刷新」——用户不必知道该回哪一页。
+ * 授权说明：Health Connect 的权限**不是**系统运行时弹窗，点按钮会跳到它自己的界面，
+ * 而且可以按组只授一部分 —— 每组的「去授权」只申请那一组的权限，
+ * 回来后本页自动刷新；没有授权的组不影响其它组同步。
  */
 const { toast } = useToast()
 
 const status = ref<HealthSyncStatus | null>(null)
 const report = ref<HealthSyncReport | null>(null)
+/** 每个指标近 14 天的镜像序列（同步后落库的 health_metrics 表） */
+const metrics = ref<HealthMetricSeries[]>([])
 /** 上一次同步的失败原因：留在页面上，不只闪一条 toast（授权没了这类问题要能反复看） */
 const message = ref<string | null>(null)
 const loading = ref(true)
@@ -44,13 +78,21 @@ const readGranted = computed(() => status.value?.readGranted ?? false)
 const writeGranted = computed(() => status.value?.writeGranted ?? false)
 const pushEnabled = computed(() => status.value?.pushEnabled ?? false)
 
+/** 每组的授权状态：旧桥没有这份 → 全部按未授权处理，引导用户去补 */
+const categories = computed(() =>
+  HEALTH_CATEGORIES.map((cat) => ({
+    ...cat,
+    granted: status.value?.grantedCategories?.[cat.key] === true,
+  })),
+)
+
 /** 阻塞操作的原因（没有原因 = 可以点「立即同步」） */
 const blockedReason = computed(() => {
   if (!supported.value) return '桌面端没有 Health Connect，这个功能只在 Android 手机上可用'
   if (status.value?.availability === 'unknown') return '正在检测本机的 Health Connect…'
   if (status.value?.availability === 'update_required') return '系统的 Health Connect 需要更新后才能使用'
   if (status.value?.availability !== 'available') return '本机没有 Health Connect（Android 14 起才内置）'
-  if (!readGranted.value) return '还没有拿到健康数据的读取授权'
+  if (!readGranted.value) return '还没有拿到「运动」组的读取授权 —— 导入运动记录从这一组开始'
   return ''
 })
 
@@ -102,6 +144,17 @@ async function converge() {
 /** 首次进入：原生侧可能还没写过状态文件 */
 async function firstLoad() {
   await converge()
+  await loadMetrics()
+}
+
+/** 拉预览：桌面端没有数据源，跳过；失败不阻塞本页（卡片按空态展示） */
+async function loadMetrics() {
+  if (!supported.value) return
+  try {
+    metrics.value = await healthSyncService.metrics()
+  } catch {
+    /* 空态即可 */
+  }
 }
 
 /** 用户手机当前时区偏移（秒）：导出方向要把「本地日期 + 分钟」折算成 HC 的瞬时时刻 */
@@ -136,7 +189,7 @@ async function resolveMaxHr(): Promise<number | null> {
   return null
 }
 
-async function authorize(mode: 'read' | 'write') {
+async function authorize(mode: 'read' | 'write' | HealthCategoryKey) {
   try {
     await healthSyncService.authorize(mode)
     toast('已打开健康数据授权页，授权后返回本页即可')
@@ -157,7 +210,10 @@ async function authorize(mode: 'read' | 'write') {
  * 只靠回调在实现上不可靠，靠 visibilitychange 才是「用户回来了」这件事本身。
  */
 function onVisibility() {
-  if (document.visibilityState === 'visible') void converge()
+  if (document.visibilityState === 'visible') {
+    void converge()
+    void loadMetrics()
+  }
 }
 
 async function togglePush(next: boolean) {
@@ -195,6 +251,8 @@ async function runSync() {
         step.report.imported + step.report.updated + step.report.removed +
         step.report.exported + step.report.reExported
       toast(total > 0 ? `同步完成，共处理 ${total} 条` : '同步完成，没有变化')
+      // 体征镜像刚被整表替换，预览跟着重拉一次
+      await loadMetrics()
     } else if (step.phase === 'pending') {
       message.value = '同步超时，请重试'
       toast(message.value)
@@ -205,6 +263,65 @@ async function runSync() {
   } finally {
     syncing.value = false
   }
+}
+
+/* ---------------- 预览卡的展示逻辑 ---------------- */
+
+const PREVIEW_DAYS = 14
+
+/** 分组 key → 组内排列顺序（config 数组的顺序就是页面顺序） */
+const METRIC_ORDER = new Map(HEALTH_METRICS.map((m, i) => [m.key, i]))
+
+/** 有数据的分组 + 组内按固定顺序排列的指标行（没数据的分组整个不出现） */
+const metricGroups = computed(() =>
+  HEALTH_CATEGORIES.map((cat) => ({
+    key: cat.key,
+    label: cat.label,
+    rows: metrics.value
+      .map((series) => ({ meta: HEALTH_METRIC_BY_KEY[series.metric], series }))
+      .filter(
+        (r): r is { meta: HealthMetricMeta; series: HealthMetricSeries } =>
+          !!r.meta && r.meta.category === cat.key,
+      )
+      .sort(
+        (a, b) =>
+          (METRIC_ORDER.get(a.meta.key) ?? 99) - (METRIC_ORDER.get(b.meta.key) ?? 99),
+      ),
+  })).filter((g) => g.rows.length > 0),
+)
+
+/** 预览空态该说哪句话：没授权和授权了但没数据是两件事 */
+const previewEmptyText = computed(() =>
+  readGranted.value
+    ? '同步一次后，这里会显示从 Health Connect 读到的每日数据'
+    : '先在上方完成「运动」组的授权，再同步一次即可',
+)
+
+/* ---- 指标详情抽屉 ---- */
+const detailOpen = ref(false)
+const detail = ref<{ meta: HealthMetricMeta; series: HealthMetricSeries } | null>(null)
+
+function openDetail(meta: HealthMetricMeta, series: HealthMetricSeries): void {
+  detail.value = { meta, series }
+  detailOpen.value = true
+}
+
+/**
+ * 一根指标 14 天的条形：缺失的天是空位（灰点底），有值的天按**窗口内**最大值
+ * 归一化高度（镜像序列现在是 90 天全量，不能拿 90 天的 max 压扁最近两周），
+ * 最高不过顶（留 6% 余量），最低不低于 10% —— 让「有但很小」与「没有」一眼分得开。
+ */
+function barsFor(series: HealthMetricSeries): { pct: number; empty: boolean }[] {
+  const window = new Set(lastLocalDays(PREVIEW_DAYS))
+  const pts = series.points.filter((p) => window.has(p.day))
+  const byDay = new Map(pts.map((p) => [p.day, p.value]))
+  const max = Math.max(...pts.map((p) => p.value), 0)
+  return lastLocalDays(PREVIEW_DAYS).map((day) => {
+    const v = byDay.get(day)
+    if (v == null) return { pct: 0, empty: true }
+    if (max <= 0) return { pct: 10, empty: false }
+    return { pct: Math.min(Math.max((v / max) * 94 + 6, 10), 100), empty: false }
+  })
 }
 
 function fmtTime(iso: string | null): string {
@@ -239,25 +356,31 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
           </span>
         </div>
 
-        <div v-if="available" class="frow row">
-          <i class="fic"><ShieldCheck :size="17" /></i>
-          <span class="col ftxt">
-            <b>读取授权</b>
-            <small>运动记录、消耗、距离、心率</small>
-          </span>
-          <span v-if="readGranted" class="pill ok"><Check :size="13" /> 已授权</span>
-          <button v-else class="act" type="button" @click="authorize('read')">去授权</button>
-        </div>
+        <!-- 四组读权限：HC 允许按类型只授一部分，所以每组单独引导、单独补授权。
+             「去授权」只申请这一组的权限，回来后本页自动刷新。 -->
+        <template v-if="available">
+          <div v-for="cat in categories" :key="cat.key" class="frow row">
+            <i class="fic">
+              <component :is="CATEGORY_ICONS[cat.key]" :size="17" />
+            </i>
+            <span class="col ftxt">
+              <b>{{ cat.label }}</b>
+              <small>{{ cat.desc }}</small>
+            </span>
+            <span v-if="cat.granted" class="pill ok"><Check :size="13" /> 已授权</span>
+            <button v-else class="act" type="button" @click="authorize(cat.key)">去授权</button>
+          </div>
 
-        <div v-if="available && pushEnabled" class="frow row">
-          <i class="fic"><ShieldCheck :size="17" /></i>
-          <span class="col ftxt">
-            <b>写入授权</b>
-            <small>把 Rein 记的运动回写给其他 App</small>
-          </span>
-          <span v-if="writeGranted" class="pill ok"><Check :size="13" /> 已授权</span>
-          <button v-else class="act" type="button" @click="authorize('write')">去授权</button>
-        </div>
+          <div v-if="pushEnabled" class="frow row">
+            <i class="fic"><ShieldCheck :size="17" /></i>
+            <span class="col ftxt">
+              <b>写入授权</b>
+              <small>把 Rein 记的运动回写给其他 App</small>
+            </span>
+            <span v-if="writeGranted" class="pill ok"><Check :size="13" /> 已授权</span>
+            <button v-else class="act" type="button" @click="authorize('write')">去授权</button>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -304,6 +427,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
           <span v-if="report.imported">导入 {{ report.imported }}</span>
           <span v-if="report.updated">更新 {{ report.updated }}</span>
           <span v-if="report.removed">移除 {{ report.removed }}</span>
+          <span v-if="report.metricsImported">体征 {{ report.metricsImported }} 天</span>
           <span v-if="report.exported">回写 {{ report.exported }}</span>
           <span v-if="report.reExported">重写 {{ report.reExported }}</span>
           <span v-if="report.skipped">跳过 {{ report.skipped }}（没填开始时间）</span>
@@ -314,7 +438,52 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
       </div>
     </section>
 
-    <!-- 3. 规则说明：双向同步必须把「谁能改谁」讲清楚，否则用户不敢点同步 -->
+    <!-- 3. 数据预览：读到了什么。只有授权过的组、同步过的数据才会出现。 -->
+    <section class="card">
+      <h2 class="gtitle">健康数据</h2>
+      <p v-if="!available" class="empty">
+        在 Android 手机上接入 Health Connect 后，这里会显示读到的每日数据
+      </p>
+      <p v-else-if="!metricGroups.length" class="empty">{{ previewEmptyText }}</p>
+      <template v-else>
+        <p class="empty">每行是近 14 天的形状，点开看趋势与原始数据</p>
+        <div v-for="group in metricGroups" :key="group.key" class="mgroup">
+          <h3 class="mtitle">{{ group.label }}</h3>
+          <div
+            v-for="row in group.rows"
+            :key="row.series.metric"
+            class="mrow"
+            role="button"
+            tabindex="0"
+            :aria-label="`查看${row.meta.label}的趋势与原始数据`"
+            @click="openDetail(row.meta, row.series)"
+            @keydown.enter.prevent="openDetail(row.meta, row.series)"
+            @keydown.space.prevent="openDetail(row.meta, row.series)"
+          >
+            <span class="col mtxt">
+              <b>{{ row.meta.label }}</b>
+              <small>{{ formatMetricDay(row.series.latestDay) }}</small>
+            </span>
+            <span class="bars">
+              <i
+                v-for="(bar, i) in barsFor(row.series)"
+                :key="i"
+                class="bar"
+                :class="{ empty: bar.empty }"
+                :style="{ height: bar.pct + '%' }"
+              />
+            </span>
+            <span class="mval">
+              <b>{{ formatMetricValue(row.meta, row.series.latestValue) }}</b>
+              <small v-if="row.meta.unit">{{ row.meta.unit }}</small>
+            </span>
+            <ChevronRight :size="14" class="mchev" />
+          </div>
+        </div>
+      </template>
+    </section>
+
+    <!-- 4. 规则说明：双向同步必须把「谁能改谁」讲清楚，否则用户不敢点同步 -->
     <section class="card">
       <h2 class="gtitle">同步规则</h2>
       <div class="rows">
@@ -322,6 +491,12 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
           <span class="col ftxt">
             <b>从手机同步进来的记录</b>
             <small>以 Health Connect 为准：那边改了会覆盖这边，那边删了这边也跟着删</small>
+          </span>
+        </div>
+        <div class="frow row">
+          <span class="col ftxt">
+            <b>每日体征数据</b>
+            <small>只是 Health Connect 的镜像，每次同步整表刷新；不会动你手填的体重等档案</small>
           </span>
         </div>
         <div class="frow row">
@@ -339,8 +514,13 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
       </div>
     </section>
 
-    <!-- 引导流程的落点（未授权时该去哪一步、怎么在小米运动健康里开启数据共享）
-         由用户自己实现，见记忆 rein-third-party-health-data 的说明。 -->
+    <!-- 指标详情：趋势 + raw 数据（预览卡点行打开） -->
+    <MetricDetailSheet
+      :open="detailOpen"
+      :meta="detail?.meta ?? null"
+      :series="detail?.series ?? null"
+      @close="detailOpen = false"
+    />
   </div>
 </template>
 
@@ -470,6 +650,107 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
   padding-top: 10px;
   border-top: 1px solid var(--line);
   color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+/* ---- 健康数据预览 ---- */
+
+.empty {
+  margin: 8px 0 4px;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+
+.mgroup + .mgroup {
+  margin-top: 6px;
+}
+
+.mtitle {
+  margin: 8px 0 2px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+.mrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  cursor: pointer;
+}
+
+.mrow + .mrow {
+  border-top: 0.5px solid var(--line);
+}
+
+.mchev {
+  flex: none;
+  color: var(--text-3);
+}
+
+.mtxt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: none;
+  min-width: 72px;
+}
+
+.mtxt b {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.mtxt small {
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 26px;
+  flex: 1;
+  min-width: 0;
+}
+
+.bar {
+  flex: 1;
+  max-width: 9px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+.bar.empty {
+  height: 2px !important;
+  border-radius: 1px;
+  background: var(--line);
+  opacity: 1;
+}
+
+.mval {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex: none;
+  min-width: 64px;
+}
+
+.mval b {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.mval small {
+  color: var(--text-3);
   font-size: var(--fs-caption);
 }
 </style>

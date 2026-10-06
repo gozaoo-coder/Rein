@@ -115,6 +115,7 @@ pub fn run() {
             modules::healthsync::commands::health_sync_set_push,
             modules::healthsync::commands::health_sync_start,
             modules::healthsync::commands::health_sync_step,
+            modules::healthsync::commands::health_metrics_all,
             // pomodoro
             modules::pomodoro::commands::save_pomodoro_session,
             modules::pomodoro::commands::list_pomodoro_sessions,

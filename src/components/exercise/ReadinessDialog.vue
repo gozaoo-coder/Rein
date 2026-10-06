@@ -6,7 +6,7 @@ import { READINESS_FACTOR } from '@/utils/trainingAdvice'
 import { FEELING_LABEL, FEELING_SCORE, feelingOfReadiness } from '@/utils/trainingScore'
 
 /**
- * 「今日状态」对话框（进入力量训练时出现一次）。
+ * 「今日状态」对话框（进入力量训练后出现一次：激活热身做完、第一正式组开做前）。
  *
  * ---------- 为什么从内联 chips 升格成对话框 ----------
  * 这一步**真的会改训练计算**（两处），原来嵌在两组卡片里的三行小字说不清代价，

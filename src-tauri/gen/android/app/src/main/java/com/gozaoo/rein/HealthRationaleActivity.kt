@@ -60,9 +60,38 @@ class HealthRationaleActivity : Activity() {
     card.addView(label("Rein 如何使用你的健康数据", 20f, true, Color.parseColor("#1C1C1E")))
     card.addView(
       label(
-        "Rein 通过 Android 系统的 Health Connect 读取你的运动记录" +
-          "（时长、消耗、距离、心率），用来计算运动强度与每日消耗。",
+        "Rein 通过 Android 系统的 Health Connect 读取你的健康数据，" +
+          "按用途分为四组，你可以只授权其中几组：",
         15f, false, Color.parseColor("#3C3C43")
+      )
+    )
+    card.addView(
+      label(
+        "· 运动记录 —— 时长、消耗、距离、心率。\n" +
+          "　导入你在其他运动 App 里的课程，用来计算运动强度与每日消耗。",
+        14f, false, Color.parseColor("#3C3C43")
+      )
+    )
+    card.addView(
+      label(
+        "· 活动与睡眠 —— 步数、睡眠时长（含深睡 / 快眼动）。\n" +
+          "　看清每天的活动量与休息恢复，补全全天 24 小时的健康画像。",
+        14f, false, Color.parseColor("#3C3C43")
+      )
+    )
+    card.addView(
+      label(
+        "· 身体成分 —— 体重、体脂、身高、基础代谢。\n" +
+          "　用体脂秤等设备的真实测量替代手动填写，让热量与营养计算更准。",
+        14f, false, Color.parseColor("#3C3C43")
+      )
+    )
+    card.addView(
+      label(
+        "· 身体机能 —— 静息心率、心率变异性、血氧、呼吸率、体温、" +
+          "最大摄氧量、血压。\n" +
+          "　这些是心肺功能与恢复状态的核心指标，Rein 用它们评估你的健康状态。",
+        14f, false, Color.parseColor("#3C3C43")
       )
     )
     card.addView(
@@ -75,7 +104,7 @@ class HealthRationaleActivity : Activity() {
     card.addView(
       label(
         "这些数据只保存在你的设备上，Rein 不会上传到任何服务器；" +
-          "你随时可以在系统设置的 Health Connect 里撤销授权。",
+          "你随时可以在系统设置的 Health Connect 里按类型撤销授权。",
         15f, false, Color.parseColor("#3C3C43")
       )
     )

@@ -152,6 +152,85 @@ let healthImported = 12
 let healthExported = 0
 let healthSteps = 0
 
+/** 体征预览的样例缓存（首次生成后固定，dev 迭代时数据不跳） */
+let healthMetricsCache: unknown[] | null = null
+
+/** 伪随机（LCG，种子固定 → 每次生成同一份数据，截图可复现） */
+function mockRandom(seed: number): () => number {
+  let s = seed % 2147483647
+  if (s <= 0) s += 2147483646
+  return () => (s = (s * 16807) % 2147483647) / 2147483647
+}
+
+/**
+ * 体征镜像的样例数据：近 14 天，形状与 Kotlin `readMetrics` 的产出一致
+ * （`(metric, day, value)` 行 + 各指标独立决定哪些天有值 —— 手环不会每天每项都全，
+ * 空天是常态，预览卡的「灰点空位」正是为它们准备的）。
+ */
+function healthMetricsSample(): unknown[] {
+  if (healthMetricsCache) return healthMetricsCache
+  const rnd = mockRandom(20261006)
+  const days: string[] = []
+  const now = new Date()
+  // 30 天：预览卡只取最近 14 天，详情抽屉的 raw 列表要能看到更长的历史
+  for (let i = 29; i >= 0; i--) {
+    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)
+    days.push(
+      `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`,
+    )
+  }
+  const build = (
+    metric: string,
+    value: () => number,
+    keep: (i: number) => boolean,
+  ) => {
+    const points = days
+      .map((day) => ({ day, value: value() }))
+      .filter((_, i) => keep(i))
+    if (!points.length) return null
+    const last = points[points.length - 1]
+    return { metric, latestDay: last.day, latestValue: last.value, points }
+  }
+  // 偶尔没戴手环（i=4、18 那两天睡眠整体缺）；体脂秤 / 血压计偶尔才上；体温计数据干脆没有
+  healthMetricsCache = [
+    build('steps', () => Math.round(5200 + rnd() * 6500 + (rnd() < 0.2 ? 4200 : 0)), () => true),
+    build('sleep_min', () => Math.round(390 + rnd() * 110), (i) => i !== 4 && i !== 18),
+    build('sleep_deep_min', () => Math.round(70 + rnd() * 45), (i) => i !== 4 && i !== 18),
+    build('sleep_rem_min', () => Math.round(75 + rnd() * 50), (i) => i !== 4 && i !== 18 && i !== 11 && i !== 25),
+    build(
+      'weight_kg',
+      () => Math.round((72.4 + (rnd() - 0.5) * 0.3) * 10) / 10,
+      (i) => i % 2 === 0,
+    ),
+    build(
+      'body_fat_pct',
+      () => Math.round((20.8 + (rnd() - 0.5) * 0.8) * 10) / 10,
+      (i) => i % 7 === 1,
+    ),
+    build('bmr_kcal', () => Math.round(1580 + rnd() * 60), (i) => i % 3 !== 1),
+    build('resting_hr_bpm', () => Math.round(54 + rnd() * 8), (i) => i !== 9 && i !== 22),
+    build('hrv_rmssd_ms', () => Math.round(48 + rnd() * 38), () => true),
+    build('spo2_pct', () => Math.round((97.2 + rnd() * 1.6) * 10) / 10, (i) => i > 2),
+    build('resp_rate_bpm', () => Math.round((14.2 + rnd() * 2.2) * 10) / 10, (i) => i % 4 === 2),
+    build(
+      'vo2max_ml_kg_min',
+      () => Math.round((41.5 + (rnd() - 0.5) * 2) * 10) / 10,
+      (i) => i % 11 === 5,
+    ),
+    build(
+      'bp_sys_mmhg',
+      () => Math.round(114 + rnd() * 10),
+      (i) => i % 4 === 2,
+    ),
+    build(
+      'bp_dia_mmhg',
+      () => Math.round(72 + rnd() * 8),
+      (i) => i % 4 === 2,
+    ),
+  ].filter((s) => s !== null)
+  return healthMetricsCache
+}
+
 let sessionId = 0
 interface MockSession {
   id: number
@@ -5127,6 +5206,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         supported: true,
         availability: 'available',
         readGranted: true,
+        // 四组全授：浏览器里迭代预览卡与「已授权」胶囊用的样子；
+        // 要看「按组去授权」的引导态，把某组改成 false 即可
+        grantedCategories: { exercise: true, activity: true, body: true, vitals: true },
         // 写授权跟着回写开关走，好让「打开开关 → 提示去补授权」这条路在 mock 里也能走一遍
         writeGranted: healthPush,
         pushEnabled: healthPush,
@@ -5163,6 +5245,12 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         unexported: 0,
         skipped: 0,
         scanned: healthImported,
+        metricsImported: first
+          ? (healthMetricsSample() as { points: unknown[] }[]).reduce(
+              (n, s) => n + s.points.length,
+              0,
+            )
+          : 0,
         pushed: healthPush,
       }
       healthImported += report.imported
@@ -5170,6 +5258,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       healthLastSync = new Date().toISOString()
       return delay({ phase: 'done', report, message: null } as T)
     }
+
+    case 'health_metrics_all':
+      return delay(healthMetricsSample() as T)
 
     case 'save_pomodoro_session': {
       const s: PomodoroSession = { ...(args.session as Omit<PomodoroSession, 'id'>), id: ++pomodoroSeq }

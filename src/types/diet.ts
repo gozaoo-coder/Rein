@@ -38,6 +38,20 @@ export interface Food {
   units: FoodUnit[]
 }
 
+/** 饮食库筛选条件（均为每 100g 口径；null = 不限） */
+export interface FoodFilter {
+  kcalMin: number | null
+  kcalMax: number | null
+  /** 蛋白质至少 N g */
+  proteinMin: number | null
+  /** 碳水化合物至多 N g */
+  carbMax: number | null
+  /** 脂肪至多 N g */
+  fatMax: number | null
+  /** 钠至多 N mg */
+  sodiumMax: number | null
+}
+
 export interface MealLog {
   id: number
   foodId: number
