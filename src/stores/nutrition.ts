@@ -18,6 +18,23 @@ export interface MacroStat {
   isLimit: boolean
 }
 
+/**
+ * 某日汇总 → 宏量列表（含钠）。
+ *
+ * 抽成纯函数而不是只留在 store 的 computed 里：**历史回看的任意一天**也要用同一份口径
+ * 画同一套宏量（饮食历史抽屉里的「摄入总览 / 宏量营养素 / 微量元素」都吃一份 DailySummary），
+ * 各写一遍必然漂 —— 这份口径只此一处。
+ */
+export function macroStatsFrom(s: DailySummary | null): MacroStat[] {
+  if (!s) return []
+  return [
+    { key: 'protein', label: '蛋白质', unit: 'g', current: s.intake.protein, target: s.targets.protein, colorVar: '--c-protein', isLimit: false },
+    { key: 'carb', label: '碳水', unit: 'g', current: s.intake.carb, target: s.targets.carb, colorVar: '--c-carb', isLimit: false },
+    { key: 'fat', label: '脂肪', unit: 'g', current: s.intake.fat, target: s.targets.fat, colorVar: '--c-fat', isLimit: false },
+    { key: 'sodiumMg', label: '钠', unit: 'mg', current: s.intake.sodiumMg, target: s.targets.sodiumMg, colorVar: '--c-sodium', isLimit: true },
+  ]
+}
+
 export const useNutritionStore = defineStore('nutrition', () => {
   const summary = ref<DailySummary | null>(null)
   const loading = ref(false)
@@ -101,16 +118,7 @@ export const useNutritionStore = defineStore('nutrition', () => {
   const exerciseKcal = computed(() => Math.round(summary.value?.exerciseKcal ?? 0))
   const kcalRemaining = computed(() => Math.max(0, kcalTarget.value + exerciseKcal.value - kcalIntake.value))
 
-  const macros = computed<MacroStat[]>(() => {
-    const s = summary.value
-    if (!s) return []
-    return [
-      { key: 'protein', label: '蛋白质', unit: 'g', current: s.intake.protein, target: s.targets.protein, colorVar: '--c-protein', isLimit: false },
-      { key: 'carb', label: '碳水', unit: 'g', current: s.intake.carb, target: s.targets.carb, colorVar: '--c-carb', isLimit: false },
-      { key: 'fat', label: '脂肪', unit: 'g', current: s.intake.fat, target: s.targets.fat, colorVar: '--c-fat', isLimit: false },
-      { key: 'sodiumMg', label: '钠', unit: 'mg', current: s.intake.sodiumMg, target: s.targets.sodiumMg, colorVar: '--c-sodium', isLimit: true },
-    ]
-  })
+  const macros = computed<MacroStat[]>(() => macroStatsFrom(summary.value))
 
   /** 三环：摄入达标 / 运动消耗 / 营养均衡（三大宏量完成度的均值） */
   const rings = computed(() => {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import { useNutritionStore, type MacroStat } from '@/stores/nutrition'
+import { macroStatsFrom, useNutritionStore, type MacroStat } from '@/stores/nutrition'
+import type { DailySummary } from '@/types'
 
 /**
  * 「目标线」的落点（条宽比例）＝ 目标的 100%。
@@ -28,32 +29,46 @@ const CAL_LINE_RATIO = 0.7
  *
  * **为什么用 span 而不是 ul/li**：本组件要嵌进移动端那枚整条可点的 `<button>`，
  * 而 button 只允许短语内容，`ul` 会构成非法 HTML。版式全部由 flex/grid 承担，语义无损失。
+ *
+ * **数据来源可换**（饮食历史「回看某一天」）：传了 `summary` 就完全按它渲染，
+ * 一个字段都不读 store —— **必须区分「没传」与「传了 null」**：没传（undefined）才回落
+ * 到 store 的「今天」；传 null 表示这一天还没拿到数据，此时读 store 会串成今天的数字。
  */
-defineProps<{
+const props = defineProps<{
   /** 窄卡（桌面便当的 hero 格只有 4/12 列宽）降一档字号，否则数字会把卡撑破 */
   dense?: boolean
+  /** 指定日期的汇总；不传则用 store 的「今天」 */
+  summary?: DailySummary | null
 }>()
 
 const n = useNutritionStore()
+
+/** 本组件渲染的那一份数据 */
+const data = computed(() => (props.summary === undefined ? n.summary : props.summary))
+
+const kcalIntake = computed(() => Math.round(data.value?.intake.kcal ?? 0))
+const kcalTarget = computed(() => Math.round(data.value?.targets.kcal ?? 0))
+const exerciseKcal = computed(() => Math.round(data.value?.exerciseKcal ?? 0))
+const kcalRemaining = computed(() => Math.max(0, kcalTarget.value + exerciseKcal.value - kcalIntake.value))
 
 /** 目标线位置（条宽 %）＝ 目标的 100% */
 const LINE = CAL_LINE_RATIO * 100
 
 /** 热量上限 = 目标 + 运动加回（与 store 的 `剩余可吃` 同一口径，不会自相矛盾） */
-const ceiling = computed(() => n.kcalTarget + n.exerciseKcal)
+const ceiling = computed(() => kcalTarget.value + exerciseKcal.value)
 /** 条的量程：上限 ÷ 0.7 */
 const calDomain = computed(() => Math.max(1, ceiling.value / CAL_LINE_RATIO))
 
 /** 比例 → 条宽 %，并钳到 [0,100]：吃爆时条不该冲出容器 */
 const pctOf = (ratio: number): number => Math.max(0, Math.min(1, ratio)) * 100
 
-const eatPct = computed(() => pctOf(n.kcalIntake / calDomain.value))
+const eatPct = computed(() => pctOf(kcalIntake.value / calDomain.value))
 /** 运动加回：把上限从「目标」抬到「上限」的那一段，正好贴在线前 */
-const exLeft = computed(() => pctOf(n.kcalTarget / calDomain.value))
-const exWidth = computed(() => pctOf(n.exerciseKcal / calDomain.value))
+const exLeft = computed(() => pctOf(kcalTarget.value / calDomain.value))
+const exWidth = computed(() => pctOf(exerciseKcal.value / calDomain.value))
 
 /** 超出上限的大卡数；0 = 没超 */
-const overKcal = computed(() => Math.max(0, n.kcalIntake - ceiling.value))
+const overKcal = computed(() => Math.max(0, kcalIntake.value - ceiling.value))
 /** 越线的那一小段（条宽 %）。已封顶在超标区的三成里 */
 const overWidth = computed(() => Math.max(0, eatPct.value - LINE))
 
@@ -63,7 +78,7 @@ function macroPct(m: MacroStat): number {
 }
 
 /** 顶栏只放三大宏量；钠是限量项、单位不同，留在营养全览里 */
-const coreMacros = computed(() => n.macros.filter((m) => m.key !== 'sodiumMg'))
+const coreMacros = computed(() => macroStatsFrom(data.value).filter((m) => m.key !== 'sodiumMg'))
 </script>
 
 <template>
@@ -74,11 +89,11 @@ const coreMacros = computed(() => n.macros.filter((m) => m.key !== 'sodiumMg'))
     </div>
 
     <div class="hero">
-      <b class="big num" :class="{ over: overKcal > 0 }">{{ n.kcalIntake }}</b>
-      <span class="target num">/ {{ n.kcalTarget }} 大卡</span>
+      <b class="big num" :class="{ over: overKcal > 0 }">{{ kcalIntake }}</b>
+      <span class="target num">/ {{ kcalTarget }} 大卡</span>
       <span class="rest" :class="{ over: overKcal > 0 }">
         <span class="rest-k">{{ overKcal > 0 ? '已超' : '剩余可吃' }}</span>
-        <b class="rest-v num">{{ overKcal > 0 ? overKcal : n.kcalRemaining }}</b>
+        <b class="rest-v num">{{ overKcal > 0 ? overKcal : kcalRemaining }}</b>
       </span>
     </div>
 
@@ -92,9 +107,9 @@ const coreMacros = computed(() => n.macros.filter((m) => m.key !== 'sodiumMg'))
     </div>
 
     <div class="legend">
-      <span class="li"><i class="dot" style="background: var(--c-intake)" />已吃<b class="num">{{ n.kcalIntake }}</b></span>
-      <span v-if="n.exerciseKcal > 0" class="li">
-        <i class="dot" style="background: var(--c-exercise)" />运动加回<b class="num">+{{ n.exerciseKcal }}</b>
+      <span class="li"><i class="dot" style="background: var(--c-intake)" />已吃<b class="num">{{ kcalIntake }}</b></span>
+      <span v-if="exerciseKcal > 0" class="li">
+        <i class="dot" style="background: var(--c-exercise)" />运动加回<b class="num">+{{ exerciseKcal }}</b>
       </span>
       <span class="li"><span class="glyph" />目标线</span>
     </div>

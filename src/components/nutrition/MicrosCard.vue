@@ -3,12 +3,22 @@ import { computed } from 'vue'
 
 import { MICROS } from '@/config/dri'
 import { useNutritionStore } from '@/stores/nutrition'
+import type { DailySummary } from '@/types'
 
-/** 微量元素全览：逐项对照 DRI，附作用与来源说明；上限类（≤）语义为「不要超过」。 */
+/** 微量元素全览：逐项对照 DRI，附作用与来源说明；上限类（≤）语义为「不要超过」。
+ *  默认读 nutrition store 的「今天」；传了 `summary` 就按那一份渲染（饮食历史回看某一天）。 */
+const props = defineProps<{
+  /** 指定日期的汇总；不传则用 store 的「今天」 */
+  summary?: DailySummary | null
+}>()
+
 const n = useNutritionStore()
 
+/** 区分「没传」与「传了 null」：前者回落 store，后者是「这天还没拿到数据」 */
+const data = computed(() => (props.summary === undefined ? n.summary : props.summary))
+
 const cells = computed(() => {
-  const intake = n.summary?.intake
+  const intake = data.value?.intake
   return MICROS.map((def) => {
     const current = intake?.[def.key] ?? 0
     return {

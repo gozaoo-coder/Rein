@@ -2,14 +2,25 @@
 import { computed } from 'vue'
 
 import { MACRO_GUIDES } from '@/config/dri'
-import { useNutritionStore } from '@/stores/nutrition'
+import { macroStatsFrom, useNutritionStore } from '@/stores/nutrition'
+import type { DailySummary } from '@/types'
 
-/** 宏量营养素详解：当日进度数值 + 作用与来源说明。数据来自 nutrition store。 */
+/** 宏量营养素详解：当日进度数值 + 作用与来源说明。
+ *  默认读 nutrition store 的「今天」；传了 `summary` 就按那一份渲染（饮食历史回看某一天），
+ *  与「摄入总览 / 微量元素」用的是同一份汇总。 */
+const props = defineProps<{
+  /** 指定日期的汇总；不传则用 store 的「今天」 */
+  summary?: DailySummary | null
+}>()
+
 const n = useNutritionStore()
+
+/** 区分「没传」与「传了 null」：前者回落 store，后者是「这天还没拿到数据」 */
+const data = computed(() => (props.summary === undefined ? n.summary : props.summary))
 
 const rows = computed(() =>
   MACRO_GUIDES.map((g) => {
-    const m = n.macros.find((x) => x.key === g.key)
+    const m = macroStatsFrom(data.value).find((x) => x.key === g.key)
     return {
       ...g,
       current: Math.round(m?.current ?? 0),

@@ -2,11 +2,15 @@
  * 饮食历史优化验证（无头 Edge + 原生 CDP）。
  * 运行：REIN_E2E_URL=http://localhost:4199 node scripts/verify-diet-history.mjs
  *
- * 验证三件事：
- *  ① 超高画质下吸顶周条不再是实底白带：玻璃档下条自身背景透明（自铺玻璃底会与
- *     面板双重叠加、亮出一档）+ 自配磨砂；流畅档回落实底、与面板同色。
- *  ② 记录行四格指标（热量/蛋白/碳水/脂肪占本日 %，有真实数值与色条）。
- *  ③ 点行打开单笔详情：占本日五行 + 微量营养素 + 删除入口（确认弹层出现、取消不删）。
+ * 验证四件事：
+ *  ① 日选栏是 Dock 栏目风格（两侧圆钮 + 中间药丸；选中是**中性提亮的药丸**、
+ *     不是主色实心块），且玻璃档（高画质 / 超高 / 极致）下吸顶条**整条什么都不画**
+ *     （透明 + 无整宽模糊，滚过的记录行改由每一块玻璃自己吃背影）；
+ *     流畅档条与块都回落实底、与面板同色。
+ *  ② 当日摄入总览跟着选中日走（切到没有记录的那天就归零，不串今天的数字）；
+ *     点它打开「营养全览 · 那一天」抽屉（摄入总览 + 宏量营养素 + 微量元素）。
+ *  ③ 记录行四格指标（热量/蛋白/碳水/脂肪占本日 %，有真实数值与色条）。
+ *  ④ 点行打开单笔详情：占本日五行 + 微量营养素 + 删除入口（确认弹层出现、取消不删）。
  * 产出：.tmp-ui-shots/dh-*.png（含滚动状态下周条区域的 3x 局部放大图）
  */
 import { spawn } from 'node:child_process'
@@ -130,9 +134,19 @@ async function probe() {
       weekbarRadiusTop: wcs.borderTopLeftRadius,
       panelBg: pcs.backgroundColor,
       panelBackdrop: pcs.backdropFilter ?? pcs.webkitBackdropFilter,
-      days: document.querySelectorAll('.panel .day').length,
-      selDay: document.querySelector('.panel .day.sel .dn')?.textContent ?? '',
-      dayHead: document.querySelector('.panel .dayhead')?.textContent.replace(/\\s+/g, ' ').trim() ?? '',
+      days: document.querySelectorAll('.panel .dock-day').length,
+      selDay: document.querySelector('.panel .dock-day.on .dd')?.textContent ?? '',
+      dockSides: document.querySelectorAll('.panel .dock-side').length,
+      pillBg: getComputedStyle(document.querySelector('.panel .dock-pill')).backgroundColor,
+      pillBackdrop: (() => { const s = getComputedStyle(document.querySelector('.panel .dock-pill')); return s.backdropFilter || s.webkitBackdropFilter })(),
+      sideBackdrop: (() => { const s = getComputedStyle(document.querySelector('.panel .dock-side')); return s.backdropFilter || s.webkitBackdropFilter })(),
+      selBg: getComputedStyle(document.querySelector('.panel .dock-day.on')).backgroundColor,
+      selColor: getComputedStyle(document.querySelector('.panel .dock-day.on .dd')).color,
+      numColor: getComputedStyle(document.querySelector('.panel .dock-day:not(.on) .dd')).color,
+      ovKcal: document.querySelector('.panel .ovcard .big')?.textContent ?? '',
+      ovDate: document.querySelector('.panel .ovcard .ovgo')?.textContent.replace(/\\s+/g, ' ').trim() ?? '',
+      ovHasTitle: /摄入总览/.test(document.querySelector('.panel .ovcard')?.textContent ?? ''),
+      mealEmpty: Boolean(document.querySelector('.panel .empty')),
       rowCount: rows.length,
       rowNames: rows.map(r => r.querySelector('.rname')?.textContent ?? ''),
       rowSubs: rows.map(r => r.querySelector('.rsub')?.textContent.replace(/\\s+/g,' ').trim() ?? ''),
@@ -213,6 +227,7 @@ async function main() {
     /* ============ ① 移动端 · 超高 ============ */
     console.log('\n[1] 移动端 407×932 · 超高画质（用户报的档）')
     await viewport(430, 932, true)
+    await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
     await setPerf('ultra')
     check('超高档生效', (await evalJS(`document.documentElement.dataset.perf`)) === 'ultra',
       await evalJS(`document.documentElement.dataset.perf`))
@@ -222,12 +237,21 @@ async function main() {
     let s = await probe()
     await shot('ultra-rows')
 
-    check('周条不再自铺玻璃底（透明，不与面板双重叠加）',
-      alphaOf(s.weekbarBg) === 0,
-      `weekbar=${s.weekbarBg} panel=${s.panelBg} token=${s.fillToken}`)
-    check('周条自带磨砂（玻璃档）', /blur/.test(s.weekbarBackdrop ?? ''), String(s.weekbarBackdrop))
+    check('顶栏整条什么都不画：不铺底色、也不挂整宽模糊（超高）',
+      alphaOf(s.weekbarBg) === 0 && !/blur/.test(s.weekbarBackdrop ?? ''),
+      `weekbar=${s.weekbarBg} backdrop=${s.weekbarBackdrop} panel=${s.panelBg} token=${s.fillToken}`)
+    check('磨砂改挂在每一块玻璃上（胶囊 + 侧钮各自吃背影）',
+      /blur/.test(s.pillBackdrop ?? '') && /blur/.test(s.sideBackdrop ?? ''),
+      `pill=${s.pillBackdrop} side=${s.sideBackdrop}`)
     check('面板也是玻璃（对照组）', /blur/.test(s.panelBackdrop ?? ''), String(s.panelBackdrop))
-    check('周条 7 天 + 选中今天', s.days === 7 && s.selDay.length > 0, `days=${s.days} sel=${s.selDay}`)
+    check('日选栏 7 天 + 选中今天', s.days === 7 && s.selDay.length > 0, `days=${s.days} sel=${s.selDay}`)
+    check('Dock 构型：两侧圆钮 + 中间药丸',
+      s.dockSides === 2 && alphaOf(s.pillBg) > 0, `sides=${s.dockSides} pill=${s.pillBg}`)
+    check('选中格是中性提亮的药丸，不是主色实心块',
+      s.selBg !== 'rgb(0, 110, 232)' && s.selBg !== s.pillBg, `sel=${s.selBg} pill=${s.pillBg}`)
+    check('选中格文字转 --accent-strong', s.selColor === 'rgb(10, 94, 194)', s.selColor)
+    check('当日摄入总览在场且挂着选中日',
+      s.ovHasTitle && s.ovDate.length > 0 && Number(s.ovKcal) > 0, `${s.ovDate} · ${s.ovKcal} 大卡`)
     check('当日 7 笔记录（mock 种子）', s.rowCount === 7, `rows=${s.rowCount} ${s.rowNames.join('/')}`)
     check('行内有 4 格指标', s.firstRowCells.length === 4,
       s.firstRowCells.map((c) => `${c.label} ${c.width}`).join(' | '))
@@ -236,7 +260,6 @@ async function main() {
     check('指标条有色且有填充', s.firstRowCells.every((c) => c.bg.includes('var') && parseFloat(c.width) > 0),
       s.firstRowCells.map((c) => `${c.bg} ${c.width}`).join(' | '))
     check('行副标题保留具体克重', /g/.test(s.rowSubs[0] ?? ''), s.rowSubs[0])
-    check('当日汇总仍在', /已摄入/.test(s.dayHead), s.dayHead)
 
     // 内容滚过吸顶条：周条应压在内容之上（视觉核对用）
     await evalJS(`document.querySelector('.panel .body').scrollTop = 520`)
@@ -247,8 +270,57 @@ async function main() {
     })()`)
     await shotClip('ultra-weekbar-clip', wbBox.x, wbBox.y, wbBox.w, wbBox.h)
 
-    /* ============ ② 单笔详情 ============ */
-    console.log('\n[2] 点行 → 单笔详情')
+    /* ============ ② 摄入总览：切日 + 点开当日营养全览 ============ */
+    console.log('\n[2] 摄入总览 · 切日与「营养全览」')
+    await evalJS(`document.querySelector('.panel .body').scrollTop = 0`)
+    await evalJS(`document.querySelector('.panel .ovcard')?.click()`)
+    const ovOpen = await waitFor(`(() => {
+      const ps = document.querySelectorAll('.panel')
+      return ps.length === 2 && Boolean(ps[1].querySelector('.scard .ov'))
+    })()`)
+    check('点摄入总览打开「营养全览」抽屉', ovOpen)
+    if (ovOpen) {
+      const nd = await evalJS(`(() => {
+        const ps = [...document.querySelectorAll('.panel')]
+        const d = ps[ps.length - 1]
+        return {
+          title: [...d.querySelectorAll('.head h2')][0]?.textContent ?? '',
+          kcal: d.querySelector('.scard .big')?.textContent ?? '',
+          cards: d.querySelectorAll('.cards .card').length,
+          rows: d.querySelectorAll('.cards .item').length,
+          hasMicro: /微量元素/.test(d.textContent),
+          cardBg: getComputedStyle(d.querySelector('.cards .card')).backgroundColor,
+          sheetFill: getComputedStyle(document.documentElement).getPropertyValue('--sheet-card-fill').trim(),
+        }
+      })()`)
+      await shot('ultra-intake-detail')
+      check('标题 = 营养全览 · 选中日', nd.title === `营养全览 · ${s.ovDate}`, `${nd.title} vs 营养全览 · ${s.ovDate}`)
+      check('这一天的热量与历史里那条逐字一致', nd.kcal === s.ovKcal, `${nd.kcal} vs ${s.ovKcal}`)
+      check('宏量 + 微量元素两张卡都在（复用页面级组件）',
+        nd.cards === 2 && nd.rows >= 17 && nd.hasMicro, `cards=${nd.cards} rows=${nd.rows}`)
+      check('两张页面级卡片在抽屉里换成抽屉白卡材质（不是页面级 .card 的玻璃底）',
+        nd.cardBg === nd.sheetFill, `card=${nd.cardBg} --sheet-card-fill=${nd.sheetFill}`)
+      await evalJS(`document.querySelectorAll('.panel')[1].querySelector('.head .close')?.click()`)
+      await sleep(700)
+      check('营养全览关闭后回到历史', (await evalJS(`document.querySelectorAll('.panel').length`)) === 1)
+    }
+
+    // 翻到没有记录的那一周（mock 只种了今天）：总览必须跟着这一天走，不能留着今天的数据
+    await evalJS(`document.querySelector('.panel [aria-label="上一周"]')?.click()`)
+    await sleep(400)
+    await evalJS(`(() => { const d = [...document.querySelectorAll('.panel .dock-day')]; d[d.length - 1]?.click() })()`)
+    await sleep(900)
+    const past = await probe()
+    check('切到无记录的过去某天：总览归零、日期跟着换',
+      past.ovKcal === '0' && past.ovDate !== s.ovDate && past.mealEmpty,
+      `${past.ovDate} ${past.ovKcal} 大卡 empty=${past.mealEmpty}`)
+    await shot('ultra-past-day')
+    // 回本周：上一周最后一格 +7 天必落在今天或之后，会被钳回今天
+    await evalJS(`document.querySelector('.panel [aria-label="下一周"]')?.click()`)
+    await sleep(700)
+
+    /* ============ ③ 单笔详情 ============ */
+    console.log('\n[3] 点行 → 单笔详情')
     await evalJS(`document.querySelector('.panel button.row.pressable')?.click()`)
     const detailOpen = await waitFor(`(() => {
       const ps = document.querySelectorAll('.panel')
@@ -287,15 +359,23 @@ async function main() {
       check('详情关闭后回到历史', (await evalJS(`document.querySelectorAll('.panel').length`)) === 1)
     }
 
-    /* ============ ③ 暗色 · 超高 ============ */
-    console.log('\n[3] 暗色 · 超高')
+    /* ============ ④ 暗色 · 超高 ============ */
+    console.log('\n[4] 暗色 · 超高')
     await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] })
     await sleep(700)
     s = await probe()
-    check('暗色下周条同样透明 + 磨砂',
-      alphaOf(s.weekbarBg) === 0 && /blur/.test(s.weekbarBackdrop ?? ''),
-      `weekbar=${s.weekbarBg} backdrop=${s.weekbarBackdrop} panel=${s.panelBg}`)
+    check('暗色下顶栏同样不画东西（透明 + 无整宽模糊），磨砂仍在块上',
+      alphaOf(s.weekbarBg) === 0 && !/blur/.test(s.weekbarBackdrop ?? '') && /blur/.test(s.pillBackdrop ?? ''),
+      `weekbar=${s.weekbarBg} backdrop=${s.weekbarBackdrop} pill=${s.pillBackdrop} panel=${s.panelBg}`)
+    check('暗色下日选栏仍是中性药丸 + 选中文字换色（不是主色块）',
+      s.selBg !== 'rgb(0, 110, 232)' && s.selColor !== s.numColor, `sel=${s.selBg} ${s.selColor} vs ${s.numColor}`)
     await shot('dark-rows')
+    // 暗色下的当日营养全览：同一张抽屉白卡，材质跟着暗色档走
+    await evalJS(`document.querySelector('.panel .ovcard')?.click()`)
+    await waitFor(`document.querySelectorAll('.panel').length === 2`)
+    await shot('dark-intake-detail')
+    await evalJS(`document.querySelectorAll('.panel')[1]?.querySelector('.head .close')?.click()`)
+    await sleep(600)
     await evalJS(`document.querySelector('.panel button.row.pressable')?.click()`)
     await waitFor(`document.querySelectorAll('.panel').length === 2`)
     await shot('dark-detail')
@@ -304,8 +384,8 @@ async function main() {
     await evalJS(`document.querySelector('.panel .head .close')?.click()`)
     await sleep(800)
 
-    /* ============ ④ 流畅档回落 ============ */
-    console.log('\n[4] 移动端 · 流畅档（回落实底）')
+    /* ============ ⑤ 流畅档回落 ============ */
+    console.log('\n[5] 移动端 · 流畅档（回落实底）')
     await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] })
     await setPerf('low')
     check('流畅档生效', (await evalJS(`document.documentElement.dataset.perf`)) === 'low')
@@ -315,21 +395,63 @@ async function main() {
     check('流畅档周条回落实底、与面板同色',
       s.weekbarBg === s.panelBg && alphaOf(s.weekbarBg) === 1, `weekbar=${s.weekbarBg} panel=${s.panelBg}`)
     check('流畅档周条无模糊', !/blur/.test(s.weekbarBackdrop ?? ''), String(s.weekbarBackdrop))
+    check('流畅档 Dock 块也退回实底、无模糊',
+      alphaOf(s.pillBg) === 1 && !/blur/.test(s.pillBackdrop ?? ''), `pill=${s.pillBg} ${s.pillBackdrop}`)
+    check('流畅档选中药丸仍与容器可辨（实底档不走令牌的薄底）',
+      s.selBg !== s.pillBg && alphaOf(s.selBg) === 1, `sel=${s.selBg} pill=${s.pillBg}`)
     await shot('low-rows')
     await evalJS(`document.querySelector('.panel .head .close')?.click()`)
     await sleep(700)
 
-    /* ============ ⑤ 桌面便当入口 ============ */
-    console.log('\n[5] 桌面 1440 · 超高（同一组件的另一入口）')
+    /* ============ ⑥ 桌面便当入口 ============ */
+    console.log('\n[6] 桌面 1440 · 超高（同一组件的另一入口）')
     await viewport(1440, 900, false)
     await setPerf('ultra')
     check('便当饮食条可点开', await openHistory(true))
     await sleep(900)
     s = await probe()
-    check('桌面周条同为透明 + 磨砂',
-      alphaOf(s.weekbarBg) === 0 && /blur/.test(s.weekbarBackdrop ?? ''),
-      `weekbar=${s.weekbarBg} backdrop=${s.weekbarBackdrop}`)
+    check('桌面顶栏同为透明 + 无整宽模糊（磨砂在块上）',
+      alphaOf(s.weekbarBg) === 0 && !/blur/.test(s.weekbarBackdrop ?? '') && /blur/.test(s.pillBackdrop ?? ''),
+      `weekbar=${s.weekbarBg} backdrop=${s.weekbarBackdrop} pill=${s.pillBackdrop}`)
     await shot('desk-rows')
+    await evalJS(`document.querySelector('.panel .head .close')?.click()`)
+    await sleep(700)
+
+    /* ============ ⑦ 窄屏 320：七格日选栏不横向溢出 ============ */
+    console.log('\n[7] 窄屏 320 · 日选栏不溢出')
+    await viewport(320, 568, true)
+    await sleep(900)
+    check('饮食历史可再开（320）', await openHistory(false))
+    await sleep(900)
+    const narrow = await evalJS(`(() => {
+      const bar = document.querySelector('.panel .weekbar')
+      const pill = document.querySelector('.panel .dock-pill')
+      const day = document.querySelector('.panel .dock-day')
+      return {
+        barOver: bar.scrollWidth - bar.clientWidth,
+        pillOver: pill.scrollWidth - pill.clientWidth,
+        dayW: Math.round(day.getBoundingClientRect().width),
+        numW: Math.round(day.querySelector('.dd').getBoundingClientRect().width),
+      }
+    })()`)
+    check('日选栏在 320 宽下不横向溢出',
+      narrow.barOver <= 1 && narrow.pillOver <= 1 && narrow.numW <= narrow.dayW,
+      `bar=+${narrow.barOver}px pill=+${narrow.pillOver}px 格宽=${narrow.dayW} 数字=${narrow.numW}`)
+    await shot('narrow-320')
+
+    /* ============ ⑧ 高画质档：条材质与超高同一套 ============ */
+    console.log('\n[8] 高画质 · 顶栏同样不画东西')
+    await viewport(430, 932, true)
+    await setPerf('high')
+    check('高画质档生效', (await evalJS(`document.documentElement.dataset.perf`)) === 'high',
+      await evalJS(`document.documentElement.dataset.perf`))
+    check('饮食历史可再开（high）', await openHistory(false))
+    await sleep(900)
+    s = await probe()
+    check('高画质顶栏同样不铺底色、不挂整宽模糊（磨砂在块上）',
+      alphaOf(s.weekbarBg) === 0 && !/blur/.test(s.weekbarBackdrop ?? '') && /blur/.test(s.pillBackdrop ?? ''),
+      `weekbar=${s.weekbarBg} backdrop=${s.weekbarBackdrop} pill=${s.pillBackdrop} side=${s.sideBackdrop}`)
+    await shot('high-rows')
 
     console.log('\n===== 结果 =====')
     const failed = results.filter((r) => !r.ok)

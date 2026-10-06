@@ -6,6 +6,8 @@ import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import MealDetailSheet from '@/components/diet/MealDetailSheet.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import IntakeDetailSheet from '@/components/nutrition/IntakeDetailSheet.vue'
+import IntakeOverview from '@/components/nutrition/IntakeOverview.vue'
 import { MEAL_LABELS, MEAL_META, MEAL_ORDER, fmtGrams, mealKcal, mealQtyText } from '@/config/domain'
 import { useToast } from '@/composables/useToast'
 import { dietService } from '@/services/dietService'
@@ -15,7 +17,8 @@ import { useNutritionStore } from '@/stores/nutrition'
 import { WEEKDAY_LABELS, addDays, fmtDateCn, startOfWeek, todayStr, weekDates } from '@/utils/date'
 import type { DailySummary, MealLog } from '@/types'
 
-/** 饮食历史悬浮窗：周条选日 + 分餐次记录列表；点行进单笔详情（实际营养素 + 删除）。
+/** 饮食历史悬浮窗：Dock 式日选栏 + 当日摄入总览 + 分餐次记录列表。
+ *  点总览看这一天的营养实际全览（与营养全览页同一套组件），点行进单笔详情（实际营养素 + 删除）。
  *  数据全部落在本地（直调 service），不污染全局 store 的「今天」视图；
    仅删除今天的记录时回流刷新，让首页宽条即时同步。 */
 const props = defineProps<{ open: boolean }>()
@@ -29,12 +32,25 @@ const today = todayStr()
 const anchor = ref(today) // 当前显示周的锚点（周内任意一天）
 const selected = ref(today)
 const logs = ref<MealLog[]>([])
-const summary = ref<DailySummary | null>(null)
 const loading = ref(false)
 
-/* ---------- 周条 ---------- */
-const days = computed(() => weekDates(anchor.value))
+/* ---------- 当日汇总（摄入总览 / 行占比 / 单笔详情 / 迷你条的分母都用它） ---------- */
+/** 看过的日期汇总：来回翻日不必再等一次往返，也就不会先闪一屏空档 */
+const summaryCache = new Map<string, DailySummary>()
+/** 最近一次到货的汇总（可能属于上一天 —— 行占比与迷你条的分母用它，翻日时不会整片归零） */
+const summary = ref<DailySummary | null>(null)
+/** 上面那一份属于哪一天 */
+const summaryDate = ref('')
+
+/** 选中日的汇总：与 `selected` 不等的这段时间里它是 null。
+ *  摄入总览与「营养全览」必须用这一份 —— 拿上一天的数字当这一天的，比空一瞬更糟。 */
+const daySummary = computed(() => (summaryDate.value === selected.value ? summary.value : null))
+
+/** 迷你条的分母：当日目标（读最近一次到货的那份汇总） */
 const targetKcal = computed(() => Math.round(summary.value?.targets.kcal ?? 0))
+
+/* ---------- 日选栏（Dock 栏目风格） ---------- */
+const days = computed(() => weekDates(anchor.value))
 const atCurrentWeek = computed(() => anchor.value === startOfWeek(today))
 
 /** 周内每日摄入占目标百分比（迷你条）；目标未设时全为 0（不显示） */
@@ -64,9 +80,19 @@ async function fetchWeek(): Promise<void> {
 }
 
 async function fetchSummary(): Promise<void> {
+  const date = selected.value
   const seq = ++summarySeq
-  const s = await nutritionService.getDailySummary(selected.value)
-  if (seq === summarySeq) summary.value = s
+  const cached = summaryCache.get(date)
+  if (cached) {
+    summary.value = cached
+    summaryDate.value = date
+  }
+  const s = await nutritionService.getDailySummary(date)
+  summaryCache.set(date, s)
+  if (seq === summarySeq && date === selected.value) {
+    summary.value = s
+    summaryDate.value = date
+  }
 }
 
 function pickDay(d: string): void {
@@ -146,6 +172,9 @@ function groupKcal(items: { log: MealLog }[]): number {
   return items.reduce((s, it) => s + (mealKcal(it.log) ?? 0), 0)
 }
 
+/* ---------- 营养全览（这一天） ---------- */
+const ovOpen = ref(false)
+
 /* ---------- 详情与删除 ---------- */
 const detail = ref<MealLog | null>(null)
 const delTarget = ref<MealLog | null>(null)
@@ -182,39 +211,46 @@ async function onDelete(): Promise<void> {
 <template>
   <SheetModal :open="open" initial-snap="large" title="饮食历史" @close="emit('close')">
     <div class="hist">
-      <!-- 周条：吸顶，翻周切换查看日期 -->
+      <!-- 日选栏：Dock 栏目风格（两侧独立圆钮 + 中间药丸），吸顶，翻周切换查看日期 -->
       <div class="weekbar">
-        <button class="nav pressable" aria-label="上一周" @click="shiftWeek(-1)">
+        <button class="dock-side pressable" aria-label="上一周" @click="shiftWeek(-1)">
           <ChevronLeft :size="18" />
         </button>
-        <div class="days">
+
+        <div class="dock-pill" role="group" aria-label="选择日期">
           <button
             v-for="(d, i) in days"
             :key="d"
-            class="day"
-            :class="{ sel: d === selected }"
+            class="dock-day"
+            :class="{ on: d === selected }"
             :disabled="d > today"
             :aria-label="fmtDateCn(d)"
+            :aria-current="d === selected ? 'date' : undefined"
             @click="pickDay(d)"
           >
+            <span class="dd num">{{ Number(d.slice(8)) }}</span>
             <span class="dw">{{ WEEKDAY_LABELS[i] }}</span>
-            <span class="dn num">{{ Number(d.slice(8)) }}</span>
             <i class="mbar"><i class="fill" :style="{ width: (dayPct.get(d) ?? 0) + '%' }" /></i>
           </button>
         </div>
-        <button class="nav pressable" aria-label="下一周" :disabled="atCurrentWeek" @click="shiftWeek(1)">
+
+        <button class="dock-side pressable" aria-label="下一周" :disabled="atCurrentWeek" @click="shiftWeek(1)">
           <ChevronRight :size="18" />
         </button>
       </div>
 
-      <!-- 当日汇总 -->
-      <div class="dayhead">
-        <b>{{ fmtDateCn(selected) }}</b>
-        <span class="num t-3">
-          已摄入 {{ Math.round(summary?.intake.kcal ?? 0) }}{{ targetKcal ? ` / ${targetKcal}` : '' }} kcal ·
-          {{ dayLogs.length }} 笔
-        </span>
-      </div>
+      <!-- 当日摄入总览：与主页、营养全览页同一个组件（传这一天的汇总）；整块是按钮，
+           点开这一天的营养实际全览。壳用抽屉白卡材质，理由见 IntakeDetailSheet。 -->
+      <button class="ovcard pressable" aria-label="查看当日营养全览" @click="ovOpen = true">
+        <IntakeOverview :summary="daySummary">
+          <template #action>
+            <span class="ovgo">
+              <span>{{ fmtDateCn(selected) }}</span>
+              <ChevronRight :size="14" />
+            </span>
+          </template>
+        </IntakeOverview>
+      </button>
 
       <!-- 分餐次列表 -->
       <section v-for="g in groups" :key="g.type" class="meal">
@@ -261,6 +297,9 @@ async function onDelete(): Promise<void> {
       />
     </div>
 
+    <!-- 这一天的营养实际全览（Teleport 到 body） -->
+    <IntakeDetailSheet :open="ovOpen" :date="selected" :summary="daySummary" @close="ovOpen = false" />
+
     <!-- 单笔详情（Teleport 到 body）：点行看这份实际吃进去的营养素 -->
     <MealDetailSheet
       :open="detail !== null"
@@ -286,12 +325,21 @@ async function onDelete(): Promise<void> {
   padding-bottom: 8px;
 }
 
-/* 周条 */
+/* ---------- 日选栏：Dock 栏目风格 ----------
+   两侧独立圆钮 + 中间药丸，与底部 Dock 的三块装配同一种构型；七格等分、**共享一条连续容器**
+   （这正是它与标签栏最直观的差别：标签栏是七个各自带底的块，选中那块实心主色）。
+   选中态因此是一枚**中性提亮的小药丸**（--glass-tab-fill，与 Dock 活动底同一个令牌）+
+   --accent-strong 的文字 —— 主色实心块是「切到哪个页签」的语言，会把「看哪一天」读错。
+
+   材质走 --glass-* 令牌而**不**挂 GlassSurface：抽屉是滚动容器，一屏三块 svg 折射
+   与 tokens.css「抽屉不挂折射」那条取舍相冲（折射按元素尺寸现烘位移贴图）。
+   要的只是「毛玻璃 + 光学令牌」，自己写一条 backdrop-filter 就够 —— 挂在哪一层
+   （条上还是块上）见下面那两条规则。 */
+
 /* 流畅档的抽屉是实底：条用同一个 --surface，观感与历史一致。
    高画质及以上抽屉本体是半透明玻璃 —— 条**不能再铺自己的玻璃底**：
    两层 0.86~0.66 的白叠起来是 0.96，条带会比面板亮出一档（白带以弱化形式回来）。
-   正确做法是玻璃档下背景透明：backdrop root 是面板，条的 backdrop 只含面板内
-   画在它之下的内容 —— 静止时与面板逐像素一致，滚动时把从条下过的记录行磨成霜。
+   所以玻璃档下条自身不铺底色，滚过的记录行交给每一块玻璃自己磨（见下面那条规则）。
    负 margin 全宽出血：否则内容会从条两侧 18px 的沟里滚过去。 */
 .weekbar {
   position: sticky;
@@ -305,75 +353,117 @@ async function onDelete(): Promise<void> {
   padding: 4px 18px 10px;
 }
 
-/* 玻璃档：面板自己的 backdrop-filter 只作用于「面板背后的页面」，
-   从条底下滚过的记录行要靠条自己这层模糊滤掉，玻璃的厚度才读得出来 */
+/* 玻璃档（高画质及以上）：条**整条什么都不画** —— 底色透明，连整宽的模糊也不挂。
+   面板自己那层 backdrop-filter 只作用于「面板背后的页面」，而条这层整宽模糊会在条的
+   位置铺出一条横贯全宽的霜带、上下各留一道硬边，与「一枚悬浮在内容之上的 Dock」
+   不是一回事。**高画质 / 超高 / 极致三档一致** —— 换画质档不换这个构件的观感。 */
 html[data-perf]:not([data-perf='low']) .weekbar {
   background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 从条底下滚过的记录行改由**每一块玻璃自己**吃自己的 backdrop：霜只落在块身上，
+   条上不留任何横向痕迹 —— 与底部 Dock 的材质做法一致（那边也是每块玻璃各管各的背影）。
+   块本身是半透明的（--glass-fill 一档 0.4~0.52），少了这层模糊，滚过的记录行会**穿过**
+   胶囊与日期数字叠成一片，两边都读不出来。 */
+html[data-perf]:not([data-perf='low']) .dock-side,
+html[data-perf]:not([data-perf='low']) .dock-pill {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
 }
 
 /* 减弱透明度：面板被 base.css 顶回实底（该媒体查询覆盖不到组件内的自定义表面），
-   条同样回实底、去模糊，与面板同材质 */
+   条同样回实底、去模糊，与面板同材质。
+   选择器与上面那条玻璃档规则**同权重**（0,3,1）、源码更晚，才压得住它；
+   流畅档不必列（那条规则本来就不覆盖它，且 low 已全局关掉 backdrop-filter）。 */
 @media (prefers-reduced-transparency: reduce) {
-  html[data-perf] .weekbar {
+  html[data-perf]:not([data-perf='low']) .weekbar {
     background: var(--surface);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
+
+  /* 日选栏那三块玻璃同样退回实底（--glass-fill 不在上面那份令牌里，就地顶掉），
+     活动底一并换成实心次级灰：胶囊已经是不透明白，再叠一层半透明白等于没有 */
+  html[data-perf]:not([data-perf='low']) .dock-side,
+  html[data-perf]:not([data-perf='low']) .dock-pill {
+    background: var(--surface);
+    border-color: var(--line-strong);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    --glass-tab-fill: var(--surface-2);
+  }
 }
 
-.nav {
-  width: 34px;
-  height: 34px;
+/* 侧钮：Dock 两侧那两块独立圆玻璃的几何（直径 ≈ 药丸高），翻周用 */
+.dock-side {
+  width: 38px;
+  height: 38px;
   flex: none;
-  border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--text-2);
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
+  background: var(--glass-fill);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  box-shadow: var(--shadow-thumb);
 }
 
-.nav:disabled {
+.dock-side:disabled {
   opacity: 0.35;
 }
 
-.days {
+/* 药丸：七格等分的一整条容器。内边距 3px 就是选中药丸与容器之间那道缝 */
+.dock-pill {
   flex: 1;
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 5px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background: var(--glass-fill);
+  border: 1px solid var(--line);
 }
 
-.day {
+/* 一格：数字（主角）在上、周几在下，第三行是这一天的摄入痕迹 —— 与 Dock 页签
+   「图标在上、标签在下」同一套竖排；选中不换布局，只换底与字色 */
+.dock-day {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 8px 0 7px;
-  border-radius: var(--radius-l);
+  gap: 2px;
   min-width: 0;
+  padding: 4px 0 5px;
+  border-radius: var(--radius-full);
+  color: var(--text-3);
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
 
-.day:disabled {
+.dock-day:disabled {
   opacity: 0.32;
 }
 
-.dw {
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-3);
+.dd {
+  font-size: var(--fs-headline);
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
 }
 
-.dn {
-  font-size: var(--fs-subhead);
-  font-weight: 700;
-  color: var(--text-1);
+.dw {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  line-height: 1.1;
 }
 
 .mbar {
-  width: 60%;
+  width: 58%;
   height: 3px;
   border-radius: var(--radius-full);
   background: var(--line);
@@ -387,43 +477,39 @@ html[data-perf]:not([data-perf='low']) .weekbar {
   background: var(--accent);
 }
 
-.day.sel {
-  background: var(--accent);
+/* 选中：中性提亮的药丸 + --accent-strong 的文字（它正是「压在浅底上的文字蓝」那一档）。
+   数字在未选中时是 --text-1（主角），选中时并入同一支蓝，不再比周几更重。 */
+.dock-day.on {
+  background: var(--glass-tab-fill);
 }
 
-.day.sel .dw {
-  color: var(--on-accent);
-  opacity: 0.75;
+.dock-day.on .dd,
+.dock-day.on .dw {
+  color: var(--accent-strong);
 }
 
-.day.sel .dn {
-  color: var(--on-accent);
+/* ---------- 当日摄入总览 ----------
+   与主页那条同一个组件、同一个「整块可点」的做法（那边是 .card.strip）：壳在这里
+   换成抽屉白卡材质（--sheet-card-fill / --sheet-card-shadow），与「营养全览」抽屉里的
+   那张是同一份 —— 页面级 .card 的底在玻璃档会跟着面板一起变薄。 */
+.ovcard {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 16px;
+  text-align: left;
+  border-radius: var(--radius-xl);
+  background: var(--sheet-card-fill);
+  box-shadow: var(--sheet-card-shadow);
 }
 
-.day.sel .mbar {
-  background: color-mix(in srgb, var(--on-accent) 28%, transparent);
-}
-
-.day.sel .mbar .fill {
-  background: var(--on-accent);
-}
-
-/* 当日汇总 */
-.dayhead {
+/* 角标：这一天 + 一个「进得去」的箭头。不给它加 chip 底 —— 整块本来就是按钮 */
+.ovgo {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-}
-
-.dayhead b {
-  font-size: var(--fs-callout);
-  font-weight: 700;
-}
-
-.dayhead span {
-  font-size: var(--fs-footnote);
+  align-items: center;
+  gap: 1px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
 /* 餐次小节 */
