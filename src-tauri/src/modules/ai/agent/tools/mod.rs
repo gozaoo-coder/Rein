@@ -11,6 +11,7 @@
 //! 2. 在 [`registry()`] 静态表登记；
 //! 3. 组名沿用前端 `ToolGroup`（registry.ts），装载策略仍由前端 resolveToolPlan 决定。
 
+pub mod kb;
 pub mod misc;
 pub mod web;
 
@@ -47,7 +48,25 @@ impl RegisteredTool {
 
 /// 已迁移工具的清单（随批次增长；每次构造，schema 都是小 JSON，开销可忽略）
 pub fn registry() -> Vec<RegisteredTool> {
-    vec![misc::search_history(), web::web_search_def(), web::web_fetch_def()]
+    vec![
+        misc::search_history(),
+        web::web_search_def(),
+        web::web_fetch_def(),
+        kb::search_knowledge(),
+        kb::read_knowledge(),
+        kb::glob_knowledge(),
+        kb::write_note(),
+        kb::rename_note(),
+        kb::delete_note(),
+        kb::read_modal(),
+        kb::classify_move(),
+        kb::pin_file(),
+        kb::make_folder(),
+        kb::list_memories(),
+        kb::remember(),
+        kb::edit_memory(),
+        kb::forget(),
+    ]
 }
 
 /// 按组取工具 defs（保持登记顺序）
@@ -68,7 +87,7 @@ pub async fn run_tool(app: &tauri::AppHandle, name: &str, args: &Value) -> Optio
     let outcome = match name {
         misc::SEARCH_HISTORY_NAME => Some(misc::run(app, args).await),
         web::WEB_SEARCH_NAME | web::WEB_FETCH_NAME => Some(web::run(app, name, args).await),
-        _ => None,
+        _ => kb::run(app, name, args).await,
     }?;
     Some(match outcome {
         Ok(v) => ToolOutcome::ok(v.to_string()),
@@ -81,6 +100,43 @@ pub async fn run_tool(app: &tauri::AppHandle, name: &str, args: &Value) -> Optio
 /// 读对象字段里的有限数值；`default` 在缺省/非法时生效
 pub(crate) fn num_arg(args: &Value, key: &str, default: f64) -> f64 {
     args.get(key).and_then(|v| v.as_f64()).filter(|v| v.is_finite()).unwrap_or(default)
+}
+
+/// 读字符串参数（缺失/非字符串报错）
+pub(crate) fn str_arg<'a>(args: &'a Value, key: &str) -> crate::error::Result<&'a str> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| crate::error::ReinError::Message(format!("参数 {key} 缺失或不是字符串")))
+}
+
+/// 本地今天（YYYY-MM-DD）
+pub(crate) fn today_str() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+/// 日期入参：缺省 = 今天；传了则校验 YYYY-MM-DD（对齐 TS resolveDate）
+pub(crate) fn resolve_date(args: &Value, key: &str) -> crate::error::Result<String> {
+    let v = match args.get(key).and_then(|x| x.as_str()) {
+        Some(s) => s.trim(),
+        None => return Ok(today_str()),
+    };
+    if v.is_empty() {
+        return Ok(today_str());
+    }
+    let b = v.as_bytes();
+    let ok = v.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && v[..4].bytes().all(|c| c.is_ascii_digit())
+        && v[5..7].bytes().all(|c| c.is_ascii_digit())
+        && v[8..].bytes().all(|c| c.is_ascii_digit());
+    if !ok {
+        return Err(crate::error::ReinError::Message(format!(
+            "{key} 格式应为 YYYY-MM-DD（可传『今天』对应的 {}），收到「{v}」",
+            today_str()
+        )));
+    }
+    Ok(v.to_string())
 }
 
 /// 结果投影统一 JSON 化（serde_json::json! 直接构造则无需此函数）
