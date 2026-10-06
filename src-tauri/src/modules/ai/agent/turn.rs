@@ -8,7 +8,7 @@
 //! - 保留 EffiBuddy 的两条硬纪律：工具并发上限 4；子任务 panic / 取消时**对账补齐
 //!   错误结果**（否则下一步 prompt 缺 tool 消息，provider 直接 400）。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -27,13 +27,22 @@ pub const MAX_STEPS: u32 = 32;
 /// 工具并发上限（对齐 EffiBuddy `tool_concurrency(4)`）
 pub const TOOL_CONCURRENCY: usize = 4;
 
+/// run 级上下文：每步 completion 前读取一次。
+///
+/// 放在共享句柄里而不是 [`TurnInput`] 里，是为了支持**运行中热更新**：
+/// 前端执行 `load_tools` 后把新工具组与重算的系统提示词推给 Rust（`ai_agent_update_context`），
+/// 下一步立即生效（chat 的动态装载语义，与 pi 的 `prepareNextTurnWithContext` 等价）。
+#[derive(Debug, Clone, Default)]
+pub struct RunContext {
+    pub system: Option<String>,
+    pub tools: Vec<LlmToolDef>,
+}
+
 /// 一轮 run 的输入
 #[derive(Debug, Clone, Default)]
 pub struct TurnInput {
-    pub system: Option<String>,
     pub prompt: String,
     pub images: Vec<ImageData>,
-    pub tools: Vec<LlmToolDef>,
     pub thinking_level: Option<String>,
     pub temperature: Option<f64>,
     pub max_tokens: Option<u32>,
@@ -74,10 +83,13 @@ pub trait TurnHooks: Send + Sync {
 pub struct NoHooks;
 impl TurnHooks for NoHooks {}
 
-/// 跑一轮完整对话（含内部工具调用循环）
+/// 跑一轮完整对话（含内部工具调用循环）。
+///
+/// `context` 每步重新读取（支持运行中热更新，见 [`RunContext`]）。
 pub async fn run_turn(
     backend: &dyn LlmBackend,
     executor: &Arc<dyn ToolExecutor>,
+    context: Arc<Mutex<RunContext>>,
     mut messages: Vec<LlmMessage>,
     input: TurnInput,
     deltas: DeltaTx,
@@ -101,11 +113,15 @@ pub async fn run_turn(
         }
         steps += 1;
 
+        let (system, tool_defs) = {
+            let ctx = context.lock().unwrap();
+            (ctx.system.clone(), ctx.tools.clone())
+        };
         let req = LlmRequest {
             model: backend.model().to_string(),
-            system: input.system.clone(),
+            system,
             messages: messages.clone(),
-            tools: input.tools.clone(),
+            tools: tool_defs,
             temperature: input.temperature,
             max_tokens: input.max_tokens,
             thinking_level: input.thinking_level.clone(),
@@ -344,8 +360,12 @@ mod tests {
         }
     }
 
-    fn input(tools: Vec<LlmToolDef>) -> TurnInput {
-        TurnInput { prompt: "你好".into(), tools, ..Default::default() }
+    fn input() -> TurnInput {
+        TurnInput { prompt: "你好".into(), ..Default::default() }
+    }
+
+    fn ctx(tools: Vec<LlmToolDef>) -> Arc<Mutex<RunContext>> {
+        Arc::new(Mutex::new(RunContext { system: None, tools }))
     }
 
     /// 具体执行器 → trait 对象（保留具体绑定以便断言其内部记录）
@@ -377,8 +397,9 @@ mod tests {
         let res = run_turn(
             &backend,
             &dyn_exec(&exec),
+            ctx(Vec::new()),
             Vec::new(),
-            input(Vec::new()),
+            input(),
             tx,
             &NoHooks,
         )
@@ -406,8 +427,9 @@ mod tests {
         let res = run_turn(
             &backend,
             &dyn_exec(&exec),
+            ctx(vec![tool("search_food")]),
             Vec::new(),
-            input(vec![tool("search_food")]),
+            input(),
             tx,
             &NoHooks,
         )
@@ -462,8 +484,9 @@ mod tests {
         let res = run_turn(
             &backend,
             &dyn_exec(&exec),
+            ctx(vec![tool("slow_tool")]),
             Vec::new(),
-            input(vec![tool("slow_tool")]),
+            input(),
             tx,
             &NoHooks,
         )
@@ -493,7 +516,7 @@ mod tests {
         );
         let exec: Arc<dyn ToolExecutor> = Arc::new(PanicExecutor { boom_id: "boom".into() });
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let res = run_turn(&backend, &exec, Vec::new(), input(vec![tool("t1"), tool("t2")]), tx, &NoHooks)
+        let res = run_turn(&backend, &exec, ctx(vec![tool("t1"), tool("t2")]), Vec::new(), input(), tx, &NoHooks)
             .await
             .unwrap();
         assert_eq!(res.content, "继续完成", "崩溃的工具不应打断整轮");
@@ -520,7 +543,7 @@ mod tests {
         let exec = RecordingExecutor::ok();
         let hooks = RecordingHooks::default();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let res = run_turn(&backend, &dyn_exec(&exec), Vec::new(), input(Vec::new()), tx, &hooks)
+        let res = run_turn(&backend, &dyn_exec(&exec), ctx(Vec::new()), Vec::new(), input(), tx, &hooks)
             .await
             .unwrap();
         assert_eq!(res.content, "重试成功");
@@ -537,7 +560,7 @@ mod tests {
         let exec = RecordingExecutor::ok();
         let hooks = RecordingHooks::default();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let err = run_turn(&backend, &dyn_exec(&exec), Vec::new(), input(Vec::new()), tx, &hooks)
+        let err = run_turn(&backend, &dyn_exec(&exec), ctx(Vec::new()), Vec::new(), input(), tx, &hooks)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("401"));
@@ -562,7 +585,7 @@ mod tests {
         let backend = MockBackend::new("m", script);
         let exec: Arc<dyn ToolExecutor> = Arc::new(AlwaysTools);
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let res = run_turn(&backend, &exec, Vec::new(), input(vec![tool("loop_tool")]), tx, &NoHooks)
+        let res = run_turn(&backend, &exec, ctx(vec![tool("loop_tool")]), Vec::new(), input(), tx, &NoHooks)
             .await
             .unwrap();
         assert_eq!(res.stop_reason, "max_steps");
@@ -584,7 +607,7 @@ mod tests {
         let exec = RecordingExecutor::ok();
         let hooks = RecordingHooks::default();
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let res = run_turn(&backend, &dyn_exec(&exec), Vec::new(), input(Vec::new()), tx, &hooks)
+        let res = run_turn(&backend, &dyn_exec(&exec), ctx(Vec::new()), Vec::new(), input(), tx, &hooks)
             .await
             .unwrap();
         assert_eq!(hooks.thinking_ends.lock().unwrap().as_slice(), ["想过"]);
@@ -592,6 +615,56 @@ mod tests {
         let deltas = drain(rx);
         assert!(deltas.contains(&StreamDelta::Reasoning("想过".into())));
         assert!(deltas.contains(&StreamDelta::Text("答".into())));
+    }
+
+    #[tokio::test]
+    async fn mid_run_context_update_applies_to_next_step() {
+        // 模拟 chat 的 load_tools：工具执行时（前端桥接期）把新工具组与
+        // 重算的系统提示词推回 Rust，下一步请求立即生效
+        struct ContextUpdater {
+            ctx: Arc<Mutex<RunContext>>,
+        }
+        #[async_trait]
+        impl ToolExecutor for ContextUpdater {
+            async fn execute(&self, _c: &str, _n: &str, _a: &Value) -> ToolOutcome {
+                let mut c = self.ctx.lock().unwrap();
+                c.system = Some("装载后的系统提示".into());
+                c.tools = vec![LlmToolDef {
+                    name: "loaded_tool".into(),
+                    description: "新装载的工具".into(),
+                    parameters: serde_json::json!({ "type": "object" }),
+                }];
+                ToolOutcome::ok("已装载 diet 组")
+            }
+        }
+
+        let backend = MockBackend::new(
+            "m",
+            vec![
+                Ok(tool_call_response("c1", "load_tools", serde_json::json!({"groups":["diet"]}))),
+                Ok(LlmResponse { content: "装载后完成".into(), ..Default::default() }),
+            ],
+        );
+        let context = ctx(vec![tool("load_tools")]);
+        let exec: Arc<dyn ToolExecutor> = Arc::new(ContextUpdater { ctx: Arc::clone(&context) });
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let res = run_turn(
+            &backend,
+            &exec,
+            context,
+            Vec::new(),
+            input(),
+            tx,
+            &NoHooks,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res.content, "装载后完成");
+        let reqs = backend.requests();
+        assert_eq!(reqs[0].tools.len(), 1);
+        assert_eq!(reqs[0].tools[0].name, "load_tools");
+        assert_eq!(reqs[1].system.as_deref(), Some("装载后的系统提示"));
+        assert_eq!(reqs[1].tools[0].name, "loaded_tool", "下一步应看到新装载的工具");
     }
 
     #[tokio::test]
@@ -618,7 +691,7 @@ mod tests {
         let exec: Arc<dyn ToolExecutor> = Arc::new(ImageExecutor);
         let hooks = RecordingHooks::default();
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let res = run_turn(&backend, &exec, Vec::new(), input(vec![tool("zoom_image")]), tx, &hooks)
+        let res = run_turn(&backend, &exec, ctx(vec![tool("zoom_image")]), Vec::new(), input(), tx, &hooks)
             .await
             .unwrap();
         assert_eq!(res.content, "看完了");

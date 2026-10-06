@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use tokio::sync::oneshot;
 
+use super::llm::LlmToolDef;
 use super::models::ToolOutcome;
+use super::turn::RunContext;
 
 /// 单次 run 的工具结果桥：等待前端回传结果。
 ///
@@ -66,6 +68,8 @@ impl ToolBridge {
 pub struct RunHandle {
     cancel: Box<dyn Fn() + Send + Sync>,
     bridge: Arc<ToolBridge>,
+    /// run 级上下文（系统提示词 + 工具集）：前端执行 load_tools 后热更新
+    context: Arc<Mutex<RunContext>>,
 }
 
 /// run 会话表（`AppState` 之外单独 manage，避免与领域状态耦合）
@@ -85,11 +89,32 @@ impl AgentHub {
         run_id: impl Into<String>,
         cancel: impl Fn() + Send + Sync + 'static,
         bridge: Arc<ToolBridge>,
+        context: Arc<Mutex<RunContext>>,
     ) {
         self.runs.lock().unwrap().insert(
             run_id.into(),
-            RunHandle { cancel: Box::new(cancel), bridge },
+            RunHandle { cancel: Box::new(cancel), bridge, context },
         );
+    }
+
+    /// 热更新 run 上下文（系统提示词 + 工具集），下一步 completion 生效。
+    /// 未知 run 返回 false。
+    pub fn update_context(
+        &self,
+        run_id: &str,
+        system: Option<String>,
+        tools: Vec<LlmToolDef>,
+    ) -> bool {
+        let runs = self.runs.lock().unwrap();
+        match runs.get(run_id) {
+            Some(handle) => {
+                let mut ctx = handle.context.lock().unwrap();
+                ctx.system = system;
+                ctx.tools = tools;
+                true
+            }
+            None => false,
+        }
     }
 
     /// 取消一次 run（未知 run 返回 false）
@@ -136,9 +161,14 @@ mod tests {
         let hub = AgentHub::new();
         let fired = Arc::new(AtomicUsize::new(0));
         let f = fired.clone();
-        hub.register("r1", move || {
-            f.fetch_add(1, Ordering::SeqCst);
-        }, ToolBridge::new());
+        hub.register(
+            "r1",
+            move || {
+                f.fetch_add(1, Ordering::SeqCst);
+            },
+            ToolBridge::new(),
+            Arc::new(Mutex::new(RunContext::default())),
+        );
         assert_eq!(hub.active_runs(), vec!["r1".to_string()]);
 
         assert!(hub.cancel("r1"));
@@ -151,7 +181,7 @@ mod tests {
     async fn deliver_routes_to_waiter() {
         let hub = AgentHub::new();
         let bridge = ToolBridge::new();
-        hub.register("r1", || {}, Arc::clone(&bridge));
+        hub.register("r1", || {}, Arc::clone(&bridge), Arc::new(Mutex::new(RunContext::default())));
 
         let waiter = {
             let b = Arc::clone(&bridge);
@@ -187,12 +217,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_context_hot_swaps_system_and_tools() {
+        let hub = AgentHub::new();
+        let context = Arc::new(Mutex::new(RunContext {
+            system: Some("旧提示".into()),
+            tools: vec![],
+        }));
+        hub.register("r1", || {}, ToolBridge::new(), Arc::clone(&context));
+
+        assert!(hub.update_context(
+            "r1",
+            Some("新提示".into()),
+            vec![LlmToolDef {
+                name: "loaded_tool".into(),
+                description: "新工具".into(),
+                parameters: serde_json::json!({}),
+            }],
+        ));
+        {
+            let c = context.lock().unwrap();
+            assert_eq!(c.system.as_deref(), Some("新提示"));
+            assert_eq!(c.tools.len(), 1);
+            assert_eq!(c.tools[0].name, "loaded_tool");
+        }
+        assert!(!hub.update_context("nope", None, vec![]), "未知 run 返回 false");
+    }
+
+    #[tokio::test]
     async fn deliver_to_unknown_run_is_rejected_and_finish_clears_bridge() {
         let hub = AgentHub::new();
         assert!(!hub.deliver_tool_result("nope", "c1", ToolOutcome::ok("x")));
 
         let bridge = ToolBridge::new();
-        hub.register("r1", || {}, Arc::clone(&bridge));
+        hub.register("r1", || {}, Arc::clone(&bridge), Arc::new(Mutex::new(RunContext::default())));
         hub.finish("r1");
         assert!(hub.active_runs().is_empty());
         assert!(!hub.deliver_tool_result("r1", "c1", ToolOutcome::ok("x")));

@@ -179,6 +179,7 @@ pub fn run() {
             modules::ai::agent::commands::ai_agent_run,
             modules::ai::agent::commands::ai_agent_cancel,
             modules::ai::agent::commands::ai_agent_tool_result,
+            modules::ai::agent::commands::ai_agent_update_context,
             modules::ai::commands::ai_chat_ensure,
             modules::ai::commands::ai_chat_messages,
             modules::ai::commands::ai_chat_append,

@@ -5,7 +5,7 @@
 //! `ai_agent_tool_result` 回传结果），session 域迁移完成后该桥接常驻，其余工具
 //! 逐步改为 Rust 注册表内部执行。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::OptionalExtension;
@@ -16,8 +16,8 @@ use crate::modules::ai::commands::{ai_model_from_row, AI_MODEL_COLS};
 use crate::state::AppState;
 
 use super::hub::{AgentHub, ToolBridge};
-use super::llm::{ImageData, LlmBackend, LlmUsage, OpenAiCompatBackend, StreamDelta};
-use super::turn::{run_turn, ToolExecutor, TurnHooks, TurnInput};
+use super::llm::{ImageData, LlmBackend, LlmToolDef, LlmUsage, OpenAiCompatBackend, StreamDelta};
+use super::turn::{run_turn, RunContext, ToolExecutor, TurnHooks, TurnInput};
 use super::models::{AgentEvent, AgentRunParams, ToolOutcome, AGENT_EVENT};
 use super::probe::{probe_model, AgentProbeResult};
 
@@ -164,23 +164,28 @@ pub async fn ai_agent_run(
     }
 
     let input = TurnInput {
-        system: params.system_prompt.clone(),
         prompt: params.prompt.clone(),
         images: params.images.clone(),
-        tools: params.tools.clone(),
         thinking_level: params.thinking_level.clone(),
         temperature: params.temperature,
         max_tokens: params.max_tokens,
     };
     let messages = params.messages.clone();
+    // 系统提示词与工具集放共享上下文：load_tools 装载后前端热更新，下一步生效
+    let context = Arc::new(Mutex::new(RunContext {
+        system: params.system_prompt.clone(),
+        tools: params.tools.clone(),
+    }));
 
     let hub_arc: Arc<AgentHub> = Arc::clone(&hub);
     let task_run_id = run_id.clone();
     let task_app = app.clone();
+    let task_context = Arc::clone(&context);
     let handle = tauri::async_runtime::spawn(async move {
         let result = run_turn(
             backend.as_ref(),
             &executor,
+            task_context,
             messages,
             input,
             delta_tx,
@@ -217,8 +222,21 @@ pub async fn ai_agent_run(
         run_id.clone(),
         move || handle.abort(),
         Arc::clone(&bridge),
+        context,
     );
     Ok(run_id)
+}
+
+/// 热更新 run 的系统提示词与工具集（`load_tools` 动态装载：前端执行完装载工具后，
+/// 把重算的提示词与工具清单推过来，下一步 completion 立即生效）
+#[tauri::command]
+pub fn ai_agent_update_context(
+    hub: State<'_, Arc<AgentHub>>,
+    run_id: String,
+    system_prompt: String,
+    tools: Vec<LlmToolDef>,
+) -> Result<bool> {
+    Ok(hub.update_context(&run_id, Some(system_prompt), tools))
 }
 
 /// 取消一次 run（中止后台循环任务；已产生的 UI 内容由前端自行处置）
