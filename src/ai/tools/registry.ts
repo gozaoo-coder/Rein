@@ -6,6 +6,10 @@
  * 2. 在下方 APP_TOOLS 里登记；
  * 3. 若属于新分组，在 GROUP_POLICY 里登记该组的装载策略（常驻 / 按需 + 插件门禁）。
  *
+ * 渐进迁移（2026-10 起）：已搬 Rust 的域（context / web，见
+ * src-tauri/src/modules/ai/agent/tools/）从本表移除 —— defs 与执行都在 Rust 注册表，
+ * 按组下发（RustAgent 的 toolGroups）；此处保留的是仍在 WebView 执行的域。
+ *
  * 装载策略（避免每轮把 83 个工具的 schema 全量塞给模型）：
  * - `always: true` 的组恒常驻（主流程缺了就坏：饮食卡协议、知识库检索、待办、记忆与笔记）；
  * - 其余组按需装载：本轮消息命中关键词、或模型调 `load_tools` 当场装载；
@@ -18,7 +22,6 @@ import { Type } from '@earendil-works/pi-ai'
 
 import { isTauri } from '@/services/transport'
 
-import { contextTools } from './misc'
 import { campusTools } from './campus'
 import { campusProgramTools } from './campusProgram'
 import { dietTools } from './diet'
@@ -37,7 +40,6 @@ import { sessionTools } from './session'
 import { defineTool, type AppTool, type ToolGroup } from './types'
 import { todoTools } from './todo'
 import { voiceTools } from './voice'
-import { webTools } from './web'
 import { workspaceTools } from './workspace'
 
 /** 各域工具（不含聊天自身的 JSON 输出协议，也不含元工具 —— 见下方 APP_TOOLS） */
@@ -51,14 +53,12 @@ const DOMAIN_TOOLS: AppTool[] = [
   ...programTools,
   ...pomodoroTools,
   ...sessionTools,
-  ...contextTools,
   ...knowledgeTools,
   ...memoryTools,
   ...noteTools,
   ...workspaceTools,
   ...modelTools,
   ...voiceTools,
-  ...webTools,
   ...imageTools,
   ...campusTools,
   ...campusProgramTools,

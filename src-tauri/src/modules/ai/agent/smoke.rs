@@ -27,6 +27,57 @@ fn backend() -> OpenAiCompatBackend {
     OpenAiCompatBackend::new(base, key, model)
 }
 
+/// Rust 注册表端到端：真实模型 → web 组工具（Rust 执行真实必应搜索）→ 终稿
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "真实网络冒烟：设好 REIN_SMOKE_* 环境变量后 --ignored --nocapture 手动运行"]
+async fn smoke_tool_registry_web() {
+    struct RegistryExecutor;
+    #[async_trait::async_trait]
+    impl ToolExecutor for RegistryExecutor {
+        async fn execute(&self, _c: &str, name: &str, args: &serde_json::Value) -> ToolOutcome {
+            // 与 HybridExecutor 同路径：注册表优先（此处直接走实现体，无需 AppHandle）
+            match super::tools::web::run_impl(name, args).await {
+                Ok(v) => ToolOutcome::ok(v.to_string()),
+                Err(e) => ToolOutcome::error(e.to_string()),
+            }
+        }
+    }
+
+    let b = Arc::new(backend());
+    let executor: Arc<dyn ToolExecutor> = Arc::new(RegistryExecutor);
+    let context = Arc::new(std::sync::Mutex::new(super::turn::RunContext {
+        system: Some("你是 Rein 的测试助手。应用外的事实先联网搜再答，并在回复里给出来源。".into()),
+        tools: Vec::new(),
+        groups: vec!["web".into()],
+    }));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let res = run_turn(
+        b.as_ref(),
+        &executor,
+        context,
+        Vec::new(),
+        TurnInput {
+            prompt: "搜一下可乐每100g的热量，用一句话告诉我数字和来源。".into(),
+            images: Vec::new(),
+            thinking_level: Some("low".into()),
+            temperature: None,
+            max_tokens: None,
+        },
+        tx,
+        &NoHooks,
+    )
+    .await
+    .expect("注册表工具循环失败");
+    println!(
+        "注册表循环：steps={} tools={} 终稿={}字",
+        res.steps,
+        res.tools,
+        res.content.chars().count()
+    );
+    assert!(res.tools >= 1, "模型应调用 web 组工具");
+    assert!(!res.content.is_empty());
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "真实网络冒烟：设好 REIN_SMOKE_* 环境变量后 --ignored --nocapture 手动运行"]
 async fn smoke_probe() {
@@ -101,6 +152,7 @@ async fn smoke_tool_loop() {
     let context = Arc::new(std::sync::Mutex::new(super::turn::RunContext {
         system: Some("你是 Rein 的测试助手。需要时间信息时调用 get_time 工具。".into()),
         tools: tools.clone(),
+        groups: Vec::new(),
     }));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let res = run_turn(

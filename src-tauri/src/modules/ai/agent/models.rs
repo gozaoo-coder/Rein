@@ -24,9 +24,12 @@ pub struct AgentRunParams {
     /// 本轮用户附带的图片（base64）
     #[serde(default)]
     pub images: Vec<ImageData>,
-    /// 工具定义（过渡期由前端提供；Phase 4 起可留空由 Rust 注册表填）
+    /// 工具定义（未迁移工具仍由前端提供；已迁移的由 Rust 注册表按 toolGroups 供）
     #[serde(default)]
     pub tools: Vec<LlmToolDef>,
+    /// 装载中的工具组（前端 resolveToolPlan 的结果；Rust 注册表据此补 defs）
+    #[serde(default)]
+    pub tool_groups: Vec<String>,
     /// 思考档：'off' | 'low' | …
     #[serde(default)]
     pub thinking_level: Option<String>,

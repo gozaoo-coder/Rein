@@ -54,6 +54,8 @@ export interface RustAgentInit {
     modelPk: number
     thinkingLevel?: string
     tools?: AgentToolLike[]
+    /** 装载中的工具组（Rust 注册表据此补已迁移工具的 defs 与执行） */
+    toolGroups?: string[]
     /** 历史（仅 user/assistant 文本与图片；工具中间轮不回放） */
     messages: AgentFinalMessage[]
   }
@@ -61,7 +63,7 @@ export interface RustAgentInit {
   prepareNextTurnWithContext?: (ctx: {
     toolResults: { toolName: string; content: unknown }[]
     context: { messages: unknown[] }
-  }) => { context: { systemPrompt: string; messages: unknown[]; tools: AgentToolLike[] } } | undefined
+  }) => { context: { systemPrompt: string; messages: unknown[]; tools: AgentToolLike[]; toolGroups?: string[] } } | undefined
 }
 
 type Subscriber = (e: RustAgentEvent) => void
@@ -79,11 +81,13 @@ export class RustAgent {
   private acc = new StepAccumulator()
   private usage: AgentUsage = emptyUsage()
   private tools: AgentToolLike[]
+  private toolGroups: string[]
   private systemPrompt: string
 
   constructor(init: RustAgentInit) {
     this.init = init
     this.tools = [...(init.initialState.tools ?? [])]
+    this.toolGroups = [...(init.initialState.toolGroups ?? [])]
     this.systemPrompt = init.initialState.systemPrompt
     this.state.messages = [...init.initialState.messages]
   }
@@ -112,6 +116,7 @@ export class RustAgent {
         description: t.description,
         parameters: t.parameters,
       })),
+      toolGroups: this.toolGroups,
       thinkingLevel: this.init.initialState.thinkingLevel ?? null,
     })
     this.runId = runId
@@ -213,9 +218,10 @@ export class RustAgent {
     const patch = this.nextTurnPatch()
     if (patch) {
       try {
-        await agentService.updateContext(this.runId as string, patch.systemPrompt, patch.tools)
+        await agentService.updateContext(this.runId as string, patch.systemPrompt, patch.tools, patch.toolGroups)
         this.systemPrompt = patch.systemPrompt
         this.tools = patch.tools
+        if (patch.toolGroups) this.toolGroups = patch.toolGroups
       } catch {
         /* 上下文更新失败不致命：模型下一轮会再尝试装载 */
       }
@@ -231,7 +237,7 @@ export class RustAgent {
   }
 
   /** 走入口给的 prepareNextTurnWithContext 取新 context（仅聊天主链路有） */
-  private nextTurnPatch(): { systemPrompt: string; tools: AgentToolLike[] } | null {
+  private nextTurnPatch(): { systemPrompt: string; tools: AgentToolLike[]; toolGroups?: string[] } | null {
     const hook = this.init.prepareNextTurnWithContext
     if (!hook) return null
     const patch = hook({
@@ -242,6 +248,7 @@ export class RustAgent {
     return {
       systemPrompt: patch.context.systemPrompt,
       tools: patch.context.tools as AgentToolLike[],
+      toolGroups: patch.context.toolGroups,
     }
   }
 

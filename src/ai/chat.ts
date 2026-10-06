@@ -263,6 +263,7 @@ export async function chatWithModel(
       modelPk: config.id,
       thinkingLevel: 'low',
       tools: buildAgentToolsForGroups(loaded),
+      toolGroups: [...loaded],
       messages: toAgentMessages(history),
     },
     // 模型调过 load_tools 就换掉 context：工具与提示词段落一起换，下一轮立刻可用
@@ -278,6 +279,7 @@ export async function chatWithModel(
           systemPrompt: opts?.systemPrompt ?? promptFor(loaded),
           messages: ctx.context.messages,
           tools: buildAgentToolsForGroups(loaded),
+          toolGroups: [...loaded],
         },
       }
     },

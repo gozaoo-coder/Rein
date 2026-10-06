@@ -60,9 +60,14 @@ export const agentService = {
       images: outcome.images ?? null,
     }),
 
-  /** 热更新 run 的系统提示词与工具集（load_tools 动态装载） */
-  updateContext: (runId: string, systemPrompt: string, tools: AgentToolDef[]): Promise<boolean> =>
-    invoke<boolean>('ai_agent_update_context', { runId, systemPrompt, tools }),
+  /** 热更新 run 的系统提示词与工具集（load_tools 动态装载；toolGroups 供 Rust 注册表补 defs） */
+  updateContext: (
+    runId: string,
+    systemPrompt: string,
+    tools: AgentToolDef[],
+    toolGroups?: string[],
+  ): Promise<boolean> =>
+    invoke<boolean>('ai_agent_update_context', { runId, systemPrompt, tools, toolGroups: toolGroups ?? null }),
 
   /** 六发能力探测（请求在 Rust 侧发起） */
   probe: (modelId: number): Promise<AiProbeResult> => invoke<AiProbeResult>('ai_probe', { modelId }),

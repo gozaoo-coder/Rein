@@ -236,6 +236,7 @@ export interface AgentRunParams {
   prompt: string
   images?: AgentImage[]
   tools?: AgentToolDef[]
+  toolGroups?: string[]
   thinkingLevel?: string | null
   temperature?: number | null
   maxTokens?: number | null

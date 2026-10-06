@@ -104,6 +104,7 @@ impl AgentHub {
         run_id: &str,
         system: Option<String>,
         tools: Vec<LlmToolDef>,
+        groups: Vec<String>,
     ) -> bool {
         let runs = self.runs.lock().unwrap();
         match runs.get(run_id) {
@@ -111,6 +112,7 @@ impl AgentHub {
                 let mut ctx = handle.context.lock().unwrap();
                 ctx.system = system;
                 ctx.tools = tools;
+                ctx.groups = groups;
                 true
             }
             None => false,
@@ -222,6 +224,7 @@ mod tests {
         let context = Arc::new(Mutex::new(RunContext {
             system: Some("旧提示".into()),
             tools: vec![],
+            groups: Vec::new(),
         }));
         hub.register("r1", || {}, ToolBridge::new(), Arc::clone(&context));
 
@@ -233,14 +236,16 @@ mod tests {
                 description: "新工具".into(),
                 parameters: serde_json::json!({}),
             }],
+            vec!["diet".to_string()],
         ));
+        assert_eq!(context.lock().unwrap().groups, vec!["diet".to_string()]);
         {
             let c = context.lock().unwrap();
             assert_eq!(c.system.as_deref(), Some("新提示"));
             assert_eq!(c.tools.len(), 1);
             assert_eq!(c.tools[0].name, "loaded_tool");
         }
-        assert!(!hub.update_context("nope", None, vec![]), "未知 run 返回 false");
+        assert!(!hub.update_context("nope", None, vec![], vec![]), "未知 run 返回 false");
     }
 
     #[tokio::test]

@@ -34,7 +34,21 @@ pub const MAX_STEPS: u32 = 32;
 #[derive(Debug, Clone, Default)]
 pub struct RunContext {
     pub system: Option<String>,
+    /// 前端仍提供的桥接工具 defs（未迁移域；session 域常驻）
     pub tools: Vec<LlmToolDef>,
+    /// 装载中的工具组：Rust 注册表按组补 defs（与 tools 按名去重，注册表优先）
+    pub groups: Vec<String>,
+}
+
+/// 组 defs（注册表）+ 桥接 defs 按名合并，注册表优先
+fn merged_tool_defs(ctx_tools: &[LlmToolDef], groups: &[String]) -> Vec<LlmToolDef> {
+    let mut defs = crate::modules::ai::agent::tools::defs_for_groups(groups);
+    for t in ctx_tools {
+        if !defs.iter().any(|d| d.name == t.name) {
+            defs.push(t.clone());
+        }
+    }
+    defs
 }
 
 /// 一轮 run 的输入
@@ -114,7 +128,7 @@ pub async fn run_turn(
 
         let (system, tool_defs) = {
             let ctx = context.lock().unwrap();
-            (ctx.system.clone(), ctx.tools.clone())
+            (ctx.system.clone(), merged_tool_defs(&ctx.tools, &ctx.groups))
         };
         let req = LlmRequest {
             model: backend.model().to_string(),
@@ -361,7 +375,7 @@ mod tests {
     }
 
     fn ctx(tools: Vec<LlmToolDef>) -> Arc<Mutex<RunContext>> {
-        Arc::new(Mutex::new(RunContext { system: None, tools }))
+        Arc::new(Mutex::new(RunContext { system: None, tools, groups: Vec::new() }))
     }
 
     /// 具体执行器 → trait 对象（保留具体绑定以便断言其内部记录）

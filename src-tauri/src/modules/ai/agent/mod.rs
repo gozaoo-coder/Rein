@@ -14,6 +14,7 @@
 //! - [`hub`]：run 会话表 + 桥接期工具结果通道（早到缓冲 / 超时兜底）
 //! - [`retry`]：瞬态错误退避决策（限流长退避，其他短退避）
 //! - [`probe`]：max_tokens=1 六发能力探测（判定语义逐字对齐前端 `src/ai/probe.ts`）
+//! - [`tools`]：Rust 侧工具注册表（渐进迁移，Rust 优先 / 未注册回退前端桥接）
 //! - [`models`]：IPC 契约（run 入参 / 流式事件 / 工具结果）
 //! - [`commands`]：Tauri 命令入口
 
@@ -24,6 +25,7 @@ pub mod turn;
 pub mod models;
 pub mod probe;
 pub mod retry;
+pub mod tools;
 
 /// 真实 provider 冒烟（默认跳过）：见 smoke.rs 头注释的运行方式
 #[cfg(test)]

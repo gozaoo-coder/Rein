@@ -53,16 +53,26 @@ pub async fn ai_probe(state: State<'_, AppState>, model_id: i64) -> Result<Agent
 // agent run
 // ---------------------------------------------------------
 
-/// 过渡期工具执行器：等前端把结果送回来（含早到缓冲与超时兜底）
-struct BridgeExecutor {
+/// 混合工具执行器：Rust 注册表优先，未迁移的回退前端桥接（含早到缓冲与超时兜底）
+struct HybridExecutor {
+    app: AppHandle,
     bridge: Arc<ToolBridge>,
     timeout: Duration,
 }
 
 #[async_trait::async_trait]
-impl ToolExecutor for BridgeExecutor {
-    async fn execute(&self, call_id: &str, _name: &str, _args: &serde_json::Value) -> ToolOutcome {
-        self.bridge.wait(call_id, self.timeout).await
+impl ToolExecutor for HybridExecutor {
+    async fn execute(&self, call_id: &str, name: &str, args: &serde_json::Value) -> ToolOutcome {
+        match super::tools::run_tool(&self.app, name, args).await {
+            Some(outcome) => {
+                eprintln!("[ai-agent] tool {name} → rust");
+                outcome
+            }
+            None => {
+                eprintln!("[ai-agent] tool {name} → bridge");
+                self.bridge.wait(call_id, self.timeout).await
+            }
+        }
     }
 }
 
@@ -139,7 +149,8 @@ pub async fn ai_agent_run(
 
     let run_id = uuid::Uuid::new_v4().to_string();
     let bridge = ToolBridge::new();
-    let executor: Arc<dyn ToolExecutor> = Arc::new(BridgeExecutor {
+    let executor: Arc<dyn ToolExecutor> = Arc::new(HybridExecutor {
+        app: app.clone(),
         bridge: Arc::clone(&bridge),
         timeout: TOOL_RESULT_TIMEOUT,
     });
@@ -178,6 +189,7 @@ pub async fn ai_agent_run(
     let context = Arc::new(Mutex::new(RunContext {
         system: params.system_prompt.clone(),
         tools: params.tools.clone(),
+        groups: params.tool_groups.clone(),
     }));
 
     let hub_arc: Arc<AgentHub> = Arc::clone(&hub);
@@ -240,8 +252,14 @@ pub fn ai_agent_update_context(
     run_id: String,
     system_prompt: String,
     tools: Vec<LlmToolDef>,
+    tool_groups: Option<Vec<String>>,
 ) -> Result<bool> {
-    Ok(hub.update_context(&run_id, Some(system_prompt), tools))
+    Ok(hub.update_context(
+        &run_id,
+        Some(system_prompt),
+        tools,
+        tool_groups.unwrap_or_default(),
+    ))
 }
 
 /// 取消一次 run（中止后台循环任务；已产生的 UI 内容由前端自行处置）
