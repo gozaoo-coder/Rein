@@ -24,21 +24,39 @@ import { isTauri } from '@/services/transport'
 
 import { campusTools } from './campus'
 import { campusProgramTools } from './campusProgram'
+import { dietTools } from './diet'
 import { exerciseTools } from './exercise'
 import { imageTools } from './image'
+import { knowledgeTools } from './knowledge'
+import { ledgerTools } from './ledger'
+import { memoryTools } from './memory'
 import { modelTools } from './models'
+import { noteTools } from './notes'
+import { nutritionTools } from './nutrition'
 import { planTools } from './plan'
+import { pomodoroTools } from './pomodoro'
 import { programTools } from './program'
 import { sessionTools } from './session'
 import { defineTool, type AppTool, type ToolGroup } from './types'
+import { todoTools } from './todo'
 import { voiceTools } from './voice'
+import { workspaceTools } from './workspace'
 
 /** 各域工具（不含聊天自身的 JSON 输出协议，也不含元工具 —— 见下方 APP_TOOLS） */
 const DOMAIN_TOOLS: AppTool[] = [
+  ...dietTools,
+  ...nutritionTools,
+  ...todoTools,
+  ...ledgerTools,
   ...exerciseTools,
   ...planTools,
   ...programTools,
+  ...pomodoroTools,
   ...sessionTools,
+  ...knowledgeTools,
+  ...memoryTools,
+  ...noteTools,
+  ...workspaceTools,
   ...modelTools,
   ...voiceTools,
   ...imageTools,
