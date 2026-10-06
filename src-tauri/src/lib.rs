@@ -28,6 +28,10 @@ pub fn run() {
             app.manage(AppState::new(conn));
             app.manage(crate::state::VoiceHub::new());
             app.manage(crate::state::CampusHub::new());
+            // AI 内核：活跃 agent run 的会话表（取消句柄 + 工具结果桥）。
+            // 只活在内存（run 结束即移除），但要 manage 成 Arc —— run 任务
+            // 结束时要回头把自己从表里摘掉。
+            app.manage(std::sync::Arc::new(modules::ai::agent::hub::AgentHub::new()));
             // 在线更新：下载/安装的进程内状态。它不落库（设置走 app_meta），
             // 但必须 manage 进来 —— 下载线程要用它广播进度、缓存已验签的候选。
             app.manage(modules::update::UpdateHub::new());
@@ -172,6 +176,9 @@ pub fn run() {
             modules::ai::commands::ai_model_set_default,
             modules::ai::commands::ai_model_save_probe,
             modules::ai::agent::commands::ai_probe,
+            modules::ai::agent::commands::ai_agent_run,
+            modules::ai::agent::commands::ai_agent_cancel,
+            modules::ai::agent::commands::ai_agent_tool_result,
             modules::ai::commands::ai_chat_ensure,
             modules::ai::commands::ai_chat_messages,
             modules::ai::commands::ai_chat_append,

@@ -10,9 +10,17 @@
 //!
 //! 分层：
 //! - [`llm`]：消息类型 + OpenAI 兼容后端（wire 线格式 / SSE 流解析 / HTTP 客户端）
+//! - [`turn`]：agent 工具循环（工具执行走 [`turn::ToolExecutor`] 缝）
+//! - [`hub`]：run 会话表 + 桥接期工具结果通道（早到缓冲 / 超时兜底）
+//! - [`retry`]：瞬态错误退避决策（限流长退避，其他短退避）
 //! - [`probe`]：max_tokens=1 六发能力探测（判定语义逐字对齐前端 `src/ai/probe.ts`）
-//! - [`commands`]：Tauri 命令入口（Phase 2 起追加 agent run/cancel/tool_result）
+//! - [`models`]：IPC 契约（run 入参 / 流式事件 / 工具结果）
+//! - [`commands`]：Tauri 命令入口
 
 pub mod commands;
+pub mod hub;
 pub mod llm;
+pub mod turn;
+pub mod models;
 pub mod probe;
+pub mod retry;

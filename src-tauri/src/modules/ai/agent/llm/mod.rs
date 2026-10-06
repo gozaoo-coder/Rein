@@ -13,6 +13,7 @@
 
 pub mod compat;
 pub mod http;
+pub mod mock;
 pub mod sse;
 pub mod wire;
 
