@@ -254,6 +254,8 @@ pub fn run() {
             modules::kb::commands::kb_memory_consolidated,
             modules::kb::commands::kb_cognition,
             modules::kb::commands::kb_memory_bump,
+            modules::kb::commands::kb_memory_duplicates,
+            modules::kb::commands::kb_memory_diffs,
             modules::kb::commands::kb_glob,
             modules::kb::commands::kb_file_write,
             modules::kb::commands::kb_file_rename,
@@ -268,6 +270,18 @@ pub fn run() {
             modules::kb::commands::kb_fs_moves,
             modules::kb::commands::kb_fs_undo,
             modules::kb::commands::kb_injection_get,
+            // kb（压缩包：打开 / 解压）
+            modules::kb::commands::kb_archive_list,
+            modules::kb::commands::kb_archive_extract,
+            // kb（空间管理：占用总览 + 孤儿清理）
+            modules::kb::commands::kb_usage,
+            modules::kb::commands::kb_usage_clean,
+            // kb（本地嵌入模型：多档可选 + 按需下载 + 自定义测试）
+            modules::kb::commands::kb_embed_models,
+            modules::kb::commands::kb_embed_model_download,
+            modules::kb::commands::kb_embed_model_cancel,
+            modules::kb::commands::kb_embed_model_remove,
+            modules::kb::commands::kb_embed_test,
             // campus（校园教务：学校系统选择器 + 课表同步 + 培养方案）
             modules::campus::commands::campus_systems,
             modules::campus::commands::campus_account_get,

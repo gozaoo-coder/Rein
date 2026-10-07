@@ -1300,6 +1300,14 @@ CREATE TABLE health_metrics (
 CREATE INDEX idx_health_metrics_day ON health_metrics(day);
 "#;
 
+/// 0038 · 本地嵌入模型可选化（modules/kb/embed_models.rs）。
+///
+/// `local_model` 存注册表里的模型 id（默认即内置那颗）。老库升级后落在内置模型上，
+/// 与升级前的行为一致（升级前也只可能有内置模型），所以这条不需要清向量。
+const MIGRATION_0038: &str = r#"
+ALTER TABLE kb_settings ADD COLUMN local_model TEXT NOT NULL DEFAULT 'bge-small-zh-v1.5-int8';
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1338,6 +1346,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0035,
     MIGRATION_0036,
     MIGRATION_0037,
+    MIGRATION_0038,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

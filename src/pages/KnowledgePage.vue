@@ -5,8 +5,11 @@ import {
   AlertCircle,
   Archive,
   Brain,
+  Cpu,
   Database,
+  Download,
   FilePlus2,
+  FlaskConical,
   FolderOpen,
   FolderTree,
   RefreshCw,
@@ -15,6 +18,7 @@ import {
   Settings2,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
@@ -22,17 +26,21 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
-import { kbService, onKbIndexProgress } from '@/services/kbService'
+import { kbService, onKbIndexProgress, onKbModelProgress } from '@/services/kbService'
 import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
 import {
   KB_MEMORY_LABELS,
   KB_SOURCE_LABELS,
   type KbChunk,
+  type KbEmbedCatalog,
   type KbEmbeddingMode,
+  type KbEmbedTestResult,
   type KbHit,
   type KbIndexEvent,
   type KbMemory,
+  type KbMemoryDiffEntry,
+  type KbMemoryDuplicate,
   type KbMemoryStats,
   type KbSettings,
   type KbSourceType,
@@ -62,6 +70,42 @@ const cloudApiKey = ref('')
 const cloudModel = ref('')
 const autoMemory = ref(true)
 const autoConsolidate = ref(true)
+
+/* ---------- 本地模型（可选 / 可下载）与自定义嵌入测试 ---------- */
+
+const embedCatalog = ref<KbEmbedCatalog | null>(null)
+const localModel = ref('bge-small-zh-v1.5-int8')
+/** 正在下载/删除的模型 id（按钮态） */
+const modelBusy = ref<string | null>(null)
+/** 下载进度：{ id, file, pct }；null = 没有进行中的下载 */
+const modelProgress = ref<{ id: string; file: string; pct: number } | null>(null)
+let offModel: (() => void) | null = null
+
+/** 测试面板：一段查询 + 若干候选（一行一条），可选第二个模型做对比 */
+const testTexts = ref('膝盖疼怎么练腿\n膝关节不适时的腿部训练该怎么安排\n今天晚饭吃什么')
+const testModelA = ref('')
+const testModelB = ref('')
+const testRunning = ref(false)
+const testA = ref<KbEmbedTestResult | null>(null)
+const testB = ref<KbEmbedTestResult | null>(null)
+
+/** 记忆库整理辅助：疑似重复对 + 最近整理审计 */
+const duplicates = ref<KbMemoryDuplicate[]>([])
+const memoryDiffs = ref<KbMemoryDiffEntry[]>([])
+const dupOpen = ref(false)
+
+const testLines = computed(() =>
+  testTexts.value
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 16),
+)
+
+/** 当前生效的模型条目（用于标题与「正在使用」标记） */
+const currentModel = computed(() =>
+  embedCatalog.value?.models.find((m) => m.id === localModel.value) ?? null,
+)
 
 const query = ref('')
 const hits = ref<KbHit[] | null>(null)
@@ -127,12 +171,137 @@ async function refresh(): Promise<void> {
   memories.value = mem
   memoryStats.value = stats
   mode.value = s.embeddingMode
+  localModel.value = s.localModel
   cloudBaseUrl.value = s.cloudBaseUrl ?? ''
   cloudModel.value = s.cloudModel ?? ''
   cloudApiKey.value = ''
   autoMemory.value = s.autoMemory
   autoConsolidate.value = s.autoConsolidate
   sourceEnabled.value = { ...(s.sourcesEnabled as Record<string, boolean>) }
+}
+
+/* ---------- 本地模型：目录 / 下载 / 删除 / 切换 ---------- */
+
+async function loadCatalog(): Promise<void> {
+  try {
+    embedCatalog.value = await kbService.embedModels()
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : String(e))
+  }
+}
+
+function humanBytes(n: number): string {
+  if (n >= 1024 * 1024 * 1024) return `${(n / 1073741824).toFixed(2)} GB`
+  if (n >= 1024 * 1024) return `${(n / 1048576).toFixed(0)} MB`
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`
+  return `${n} B`
+}
+
+async function downloadModel(id: string): Promise<void> {
+  if (modelBusy.value) return
+  modelBusy.value = id
+  modelProgress.value = { id, file: '', pct: 0 }
+  try {
+    await kbService.embedModelDownload(id)
+    toast.toast('模型已就绪')
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : String(e))
+  } finally {
+    modelBusy.value = null
+    modelProgress.value = null
+    await loadCatalog()
+  }
+}
+
+async function cancelDownload(): Promise<void> {
+  const id = modelProgress.value?.id
+  if (!id) return
+  await kbService.embedModelCancel(id).catch(() => undefined)
+}
+
+async function removeModel(id: string): Promise<void> {
+  if (modelBusy.value) return
+  modelBusy.value = id
+  try {
+    const freed = await kbService.embedModelRemove(id)
+    toast.toast(`已删除，释放 ${humanBytes(freed)}`)
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : String(e))
+  } finally {
+    modelBusy.value = null
+    await loadCatalog()
+  }
+}
+
+/** 换本地模型：落库（后端会作废旧向量并按新模型重算） */
+async function pickModel(id: string): Promise<void> {
+  if (id === localModel.value || busy.value) return
+  localModel.value = id
+  await saveSettings(true)
+  await loadCatalog()
+  toast.toast('已切换本地模型，向量会在后台按新模型重算')
+}
+
+/* ---------- 自定义嵌入测试 ---------- */
+
+async function runEmbedTest(): Promise<void> {
+  if (!testLines.value.length) {
+    toast.toast('先写几行文本：第一行是查询，后面是候选')
+    return
+  }
+  if (mode.value === 'keyword' && !testModelA.value) {
+    toast.toast('当前是纯关键词模式：上面选一个本地模型再测（或先切到本地/云端模式）')
+    return
+  }
+  testRunning.value = true
+  testA.value = null
+  testB.value = null
+  try {
+    const base = { texts: testLines.value }
+    testA.value = await kbService.embedTest({
+      ...base,
+      localModel: testModelA.value || undefined,
+    })
+    if (testModelB.value) {
+      testB.value = await kbService.embedTest({
+        ...base,
+        localModel: testModelB.value,
+      })
+    }
+  } catch (e) {
+    toast.toast(e instanceof Error ? e.message : String(e))
+  } finally {
+    testRunning.value = false
+  }
+}
+
+/* ---------- 记忆整理辅助 ---------- */
+
+async function loadMemoryAudit(): Promise<void> {
+  try {
+    const [dups, diffs] = await Promise.all([
+      kbService.memoryDuplicates(undefined, 12),
+      kbService.memoryDiffs(5),
+    ])
+    duplicates.value = dups
+    memoryDiffs.value = diffs
+  } catch {
+    /* 审计是锦上添花，取不到就不显示 */
+  }
+}
+
+/** 审计条目的一句话描述（抽取/整理/维护都写在同一张表里） */
+function diffLabel(d: KbMemoryDiffEntry): string {
+  const p = d.payload
+  if (p.maintain) return `自动维护：检查 ${p.checked ?? 0} 条，归档 ${p.archived ?? 0} 条`
+  const parts: string[] = []
+  if (p.added) parts.push(`新增 ${p.added}`)
+  if (p.updated) parts.push(`更新 ${p.updated}`)
+  if (p.deleted) parts.push(`删除 ${p.deleted}`)
+  if (p.archived) parts.push(`归档 ${p.archived}`)
+  if (p.restored) parts.push(`复活 ${p.restored}`)
+  if (!parts.length) parts.push(`跳过 ${p.skipped ?? 0}`)
+  return `记忆变更（${p.candidates ?? 0} 条候选）：${parts.join(' · ')}`
 }
 
 /** 只刷新记忆区（记忆操作后调用；不必整页重来） */
@@ -155,13 +324,31 @@ function onIndexProgress(e: KbIndexEvent): void {
 
 onMounted(() => {
   void refresh().catch((e) => toast.toast(e instanceof Error ? e.message : String(e)))
+  void loadCatalog()
+  void loadMemoryAudit()
   void onKbIndexProgress(onIndexProgress).then((off) => {
     offIndex = off
+  })
+  void onKbModelProgress((e) => {
+    if (e.phase === 'error') {
+      modelProgress.value = null
+      if (e.message) toast.toast(e.message)
+      return
+    }
+    if (e.phase === 'done') {
+      modelProgress.value = null
+      return
+    }
+    const pct = e.total > 0 ? Math.min(100, Math.round((e.done / e.total) * 100)) : 0
+    modelProgress.value = { id: e.id, file: e.file, pct }
+  }).then((off) => {
+    offModel = off
   })
 })
 
 onBeforeUnmount(() => {
   offIndex?.()
+  offModel?.()
 })
 
 /** silent：开关/chips 这类即时生效的小改动不出声，别让「已保存」toast 打断操作节奏 */
@@ -170,6 +357,7 @@ async function saveSettings(silent = false): Promise<void> {
   try {
     const input: Record<string, unknown> = {
       embeddingMode: mode.value,
+      localModel: localModel.value,
       sourcesEnabled: sourceEnabled.value,
       autoMemory: autoMemory.value,
       autoConsolidate: autoConsolidate.value,
@@ -385,6 +573,7 @@ async function runMaintain(): Promise<void> {
   try {
     const r = await kbService.memoryMaintain()
     await refreshMemories()
+    await loadMemoryAudit()
     ai.invalidateCognitionCache()
     toast.toast(
       r.archived > 0
@@ -404,6 +593,7 @@ async function runConsolidate(): Promise<void> {
   try {
     const changed = await ai.consolidateMemoriesNow(true)
     await refreshMemories()
+    await loadMemoryAudit()
     toast.toast(changed > 0 ? `AI 已整理 ${changed} 处记忆` : '记忆库很健康，无需调整')
   } finally {
     consolidating.value = false
@@ -616,6 +806,31 @@ function requestCloseEditor(): void {
           title="还没有长期记忆"
           hint="默认会在每次会话结束时自动提炼。也可以直接对 AI 说「记住……」"
         />
+        <!-- 整理线索：疑似重复（本地向量算出，喂给 AI 整理当重点怀疑对象）+ 最近变更审计 -->
+        <div v-if="duplicates.length || memoryDiffs.length" class="audit">
+          <div v-if="duplicates.length" class="dup">
+            <button class="dup-head" @click="dupOpen = !dupOpen">
+              <Sparkles :size="13" />
+              <span>疑似重复 {{ duplicates.length }} 对</span>
+              <span class="dup-hint">{{ dupOpen ? '收起' : '看看' }}</span>
+            </button>
+            <ul v-show="dupOpen" class="dup-list">
+              <li v-for="d in duplicates" :key="`${d.aId}-${d.bId}`">
+                <span class="dup-score">{{ d.score.toFixed(2) }}</span>
+                <span class="dup-text">{{ d.aContent }}<br /><i>{{ d.bContent }}</i></span>
+              </li>
+            </ul>
+            <p v-if="dupOpen" class="hint">
+              点「AI 整理」会把它们当重点：能合的合并成一条，措辞更全的留下。
+            </p>
+          </div>
+          <div v-if="memoryDiffs.length" class="diffs">
+            <span class="diffs-head">最近整理</span>
+            <p v-for="d in memoryDiffs.slice(0, 3)" :key="d.at" class="diff-line">
+              <span class="mono">{{ d.at.slice(0, 16) }}</span> {{ diffLabel(d) }}
+            </p>
+          </div>
+        </div>
         <p v-if="visibleMemories.length" class="foot">
           记忆会随时间自然衰减：长期没被用到且显著性变低的条目会被自动归档（可在上方恢复）。
         </p>
@@ -735,6 +950,134 @@ function requestCloseEditor(): void {
           <button class="btn ghost" :disabled="busy" @click="rebuild">
             <RefreshCw :size="14" /> 重建索引
           </button>
+        </div>
+      </section>
+
+      <!-- 本地模型：多档可选、按需下载（换模型即重建向量） -->
+      <section v-if="mode === 'local'" class="set-block">
+        <div class="set-head">
+          <Cpu :size="15" />
+          <h3>本地模型</h3>
+          <span v-if="currentModel" class="chip">{{ currentModel.dim }} 维</span>
+        </div>
+        <p class="hint">
+          只有最小那颗模型编进安装包；更大的中文模型按需下载，可随时换、可删除。
+          换模型后旧向量会作废，后台会按新模型重算。
+        </p>
+        <ul class="models">
+          <li
+            v-for="m in embedCatalog?.models ?? []"
+            :key="m.id"
+            class="model"
+            :class="{ on: m.id === localModel }"
+          >
+            <button
+              class="model-main"
+              :disabled="!m.installed || Boolean(modelBusy)"
+              @click="pickModel(m.id)"
+            >
+              <span class="model-label">
+                {{ m.label }}
+                <i v-if="m.id === localModel" class="in-use">使用中</i>
+                <i v-else-if="!m.installed" class="need-dl">未下载</i>
+              </span>
+              <span class="model-note">{{ m.note }}</span>
+              <span class="model-meta">{{ m.dim }} 维 · {{ humanBytes(m.bytes) }}</span>
+            </button>
+            <div class="model-ops">
+              <button
+                v-if="!m.installed"
+                class="btn ghost tiny"
+                :disabled="Boolean(modelBusy)"
+                @click="downloadModel(m.id)"
+              >
+                <Download :size="13" /> 下载
+              </button>
+              <button
+                v-else-if="!m.bundled"
+                class="btn ghost tiny"
+                :disabled="m.id === localModel || Boolean(modelBusy)"
+                :title="m.id === localModel ? '正在使用中：先换一个模型再删' : '删除已下载的模型文件'"
+                @click="removeModel(m.id)"
+              >
+                <Trash2 :size="13" />
+              </button>
+              <span v-else class="chip">内置</span>
+            </div>
+          </li>
+        </ul>
+        <div v-if="modelProgress" class="dl">
+          <div class="dl-head">
+            <span>{{ modelProgress.file || '准备中' }} · {{ modelProgress.pct }}%</span>
+            <button class="link" @click="cancelDownload"><X :size="12" /> 取消</button>
+          </div>
+          <div class="bar"><i :style="{ transform: `scaleX(${modelProgress.pct / 100})` }" /></div>
+        </div>
+      </section>
+
+      <!-- 自定义嵌入测试：用自己的中文文本看维度 / 延迟 / 相似度排序 -->
+      <section class="set-block">
+        <div class="set-head">
+          <FlaskConical :size="15" />
+          <h3>自定义嵌入测试</h3>
+        </div>
+        <p class="hint">
+          一行一条：<b>第一行是查询</b>，其余当候选。可以另选一个模型对比同一批文本，再决定要不要换
+          （只测不存，不动当前设置）。
+        </p>
+        <textarea
+          v-model="testTexts"
+          rows="4"
+          class="test-input"
+          placeholder="膝盖疼怎么练腿&#10;膝关节不适时的腿部训练安排&#10;今天晚饭吃什么"
+        />
+        <div class="row">
+          <label class="test-pick">
+            <span>被测模型</span>
+            <select v-model="testModelA">
+              <option value="">当前模型</option>
+              <option v-for="m in embedCatalog?.models ?? []" :key="m.id" :value="m.id">
+                {{ m.label }}{{ m.installed ? '' : '（未下载）' }}
+              </option>
+            </select>
+          </label>
+          <label class="test-pick">
+            <span>对比模型（可选）</span>
+            <select v-model="testModelB">
+              <option value="">不比</option>
+              <option v-for="m in embedCatalog?.models ?? []" :key="m.id" :value="m.id">
+                {{ m.label }}{{ m.installed ? '' : '（未下载）' }}
+              </option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <button class="btn" :disabled="testRunning" @click="runEmbedTest">
+            <FlaskConical :size="14" /> {{ testRunning ? '测试中…' : '运行测试' }}
+          </button>
+          <span class="hint">当前模式：{{ modeLabel }}</span>
+        </div>
+
+        <div v-if="testA || testB" class="test-results">
+          <div v-for="(res, idx) in [testA, testB]" :key="idx" class="test-col">
+            <template v-if="res">
+              <p class="test-head">
+                <b>{{ idx === 0 ? '模型 A' : '模型 B' }}</b>
+                <span class="mono">{{ res.modelId }}</span>
+              </p>
+              <p class="test-meta">{{ res.dim }} 维 · 构建 {{ res.buildMs }}ms · 总 {{ res.totalMs }}ms</p>
+              <ol class="ranks">
+                <li v-for="r in res.ranking" :key="r.text">
+                  <span class="rank-score">{{ r.score.toFixed(3) }}</span>
+                  <span class="rank-bar">
+                    <i :style="{ transform: `scaleX(${Math.max(0, Math.min(1, r.score))})` }" />
+                  </span>
+                  <span class="rank-text">{{ r.text }}</span>
+                </li>
+              </ol>
+              <p class="hint">{{ res.note }}</p>
+            </template>
+          </div>
         </div>
       </section>
 
@@ -1281,6 +1624,246 @@ textarea {
   gap: 12px;
   font-size: var(--fs-footnote);
   color: var(--text-1);
+}
+
+/* 本地模型列表（设置抽屉） */
+.models {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+.model {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.model.on {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-soft);
+}
+.model-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  color: var(--text-1);
+  min-width: 0;
+}
+.model-main:disabled {
+  opacity: 0.6;
+}
+.model-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+}
+.model-label i {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+}
+.model-label .in-use {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.model-label .need-dl {
+  background: var(--surface-3, var(--surface-2));
+  color: var(--text-2);
+  border: 1px solid var(--line-strong);
+}
+.model-note {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.model-meta {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.model-ops {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.btn.tiny {
+  padding: 5px 9px;
+  font-size: var(--fs-caption);
+}
+.dl {
+  display: grid;
+  gap: 5px;
+}
+.dl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--fs-caption);
+  color: var(--accent);
+}
+
+/* 嵌入测试 */
+.test-input {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-footnote);
+  line-height: 1.6;
+  resize: vertical;
+}
+.test-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 140px;
+}
+.test-pick span {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.test-pick select {
+  padding: 7px 8px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-footnote);
+}
+.test-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.test-col {
+  display: grid;
+  gap: 4px;
+}
+.test-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-footnote);
+}
+.test-meta {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.ranks {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  list-style: none;
+}
+.ranks li {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  grid-template-areas: 'score bar' 'text text';
+  gap: 2px 8px;
+  align-items: center;
+}
+.rank-score {
+  grid-area: score;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.rank-bar {
+  grid-area: bar;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rank-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: 0 50%;
+}
+.rank-text {
+  grid-area: text;
+  font-size: var(--fs-caption);
+  color: var(--text-1);
+}
+.mono {
+  font-family: ui-monospace, monospace;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+/* 记忆卡：整理线索 */
+.audit {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.dup-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-size: var(--fs-caption);
+  color: var(--text-1);
+}
+.dup-hint {
+  margin-left: auto;
+  color: var(--accent);
+}
+.dup-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  list-style: none;
+}
+.dup-list li {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 8px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.dup-score {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.dup-text i {
+  color: var(--text-3);
+  font-style: normal;
+}
+.diffs {
+  display: grid;
+  gap: 3px;
+}
+.diffs-head {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.diff-line {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
 }
 
 /* 阅读抽屉 */

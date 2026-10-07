@@ -456,6 +456,8 @@ export const useAiStore = defineStore('ai', () => {
   let consolidating = false
   /** 上次检查时间：避免一次启动里反复查库。 */
   let lastConsolidateCheck = 0
+  /** 分批整理的游标（进程内保留）：大库下次从这里继续，尾部记忆也有机会被整理。 */
+  let consolidateCursor = 0
 
   /** SQLite 的 datetime('now') 是 UTC 的 `YYYY-MM-DD HH:MM:SS`，转成毫秒时间戳。 */
   function sqliteUtcMs(raw: string | null): number {
@@ -468,6 +470,10 @@ export const useAiStore = defineStore('ai', () => {
    * 跑一次整库记忆整理（合并重叠 / 统一分类 / 归档噪声 / 清理归档区）。
    * `force=true` 供 UI 手动触发，跳过开关与 24h 节流；返回实际改动的条数。
    * 全程静默：整理失败（模型不可用、网络失败）绝不能影响对话。
+   *
+   * **分批**：每批处理完立即落库，再取下一批（下一批看到的是整理后的库）。
+   * 单次最多 `CONSOLIDATE_MAX_BATCHES` 批，游标在进程内保留，下次从断点继续——
+   * 大库不会永远只整理头部。
    */
   async function consolidateMemoriesNow(force = false): Promise<number> {
     if (consolidating) return 0
@@ -484,20 +490,31 @@ export const useAiStore = defineStore('ai', () => {
         if (Date.now() - sqliteUtcMs(s.lastConsolidateAt) < CONSOLIDATE_MIN_INTERVAL_MS) return 0
       }
 
-      const memories = await kbService.memories(undefined, 'all')
-      const { consolidateMemories } = await import('@/ai/memoryConsolidate')
-      const candidates = await consolidateMemories({ config: cfg, memories })
-      if (candidates.length > 0) {
-        const r = await kbService.memoryApply(candidates)
-        invalidateCognitionCache()
-        const changed = r.added + r.updated + r.deleted + r.archived + r.restored
-        if (changed > 0 && force) toast.toast(`已整理 ${changed} 条长期记忆`)
-        // 无论有无变更都记一次：整库健康时不该被反复检查打扰
-        await kbService.memoryConsolidated()
-        return changed
+      const { consolidateMemories, CONSOLIDATE_MAX_BATCHES } = await import('@/ai/memoryConsolidate')
+      let changed = 0
+      for (let round = 0; round < CONSOLIDATE_MAX_BATCHES; round++) {
+        const memories = await kbService.memories(undefined, 'all')
+        // 疑似重复对：本地向量算，零模型成本；keyword 模式（无向量）返回空，自然降级
+        const duplicates = await kbService.memoryDuplicates(undefined, 30).catch(() => [])
+        const { candidates, size, nextOffset } = await consolidateMemories({
+          config: cfg,
+          memories,
+          duplicates,
+          offset: consolidateCursor,
+        })
+        consolidateCursor = nextOffset
+        if (candidates.length > 0) {
+          const r = await kbService.memoryApply(candidates)
+          invalidateCognitionCache()
+          changed += r.added + r.updated + r.deleted + r.archived + r.restored
+        }
+        // 一批就装下了（或本批没东西可动）→ 收工
+        if (size < memories.length) break
       }
+      if (changed > 0 && force) toast.toast(`已整理 ${changed} 条长期记忆`)
+      // 无论有无变更都记一次：整库健康时不该被反复检查打扰
       await kbService.memoryConsolidated()
-      return 0
+      return changed
     } catch {
       return 0
     } finally {

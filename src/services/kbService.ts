@@ -1,8 +1,14 @@
 /** 知识库域 IPC 封装 · 对应 modules/kb/commands.rs */
 
 import type {
+  KbArchiveListing,
+  KbArchiveReport,
   KbCognition,
   KbDocDetail,
+  KbEmbedCatalog,
+  KbEmbedModelInfo,
+  KbEmbedTestInput,
+  KbEmbedTestResult,
   KbFile,
   KbFileInput,
   KbFsMove,
@@ -14,13 +20,18 @@ import type {
   KbMedia,
   KbMediaInput,
   KbMemory,
+  KbMemoryDiffEntry,
+  KbMemoryDuplicate,
   KbMemoryScope,
   KbMemoryStats,
   KbMemoryType,
+  KbModelEvent,
   KbQuery,
   KbSettings,
   KbSettingsInput,
   KbStatus,
+  KbUsageCleanResult,
+  KbUsageReport,
   MemoryApplyResult,
   MemoryCandidate,
   MemoryMaintainResult,
@@ -133,6 +144,50 @@ export const kbService = {
   /** 取「系统提示词 + 用户记忆」注入块（前端带 TTL 缓存，不必每轮都取） */
   injection: () => invoke<KbInjection>('kb_injection_get', {}),
 
+  /* ---------- 压缩包（打开 / 解压） ---------- */
+
+  /** 打开压缩包：列出包内条目（不解压）。docId 用 glob 查 */
+  archiveList: (docId: number) => invoke<KbArchiveListing>('kb_archive_list', { docId }),
+
+  /** 解压进工作区：文本进检索、二进制落本体；同名自动让位 */
+  archiveExtract: (docId: number, toDir?: string, only?: string[]) =>
+    invoke<KbArchiveReport>('kb_archive_extract', { docId, toDir, only }),
+
+  /* ---------- 空间管理 ---------- */
+
+  /** 占用总览（文本 / 本体 / 索引 / 数据库 + 大文件榜 + 孤儿统计） */
+  usage: (top = 20) => invoke<KbUsageReport>('kb_usage', { top }),
+
+  /** 清理磁盘上无人引用的本体碎片（dryRun 只统计） */
+  usageClean: (dryRun = false) => invoke<KbUsageCleanResult>('kb_usage_clean', { dryRun }),
+
+  /* ---------- 本地嵌入模型（多档可选 / 按需下载） ---------- */
+
+  /** 可选模型目录 + 安装状态 + 当前选择 */
+  embedModels: () => invoke<KbEmbedCatalog>('kb_embed_models', {}),
+
+  /** 下载一个本地模型（进度走 kb://model 事件）；已安装则直接返回 */
+  embedModelDownload: (modelId: string) =>
+    invoke<KbEmbedModelInfo>('kb_embed_model_download', { modelId }),
+
+  /** 取消进行中的下载 */
+  embedModelCancel: (modelId: string) => invoke<void>('kb_embed_model_cancel', { modelId }),
+
+  /** 删除已下载的模型（当前正在用的会被拒绝），返回释放字节数 */
+  embedModelRemove: (modelId: string) => invoke<number>('kb_embed_model_remove', { modelId }),
+
+  /** 自定义嵌入测试：自己的文本 → 维度 / 延迟 / 相似度排序（可临时换模型对比） */
+  embedTest: (input: KbEmbedTestInput) => invoke<KbEmbedTestResult>('kb_embed_test', { input }),
+
+  /* ---------- 记忆整理：查重提示与审计 ---------- */
+
+  /** 疑似重复的记忆对（本地向量算余弦，零模型成本；keyword 模式返回空） */
+  memoryDuplicates: (threshold?: number, limit = 30) =>
+    invoke<KbMemoryDuplicate[]>('kb_memory_duplicates', { threshold, limit }),
+
+  /** 最近的记忆变更记录（抽取 / 整理 / 维护都写在同一张审计表） */
+  memoryDiffs: (limit = 5) => invoke<KbMemoryDiffEntry[]>('kb_memory_diffs', { limit }),
+
   /** 取喂给系统提示词的紧凑认知块 */
   cognition: () => invoke<KbCognition>('kb_cognition', {}),
 
@@ -166,4 +221,25 @@ export async function onKbIndexProgress(cb: (e: KbIndexEvent) => void): Promise<
   await bridgeIndexEvents()
   indexListeners.add(cb)
   return () => indexListeners.delete(cb)
+}
+
+/* ---------- 模型下载进度事件（kb://model，对应 Rust commands.rs 的 MODEL_EVENT） ---------- */
+
+const modelListeners = new Set<(e: KbModelEvent) => void>()
+let modelBridged = false
+
+async function bridgeModelEvents(): Promise<void> {
+  if (modelBridged) return
+  modelBridged = true
+  if (!isTauri) return
+  const { listen } = await import('@tauri-apps/api/event')
+  await listen<KbModelEvent>('kb://model', (e) => {
+    for (const l of modelListeners) l(e.payload)
+  })
+}
+
+export async function onKbModelProgress(cb: (e: KbModelEvent) => void): Promise<() => void> {
+  await bridgeModelEvents()
+  modelListeners.add(cb)
+  return () => modelListeners.delete(cb)
 }

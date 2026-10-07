@@ -14,6 +14,8 @@
 | 2 | 多模态文件 + 按需取原模态 + 不兼容时降级为文本 | ✅ | `kb_assets` + `assets.rs` 降级链 + `read_modal` 工具 + 文件管理器模态预览（超 16MB 只给元信息） |
 | 3 | AI 主动分类；系统提示词 + 用户记忆每会话全量注入；文本模态向量检索 | ✅ | `governance.rs`（move/mkdir/pin + 审计 + 防抖 + 保留区）+ `injection.rs`（12k 预算）+ 索引范围不变（只有文本/派生文本进向量） |
 | 4 | AI 页左上角文件按钮 → 自研文件管理器 | ✅ | `AIPage.vue` 页头 `#lead` 槽 → `/ai/files` → `FileLibraryPage.vue`（模态预览/钉住/归类/新建目录/导入，全部走 kb 命令，令牌化配色） |
+| 5 | 压缩包打开与解压（2026-10-07 增） | ✅ | `kb/archive.rs`（魔数识别 zip/tar/gz + zip-slip/体积/条目护栏）+ 文件管理器阅读器面板；解压产物文本进索引、二进制进模态层 |
+| 6 | 空间管理：大小总览 / 大文件排序 / 碎片回收（2026-10-07 增） | ✅ | `kb/usage.rs`（四本账：文本/本体/索引/数据库）+ 文件管理器根视图「空间总览」卡 + `workspace_usage` / `find_large_files` 工具（AI 只读，删除要用户确认） |
 
 ---
 
@@ -190,6 +192,9 @@
 | 命令 | `kb_injection_get` | 系统提示词 + 用户记忆块（带缓存） |
 | 工具 | `read_modal` / `write_modal` / `classify_move` / `pin_file` | 给模型 |
 | 工具 | `read_knowledge`（+ `modal` 参数） | 升级 |
+| 命令 | `kb_archive_list` / `kb_archive_extract` | 压缩包打开 / 解压进工作区（2026-10-07 增） |
+| 命令 | `kb_usage` / `kb_usage_clean` | 空间占用总览 / 清理孤儿本体碎片（2026-10-07 增） |
+| 工具 | `list_archive` / `extract_archive` / `workspace_usage` / `find_large_files` | 压缩包与空间管理（group=knowledge，常驻） |
 
 前后端三处同步（Rust commands / `kbService.ts` / `src/types`）按 ARCHITECTURE §3，漏一处 = 不可合并。
 

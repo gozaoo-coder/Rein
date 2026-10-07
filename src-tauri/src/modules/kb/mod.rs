@@ -11,15 +11,20 @@
 //! - `memory.rs`  长期记忆的增删改与 prompt 注入块
 //! - `files.rs`   真实文件（kb_files）：文本笔记 / 多模态节点 / 目录
 //! - `assets.rs`  模态层（kb_assets）：本体引用、转写状态与降级链（ai-workspace §2）
+//! - `archive.rs` 压缩包：列内容 + 解压进工作区（zip / tar / gz，含 zip-slip 与体积护栏）
+//! - `usage.rs`   空间管理：占用总览、大文件排序、孤儿本体清理
 //! - `governance.rs` 目录治理：保留区、分类移动、审计与撤销（§3.3）
 //! - `injection.rs` 全量注入区：系统提示词 + 用户记忆（§3.4）
 //! - `embed.rs`   三种 embedding 后端（本地 ORT / 云端 / 纯关键词）
+//! - `embed_models.rs` 本地模型注册表与按需下载（多档可选，见 docs/kb-embed-benchmark.md）
 //! - `worker.rs`  后台索引线程（消费脏队列、补算向量、上报进度）
 
+pub mod archive;
 pub mod assets;
 pub mod chunk;
 pub mod commands;
 pub mod embed;
+pub mod embed_models;
 pub mod files;
 pub mod governance;
 pub mod index;
@@ -29,4 +34,5 @@ pub mod models;
 pub mod search;
 pub mod settings;
 pub mod source;
+pub mod usage;
 pub mod worker;

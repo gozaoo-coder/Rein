@@ -45,6 +45,11 @@ tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
 tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 flate2 = "1"
+# 压缩包（modules/kb/archive）：zip + tar + gzip 解析。
+# zip 必须 default-features=false —— 默认会拖进 bzip2/zstd/aes 一串后端，
+# 其中 bzip2 是 C 代码（毒化 Android 交叉编译）；只留 deflate（flate2 rust_backend，纯 Rust）。
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
 uuid = { version = "1", features = ["v4"] }
 # 端侧 embedding（modules/kb，见 docs/kb-embed-benchmark.md）：
 # 必须 default-features = false —— ort 的默认 feature 含 download-binaries，与 load-dynamic 冲突；

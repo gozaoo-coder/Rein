@@ -49,6 +49,8 @@ export const KB_SOURCE_LABELS: Record<KbSourceType, string> = {
 
 export interface KbSettings {
   embeddingMode: KbEmbeddingMode
+  /** 本地嵌入模型 id（见 KbEmbedModelInfo；mode='local' 时生效） */
+  localModel: string
   cloudBaseUrl: string | null
   /** 只回尾四位，密钥不回传明文 */
   cloudApiKeyTail: string | null
@@ -67,6 +69,7 @@ export interface KbSettings {
 
 export interface KbSettingsInput {
   embeddingMode?: KbEmbeddingMode
+  localModel?: string
   cloudBaseUrl?: string
   cloudApiKey?: string
   cloudModel?: string
@@ -392,4 +395,182 @@ export interface KbMemoryStats {
 export interface KbCognition {
   memories: KbMemory[]
   text: string
+}
+
+/* ---------- 压缩包（kb/archive.rs） ---------- */
+
+export interface KbArchiveEntry {
+  path: string
+  size: number
+  packed: number
+  isDir: boolean
+  /** 解压时会作为可检索文本入库 */
+  text: boolean
+  /** 非空表示该条目会被跳过（附原因） */
+  skipped: string | null
+}
+
+export interface KbArchiveListing {
+  format: string
+  entries: KbArchiveEntry[]
+  /** 包内条目总数（可能大于 entries.length） */
+  total: number
+  totalBytes: number
+  packedBytes: number
+  truncated: boolean
+  notes: string[]
+}
+
+export interface KbArchiveItem {
+  id: number
+  path: string
+  bytes: number
+  /** text | binary */
+  kind: string
+}
+
+export interface KbArchiveReport {
+  format: string
+  target: string
+  extracted: KbArchiveItem[]
+  skipped: string[]
+  bytes: number
+  truncated: boolean
+  message: string
+}
+
+/* ---------- 空间管理（kb/usage.rs） ---------- */
+
+export interface KbUsageSlice {
+  name: string
+  bytes: number
+  count: number
+}
+
+export interface KbUsageFile {
+  id: number
+  path: string
+  kind: string
+  bytes: number
+  textBytes: number
+  assetBytes: number
+  updatedAt: string
+}
+
+export interface KbUsageReport {
+  totalBytes: number
+  textBytes: number
+  assetBytes: number
+  indexBytes: number
+  dbBytes: number
+  fileCount: number
+  docCount: number
+  assetCount: number
+  /** 按工作区一级目录 */
+  areas: KbUsageSlice[]
+  /** 按来源类型（索引口径） */
+  sources: KbUsageSlice[]
+  /** 按模态（本体口径） */
+  modals: KbUsageSlice[]
+  largest: KbUsageFile[]
+  orphanCount: number
+  orphanBytes: number
+  missingCount: number
+  summary: string
+}
+
+export interface KbUsageCleanResult {
+  removed: number
+  bytes: number
+  dryRun: boolean
+  message: string
+}
+
+/* ---------- 本地嵌入模型（kb/embed_models.rs） ---------- */
+
+export interface KbEmbedModelInfo {
+  id: string
+  label: string
+  /** light | standard | high | multi */
+  tier: string
+  dim: number
+  /** 注册表声明的下载体积 */
+  bytes: number
+  note: string
+  /** 编进二进制的默认模型（离线可用、不可删） */
+  bundled: boolean
+  installed: boolean
+  diskBytes: number
+  downloading: boolean
+}
+
+export interface KbEmbedCatalog {
+  models: KbEmbedModelInfo[]
+  current: string
+  mode: KbEmbeddingMode
+  /** 模型目录路径（排查用） */
+  dir: string
+}
+
+/** `kb://model` 事件载荷（下载进度） */
+export interface KbModelEvent {
+  id: string
+  /** model.onnx | tokenizer.json | ''（阶段事件） */
+  file: string
+  done: number
+  total: number
+  /** start | downloading | done | error */
+  phase: string
+  message?: string
+}
+
+/* ---------- 自定义嵌入测试（kb/embed.rs::test） ---------- */
+
+export interface KbEmbedTestVector {
+  text: string
+  dim: number
+  /** 前 8 维预览 */
+  preview: number[]
+  norm: number
+  ms: number
+}
+
+export interface KbEmbedTestRank {
+  text: string
+  score: number
+}
+
+export interface KbEmbedTestResult {
+  modelId: string
+  dim: number
+  vectors: KbEmbedTestVector[]
+  ranking: KbEmbedTestRank[]
+  buildMs: number
+  totalMs: number
+  note: string
+}
+
+export interface KbEmbedTestInput {
+  /** 第一段当查询，其余为候选 */
+  texts: string[]
+  /** 临时换本地模型对比（不落库） */
+  localModel?: string
+  /** 临时用云端端点测（不落库；apiKey 留空则用已保存的） */
+  cloud?: { baseUrl: string; apiKey?: string; model: string; dim?: number }
+}
+
+/* ---------- 记忆整理：查重提示与审计（kb/memory.rs） ---------- */
+
+export interface KbMemoryDuplicate {
+  aId: number
+  bId: number
+  score: number
+  aContent: string
+  bContent: string
+}
+
+export interface KbMemoryDiffEntry {
+  at: string
+  /** 变更计数（candidates/added/updated/deleted/archived/restored/skipped 或 maintain 记录） */
+  payload: Record<string, unknown>
 }

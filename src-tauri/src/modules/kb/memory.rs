@@ -46,6 +46,10 @@ const STALE_PRUNE_DAYS: f64 = 45.0;
 const ARCHIVE_REASON_DECAY: &str = "decay";
 /// 手动归档（UI 按钮）未给原因时的兜底标记。
 const ARCHIVE_REASON_MANUAL: &str = "manual";
+/// 查重的默认相似度阈值。低于它的一律不报——报多了模型反而会乱合并。
+pub const DUP_THRESHOLD_DEFAULT: f64 = 0.86;
+/// 查重参与的条数上限（O(n²) 的成对比较，400 条约 8 万对，够用且 30ms 内能算完）。
+const DUP_SCAN_LIMIT: i64 = 400;
 
 const COLS: &str = "id, mem_type, topic, category, content, confidence, active_count, source_chat_id, \
                     created_at, updated_at, last_used_at, archived_at, archived_reason";
@@ -443,6 +447,116 @@ pub fn maintain(conn: &Connection) -> Result<MemoryMaintainResult> {
     })
 }
 
+/// 一对疑似重复的记忆。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDuplicate {
+    pub a_id: i64,
+    pub b_id: i64,
+    /// 余弦相似度（向量已 L2 归一化，点积即余弦）
+    pub score: f64,
+    pub a_content: String,
+    pub b_content: String,
+}
+
+/// 用**已落库的向量**找疑似重复的记忆对，供整理器当「重点怀疑对象」。
+///
+/// 为什么值得单独做：整库整理靠模型读全量清单，模型对「哪两条在说同一件事」的判断
+/// 远不如向量稳（措辞不同、跨会话重复抽取是最常见的脏数据形态）。本地算一遍 n² 余弦
+/// 只要几十毫秒、零模型成本，把结果作为提示喂进去，合并的召回率和准确率都上来了。
+///
+/// 前提：本地/云端嵌入已跑过（keyword 模式没有向量，返回空表，调用方自然降级）。
+pub fn duplicate_pairs(
+    conn: &Connection,
+    model_id: Option<&str>,
+    threshold: f64,
+    limit: i64,
+) -> Result<Vec<MemoryDuplicate>> {
+    let Some(model_id) = model_id else {
+        return Ok(Vec::new());
+    };
+    // 每条记忆取首块向量（记忆短，几乎都只有一块）
+    let mut stmt = conn.prepare(
+        "SELECT d.source_id, m.content, v.vec, v.dim
+         FROM kb_docs d
+         JOIN kb_chunks c ON c.doc_id = d.id AND c.ord = 0
+         JOIN kb_vectors v ON v.chunk_id = c.id AND v.model_id = ?1
+         JOIN kb_memories m ON m.id = CAST(d.source_id AS INTEGER)
+         WHERE d.source_type = 'memory' AND m.archived_at IS NULL
+         ORDER BY m.id DESC LIMIT ?2",
+    )?;
+    let mut rows: Vec<(i64, String, Vec<f32>)> = Vec::new();
+    let mapped = stmt.query_map(rusqlite::params![model_id, DUP_SCAN_LIMIT], |r| {
+        let id: i64 = r.get::<_, String>(0)?.parse().unwrap_or(0);
+        let content: String = r.get(1)?;
+        let blob: Vec<u8> = r.get(2)?;
+        let dim: i64 = r.get(3)?;
+        Ok((id, content, (blob, dim)))
+    })?;
+    for row in mapped {
+        let (id, content, (blob, dim)) = row?;
+        if id == 0 || dim <= 0 || blob.len() < (dim as usize) * 4 {
+            continue;
+        }
+        let mut v = Vec::with_capacity(dim as usize);
+        for chunk in blob.chunks_exact(4).take(dim as usize) {
+            v.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+        rows.push((id, content, v));
+    }
+
+    let mut out: Vec<MemoryDuplicate> = Vec::new();
+    for i in 0..rows.len() {
+        for j in (i + 1)..rows.len() {
+            let (a_id, a_text, av) = &rows[i];
+            let (b_id, b_text, bv) = &rows[j];
+            if av.len() != bv.len() {
+                continue;
+            }
+            let score: f32 = av.iter().zip(bv).map(|(x, y)| x * y).sum();
+            if (score as f64) < threshold {
+                continue;
+            }
+            out.push(MemoryDuplicate {
+                // 对内定序（小 id 在前）：同一对不因扫描顺序不同而换个写法
+                a_id: (*a_id).min(*b_id),
+                b_id: (*a_id).max(*b_id),
+                score: ((score as f64) * 1000.0).round() / 1000.0,
+                a_content: a_text.chars().take(120).collect(),
+                b_content: b_text.chars().take(120).collect(),
+            });
+        }
+    }
+    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    if limit > 0 {
+        out.truncate(limit as usize);
+    }
+    Ok(out)
+}
+
+/// 最近几次记忆变更的审计记录（谁在什么时候动了多少条）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryDiffEntry {
+    pub at: String,
+    /// 变更计数（payload 里的字段原样透出，前端按需展示）
+    pub payload: serde_json::Value,
+}
+
+/// 读最近 N 条记忆变更审计（抽取、整理、维护都写在同一张表）。
+pub fn recent_diffs(conn: &Connection, limit: i64) -> Result<Vec<MemoryDiffEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT at, ops_json FROM kb_memory_diffs ORDER BY id DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit.clamp(1, 50)], |r| {
+        Ok(MemoryDiffEntry {
+            at: r.get(0)?,
+            payload: serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or(json!({})),
+        })
+    })?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 /// 显式的信噪比指标与记忆库概况（UI 面板与整理决策共用）。
 ///
 /// - `signal_ratio`（注入覆盖率）= 当前会被注入的条数 / 活跃条数：记忆库越大、这个数越低，
@@ -695,6 +809,69 @@ mod tests {
             1,
             "更新后应重新入索引队列"
         );
+    }
+
+    /// 查重：手工塞两条几乎同向的向量（不必真跑模型），该被算成疑似重复。
+    #[test]
+    fn duplicate_pairs_finds_near_identical_vectors() {
+        let conn = db();
+        apply(
+            &conn,
+            &[
+                cand("add", "constraint", "膝盖", "避免深蹲"),
+                cand("add", "constraint", "训练", "深蹲不宜过深，膝盖不舒服"),
+                cand("add", "preference", "饮食", "不喜欢香菜"),
+            ],
+            None,
+            &[],
+        )
+        .unwrap();
+        for id in [1i64, 2, 3] {
+            index::apply_one(&conn, "memory", &id.to_string()).unwrap();
+        }
+
+        // 三条首块向量：1↔2 几乎同向，3 与它们正交
+        let mk = |v: [f32; 3]| -> Vec<u8> {
+            let norm = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            v.iter().flat_map(|x| (x / norm).to_le_bytes()).collect()
+        };
+        let blobs = [mk([1.0, 0.05, 0.0]), mk([1.0, 0.0, 0.02]), mk([0.0, 0.0, 1.0])];
+        for (i, blob) in blobs.iter().enumerate() {
+            let chunk_id: i64 = conn
+                .query_row(
+                    "SELECT c.id FROM kb_chunks c JOIN kb_docs d ON d.id = c.doc_id
+                     WHERE d.source_type = 'memory' AND d.source_id = ?1 AND c.ord = 0",
+                    [(i + 1).to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            conn.execute(
+                "INSERT INTO kb_vectors(chunk_id, model_id, dim, vec, updated_at)
+                 VALUES (?1, 'test-model', 3, ?2, datetime('now'))",
+                rusqlite::params![chunk_id, blob],
+            )
+            .unwrap();
+        }
+
+        let pairs = duplicate_pairs(&conn, Some("test-model"), 0.9, 10).unwrap();
+        assert_eq!(pairs.len(), 1, "只有 1↔2 该被判为疑似重复：{pairs:?}");
+        assert_eq!((pairs[0].a_id, pairs[0].b_id), (1, 2));
+        assert!(pairs[0].score > 0.99);
+
+        // 阈值抬高到不可能达到的水平 → 空表（宁缺毋滥）
+        assert!(duplicate_pairs(&conn, Some("test-model"), 0.9999, 10).unwrap().is_empty());
+        // keyword 模式（没有 model_id）→ 空表，调用方自然降级
+        assert!(duplicate_pairs(&conn, None, 0.5, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn recent_diffs_exposes_audit_rows() {
+        let conn = db();
+        apply(&conn, &[cand("add", "preference", "饮食", "不吃辣")], Some("c1"), &[]).unwrap();
+        let rows = recent_diffs(&conn, 5).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].payload["added"], 1);
+        assert!(rows[0].payload["candidates"].is_number());
     }
 
     #[test]

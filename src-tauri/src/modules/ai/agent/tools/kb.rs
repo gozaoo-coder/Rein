@@ -193,6 +193,75 @@ pub fn make_folder() -> RegisteredTool {
     }
 }
 
+/* ---------- 压缩包（打开 / 解压） ---------- */
+
+pub fn list_archive() -> RegisteredTool {
+    RegisteredTool {
+        name: "list_archive",
+        group: "knowledge",
+        label: "打开压缩包",
+        description: "打开一个压缩包（zip / tar / tar.gz / 单个 gz），列出里面有什么文件、多大、压缩比。**先用它再决定解不解压**：用户说「这个包里是什么」「帮我看看压缩包」或需要确认内容时调用。参数 docId 用 glob_knowledge 查（压缩包必须是上传到工作区的文件）。解压用 extract_archive。",
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "number", "description": "压缩包文件的 docId（glob_knowledge 查）" }
+            },
+            "required": ["docId"]
+        }),
+    }
+}
+
+pub fn extract_archive() -> RegisteredTool {
+    RegisteredTool {
+        name: "extract_archive",
+        group: "knowledge",
+        label: "解压压缩包",
+        description: "把压缩包解压进工作区：文本文件（md/txt/csv/json/代码等）成为可检索的笔记，其它文件（图片/音频/文档/二进制）本体落盘、按需取用。**用户说「解压/展开/把里面文件拿出来」时调用**。默认落到「未分类数据/解压/包名/」下；同名目录自动让位，绝不覆盖既有文件。安全护栏：带 .. / 绝对路径的条目会被跳过，超过 300 个文件或 256 MB 会截断（返回里会说明）。解压完成后可以按内容把文件归类（classify_move）。",
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "docId": { "type": "number", "description": "压缩包文件的 docId（先 list_archive 看过再解）" },
+                "toDir": { "type": "string", "description": "落点目录（可选），如「笔记/课程资料」；不传则落「未分类数据/解压/{包名}」" },
+                "only": { "type": "array", "items": { "type": "string" }, "description": "只解压路径里包含这些子串的条目，如 [\"复习\", \"docx\"]；不传=全部" }
+            },
+            "required": ["docId"]
+        }),
+    }
+}
+
+/* ---------- 空间管理 ---------- */
+
+pub fn workspace_usage() -> RegisteredTool {
+    RegisteredTool {
+        name: "workspace_usage",
+        group: "knowledge",
+        label: "看工作区占用",
+        description: "看工作区（知识库 + 虚拟文件系统）的存储占用总览：总量、文本/本体/索引各占多少、按目录与来源的分布、最大的几个文件、有没有可清理的碎片。用户问「占了多大空间」「什么东西最占地方」「帮我看看存储」时调用。只读；清理要用户点确认，不要自己删。",
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "top": { "type": "number", "description": "大文件榜返回条数，默认 10，上限 50" }
+            }
+        }),
+    }
+}
+
+pub fn find_large_files() -> RegisteredTool {
+    RegisteredTool {
+        name: "find_large_files",
+        group: "knowledge",
+        label: "找大文件",
+        description: "按体积倒序列出工作区里的文件（文本节点 + 本体一起算），可按最小体积过滤。用户问「哪些文件最大」「帮我找占地方的文件」时用它；要整体占用面用 workspace_usage。",
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "limit": { "type": "number", "description": "返回条数，默认 15，上限 50" },
+                "minBytes": { "type": "number", "description": "只看大于这个字节数的文件（如 1048576 = 1 MB）" }
+            }
+        }),
+    }
+}
+
 pub fn list_memories() -> RegisteredTool {
     RegisteredTool {
         name: "list_memories",
@@ -307,6 +376,10 @@ pub async fn run(app: &tauri::AppHandle, name: &str, args: &Value) -> Option<Res
         "remember" => run_remember(app, args).await,
         "edit_memory" => run_edit_memory(app, args).await,
         "forget" => run_forget(app, args).await,
+        "list_archive" => run_list_archive(app, args).await,
+        "extract_archive" => run_extract_archive(app, args).await,
+        "workspace_usage" => run_workspace_usage(app, args).await,
+        "find_large_files" => run_find_large_files(app, args).await,
         _ => return None,
     })
 }
@@ -575,4 +648,141 @@ async fn run_forget(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
         return Err(ReinError::Message(format!("记忆不存在：id={id}（先用 list_memories 查 id）")));
     }
     Ok(json!({ "ok": true, "message": "已删除该条记忆" }))
+}
+
+/* ---------- 压缩包 ---------- */
+
+fn human_bytes(n: i64) -> String {
+    if n >= 1024 * 1024 * 1024 {
+        format!("{:.2} GB", n as f64 / 1073741824.0)
+    } else if n >= 1024 * 1024 {
+        format!("{:.1} MB", n as f64 / 1048576.0)
+    } else if n >= 1024 {
+        format!("{} KB", n / 1024)
+    } else {
+        format!("{n} B")
+    }
+}
+
+async fn run_list_archive(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
+    let doc_id = i64_arg(args, "docId")?;
+    let l = kb::kb_archive_list(app.clone(), app.state::<AppState>(), doc_id)?;
+    // 只回前 80 条给模型：压缩包动辄几百条，全塞进上下文是浪费
+    let shown: Vec<Value> = l
+        .entries
+        .iter()
+        .take(80)
+        .map(|e| {
+            json!({
+                "path": e.path,
+                "size": human_bytes(e.size),
+                "dir": e.is_dir,
+                "text": e.text,
+                "skipped": e.skipped,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "ok": true,
+        "format": l.format,
+        "total": l.total,
+        "totalBytes": l.total_bytes,
+        "packedBytes": l.packed_bytes,
+        "entries": shown,
+        "truncated": l.total > 80,
+        "notes": l.notes,
+        "hint": "要解压就用 extract_archive（可传 only 只取部分）；文本文件解压后会进检索。",
+    }))
+}
+
+async fn run_extract_archive(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
+    let doc_id = i64_arg(args, "docId")?;
+    let to_dir = args.get("toDir").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let only: Vec<String> = args
+        .get("only")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).map(str::to_string).collect())
+        .unwrap_or_default();
+    let r = kb::kb_archive_extract(
+        app.clone(),
+        app.state::<AppState>(),
+        app.state::<Arc<crate::modules::kb::worker::KbHub>>(),
+        doc_id,
+        to_dir,
+        Some(only),
+    )?;
+    let files: Vec<Value> = r
+        .extracted
+        .iter()
+        .take(60)
+        .map(|i| json!({ "id": i.id, "path": i.path, "bytes": i.bytes, "kind": i.kind }))
+        .collect();
+    Ok(json!({
+        "ok": true,
+        "target": r.target,
+        "count": r.extracted.len(),
+        "bytes": r.bytes,
+        "files": files,
+        "skipped": r.skipped.iter().take(20).collect::<Vec<_>>(),
+        "truncated": r.truncated,
+        "message": r.message,
+        "hint": "文本文件已进检索（可用 search_knowledge 搜到）；需要按内容整理就用 classify_move。",
+    }))
+}
+
+/* ---------- 空间管理 ---------- */
+
+async fn run_workspace_usage(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
+    let top = super::num_arg(args, "top", 10.0).clamp(0.0, 50.0) as i64;
+    let r = kb::kb_usage(app.clone(), app.state::<AppState>(), Some(top))?;
+    Ok(json!({
+        "ok": true,
+        "total": r.total_bytes,
+        "totalText": human_bytes(r.total_bytes),
+        "textBytes": r.text_bytes,
+        "assetBytes": r.asset_bytes,
+        "indexBytes": r.index_bytes,
+        "dbBytes": r.db_bytes,
+        "files": r.file_count,
+        "docs": r.doc_count,
+        "assets": r.asset_count,
+        "areas": r.areas.iter().take(10).map(|a| json!({
+            "name": a.name, "bytes": a.bytes, "human": human_bytes(a.bytes), "count": a.count
+        })).collect::<Vec<_>>(),
+        "sources": r.sources.iter().take(10).map(|a| json!({
+            "name": a.name, "bytes": a.bytes, "human": human_bytes(a.bytes), "count": a.count
+        })).collect::<Vec<_>>(),
+        "modals": r.modals.iter().map(|a| json!({
+            "name": a.name, "bytes": a.bytes, "human": human_bytes(a.bytes), "count": a.count
+        })).collect::<Vec<_>>(),
+        "largest": r.largest.iter().map(|f| json!({
+            "id": f.id, "path": f.path, "kind": f.kind,
+            "bytes": f.bytes, "human": human_bytes(f.bytes), "updatedAt": f.updated_at
+        })).collect::<Vec<_>>(),
+        "orphans": { "count": r.orphan_count, "bytes": r.orphan_bytes, "human": human_bytes(r.orphan_bytes) },
+        "missingAssets": r.missing_count,
+        "summary": r.summary,
+        "hint": "清理碎片要在文件管理器里由用户确认（本工具只读）。",
+    }))
+}
+
+async fn run_find_large_files(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
+    let limit = super::num_arg(args, "limit", 15.0).clamp(1.0, 50.0) as i64;
+    let min_bytes = super::num_arg(args, "minBytes", 0.0).max(0.0) as i64;
+    let r = kb::kb_usage(app.clone(), app.state::<AppState>(), Some(limit))?;
+    let items: Vec<Value> = r
+        .largest
+        .iter()
+        .filter(|f| f.bytes >= min_bytes)
+        .map(|f| json!({
+            "id": f.id, "path": f.path, "kind": f.kind,
+            "bytes": f.bytes, "human": human_bytes(f.bytes),
+            "textBytes": f.text_bytes, "assetBytes": f.asset_bytes, "updatedAt": f.updated_at
+        }))
+        .collect();
+    Ok(json!({
+        "total": items.len(),
+        "items": items,
+        "hint": "要删就先用 glob_knowledge 确认路径，再删除（用户明确要求时才删）。",
+    }))
 }

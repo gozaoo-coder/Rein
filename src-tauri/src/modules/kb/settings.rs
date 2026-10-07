@@ -8,7 +8,7 @@ use super::models::{
     KbSettings, KbSettingsInput, MODE_CLOUD, MODE_KEYWORD, MODE_LOCAL, SOURCE_TYPES,
 };
 
-const COLS: &str = "embedding_mode, cloud_base_url, cloud_api_key, cloud_model, cloud_dim, sources_enabled, \
+const COLS: &str = "embedding_mode, local_model, cloud_base_url, cloud_api_key, cloud_model, cloud_dim, sources_enabled, \
                      auto_memory, auto_consolidate, last_consolidate_at, last_error, updated_at";
 
 fn tail(secret: Option<&str>) -> Option<String> {
@@ -30,29 +30,31 @@ fn tail(secret: Option<&str>) -> Option<String> {
 
 /// 读取设置。apiKey 只回尾四位——与 AI 模型工具的做法一致，密钥不落前端明文。
 pub fn get(conn: &Connection) -> Result<KbSettings> {
-    let (mode, base_url, api_key, model, dim, sources, auto_memory, auto_consolidate, last_consolidate_at, last_error, updated_at) = conn
+    let (mode, local_model, base_url, api_key, model, dim, sources, auto_memory, auto_consolidate, last_consolidate_at, last_error, updated_at) = conn
         .query_row(
             &format!("SELECT {COLS} FROM kb_settings WHERE id = 1"),
             [],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
-                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, String>(1)?,
                     r.get::<_, Option<String>>(2)?,
                     r.get::<_, Option<String>>(3)?,
-                    r.get::<_, Option<i64>>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, i64>(6)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<i64>>(5)?,
+                    r.get::<_, String>(6)?,
                     r.get::<_, i64>(7)?,
-                    r.get::<_, Option<String>>(8)?,
+                    r.get::<_, i64>(8)?,
                     r.get::<_, Option<String>>(9)?,
-                    r.get::<_, String>(10)?,
+                    r.get::<_, Option<String>>(10)?,
+                    r.get::<_, String>(11)?,
                 ))
             },
         )?;
 
     Ok(KbSettings {
         embedding_mode: mode,
+        local_model,
         cloud_base_url: base_url,
         cloud_api_key_tail: tail(api_key.as_deref()),
         cloud_model: model,
@@ -78,6 +80,22 @@ pub fn update(conn: &Connection, input: &KbSettingsInput) -> Result<KbSettings> 
             "UPDATE kb_settings SET embedding_mode = ?1 WHERE id = 1",
             [mode],
         )?;
+    }
+    if let Some(v) = &input.local_model {
+        let id = v.trim();
+        if !id.is_empty() {
+            if super::embed_models::find(id).is_none() {
+                let known: Vec<&str> = super::embed_models::MODELS.iter().map(|m| m.id).collect();
+                return Err(crate::error::ReinError::Message(format!(
+                    "未知的本地模型：{id}（可选：{}）",
+                    known.join(" / ")
+                )));
+            }
+            conn.execute(
+                "UPDATE kb_settings SET local_model = ?1 WHERE id = 1",
+                [id],
+            )?;
+        }
     }
     if let Some(v) = &input.cloud_base_url {
         conn.execute(

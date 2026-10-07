@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  Archive,
   Brain,
   CalendarDays,
   Carrot,
@@ -15,6 +16,7 @@ import {
   FileVideo,
   Folder,
   FolderPlus,
+  HardDrive,
   Image as ImageIcon,
   Lock,
   MessagesSquare,
@@ -24,6 +26,7 @@ import {
   Paperclip,
   Pencil,
   Pin,
+  PackageOpen,
   PinOff,
   Scale,
   Search,
@@ -43,6 +46,8 @@ import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
 import {
   KB_SOURCE_LABELS,
+  type KbArchiveListing,
+  type KbArchiveReport,
   type KbChunk,
   type KbFile,
   type KbGlobHit,
@@ -50,6 +55,7 @@ import {
   type KbMedia,
   type KbModal,
   type KbSourceType,
+  type KbUsageReport,
 } from '@/types'
 
 /** 文件管理器（docs/ai-workspace.md §5）：虚拟文件系统的真实视图。
@@ -325,12 +331,114 @@ interface ReaderState {
   mediaBusy: boolean
   moveOpen: boolean
   moveTarget: string
+  /** 压缩包清单（打开后才有值）；null = 还没打开或不是压缩包 */
+  archive: KbArchiveListing | null
+  archiveErr: string
 }
 
 const reader = ref<ReaderState | null>(null)
 
 function baseName(path: string): string {
   return path.split('/').pop() ?? path
+}
+
+/* ---------- 空间总览（根视图顶部） ---------- */
+
+const usage = ref<KbUsageReport | null>(null)
+const usageOpen = ref(false)
+const cleaning = ref(false)
+const cleanConfirm = ref(false)
+
+async function loadUsage(): Promise<void> {
+  try {
+    usage.value = await kbService.usage(12)
+  } catch {
+    /* 总览是锦上添花：取不到就整块不显示，不打扰浏览 */
+    usage.value = null
+  }
+}
+
+async function cleanOrphans(): Promise<void> {
+  if (!cleanConfirm.value) {
+    cleanConfirm.value = true
+    return
+  }
+  cleaning.value = true
+  try {
+    const r = await kbService.usageClean(false)
+    toast.toast(r.removed > 0 ? r.message : '没有需要清理的碎片')
+    cleanConfirm.value = false
+    await loadUsage()
+  } catch (e) {
+    toast.toast(errMsg(e))
+  } finally {
+    cleaning.value = false
+  }
+}
+
+function humanBytes(n: number): string {
+  if (n >= 1024 * 1024 * 1024) return `${(n / 1073741824).toFixed(2)} GB`
+  if (n >= 1024 * 1024) return `${(n / 1048576).toFixed(1)} MB`
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`
+  return `${n} B`
+}
+
+/** 占用条：以最大项为满格（比按总量归一更能看出层级） */
+function areaPct(bytes: number): number {
+  const max = usage.value?.areas[0]?.bytes ?? 0
+  return max > 0 ? Math.max(2, Math.round((bytes / max) * 100)) : 0
+}
+
+/* ---------- 压缩包（zip / tar / gz） ---------- */
+
+const archiveBusy = ref(false)
+const archiveToDir = ref('')
+const archiveOnly = ref('')
+const archiveReport = ref<KbArchiveReport | null>(null)
+
+/** 是不是「可能能打开」的压缩包：按扩展名给出入口，真实格式由后端按魔数判 */
+const archiveCandidate = computed(() => /\.(zip|tar|gz|tgz)$/i.test(reader.value?.path ?? ''))
+
+async function openArchive(): Promise<void> {
+  const r = reader.value
+  if (!r || archiveBusy.value) return
+  archiveBusy.value = true
+  r.archiveErr = ''
+  try {
+    r.archive = await kbService.archiveList(r.docId)
+  } catch (e) {
+    r.archive = null
+    r.archiveErr = errMsg(e)
+  } finally {
+    archiveBusy.value = false
+  }
+}
+
+async function doExtract(): Promise<void> {
+  const r = reader.value
+  if (!r || archiveBusy.value) return
+  const only = archiveOnly.value
+    .split(/[,\n]/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+  archiveBusy.value = true
+  r.archiveErr = ''
+  try {
+    const rep = await kbService.archiveExtract(
+      r.docId,
+      archiveToDir.value.trim() || undefined,
+      only.length ? only : undefined,
+    )
+    archiveReport.value = rep
+    toast.toast(rep.message)
+    await refreshListing()
+    await loadUsage()
+  } catch (e) {
+    r.archiveErr = errMsg(e)
+    toast.toast(errMsg(e))
+  } finally {
+    archiveBusy.value = false
+  }
 }
 
 function kindIcon(kind: string) {
@@ -479,6 +587,9 @@ function applyFile(r: ReaderState, f: KbFile): void {
 }
 
 async function openDoc(docId: number): Promise<void> {
+  archiveReport.value = null
+  archiveToDir.value = ''
+  archiveOnly.value = ''
   try {
     const d = await kbService.read(docId, 'l2', 0, PAGE_CHUNKS)
     const r: ReaderState = {
@@ -507,6 +618,8 @@ async function openDoc(docId: number): Promise<void> {
       modalities: d.modalities,
       viewing: 'text',
       media: null,
+      archive: null,
+      archiveErr: '',
       mediaBusy: false,
       moveOpen: false,
       moveTarget: '',
@@ -654,6 +767,7 @@ async function doMove(target?: string): Promise<void> {
 
 onMounted(async () => {
   void loadDir('')
+  void loadUsage()
   try {
     // 空查询 = 按日期倒序浏览最近内容
     recent.value = await kbService.search({ query: '', limit: 8 })
@@ -708,6 +822,73 @@ onMounted(async () => {
           {{ modalLabel(m) }}
         </button>
         <span v-if="reader.mediaBusy" class="t-3 chip-busy">读取中…</span>
+      </div>
+
+      <!-- 压缩包：打开看内容 / 解压进工作区 -->
+      <div v-if="archiveCandidate" class="archive">
+        <div class="row actions">
+          <button class="btn ghost" :disabled="archiveBusy" @click="openArchive">
+            <PackageOpen :size="14" />
+            {{ reader.archive ? '重新读取' : '打开压缩包' }}
+          </button>
+          <span class="t-3 hint-inline">按内容真解压：文本会成为可检索的笔记</span>
+        </div>
+        <p v-if="reader.archiveErr" class="err"><AlertCircle :size="13" /> {{ reader.archiveErr }}</p>
+
+        <template v-if="reader.archive">
+          <div class="meta row">
+            <span class="pill">{{ reader.archive.format }}</span>
+            <span class="pill">{{ reader.archive.total }} 项</span>
+            <span class="pill">解压后 {{ humanBytes(reader.archive.totalBytes) }}</span>
+            <span v-if="reader.archive.packedBytes > 0" class="pill">
+              压缩包 {{ humanBytes(reader.archive.packedBytes) }}
+            </span>
+          </div>
+          <p v-for="n in reader.archive.notes" :key="n" class="t-3 hint-inline">{{ n }}</p>
+
+          <ul class="arc-list">
+            <li v-for="e in reader.archive.entries.slice(0, 80)" :key="e.path" :class="{ dim: e.isDir }">
+              <span class="arc-ic">
+                <Folder v-if="e.isDir" :size="13" class="fic dim" />
+                <FileText v-else-if="e.text" :size="13" class="fic" />
+                <Paperclip v-else :size="13" class="fic dim" />
+              </span>
+              <span class="arc-path">{{ e.path }}</span>
+              <span class="arc-size">{{ e.isDir ? '' : humanBytes(e.size) }}</span>
+              <span v-if="e.skipped" class="arc-skip" :title="e.skipped">跳过</span>
+            </li>
+          </ul>
+          <p v-if="reader.archive.total > 80" class="t-3 hint-inline">
+            只显示前 80 项（共 {{ reader.archive.total }} 项），解压仍按全部执行。
+          </p>
+
+          <div class="arc-extract">
+            <label class="arc-field">
+              <span>解压到（留空 = 未分类数据/解压/包名）</span>
+              <input v-model="archiveToDir" placeholder="笔记/课程资料" aria-label="解压目标目录">
+            </label>
+            <label class="arc-field">
+              <span>只解压路径包含（逗号分隔，留空 = 全部）</span>
+              <input v-model="archiveOnly" placeholder="复习, docx" aria-label="只解压匹配项">
+            </label>
+            <div class="row">
+              <button class="btn" :disabled="archiveBusy" @click="doExtract">
+                <Archive :size="14" /> {{ archiveBusy ? '处理中…' : '解压到工作区' }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="archiveReport" class="arc-report">
+            <p class="arc-ok">{{ archiveReport.message }}</p>
+            <ul>
+              <li v-for="f in archiveReport.extracted.slice(0, 12)" :key="f.id">
+                <button class="link" @click="openDoc(f.id)">{{ f.path }}</button>
+                <span class="t-3">{{ humanBytes(f.bytes) }}</span>
+              </li>
+            </ul>
+            <p v-for="n in archiveReport.skipped.slice(0, 5)" :key="n" class="t-3 hint-inline">{{ n }}</p>
+          </div>
+        </template>
       </div>
 
       <!-- 文本模态 -->
@@ -868,8 +1049,66 @@ onMounted(async () => {
         />
       </section>
 
-      <!-- 根目录：最近内容 + 命名空间 -->
+      <!-- 根目录：空间总览 + 最近内容 + 命名空间 -->
       <template v-else-if="!dir">
+        <!-- 空间总览：总量一句话 + 可展开的分布（大文件榜 / 目录占比 / 碎片清理） -->
+        <section v-if="usage" class="card usage">
+          <button class="usage-head" @click="usageOpen = !usageOpen">
+            <HardDrive :size="15" class="fic" />
+            <span class="flex-1">
+              <b>空间总览 · {{ humanBytes(usage.totalBytes) }}</b>
+              <small>
+                文本 {{ humanBytes(usage.textBytes) }} · 本体 {{ humanBytes(usage.assetBytes) }} · 索引
+                {{ humanBytes(usage.indexBytes) }} · {{ usage.fileCount }} 个文件
+              </small>
+            </span>
+            <ChevronRight :size="15" class="t-3" :class="{ rot: usageOpen }" />
+          </button>
+
+          <div v-show="usageOpen" class="usage-body">
+            <div class="usage-sec">
+              <h4>目录占用</h4>
+              <div v-for="a in usage.areas.slice(0, 8)" :key="a.name" class="ubar">
+                <span class="ubar-name">{{ a.name }}</span>
+                <span class="ubar-track"><i :style="{ transform: `scaleX(${areaPct(a.bytes) / 100})` }" /></span>
+                <span class="ubar-val">{{ humanBytes(a.bytes) }}</span>
+              </div>
+              <p v-if="!usage.areas.length" class="t-3 hint-inline">还没有内容</p>
+            </div>
+
+            <div class="usage-sec">
+              <h4>大文件（文本 + 本体）</h4>
+              <ul class="ubig">
+                <li v-for="f in usage.largest.slice(0, 6)" :key="f.id">
+                  <button class="link" @click="openDoc(f.id)">{{ f.path }}</button>
+                  <span class="t-3">{{ humanBytes(f.bytes) }}</span>
+                </li>
+              </ul>
+              <p v-if="!usage.largest.length" class="t-3 hint-inline">还没有文件</p>
+            </div>
+
+            <div class="usage-sec">
+              <h4>存储明细</h4>
+              <p class="t-3 hint-inline">
+                索引 {{ humanBytes(usage.indexBytes) }}（删源数据会自然缩回）· 数据库
+                {{ humanBytes(usage.dbBytes) }} · 本体 {{ usage.assetCount }} 个
+                <template v-if="usage.missingCount">
+                  · <span class="bad">{{ usage.missingCount }} 个本体文件丢失</span>
+                </template>
+              </p>
+              <div v-if="usage.orphanCount > 0" class="row orphans">
+                <span class="flex-1">
+                  发现 {{ usage.orphanCount }} 个没人引用的本体碎片（{{ humanBytes(usage.orphanBytes) }}）
+                </span>
+                <button class="btn ghost tiny" :class="{ danger: cleanConfirm }" :disabled="cleaning" @click="cleanOrphans">
+                  <Trash2 :size="13" /> {{ cleaning ? '清理中…' : cleanConfirm ? '确认清理?' : '清理' }}
+                </button>
+              </div>
+              <p v-else class="t-3 hint-inline">没有发现可回收的碎片。</p>
+            </div>
+          </div>
+        </section>
+
         <section class="card list list-recent">
           <h3 class="sec">最近内容</h3>
           <ul v-if="recent.length">
@@ -1218,6 +1457,198 @@ li + li .item {
 }
 
 /* 模态 chips */
+.hint-inline {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+.rot {
+  transform: rotate(90deg);
+}
+
+/* 空间总览 */
+.usage {
+  display: grid;
+  gap: 0;
+  padding: 10px 12px;
+}
+.usage-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  color: var(--text-1);
+}
+.usage-head b {
+  display: block;
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+}
+.usage-head small {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.usage-head .rot {
+  transition: transform 0.2s var(--ease-standard);
+}
+.usage-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.usage-sec {
+  display: grid;
+  gap: 5px;
+}
+.usage-sec h4 {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  font-weight: 600;
+}
+.ubar {
+  display: grid;
+  grid-template-columns: 68px 1fr 62px;
+  gap: 8px;
+  align-items: center;
+  font-size: var(--fs-caption);
+  color: var(--text-1);
+}
+.ubar-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ubar-track {
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.ubar-track i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: 0 50%;
+}
+.ubar-val {
+  text-align: right;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.ubig {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+}
+.ubig li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-caption);
+}
+.ubig .link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.orphans {
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  font-size: var(--fs-caption);
+  color: var(--text-1);
+}
+.bad {
+  color: var(--danger);
+}
+
+/* 压缩包面板 */
+.archive {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+.arc-list {
+  display: grid;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+  list-style: none;
+  font-size: var(--fs-caption);
+}
+.arc-list li {
+  display: grid;
+  grid-template-columns: 18px 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  color: var(--text-1);
+}
+.arc-list li.dim {
+  color: var(--text-2);
+}
+.arc-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: var(--fs-micro);
+}
+.arc-size {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.arc-skip {
+  color: var(--danger);
+  font-size: var(--fs-micro);
+}
+.arc-extract {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.arc-field {
+  display: grid;
+  gap: 3px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+.arc-field input {
+  padding: 7px 9px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--text-1);
+  font-size: var(--fs-footnote);
+}
+.arc-report {
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-caption);
+}
+.arc-ok {
+  color: var(--accent);
+}
+.arc-report ul {
+  display: grid;
+  gap: 3px;
+  list-style: none;
+}
+.arc-report li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .modals {
   gap: 6px;
   margin-top: 12px;

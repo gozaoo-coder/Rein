@@ -105,6 +105,8 @@ pub const MODE_CLOUD: &str = "cloud";
 #[serde(rename_all = "camelCase")]
 pub struct KbSettings {
     pub embedding_mode: String,
+    /// 本地嵌入模型 id（注册表 embed_models::MODELS；mode=local 时生效）
+    pub local_model: String,
     pub cloud_base_url: Option<String>,
     pub cloud_api_key_tail: Option<String>,
     pub cloud_model: Option<String>,
@@ -125,6 +127,7 @@ pub struct KbSettings {
 #[serde(rename_all = "camelCase")]
 pub struct KbSettingsInput {
     pub embedding_mode: Option<String>,
+    pub local_model: Option<String>,
     pub cloud_base_url: Option<String>,
     pub cloud_api_key: Option<String>,
     pub cloud_model: Option<String>,

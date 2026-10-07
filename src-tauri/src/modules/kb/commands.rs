@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::OptionalExtension;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{ReinError, Result};
 use crate::state::AppState;
@@ -14,10 +14,14 @@ use super::models::{
     KbChunk, KbCognition, KbDocDetail, KbFile, KbFileInput, KbFsMove, KbFsMoveResult, KbGlobHit,
     KbHit, KbInjection, KbMedia, KbMediaInput, KbMemory, KbMemoryStats, KbQuery, KbSettings,
     KbSettingsInput, KbStatus, MemoryApplyResult, MemoryCandidate, MemoryMaintainResult,
-    MODE_KEYWORD,
+    MODE_KEYWORD, MODE_LOCAL,
 };
+use super::embed::Embedder;
 use super::worker::{self, KbHub};
-use super::{assets, chunk, embed, files, governance, index, injection, memory, search, settings};
+use super::{
+    archive, assets, chunk, embed, embed_models, files, governance, index, injection, memory,
+    search, settings, usage,
+};
 
 /// 检索前的刷新预算。嵌入是毫秒级，正常一轮就够；超时也不阻塞工具调用。
 const REFRESH_BUDGET: Duration = Duration::from_millis(1500);
@@ -344,7 +348,8 @@ pub fn kb_settings_get(state: State<AppState>) -> Result<KbSettings> {
     settings::get(&conn)
 }
 
-/// 改设置。模式变化会清空向量，让下一轮索引按新模型重算。
+/// 改设置。**嵌入身份（模式 / 本地模型 / 云端模型）变了就清空向量**，
+/// 让下一轮索引按新模型重算。
 #[tauri::command]
 pub fn kb_settings_set(
     state: State<AppState>,
@@ -353,17 +358,18 @@ pub fn kb_settings_set(
 ) -> Result<KbSettings> {
     let out = {
         let conn = state.db.lock();
-        let before = settings::get(&conn)?.embedding_mode;
-        let after = settings::update(&conn, &input)?;
-        if before != after.embedding_mode {
-            // 换模式就作废旧向量：留着会让旧模型的向量被当成新模型的复用，检索结果静默错乱。
+        let before = embed::identity(&embed::resolve_config(&conn)?);
+        let after_settings = settings::update(&conn, &input)?;
+        let after = embed::identity(&embed::resolve_config(&conn)?);
+        if before != after {
+            // 换模型＝换向量空间：留着会让旧模型的向量被当成新模型的复用，检索结果静默错乱。
             // 清空后 chunks_needing_vectors 自然会把所有块重新入列，无需额外标记。
             index::clear_vectors(&conn, None)?;
         }
-        after
+        after_settings
     };
 
-    // 模式变了要丢掉缓存的 embedder，让下次用新配置重建
+    // 身份变了要丢掉缓存的 embedder，让下次用新配置重建
     hub.release_embedder();
     hub.notify();
     Ok(out)
@@ -397,6 +403,288 @@ pub fn kb_rebuild_vectors(state: State<AppState>, hub: State<'_, Arc<KbHub>>) ->
     hub.release_embedder();
     hub.notify();
     Ok(cleared)
+}
+
+/* ---------- 本地嵌入模型（可选 / 可下载） ---------- */
+
+/// 可选的本地嵌入模型目录 + 安装状态。
+#[tauri::command]
+pub fn kb_embed_models(app: AppHandle, state: State<AppState>) -> Result<embed_models::EmbedCatalog> {
+    let root = data_root(&app)?;
+    let conn = state.db.lock();
+    let s = settings::get(&conn)?;
+    Ok(embed_models::catalog(&root, &s.local_model, &s.embedding_mode))
+}
+
+/// 下载一个本地模型（两个文件；进度走 `kb://model` 事件）。已安装则直接返回。
+#[tauri::command]
+pub async fn kb_embed_model_download(
+    app: AppHandle,
+    hub: State<'_, Arc<KbHub>>,
+    state: State<'_, AppState>,
+    model_id: String,
+) -> Result<embed_models::EmbedModelInfo> {
+    const MODEL_EVENT: &str = "kb://model";
+    let model = embed_models::find(&model_id)
+        .ok_or_else(|| ReinError::Message(format!("未知的本地模型：{model_id}")))?;
+    let root = data_root(&app)?;
+
+    // 已经装好就直接回状态（重复点按钮不该重新下一遍）
+    if embed_models::is_installed(&root, model) {
+        let conn = state.db.lock();
+        let s = settings::get(&conn)?;
+        let cat = embed_models::catalog(&root, &s.local_model, &s.embedding_mode);
+        return Ok(cat
+            .models
+            .into_iter()
+            .find(|m| m.id == model_id)
+            .expect("注册表里的模型必然在目录里"));
+    }
+
+    // 下载是长阻塞 IO：放阻塞线程池，期间照常发进度事件
+    let app_ev = app.clone();
+    let id_ev = model_id.clone();
+    let root_dl = root.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        let _ = app_ev.emit(
+            MODEL_EVENT,
+            serde_json::json!({ "id": id_ev, "file": "", "done": 0, "total": 0, "phase": "start" }),
+        );
+        let res = embed_models::download(&root_dl, model, &mut |file, done, total| {
+            // 进度事件按 1% 粒度节流：64 KB 一块会把事件刷爆
+            let _ = app_ev.emit(
+                MODEL_EVENT,
+                serde_json::json!({
+                    "id": id_ev, "file": file, "done": done, "total": total, "phase": "downloading"
+                }),
+            );
+        });
+        (res, model, root_dl)
+    })
+    .await
+    .map_err(|e| ReinError::Message(format!("下载任务异常终止：{e}")))?;
+
+    let (res, model, root) = out;
+    match res {
+        Ok(_) => {
+            // 装完就自检一次：加载 + 真跑一段中文，跑不通就回滚，
+            // 不让一个坏模型留在磁盘上等着在检索时炸。
+            let probe = match embed::LocalEmbedder::new(&root, model) {
+                Ok(e) => e.probe().map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            match probe {
+                Ok(dim) => {
+                    let conn = state.db.lock();
+                    let s = settings::get(&conn)?;
+                    let cat = embed_models::catalog(&root, &s.local_model, &s.embedding_mode);
+                    hub.notify();
+                    let _ = app.emit(
+                        MODEL_EVENT,
+                        serde_json::json!({ "id": model_id, "file": "", "done": dim, "total": dim, "phase": "done" }),
+                    );
+                    Ok(cat
+                        .models
+                        .into_iter()
+                        .find(|m| m.id == model_id)
+                        .expect("注册表里的模型必然在目录里"))
+                }
+                Err(e) => {
+                    let _ = embed_models::remove(&root, model);
+                    let _ = app.emit(
+                        MODEL_EVENT,
+                        serde_json::json!({ "id": model_id, "phase": "error", "message": e.to_string() }),
+                    );
+                    Err(ReinError::Message(format!(
+                        "模型装好了但自检失败，已回滚：{e}"
+                    )))
+                }
+            }
+        }
+        Err(e) => {
+            let _ = app.emit(
+                MODEL_EVENT,
+                serde_json::json!({ "id": model_id, "phase": "error", "message": e.to_string() }),
+            );
+            Err(e)
+        }
+    }
+}
+
+/// 取消一个进行中的下载（下载循环在分块之间检查）。
+#[tauri::command]
+pub fn kb_embed_model_cancel(model_id: String) -> Result<()> {
+    embed_models::request_cancel(&model_id);
+    Ok(())
+}
+
+/// 删除一个已下载的本地模型（释放磁盘）。当前正在用的模型拒绝删除。
+#[tauri::command]
+pub fn kb_embed_model_remove(
+    app: AppHandle,
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+    model_id: String,
+) -> Result<i64> {
+    let model = embed_models::find(&model_id)
+        .ok_or_else(|| ReinError::Message(format!("未知的本地模型：{model_id}")))?;
+    let root = data_root(&app)?;
+    let freed = {
+        let conn = state.db.lock();
+        let s = settings::get(&conn)?;
+        if s.embedding_mode == MODE_LOCAL && s.local_model == model_id {
+            return Err(ReinError::Message(
+                "该模型正在使用中：先把检索模式换成别的模型（或纯关键词），再回来删除".into(),
+            ));
+        }
+        embed_models::remove(&root, model)?
+    };
+    hub.notify();
+    Ok(freed as i64)
+}
+
+/// 自定义嵌入测试：拿自己的文本看维度、延迟与相似度排序。
+/// 可临时指定本地模型或云端端点（先测后存），不落库。
+#[tauri::command]
+pub fn kb_embed_test(
+    app: AppHandle,
+    state: State<AppState>,
+    input: embed::EmbedTestInput,
+) -> Result<embed::EmbedTestResult> {
+    let root = data_root(&app)?;
+    let cfg = {
+        let conn = state.db.lock();
+        embed::resolve_config(&conn)?
+    };
+    embed::test(&cfg, &root, &input)
+}
+
+/* ---------- 压缩包 ---------- */
+
+/// 取一个「压缩包」文件节点的原始字节（上传的文件 / 之前解压出来的包）。
+///
+/// 只认 note 来源的多模态节点；其它来源（日程附件、语音本体）给可读的理由，
+/// 而不是一个含糊的「读不到」。
+fn archive_source(conn: &rusqlite::Connection, root: &PathBuf, doc_id: i64) -> Result<(Vec<u8>, String)> {
+    let row: Option<(String, String, String, String, String)> = conn
+        .query_row(
+            "SELECT source_type, source_id, path, title, kind FROM kb_docs WHERE id = ?1",
+            [doc_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()?;
+    let Some((source_type, source_id, path, title, _kind)) = row else {
+        return Err(ReinError::Message(format!(
+            "知识库条目不存在：id={doc_id}（先用 glob_knowledge 查 id）"
+        )));
+    };
+    if source_type != "note" {
+        return Err(ReinError::Message(format!(
+            "「{title}」来自 {source_type} 源（不是工作区文件），不能当压缩包打开。\
+             先把压缩包上传到文件管理器，再用它的 id 调本工具。"
+        )));
+    }
+    let file_id: i64 = source_id
+        .parse()
+        .map_err(|_| ReinError::Message("该条目的文件 id 不合法".into()))?;
+    // 本体：优先 binary（zip 等），其次 image/audio/video（用户可能改了扩展名）
+    let asset: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT modal, storage, ref FROM kb_assets \
+             WHERE file_id = ?1 AND modal != 'text' ORDER BY (modal = 'binary') DESC, id LIMIT 1",
+            [file_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    let Some((modal, storage, ref_)) = asset else {
+        return Err(ReinError::Message(format!(
+            "「{path}」没有可读的本体（只有文本模态），不是压缩包"
+        )));
+    };
+    let bytes = if storage == "fs" {
+        std::fs::read(root.join(&ref_)).map_err(|e| {
+            ReinError::Message(format!("读取本体失败（{modal}）：{e}（文件可能已被移动）"))
+        })?
+    } else {
+        base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            ref_.trim(),
+        )
+        .map_err(|e| ReinError::Message(format!("本体不是合法 base64：{e}")))?
+    };
+    Ok((bytes, path))
+}
+
+/// 打开一个压缩包：列出内容（不解压）。
+#[tauri::command]
+pub fn kb_archive_list(app: AppHandle, state: State<AppState>, doc_id: i64) -> Result<archive::KbArchiveListing> {
+    let root = data_root(&app)?;
+    let conn = state.db.lock();
+    let (bytes, path) = archive_source(&conn, &root, doc_id)?;
+    let name = path.rsplit('/').next().unwrap_or("压缩包").to_string();
+    archive::list(&bytes, &name)
+}
+
+/// 解压一个压缩包进工作区（文本进检索，二进制落本体）。
+#[tauri::command]
+pub fn kb_archive_extract(
+    app: AppHandle,
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+    doc_id: i64,
+    to_dir: Option<String>,
+    only: Option<Vec<String>>,
+) -> Result<archive::KbArchiveReport> {
+    let root = data_root(&app)?;
+    let report = {
+        let conn = state.db.lock();
+        let (bytes, path) = archive_source(&conn, &root, doc_id)?;
+        let name = path.rsplit('/').next().unwrap_or("压缩包").to_string();
+        archive::extract(
+            &conn,
+            &root,
+            &bytes,
+            &name,
+            &archive::ExtractOptions {
+                to_dir,
+                only: only.unwrap_or_default(),
+            },
+        )?
+    };
+    // 解压出来的文本要尽快可检索
+    hub.notify();
+    Ok(report)
+}
+
+/* ---------- 空间管理 ---------- */
+
+/// 工作区占用总览（含大文件榜与孤儿统计）。
+#[tauri::command]
+pub fn kb_usage(app: AppHandle, state: State<AppState>, top: Option<i64>) -> Result<usage::KbUsageReport> {
+    let root = data_root(&app)?;
+    let conn = state.db.lock();
+    usage::report(
+        &conn,
+        &root,
+        top.unwrap_or(usage::TOP_DEFAULT).clamp(0, usage::TOP_MAX),
+    )
+}
+
+/// 清理磁盘上无人引用的本体碎片（`dry_run=true` 只统计）。
+#[tauri::command]
+pub fn kb_usage_clean(
+    app: AppHandle,
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+    dry_run: Option<bool>,
+) -> Result<usage::KbUsageCleanResult> {
+    let root = data_root(&app)?;
+    let out = {
+        let conn = state.db.lock();
+        usage::clean_orphans(&conn, &root, dry_run.unwrap_or(false))?
+    };
+    hub.notify();
+    Ok(out)
 }
 
 /* ---------- 记忆层 ---------- */
@@ -520,6 +808,32 @@ pub fn kb_cognition(state: State<AppState>) -> Result<KbCognition> {
 pub fn kb_memory_bump(state: State<AppState>, ids: Vec<i64>) -> Result<()> {
     let conn = state.db.lock();
     memory::bump_active(&conn, &ids)
+}
+
+/// 疑似重复的记忆对（用已落库的向量算余弦，本地零模型成本）。
+/// 整理器把它当「重点怀疑对象」喂给模型；keyword 模式（无向量）返回空表。
+#[tauri::command]
+pub fn kb_memory_duplicates(
+    state: State<AppState>,
+    threshold: Option<f64>,
+    limit: Option<i64>,
+) -> Result<Vec<memory::MemoryDuplicate>> {
+    let conn = state.db.lock();
+    let cfg = embed::resolve_config(&conn)?;
+    let model_id = embed::model_id_of(&cfg);
+    memory::duplicate_pairs(
+        &conn,
+        model_id.as_deref(),
+        threshold.unwrap_or(memory::DUP_THRESHOLD_DEFAULT).clamp(0.5, 0.99),
+        limit.unwrap_or(30),
+    )
+}
+
+/// 最近的记忆变更记录（抽取 / 整理 / 维护都写在同一张审计表）。
+#[tauri::command]
+pub fn kb_memory_diffs(state: State<AppState>, limit: Option<i64>) -> Result<Vec<memory::MemoryDiffEntry>> {
+    let conn = state.db.lock();
+    memory::recent_diffs(&conn, limit.unwrap_or(5))
 }
 
 /* ---------- 虚拟文件系统（glob / 真实文件） ---------- */

@@ -277,8 +277,13 @@ pub fn health_sync_step(
                 // 这一步之后 report 里已经有 imported/updated/removed/scanned
                 let (counts, metrics_imported) = {
                     let conn = state.db.lock();
-                    let counts = apply_pull(&conn, &payload, pending.max_hr)?;
-                    let metrics = apply_metrics(&conn, &payload.metrics)?;
+                    // 入库是「清镜像 + 几百行 upsert + 回收删除」的批量写。不开事务时
+                    // 每条语句各自提交（各写一次 WAL），90 天窗口下就是几百次提交；
+                    // 而且中途失败会把镜像留在「已清空、未填满」的半截状态。
+                    let tx = conn.unchecked_transaction()?;
+                    let counts = apply_pull(&tx, &payload, pending.max_hr)?;
+                    let metrics = apply_metrics(&tx, &payload.metrics)?;
+                    tx.commit()?;
                     (counts, metrics)
                 };
                 pending.report.imported = counts.imported;

@@ -6,8 +6,9 @@
  *
  * 职责：
  * - 订阅 `ai://agent` 事件（按 runId 认领，含认领前缓冲），把内核事件翻译成入口消费的事件流；
- * - **工具执行仍在 TS 侧**（过渡期 + session 域常驻）：收到 `toolStarted` 就跑
- *   注册表里的工具，把结果经 `ai_agent_tool_result` 送回内核；
+ * - **工具执行分两路**：`toolStarted.kernel:true` 的工具已迁移进 Rust 注册表，
+ *   由内核自己执行（壳只把结果翻译成 `tool_execution_end`）；`kernel:false` 的仍在
+ *   TS 侧跑注册表工具，把结果经 `ai_agent_tool_result` 送回内核（session 域常驻）；
  * - `load_tools` 动态装载：执行完装载工具后调用 `prepareNextTurnWithContext`
  *   取新的提示词与工具清单，先 `ai_agent_update_context` 再回传结果，
  *   保证内核下一步用上新上下文（「先更新后回传」保证顺序确定）。
@@ -179,8 +180,23 @@ export class RustAgent {
         // 新一步开始：文本/思考从头计（工具后模型重新输出答复）
         this.acc.onStepBoundary()
         this.emit({ type: 'tool_execution_start', toolName: e.name, args: e.args })
-        void this.runTool(e.callId, e.name, e.args)
+        // 内核工具（Rust 注册表）在 Rust 侧执行：这里**不能**再跑一遍 TS 工具，
+        // 否则同一次副作用做两遍、还多付一次往返 IPC（结果会被桥接层按「早到」丢弃）。
+        if (!e.kernel) void this.runTool(e.callId, e.name, e.args)
         break
+      case 'toolCompleted': {
+        // 内核工具的结果从内核回传（桥接工具的结果由 runTool 上报，跳过避免重复）
+        if (!e.kernel) break
+        const outcome: AgentToolOutcome = { content: e.content, isError: e.isError }
+        this.acc.pushToolResult(e.name, outcome)
+        this.emit({
+          type: 'tool_execution_end',
+          toolName: e.name,
+          isError: e.isError,
+          result: { content: blocksFromOutcome(outcome) },
+        })
+        break
+      }
       case 'usage':
         this.usage = e.usage
         break

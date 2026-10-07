@@ -48,8 +48,8 @@ pub struct KbHub {
     indexing: Arc<AtomicBool>,
     /// 供 AI 检索路径同步取用的 embedder。`None` 表示当前无需向量（keyword 模式或未就绪）。
     embedder: Arc<Mutex<Option<Arc<dyn Embedder>>>>,
-    /// 构建 embedder 时的模式，用于识别「设置换了」而重建。
-    built_mode: Arc<Mutex<String>>,
+    /// 构建 embedder 时的身份指纹（模式 + 本地模型 + 云端模型），变了就重建。
+    built_key: Arc<Mutex<String>>,
     data_dir: PathBuf,
     /// 待处理的脏标记数，供 status 快速读取（避免每次都查库）。
     pending: Arc<AtomicI64>,
@@ -67,7 +67,7 @@ impl KbHub {
             })),
             indexing: Arc::new(AtomicBool::new(false)),
             embedder: Arc::new(Mutex::new(None)),
-            built_mode: Arc::new(Mutex::new(String::new())),
+            built_key: Arc::new(Mutex::new(String::new())),
             data_dir,
             pending: Arc::new(AtomicI64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
@@ -115,14 +115,15 @@ impl KbHub {
             return Ok(None);
         }
 
-        let mut built = self.built_mode.lock().unwrap();
+        let mut built = self.built_key.lock().unwrap();
         let mut slot = self.embedder.lock().unwrap();
-        if slot.is_none() || *built != cfg.mode {
-            // 模式变了要重建：云端 key/模型也可能变了，所以不缓存旧的
+        let key = embed::identity(cfg);
+        if slot.is_none() || *built != key {
+            // 身份变了要重建：换本地模型 / 换云端端点或模型都可能发生，不缓存旧的
             match embed::build(cfg, &self.data_dir) {
                 Ok(Some(e)) => {
                     *slot = Some(Arc::from(e));
-                    *built = cfg.mode.clone();
+                    *built = key;
                 }
                 Ok(None) => {
                     *slot = None;
@@ -146,7 +147,7 @@ impl KbHub {
         if let Ok(mut slot) = self.embedder.lock() {
             if slot.is_some() {
                 *slot = None;
-                if let Ok(mut b) = self.built_mode.lock() {
+                if let Ok(mut b) = self.built_key.lock() {
                     b.clear();
                 }
             }
@@ -424,7 +425,7 @@ mod tests {
         let cfg = embed::resolve_config(&conn).unwrap();
         assert!(embed::model_id_of(&cfg).is_none());
         assert!(hub.embedder(&cfg).unwrap().is_none());
-        assert!(hub.built_mode.lock().unwrap().is_empty());
+        assert!(hub.built_key.lock().unwrap().is_empty());
     }
 
     /// 云端配置不完整时应降级为「无 embedder + 记录错误」，而不是让检索直接失败。

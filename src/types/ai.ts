@@ -256,8 +256,18 @@ export type AgentEvent =
   | { type: 'thinkingDelta'; runId: string; delta: string }
   | { type: 'thinkingEnd'; runId: string; content: string }
   | { type: 'stepRetry'; runId: string; attempt: number; delayMs: number }
-  | { type: 'toolStarted'; runId: string; callId: string; name: string; args: unknown }
-  | { type: 'toolCompleted'; runId: string; callId: string; name: string; isError: boolean; content: string }
+  /** `kernel` = 由 Rust 注册表执行：前端不要再跑 TS 侧同名工具（重复执行＝副作用做两遍） */
+  | { type: 'toolStarted'; runId: string; callId: string; name: string; args: unknown; kernel: boolean }
+  | {
+      type: 'toolCompleted'
+      runId: string
+      callId: string
+      name: string
+      isError: boolean
+      content: string
+      /** 同 toolStarted.kernel：内核工具才由前端补发 tool_execution_end */
+      kernel: boolean
+    }
   | { type: 'usage'; runId: string; usage: AgentUsage }
   | {
       type: 'done'

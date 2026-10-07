@@ -1767,7 +1767,8 @@ async function playMockRun(runId: string, script: MockAgentStep[]): Promise<void
       if (run.cancelled) return
       const callId = `mock-${Math.random().toString(36).slice(2, 10)}`
       toolCount += 1
-      mockAgentEmit({ type: 'toolStarted', runId, callId, name: call.name, args: call.args ?? {} })
+      // 浏览器 mock 没有 Rust 内核：所有工具都由前端执行，故 kernel 恒为 false
+      mockAgentEmit({ type: 'toolStarted', runId, callId, name: call.name, args: call.args ?? {}, kernel: false })
       const outcome = await waitMockToolResult(run, callId, 8000)
       if (run.cancelled) return
       mockAgentEmit({
@@ -1777,6 +1778,7 @@ async function playMockRun(runId: string, script: MockAgentStep[]): Promise<void
         name: call.name,
         isError: outcome.isError,
         content: outcome.content,
+        kernel: false,
       })
       // 工具后文本重新起算（与内核一致：最终文本 = 最后一步的正文）
       lastText = ''
@@ -2251,9 +2253,31 @@ let kbAssetId = 0
 const kbMoves: MockKbFsMove[] = []
 let kbMoveId = 0
 let kbIndexed = false
+/** 记忆变更审计（对齐 Rust kb_memory_diffs；只存最近 20 条，不落 localStorage 之外的地方） */
+const mockMemoryDiffs: Array<{ at: string; payload: Record<string, unknown> }> = []
+const KB_DIFF_KEY = 'rein.mock.kb_memory_diffs.v1'
+
+function saveMockMemoryDiffs(): void {
+  try {
+    localStorage.setItem(KB_DIFF_KEY, JSON.stringify(mockMemoryDiffs))
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function loadMockMemoryDiffs(): void {
+  if (mockMemoryDiffs.length) return
+  try {
+    const raw = localStorage.getItem(KB_DIFF_KEY)
+    if (raw) mockMemoryDiffs.push(...(JSON.parse(raw) as typeof mockMemoryDiffs))
+  } catch {
+    /* 忽略 */
+  }
+}
 
 let kbSettings: {
   embeddingMode: 'keyword' | 'local' | 'cloud'
+  localModel: string
   cloudBaseUrl: string | null
   cloudApiKey: string | null
   cloudModel: string | null
@@ -2267,6 +2291,7 @@ let kbSettings: {
   updatedAt: string
 } = {
   embeddingMode: 'keyword',
+  localModel: 'bge-small-zh-v1.5-int8',
   cloudBaseUrl: null,
   cloudApiKey: null,
   cloudModel: null,
@@ -2525,6 +2550,36 @@ function primaryModalKind(fileId: number): MockKbDoc['kind'] {
   if (modals.includes('audio')) return 'audio'
   if (modals.includes('image')) return 'image'
   return 'file'
+}
+
+/**
+ * 浏览器 mock 的伪嵌入：字符三元组哈希到 512 维再 L2 归一化。
+ * **不是真模型**（没有 ONNX 可用），但确定性、同义改写会共享大量三元组，
+ * 所以相似度排序有真实意义 —— 界面与 e2e 能验证交互，模型质量本身必须在真机看。
+ */
+function mockEmbed(text: string, dim = 512): number[] {
+  const v = new Array<number>(dim).fill(0)
+  const chars = [...text.replace(/\s+/g, '')]
+  if (!chars.length) return v
+  const feed = (s: string): void => {
+    let h = 2166136261
+    for (const ch of s) {
+      h ^= ch.codePointAt(0) ?? 0
+      h = Math.imul(h, 16777619) >>> 0
+    }
+    v[h % dim] += 1
+  }
+  for (const ch of chars) feed(ch)
+  for (let i = 0; i + 1 < chars.length; i++) feed(chars[i] + chars[i + 1])
+  for (let i = 0; i + 2 < chars.length; i++) feed(chars[i] + chars[i + 1] + chars[i + 2])
+  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0))
+  return norm > 0 ? v.map((x) => x / norm) : v
+}
+
+function mockCosine(a: number[], b: number[]): number {
+  let s = 0
+  for (let i = 0; i < Math.min(a.length, b.length); i++) s += a[i] * b[i]
+  return s
 }
 
 function kbHumanSize(bytes: number): string {
@@ -6548,7 +6603,11 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         progress: { phase: 'idle', done: 0, total: 0 },
         lastError: kbSettings.lastError,
         embedderReady: kbSettings.embeddingMode === 'cloud' ? !!kbSettings.cloudBaseUrl : true,
-        vecModel: kbSettings.embeddingMode === 'keyword' ? null : kbSettings.cloudModel ?? 'bge-small-zh-v1.5-int8',
+        vecModel: kbSettings.embeddingMode === 'keyword'
+          ? null
+          : kbSettings.embeddingMode === 'local'
+            ? kbSettings.localModel
+            : kbSettings.cloudModel ?? 'bge-small-zh-v1.5-int8',
         enabledSources: enabled.length ? enabled : allSources,
       } as T)
     }
@@ -7017,6 +7076,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'kb_settings_get':
       return delay({
         embeddingMode: kbSettings.embeddingMode,
+        localModel: kbSettings.localModel,
         cloudBaseUrl: kbSettings.cloudBaseUrl,
         cloudApiKeyTail: kbSettings.cloudApiKey ? `…${kbSettings.cloudApiKey.slice(-4)}` : null,
         cloudModel: kbSettings.cloudModel,
@@ -7037,6 +7097,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           throw new Error(`未知的检索模式：${mode}（可选 keyword / local / cloud）`)
         }
         kbSettings.embeddingMode = mode as typeof kbSettings.embeddingMode
+      }
+      if (input.localModel !== undefined && String(input.localModel).trim()) {
+        kbSettings.localModel = String(input.localModel).trim()
       }
       if (input.cloudBaseUrl !== undefined) kbSettings.cloudBaseUrl = String(input.cloudBaseUrl) || null
       if (input.cloudApiKey !== undefined) {
@@ -7064,6 +7127,221 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     case 'kb_rebuild_vectors':
       return delay(0 as T)
+
+    /* ---------- 压缩包（mock 用 jszip 真解，行为与 Rust 对齐） ---------- */
+
+    case 'kb_archive_list': {
+      loadKbStore()
+      const docId = Number(args.docId)
+      const doc = kbDocs.find((d) => d.id === docId)
+      if (!doc) throw new Error(`知识库条目不存在：id=${docId}（先用 glob_knowledge 查 id）`)
+      const asset = kbAssets.find((a) => a.fileId === Number(doc.sourceId) && a.modal !== 'text')
+      if (!asset?.ref) throw new Error('该节点没有可读的本体（只有文本模态），不是压缩包')
+      const { mockArchiveList } = await import('./archiveMock')
+      return delay(plain(await mockArchiveList(asset.ref, doc.title)) as T)
+    }
+
+    case 'kb_archive_extract': {
+      loadKbStore()
+      const docId = Number(args.docId)
+      const doc = kbDocs.find((d) => d.id === docId)
+      if (!doc) throw new Error(`知识库条目不存在：id=${docId}`)
+      const asset = kbAssets.find((a) => a.fileId === Number(doc.sourceId) && a.modal !== 'text')
+      if (!asset?.ref) throw new Error('该节点没有可读的本体（只有文本模态），不是压缩包')
+      const { mockArchiveExtract } = await import('./archiveMock')
+      const report = await mockArchiveExtract(asset.ref, doc.title, {
+        toDir: args.toDir ? String(args.toDir) : undefined,
+        only: (args.only as string[] | undefined) ?? [],
+      })
+      const now = new Date().toISOString()
+      const items: Array<Record<string, unknown>> = []
+      for (const f of report.files) {
+        const path = `${report.target}/${f.path}`
+        let row = kbFiles.find((x) => x.path === path)
+        if (f.text !== null) {
+          if (!row) {
+            row = {
+              id: ++kbFileId, path, content: f.text, system: false, kind: 'text',
+              pinned: false, classifyState: 'inbox', createdAt: now, updatedAt: now,
+            }
+            kbFiles.push(row)
+          } else {
+            row.content = f.text
+            row.updatedAt = now
+          }
+          items.push({ id: row.id, path, bytes: f.text.length, kind: 'text' })
+        } else {
+          if (!row) {
+            row = {
+              id: ++kbFileId, path, content: `【文件】${f.path}`, system: false, kind: 'multimodal',
+              pinned: false, classifyState: 'inbox', createdAt: now, updatedAt: now,
+            }
+            kbFiles.push(row)
+          }
+          kbAssets.push({
+            id: ++kbAssetId, fileId: row.id, modal: 'binary', mime: f.mime, ref: f.dataUrl,
+            bytes: f.bytes, durationMs: null, transcriptState: 'done', derivedFrom: null, createdAt: now,
+          })
+          items.push({ id: row.id, path, bytes: f.bytes, kind: 'binary' })
+        }
+      }
+      saveKbFiles()
+      saveKbAssets()
+      kbIndexed = false
+      kbEnsureIndex()
+      return delay(plain({
+        format: report.format, target: report.target, extracted: items,
+        skipped: report.skipped, bytes: report.bytes, truncated: report.truncated,
+        message: `已解压到 ${report.target}/：${items.length} 个文件（浏览器 mock）`,
+      }) as T)
+    }
+
+    /* ---------- 空间管理 ---------- */
+
+    case 'kb_usage': {
+      loadKbStore()
+      const top = Math.max(0, Math.min(Number(args.top ?? 20), 100))
+      const textBytesOf = (f: MockKbFile): number => new Blob([f.content]).size
+      const assetsOf = (id: number): number =>
+        kbAssets.filter((a) => a.fileId === id).reduce((s2, a) => s2 + a.bytes, 0)
+      const textBytes = kbFiles.filter((f) => f.kind !== 'folder').reduce((s2, f) => s2 + textBytesOf(f), 0)
+      const assetBytes = kbAssets.reduce((s2, a) => s2 + a.bytes, 0)
+      const areaMap = new Map<string, { bytes: number; count: number }>()
+      const modalMap = new Map<string, { bytes: number; count: number }>()
+      for (const f of kbFiles) {
+        if (f.kind === 'folder') continue
+        const area = f.path.includes('/') ? f.path.split('/')[0] : f.path
+        const cur = areaMap.get(area) ?? { bytes: 0, count: 0 }
+        cur.bytes += textBytesOf(f) + assetsOf(f.id)
+        cur.count++
+        areaMap.set(area, cur)
+      }
+      for (const a of kbAssets) {
+        const cur = modalMap.get(a.modal) ?? { bytes: 0, count: 0 }
+        cur.bytes += a.bytes
+        cur.count++
+        modalMap.set(a.modal, cur)
+      }
+      const sourceMap = new Map<string, { bytes: number; count: number }>()
+      for (const d of kbDocs) {
+        const cur = sourceMap.get(d.sourceType) ?? { bytes: 0, count: 0 }
+        cur.bytes += new Blob([d.body ?? '']).size
+        cur.count++
+        sourceMap.set(d.sourceType, cur)
+      }
+      const largest = kbFiles
+        .filter((f) => f.kind !== 'folder')
+        .map((f) => ({
+          id: f.id, path: f.path, kind: f.kind,
+          bytes: textBytesOf(f) + assetsOf(f.id),
+          textBytes: textBytesOf(f), assetBytes: assetsOf(f.id), updatedAt: f.updatedAt,
+        }))
+        .sort((a, b) => b.bytes - a.bytes)
+        .slice(0, top)
+      const indexBytes = kbDocs.reduce((s2, d) => s2 + new Blob([d.body ?? '']).size, 0)
+      const slices = (m: Map<string, { bytes: number; count: number }>): Array<{ name: string; bytes: number; count: number }> =>
+        [...m.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.bytes - a.bytes)
+      const totalBytes = textBytes + assetBytes
+      const human = (n: number): string =>
+        n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`
+      return delay(plain({
+        totalBytes, textBytes, assetBytes, indexBytes,
+        dbBytes: 0,
+        fileCount: kbFiles.length, docCount: kbDocs.length, assetCount: kbAssets.length,
+        areas: slices(areaMap), sources: slices(sourceMap), modals: slices(modalMap),
+        largest,
+        orphanCount: 0, orphanBytes: 0, missingCount: 0,
+        summary: `工作区共 ${human(totalBytes)}（文本 ${human(textBytes)} + 本体 ${human(assetBytes)}）：${kbFiles.length} 个文件节点、${kbDocs.length} 条索引文档、${kbAssets.length} 个本体（浏览器 mock 环境，不落磁盘）`,
+      }) as T)
+    }
+
+    case 'kb_usage_clean':
+      return delay({ removed: 0, bytes: 0, dryRun: Boolean(args.dryRun), message: '浏览器 mock 环境没有可清理的碎片' } as T)
+
+    /* ---------- 本地嵌入模型（目录与 Rust 注册表一致；浏览器不能下载） ---------- */
+
+    case 'kb_embed_models': {
+      const { MOCK_EMBED_MODELS } = await import('./embedModelsMock')
+      return delay(plain({
+        models: MOCK_EMBED_MODELS.map((m) => ({
+          ...m,
+          installed: m.bundled,
+          diskBytes: m.bundled ? m.bytes : 0,
+          downloading: false,
+        })),
+        current: kbSettings.localModel,
+        mode: kbSettings.embeddingMode,
+        dir: '(浏览器 mock 没有模型目录)',
+      }) as T)
+    }
+
+    case 'kb_embed_model_download':
+      throw new Error('浏览器 mock 不能下载模型（真实应用从 hf-mirror / ModelScope 拉取）')
+
+    case 'kb_embed_model_cancel':
+      return delay(undefined as T)
+
+    case 'kb_embed_model_remove':
+      throw new Error('浏览器 mock 没有已下载的模型')
+
+    case 'kb_embed_test': {
+      const input = plain(args.input as { texts?: string[]; localModel?: string; cloud?: unknown }) ?? {}
+      const texts = (input.texts ?? []).map((t) => String(t).trim()).filter(Boolean)
+      if (!texts.length) throw new Error('请至少输入一段文本')
+      const modelId = input.cloud ? '(云端测试)' : input.localModel ?? kbSettings.localModel
+      const t0 = performance.now()
+      const vecs = texts.map((t) => mockEmbed(t))
+      const vectors = texts.map((t, i) => ({
+        text: t.slice(0, 40),
+        dim: vecs[i].length,
+        preview: vecs[i].slice(0, 8).map((x) => Number(x.toFixed(4))),
+        norm: Number(Math.sqrt(vecs[i].reduce((s2, x) => s2 + x * x, 0)).toFixed(4)),
+        ms: 0.1,
+      }))
+      const ranking = texts
+        .slice(1)
+        .map((t, i) => ({ text: t.slice(0, 60), score: Number(mockCosine(vecs[0], vecs[i + 1]).toFixed(4)) }))
+        .sort((a, b) => b.score - a.score)
+      return delay(plain({
+        modelId: `${modelId}（浏览器伪嵌入）`,
+        dim: 512,
+        vectors,
+        ranking,
+        buildMs: 0.3,
+        totalMs: Number((performance.now() - t0).toFixed(1)),
+        note: '浏览器 mock 用字符三元组哈希模拟向量：交互可用，模型质量要在真机看',
+      }) as T)
+    }
+
+    case 'kb_memory_duplicates': {
+      loadKbStore()
+      const threshold = Number(args.threshold ?? 0.86)
+      const limit = Number(args.limit ?? 30)
+      const active = kbMemories.filter((m) => !m.archivedAt)
+      const vecs = new Map(active.map((m) => [m.id, mockEmbed(m.content)]))
+      const pairs: Array<Record<string, unknown>> = []
+      for (let i = 0; i < active.length; i++) {
+        for (let j = i + 1; j < active.length; j++) {
+          const a = active[i]
+          const b = active[j]
+          const score = mockCosine(vecs.get(a.id)!, vecs.get(b.id)!)
+          if (score < threshold) continue
+          pairs.push({
+            aId: Math.min(a.id, b.id), bId: Math.max(a.id, b.id),
+            score: Number(score.toFixed(3)),
+            aContent: a.content.slice(0, 120), bContent: b.content.slice(0, 120),
+          })
+        }
+      }
+      pairs.sort((a, b) => Number(b.score) - Number(a.score))
+      return delay(plain(pairs.slice(0, limit)) as T)
+    }
+
+    case 'kb_memory_diffs': {
+      loadMockMemoryDiffs()
+      const limit = Number(args.limit ?? 5)
+      return delay(plain(mockMemoryDiffs.slice(0, limit)) as T)
+    }
 
     case 'kb_memories': {
       loadKbStore()
@@ -7187,6 +7465,12 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         }
       }
       if (added || updated || deleted || archived || restored) {
+        mockMemoryDiffs.unshift({
+          at: new Date().toISOString(),
+          payload: { candidates: candidates.length, added, updated, deleted, archived, restored, skipped },
+        })
+        mockMemoryDiffs.length = Math.min(mockMemoryDiffs.length, 20)
+        saveMockMemoryDiffs()
         saveKbMemories()
         // 编目同步：新增/更新/复活走重建；删除与归档已直接摘除文档
         if (added > 0 || updated > 0 || restored > 0) {

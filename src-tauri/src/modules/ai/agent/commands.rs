@@ -63,15 +63,26 @@ struct HybridExecutor {
 #[async_trait::async_trait]
 impl ToolExecutor for HybridExecutor {
     async fn execute(&self, call_id: &str, name: &str, args: &serde_json::Value) -> ToolOutcome {
-        match super::tools::run_tool(&self.app, name, args).await {
-            Some(outcome) => {
+        // 注册表工具全是同步 IO（rusqlite / ureq），KB 查询还会「等索引排空」最长 1.5s。
+        // 挪到阻塞线程池执行：既不占 tokio worker，也不让增量泵（流式输出）被 IO 饿着。
+        let app = self.app.clone();
+        let tool = name.to_string();
+        let payload = args.clone();
+        let ran = tokio::task::spawn_blocking(move || {
+            // 阻塞线程内用运行时的 block_on 是 tokio 明确支持的用法（非 worker 上下文）
+            tauri::async_runtime::block_on(super::tools::run_tool(&app, &tool, &payload))
+        })
+        .await;
+        match ran {
+            Ok(Some(outcome)) => {
                 eprintln!("[ai-agent] tool {name} → rust");
                 outcome
             }
-            None => {
+            Ok(None) => {
                 eprintln!("[ai-agent] tool {name} → bridge");
                 self.bridge.wait(call_id, self.timeout).await
             }
+            Err(e) => ToolOutcome::error(format!("[内部错误] 工具执行线程异常终止：{e}")),
         }
     }
 }
@@ -108,6 +119,7 @@ impl TurnHooks for EmitHooks {
         self.emit(AgentEvent::ToolStarted {
             run_id: self.run_id.clone(),
             call_id: call_id.to_string(),
+            kernel: super::tools::is_registered(name),
             name: name.to_string(),
             args: args.clone(),
         });
@@ -117,6 +129,7 @@ impl TurnHooks for EmitHooks {
         self.emit(AgentEvent::ToolCompleted {
             run_id: self.run_id.clone(),
             call_id: call_id.to_string(),
+            kernel: super::tools::is_registered(name),
             name: name.to_string(),
             is_error: outcome.is_error,
             content: outcome.content.clone(),
@@ -161,7 +174,7 @@ pub async fn ai_agent_run(
 
     // token 增量热路径：通道 → 事件泵（循环本身与 Tauri 解耦，便于单测）
     let (delta_tx, mut delta_rx) = tokio::sync::mpsc::unbounded_channel::<StreamDelta>();
-    {
+    let pump = {
         let app = app.clone();
         let run_id = run_id.clone();
         tauri::async_runtime::spawn(async move {
@@ -174,8 +187,8 @@ pub async fn ai_agent_run(
                 };
                 let _ = app.emit(AGENT_EVENT, ev);
             }
-        });
-    }
+        })
+    };
 
     let input = TurnInput {
         prompt: params.prompt.clone(),
@@ -207,6 +220,9 @@ pub async fn ai_agent_run(
             &hooks,
         )
         .await;
+        // 等增量泵排空再发 Done/Error：泵是独立任务，不等它的话 done 可能越过
+        // 最后几条 delta 先到（多线程运行时实测过的竞态）
+        let _ = pump.await;
         match result {
             Ok(res) => {
                 eprintln!("[ai-agent] run done steps={} tools={} err={:?}", res.steps, res.tools, res.stop_reason);

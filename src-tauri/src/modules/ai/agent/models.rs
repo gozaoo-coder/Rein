@@ -77,15 +77,28 @@ pub enum AgentEvent {
     ThinkingEnd { run_id: String, content: String },
     /// 某步因瞬态错误重试：前端应重置本步的文本/思考累积，避免重复显示
     StepRetry { run_id: String, attempt: u32, delay_ms: u64 },
-    /// 模型请求执行工具（过渡期＝前端立即执行；Rust 工具期＝即将开始执行）
-    ToolStarted { run_id: String, call_id: String, name: String, args: Value },
-    /// 工具执行完成
+    /// 模型请求执行工具。
+    ///
+    /// `kernel` = 该工具由 Rust 注册表执行（已迁移）。前端据此**不再跑 TS 侧同名工具**
+    /// —— 重复执行会让同一次副作用做两遍（写库、移动文件、删记录），
+    /// 结果也会被桥接层按「早到」丢弃，白付一次 IPC。
+    /// `kernel:false` 时前端才走「执行 → ai_agent_tool_result」的桥接。
+    ToolStarted {
+        run_id: String,
+        call_id: String,
+        name: String,
+        args: Value,
+        kernel: bool,
+    },
+    /// 工具执行完成。`kernel` 语义同 [`AgentEvent::ToolStarted`]：为真时前端据此
+    /// 补发 `tool_execution_end`（桥接工具由前端自己的执行路径上报，不再重复）。
     ToolCompleted {
         run_id: String,
         call_id: String,
         name: String,
         is_error: bool,
         content: String,
+        kernel: bool,
     },
     /// 单次 completion 的 token 用量
     Usage { run_id: String, usage: LlmUsage },

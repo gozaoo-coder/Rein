@@ -15,8 +15,9 @@ pub mod kb;
 pub mod misc;
 pub mod web;
 
+use std::sync::OnceLock;
+
 use serde_json::Value;
-use tauri::Manager;
 
 use crate::error::Result;
 
@@ -46,27 +47,46 @@ impl RegisteredTool {
     }
 }
 
-/// 已迁移工具的清单（随批次增长；每次构造，schema 都是小 JSON，开销可忽略）
-pub fn registry() -> Vec<RegisteredTool> {
-    vec![
-        misc::search_history(),
-        web::web_search_def(),
-        web::web_fetch_def(),
-        kb::search_knowledge(),
-        kb::read_knowledge(),
-        kb::glob_knowledge(),
-        kb::write_note(),
-        kb::rename_note(),
-        kb::delete_note(),
-        kb::read_modal(),
-        kb::classify_move(),
-        kb::pin_file(),
-        kb::make_folder(),
-        kb::list_memories(),
-        kb::remember(),
-        kb::edit_memory(),
-        kb::forget(),
-    ]
+/// 已迁移工具的清单。
+///
+/// 进程内只构造一次（实测重建约 0.06 ms/步，本身不是瓶颈）——缓存主要是为了
+/// 让 [`is_registered`] 与 defs 走同一份表：**两者必须永远一致**，
+/// 一旦「登记了但 run_tool 不认」，前端会因为 kernel=true 跳过 TS 执行而静默失效。
+pub fn registry() -> &'static [RegisteredTool] {
+    static REGISTRY: OnceLock<Vec<RegisteredTool>> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        vec![
+            misc::search_history(),
+            web::web_search_def(),
+            web::web_fetch_def(),
+            kb::search_knowledge(),
+            kb::read_knowledge(),
+            kb::glob_knowledge(),
+            kb::write_note(),
+            kb::rename_note(),
+            kb::delete_note(),
+            kb::read_modal(),
+            kb::classify_move(),
+            kb::pin_file(),
+            kb::make_folder(),
+            kb::list_archive(),
+            kb::extract_archive(),
+            kb::workspace_usage(),
+            kb::find_large_files(),
+            kb::list_memories(),
+            kb::remember(),
+            kb::edit_memory(),
+            kb::forget(),
+        ]
+    })
+}
+
+/// 该名字是否由 Rust 注册表执行。
+///
+/// 前端据此**跳过 TS 侧同名工具的重复执行**（见 `AgentEvent::ToolStarted.kernel`）：
+/// 迁移后内核自己会跑，前端再跑一遍等于同一次副作用做两遍（写库、移动文件都会重复）。
+pub fn is_registered(name: &str) -> bool {
+    registry().iter().any(|t| t.name == name)
 }
 
 /// 按组取工具 defs（保持登记顺序）
@@ -161,6 +181,39 @@ mod tests {
             assert!(t.parameters.is_object(), "{} 的 parameters 应为 JSON Schema object", t.name);
             assert!(t.parameters["type"] == "object", "{} 缺 type:object", t.name);
             assert!(!t.description.is_empty());
+        }
+    }
+
+    /// 名字集一致性：`is_registered` 决定前端是否跳过 TS 侧执行（AgentEvent::ToolStarted.kernel），
+    /// 一旦「登记了但 run_tool 不认」就会出现「前端不跑、后端也不跑」的静默失效。
+    #[test]
+    fn registered_names_match_dispatcher() {
+        for c in [misc::SEARCH_HISTORY_NAME, web::WEB_SEARCH_NAME, web::WEB_FETCH_NAME] {
+            assert!(is_registered(c), "{c} 应在注册表里");
+        }
+        assert!(!is_registered("load_tools"), "未迁移的工具不该被当成内核工具");
+        assert!(!is_registered("完全不存在的工具"));
+        for n in [
+            "search_knowledge",
+            "read_knowledge",
+            "glob_knowledge",
+            "write_note",
+            "rename_note",
+            "delete_note",
+            "read_modal",
+            "classify_move",
+            "pin_file",
+            "make_folder",
+            "list_archive",
+            "extract_archive",
+            "workspace_usage",
+            "find_large_files",
+            "list_memories",
+            "remember",
+            "edit_memory",
+            "forget",
+        ] {
+            assert!(is_registered(n), "{n} 应在注册表里");
         }
     }
 

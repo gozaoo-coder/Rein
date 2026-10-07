@@ -22,7 +22,7 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::error::{ReinError, Result};
 
 use super::files;
-use super::index;
+use super::governance;
 use super::models::*;
 use super::source::sanitize;
 
@@ -796,16 +796,6 @@ fn decode_data_url(raw: &str) -> Result<Vec<u8>> {
 /// 返回新节点 id。
 pub fn write_media(conn: &Connection, root: &Path, input: &KbMediaInput) -> Result<i64> {
     let bytes = decode_data_url(&input.data_base64)?;
-    if bytes.is_empty() {
-        return Err(ReinError::Message("本体为空".into()));
-    }
-    if bytes.len() as i64 > UPLOAD_CAP {
-        return Err(ReinError::Message(format!(
-            "本体超过上传上限（{} MB）",
-            UPLOAD_CAP / 1024 / 1024
-        )));
-    }
-
     let name = input
         .name
         .clone()
@@ -823,40 +813,69 @@ pub fn write_media(conn: &Connection, root: &Path, input: &KbMediaInput) -> Resu
     } else {
         input.mime.clone()
     };
+    let path = files::normalize_media_path(&input.path, &name)?;
+    write_media_bytes(conn, root, &path, &name, &mime, &bytes, input.text.as_deref().unwrap_or(""))
+}
+
+/// 已经拿到字节的本体入库（解压产物等多模态写入走这里）。
+///
+/// `path` 必须是**已经归位**的虚拟路径（调用方负责 normalize/让位）；
+/// `text` 为空的描述行自动生成，保证节点可检索（§2.3）。
+pub fn write_media_bytes(
+    conn: &Connection,
+    root: &Path,
+    path: &str,
+    name: &str,
+    mime: &str,
+    bytes: &[u8],
+    text: &str,
+) -> Result<i64> {
+    if bytes.is_empty() {
+        return Err(ReinError::Message("本体为空".into()));
+    }
+    if bytes.len() as i64 > UPLOAD_CAP {
+        return Err(ReinError::Message(format!(
+            "本体超过上传上限（{} MB）",
+            UPLOAD_CAP / 1024 / 1024
+        )));
+    }
+    // 先验路径（系统命名空间 / 非法路径）再落盘，免得白写一个本体文件
+    governance::ensure_writable(path)?;
+    let mime = if mime.trim().is_empty() {
+        mime_of_name(name)
+    } else {
+        mime.to_string()
+    };
     let modal = modal_of_mime(&mime);
 
     // 本体落盘：workspace/media/{时间戳}-{净化名}
     let stamp = chrono::Local::now().format("%Y%m%d%H%M%S");
-    let safe = sanitize(&name, 60);
+    let safe = sanitize(name, 60);
     let rel = format!("workspace/media/{stamp}-{safe}");
     let abs = root.join(&rel);
     if let Some(dir) = abs.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| ReinError::Message(format!("创建媒体目录失败：{e}")))?;
     }
-    std::fs::write(&abs, &bytes).map_err(|e| ReinError::Message(format!("写入本体失败：{e}")))?;
+    std::fs::write(&abs, bytes).map_err(|e| ReinError::Message(format!("写入本体失败：{e}")))?;
 
-    // 文本模态：调用方给的优先；否则自动描述行（保证可检索，§2.3）
-    let text = input
-        .text
-        .clone()
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or_else(|| {
-            format!(
-                "【{}】{name}（{mime}，{}）",
-                modal_label(modal),
-                human_size(bytes.len() as i64)
-            )
-        });
+    // 文本模态：调用方给的优先；否则自动描述行
+    let text = if text.trim().is_empty() {
+        format!(
+            "【{}】{name}（{mime}，{}）",
+            modal_label(modal),
+            human_size(bytes.len() as i64)
+        )
+    } else {
+        text.to_string()
+    };
 
-    let path = files::normalize_media_path(&input.path, &name)?;
-    let file_id = files::write_media_row(conn, &path, &text, FILE_KIND_MULTIMODAL)?;
+    let file_id = files::write_media_row(conn, path, &text, FILE_KIND_MULTIMODAL)?;
     add(
         conn,
         file_id,
         &NewAsset::fs(modal, &mime, &rel, bytes.len() as i64),
     )?;
-    index::mark_dirty(conn, "note", &file_id.to_string())?;
     Ok(file_id)
 }
 

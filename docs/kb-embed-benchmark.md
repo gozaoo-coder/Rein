@@ -149,3 +149,32 @@ node scripts/fetch-ort-runtime.mjs --target android-arm64           # Maven AAR
 ```
 
 模型与运行库均在 `.gitignore` 中，克隆仓库后需先执行上述脚本再构建。
+
+---
+
+# 附录：本地模型可选化（2026-10-07 追加）
+
+> 原评估定下「内置一颗 int8 小模型」；实际用起来，中文语义质量对小模型是硬约束。
+> 于是把本地模型做成**注册表 + 按需下载**：内置那颗仍是离线默认，其余 4 档可选。
+
+## 可选清单（体积为实测字节数，经 hf-mirror 探测）
+
+| id | 档位 | 维度 | 池化 | 体积 | 说明 |
+|---|---|---|---|---|---|
+| `bge-small-zh-v1.5-int8` | 轻量·内置 | 512 | CLS | 24.4 MB | 随包分发、离线可用 |
+| `bge-base-zh-v1.5-int8` | 标准·中文 | 768 | CLS | 103.3 MB | 中文语义明显更细，日常首选 |
+| `bge-large-zh-v1.5-int8` | 高精度·中文 | 1024 | CLS | 327.8 MB | 中文检索天花板一档，桌面优先 |
+| `bge-m3-int8` | 多语·超大 | 1024 | CLS | 586.8 MB | 100+ 语言、长文本；手机不建议 |
+| `paraphrase-multilingual-MiniLM-L12-v2-int8` | 轻量·多语 | 384 | Mean | 135.4 MB | 多语折中档，384 维更省内存 |
+
+## 几个必须记住的工程结论
+
+1. **下载源用 `hf-mirror.com`（主）+ ModelScope（备）**：本机实测 `huggingface.co` 直连不通（curl 000），
+   而 hf-mirror 五个模型文件全部 200；ModelScope 的 `api/v1/models/{repo}/repo?FilePath=` 形式也可达。
+2. **换模型 = 换向量空间**：`kb_settings_set` 比较「嵌入身份」（模式 + 本地模型 + 云端模型）的指纹，
+   变了就 `clear_vectors`；embedder 缓存同样按指纹作废（原来只比 mode，换云端模型不会重建——已修）。
+3. **装完必须自检**：下载完成 → `LocalEmbedder::new` 加载 → `probe()` 真跑一条中文 → 维度不符就回滚删文件。
+   否则一个坏模型会静静躺在磁盘上，等检索时才炸。
+4. **池化不止 CLS**：BGE 系用 CLS，多语 MiniLM 系用带掩码的均值池化，注册表里带 `pooling` 字段。
+5. **自检的真实价值**：`#[ignore]` 的真网络测试（`download_small_model_over_network`）一次跑通
+   下载→落盘→加载→嵌入→删除全链路，实测 3.98 s（24 MB）。模型源换域名时这条会先红。
