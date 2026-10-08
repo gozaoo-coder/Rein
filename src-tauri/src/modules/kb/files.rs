@@ -625,8 +625,8 @@ pub fn purge(conn: &Connection, id: i64) -> Result<(i64, Vec<String>, i64)> {
     Ok((rows.len() as i64, refs, bytes))
 }
 
-/// 清空回收站。返回 (清掉的条数, 要清的本体路径, 释放的字节数)。
-pub fn empty_trash(conn: &Connection) -> Result<(i64, Vec<String>, i64)> {
+/// 清空回收站。返回 (清掉的条数, 要清的本体路径, 释放的字节数, 逐条失败原因)。
+pub fn empty_trash(conn: &Connection) -> Result<(i64, Vec<String>, i64, Vec<String>)> {
     let ids: Vec<i64> = {
         let mut stmt =
             conn.prepare("SELECT id FROM kb_files WHERE trashed_at IS NOT NULL ORDER BY id")?;
@@ -636,15 +636,20 @@ pub fn empty_trash(conn: &Connection) -> Result<(i64, Vec<String>, i64)> {
     let mut refs = Vec::new();
     let mut bytes = 0;
     let mut n = 0;
+    let mut failed = Vec::new();
     for id in ids {
         // 目录子树里的行也会各自出现在清单里；删过的节点再删是空操作
-        if let Ok((count, r, b)) = purge(conn, id) {
-            n += count;
-            refs.extend(r);
-            bytes += b;
+        match purge(conn, id) {
+            Ok((count, r, b)) => {
+                n += count;
+                refs.extend(r);
+                bytes += b;
+            }
+            // 真错（锁 / 损坏 / 外键）要报出去：吞掉的话界面会把「清了一半」显示成「已清空」
+            Err(e) => failed.push(format!("id={id}：{e}")),
         }
     }
-    Ok((n, refs, bytes))
+    Ok((n, refs, bytes, failed))
 }
 
 /// 把调用方给的 id 解析成 kb_files.id。统一入口都收**文档 id**（与 glob/检索一致），
@@ -1165,7 +1170,8 @@ mod tests {
         let b = write(&conn, "b.md", "乙").unwrap();
         trash(&conn, a).unwrap();
         trash(&conn, b).unwrap();
-        let (n, _refs, _bytes) = empty_trash(&conn).unwrap();
+        let (n, _refs, _bytes, failed) = empty_trash(&conn).unwrap();
+        assert!(failed.is_empty(), "{failed:?}");
         assert_eq!(n, 2);
         assert!(trash_list(&conn, 50).unwrap().is_empty());
         assert!(get(&conn, a).is_err() && get(&conn, b).is_err());
@@ -1177,6 +1183,21 @@ mod tests {
         ensure_spec(&conn).unwrap();
         let f = get_by_path(&conn, SPEC_PATH).unwrap().unwrap();
         assert!(trash(&conn, f.id).is_err());
+    }
+
+    /// 回收站是系统命名空间：不能在里面建目录/写文件
+    ///（否则会被浏览侧整棵滤掉 —— 文件在库里却永远看不见、也删不掉）。
+    #[test]
+    fn trash_root_is_a_system_namespace() {
+        let conn = db();
+        assert!(governance::mkdir(&conn, "回收站", "测试", "user").is_err());
+        assert!(governance::mkdir(&conn, "回收站/收藏", "测试", "user").is_err());
+        assert!(write(&conn, "回收站/藏.md", "内容").is_err());
+        // 回收站自身的删除/恢复不受影响（走裸 SQL，不查系统命名空间）
+        let id = write(&conn, "笔记/临时.md", "内容").unwrap();
+        trash(&conn, id).unwrap();
+        untrash(&conn, id).unwrap();
+        assert_eq!(get(&conn, id).unwrap().path, "笔记/临时.md");
     }
 
     fn mkdir_for_test(conn: &Connection, path: &str) -> i64 {

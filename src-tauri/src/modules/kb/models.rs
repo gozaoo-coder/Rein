@@ -73,7 +73,9 @@ pub const VIDEO_ROOT: &str = "视频";
 /// 规范文件路径：播种进知识库，供 AI 随时查阅自身约定。
 pub const SPEC_PATH: &str = "规范/知识库规范.md";
 /// 系统命名空间（只读）：写入口与治理层都按这份清单拒绝。
-pub const SYSTEM_ROOTS: &[&str] = &[SPEC_ROOT, SYSTEM_PROMPT_ROOT];
+/// `回收站` 也在内 —— 否则用户/AI 能建出同名根目录，而浏览侧按前缀把它整棵滤掉
+/// （文件在库里却永远看不见、也删不掉）。回收站自身的 trash/restore/purge 走裸 SQL，不受影响。
+pub const SYSTEM_ROOTS: &[&str] = &[SPEC_ROOT, SYSTEM_PROMPT_ROOT, TRASH_ROOT];
 
 /// 知识区：用户/AI 可直接写的根目录（docs/ai-workspace.md §3.2）。
 pub const WRITABLE_ROOTS: &[&str] = &[

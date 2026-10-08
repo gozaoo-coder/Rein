@@ -155,10 +155,33 @@ function attachChatContext(chatId: string, messages: AiMessage[]): void {
   seedToolGroups(messages.map((m) => m.text ?? '').join('\n'))
 }
 
-/** 工具入参 → 原始 JSON 字符串（过程段展示用） */
+/** 工具入参 → 原始 JSON 字符串（过程段展示用，落库前先脱敏与截断） */
+/** 这些键的值不进聊天记录、也不落库（`save_provider` 的明文 Key 曾会永久躺在 payload 里） */
+const SECRET_KEY_RE = /(api[-_]?key|token|secret|password|passwd|credential)/i
+/** 单个字符串值的展示上限：本体 base64 这类几 MB 的入参不该被整份写进 ai_messages */
+const ARG_VALUE_MAX = 400
+
+function redactArgValue(value: unknown, depth = 0): unknown {
+  if (depth > 6 || value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map((v) => redactArgValue(v, depth + 1))
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_KEY_RE.test(k)) {
+      out[k] = '****'
+      continue
+    }
+    if (typeof v === 'string' && v.length > ARG_VALUE_MAX) {
+      out[k] = `${v.slice(0, 120)}…（共 ${v.length} 字符，已省略）`
+      continue
+    }
+    out[k] = redactArgValue(v, depth + 1)
+  }
+  return out
+}
+
 function safeArgs(args: unknown): string {
   try {
-    return JSON.stringify(args) ?? ''
+    return JSON.stringify(redactArgValue(args)) ?? ''
   } catch {
     return ''
   }

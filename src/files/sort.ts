@@ -103,6 +103,20 @@ function orient(n: number, dir: SortDir): number {
   return dir === 'asc' ? n : -n
 }
 
+/** 这一列上该条目算「空值」吗（空值沉底，见 sortItems） */
+function isMissing(i: FileItem, key: SortKey): boolean {
+  switch (key) {
+    case 'modified':
+      return i.modifiedAt === undefined
+    case 'size':
+      return i.size === undefined
+    case 'rating':
+      return !i.rating
+    default:
+      return false
+  }
+}
+
 /** 体积档（分组用）：越小越靠前 */
 const SIZE_BUCKETS: { max: number; label: string }[] = [
   { max: 64 * 1024, label: '小（< 64 KB）' },
@@ -136,6 +150,8 @@ export function kindLabel(kind: string): string {
  * 排序：目录优先（可关），其后按所选键。
  *
  * 空值一律排在最后 —— 无论升降序（`size` 缺失的目录不该因为降序就跑到最前面）。
+ * 这个判定**必须在 orient 之前单独做**：把它折进比较结果里再整体取反，
+ * 降序就会把「缺失」翻到最前面（与注释、与用户预期都相反）。
  */
 export function sortItems(
   items: FileItem[],
@@ -146,31 +162,26 @@ export function sortItems(
   const out = [...items]
   out.sort((a, b) => {
     if (foldersFirst && a.isDir !== b.isDir) return a.isDir ? -1 : 1
+    const am = isMissing(a, key)
+    const bm = isMissing(b, key)
+    if (am !== bm) return am ? 1 : -1
     let n = 0
     switch (key) {
       case 'name':
         n = naturalCompare(a.sortName, b.sortName)
         break
-      case 'modified': {
-        const av = a.modifiedAt ?? 0
-        const bv = b.modifiedAt ?? 0
-        if (av === 0 || bv === 0) n = av === bv ? 0 : av === 0 ? 1 : -1
-        else n = av - bv
+      case 'modified':
+        n = (a.modifiedAt ?? 0) - (b.modifiedAt ?? 0)
         break
-      }
-      case 'size': {
-        const av = a.size ?? -1
-        const bv = b.size ?? -1
-        if (av < 0 || bv < 0) n = av === bv ? 0 : av < 0 ? 1 : -1
-        else n = av - bv
+      case 'size':
+        n = (a.size ?? 0) - (b.size ?? 0)
         break
-      }
       case 'kind':
         n = naturalCompare(a.kind, b.kind) || naturalCompare(a.sortName, b.sortName)
         break
       case 'rating':
-        // 没评分的排最后（与体积/时间同一套「空值沉底」规则）
-        n = (a.rating || -1) - (b.rating || -1)
+        // 未评分由 isMissing 沉底，这里只比有评分的
+        n = (a.rating || 0) - (b.rating || 0)
         break
     }
     if (n === 0) n = naturalCompare(a.sortName, b.sortName)

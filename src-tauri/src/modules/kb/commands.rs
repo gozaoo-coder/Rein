@@ -1051,7 +1051,7 @@ pub fn kb_trash_empty(
     state: State<AppState>,
     hub: State<'_, Arc<KbHub>>,
 ) -> Result<KbTrashBatchResult> {
-    let (done, refs, freed) = {
+    let (done, refs, freed, failed) = {
         let conn = state.db.lock();
         files::empty_trash(&conn)?
     };
@@ -1060,7 +1060,7 @@ pub fn kb_trash_empty(
     Ok(KbTrashBatchResult {
         done,
         freed_bytes: freed,
-        failed: Vec::new(),
+        failed,
     })
 }
 
@@ -1312,8 +1312,18 @@ pub fn kb_export_file(app: AppHandle, state: State<AppState>, id: i64) -> Result
         (name, f.content, assets::fs_refs(&conn, fid)?)
     };
 
-    // 有多模态本体就优先导本体（那才是「原文件」）；否则把正文写成文本文件
-    let dest = out_dir.join(&name);
+    // 有多模态本体就优先导本体（那才是「原文件」）；否则把正文写成文本文件。
+    // 目标重名按 -v2/-v3 让位：第二次导出同一个文件不该覆盖用户已经改过的那一份。
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.clone(), String::new()),
+    };
+    let mut dest = out_dir.join(&name);
+    let mut i = 1;
+    while dest.exists() && i < 64 {
+        i += 1;
+        dest = out_dir.join(format!("{stem}-v{i}{ext}"));
+    }
     match refs.first() {
         Some(rel) => {
             let src = root.join(rel);

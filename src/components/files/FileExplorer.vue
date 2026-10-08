@@ -632,23 +632,30 @@ const armedSuffix = computed(() => (armed.value ? ' · 再点一次确认' : '')
 
 /* ---------- 读取与刷新 ---------- */
 
+/** 请求序号：切目录 / 刷新并发时，先发后到的旧响应不许覆盖新目录的列表 */
+let refreshSeq = 0
+
 async function refresh(): Promise<void> {
+  const my = ++refreshSeq
   loading.value = true
   try {
     if (trashMode.value) {
-      trashItems.value = await provider.listTrash()
-      trashCount.value = trashItems.value.length
+      const items = await provider.listTrash()
+      if (my !== refreshSeq) return
+      trashItems.value = items
+      trashCount.value = items.length
     } else {
       const l = await provider.listDir(path.value)
+      if (my !== refreshSeq) return
       listing.value = l
       // 刷新后保留仍然存在的选择 —— 稳定 id 的意义就在这里
       sel.prune(l.items)
     }
     errText.value = ''
   } catch (e) {
-    errText.value = errMsg(e)
+    if (my === refreshSeq) errText.value = errMsg(e)
   } finally {
-    loading.value = false
+    if (my === refreshSeq) loading.value = false
   }
 }
 
@@ -1124,9 +1131,11 @@ function onDragEnd(): void {
   dropTarget.value = null
 }
 
-/** 目标目录能不能接住这一拖：得是目录、不在回收站视图、且至少有一个源不在该目录里 */
+/** 目标目录能不能接住这一拖：得是目录、不在回收站/压缩包视图、且至少有一个源不在该目录里。
+ *  压缩包视图里的「目录」是包内条目（路径形如 `3/子目录`），不是工作区目录 ——
+ *  接住这一拖会把真实文件写进磁盘上一个名叫 `3` 的目录里。 */
 function acceptsDrop(item: FileItem): boolean {
-  if (!dragItems.value.length || !item.isDir || trashMode.value) return false
+  if (!dragItems.value.length || !item.isDir || trashMode.value || archive.value) return false
   const target = dirPathOf(item)
   return dragItems.value.some((i) => parentOf(dirPathOf(i)) !== target)
 }

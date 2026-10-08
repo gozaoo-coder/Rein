@@ -848,11 +848,37 @@ pub fn write_media_bytes(
     };
     let modal = modal_of_mime(&mime);
 
-    // 本体落盘：workspace/media/{时间戳}-{净化名}
+    // 本体落盘：workspace/media/{时间戳}-{净化名}。
+    // 时间戳只到秒，而批量解压/导入会在同一秒里写多个同名文件（包内 `a/图.png` + `b/图.png`）——
+    // 重名必须让位，否则后写的覆盖先写的，两个节点指向同一份字节（删一个会把另一个的本体也带走）。
     let stamp = chrono::Local::now().format("%Y%m%d%H%M%S");
     let safe = sanitize(name, 60);
-    let rel = format!("workspace/media/{stamp}-{safe}");
-    let abs = root.join(&rel);
+    let (stem, ext) = match safe.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (safe.clone(), String::new()),
+    };
+    let mut rel = String::new();
+    let mut abs = root.join("workspace/media");
+    let mut placed = false;
+    for i in 1..64 {
+        let file_name = if i == 1 {
+            format!("{stamp}-{safe}")
+        } else {
+            format!("{stamp}-{stem}-v{i}{ext}")
+        };
+        let candidate = root.join(format!("workspace/media/{file_name}"));
+        if !candidate.exists() {
+            rel = format!("workspace/media/{file_name}");
+            abs = candidate;
+            placed = true;
+            break;
+        }
+    }
+    if !placed {
+        return Err(ReinError::Message(
+            "本体文件名冲突过多（同一秒同名 63 次），写入失败".into(),
+        ));
+    }
     if let Some(dir) = abs.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| ReinError::Message(format!("创建媒体目录失败：{e}")))?;
@@ -917,6 +943,40 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// 同一秒里写两个同名本体必须各占一个文件：批量解压一个包里的 `a/图.png` + `b/图.png`
+    /// 曾在同一秒落到同一个 `workspace/media/{时间戳}-图.png` —— 后写的覆盖先写的，
+    /// 两个节点指向同一份字节，随后删一个会把另一个的本体一起带走。
+    #[test]
+    fn same_second_same_name_gets_its_own_body_file() {
+        let conn = db();
+        let root = temp_root("media-collision");
+        let a = write_media_bytes(
+            &conn,
+            &root,
+            "笔记/甲.png",
+            "图.png",
+            "image/png",
+            b"\x89PNG-aaa",
+            "",
+        )
+        .unwrap();
+        let b = write_media_bytes(
+            &conn,
+            &root,
+            "笔记/乙.png",
+            "图.png",
+            "image/png",
+            b"\x89PNG-bbb",
+            "",
+        )
+        .unwrap();
+        let ra = fs_refs(&conn, a).unwrap();
+        let rb = fs_refs(&conn, b).unwrap();
+        assert_ne!(ra, rb, "同名本体各占一个文件（让位后缀）");
+        assert_eq!(std::fs::read(root.join(&ra[0])).unwrap(), b"\x89PNG-aaa");
+        assert_eq!(std::fs::read(root.join(&rb[0])).unwrap(), b"\x89PNG-bbb");
     }
 
     #[test]

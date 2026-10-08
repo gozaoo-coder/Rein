@@ -7480,12 +7480,21 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           ...metaOf(f),
         })
       }
+      // 与 Rust listing.rs 同口径（MAX_SCAN 扫描上限 / MAX_ENTRIES 返回上限，超了置 truncated）：
+      // 浏览器里也要能出现「目录过大，仅列出一部分」，否则这条提示的回归没人守。
+      const MAX_SCAN = 20000
+      const MAX_ENTRIES = 2000
+      let truncated = docsIn.length > MAX_SCAN || nodes.length > MAX_SCAN
       entries.sort((a, b) => {
         const ad = a.kind === 'folder' ? 0 : 1
         const bd = b.kind === 'folder' ? 0 : 1
         return ad - bd || String(a.path).localeCompare(String(b.path))
       })
-      return delay(plain({ path: dir, entries, total: entries.length, truncated: false }) as T)
+      if (entries.length > MAX_ENTRIES) {
+        entries.length = MAX_ENTRIES
+        truncated = true
+      }
+      return delay(plain({ path: dir, entries, total: entries.length, truncated }) as T)
     }
 
     case 'kb_meta_set': {

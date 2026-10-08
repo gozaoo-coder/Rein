@@ -293,6 +293,14 @@ export const kbProvider: IFileSystemProvider = {
    */
   capability(item, action) {
     const deny = (reason: string): { ok: boolean; reason?: string } => ({ ok: false, reason })
+    // 搜索结果与派生投影没有文件实体（`fileId === undefined`）——rename/move/delete/copy
+    // 在实现里都会抛「该条目没有文件实体」。能力声明必须先按同一判据拒绝，
+    // 否则菜单是亮的、一点必失败（全选搜索结果批量删除就是 20 条逐条报错）。
+    const noEntity = deny(
+      item.sourceType && item.sourceType !== 'note'
+        ? DERIVED_REASON
+        : '搜索结果只能打开，操作请到原目录',
+    )
     switch (action) {
       case 'open':
         // 目录也能「打开」（进入它），所以这里恒为真
@@ -300,19 +308,24 @@ export const kbProvider: IFileSystemProvider = {
       case 'preview':
         return item.permissions.canRead ? { ok: true } : deny('回收站里的条目没有可读内容')
       case 'rename':
-        return item.permissions.canRename
-          ? { ok: true }
-          : deny(item.readOnlyReason ?? '没有改名权限')
-      case 'delete':
-        return item.permissions.canDelete
-          ? { ok: true }
-          : deny(item.readOnlyReason ?? '没有删除权限')
-      case 'move':
-        return item.permissions.canRename
-          ? { ok: true }
-          : deny(item.readOnlyReason ?? '没有移动权限')
-      case 'copy':
-        return item.isDir ? deny('暂不支持复制目录') : { ok: true }
+      case 'move': {
+        if (!item.permissions.canRename) {
+          return deny(item.readOnlyReason ?? (action === 'move' ? '没有移动权限' : '没有改名权限'))
+        }
+        return item.fileId !== undefined ? { ok: true } : noEntity
+      }
+      case 'delete': {
+        if (!item.permissions.canDelete) return deny(item.readOnlyReason ?? '没有删除权限')
+        return item.fileId !== undefined ? { ok: true } : noEntity
+      }
+      case 'copy': {
+        if (item.isDir) return deny('暂不支持复制目录')
+        // 与 duplicate 的两条路径对齐：有文件实体，或多模态投影（有本体可复制）
+        const canCopy =
+          item.fileId !== undefined ||
+          (item.docId !== undefined && (item.modalities ?? []).some((m) => m !== 'text'))
+        return canCopy ? { ok: true } : noEntity
+      }
       case 'pin':
         return item.sourceType === 'note' && !item.attributes.system
           ? { ok: true }
