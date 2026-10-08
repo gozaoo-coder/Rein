@@ -384,6 +384,26 @@ pub struct KbFile {
     pub updated_at: String,
     /// 该节点的模态清单（含可用状态）。文本笔记恒有 text，多模态节点另有本体模态。
     pub modalities: Vec<KbModalInfo>,
+    /// 用户评分 0..5（0 = 未评）
+    pub rating: i64,
+    /// 用户标签（不进索引：标签是给人看的分类，不是内容）
+    pub tags: Vec<String>,
+    /// 用户注释（自由文本）
+    pub note: String,
+}
+
+/// 改一个文件的用户元数据：评分 / 标签 / 注释。只传要改的字段，缺省不动。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbMetaInput {
+    /// `id` 可以是文档 id 或文件 id（与其余文件命令一致）
+    pub id: i64,
+    #[serde(default)]
+    pub rating: Option<i64>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// 新建 / 覆盖一个文件。路径会按规范净化与归位（见 files.rs::normalize_path）。
@@ -407,6 +427,98 @@ pub struct KbGlobHit {
     pub editable: bool,
     pub system: bool,
     pub occurred_on: Option<String>,
+}
+
+/* ---------- 目录列举（文件管理器的「一层」视图，kb/listing.rs） ---------- */
+
+/// 回收站命名空间：被删除的文件整体挪到这里（path 是 UNIQUE，必须先腾开原路径）。
+/// 它不在任何已知根目录里，正常浏览路径永远不会走到。
+pub const TRASH_ROOT: &str = "回收站";
+
+/// 目录里的一个条目。**一层的完整元数据**：文件管理器的列表/网格只需要这一份，
+/// 不必再去 glob 整棵子树。目录条目用 `path` 做身份（`doc_id` 为 0）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbEntry {
+    /// kb_docs.id —— 目录节点为 0（它没有可阅读的派生文档）
+    pub id: i64,
+    /// kb_files.id —— 派生投影没有真实文件行为 None
+    pub file_id: Option<i64>,
+    pub path: String,
+    /// 路径末段（真实文件名，如 `晨会录音.wav`）
+    pub name: String,
+    /// folder | text | image | audio | video | file
+    pub kind: String,
+    /// 目录条目恒为 ""；文件条目给出来源类别，UI 用它在只读派生文档上标注原因
+    pub source_type: String,
+    pub title: String,
+    pub system: bool,
+    pub editable: bool,
+    /// 字节数：文本按其 UTF-8 长度；多模态取本体字节；目录为子树占用
+    pub size: i64,
+    /// 目录的直接子项数（文件条目恒为 0）
+    pub child_count: i64,
+    pub occurred_on: Option<String>,
+    pub updated_at: String,
+    pub pinned: bool,
+    /// inbox | filed | manual | ""（派生投影没有归类状态）
+    pub classify_state: String,
+    /// 该节点的可用模态（text / image / audio / video / binary）
+    pub modalities: Vec<String>,
+    /// 用户评分 0..5（0 = 未评）
+    pub rating: i64,
+    /// 用户标签
+    pub tags: Vec<String>,
+    /// 用户注释（列表不带，避免一层的响应被长文本撑肥；详情走 kb_file_get）
+    pub has_note: bool,
+}
+
+/// 一次目录列举的结果。`truncated` 表示条目或聚合被上限截断（大目录）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbDirListing {
+    pub path: String,
+    pub entries: Vec<KbEntry>,
+    /// 条目总数（未截断时等于 entries.len()）
+    pub total: i64,
+    pub truncated: bool,
+}
+
+/// 回收站里的一条。`path` 是回收站内的存放路径，`original_path` 是删除前的位置。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbTrashEntry {
+    pub file_id: i64,
+    /// kb_docs.id（回收后派生文档已删，通常为 0）
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub original_path: String,
+    pub kind: String,
+    pub source_type: String,
+    pub size: i64,
+    pub system: bool,
+    pub trashed_at: String,
+    pub updated_at: String,
+}
+
+/// 单条回收站操作的结果。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbTrashResult {
+    pub file_id: i64,
+    /// 影响的行数（目录会连带子树）
+    pub count: i64,
+    pub path: String,
+}
+
+/// 批量回收站操作的结果：成功条数与逐条失败原因（前端逐条报告，不整体失败）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KbTrashBatchResult {
+    pub done: i64,
+    pub freed_bytes: i64,
+    pub failed: Vec<String>,
 }
 
 /* ---------- 模态层（kb_assets，docs/ai-workspace.md §2） ---------- */

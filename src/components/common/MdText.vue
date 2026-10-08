@@ -80,4 +80,45 @@ const html = computed(() => {
   border-left: 3px solid var(--line-strong);
   color: var(--text-2);
 }
+
+/* 表格：与全应用的表（.wtable / .matrix）同一套语言 —— 只有行分隔线，没有网格。
+   外层 wrap 管横向滚动：手机气泡窄，宽表在表内滚，不把气泡撑破。
+   对齐由 renderTable 写进单元格的 inline style（对齐是数据，不是主题）。 */
+.md :deep(.md-table-wrap) {
+  margin: 6px 0 2px;
+  overflow-x: auto;
+}
+
+.md :deep(.md-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.md :deep(.md-table th),
+.md :deep(.md-table td) {
+  padding: 5px 8px;
+  border-bottom: 0.5px solid var(--line);
+  color: var(--text-2);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.md :deep(.md-table th) {
+  font-weight: 600;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* 表尾不画线：最后一条横线会让表看起来「没结束」 */
+.md :deep(.md-table tbody tr:last-child td) {
+  border-bottom: none;
+}
+
+/* 首列是行标签（「周一 / 胸 / 1月」这类）：加重一档，正文列才是数据 */
+.md :deep(.md-table tbody td:first-child) {
+  color: var(--text-1);
+}
 </style>

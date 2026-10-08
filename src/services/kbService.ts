@@ -4,6 +4,7 @@ import type {
   KbArchiveListing,
   KbArchiveReport,
   KbCognition,
+  KbDirListing,
   KbDocDetail,
   KbEmbedCatalog,
   KbEmbedModelInfo,
@@ -20,6 +21,7 @@ import type {
   KbMedia,
   KbMediaInput,
   KbMemory,
+  KbMetaInput,
   KbMemoryDiffEntry,
   KbMemoryDuplicate,
   KbMemoryScope,
@@ -30,6 +32,9 @@ import type {
   KbSettings,
   KbSettingsInput,
   KbStatus,
+  KbTrashBatchResult,
+  KbTrashEntry,
+  KbTrashResult,
   KbUsageCleanResult,
   KbUsageReport,
   MemoryApplyResult,
@@ -107,6 +112,16 @@ export const kbService = {
   /** 取文件原文（编辑用；kb_read 走分块管线会丢原始换行） */
   fileGet: (id: number) => invoke<KbFile>('kb_file_get', { id }),
 
+  /** 改用户元数据：评分 / 标签 / 注释（只传要改的字段）。元数据不进索引 */
+  metaSet: (input: KbMetaInput) => invoke<KbFile>('kb_meta_set', { input }),
+
+  /** 导入磁盘上的本地文件（从系统文件管理器拖进来的路径；桌面端专用） */
+  importPath: (path: string, dir?: string, name?: string) =>
+    invoke<KbFile>('kb_import_path', { path, dir, name }),
+
+  /** 导出到本地（下载/Rein 下），返回绝对路径（桌面端专用） */
+  exportFile: (id: number) => invoke<string>('kb_export_file', { id }),
+
   /**
    * 上传 / 产出一个多模态节点（ai-workspace §2）：本体落盘 + 文本模态入索引。
    * `dataBase64` 可带 data URL 前缀；文本模态缺省时后端生成描述行（保证可检索）。
@@ -139,6 +154,29 @@ export const kbService = {
   /** 整批撤销一批整理，返回撤销条数 */
   fsUndo: (batchId: string) => invoke<number>('kb_fs_undo', { batchId }),
 
+  /* ---------- 文件管理器：目录列举 + 回收站 ---------- */
+
+  /**
+   * 列一层目录（文件管理器的 `ls`）。一次带回大小 / 时间 / 模态 / 钉住 / 归类 / 子项数，
+   * 所以排序、分组、状态列都不用再逐个查询；`path` 为空 = 根目录。
+   */
+  listDir: (path: string) => invoke<KbDirListing>('kb_list_dir', { path }),
+
+  /** 删除 = 移进回收站（目录连整棵子树一起走）。可撤销：trashRestore */
+  trash: (id: number) => invoke<KbTrashResult>('kb_trash', { id }),
+
+  /** 回收站清单（最近删除的在前） */
+  trashList: (limit = 200) => invoke<KbTrashEntry[]>('kb_trash_list', { limit }),
+
+  /** 从回收站恢复（批量，逐条报告失败） */
+  trashRestore: (ids: number[]) => invoke<KbTrashBatchResult>('kb_trash_restore', { ids }),
+
+  /** 彻底删除（批量，本体文件一并从磁盘清掉） */
+  trashPurge: (ids: number[]) => invoke<KbTrashBatchResult>('kb_trash_purge', { ids }),
+
+  /** 清空回收站 */
+  trashEmpty: () => invoke<KbTrashBatchResult>('kb_trash_empty', {}),
+
   /* ---------- 全量注入区（ai-workspace §3.4） ---------- */
 
   /** 取「系统提示词 + 用户记忆」注入块（前端带 TTL 缓存，不必每轮都取） */
@@ -155,8 +193,8 @@ export const kbService = {
 
   /* ---------- 空间管理 ---------- */
 
-  /** 占用总览（文本 / 本体 / 索引 / 数据库 + 大文件榜 + 孤儿统计） */
-  usage: (top = 20) => invoke<KbUsageReport>('kb_usage', { top }),
+  /** 占用总览（文本 / 本体 / 索引 / 数据库 + 大文件榜 + 孤儿统计）；minBytes 给榜单下限 */
+  usage: (top = 20, minBytes = 0) => invoke<KbUsageReport>('kb_usage', { top, minBytes }),
 
   /** 清理磁盘上无人引用的本体碎片（dryRun 只统计） */
   usageClean: (dryRun = false) => invoke<KbUsageCleanResult>('kb_usage_clean', { dryRun }),
@@ -195,23 +233,76 @@ export const kbService = {
   memoryBump: (ids: number[]) => invoke<void>('kb_memory_bump', { ids }),
 }
 
+/* ---------- 占用总览的会话级备忘 ---------- */
+
+// report 是全表聚合 + 目录遍历 + 逐本体 stat，属于重读；而入口在页面挂载时就会取一次
+// （来回切页 = 反复扫库）。这里给个短 TTL 备忘：同一会话里切页不再重复扫，
+// 动了文件（解压 / 清理 / 移动 / 删除）时由调用方显式 invalidate。
+//
+// **按 top 分别记**：三个入口要的榜单长度不同（文件页胶囊与总览页 12 条、大文件页 100 条），
+// 单条备忘会让「总览 ↔ 大文件」来回切时每次都落空、每次重扫一遍库。留最近三份即可 ——
+// 再多也没有第四个入口，只会白占内存。
+const USAGE_TTL_MS = 5 * 60 * 1000
+const USAGE_MEMO_MAX = 3
+const usageMemo = new Map<string, { at: number; data: KbUsageReport }>()
+
+/** 让下次 usageCached 重新扫库（任何会改动工作区内容的操作之后调它） */
+export function invalidateUsage(): void {
+  usageMemo.clear()
+}
+
+/** 取占用总览（带会话级备忘）；`force` 跳过备忘强制刷新 */
+export async function usageCached(top = 12, force = false): Promise<KbUsageReport> {
+  const key = `top:${top}`
+  const hit = usageMemo.get(key)
+  if (!force && hit && Date.now() - hit.at < USAGE_TTL_MS) return hit.data
+  const data = await kbService.usage(top)
+  usageMemo.delete(key)
+  usageMemo.set(key, { at: Date.now(), data })
+  while (usageMemo.size > USAGE_MEMO_MAX) {
+    // Map 迭代顺序 = 插入顺序：删最旧的那份
+    const oldest = usageMemo.keys().next()
+    if (oldest.done) break
+    usageMemo.delete(oldest.value)
+  }
+  return data
+}
+
+/* ---------- 事件桥（惰性 / 单飞 / 失败可重试） ---------- */
+
+/**
+ * 惰性建一次 Tauri 事件订阅，并派发给一组监听者。
+ *
+ * 三个要点（都是踩过的坑）：
+ * 1. **单飞**：并发调用只建一次订阅 —— 旧写法「先置位再 await」，并发时两个调用
+ *    都会通过检查，事件被派发两次；
+ * 2. **失败不缓存**：`listen()` 抛错时清掉缓存的 promise，下次订阅还能重试。
+ *    旧写法一旦失败就把标志留在 true，本会话里进度事件永久失效；
+ * 3. 浏览器 mock 模式没有 Tauri（也没有索引线程/下载），直接当就绪，不建订阅。
+ */
+function makeEventBridge<T>(event: string, listeners: Set<(e: T) => void>): () => Promise<void> {
+  let ready: Promise<void> | null = null
+  return () => {
+    if (!ready) {
+      ready = (async () => {
+        if (!isTauri) return
+        const { listen } = await import('@tauri-apps/api/event')
+        await listen<T>(event, (e) => {
+          for (const l of listeners) l(e.payload)
+        })
+      })().catch((e) => {
+        ready = null
+        throw e
+      })
+    }
+    return ready
+  }
+}
+
 /* ---------- 索引进度事件（kb://index，对应 Rust worker.rs::INDEX_EVENT） ---------- */
 
 const indexListeners = new Set<(e: KbIndexEvent) => void>()
-let indexBridged = false
-
-function dispatchIndex(payload: KbIndexEvent): void {
-  for (const l of indexListeners) l(payload)
-}
-
-async function bridgeIndexEvents(): Promise<void> {
-  if (indexBridged) return
-  indexBridged = true
-  // 浏览器 mock 没有索引线程，不产事件 —— 页面靠进入时的一次 kb_status 快照兜底
-  if (!isTauri) return
-  const { listen } = await import('@tauri-apps/api/event')
-  await listen<KbIndexEvent>('kb://index', (e) => dispatchIndex(e.payload))
-}
+const bridgeIndexEvents = makeEventBridge<KbIndexEvent>('kb://index', indexListeners)
 
 /**
  * 订阅索引进度推送（页面必须在卸载时取消订阅，否则重挂载会重复派发）。
@@ -226,17 +317,7 @@ export async function onKbIndexProgress(cb: (e: KbIndexEvent) => void): Promise<
 /* ---------- 模型下载进度事件（kb://model，对应 Rust commands.rs 的 MODEL_EVENT） ---------- */
 
 const modelListeners = new Set<(e: KbModelEvent) => void>()
-let modelBridged = false
-
-async function bridgeModelEvents(): Promise<void> {
-  if (modelBridged) return
-  modelBridged = true
-  if (!isTauri) return
-  const { listen } = await import('@tauri-apps/api/event')
-  await listen<KbModelEvent>('kb://model', (e) => {
-    for (const l of modelListeners) l(e.payload)
-  })
-}
+const bridgeModelEvents = makeEventBridge<KbModelEvent>('kb://model', modelListeners)
 
 export async function onKbModelProgress(cb: (e: KbModelEvent) => void): Promise<() => void> {
   await bridgeModelEvents()

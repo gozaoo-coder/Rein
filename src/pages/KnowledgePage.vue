@@ -27,6 +27,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { kbService, onKbIndexProgress, onKbModelProgress } from '@/services/kbService'
+import { humanBytes } from '@/utils/format'
 import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
 import {
@@ -42,6 +43,7 @@ import {
   type KbMemoryDiffEntry,
   type KbMemoryDuplicate,
   type KbMemoryStats,
+  type KbModelEvent,
   type KbSettings,
   type KbSourceType,
   type KbStatus,
@@ -80,6 +82,10 @@ const modelBusy = ref<string | null>(null)
 /** 下载进度：{ id, file, pct }；null = 没有进行中的下载 */
 const modelProgress = ref<{ id: string; file: string; pct: number } | null>(null)
 let offModel: (() => void) | null = null
+/** 组件是否已卸载（订阅是异步建立的，落地前要先看这个再决定退不退订） */
+let disposed = false
+/** 上一次已渲染的下载百分比：同一个数不重复赋值，省掉整页重渲染 */
+let lastModelPct = -1
 
 /** 测试面板：一段查询 + 若干候选（一行一条），可选第二个模型做对比 */
 const testTexts = ref('膝盖疼怎么练腿\n膝关节不适时的腿部训练该怎么安排\n今天晚饭吃什么')
@@ -190,13 +196,6 @@ async function loadCatalog(): Promise<void> {
   }
 }
 
-function humanBytes(n: number): string {
-  if (n >= 1024 * 1024 * 1024) return `${(n / 1073741824).toFixed(2)} GB`
-  if (n >= 1024 * 1024) return `${(n / 1048576).toFixed(0)} MB`
-  if (n >= 1024) return `${Math.round(n / 1024)} KB`
-  return `${n} B`
-}
-
 async function downloadModel(id: string): Promise<void> {
   if (modelBusy.value) return
   modelBusy.value = id
@@ -236,8 +235,14 @@ async function removeModel(id: string): Promise<void> {
 /** 换本地模型：落库（后端会作废旧向量并按新模型重算） */
 async function pickModel(id: string): Promise<void> {
   if (id === localModel.value || busy.value) return
+  const prev = localModel.value
   localModel.value = id
-  await saveSettings(true)
+  const ok = await saveSettings(true)
+  if (!ok) {
+    // 没落库就别把面板留在「已切换」上：后端还会校验注册表，失败是可能的
+    localModel.value = prev
+    return
+  }
   await loadCatalog()
   toast.toast('已切换本地模型，向量会在后台按新模型重算')
 }
@@ -326,33 +331,54 @@ onMounted(() => {
   void refresh().catch((e) => toast.toast(e instanceof Error ? e.message : String(e)))
   void loadCatalog()
   void loadMemoryAudit()
-  void onKbIndexProgress(onIndexProgress).then((off) => {
-    offIndex = off
-  })
-  void onKbModelProgress((e) => {
-    if (e.phase === 'error') {
-      modelProgress.value = null
-      if (e.message) toast.toast(e.message)
-      return
-    }
-    if (e.phase === 'done') {
-      modelProgress.value = null
-      return
-    }
-    const pct = e.total > 0 ? Math.min(100, Math.round((e.done / e.total) * 100)) : 0
-    modelProgress.value = { id: e.id, file: e.file, pct }
-  }).then((off) => {
-    offModel = off
-  })
+  // 订阅失败（listen 抛错）不该冒成未处理拒绝：丢掉 .catch 会让整个 onMounted 变成
+  // unhandled rejection；卸载途中才 resolve 的话当场退订，别把监听留在已销毁的组件上。
+  void onKbIndexProgress(onIndexProgress)
+    .then((off) => {
+      if (disposed) off()
+      else offIndex = off
+    })
+    .catch(() => {})
+  void onKbModelProgress(onModelProgress)
+    .then((off) => {
+      if (disposed) off()
+      else offModel = off
+    })
+    .catch(() => {})
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   offIndex?.()
   offModel?.()
 })
 
-/** silent：开关/chips 这类即时生效的小改动不出声，别让「已保存」toast 打断操作节奏 */
-async function saveSettings(silent = false): Promise<void> {
+/**
+ * 下载进度：Rust 侧已按 1% 节流，前端再把「同一个百分比」合并掉——
+ * 赋值是一次组件重渲染，这个页面很大，白渲染几千次就是卡顿。
+ */
+function onModelProgress(e: KbModelEvent): void {
+  if (e.phase === 'error') {
+    lastModelPct = -1
+    modelProgress.value = null
+    if (e.message) toast.toast(e.message)
+    return
+  }
+  if (e.phase === 'done') {
+    lastModelPct = -1
+    modelProgress.value = null
+    return
+  }
+  const pct = e.total > 0 ? Math.min(100, Math.round((e.done / e.total) * 100)) : 0
+  const cur = modelProgress.value
+  if (pct === lastModelPct && cur?.id === e.id && cur?.file === e.file) return
+  lastModelPct = pct
+  modelProgress.value = { id: e.id, file: e.file, pct }
+}
+
+/** silent：开关/chips 这类即时生效的小改动不出声，别让「已保存」toast 打断操作节奏。
+ *  返回是否落库成功——乐观更新的调用方（如换模型）要拿它决定回不回滚。 */
+async function saveSettings(silent = false): Promise<boolean> {
   busy.value = true
   try {
     const input: Record<string, unknown> = {
@@ -372,8 +398,10 @@ async function saveSettings(silent = false): Promise<void> {
     cloudApiKey.value = ''
     status.value = await kbService.status()
     if (!silent) toast.toast('已保存')
+    return true
   } catch (e) {
     toast.toast(e instanceof Error ? e.message : String(e))
+    return false
   } finally {
     busy.value = false
   }
@@ -826,7 +854,7 @@ function requestCloseEditor(): void {
           </div>
           <div v-if="memoryDiffs.length" class="diffs">
             <span class="diffs-head">最近整理</span>
-            <p v-for="d in memoryDiffs.slice(0, 3)" :key="d.at" class="diff-line">
+            <p v-for="(d, i) in memoryDiffs.slice(0, 3)" :key="`${i}-${d.at}`" class="diff-line">
               <span class="mono">{{ d.at.slice(0, 16) }}</span> {{ diffLabel(d) }}
             </p>
           </div>
@@ -1067,7 +1095,7 @@ function requestCloseEditor(): void {
               </p>
               <p class="test-meta">{{ res.dim }} 维 · 构建 {{ res.buildMs }}ms · 总 {{ res.totalMs }}ms</p>
               <ol class="ranks">
-                <li v-for="r in res.ranking" :key="r.text">
+                <li v-for="(r, i) in res.ranking" :key="`${i}-${r.text}`">
                   <span class="rank-score">{{ r.score.toFixed(3) }}</span>
                   <span class="rank-bar">
                     <i :style="{ transform: `scaleX(${Math.max(0, Math.min(1, r.score))})` }" />

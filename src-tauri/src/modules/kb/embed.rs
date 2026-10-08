@@ -471,15 +471,24 @@ pub fn model_id_of(cfg: &EmbedConfig) -> Option<String> {
     }
 }
 
-/// 嵌入身份的指纹：模式 + 本地模型 + 云端模型。**任何一处变了都要作废旧向量**
-/// （kb_settings_set 用它判断），也是 embedder 缓存的键。
+/// 嵌入身份的指纹：**当前模式真正生效的那部分**（本地模式看本地模型，云端模式看云端模型）。
+///
+/// `kb_settings_set` 用它判断要不要作废旧向量，它也是 embedder 缓存的键。
+/// 只取生效部分是有意的：云端模式下改一下本地模型的选择，不该把云端向量全清掉
+/// （那是按量计费的重算）。
 pub fn identity(cfg: &EmbedConfig) -> String {
-    let cloud = cfg
-        .cloud
-        .as_ref()
-        .map(|(_, _, m, d)| format!("{m}:{}", d.unwrap_or(0)))
-        .unwrap_or_default();
-    format!("{}|{}|{}", cfg.mode, cfg.local.id, cloud)
+    match cfg.mode.as_str() {
+        crate::modules::kb::models::MODE_LOCAL => format!("local|{}", cfg.local.id),
+        crate::modules::kb::models::MODE_CLOUD => {
+            let cloud = cfg
+                .cloud
+                .as_ref()
+                .map(|(_, _, m, d)| format!("{m}:{}", d.unwrap_or(0)))
+                .unwrap_or_default();
+            format!("cloud|{cloud}")
+        }
+        other => other.to_string(),
+    }
 }
 
 /// 按配置构造 embedder。`keyword` 模式返回 None——调用方据此跳过向量召回。

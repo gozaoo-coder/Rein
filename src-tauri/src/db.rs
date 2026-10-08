@@ -1308,6 +1308,72 @@ const MIGRATION_0038: &str = r#"
 ALTER TABLE kb_settings ADD COLUMN local_model TEXT NOT NULL DEFAULT 'bge-small-zh-v1.5-int8';
 "#;
 
+/// 0039 · 工作区回收站（modules/kb/files.rs）。
+///
+/// 删除默认不再是物理删除：`trashed_at` 非空即进了回收站，`trash_from` 记住原路径供恢复。
+/// 行本身被移到 `回收站/{span id}/{原相对路径}` 命名空间下——`kb_files.path` 是 UNIQUE，
+/// 不腾走原路径就没法在同一个位置新建同名文件。
+///
+/// 「看不见」由查询层保证：派生（source.rs）、索引对账（index.rs）、注入区与目录列举
+/// 一律过滤 `trashed_at IS NULL`，AI 与检索都看不到回收站里的东西。
+const MIGRATION_0039: &str = r#"
+ALTER TABLE kb_files ADD COLUMN trashed_at TEXT;
+ALTER TABLE kb_files ADD COLUMN trash_from TEXT;
+CREATE INDEX idx_kb_files_trash ON kb_files(trashed_at);
+"#;
+
+/// 0040 · 提供商（供应商）账号与其模型目录（modules/ai/providers.rs）。
+///
+/// 一个「提供商」= 适配器 + 凭据 + 接入方式；`ai_provider_models` 存拉到的模型目录
+/// （origin 记来源：api = /models 接口拉到，preset = 适配器内置参考，manual = 手填）。
+/// 目录本身不重复存密钥——密钥在 `ai_providers.api_key`，启用模型时再落到
+/// `ai_models`（LLM）/ 语音配置（ASR）/ 知识库设置（向量）。
+const MIGRATION_0040: &str = r#"
+CREATE TABLE ai_providers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  -- 适配器 id（deepseek | volc-ark | dashscope | siliconflow | openai-compatible）
+  adapter TEXT NOT NULL,
+  -- 昵称：模型名前缀与折叠分组都用它
+  name TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  api_key TEXT NOT NULL,
+  -- 接入方式（适配器内的 style id，如方舟的 ark / agent-plan）
+  api_style TEXT NOT NULL DEFAULT '',
+  -- 适配器专属字段的 JSON（如豆包语音的 appId / accessToken）
+  extra TEXT,
+  last_error TEXT,
+  last_sync_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_ai_providers_adapter_base ON ai_providers(adapter, base_url);
+
+CREATE TABLE ai_provider_models (
+  provider_id INTEGER NOT NULL REFERENCES ai_providers(id) ON DELETE CASCADE,
+  model_id TEXT NOT NULL,
+  -- llm | vision | asr | embedding | tts
+  kind TEXT NOT NULL,
+  -- api | preset | manual
+  origin TEXT NOT NULL DEFAULT 'api',
+  -- 附加元信息 JSON（维度、单价、说明…）
+  meta TEXT,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (provider_id, model_id)
+);
+CREATE INDEX idx_ai_provider_models_kind ON ai_provider_models(provider_id, kind);
+"#;
+
+/// 0041 · 文件元数据：评分 / 标签 / 注释（modules/kb/files.rs）。
+///
+/// 三样都存在 `kb_files` 行上（不进 `kb_docs`）：它们是**用户给文件加的话**，
+/// 不是内容的一部分 —— 不喂给索引，避免「标签里的词把语义带偏」。
+/// 评分 0 = 未评（0..5）；标签是 JSON 数组字符串；注释是自由文本。
+const MIGRATION_0041: &str = r#"
+ALTER TABLE kb_files ADD COLUMN rating INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE kb_files ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE kb_files ADD COLUMN note TEXT NOT NULL DEFAULT '';
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1347,6 +1413,9 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0036,
     MIGRATION_0037,
     MIGRATION_0038,
+    MIGRATION_0039,
+    MIGRATION_0040,
+    MIGRATION_0041,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

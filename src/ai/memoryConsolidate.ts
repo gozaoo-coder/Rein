@@ -111,6 +111,13 @@ export interface ConsolidateBatchResult {
   size: number
   /** 下一个游标（调用方存起来，下次从这里继续） */
   nextOffset: number
+  /**
+   * 本批**已经覆盖整个记忆库** → 调用方直接收工，不要再跑下一批。
+   *
+   * 用这个布尔量而不是让调用方拿 `size` 跟库长度比：那正是上一版把终止条件
+   * 写反的地方（`size < 总数` 在库 > 一批时第一轮就 break，永远只跑一批）。
+   */
+  coveredAll: boolean
 }
 
 /**
@@ -146,7 +153,10 @@ export async function consolidateMemories(
   input: ConsolidateMemoriesInput,
 ): Promise<ConsolidateBatchResult> {
   const { batch, nextOffset } = pickBatch(input.memories, input.offset ?? 0)
-  if (input.memories.length < 4) return { candidates: [], size: 0, nextOffset: 0 }
+  const coveredAll = input.memories.length <= BATCH_SIZE
+  if (input.memories.length < 4) {
+    return { candidates: [], size: 0, nextOffset: 0, coveredAll: true }
+  }
 
   const dups = relevantDups(input.duplicates ?? [], batch)
   const batches = Math.max(1, Math.ceil(input.memories.length / BATCH_SIZE))
@@ -167,7 +177,7 @@ export async function consolidateMemories(
 
   const raw = lastAssistantText(agent.state.messages)
   const candidates = toCandidates(raw ?? '', { maxOps: MAX_OPS_PER_BATCH, allowArchive: true })
-  return { candidates, size: batch.length, nextOffset }
+  return { candidates, size: batch.length, nextOffset, coveredAll }
 }
 
 /** 单次整理最多跑几批（供 stores/ai.ts 循环）；导出以免两处写死不一致。 */

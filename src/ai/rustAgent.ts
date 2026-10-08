@@ -27,9 +27,11 @@ import {
   blocksFromOutcome,
   emptyUsage,
   finalMessage,
+  imageFromToolResult,
   outcomeFromToolResult,
   StepAccumulator,
   toLlmMessages,
+  toolDetailsFromResult,
 } from './agentProtocol'
 
 /** 注册表工具（pi AgentTool 的结构子集；parameters 为 JSON Schema） */
@@ -144,10 +146,20 @@ export class RustAgent {
     this.unlisten = await agentService.onEvent((e) => this.onEvent(e))
   }
 
+  /** 退订。agent 是一次性的（每个入口/抽取/整理各用一个），跑完必须放手：
+   *  否则它会一直收着本进程**所有** run 的事件，谁也活不到被回收。 */
+  private unsubscribe(): void {
+    const off = this.unlisten
+    this.unlisten = null
+    off?.()
+  }
+
   private onEvent(e: AgentEvent): void {
     if (e.type === 'started') return
     if (!this.runId) {
-      this.pendingEvents.push(e)
+      // 只为「订阅已建立、runId 还没认领」这一小段窗口缓冲（invoke 返回与事件
+      // 推送有竞态）。给个上限兜底：万一谁又忘了退订，也不会无界增长。
+      if (this.pendingEvents.length < 500) this.pendingEvents.push(e)
       return
     }
     if (e.runId !== this.runId) return
@@ -189,11 +201,14 @@ export class RustAgent {
         if (!e.kernel) break
         const outcome: AgentToolOutcome = { content: e.content, isError: e.isError }
         this.acc.pushToolResult(e.name, outcome)
+        const blocks = blocksFromOutcome(outcome)
         this.emit({
           type: 'tool_execution_end',
           toolName: e.name,
           isError: e.isError,
-          result: { content: blocksFromOutcome(outcome) },
+          // details 是给前端自己用的结构化载荷（文件卡片 / 放大镜元数据），
+          // 与回灌模型的文本同源但不同用途（见 agentProtocol::toolDetailsFromResult）
+          result: { content: blocks, details: toolDetailsFromResult({ content: blocks }) },
         })
         break
       }
@@ -219,11 +234,13 @@ export class RustAgent {
   private async runTool(callId: string, name: string, args: unknown): Promise<void> {
     const tool = this.tools.find((t) => t.name === name)
     let outcome: AgentToolOutcome
+    let raw: unknown = null
     if (!tool) {
       outcome = { content: `未知工具: ${name}`, isError: true }
     } else {
       try {
-        outcome = outcomeFromToolResult(await tool.execute(callId, args))
+        raw = await tool.execute(callId, args)
+        outcome = outcomeFromToolResult(raw)
       } catch (e) {
         outcome = { content: e instanceof Error ? e.message : String(e), isError: true }
       }
@@ -244,11 +261,18 @@ export class RustAgent {
     }
 
     await agentService.toolResult(this.runId as string, callId, outcome).catch(() => undefined)
+    const blocks = blocksFromOutcome(outcome)
     this.emit({
       type: 'tool_execution_end',
       toolName: name,
       isError: outcome.isError,
-      result: { content: blocksFromOutcome(outcome) },
+      // 结构化载荷（details / {ok,data} 信封里的 data）与结果图一起带上：
+      // 过程卡的文件卡片、放大镜结果图与元数据都从这两项读（见 agentProtocol）
+      result: {
+        content: blocks,
+        details: toolDetailsFromResult(raw ?? { content: blocks }),
+        image: imageFromToolResult(raw ?? { content: blocks }),
+      },
     })
   }
 
@@ -275,6 +299,9 @@ export class RustAgent {
   private finish(errorMessage?: string): void {
     this.runId = null
     if (errorMessage) this.state.errorMessage = errorMessage
+    // 跑完就退订 + 清空缓冲：不留僵尸订阅（流式文本会一直累积在 pendingEvents 里）
+    this.pendingEvents = []
+    this.unsubscribe()
     const settle = this.settle
     this.settle = null
     settle?.()

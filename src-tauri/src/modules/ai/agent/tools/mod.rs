@@ -73,6 +73,7 @@ pub fn registry() -> &'static [RegisteredTool] {
             kb::extract_archive(),
             kb::workspace_usage(),
             kb::find_large_files(),
+            kb::present_file(),
             kb::list_memories(),
             kb::remember(),
             kb::edit_memory(),
@@ -103,12 +104,29 @@ pub fn defs_for_groups(groups: &[String]) -> Vec<LlmToolDef> {
 /// 失败收敛为 `is_error: true` 的结果（模型据此自纠正），不抛 IPC 错误 ——
 /// 与前端注册表「失败 throw 由框架回灌错误」的语义一致。
 pub async fn run_tool(app: &tauri::AppHandle, name: &str, args: &Value) -> Option<ToolOutcome> {
-    // 各域实现需要的 State 从 app 现取（任务里 app 是 'static 的）
-    let outcome = match name {
-        misc::SEARCH_HISTORY_NAME => Some(misc::run(app, args).await),
-        web::WEB_SEARCH_NAME | web::WEB_FETCH_NAME => Some(web::run(app, name, args).await),
-        _ => kb::run(app, name, args).await,
-    }?;
+    // 各域实现需要的 State 从 app 现取（任务里 app 是 'static 的）。
+    // 分派按各域的 `handles` 名单走：名单既是分派依据，也是测试断言
+    // 「注册表 ⊆ 各域认领」的依据，只有一份、不会两处漂移。
+    let outcome = if misc::handles(name) {
+        Some(misc::run(app, args).await)
+    } else if web::handles(name) {
+        Some(web::run(app, name, args).await)
+    } else if kb::handles(name) {
+        kb::run(app, name, args).await
+    } else {
+        None
+    };
+    let Some(outcome) = outcome else {
+        // 「已登记但没人执行」是内核 bug：前端看到 kernel=true 就不再跑 TS 侧同名工具，
+        // 这里再静默返回 None，这次调用就无声消失了。宁可吵一声。
+        if is_registered(name) {
+            eprintln!("[ai-agent] 工具 {name} 已登记但没有执行器（内核 bug）");
+            return Some(ToolOutcome::error(format!(
+                "[内部错误] 工具 {name} 已登记但未接入执行器，请把这条反馈给开发者"
+            )));
+        }
+        return None;
+    };
     Some(match outcome {
         Ok(v) => ToolOutcome::ok(v.to_string()),
         Err(e) => ToolOutcome::error(e.to_string()),
@@ -185,7 +203,9 @@ mod tests {
     }
 
     /// 名字集一致性：`is_registered` 决定前端是否跳过 TS 侧执行（AgentEvent::ToolStarted.kernel），
-    /// 一旦「登记了但 run_tool 不认」就会出现「前端不跑、后端也不跑」的静默失效。
+    /// 一旦「登记了但没人执行」就会出现「前端不跑、后端也不跑」的静默失效。
+    ///
+    /// 断言方向是**注册表 → 各域认领**（而不是反过来列一串名字）：前者才是危险方向。
     #[test]
     fn registered_names_match_dispatcher() {
         for c in [misc::SEARCH_HISTORY_NAME, web::WEB_SEARCH_NAME, web::WEB_FETCH_NAME] {
@@ -193,27 +213,13 @@ mod tests {
         }
         assert!(!is_registered("load_tools"), "未迁移的工具不该被当成内核工具");
         assert!(!is_registered("完全不存在的工具"));
-        for n in [
-            "search_knowledge",
-            "read_knowledge",
-            "glob_knowledge",
-            "write_note",
-            "rename_note",
-            "delete_note",
-            "read_modal",
-            "classify_move",
-            "pin_file",
-            "make_folder",
-            "list_archive",
-            "extract_archive",
-            "workspace_usage",
-            "find_large_files",
-            "list_memories",
-            "remember",
-            "edit_memory",
-            "forget",
-        ] {
-            assert!(is_registered(n), "{n} 应在注册表里");
+        for t in registry() {
+            let claimed = kb::handles(t.name) || web::handles(t.name) || misc::handles(t.name);
+            assert!(
+                claimed,
+                "工具 {} 已登记但没有域认领：前端会跳过 TS 执行，等于静默失效",
+                t.name
+            );
         }
     }
 

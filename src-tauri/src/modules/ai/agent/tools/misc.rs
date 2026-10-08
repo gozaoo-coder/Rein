@@ -29,6 +29,11 @@ pub fn search_history() -> RegisteredTool {
     }
 }
 
+/// 本模块负责执行的名字（测试用它断言「注册表 ⊆ 各域认领」）。
+pub fn handles(name: &str) -> bool {
+    name == SEARCH_HISTORY_NAME
+}
+
 /// 执行：与 TS 版同一投影（chat/role/at/text 截 200 字）
 pub(super) async fn run(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
     let keyword = args.get("keyword").and_then(|v| v.as_str()).unwrap_or("").to_string();

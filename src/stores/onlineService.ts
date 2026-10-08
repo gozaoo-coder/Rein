@@ -48,6 +48,32 @@ export const useOnlineServiceStore = defineStore('online-service', () => {
     }
   })
 
+  /** 这个密钥的「调用条件」：服务端报的原文优先（余额不足/已限流…），
+   *  没报就按状态码与白名单说人话 —— 这一句是用户判断「还能不能用」的依据。 */
+  const accountText = computed(() => {
+    const c = catalog.value
+    if (!hasKey.value) return '未配置服务密钥：填 rein_sk_… 之后才能取到可用模型'
+    if (!c) return '还没连接：点「获取模型列表」看这个密钥能用什么'
+    if (c.clientNote) return c.clientNote
+    if (c.clientStatus) return `账号状态：${c.clientStatus}`
+    switch (c.status) {
+      case 'ready':
+        return c.clientModels.length > 0
+          ? `本账号限用 ${c.clientModels.length} 个模型（其余模型不在白名单里）`
+          : '本账号无限制：服务端下发的模型都可用'
+      case 'unauthorized':
+        return '密钥无效或已被撤销，需要服务端重新签发'
+      case 'forbidden':
+        return '这个密钥没有可用模型（白名单为空）'
+      case 'not_configured':
+        return '服务端暂无可用模型（后台还没配 provider）'
+      case 'unreachable':
+        return '服务异常或网络不通：地址是否写错、服务是否在跑'
+      default:
+        return '连接异常：看下方错误原文'
+    }
+  })
+
   async function load(force = false): Promise<void> {
     if (loaded.value && !force) return
     try {
@@ -145,6 +171,7 @@ export const useOnlineServiceStore = defineStore('online-service', () => {
     ready,
     configured,
     statusText,
+    accountText,
     load,
     saveSettings,
     disconnect,

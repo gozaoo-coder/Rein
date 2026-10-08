@@ -145,11 +145,15 @@ pub async fn run_turn(
 
         // 一步 completion（瞬态错误退避重试；重试会把该步增量重新发一遍，
         // 故经 on_step_retry 通知前端重置本步累积）
-        let resp = {
+        //
+        // 用带标签的块把「失败」也带回块外：历史此刻在 `req` 里（上面 take 走了），
+        // 直接 `return Err` 会让 messages 空着离开本步——后面任何复用它的调用方
+        // 都会拿到空历史。所以先统一取回历史，再 `?` 抛错。
+        let resp = 'step: {
             let mut attempt: usize = 0;
             loop {
                 match backend.stream_complete(&req, deltas.clone()).await {
-                    Ok(r) => break r,
+                    Ok(r) => break 'step Ok(r),
                     Err(e) => {
                         let msg = e.to_string();
                         match plan_retry(&msg, attempt) {
@@ -158,7 +162,7 @@ pub async fn run_turn(
                                 hooks.on_step_retry(attempt as u32, delay);
                                 tokio::time::sleep(delay).await;
                             }
-                            RetryPlan::Fail => return Err(ReinError::Message(msg)),
+                            RetryPlan::Fail => break 'step Err(ReinError::Message(msg)),
                         }
                     }
                 }
@@ -166,6 +170,7 @@ pub async fn run_turn(
         };
         // 取回历史（见上面 take 的说明）；此后的 messages 增删照旧
         messages = std::mem::take(&mut req.messages);
+        let resp = resp?;
 
         if let Some(u) = &resp.usage {
             hooks.on_usage(u);
@@ -256,7 +261,8 @@ async fn execute_tools(
     let mut slots: Vec<Option<ToolOutcome>> = vec![None; calls.len()];
     while let Some((idx, outcome)) = rx.recv().await {
         slots[idx] = Some(outcome);
-    }    // 收割句柄：panic 的子任务在这里被观察到（其结果槽位保持 None）
+    }
+    // 收割句柄：panic 的子任务在这里被观察到（其结果槽位保持 None）
     let mut panicked = 0usize;
     while let Some(joined) = set.join_next().await {
         if joined.is_err() {

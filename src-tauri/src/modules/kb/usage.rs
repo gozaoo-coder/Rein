@@ -153,8 +153,46 @@ fn missing_assets(conn: &Connection, root: &Path) -> Result<i64> {
     Ok(missing)
 }
 
-/// 占用总览。`top` = 大文件榜条数（0 表示不要榜）。
-pub fn report(conn: &Connection, root: &Path, top: i64) -> Result<KbUsageReport> {
+/// 按体积倒序的文件榜（文本字节 + 本体字节），可给体积下限。
+///
+/// **只做这一条查询**：「找大文件」这类调用不该顺带跑整份 report
+/// （全表聚合 + 目录遍历 + 逐本体 stat）。`report` 也复用它，保证口径只有一份。
+pub fn largest(conn: &Connection, limit: i64, min_bytes: i64) -> Result<Vec<KbUsageFile>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, path, kind, updated_at, tb, ab FROM (
+             SELECT f.id, f.path, f.kind, f.updated_at,
+                    COALESCE(LENGTH(CAST(f.content AS BLOB)), 0) AS tb,
+                    COALESCE((SELECT SUM(a.bytes) FROM kb_assets a WHERE a.file_id = f.id), 0) AS ab
+             FROM kb_files f
+             WHERE f.kind != 'folder' AND f.trashed_at IS NULL
+         )
+         WHERE (tb + ab) >= ?2
+         ORDER BY (tb + ab) DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![limit.clamp(1, TOP_MAX), min_bytes.max(0)],
+        |r| {
+            let text_bytes: i64 = r.get(4)?;
+            let asset_bytes: i64 = r.get(5)?;
+            Ok(KbUsageFile {
+                id: r.get(0)?,
+                path: r.get(1)?,
+                kind: r.get(2)?,
+                bytes: text_bytes + asset_bytes,
+                text_bytes,
+                asset_bytes,
+                updated_at: r.get(3)?,
+            })
+        },
+    )?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+/// 占用总览。`top` = 大文件榜条数（0 表示不要榜）；`min_bytes` = 榜单的体积下限。
+///
+/// 下限**在 SQL 里生效**：先按体积取前 N 条再过滤的话，阈值一高就会莫名其妙
+/// 少一半甚至空榜（后面的达标文件根本没进候选）。
+pub fn report(conn: &Connection, root: &Path, top: i64, min_bytes: i64) -> Result<KbUsageReport> {
     let text_bytes: i64 = conn.query_row(
         "SELECT COALESCE(SUM(LENGTH(CAST(content AS BLOB))), 0) FROM kb_files WHERE kind != 'folder'",
         [],
@@ -190,14 +228,19 @@ pub fn report(conn: &Connection, root: &Path, top: i64) -> Result<KbUsageReport>
         .query_row("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()", [], |r| r.get(0))
         .unwrap_or(0);
 
-    // 按工作区一级目录
+    // 按工作区一级目录：**文本 + 本体**。一个目录「占了多少地方」才是这一栏要回答的
+    // 问题，只算文本会把 附件/语音/视频 这些放本体的目录显示成近乎空的 —— 而本体恰恰
+    // 是体积大头。口径与 largest 的 `bytes` 一致（模型 / mock 也都是文本 + 本体）。
     let mut areas: Vec<KbUsageSlice> = Vec::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT CASE WHEN instr(path, '/') > 0 THEN substr(path, 1, instr(path, '/') - 1) ELSE path END AS area,
+            "SELECT CASE WHEN instr(f.path, '/') > 0 THEN substr(f.path, 1, instr(f.path, '/') - 1) ELSE f.path END AS area,
                     COUNT(*),
-                    COALESCE(SUM(LENGTH(CAST(content AS BLOB))), 0)
-             FROM kb_files WHERE kind != 'folder'
+                    COALESCE(SUM(LENGTH(CAST(f.content AS BLOB))), 0) + COALESCE(SUM(a.bytes), 0)
+             FROM kb_files f
+             LEFT JOIN (SELECT file_id, SUM(bytes) AS bytes FROM kb_assets GROUP BY file_id) a
+                    ON a.file_id = f.id
+             WHERE f.kind != 'folder'
              GROUP BY area ORDER BY 3 DESC",
         )?;
         let rows = stmt.query_map([], |r| {
@@ -253,34 +296,12 @@ pub fn report(conn: &Connection, root: &Path, top: i64) -> Result<KbUsageReport>
         }
     }
 
-    // 大文件榜：文本字节 + 本体字节
-    let mut largest: Vec<KbUsageFile> = Vec::new();
-    if top > 0 {
-        let mut stmt = conn.prepare(
-            "SELECT f.id, f.path, f.kind, f.updated_at,
-                    COALESCE(LENGTH(CAST(f.content AS BLOB)), 0) AS tb,
-                    COALESCE((SELECT SUM(a.bytes) FROM kb_assets a WHERE a.file_id = f.id), 0) AS ab
-             FROM kb_files f
-             WHERE f.kind != 'folder'
-             ORDER BY (tb + ab) DESC LIMIT ?1",
-        )?;
-        let rows = stmt.query_map([top.clamp(1, TOP_MAX)], |r| {
-            let text_bytes: i64 = r.get(4)?;
-            let asset_bytes: i64 = r.get(5)?;
-            Ok(KbUsageFile {
-                id: r.get(0)?,
-                path: r.get(1)?,
-                kind: r.get(2)?,
-                bytes: text_bytes + asset_bytes,
-                text_bytes,
-                asset_bytes,
-                updated_at: r.get(3)?,
-            })
-        })?;
-        for r in rows {
-            largest.push(r?);
-        }
-    }
+    // 大文件榜：文本字节 + 本体字节（体积下限在 SQL 里过滤，见 report 的说明）
+    let largest = if top > 0 {
+        largest(conn, top, min_bytes)?
+    } else {
+        Vec::new()
+    };
 
     let orphans = list_orphans(conn, root)?;
     let orphan_bytes: i64 = orphans.iter().map(|(_, b)| b).sum();
@@ -401,7 +422,7 @@ mod tests {
         )
         .unwrap();
 
-        let r = report(&conn, &root, 10).unwrap();
+        let r = report(&conn, &root, 10, 0).unwrap();
         assert!(r.text_bytes >= 3000, "1000 个汉字是 3000 字节");
         assert_eq!(r.asset_bytes, 8192);
         assert_eq!(r.file_count, 2);
@@ -410,6 +431,28 @@ mod tests {
         assert!(r.areas.iter().any(|a| a.name == "笔记"));
         assert!(r.modals.iter().any(|m| m.name == "image" && m.bytes == 8192));
         assert!(r.summary.contains("工作区共"));
+    }
+
+    /// 体积下限必须在 SQL 里生效（先取前 N 条再过滤会把达标文件漏在候选之外）。
+    #[test]
+    fn largest_honours_min_bytes() {
+        let conn = db();
+        let root = root();
+        for (name, size) in [("笔记/大.md", 5000usize), ("笔记/中.md", 2000), ("笔记/小.md", 100)] {
+            files::write_media_row(
+                &conn,
+                name,
+                &"x".repeat(size),
+                crate::modules::kb::models::FILE_KIND_TEXT,
+            )
+            .unwrap();
+        }
+        assert_eq!(largest(&conn, 10, 0).unwrap().len(), 3);
+        let big = largest(&conn, 10, 1000).unwrap();
+        assert_eq!(big.len(), 2, "下限应在 SQL 里过滤：{big:?}");
+        assert!(big.iter().all(|f| f.bytes >= 1000));
+        assert_eq!(big[0].path, "笔记/大.md");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -442,7 +485,7 @@ mod tests {
         let refs = assets::fs_refs(&conn, fid).unwrap();
         std::fs::remove_file(root.join(&refs[0])).unwrap();
 
-        let r = report(&conn, &root, 5).unwrap();
+        let r = report(&conn, &root, 5, 0).unwrap();
         assert_eq!(r.orphan_count, 1);
         assert_eq!(r.orphan_bytes, 4096);
         assert_eq!(r.missing_count, 1, "fid 的本体被删了，应报缺失");

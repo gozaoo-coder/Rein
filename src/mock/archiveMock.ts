@@ -2,9 +2,12 @@
  * 浏览器 mock 的压缩包解析（jszip）。
  *
  * 接口形状与 Rust `modules/kb/archive.rs` 对齐，安全护栏同样照搬（zip-slip / 绝对路径 /
- * 体积与条目上限），这样 e2e 与真机行为一致。**只支持 zip**：jszip 的能力边界就是 zip，
- * tar / gz 在浏览器里没有现成实现，mock 会如实报「不支持」——真实能力以 Rust 侧为准。
+ * 条目体积与总数 / 压缩比），这样 e2e 与真机行为一致。**只支持 zip**：jszip 的能力边界
+ * 就是 zip，tar / gz 在浏览器里没有现成实现，mock 会如实报「不支持」——真实能力以 Rust
+ * 侧为准。与真机的已知差异都写在 `skipped` 的文案里（例如浏览器不落盘本体）。
  */
+
+import { bytesToBase64 } from '@/utils/image'
 
 /** 与 Rust `TEXT_EXTS` 同口径：这些扩展名按文本节点入库（可检索）。 */
 const TEXT_EXTS = [
@@ -19,6 +22,23 @@ const MAX_FILES = 300
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024
 const LIST_CAP = 500
 const MAX_INNER_DEPTH = 3
+/** 压缩比闸门（与 Rust 同值同义） */
+const RATIO_MAX = 200
+const RATIO_FLOOR = 64 * 1024 * 1024
+/** 文本判定的头部采样长度（与 Rust 的 4096 一致） */
+const SAMPLE_BYTES = 4096
+/** 提示条数上限（与 Rust NOTES_MAX 一致） */
+const NOTES_MAX = 10
+/** 浏览器里把本体编成 dataUrl 的体积上限：真机是把字节写进 workspace/media/，
+ *  浏览器没有磁盘，几十 MB 的 base64 字符串会直接把页面拖死。超了如实跳过。 */
+const MOCK_BINARY_CAP = 32 * 1024 * 1024
+
+/** 可写的根目录（对齐 Rust models.rs 的 WRITABLE_ROOTS + DOMAIN_ROOTS） */
+const KNOWN_ROOTS = [
+  '笔记', '文档', '用户记忆', '未分类数据', '语音', '视频',
+  '日程', '运动', '饮食', '体测', '课程', '食物', '方案', '菜单', '对话', '附件', '记忆', '纪要',
+]
+const INBOX_ROOT = '未分类数据'
 
 export interface MockArchiveEntry {
   path: string
@@ -90,6 +110,38 @@ function cleanPath(raw: string): string | null {
 
 const extOf = (name: string): string => (name.split('.').pop() ?? '').toLowerCase()
 
+/** 记一条提示；超过上限的只计数（与 Rust `note()` 同口径）。返回 1 表示被压掉。 */
+function note(notes: string[], msg: string): number {
+  if (notes.length < NOTES_MAX) {
+    notes.push(msg)
+    return 0
+  }
+  return 1
+}
+
+/** 文本判定：扩展名 + 体积 + 头部采样无 NUL（对齐 Rust looks_text；大文件不做内容判定）。 */
+function looksText(name: string, size: number, sample: Uint8Array | null): boolean {
+  if (!TEXT_EXTS.includes(extOf(name))) return false
+  if (size > MAX_TEXT_BYTES) return false
+  return !sample || !sample.includes(0)
+}
+
+/**
+ * JSZip 条目的体积元信息（不解压就能拿到）。
+ *
+ * jszip 3.10 的 ZipObject 把尺寸放在私有 `_data` 上（没有公开 API）。**拿不到就退化为
+ * 解压一次**：升级 jszip 最多让 mock 慢一点，不会拿错数——这条比"绝对不碰内部字段"重要，
+ * 因为「列清单就把整包解开」正是要修掉的毛病（几百 MB 的包会把页面卡死）。
+ */
+function entrySizes(f: unknown): { size: number; packed: number } | null {
+  const data = (f as { _data?: { uncompressedSize?: number; compressedSize?: number } })._data
+  if (!data || typeof data.uncompressedSize !== 'number') return null
+  return {
+    size: data.uncompressedSize,
+    packed: typeof data.compressedSize === 'number' ? data.compressedSize : 0,
+  }
+}
+
 function decodeText(bytes: Uint8Array): string | null {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
@@ -107,52 +159,104 @@ async function openZip(dataUrl: string): Promise<import('jszip')> {
   return JSZip.loadAsync(bytes)
 }
 
-export async function mockArchiveList(dataUrl: string, name: string): Promise<MockArchiveListing> {
+/** 压缩比闸门（与 Rust check_ratio 同文案） */
+function checkRatio(entries: MockArchiveEntry[]): void {
+  const total = entries.reduce((s, e) => s + e.size, 0)
+  const packed = entries.reduce((s, e) => s + e.packed, 0)
+  if (total > RATIO_FLOOR && packed > 0 && total / Math.max(1, packed) > RATIO_MAX) {
+    throw new Error(
+      `压缩比异常（解压后约 ${Math.floor(total / 1048576)} MB，压缩包仅 ${Math.floor(packed / 1024)} KB），出于安全考虑拒绝解压`,
+    )
+  }
+}
+
+/** 解析出**全量**条目（list 与 extract 共用；extract 不再受 list 的 500 条截断影响）。 */
+async function loadEntries(
+  dataUrl: string,
+): Promise<{ zip: import('jszip'); entries: MockArchiveEntry[]; notes: string[] }> {
   const zip = await openZip(dataUrl)
   const entries: MockArchiveEntry[] = []
   const notes: string[] = []
   let unsafe = 0
-  const names = Object.keys(zip.files)
-  for (const raw of names) {
+  let suppressed = 0
+  for (const raw of Object.keys(zip.files)) {
     const f = zip.files[raw]
-    const isDir = f.dir
     const clean = cleanPath(raw)
     if (!clean) {
       unsafe++
-      notes.push(`跳过可疑路径：${raw}`)
+      suppressed += note(notes, `跳过可疑路径：${raw}`)
       continue
     }
-    const inner = isDir ? null : await f.async('uint8array')
-    const size = inner ? inner.length : 0
+    const isDir = f.dir
+    let size = 0
+    let packed = 0
+    let sample: Uint8Array | null = null
+    if (!isDir) {
+      const meta = entrySizes(f)
+      if (meta) {
+        size = meta.size
+        packed = meta.packed
+        // 只对小文件取头部样本（与 Rust 一致：大文件不做内容判定，也就不解压）
+        if (size > 0 && size <= SAMPLE_BYTES) sample = await f.async('uint8array')
+      } else {
+        const inner = await f.async('uint8array')
+        size = inner.length
+        sample = inner.length <= SAMPLE_BYTES ? inner : null
+      }
+    }
     const skip = size > MAX_FILE_BYTES ? `单文件超过上限（${MAX_FILE_BYTES / 1048576} MB）` : null
     entries.push({
       path: clean,
       size,
-      packed: 0,
+      packed,
       isDir,
-      text:
-        !isDir &&
-        !skip &&
-        TEXT_EXTS.includes(extOf(clean)) &&
-        size <= MAX_TEXT_BYTES &&
-        decodeText(inner!) !== null,
+      text: !isDir && !skip && looksText(clean, size, sample),
       skipped: skip,
     })
   }
+  checkRatio(entries)
+  if (unsafe > 0) {
+    notes.push(`${unsafe} 个条目带不安全路径（绝对路径 / .. / 盘符），已跳过`)
+  }
+  if (suppressed > 0) notes.push(`另有 ${suppressed} 条同类提示已省略`)
+  return { zip, entries, notes }
+}
+
+export async function mockArchiveList(dataUrl: string, name: string): Promise<MockArchiveListing> {
+  const { entries, notes } = await loadEntries(dataUrl)
   const totalBytes = entries.reduce((s, e) => s + e.size, 0)
+  const packedBytes = entries.reduce((s, e) => s + e.packed, 0)
   const truncated = entries.length > LIST_CAP
   if (truncated) notes.push(`条目较多，只显示前 ${LIST_CAP} 条（共 ${entries.length} 条）`)
-  if (unsafe > 0) notes.push(`${unsafe} 个条目带不安全路径（绝对路径 / .. / 盘符），已跳过`)
   void name
   return {
     format: 'zip',
     entries: entries.slice(0, LIST_CAP),
     total: entries.length,
     totalBytes,
-    packedBytes: 0,
+    packedBytes,
     truncated,
     notes,
   }
+}
+
+/** 落点目录归位（对齐 Rust normalize_target_dir）：净化逐段、拒绝 `..`、未知根落收件箱。 */
+function normalizeTargetDir(raw: string | undefined, name: string): string {
+  const trimmed = (raw ?? '').trim().replace(/^\/+|\/+$/g, '')
+  if (!trimmed) {
+    const stem = name.replace(/\.[^.]+$/, '').slice(0, 40) || '压缩包'
+    return `${INBOX_ROOT}/解压/${stem}`
+  }
+  const segs: string[] = []
+  for (const seg of trimmed.split('/')) {
+    if (!seg || seg === '.') continue
+    if (seg === '..') throw new Error(`路径不允许包含 ..：${trimmed}`)
+    const cleaned = cleanPath(seg)
+    if (cleaned) segs.push(cleaned)
+  }
+  if (!segs.length) throw new Error('落点目录不能为空')
+  if (!KNOWN_ROOTS.includes(segs[0])) segs.unshift(INBOX_ROOT)
+  return segs.join('/')
 }
 
 export async function mockArchiveExtract(
@@ -160,18 +264,16 @@ export async function mockArchiveExtract(
   name: string,
   opts: { toDir?: string; only?: string[] },
 ): Promise<MockArchiveReport> {
-  const listing = await mockArchiveList(dataUrl, name)
-  const target = opts.toDir?.trim()
-    ? opts.toDir.trim().replace(/^\/+|\/+$/g, '')
-    : `未分类数据/解压/${name.replace(/\.[^.]+$/, '').slice(0, 40) || '压缩包'}`
+  // 一次解析两用：清单与解压不再各解析一遍（旧实现连 openZip 都跑了两次）
+  const { zip, entries, notes } = await loadEntries(dataUrl)
+  const target = normalizeTargetDir(opts.toDir, name)
   const only = (opts.only ?? []).filter(Boolean)
-  const zip = await openZip(dataUrl)
   const files: MockArchiveFile[] = []
-  const skipped: string[] = [...listing.notes]
+  const skipped: string[] = [...notes]
   let bytes = 0
   let truncated = false
 
-  for (const entry of listing.entries) {
+  for (const entry of entries) {
     if (entry.isDir) continue
     if (only.length && !only.some((p) => entry.path.includes(p))) continue
     if (entry.skipped) {
@@ -188,9 +290,22 @@ export async function mockArchiveExtract(
       skipped.push('解压总量超过上限，其余未解压')
       break
     }
-    const f = zip.files[entry.path] ?? zip.files[Object.keys(zip.files).find((k) => cleanPath(k) === entry.path) ?? '']
+    if (!entry.text && entry.size > MOCK_BINARY_CAP) {
+      skipped.push(
+        `${entry.path}（浏览器预览不落盘超过 ${MOCK_BINARY_CAP / 1048576} MB 的本体，请在真机里解压）`,
+      )
+      continue
+    }
+    const raw = Object.keys(zip.files).find((k) => cleanPath(k) === entry.path)
+    const f = raw ? zip.files[raw] : undefined
     if (!f) continue
     const data = await f.async('uint8array')
+    const remaining = MAX_TOTAL_BYTES - bytes
+    if (data.length > remaining) {
+      truncated = true
+      skipped.push(`${entry.path}（超出剩余空间预算）`)
+      continue
+    }
     const segs = entry.path.split('/')
     const inner =
       segs.length <= MAX_INNER_DEPTH
@@ -202,15 +317,13 @@ export async function mockArchiveExtract(
       continue
     }
     const mime = entry.text ? 'text/plain' : 'application/octet-stream'
-    const b64 = entry.text
-      ? ''
-      : btoa(String.fromCharCode(...data.subarray(0, Math.min(data.length, 32 * 1024 * 1024) as number)))
     files.push({
       path: inner,
       text,
       mime,
-      bytes: data.length,
-      dataUrl: entry.text ? '' : `data:${mime};base64,${b64}`,
+      // 文本按 UTF-8 字节数上报（真机是字节，不是 JS 的 UTF-16 码元数）
+      bytes: entry.text ? new TextEncoder().encode(text ?? '').length : data.length,
+      dataUrl: entry.text ? '' : `data:${mime};base64,${bytesToBase64(data)}`,
     })
     bytes += data.length
   }

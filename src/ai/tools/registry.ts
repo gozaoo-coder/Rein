@@ -36,6 +36,7 @@ import { nutritionTools } from './nutrition'
 import { planTools } from './plan'
 import { pomodoroTools } from './pomodoro'
 import { programTools } from './program'
+import { providerTools } from './providers'
 import { sessionTools } from './session'
 import { defineTool, type AppTool, type ToolGroup } from './types'
 import { todoTools } from './todo'
@@ -58,6 +59,7 @@ const DOMAIN_TOOLS: AppTool[] = [
   ...noteTools,
   ...workspaceTools,
   ...modelTools,
+  ...providerTools,
   ...voiceTools,
   ...imageTools,
   ...campusTools,
@@ -125,9 +127,11 @@ export const GROUP_POLICY: Record<ToolGroup, GroupPolicy> = {
     keywords: /番茄|专注|计时/,
   },
   models: {
-    label: '模型配置',
-    hint: 'AI 模型列表、增改、探测与默认项切换（AI 自管理）',
-    keywords: /模型|api\s*key|apikey|密钥|接口地址|base\s*url|探测|视觉能力|思考能力|默认模型|供应商|provider/i,
+    label: '模型与服务商',
+    hint:
+      'AI 模型列表、增改、探测与默认项切换，以及提供商账号（服务商 Key）、模型目录拉取与四个服务模型槽位（主对话 / 多模态 / 语音识别 / 向量）的切换（AI 自管理）',
+    keywords:
+      /模型|api\s*key|apikey|密钥|接口地址|base\s*url|探测|视觉能力|思考能力|默认模型|供应商|服务商|提供商|provider|方舟|百炼|硅基|通义|向量|embedding|识别模型|语音识别|多模态|asr/i,
   },
   voice: {
     label: '语音服务',

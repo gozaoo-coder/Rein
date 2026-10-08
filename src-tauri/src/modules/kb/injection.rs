@@ -57,7 +57,7 @@ struct Entry {
 fn load(conn: &Connection) -> Result<Vec<Entry>> {
     let mut stmt = conn.prepare(
         "SELECT path, content FROM kb_files
-         WHERE path LIKE ?1 || '/%' OR path LIKE ?2 || '/%'
+         WHERE (path LIKE ?1 || '/%' OR path LIKE ?2 || '/%') AND trashed_at IS NULL
          ORDER BY path",
     )?;
     let rows = stmt.query_map([SYSTEM_PROMPT_ROOT, USER_MEMORY_ROOT], |r| {

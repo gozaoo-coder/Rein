@@ -1,47 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, type Component } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
+  AlertCircle,
   Archive,
-  Brain,
-  CalendarDays,
-  Carrot,
   ChevronLeft,
-  ChevronRight,
-  ClipboardList,
-  CornerLeftUp,
-  Dumbbell,
   FileAudio,
   FileText,
   FileVideo,
   Folder,
-  FolderPlus,
   HardDrive,
   Image as ImageIcon,
   Lock,
-  MessagesSquare,
-  Mic,
   MoveRight,
-  NotebookPen,
   Paperclip,
   Pencil,
   Pin,
   PackageOpen,
   PinOff,
-  Scale,
-  Search,
-  ShieldCheck,
-  Soup,
-  Target,
   Trash2,
-  Upload,
-  UtensilsCrossed,
-  X,
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
-import EmptyState from '@/components/common/EmptyState.vue'
-import { kbService } from '@/services/kbService'
+import FileExplorer from '@/components/files/FileExplorer.vue'
+import { kbService, invalidateUsage, usageCached } from '@/services/kbService'
+import { humanBytes } from '@/utils/format'
 import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
 import {
@@ -50,7 +33,6 @@ import {
   type KbArchiveReport,
   type KbChunk,
   type KbFile,
-  type KbGlobHit,
   type KbHit,
   type KbMedia,
   type KbModal,
@@ -58,244 +40,58 @@ import {
   type KbUsageReport,
 } from '@/types'
 
-/** 文件管理器（docs/ai-workspace.md §5）：虚拟文件系统的真实视图。
- *  入口在 AI 页左上角；浏览走 glob 目录下钻 + 面包屑，阅读保证完整
- *  （note 源直读 kb_files 真源，派生文档按 L2 分块渐进加载），
- *  本体（音频/视频/图片）按模态取，不可用则降级为文本。
- *  一切操作 = 一条 kb 命令，不读物理路径、不调用系统文件管理器。 */
+/** 文件库页（docs/ai-workspace.md §5）：**阅读器 + 文件管理器**两态。
+ *
+ *  - 浏览交给 `<FileExplorer>`（组件化：虚拟滚动、多选、拖放、回收站、操作队列都在它里面）；
+ *  - 本页只剩「打开一个条目之后」的事：完整阅读（note 源直读 kb_files 真源，派生文档按 L2
+ *    分块渐进加载）、本体预览（音频/视频/图片）、压缩包解压、编辑/钉住/归类/删除。
+ *  - 一切操作 = 一条 kb 命令，不读物理路径、不调用系统文件管理器。 */
 
 const ai = useAiStore()
 const toast = useToast()
 /** 「去原页面」用：派生投影只是索引，正文要看真身就得回它自己的页面 */
 const router = useRouter()
+/** 深链参数（`?dir=` 目录 / `?path=` 文件）：空间总览页的目录行与大文件行带着它们跳进来 */
+const route = useRoute()
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
-/** 目录列举的单次拉取上限（服务端 glob 上限 500） */
-const GLOB_LIMIT = 500
 /** 阅读器每次加载的块数（kb_read 上限 64） */
 const PAGE_CHUNKS = 24
-/** 客户端导入上限：base64 走 IPC，超过这个体积就不再考虑 */
-const UPLOAD_CAP = 32 * 1024 * 1024
 
-/* ---------- 目录浏览 ---------- */
+/** 根目录的「地标」：系统区 → 知识区 → 投影区，顺序即规范里的心智模型（§3.1）。
+ *  文件管理器不认识这些名字，由本页作为工作区的领域知识传进去。 */
+const NAMESPACES: readonly { name: string; hint: string }[] = [
+  { name: '系统提示词', hint: '只读 · 每轮注入' },
+  { name: '用户记忆', hint: '长期设定与规范' },
+  { name: '未分类数据', hint: '收件箱 · 待归类' },
+  { name: '笔记', hint: '手写笔记' },
+  { name: '文档', hint: '上传文档全文' },
+  { name: '语音', hint: '语音纪要与本音' },
+  { name: '视频', hint: '视频与转写' },
+  { name: '日程', hint: '待办与安排' },
+  { name: '附件', hint: '图片·音频·文件' },
+  { name: '对话', hint: '会话转录' },
+  { name: '运动', hint: '训练记录' },
+  { name: '课程', hint: '训练课程' },
+  { name: '饮食', hint: '饮食记录' },
+  { name: '体测', hint: '体重身高' },
+  { name: '食物', hint: '自建食物' },
+  { name: '方案', hint: '健康方案' },
+  { name: '菜单', hint: '方案菜单' },
+  { name: '记忆', hint: '长期记忆' },
+  { name: '规范', hint: '系统规范' },
+]
 
-interface DirEntry {
-  name: string
-  path: string
-  count: number
-}
+/* ---------- 文件管理器（浏览态） ---------- */
 
-const dir = ref('')
-const dirs = ref<DirEntry[]>([])
-const files = ref<KbGlobHit[]>([])
-const listingBusy = ref(false)
-const truncated = ref(false)
+const explorer = ref<{ refresh: () => Promise<void>; navigate: (p: string) => Promise<void>; path: string } | null>(null)
+/** 文件管理器当前所在目录（根目录时展示「最近内容」卡片，别的目录不展示） */
+const explorerPath = computed(() => explorer.value?.path ?? '')
+
 const recent = ref<KbHit[]>([])
 const recentLoaded = ref(false)
 
-/** 根目录网格：系统区 → 知识区 → 投影区，顺序即规范里的心智模型（§3.1） */
-const NAMESPACES = [
-  { name: '系统提示词', icon: ShieldCheck, hint: '只读 · 每轮注入' },
-  { name: '用户记忆', icon: Brain, hint: '长期设定与规范' },
-  { name: '未分类数据', icon: Folder, hint: '收件箱 · 待归类' },
-  { name: '笔记', icon: NotebookPen, hint: '手写笔记' },
-  { name: '文档', icon: FileText, hint: '上传文档全文' },
-  { name: '语音', icon: Mic, hint: '语音纪要与本音' },
-  { name: '视频', icon: FileVideo, hint: '视频与转写' },
-  { name: '日程', icon: CalendarDays, hint: '待办与安排' },
-  { name: '附件', icon: Paperclip, hint: '图片·音频·文件' },
-  { name: '对话', icon: MessagesSquare, hint: '会话转录' },
-  { name: '运动', icon: Dumbbell, hint: '训练记录' },
-  { name: '课程', icon: ClipboardList, hint: '训练课程' },
-  { name: '饮食', icon: UtensilsCrossed, hint: '饮食记录' },
-  { name: '体测', icon: Scale, hint: '体重身高' },
-  { name: '食物', icon: Carrot, hint: '自建食物' },
-  { name: '方案', icon: Target, hint: '健康方案' },
-  { name: '菜单', icon: Soup, hint: '方案菜单' },
-  { name: '记忆', icon: Brain, hint: '长期记忆' },
-  { name: '规范', icon: ShieldCheck, hint: '系统规范' },
-] as const
-
-/** 归类时的常用目标（快速 chips） */
-const MOVE_TARGETS = ['运动', '饮食', '日程', '笔记', '文档', '语音', '视频', '用户记忆', '未分类数据']
-
-/**
- * 根目录清单：按真实文件系统的读法——一行一个目录（名称 + 说明 + 条目数 + 进箭头），
- * 而不是方块网格。命名空间在前（规范里定义的心智模型），数据里存在的其他顶层目录补在后面，
- * 保证没有哪个目录会被藏起来。
- */
-const rootEntries = computed(() => {
-  const counts = new Map(dirs.value.map((d) => [d.name, d.count]))
-  const known = new Set<string>(NAMESPACES.map((n) => n.name))
-  const rows = NAMESPACES.map((n) => ({
-    name: n.name as string,
-    icon: n.icon as Component,
-    hint: n.hint as string,
-    count: counts.get(n.name) ?? 0,
-  }))
-  for (const d of dirs.value) {
-    if (!known.has(d.name)) rows.push({ name: d.name, icon: Folder, hint: '用户目录', count: d.count })
-  }
-  return rows
-})
-
-const crumbs = computed(() => (dir.value ? dir.value.split('/') : []))
-
-async function loadDir(path: string): Promise<void> {
-  listingBusy.value = true
-  try {
-    const hits = await kbService.glob(path ? `${path}/**` : '**', GLOB_LIMIT)
-    const map = new Map<string, number>()
-    const fs: KbGlobHit[] = []
-    const prefix = path ? `${path}/` : ''
-    for (const h of hits) {
-      const rel = path ? h.path.slice(prefix.length) : h.path
-      if (!rel || rel.startsWith('..')) continue
-      const slash = rel.indexOf('/')
-      // 根目录：顶层文件直接列出；顶层目录由命名空间网格承担
-      if (slash < 0) {
-        fs.push(h)
-      } else {
-        const name = rel.slice(0, slash)
-        map.set(name, (map.get(name) ?? 0) + 1)
-      }
-    }
-    dirs.value = [...map.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0], 'zh'))
-      .map(([name, count]) => ({ name, path: `${path}/${name}`, count }))
-    files.value = fs
-    truncated.value = hits.length >= GLOB_LIMIT
-  } catch (e) {
-    toast.toast(errMsg(e))
-  } finally {
-    listingBusy.value = false
-  }
-}
-
-function openDir(path: string): void {
-  dir.value = path
-  dirs.value = []
-  files.value = []
-  truncated.value = false
-  void loadDir(path)
-}
-
-async function refreshListing(): Promise<void> {
-  await loadDir(dir.value)
-}
-
-/** k = -1 回根目录 */
-function jumpCrumb(k: number): void {
-  const path = k < 0 ? '' : crumbs.value.slice(0, k + 1).join('/')
-  if (path === dir.value) return
-  if (!path) {
-    dir.value = ''
-    void loadDir('')
-    return
-  }
-  openDir(path)
-}
-
-/* ---------- 新建目录 / 导入本体 ---------- */
-
-const folderOpen = ref(false)
-const folderName = ref('')
-const folderBusy = ref(false)
-const fileInput = ref<HTMLInputElement | null>(null)
-
-function openFolderPanel(): void {
-  folderOpen.value = true
-  folderName.value = ''
-}
-
-async function createFolder(): Promise<void> {
-  const name = folderName.value.trim()
-  if (!name) return
-  folderBusy.value = true
-  try {
-    const f = await kbService.fsMkdir(dir.value ? `${dir.value}/${name}` : name, '用户在文件管理器新建', 'user')
-    toast.toast(`已建目录 ${f.path}`)
-    folderOpen.value = false
-    await refreshListing()
-  } catch (e) {
-    toast.toast(errMsg(e))
-  } finally {
-    folderBusy.value = false
-  }
-}
-
-function pickUpload(): void {
-  fileInput.value?.click()
-}
-
-function readAsDataUrl(f: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result ?? ''))
-    reader.onerror = () => reject(new Error('读取文件失败'))
-    reader.readAsDataURL(f)
-  })
-}
-
-async function onUploadPicked(e: Event): Promise<void> {
-  const input = e.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  if (file.size > UPLOAD_CAP) {
-    toast.toast(`文件超过 ${UPLOAD_CAP / 1024 / 1024}MB，暂不支持导入工作区`)
-    return
-  }
-  try {
-    const dataUrl = await readAsDataUrl(file)
-    // 目录里导入就落当前目录；根目录导入先落收件箱，等用户或 AI 归类（§3.3）
-    const target = dir.value || '未分类数据'
-    const f = await kbService.mediaWrite({
-      path: `${target}/${file.name}`,
-      name: file.name,
-      mime: file.type || '',
-      dataBase64: dataUrl,
-    })
-    toast.toast(`已导入 ${f.path}`)
-    await refreshListing()
-  } catch (e2) {
-    toast.toast(errMsg(e2))
-  }
-}
-
-/* ---------- 文件名搜索 ---------- */
-
-const query = ref('')
-const found = ref<KbGlobHit[] | null>(null)
-const searching = ref(false)
-
-async function runFilter(): Promise<void> {
-  const kw = query.value.trim().replace(/[*?/\\]/g, '')
-  if (!kw) {
-    found.value = null
-    return
-  }
-  searching.value = true
-  try {
-    found.value = await kbService.glob(`**/*${kw}*`, 200)
-  } catch (e) {
-    toast.toast(errMsg(e))
-  } finally {
-    searching.value = false
-  }
-}
-
-let filterTimer: ReturnType<typeof setTimeout> | null = null
-watch(query, () => {
-  if (filterTimer) clearTimeout(filterTimer)
-  filterTimer = setTimeout(() => void runFilter(), 250)
-})
-
-function clearFilter(): void {
-  query.value = ''
-  found.value = null
-}
 
 /* ---------- 阅读器 ---------- */
 
@@ -334,75 +130,50 @@ interface ReaderState {
   /** 压缩包清单（打开后才有值）；null = 还没打开或不是压缩包 */
   archive: KbArchiveListing | null
   archiveErr: string
+  /** 解压产物与进度的**阅读器级**状态：页面级的会在切换文档时把结果挂错面板 */
+  archiveReport: KbArchiveReport | null
+  archiveBusy: boolean
+  archiveToDir: string
+  archiveOnly: string
 }
 
 const reader = ref<ReaderState | null>(null)
 
-function baseName(path: string): string {
-  return path.split('/').pop() ?? path
-}
+/** 归类时的常用目标（快速 chips；文件管理器里的「移动到…」用的是同一份清单） */
+const MOVE_TARGETS = ['运动', '饮食', '日程', '笔记', '文档', '语音', '视频', '用户记忆', '未分类数据']
 
-/* ---------- 空间总览（根视图顶部） ---------- */
+/* ---------- 空间占用（只留页头右侧那颗胶囊，明细都在空间总览页） ---------- */
 
 const usage = ref<KbUsageReport | null>(null)
-const usageOpen = ref(false)
-const cleaning = ref(false)
-const cleanConfirm = ref(false)
 
-async function loadUsage(): Promise<void> {
+async function loadUsage(force = false): Promise<void> {
   try {
-    usage.value = await kbService.usage(12)
+    // 走会话级备忘：report 是全表聚合 + 目录遍历 + 逐本体 stat，
+    // 每次进页面都重扫一遍没必要；动了工作区的地方显式 invalidateUsage()。
+    // **不传 top**：与空间总览页取的是同一个键，两页共享同一份 report（来回切页零重扫）。
+    usage.value = await usageCached(undefined, force)
   } catch {
-    /* 总览是锦上添花：取不到就整块不显示，不打扰浏览 */
+    /* 胶囊是锦上添花：取不到就整颗不显示，不打扰浏览 */
     usage.value = null
   }
 }
 
-async function cleanOrphans(): Promise<void> {
-  if (!cleanConfirm.value) {
-    cleanConfirm.value = true
-    return
-  }
-  cleaning.value = true
-  try {
-    const r = await kbService.usageClean(false)
-    toast.toast(r.removed > 0 ? r.message : '没有需要清理的碎片')
-    cleanConfirm.value = false
-    await loadUsage()
-  } catch (e) {
-    toast.toast(errMsg(e))
-  } finally {
-    cleaning.value = false
-  }
-}
-
-function humanBytes(n: number): string {
-  if (n >= 1024 * 1024 * 1024) return `${(n / 1073741824).toFixed(2)} GB`
-  if (n >= 1024 * 1024) return `${(n / 1048576).toFixed(1)} MB`
-  if (n >= 1024) return `${Math.round(n / 1024)} KB`
-  return `${n} B`
-}
-
-/** 占用条：以最大项为满格（比按总量归一更能看出层级） */
-function areaPct(bytes: number): number {
-  const max = usage.value?.areas[0]?.bytes ?? 0
-  return max > 0 ? Math.max(2, Math.round((bytes / max) * 100)) : 0
+function openUsage(): void {
+  void router.push({ name: 'ai-files-usage' })
 }
 
 /* ---------- 压缩包（zip / tar / gz） ---------- */
 
-const archiveBusy = ref(false)
-const archiveToDir = ref('')
-const archiveOnly = ref('')
-const archiveReport = ref<KbArchiveReport | null>(null)
+// 解压的面板状态全都挂在 `reader` 上（见 ReaderState）：解压是异步的，切了文档再回来
+// 写页面级 ref 会把 A 包的报告挂到 B 文档的面板上；busy 也会挡住新文档的按钮。
 
 /** 是不是「可能能打开」的压缩包：按扩展名给出入口，真实格式由后端按魔数判 */
 const archiveCandidate = computed(() => /\.(zip|tar|gz|tgz)$/i.test(reader.value?.path ?? ''))
 
 async function openArchive(): Promise<void> {
   const r = reader.value
-  if (!r || archiveBusy.value) return
-  archiveBusy.value = true
+  if (!r || r.archiveBusy) return
+  r.archiveBusy = true
   r.archiveErr = ''
   try {
     r.archive = await kbService.archiveList(r.docId)
@@ -410,34 +181,36 @@ async function openArchive(): Promise<void> {
     r.archive = null
     r.archiveErr = errMsg(e)
   } finally {
-    archiveBusy.value = false
+    r.archiveBusy = false
   }
 }
 
 async function doExtract(): Promise<void> {
   const r = reader.value
-  if (!r || archiveBusy.value) return
-  const only = archiveOnly.value
+  if (!r || r.archiveBusy) return
+  const only = r.archiveOnly
     .split(/[,\n]/)
     .map((t) => t.trim())
     .filter(Boolean)
-  archiveBusy.value = true
+  r.archiveBusy = true
   r.archiveErr = ''
   try {
     const rep = await kbService.archiveExtract(
       r.docId,
-      archiveToDir.value.trim() || undefined,
+      r.archiveToDir.trim() || undefined,
       only.length ? only : undefined,
     )
-    archiveReport.value = rep
+    // 期间可能已经切走：结果只写回它自己那份 reader
+    if (reader.value === r) r.archiveReport = rep
     toast.toast(rep.message)
-    await refreshListing()
+    invalidateUsage()
+    await refreshExplorer()
     await loadUsage()
   } catch (e) {
     r.archiveErr = errMsg(e)
     toast.toast(errMsg(e))
   } finally {
-    archiveBusy.value = false
+    r.archiveBusy = false
   }
 }
 
@@ -587,9 +360,6 @@ function applyFile(r: ReaderState, f: KbFile): void {
 }
 
 async function openDoc(docId: number): Promise<void> {
-  archiveReport.value = null
-  archiveToDir.value = ''
-  archiveOnly.value = ''
   try {
     const d = await kbService.read(docId, 'l2', 0, PAGE_CHUNKS)
     const r: ReaderState = {
@@ -620,6 +390,10 @@ async function openDoc(docId: number): Promise<void> {
       media: null,
       archive: null,
       archiveErr: '',
+      archiveReport: null,
+      archiveBusy: false,
+      archiveToDir: '',
+      archiveOnly: '',
       mediaBusy: false,
       moveOpen: false,
       moveTarget: '',
@@ -636,6 +410,21 @@ async function openDoc(docId: number): Promise<void> {
       r.modalities.find((m) => m === 'audio') ??
       r.modalities.find((m) => m === 'image')
     if (primary && r.modalities.length > 1) void viewModal(primary as KbModal)
+  } catch (e) {
+    toast.toast(errMsg(e))
+  }
+}
+
+/** 按虚拟路径打开一个文件（空间总览页的大文件榜深链）。
+ *
+ *  **为什么要多一次 glob**：那边给的是 `kb_files.id`，而这边的阅读器要 `kb_docs.id`
+ *  —— 两个 id 空间，直接当 doc id 用会把别的文档读出来。路径是两页都认的键，
+ *  这里解析一次；解析不到（文件已被删）就安静地留在列表，不弹错。 */
+async function openPath(path: string): Promise<void> {
+  try {
+    const hits = await kbService.glob(path, 5)
+    const hit = hits.find((h) => h.path === path)
+    if (hit) await openDoc(hit.id)
   } catch (e) {
     toast.toast(errMsg(e))
   }
@@ -698,6 +487,7 @@ async function saveEdit(): Promise<void> {
     applyFile(r, f)
     r.editing = false
     ai.invalidateCognitionCache()
+    invalidateUsage()
     toast.toast('已保存')
   } catch (e) {
     toast.toast(errMsg(e))
@@ -706,16 +496,30 @@ async function saveEdit(): Promise<void> {
   }
 }
 
+/** 删除 = 移进回收站（与文件管理器同一条路径，可撤销）。
+ *  彻底删除是回收站里的第二个动作——「删除」不该是不可逆的。 */
 async function removeFile(): Promise<void> {
   const r = reader.value
   if (!r || r.fileId === null) return
   r.busy = true
   try {
-    await kbService.fileDelete(r.fileId)
+    const id = r.fileId
+    await kbService.trash(id)
     ai.invalidateCognitionCache()
-    toast.toast('已删除该文件')
+    invalidateUsage()
     reader.value = null
-    await refreshListing()
+    await refreshExplorer()
+    toast.toast('已移入回收站', {
+      action: {
+        label: '撤销',
+        run: () => {
+          void kbService
+            .trashRestore([id])
+            .then(() => refreshExplorer())
+            .catch((e) => toast.toast(errMsg(e)))
+        },
+      },
+    })
   } catch (e) {
     toast.toast(errMsg(e))
     r.busy = false
@@ -757,7 +561,8 @@ async function doMove(target?: string): Promise<void> {
     r.classifyState = res.file.classifyState
     r.moveOpen = false
     toast.toast(`已移到 ${res.to}`)
-    await refreshListing()
+    invalidateUsage()
+    await refreshExplorer()
   } catch (e) {
     toast.toast(errMsg(e))
   } finally {
@@ -765,9 +570,21 @@ async function doMove(target?: string): Promise<void> {
   }
 }
 
+/** 让文件管理器重读当前目录（编辑 / 解压 / 移动之后调；
+ *  选择与滚动位置由它自己按稳定 id 保留，不用宿主操心） */
+async function refreshExplorer(): Promise<void> {
+  await explorer.value?.refresh()
+}
+
 onMounted(async () => {
-  void loadDir('')
+  // 深链只消费一次：进来时看 query，页面内的浏览都不再读它
+  const q = route.query
+  const qdir = typeof q.dir === 'string' ? q.dir : ''
+  const qpath = typeof q.path === 'string' ? q.path : ''
   void loadUsage()
+  // 子组件的实例要等挂载完才拿得到，深链目录因此晚一拍下发
+  if (qdir) void nextTick().then(() => explorer.value?.navigate(qdir))
+  if (qpath) void openPath(qpath)
   try {
     // 空查询 = 按日期倒序浏览最近内容
     recent.value = await kbService.search({ query: '', limit: 8 })
@@ -781,7 +598,21 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <PageHeader back title="文件" subtitle="AI 工作区的虚拟文件系统" />
+    <PageHeader back title="文件" subtitle="AI 工作区的虚拟文件系统">
+      <!-- 空间总览的入口：**只在页头**（曾占页内第一张卡）。只显示总大小 ——
+           分类明细在总览页里讲，这一颗的职责就是「一眼看到占了多少」。 -->
+      <template #action>
+        <button
+          v-if="usage"
+          class="hdr-btn pill"
+          :aria-label="`空间总览 · ${humanBytes(usage.totalBytes)}`"
+          @click="openUsage"
+        >
+          <HardDrive :size="15" />
+          {{ humanBytes(usage.totalBytes) }}
+        </button>
+      </template>
+    </PageHeader>
 
     <!-- 阅读器 -->
     <section v-if="reader" class="card reader">
@@ -827,7 +658,7 @@ onMounted(async () => {
       <!-- 压缩包：打开看内容 / 解压进工作区 -->
       <div v-if="archiveCandidate" class="archive">
         <div class="row actions">
-          <button class="btn ghost" :disabled="archiveBusy" @click="openArchive">
+          <button class="btn ghost" :disabled="reader.archiveBusy" @click="openArchive">
             <PackageOpen :size="14" />
             {{ reader.archive ? '重新读取' : '打开压缩包' }}
           </button>
@@ -844,10 +675,14 @@ onMounted(async () => {
               压缩包 {{ humanBytes(reader.archive.packedBytes) }}
             </span>
           </div>
-          <p v-for="n in reader.archive.notes" :key="n" class="t-3 hint-inline">{{ n }}</p>
+          <p v-for="(n, i) in reader.archive.notes" :key="`${i}-${n}`" class="t-3 hint-inline">{{ n }}</p>
 
           <ul class="arc-list">
-            <li v-for="e in reader.archive.entries.slice(0, 80)" :key="e.path" :class="{ dim: e.isDir }">
+            <li
+              v-for="(e, i) in reader.archive.entries.slice(0, 80)"
+              :key="`${i}-${e.path}`"
+              :class="{ dim: e.isDir }"
+            >
               <span class="arc-ic">
                 <Folder v-if="e.isDir" :size="13" class="fic dim" />
                 <FileText v-else-if="e.text" :size="13" class="fic" />
@@ -865,28 +700,34 @@ onMounted(async () => {
           <div class="arc-extract">
             <label class="arc-field">
               <span>解压到（留空 = 未分类数据/解压/包名）</span>
-              <input v-model="archiveToDir" placeholder="笔记/课程资料" aria-label="解压目标目录">
+              <input v-model="reader.archiveToDir" placeholder="笔记/课程资料" aria-label="解压目标目录">
             </label>
             <label class="arc-field">
               <span>只解压路径包含（逗号分隔，留空 = 全部）</span>
-              <input v-model="archiveOnly" placeholder="复习, docx" aria-label="只解压匹配项">
+              <input v-model="reader.archiveOnly" placeholder="复习, docx" aria-label="只解压匹配项">
             </label>
             <div class="row">
-              <button class="btn" :disabled="archiveBusy" @click="doExtract">
-                <Archive :size="14" /> {{ archiveBusy ? '处理中…' : '解压到工作区' }}
+              <button class="btn" :disabled="reader.archiveBusy" @click="doExtract">
+                <Archive :size="14" /> {{ reader.archiveBusy ? '处理中…' : '解压到工作区' }}
               </button>
             </div>
           </div>
 
-          <div v-if="archiveReport" class="arc-report">
-            <p class="arc-ok">{{ archiveReport.message }}</p>
+          <div v-if="reader.archiveReport" class="arc-report">
+            <p class="arc-ok">{{ reader.archiveReport.message }}</p>
             <ul>
-              <li v-for="f in archiveReport.extracted.slice(0, 12)" :key="f.id">
+              <li v-for="f in reader.archiveReport.extracted.slice(0, 12)" :key="f.id">
                 <button class="link" @click="openDoc(f.id)">{{ f.path }}</button>
                 <span class="t-3">{{ humanBytes(f.bytes) }}</span>
               </li>
             </ul>
-            <p v-for="n in archiveReport.skipped.slice(0, 5)" :key="n" class="t-3 hint-inline">{{ n }}</p>
+            <p
+              v-for="(n, i) in reader.archiveReport.skipped.slice(0, 5)"
+              :key="`${i}-${n}`"
+              class="t-3 hint-inline"
+            >
+              {{ n }}
+            </p>
           </div>
         </template>
       </div>
@@ -1003,221 +844,26 @@ onMounted(async () => {
       </div>
     </section>
 
-    <!-- 浏览 -->
+    <!-- 浏览：文件管理器（虚拟滚动 / 多选 / 拖放 / 回收站 / 操作队列都在组件里） -->
     <template v-else>
-      <div class="finder row">
-        <Search :size="17" class="t-3" />
-        <input v-model="query" type="text" placeholder="按文件名搜索，如「膝盖」「安排表」">
-        <button v-if="query" class="clear" aria-label="清空搜索" @click="clearFilter">
-          <X :size="14" />
-        </button>
-        <button class="tool" aria-label="新建目录" @click="openFolderPanel">
-          <FolderPlus :size="17" />
-        </button>
-        <button class="tool" aria-label="导入文件" @click="pickUpload">
-          <Upload :size="17" />
-        </button>
-        <input ref="fileInput" type="file" class="hidden-input" @change="onUploadPicked">
-      </div>
+      <FileExplorer ref="explorer" :landmarks="NAMESPACES" @open="(it) => it.docId && openDoc(it.docId)" />
 
-      <div v-if="folderOpen" class="card newfolder">
-        <input v-model="folderName" placeholder="新目录名，如「知识」" aria-label="新目录名" @keyup.enter="createFolder">
-        <button class="btn" :disabled="folderBusy || !folderName.trim()" @click="createFolder">创建</button>
-        <button class="btn ghost" :disabled="folderBusy" @click="folderOpen = false">取消</button>
-      </div>
-
-      <!-- 文件名搜索结果 -->
-      <section v-if="found !== null" class="card list list-found">
-        <ul v-if="found.length">
-          <li v-for="f in found" :key="`${f.sourceType}-${f.id}`">
-            <button class="row item" @click="openDoc(f.id)">
-              <component :is="kindIcon(f.kind)" :size="15" class="fic" :class="{ dim: f.system }" />
+      <!-- 最近内容：跨工作区的「最近动过」，列不出来（它跨目录），所以单列一张卡 -->
+      <section v-if="recent.length && !explorerPath" class="card list list-recent">
+        <h3 class="sec">最近内容</h3>
+        <ul>
+          <li v-for="h in recent" :key="`${h.sourceType}-${h.id}`">
+            <button class="row item" @click="openDoc(h.id)">
+              <component :is="kindIcon(h.kind)" :size="15" class="fic" :class="{ dim: h.system }" />
               <span class="flex-1">
-                <b>{{ baseName(f.path) }}</b>
-                <small>{{ f.path }}</small>
+                <b>{{ h.title }}</b>
+                <small>{{ h.path ?? KB_SOURCE_LABELS[h.sourceType] ?? h.sourceType }}</small>
               </span>
-              <ChevronRight :size="15" class="t-3" />
+              <span class="t-3 date">{{ h.occurredOn ?? '' }}</span>
             </button>
           </li>
         </ul>
-        <p v-else-if="searching" class="t-3 hint-line">搜索中…</p>
-        <EmptyState
-          v-else
-          :icon="Search"
-          title="没有匹配的文件"
-          hint="这里按文件名匹配；搜正文内容请到「知识库」页检索"
-        />
       </section>
-
-      <!-- 根目录：空间总览 + 最近内容 + 命名空间 -->
-      <template v-else-if="!dir">
-        <!-- 空间总览：总量一句话 + 可展开的分布（大文件榜 / 目录占比 / 碎片清理） -->
-        <section v-if="usage" class="card usage">
-          <button class="usage-head" @click="usageOpen = !usageOpen">
-            <HardDrive :size="15" class="fic" />
-            <span class="flex-1">
-              <b>空间总览 · {{ humanBytes(usage.totalBytes) }}</b>
-              <small>
-                文本 {{ humanBytes(usage.textBytes) }} · 本体 {{ humanBytes(usage.assetBytes) }} · 索引
-                {{ humanBytes(usage.indexBytes) }} · {{ usage.fileCount }} 个文件
-              </small>
-            </span>
-            <ChevronRight :size="15" class="t-3" :class="{ rot: usageOpen }" />
-          </button>
-
-          <div v-show="usageOpen" class="usage-body">
-            <div class="usage-sec">
-              <h4>目录占用</h4>
-              <div v-for="a in usage.areas.slice(0, 8)" :key="a.name" class="ubar">
-                <span class="ubar-name">{{ a.name }}</span>
-                <span class="ubar-track"><i :style="{ transform: `scaleX(${areaPct(a.bytes) / 100})` }" /></span>
-                <span class="ubar-val">{{ humanBytes(a.bytes) }}</span>
-              </div>
-              <p v-if="!usage.areas.length" class="t-3 hint-inline">还没有内容</p>
-            </div>
-
-            <div class="usage-sec">
-              <h4>大文件（文本 + 本体）</h4>
-              <ul class="ubig">
-                <li v-for="f in usage.largest.slice(0, 6)" :key="f.id">
-                  <button class="link" @click="openDoc(f.id)">{{ f.path }}</button>
-                  <span class="t-3">{{ humanBytes(f.bytes) }}</span>
-                </li>
-              </ul>
-              <p v-if="!usage.largest.length" class="t-3 hint-inline">还没有文件</p>
-            </div>
-
-            <div class="usage-sec">
-              <h4>存储明细</h4>
-              <p class="t-3 hint-inline">
-                索引 {{ humanBytes(usage.indexBytes) }}（删源数据会自然缩回）· 数据库
-                {{ humanBytes(usage.dbBytes) }} · 本体 {{ usage.assetCount }} 个
-                <template v-if="usage.missingCount">
-                  · <span class="bad">{{ usage.missingCount }} 个本体文件丢失</span>
-                </template>
-              </p>
-              <div v-if="usage.orphanCount > 0" class="row orphans">
-                <span class="flex-1">
-                  发现 {{ usage.orphanCount }} 个没人引用的本体碎片（{{ humanBytes(usage.orphanBytes) }}）
-                </span>
-                <button class="btn ghost tiny" :class="{ danger: cleanConfirm }" :disabled="cleaning" @click="cleanOrphans">
-                  <Trash2 :size="13" /> {{ cleaning ? '清理中…' : cleanConfirm ? '确认清理?' : '清理' }}
-                </button>
-              </div>
-              <p v-else class="t-3 hint-inline">没有发现可回收的碎片。</p>
-            </div>
-          </div>
-        </section>
-
-        <section class="card list list-recent">
-          <h3 class="sec">最近内容</h3>
-          <ul v-if="recent.length">
-            <li v-for="h in recent" :key="`${h.sourceType}-${h.id}`">
-              <button class="row item" @click="openDoc(h.id)">
-                <component :is="kindIcon(h.kind)" :size="15" class="fic" :class="{ dim: h.system }" />
-                <span class="flex-1">
-                  <b>{{ h.title }}</b>
-                  <small>{{ h.path ?? KB_SOURCE_LABELS[h.sourceType] ?? h.sourceType }}</small>
-                </span>
-                <span class="t-3 date">{{ h.occurredOn ?? '' }}</span>
-              </button>
-            </li>
-          </ul>
-          <p v-else class="t-3 hint-line">{{ recentLoaded ? '知识库还没有内容' : '加载中…' }}</p>
-        </section>
-
-        <!-- 顶层目录：一行一个（像文件管理器左侧的「位置」栏），不做方块网格 -->
-        <section class="card list list-roots">
-          <h3 class="sec">顶层目录</h3>
-          <ul>
-            <li v-for="e in rootEntries" :key="e.name">
-              <button class="row item" @click="openDir(e.name)">
-                <component :is="e.icon" :size="16" class="fic" />
-                <span class="flex-1">
-                  <b>{{ e.name }}</b>
-                  <small>{{ e.hint }}</small>
-                </span>
-                <span v-if="e.count > 0" class="t-3 dcount">{{ e.count }} 项</span>
-                <ChevronRight :size="15" class="t-3" />
-              </button>
-            </li>
-          </ul>
-        </section>
-
-        <section v-if="files.length" class="card list list-files">
-          <h3 class="sec">根目录文件</h3>
-          <ul>
-            <li v-for="f in files" :key="`${f.sourceType}-${f.id}`">
-              <button class="row item" @click="openDoc(f.id)">
-                <component :is="kindIcon(f.kind)" :size="15" class="fic" :class="{ dim: f.system }" />
-                <span class="flex-1">
-                  <b>{{ baseName(f.path) }}</b>
-                  <small>{{ f.path }}</small>
-                </span>
-                <Lock v-if="f.system" :size="12" class="t-3" />
-                <ChevronRight :size="15" class="t-3" />
-              </button>
-            </li>
-          </ul>
-        </section>
-      </template>
-
-      <!-- 子目录：面包屑 + 子目录 + 文件 -->
-      <template v-else>
-        <div class="crumbs row">
-          <button class="crumb" @click="jumpCrumb(-1)">文件</button>
-          <template v-for="(c, k) in crumbs" :key="k">
-            <ChevronRight :size="13" class="t-3" />
-            <button class="crumb" :class="{ cur: k === crumbs.length - 1 }" @click="jumpCrumb(k)">
-              {{ c }}
-            </button>
-          </template>
-        </div>
-
-        <section class="card list list-dir">
-          <!-- 「..」不跟着空状态走：空目录也要留一条回退的路（真实文件管理器就是这样） -->
-          <ul>
-            <li>
-              <button class="row item" @click="jumpCrumb(crumbs.length - 2)">
-                <CornerLeftUp :size="16" class="fic dim" />
-                <span class="flex-1">
-                  <b>..</b>
-                  <small>{{ crumbs.length > 1 ? crumbs[crumbs.length - 2] : '文件' }}</small>
-                </span>
-              </button>
-            </li>
-            <li v-for="d in dirs" :key="d.path">
-              <button class="row item" @click="openDir(d.path)">
-                <Folder :size="16" class="fic" />
-                <span class="flex-1"><b>{{ d.name }}</b><small>目录</small></span>
-                <span class="t-3 dcount">{{ d.count }} 项</span>
-                <ChevronRight :size="15" class="t-3" />
-              </button>
-            </li>
-            <li v-for="f in files" :key="`${f.sourceType}-${f.id}`">
-              <button class="row item" @click="openDoc(f.id)">
-                <component :is="kindIcon(f.kind)" :size="16" class="fic" :class="{ dim: f.system }" />
-                <span class="flex-1">
-                  <b>{{ baseName(f.path) }}</b>
-                  <small v-if="f.occurredOn">{{ f.occurredOn }}</small>
-                </span>
-                <Lock v-if="f.system" :size="12" class="t-3" />
-                <ChevronRight :size="15" class="t-3" />
-              </button>
-            </li>
-          </ul>
-          <p v-if="!dirs.length && !files.length" class="t-3 hint-line">
-            {{ listingBusy ? '加载中…' : '此目录还没有文件' }}
-          </p>
-          <!-- 状态栏一行：目录 / 文件计数 + 当前路径，像文件管理器底部的信息栏 -->
-          <p class="listing-meta t-3">
-            {{ dirs.length }} 个目录 · {{ files.length }} 个文件 · /{{ dir }}
-          </p>
-          <p v-if="truncated" class="t-3 hint-line">
-            目录较大，仅列出前 {{ GLOB_LIMIT }} 项；进入子目录可缩小范围。
-          </p>
-        </section>
-      </template>
     </template>
   </div>
 </template>
@@ -1227,56 +873,12 @@ onMounted(async () => {
   padding: 10px var(--page-pad-x) var(--page-pad-bottom);
 }
 
-.finder {
-  gap: 8px;
-  padding: 11px 14px;
-  border-radius: var(--radius-m);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
-}
 
-.finder input {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--fs-subhead);
-}
 
-.clear {
-  flex: none;
-  padding: 4px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--text-3);
-}
 
-.tool {
-  flex: none;
-  padding: 6px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--accent);
-}
 
-.hidden-input {
-  display: none;
-}
 
-.newfolder {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-}
 
-.newfolder input {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-  color: var(--text-1);
-  font-size: var(--fs-footnote);
-}
 
 /* 列表卡片：行式布局，压掉全局卡片的大内边距 */
 .card.list {
@@ -1330,58 +932,13 @@ li + li .item {
   color: var(--text-3);
 }
 
-.date,
-.dcount {
+.date {
   flex: none;
   font-size: var(--fs-caption);
 }
 
-.hint-line {
-  padding: 12px 0;
-  font-size: var(--fs-footnote);
-}
 
-/* 状态栏一行（目录 / 文件计数 + 当前路径）：像文件管理器底部的信息栏 */
-.listing-meta {
-  padding: 9px 0 7px;
-  border-top: 0.5px solid var(--line);
-  font-family: ui-monospace, monospace;
-  font-size: var(--fs-micro);
-  overflow-wrap: anywhere;
-}
 
-/* 桌面指针：整行给出可点反馈（移动端靠 :active，不要 hover 残留） */
-@media (hover: hover) {
-  .item:hover {
-    background: var(--surface-2);
-    border-radius: var(--radius-m);
-  }
-}
-
-/* 面包屑 */
-.crumbs {
-  gap: 4px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-
-.crumb {
-  padding: 4px 8px;
-  border-radius: var(--radius-full);
-  font-size: var(--fs-footnote);
-  color: var(--text-2);
-}
-
-.crumb.cur {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-
-/* 阅读器 */
-.reader {
-  margin-top: 14px;
-}
 
 .rhead {
   gap: 8px;
@@ -1460,112 +1017,6 @@ li + li .item {
 .hint-inline {
   font-size: var(--fs-caption);
   color: var(--text-3);
-}
-.rot {
-  transform: rotate(90deg);
-}
-
-/* 空间总览 */
-.usage {
-  display: grid;
-  gap: 0;
-  padding: 10px 12px;
-}
-.usage-head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  text-align: left;
-  color: var(--text-1);
-}
-.usage-head b {
-  display: block;
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-}
-.usage-head small {
-  display: block;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  margin-top: 2px;
-}
-.usage-head .rot {
-  transition: transform 0.2s var(--ease-standard);
-}
-.usage-body {
-  display: grid;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-.usage-sec {
-  display: grid;
-  gap: 5px;
-}
-.usage-sec h4 {
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-  font-weight: 600;
-}
-.ubar {
-  display: grid;
-  grid-template-columns: 68px 1fr 62px;
-  gap: 8px;
-  align-items: center;
-  font-size: var(--fs-caption);
-  color: var(--text-1);
-}
-.ubar-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ubar-track {
-  height: 5px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  overflow: hidden;
-}
-.ubar-track i {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  transform-origin: 0 50%;
-}
-.ubar-val {
-  text-align: right;
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-}
-.ubig {
-  display: grid;
-  gap: 4px;
-  list-style: none;
-}
-.ubig li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: var(--fs-caption);
-}
-.ubig .link {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.orphans {
-  align-items: center;
-  padding: 6px 8px;
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
-  color: var(--text-1);
-}
-.bad {
-  color: var(--danger);
 }
 
 /* 压缩包面板 */
@@ -1838,8 +1289,8 @@ li + li .item {
 
 /* ============================================================
    桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
-   这页是 wide 路由：主人区整宽自负，没有壳层的两栏栅格，
-   所以「宽浏览面」= 每张列表卡通栏 + 卡内列表按多栏流铺开。
+   这页是 wide 路由：主人区整宽自负 —— 浏览宽度由文件管理器组件自己负责
+   （它在宽容器里自动切表格式多列），页面这边只剩「最近内容」卡与阅读卡。
    ============================================================ */
 
 /* 宽形态页面的内容上限，超过就不再拉长行 */
@@ -1847,10 +1298,8 @@ li + li .item {
   max-width: var(--desk-wide);
 }
 
-/* 列表卡内部多栏流：根目录有近 20 个顶层目录、每个只有「图标 + 名词 + 计数」，
-   一列排到 970px 宽、一屏只看得下几个 —— 桌面上按栏摊开才叫文件浏览面。
-   用 columns 而不是 grid：条目高度参差（有的带日期、有的带锁标），
-   grid 会把同行撑到最高的那条，留下锯齿状空白。 */
+/* 列表卡内部多栏流：「最近内容」的条目高度参差，
+   用 columns 而不是 grid —— grid 会把同行撑到最高的那条，留下锯齿状空白。 */
 .desk-main .card.list > ul {
   columns: var(--b-cols, 2);
   column-gap: var(--desk-gap);
@@ -1858,12 +1307,6 @@ li + li .item {
 
 .desk-main .card.list > ul > li {
   break-inside: avoid;
-}
-
-/* 顶层目录条目最短（图标 + 名称 + 说明 + 项数），三栏摊得开；
-   最近内容/根目录文件带路径或日期，两栏给足宽度 */
-.desk-main .card.list.list-roots > ul {
-  --b-cols: 3;
 }
 
 /* 阅读器：正文一行 80+ 字就没人读得下去。这页没有侧栏可放元信息，

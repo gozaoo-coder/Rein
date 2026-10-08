@@ -156,6 +156,10 @@ pub struct OnlineCatalog {
     pub client_name: Option<String>,
     /// 密钥可见的模型白名单（空 = 全部）
     pub client_models: Vec<String>,
+    /// 服务端给的账号状态原文（如「正常」「余额不足」「已限流」）；缺省 = 服务端没报
+    pub client_status: Option<String>,
+    /// 服务端给的账号备注原文（额度、到期、限流原因…）；缺省 = 没有
+    pub client_note: Option<String>,
     pub models: Vec<OnlineModel>,
     pub error: Option<String>,
     pub checked_at: String,

@@ -6,11 +6,14 @@
  * 成本要同时显示本机估算与服务端权威值。这些联动单测照不出来。
  *
  * 剧本（浏览器 mock 模式，服务端的账由 mock 复刻同一结构）：
- *   1. 预置一条本机账本记录（2 元模型费 + 0.1 元流量费）→ 卡片显示「本机累计 ¥2.1000」
- *   2. 未填密钥时状态是「未配置服务密钥」，「获取模型列表」按钮禁用
- *   3. 填 rein_sk_… → 获取模型列表 → 出现服务端下发的 3 个模型与单价
- *   4. 导入所选 → 模型列表出现「在线」徽章 + 单价行，卡片状态变「已连接」
- *   5. 密钥填错（清空）→ 状态回到未配置，成本区仍显示本机账本
+ *   1. 预置一条本机账本记录（2 元模型费 + 0.1 元流量费）→ 抽屉里显示「本机累计 ¥2.1000」
+ *   2. 未填密钥时状态是「未配置服务密钥」，入口卡与抽屉里都这么写
+ *   3. 填 rein_sk_… → 获取模型列表 → 出现服务端下发的 3 个模型、单价与账号调用条件
+ *   4. 导入所选 → 「全部模型」抽屉里出现「在线」徽章 + 单价行
+ *   5. 断开（清空密钥）→ 状态回到未配置，本机账本不受影响
+ *
+ * 页面结构（2026-10 改版）：在线服务从「页面内展开的卡」改成**入口卡 + 状态抽屉**
+ * （地址 / 密钥 / 目录 / 调用条件 / 对账 / 使用说明都在抽屉里），断言一律从抽屉里取。
  *
  * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
  * 运行：node scripts/e2e-online-cost.mjs
@@ -145,19 +148,43 @@ const clickByText = (text) =>
     return true
   })()`)
 
-/** 在线服务卡里列出的模型 id（服务端下发的清单） */
-const catalogIds = () =>
-  evalJS(`[...document.querySelectorAll('.osc .models .m b')].map((e) => e.textContent.trim())`)
+/** 在线服务抽屉（打开状态下的那一层）的文字 */
+const sheetText = () =>
+  evalJS(`document.querySelector('.panel[aria-label="Rein 在线服务"]')?.innerText ?? ''`)
 
-/** 管理页模型卡上的名字与徽章 */
+/** 在线服务抽屉里的模型 id（服务端下发的清单） */
+const catalogIds = () =>
+  evalJS(`[...document.querySelectorAll('.onl .list .m b')].map((e) => e.textContent.trim())`)
+
+/** 「全部模型」抽屉里的模型卡（名字与徽章） */
 const modelCards = () =>
-  evalJS(`[...document.querySelectorAll('.m-card')].map((c) => ({
+  evalJS(`[...document.querySelectorAll('.all .m-card')].map((c) => ({
     name: c.querySelector('.m-name')?.textContent.trim() ?? '',
     online: Boolean(c.querySelector('.chip-onl')),
     cost: c.querySelector('.m-cost')?.textContent.trim() ?? '',
   }))`)
 
-const onlineStatusText = () => evalJS(`document.querySelector('.osc .chip')?.textContent.trim() ?? ''`)
+/** 在线服务入口卡上的状态胶囊 */
+const onlineStatusText = () => evalJS(`document.querySelector('.onl .chip')?.textContent.trim() ?? ''`)
+
+async function openOnlineSheet() {
+  await evalJS(`(() => {
+    const el = [...document.querySelectorAll('button')].find((b) => b.textContent.includes('Rein 在线服务'))
+    if (!el) return false
+    el.click()
+    return true
+  })()`)
+  await waitFor(`Boolean(document.querySelector('#osc-key'))`, 6000, '在线服务抽屉打开')
+}
+
+async function closeSheets() {
+  await evalJS(`(() => {
+    const b = [...document.querySelectorAll('button')].find((e) => e.getAttribute('aria-label') === '关闭')
+    if (b) b.click()
+    return true
+  })()`)
+  await sleep(400)
+}
 
 async function main() {
   const edge = spawn(
@@ -196,21 +223,29 @@ async function main() {
     await evalJS(`location.reload()`)
     await waitFor(`document.querySelector('h1')?.textContent === '管理模型'`, 15000, '管理模型页挂载')
 
-    /* ---- 2. 卡片与未配置态 ---- */
-    ok('管理模型页出现「Rein 在线服务」卡', (await pageText()).includes('Rein 在线服务'))
-    ok('未填密钥时状态为「未配置服务密钥」', (await onlineStatusText()).includes('未配置服务密钥'), await onlineStatusText())
-    // 账本随模型列表一起异步加载，等它落位再断言
-    await waitFor(`document.querySelector('.page').innerText.includes('¥2.1000')`, 8000, '本机账本渲染')
+    /* ---- 2. 入口卡与未配置态 ---- */
+    ok('模型页出现「Rein 在线服务」入口卡', (await pageText()).includes('Rein 在线服务'))
+    ok(
+      '未填密钥时入口卡状态为「未配置服务密钥」',
+      (await onlineStatusText()).includes('未配置服务密钥'),
+      await onlineStatusText(),
+    )
+    await shot('0-page')
+
+    await openOnlineSheet()
+    ok('抽屉里有「接口状态」与账号调用条件', (await sheetText()).includes('接口状态'))
+    await waitFor(`document.querySelector('.panel .cost')?.innerText.includes('¥2.1000')`, 8000, '本机账本渲染')
     ok(
       '本机累计成本按账本显示 ¥2.1000（模型费 + 流量费）',
-      (await pageText()).includes('¥2.1000'),
-      (await pageText()).match(/本机累计[^\n]*/)?.[0] ?? '',
+      (await sheetText()).includes('¥2.1000'),
+      (await sheetText()).match(/本机累计[^\n]*/)?.[0] ?? '',
     )
-    await evalJS(`document.querySelector('.osc .head')?.click()`)
-    await waitFor(`Boolean(document.querySelector('#osc-key'))`, 6000, '展开在线服务卡')
     ok(
       '未填密钥时「获取模型列表」禁用',
-      await evalJS(`document.querySelector('.osc .act.primary')?.disabled === true`),
+      await evalJS(`(() => {
+        const b = [...document.querySelectorAll('.panel button')].find((e) => e.textContent.includes('获取模型列表'))
+        return b?.disabled === true
+      })()`),
     )
     await shot('1-online-idle')
 
@@ -218,38 +253,52 @@ async function main() {
     ok('填入服务地址', await setInput('#osc-base', 'http://127.0.0.1:8787'))
     ok('填入服务密钥', await setInput('#osc-key', 'rein_sk_e2e_demo'))
     await clickByText('获取模型列表')
-    await waitFor(`document.querySelectorAll('.osc .models .m').length > 0`, 10000, '模型清单返回')
+    await waitFor(`document.querySelectorAll('.onl .list .m').length > 0`, 10000, '模型清单返回')
     const ids = await catalogIds()
     ok('清单只列服务端下发的模型', ids.length === 3 && ids.includes('deepseek-flash'), ids.join(' · '))
-    ok('清单带官方单价（未定价的显示「未定价」）', (await pageText()).includes('每百万 tokens'))
-    ok('状态变为已连接', (await onlineStatusText()).includes('已连接'), await onlineStatusText())
+    ok('清单带官方单价（未定价的显示「未定价」）', (await sheetText()).includes('每百万 tokens'))
+    ok(
+      '账号调用条件说人话（本账号无限制 / 白名单）',
+      /本账号/.test(await sheetText()),
+      (await sheetText()).match(/本账号[^\n]*/)?.[0] ?? '',
+    )
     await shot('2-online-catalog')
 
-    /* ---- 4. 导入 → 落库成可用模型 ---- */
+    /* ---- 4. 导入 → 落库成可用模型（模型卡在「全部模型」抽屉里） ---- */
     await clickByText('导入所选')
-    await waitFor(`document.querySelectorAll('.m-card').length >= 3`, 10000, '模型落库')
+    await sleep(700)
+    await closeSheets()
+    await clickByText('全部模型')
+    await waitFor(`document.querySelectorAll('.all .m-card').length >= 3`, 10000, '模型落库')
     const cards = await modelCards()
-    ok('导入的模型出现在管理列表', cards.length === 3, JSON.stringify(cards.map((c) => c.name)))
+    ok('导入的模型出现在「全部模型」里', cards.length === 3, JSON.stringify(cards.map((c) => c.name)))
     ok('导入的模型带「在线」徽章', cards.every((c) => c.online), JSON.stringify(cards))
     ok(
       '模型卡显示服务端下发的单价',
       cards.some((c) => c.cost.includes('每百万 tokens')),
       JSON.stringify(cards.map((c) => c.cost)),
     )
+    ok(
+      '模型名前带提供商前缀（provider name display）',
+      cards.every((c) => c.name.includes('·')),
+      JSON.stringify(cards.map((c) => c.name)),
+    )
     await shot('3-online-imported')
-
-    /* ---- 4b. 模型卡（含单价与「在线」徽章）---- */
-    await evalJS(`document.querySelector('.m-card')?.scrollIntoView({ block: 'center' })`)
-    await sleep(400)
-    await shot('3b-model-cards')
     await shotDark('3b-model-cards-dark')
 
     /* ---- 5. 断开：状态回到未配置，本机账本不受影响 ---- */
+    await closeSheets()
+    await openOnlineSheet()
     await clickByText('断开')
-    await waitFor(`document.querySelector('.osc .chip')?.textContent.includes('未配置')`, 6000, '断开生效')
+    await waitFor(`document.querySelector('.onl .chip')?.textContent.includes('未配置')`, 6000, '断开生效')
+    await closeSheets()
     ok('断开后状态回到未配置', (await onlineStatusText()).includes('未配置'), await onlineStatusText())
-    ok('断开后不再提供「导入所选」（清单已清）', !(await evalJS(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('导入所选'))`)))
-    ok('本机账本仍在（¥2.1000 不因断开而消失）', (await pageText()).includes('¥2.1000'))
+    ok(
+      '断开后不再提供「导入所选」（清单已清）',
+      !(await evalJS(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('导入所选'))`)),
+    )
+    await openOnlineSheet()
+    ok('本机账本仍在（¥2.1000 不因断开而消失）', (await sheetText()).includes('¥2.1000'))
     await shot('4-online-cleared')
   } finally {
     edge.kill()

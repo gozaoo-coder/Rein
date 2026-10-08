@@ -29,6 +29,7 @@ import GlassSurface from '@/components/common/GlassSurface.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
 import ProcessSection from '@/components/ai/ProcessSection.vue'
+import ChatFileCard from '@/components/ai/ChatFileCard.vue'
 import MdText from '@/components/common/MdText.vue'
 import MemoPickerSheet from '@/components/voice/MemoPickerSheet.vue'
 import { openMemoById } from '@/system/voiceRuntime'
@@ -51,7 +52,7 @@ import { shareInbox } from '@/system/shareInbox'
 import type { SendImage } from '@/stores/ai'
 import type { VoiceMemo } from '@/types'
 import { fmtDateCn, toDateStr } from '@/utils/date'
-import type { AiMessage, AiDocMeta, KbEmbeddingMode, MealType } from '@/types'
+import type { AiMessage, AiDocMeta, KbEmbeddingMode, KbEntry, MealType } from '@/types'
 
 /** AI 页：拍照直识别（可编辑卡片 + 草稿箱）/ 文字记饮食 / 数据工具对话。 */
 const ai = useAiStore()
@@ -80,6 +81,8 @@ function showMsg(m: AiMessage): boolean {
   if (meta?.absorbed) return false
   if (meta?.segments.length) return true
   if (m.quoteText) return true
+  // 挂出的文件卡片本身就是内容：模型只挂了文件、一个字没说时，这条消息也要在
+  if (m.files?.length) return true
   switch (m.kind) {
     case 'text':
       return showTextBubble(m)
@@ -226,6 +229,20 @@ function toggleDocImage(id: string): void {
 function msgImages(m: AiMessage): { base64: string; mime: string }[] {
   if (m.images?.length) return m.images.map((im) => ({ base64: im.base64, mime: im.mime }))
   return m.imageBase64 ? [{ base64: m.imageBase64, mime: m.mime ?? 'image/jpeg' }] : []
+}
+
+/** 打开 AI 挂出的文件卡片：文件进阅读器、目录进文件管理器。
+ *  一律**按路径跳**（与空间总览的大文件榜同一条深链）：卡片拿到的是 kb_docs.id 或
+ *  只有文件实体，而阅读器要的是 kb_docs.id —— 路径是两个页面都认的键。
+ *  都是页内跳转，不唤起系统应用（docs/ai-workspace.md §5 的约定）。 */
+function openChatFile(f: KbEntry): void {
+  if (f.kind === 'folder') {
+    void router.push({ name: 'ai-files', query: { dir: f.path } })
+    return
+  }
+  const cut = f.path.lastIndexOf('/')
+  const parent = cut > 0 ? f.path.slice(0, cut) : ''
+  void router.push({ name: 'ai-files', query: parent ? { dir: parent, path: f.path } : { path: f.path } })
 }
 
 /** 每张解析卡选择的目标餐次，默认按当前时间推荐 */
@@ -815,6 +832,18 @@ async function onMenuSelect(value: string): Promise<void> {
                 <p class="a-title row center"><ChartPie :size="15" /> 今日饮食分析</p>
                 <p class="a-body">{{ m.text }}</p>
               </div>
+
+              <!-- AI 挂出的工作区文件（present_file）：点在聊天里，开在文件页里。
+                   放在所有正文分支之后 —— 它是「这条回复的产物」，与正文同属一条消息，
+                   所以模型只挂了文件没说话时也照常出现。 -->
+              <div v-if="m.files?.length" class="msg-files">
+                <ChatFileCard
+                  v-for="f in m.files"
+                  :key="f.path"
+                  :file="f"
+                  @open="openChatFile"
+                />
+              </div>
             </div>
           </div>
         </template>
@@ -1155,6 +1184,18 @@ async function onMenuSelect(value: string): Promise<void> {
 .dc-meta {
   font-size: var(--fs-micro);
   color: var(--text-3);
+}
+
+/* AI 挂出的文件卡片列：跟着消息列左对齐（.msg-col 的 align-items 已经管了），
+   多张之间比消息间距再紧一档 —— 它们是一组「产物」，不是几条独立消息。
+   宽度撑到消息列满宽：卡片自己按内容收缩，长路径由卡片内的省略号收住。 */
+.msg-files {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  max-width: 100%;
 }
 
 /* 消息滚动区。

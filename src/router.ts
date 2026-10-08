@@ -57,6 +57,20 @@ export const routes = [
     meta: { title: '文件库', desk: 'wide' },
   },
   {
+    path: '/ai/files/space',
+    name: 'ai-files-usage',
+    component: () => import('@/pages/SpaceUsagePage.vue'),
+    // 空间总览：入口是文件页页头右侧那颗「总大小」胶囊（不占页内位置）
+    meta: { title: '空间总览' },
+  },
+  {
+    path: '/ai/files/space/large',
+    name: 'ai-files-usage-large',
+    component: () => import('@/pages/LargeFilesPage.vue'),
+    // 大文件完整榜单：空间总览只留前三名做摘要，完整榜单单独一页（会长到 100 条）
+    meta: { title: '大文件' },
+  },
+  {
     path: '/me',
     name: 'me',
     component: () => import('@/pages/ProfilePage.vue'),

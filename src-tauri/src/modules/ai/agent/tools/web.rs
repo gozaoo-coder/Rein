@@ -46,6 +46,11 @@ pub fn web_fetch_def() -> RegisteredTool {
     }
 }
 
+/// 本模块负责执行的名字（测试用它断言「注册表 ⊆ 各域认领」）。
+pub fn handles(name: &str) -> bool {
+    name == WEB_SEARCH_NAME || name == WEB_FETCH_NAME
+}
+
 /// 执行：search 投影带 engine 标记，fetch 带 contentType（与 TS 版字段一致）
 pub(super) async fn run(app: &tauri::AppHandle, name: &str, args: &Value) -> Result<Value> {
     let _ = app; // web 抓取无状态，签名留 app 以便未来需要

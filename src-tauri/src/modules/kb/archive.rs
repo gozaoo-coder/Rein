@@ -39,6 +39,13 @@ const RATIO_FLOOR: u64 = 64 * 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 512 * 1024;
 /// 解压产物的目录深度上限（相对落点，与治理层 MAX_DEPTH 同口径）。
 const MAX_INNER_DEPTH: usize = 3;
+/// gzip 解压的**输出**上限。解压在内存里做：没有上限时，一个几十 KB 的炸弹包
+/// 在「条目体积护栏」生效之前就能把进程撑爆。取值是落盘预算的两倍——真包够用，
+/// 炸弹在这里就被挡住（顺带把 tar.gz 的压缩比判据也放回生效范围）。
+const GUNZIP_CAP: u64 = MAX_TOTAL_BYTES * 2;
+/// 列表里提示的条数上限：一个满是 `../` 的包能生成上万条提示，
+/// 而它们最终会进模型上下文。
+const NOTES_MAX: usize = 10;
 
 /// 免解压就能当文本读的扩展名（大小写不敏感）。
 const TEXT_EXTS: &[&str] = &[
@@ -172,12 +179,61 @@ pub fn unsupported_message(name: &str) -> String {
     )
 }
 
+/// gzip 解压（带输出上限，见 [`GUNZIP_CAP`]）。
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    flate2::read::GzDecoder::new(std::io::Cursor::new(bytes))
-        .read_to_end(&mut out)
+    let mut dec = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes)).take(GUNZIP_CAP + 1);
+    dec.read_to_end(&mut out)
         .map_err(|e| ReinError::Message(format!("gzip 解压失败（文件可能损坏）：{e}")))?;
+    if out.len() as u64 > GUNZIP_CAP {
+        return Err(ReinError::Message(format!(
+            "gzip 解压后超过 {} MB 上限：包太大或压缩比异常（疑似压缩炸弹），出于安全考虑拒绝。\
+             请先在电脑上拆包再传入。",
+            GUNZIP_CAP / 1048576
+        )));
+    }
     Ok(out)
+}
+
+/// 记一条提示；超过 [`NOTES_MAX`] 的只计数，最后并成一条。
+/// 返回 1 表示这条被压掉（调用方累加后写汇总）。
+fn note(notes: &mut Vec<String>, msg: String) -> usize {
+    if notes.len() < NOTES_MAX {
+        notes.push(msg);
+        0
+    } else {
+        1
+    }
+}
+
+/// tar / tar.gz 的条目没有各自的压缩体积：按解压后体积**等比分摊**整包体积。
+///
+/// 两个作用：(1) 压缩比闸门对 tar.gz 也生效——原来 `packed` 全是 0，判据因
+/// `packed_bytes > 0` 不成立被整段跳过，而 tar.gz 恰恰是等比压缩、最该拦的一类；
+/// (2) 列表里的「压缩包 X MB」不再是 0。
+fn attribute_packed(entries: &mut [Entry], packed_total: u64) {
+    let raw_total: u64 = entries.iter().map(|e| e.size).sum();
+    if raw_total == 0 || packed_total == 0 {
+        return;
+    }
+    for e in entries.iter_mut() {
+        e.packed = (e.size as u128 * packed_total as u128 / raw_total as u128) as u64;
+    }
+}
+
+/// 压缩比闸门：解压后总量超过 [`RATIO_FLOOR`] 且比值超过 [`RATIO_MAX`] → 拒绝整包。
+///
+/// **列清单与解压两条路径都要过**（解压不再经过 `list`，别让这里成为缺口）。
+fn check_ratio(entries: &[Entry], packed_total: u64) -> Result<()> {
+    let total: u64 = entries.iter().map(|e| e.size).sum();
+    if total > RATIO_FLOOR && packed_total > 0 && total / packed_total.max(1) > RATIO_MAX {
+        return Err(ReinError::Message(format!(
+            "压缩比异常（解压后约 {} MB，压缩包仅 {} KB），出于安全考虑拒绝解压",
+            total / 1048576,
+            packed_total / 1024
+        )));
+    }
+    Ok(())
 }
 
 /// 路径净化：去掉绝对路径与前导 `./`，拒绝 `..` 与盘符，逐段 sanitize。
@@ -235,6 +291,7 @@ pub fn list(bytes: &[u8], name: &str) -> Result<KbArchiveListing> {
     let mut entries: Vec<Entry> = Vec::new();
     let mut notes: Vec<String> = Vec::new();
     let mut unsafe_count = 0usize;
+    let mut suppressed = 0usize;
 
     match format {
         Format::Zip => {
@@ -261,7 +318,7 @@ pub fn list(bytes: &[u8], name: &str) -> Result<KbArchiveListing> {
                 match clean_path(&raw) {
                     None => {
                         unsafe_count += 1;
-                        notes.push(format!("跳过可疑路径：{raw}"));
+                        suppressed += note(&mut notes, format!("跳过可疑路径：{raw}"));
                     }
                     Some(clean) => {
                         let skip = if symlink {
@@ -288,10 +345,12 @@ pub fn list(bytes: &[u8], name: &str) -> Result<KbArchiveListing> {
         }
         Format::Tar => {
             parse_tar(bytes, &mut entries, &mut notes, &mut unsafe_count)?;
+            attribute_packed(&mut entries, bytes.len() as u64);
         }
         Format::TarGz => {
             let raw = gunzip(bytes)?;
             parse_tar(&raw, &mut entries, &mut notes, &mut unsafe_count)?;
+            attribute_packed(&mut entries, bytes.len() as u64);
         }
         Format::Gzip => {
             // 单文件 gz：解出来就是一个文件，名字取去掉 .gz 的部分
@@ -321,16 +380,7 @@ pub fn list(bytes: &[u8], name: &str) -> Result<KbArchiveListing> {
 
     let total_bytes: u64 = entries.iter().map(|e| e.size).sum();
     let packed_bytes: u64 = entries.iter().map(|e| e.packed).sum();
-    if total_bytes > RATIO_FLOOR
-        && packed_bytes > 0
-        && total_bytes / packed_bytes.max(1) > RATIO_MAX
-    {
-        return Err(ReinError::Message(format!(
-            "压缩比异常（解压后约 {} MB，压缩包仅 {} KB），出于安全考虑拒绝解压",
-            total_bytes / 1048576,
-            packed_bytes / 1024
-        )));
-    }
+    check_ratio(&entries, packed_bytes)?;
 
     let truncated = entries.len() > LIST_CAP;
     let shown: Vec<KbArchiveEntry> = entries
@@ -356,6 +406,9 @@ pub fn list(bytes: &[u8], name: &str) -> Result<KbArchiveListing> {
             "{unsafe_count} 个条目带不安全路径（绝对路径 / .. / 盘符），已跳过"
         ));
     }
+    if suppressed > 0 {
+        notes.push(format!("另有 {suppressed} 条同类提示已省略"));
+    }
 
     Ok(KbArchiveListing {
         format: format.as_str().to_string(),
@@ -378,11 +431,12 @@ fn parse_tar(
     let iter = ar
         .entries()
         .map_err(|e| ReinError::Message(format!("打开 tar 失败：{e}")))?;
+    let mut suppressed = 0usize;
     for item in iter {
         let e = match item {
             Ok(e) => e,
             Err(err) => {
-                notes.push(format!("有条目无法读取，已跳过：{err}"));
+                suppressed += note(notes, format!("有条目无法读取，已跳过：{err}"));
                 continue;
             }
         };
@@ -392,7 +446,7 @@ fn parse_tar(
         let etype = header.entry_type();
         if !etype.is_file() && !etype.is_dir() {
             *unsafe_count += 1;
-            notes.push(format!("跳过非普通文件条目：{raw_name}"));
+            suppressed += note(notes, format!("跳过非普通文件条目：{raw_name}"));
             continue;
         }
         let is_dir = etype.is_dir();
@@ -403,7 +457,7 @@ fn parse_tar(
         match clean_path(&raw_name) {
             None => {
                 *unsafe_count += 1;
-                notes.push(format!("跳过可疑路径：{raw_name}"));
+                suppressed += note(notes, format!("跳过可疑路径：{raw_name}"));
             }
             Some(clean) => {
                 let skip = if size > MAX_FILE_BYTES {
@@ -423,6 +477,9 @@ fn parse_tar(
                 });
             }
         }
+    }
+    if suppressed > 0 {
+        notes.push(format!("另有 {suppressed} 条同类提示已省略"));
     }
     Ok(())
 }
@@ -528,9 +585,6 @@ pub fn extract(
     name: &str,
     opts: &ExtractOptions,
 ) -> Result<KbArchiveReport> {
-    let listing = list(bytes, name)?;
-    let format = listing.format.clone();
-
     // 落点目录：显式给了就用，否则 未分类数据/解压/{包名}
     let target_raw = match opts.to_dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(dir) => normalize_target_dir(dir)?,
@@ -547,23 +601,31 @@ pub fn extract(
     };
     let target = free_dir(conn, &target_raw)?;
 
-    // 先解出完整条目表（list 截断到 500，解压要按全量判断）
-    let plan = plan_entries(bytes, name, &opts.only)?;
+    // 全量条目 + 已解开的包体（list 只回前 500 条，解压要按全量判断）
+    let mut plan = plan_entries(bytes, name, &opts.only)?;
+    let format = plan.format.as_str().to_string();
+    // 内容读取器：每类包只解析一次（见 [`ContentReader`]）
+    let mut reader = ContentReader::new(bytes, name, plan.format, plan.inflated.take())?;
 
     let mut extracted: Vec<KbArchiveItem> = Vec::new();
-    let mut skipped: Vec<String> = listing.notes.clone();
+    let mut skipped: Vec<String> = std::mem::take(&mut plan.notes);
     let mut written_bytes: u64 = 0;
     let mut truncated = false;
 
+    // 整段解压走一个事务：300 个文件 = 数百次插入 + 数百次 mark_dirty，
+    // 不开事务时每条语句各自提交（各写一次 WAL）；中途失败还会把工作区
+    // 留在「解了一半」的状态。
+    let tx = conn.unchecked_transaction()?;
+
     // 目录节点（空目录也要可见）
-    files::write_media_row(conn, &target, &format!("【目录】{target}"), FILE_KIND_FOLDER)?;
+    files::write_media_row(&tx, &target, &format!("【目录】{target}"), FILE_KIND_FOLDER)?;
 
     let mut budget_hit = false;
-    for e in &plan {
+    for e in &plan.entries {
         if e.is_dir {
             let dir_path = format!("{target}/{}", e.name);
             files::write_media_row(
-                conn,
+                &tx,
                 &dir_path,
                 &format!("【目录】{dir_path}"),
                 FILE_KIND_FOLDER,
@@ -585,7 +647,7 @@ pub fn extract(
             break;
         }
 
-        let Some(data) = read_entry(bytes, name, &listing.format, &e.name)? else {
+        let Some(data) = reader.read(&e.name)? else {
             skipped.push(format!("{}（读不到内容）", e.name));
             continue;
         };
@@ -602,15 +664,15 @@ pub fn extract(
         let rel_name = e.name.rsplit('/').next().unwrap_or(&e.name).to_string();
         let bytes_len = data.len() as u64;
         if e.as_text {
-            let path = free_child_path(conn, &target, &inner)?;
+            let path = free_child_path(&tx, &target, &inner)?;
             let text = String::from_utf8_lossy(&data).to_string();
             let content = if text.trim().is_empty() {
                 format!("（{rel_name}：空文件）")
             } else {
                 text
             };
-            let fid = files::write_media_row(conn, &path, &content, FILE_KIND_TEXT)?;
-            index::mark_dirty(conn, "note", &fid.to_string())?;
+            let fid = files::write_media_row(&tx, &path, &content, FILE_KIND_TEXT)?;
+            index::mark_dirty(&tx, "note", &fid.to_string())?;
             extracted.push(KbArchiveItem {
                 id: fid,
                 path,
@@ -618,10 +680,10 @@ pub fn extract(
                 kind: "text".into(),
             });
         } else {
-            let path = free_child_path(conn, &target, &inner)?;
+            let path = free_child_path(&tx, &target, &inner)?;
             let mime = assets::mime_of_name(&rel_name);
             let fid = assets::write_media_bytes(
-                conn,
+                &tx,
                 root,
                 &path,
                 &rel_name,
@@ -629,7 +691,7 @@ pub fn extract(
                 &data,
                 &format!("【解压自 {name}】{rel_name}"),
             )?;
-            index::mark_dirty(conn, "note", &fid.to_string())?;
+            index::mark_dirty(&tx, "note", &fid.to_string())?;
             extracted.push(KbArchiveItem {
                 id: fid,
                 path,
@@ -639,6 +701,7 @@ pub fn extract(
         }
         written_bytes += bytes_len;
     }
+    tx.commit()?;
 
     let text_count = extracted.iter().filter(|i| i.kind == "text").count();
     let bin_count = extracted.len() - text_count;
@@ -661,12 +724,23 @@ pub fn extract(
     })
 }
 
+/// 解压计划：全量条目 + 已解开的包体（tar.gz / 单文件 gz 在计划阶段就解开一次，
+/// 解压阶段直接复用，不再重复 gunzip）。
+struct Plan {
+    format: Format,
+    entries: Vec<Entry>,
+    notes: Vec<String>,
+    inflated: Option<Vec<u8>>,
+}
+
 /// 解压计划：把 list 的结果扩到全量条目（list 只回前 500 条）。
-fn plan_entries(bytes: &[u8], name: &str, only: &[String]) -> Result<Vec<Entry>> {
+fn plan_entries(bytes: &[u8], name: &str, only: &[String]) -> Result<Plan> {
     let mut entries = Vec::new();
     let mut notes = Vec::new();
     let mut unsafe_count = 0usize;
-    match detect(bytes, name) {
+    let mut inflated: Option<Vec<u8>> = None;
+    let format = detect(bytes, name);
+    match format {
         Format::Zip => {
             let mut ar = zip::ZipArchive::new(std::io::Cursor::new(bytes))
                 .map_err(|e| ReinError::Message(format!("打开 zip 失败（文件可能损坏）：{e}")))?;
@@ -713,17 +787,11 @@ fn plan_entries(bytes: &[u8], name: &str, only: &[String]) -> Result<Vec<Entry>>
         Format::TarGz => {
             let raw = gunzip(bytes)?;
             parse_tar(&raw, &mut entries, &mut notes, &mut unsafe_count)?;
+            inflated = Some(raw);
         }
         Format::Gzip => {
             let raw = gunzip(bytes)?;
-            let stem = name
-                .rsplit('/')
-                .next()
-                .unwrap_or("解压文件")
-                .trim_end_matches(".gz")
-                .trim_end_matches(".GZ");
-            let stem = if stem.is_empty() { "解压文件" } else { stem };
-            let clean = sanitize(stem, 60);
+            let clean = sanitize(&gz_stem(name), 60);
             let sample: &[u8] = &raw[..raw.len().min(4096)];
             entries.push(Entry {
                 name: clean.clone(),
@@ -733,87 +801,158 @@ fn plan_entries(bytes: &[u8], name: &str, only: &[String]) -> Result<Vec<Entry>>
                 as_text: looks_text(&clean, raw.len() as u64, sample),
                 skip: None,
             });
+            inflated = Some(raw);
         }
         Format::Unknown => return Err(ReinError::Message(unsupported_message(name))),
     }
     let _ = unsafe_count;
 
-    if only.is_empty() {
-        return Ok(entries);
+    // 与 list 同一条压缩比闸门：解压不再经过 list，这里漏掉就是缺口
+    if matches!(format, Format::Tar | Format::TarGz) {
+        attribute_packed(&mut entries, bytes.len() as u64);
     }
-    Ok(entries
-        .into_iter()
-        .filter(|e| only.iter().any(|pat| e.name.contains(pat.as_str())))
-        .collect())
+    check_ratio(&entries, entries.iter().map(|e| e.packed).sum())?;
+
+    let entries = if only.is_empty() {
+        entries
+    } else {
+        entries
+            .into_iter()
+            .filter(|e| only.iter().any(|pat| e.name.contains(pat.as_str())))
+            .collect()
+    };
+    Ok(Plan {
+        format,
+        entries,
+        notes,
+        inflated,
+    })
 }
 
-/// 读一个条目的完整内容（zip 按名重开一次；tar 顺序扫一遍）。
-fn read_entry(bytes: &[u8], name: &str, format: &str, want: &str) -> Result<Option<Vec<u8>>> {
-    match format {
-        "zip" => {
-            let mut ar = zip::ZipArchive::new(std::io::Cursor::new(bytes))
-                .map_err(|e| ReinError::Message(format!("打开 zip 失败：{e}")))?;
-            for i in 0..ar.len() {
+/// 单文件 gzip 的名字：去掉路径与 `.gz`。
+fn gz_stem(name: &str) -> String {
+    let stem = name
+        .rsplit('/')
+        .next()
+        .unwrap_or("解压文件")
+        .trim_end_matches(".gz")
+        .trim_end_matches(".GZ");
+    if stem.is_empty() {
+        "解压文件".to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
+/// 解压时的按需取内容器：**每类包只解析一次**。
+///
+/// 老实现是「每个条目重新打开一次包」——zip 每条目重扫一遍中央目录逐个比名字，
+/// tar.gz 每条目把整包 gunzip 一遍（300 个文件 ≈ 300 次全量解压，几十 GB 的解压量）。
+/// 现在构造时建一次「净化名 → 位置」索引，取内容都是 O(1)。
+enum Store<'a> {
+    Zip(
+        zip::ZipArchive<std::io::Cursor<&'a [u8]>>,
+        std::collections::HashMap<String, usize>,
+    ),
+    /// 解开的 tar 字节 + 名字 →（数据偏移, 长度）
+    Tar(
+        std::borrow::Cow<'a, [u8]>,
+        std::collections::HashMap<String, (usize, u64)>,
+    ),
+    /// 单文件 gz：净化名 + 解开的内容
+    Single(String, std::borrow::Cow<'a, [u8]>),
+}
+
+struct ContentReader<'a> {
+    store: Store<'a>,
+}
+
+impl<'a> ContentReader<'a> {
+    fn new(bytes: &'a [u8], name: &str, format: Format, inflated: Option<Vec<u8>>) -> Result<Self> {
+        let inflated: Option<std::borrow::Cow<'a, [u8]>> = inflated.map(std::borrow::Cow::Owned);
+        let store = match format {
+            Format::Zip => {
+                let mut ar = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+                    .map_err(|e| ReinError::Message(format!("打开 zip 失败：{e}")))?;
+                let mut index = std::collections::HashMap::new();
+                for i in 0..ar.len() {
+                    let f = ar
+                        .by_index(i)
+                        .map_err(|e| ReinError::Message(format!("读取 zip 条目失败：{e}")))?;
+                    if f.is_dir() {
+                        continue;
+                    }
+                    if let Some(clean) = clean_path(f.name()) {
+                        index.entry(clean).or_insert(i);
+                    }
+                }
+                Store::Zip(ar, index)
+            }
+            Format::Tar | Format::TarGz => {
+                let raw = inflated.unwrap_or(std::borrow::Cow::Borrowed(bytes));
+                let mut index = std::collections::HashMap::new();
+                let mut ar = tar::Archive::new(std::io::Cursor::new(&raw[..]));
+                if let Ok(iter) = ar.entries() {
+                    for e in iter.flatten() {
+                        let header = e.header().clone();
+                        if !header.entry_type().is_file() {
+                            continue;
+                        }
+                        let raw_name = String::from_utf8_lossy(&header.path_bytes()).to_string();
+                        if let Some(clean) = clean_path(&raw_name) {
+                            let size = header.size().unwrap_or(0);
+                            index
+                                .entry(clean)
+                                .or_insert((e.raw_file_position() as usize, size));
+                        }
+                    }
+                }
+                Store::Tar(raw, index)
+            }
+            Format::Gzip => {
+                let clean = sanitize(&gz_stem(name), 60);
+                let raw = inflated.unwrap_or(std::borrow::Cow::Borrowed(bytes));
+                Store::Single(clean, raw)
+            }
+            Format::Unknown => Store::Single(String::new(), std::borrow::Cow::Borrowed(&[][..])),
+        };
+        Ok(Self { store })
+    }
+
+    /// 取一个条目的完整内容（上限 [`MAX_FILE_BYTES`]）。
+    fn read(&mut self, want: &str) -> Result<Option<Vec<u8>>> {
+        match &mut self.store {
+            Store::Zip(ar, index) => {
+                let Some(&i) = index.get(want) else {
+                    return Ok(None);
+                };
                 let f = ar
                     .by_index(i)
                     .map_err(|e| ReinError::Message(format!("读取 zip 条目失败：{e}")))?;
-                let raw = f.name().to_string();
-                if clean_path(&raw).as_deref() != Some(want) {
-                    continue;
-                }
                 let mut buf = Vec::new();
                 f.take(MAX_FILE_BYTES)
                     .read_to_end(&mut buf)
                     .map_err(|e| ReinError::Message(format!("读取 {want} 失败：{e}")))?;
-                return Ok(Some(buf));
+                Ok(Some(buf))
             }
-            Ok(None)
-        }
-        "tar" | "tar.gz" => {
-            let owned;
-            let raw: &[u8] = if format == "tar.gz" {
-                owned = gunzip(bytes)?;
-                &owned
-            } else {
-                bytes
-            };
-            let mut ar = tar::Archive::new(std::io::Cursor::new(raw));
-            let iter = ar
-                .entries()
-                .map_err(|e| ReinError::Message(format!("打开 tar 失败：{e}")))?;
-            for item in iter {
-                let e = match item {
-                    Ok(e) => e,
-                    Err(_) => continue,
+            Store::Tar(raw, index) => {
+                let Some(&(off, size)) = index.get(want) else {
+                    return Ok(None);
                 };
-                let raw_name = String::from_utf8_lossy(&e.header().path_bytes()).to_string();
-                if clean_path(&raw_name).as_deref() != Some(want) {
-                    continue;
+                if off >= raw.len() {
+                    return Ok(None);
                 }
-                let mut buf = Vec::new();
-                e.take(MAX_FILE_BYTES)
-                    .read_to_end(&mut buf)
-                    .map_err(|err| ReinError::Message(format!("读取 {want} 失败：{err}")))?;
-                return Ok(Some(buf));
+                let end = raw.len().min(off.saturating_add(size.min(MAX_FILE_BYTES) as usize));
+                Ok(Some(raw[off..end].to_vec()))
             }
-            Ok(None)
-        }
-        "gzip" => {
-            let raw = gunzip(bytes)?;
-            let stem = name
-                .rsplit('/')
-                .next()
-                .unwrap_or("解压文件")
-                .trim_end_matches(".gz")
-                .trim_end_matches(".GZ");
-            let stem = if stem.is_empty() { "解压文件" } else { stem };
-            if sanitize(stem, 60) == want {
-                Ok(Some(raw))
-            } else {
-                Ok(None)
+            Store::Single(clean, raw) => {
+                if clean == want {
+                    Ok(Some(raw.to_vec()))
+                } else {
+                    Ok(None)
+                }
             }
         }
-        _ => Ok(None),
     }
 }
 
@@ -985,5 +1124,114 @@ mod tests {
     fn cap_inner_path_flattens_deep_trees() {
         assert_eq!(cap_inner_path("a/b/c"), "a/b/c");
         assert_eq!(cap_inner_path("a/b/c/d/e.txt"), "a/b/c-d-e.txt");
+    }
+
+    /// 造一个高压缩比的 tar.gz（全零 → 比值远超闸门）。
+    fn tar_gz_bomb(zeros: usize) -> Vec<u8> {
+        let big = vec![0u8; zeros];
+        let mut tar_buf = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut tar_buf);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(big.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            b.append_data(&mut header, "zeros.bin", &big[..]).unwrap();
+            b.finish().unwrap();
+        }
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &tar_buf).unwrap();
+        gz.finish().unwrap()
+    }
+
+    /// tar.gz 的高压缩比包**在列表与解压两条路径上都要被拦**：
+    /// 原来 tar 系列的 packed 全是 0，判据因 `packed_bytes > 0` 不成立被整段跳过。
+    #[test]
+    fn tar_gz_ratio_guard_covers_list_and_extract() {
+        let tgz = tar_gz_bomb(66 * 1024 * 1024);
+        assert!(
+            tgz.len() * 200 < 66 * 1024 * 1024,
+            "构造的包必须能触发比值判据，实际 {} 字节",
+            tgz.len()
+        );
+        let listed = list(&tgz, "bomb.tar.gz").unwrap_err().to_string();
+        assert!(listed.contains("压缩比异常"), "列表要拦：{listed}");
+
+        let conn = db();
+        let root = std::env::temp_dir().join("rein-kb-archive-bomb");
+        let _ = std::fs::create_dir_all(&root);
+        let extracted = extract(
+            &conn,
+            &root,
+            &tgz,
+            "bomb.tar.gz",
+            &ExtractOptions::default(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            extracted.contains("压缩比异常"),
+            "解压也要拦（解压不再经过 list，别在这里漏）：{extracted}"
+        );
+    }
+
+    /// 正常 tar.gz：文本与二进制都要按偏移索引取对字节。
+    #[test]
+    fn tar_gz_extracts_text_and_binary() {
+        let blob = [0u8, 1, 2, 3, 4, 5, 6, 7];
+        let mut tar_buf = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut tar_buf);
+            let mut h1 = tar::Header::new_gnu();
+            h1.set_size(6);
+            h1.set_mode(0o644);
+            h1.set_cksum();
+            b.append_data(&mut h1, "docs/a.md", &b"# hi\n\n"[..]).unwrap();
+            let mut h2 = tar::Header::new_gnu();
+            h2.set_size(blob.len() as u64);
+            h2.set_mode(0o644);
+            h2.set_cksum();
+            b.append_data(&mut h2, "bin/x.bin", &blob[..]).unwrap();
+            b.finish().unwrap();
+        }
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut gz, &tar_buf).unwrap();
+        let tgz = gz.finish().unwrap();
+
+        let conn = db();
+        let root = std::env::temp_dir().join("rein-kb-archive-tgz");
+        let _ = std::fs::create_dir_all(&root);
+        let r = extract(&conn, &root, &tgz, "资料.tar.gz", &ExtractOptions::default()).unwrap();
+        assert_eq!(r.extracted.len(), 2);
+        let text = r.extracted.iter().find(|i| i.kind == "text").unwrap();
+        let content: String = conn
+            .query_row("SELECT content FROM kb_files WHERE id = ?1", [text.id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(content.contains("# hi"), "文本内容要从索引取对：{content}");
+        let bin = r.extracted.iter().find(|i| i.kind == "binary").unwrap();
+        let refs = assets::fs_refs(&conn, bin.id).unwrap();
+        let on_disk = std::fs::read(root.join(&refs[0])).unwrap();
+        assert_eq!(on_disk, blob.to_vec(), "二进制字节要精确（偏移索引不能错位）");
+    }
+
+    /// 提示条数封顶：一个满是可疑路径的包不该刷出上万条提示（它们会进模型上下文）。
+    #[test]
+    fn unsafe_path_notes_are_capped() {
+        let names: Vec<String> = (0..30).map(|i| format!("../evil{i}.sh")).collect();
+        let mut files: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b"x"[..])).collect();
+        files.push(("ok.txt", b"fine"));
+        let z = zip_bytes(&files);
+
+        let l = list(&z, "包.zip").unwrap();
+        assert_eq!(l.total, 1);
+        assert!(
+            l.notes.len() <= NOTES_MAX + 2,
+            "提示条数应封顶，实际 {}：{:?}",
+            l.notes.len(),
+            l.notes
+        );
+        assert!(l.notes.iter().any(|n| n.contains("已省略")), "{:?}", l.notes);
     }
 }

@@ -11,16 +11,17 @@ use crate::error::{ReinError, Result};
 use crate::state::AppState;
 
 use super::models::{
-    KbChunk, KbCognition, KbDocDetail, KbFile, KbFileInput, KbFsMove, KbFsMoveResult, KbGlobHit,
-    KbHit, KbInjection, KbMedia, KbMediaInput, KbMemory, KbMemoryStats, KbQuery, KbSettings,
-    KbSettingsInput, KbStatus, MemoryApplyResult, MemoryCandidate, MemoryMaintainResult,
-    MODE_KEYWORD, MODE_LOCAL,
+    KbChunk, KbCognition, KbDirListing, KbDocDetail, KbFile, KbFileInput, KbFsMove, KbFsMoveResult,
+    KbGlobHit, KbHit, KbInjection, KbMedia, KbMediaInput, KbMemory, KbMemoryStats, KbQuery,
+    KbMetaInput, KbSettings, KbSettingsInput, KbStatus, KbTrashBatchResult, KbTrashEntry,
+    KbTrashResult, MemoryApplyResult, MemoryCandidate, MemoryMaintainResult, MODE_KEYWORD,
+    MODE_LOCAL,
 };
 use super::embed::Embedder;
 use super::worker::{self, KbHub};
 use super::{
-    archive, assets, chunk, embed, embed_models, files, governance, index, injection, memory,
-    search, settings, usage,
+    archive, assets, chunk, embed, embed_models, files, governance, index, injection, listing,
+    memory, search, settings, usage,
 };
 
 /// 检索前的刷新预算。嵌入是毫秒级，正常一轮就够；超时也不阻塞工具调用。
@@ -451,7 +452,7 @@ pub async fn kb_embed_model_download(
             serde_json::json!({ "id": id_ev, "file": "", "done": 0, "total": 0, "phase": "start" }),
         );
         let res = embed_models::download(&root_dl, model, &mut |file, done, total| {
-            // 进度事件按 1% 粒度节流：64 KB 一块会把事件刷爆
+            // 节流在 embed_models::download_file 里做的（1% 粒度）；这里只负责转发。
             let _ = app_ev.emit(
                 MODEL_EVENT,
                 serde_json::json!({
@@ -545,7 +546,10 @@ pub fn kb_embed_model_remove(
 
 /// 自定义嵌入测试：拿自己的文本看维度、延迟与相似度排序。
 /// 可临时指定本地模型或云端端点（先测后存），不落库。
-#[tauri::command]
+///
+/// `async`（= 派到线程池）：要加载 ONNX 模型并真跑推理，几百毫秒起——
+/// 同步命令在主线程执行，会把界面一起冻住。
+#[tauri::command(async)]
 pub fn kb_embed_test(
     app: AppHandle,
     state: State<AppState>,
@@ -616,7 +620,9 @@ fn archive_source(conn: &rusqlite::Connection, root: &PathBuf, doc_id: i64) -> R
 }
 
 /// 打开一个压缩包：列出内容（不解压）。
-#[tauri::command]
+///
+/// `async`：要读整个包并解析（tar.gz 还得整包解压一次），不能占主线程。
+#[tauri::command(async)]
 pub fn kb_archive_list(app: AppHandle, state: State<AppState>, doc_id: i64) -> Result<archive::KbArchiveListing> {
     let root = data_root(&app)?;
     let conn = state.db.lock();
@@ -626,7 +632,9 @@ pub fn kb_archive_list(app: AppHandle, state: State<AppState>, doc_id: i64) -> R
 }
 
 /// 解压一个压缩包进工作区（文本进检索，二进制落本体）。
-#[tauri::command]
+///
+/// `async`：几百个文件落盘 + 落库，重活；在主线程跑会冻住界面。
+#[tauri::command(async)]
 pub fn kb_archive_extract(
     app: AppHandle,
     state: State<AppState>,
@@ -658,20 +666,30 @@ pub fn kb_archive_extract(
 
 /* ---------- 空间管理 ---------- */
 
-/// 工作区占用总览（含大文件榜与孤儿统计）。
-#[tauri::command]
-pub fn kb_usage(app: AppHandle, state: State<AppState>, top: Option<i64>) -> Result<usage::KbUsageReport> {
+/// 工作区占用总览（含大文件榜与孤儿统计）。`min_bytes` 只影响大文件榜的下限。
+///
+/// `async`：全表聚合 + 目录遍历 + 逐本体 stat，属于重读；主线程执行会卡界面。
+#[tauri::command(async)]
+pub fn kb_usage(
+    app: AppHandle,
+    state: State<AppState>,
+    top: Option<i64>,
+    min_bytes: Option<i64>,
+) -> Result<usage::KbUsageReport> {
     let root = data_root(&app)?;
     let conn = state.db.lock();
     usage::report(
         &conn,
         &root,
         top.unwrap_or(usage::TOP_DEFAULT).clamp(0, usage::TOP_MAX),
+        min_bytes.unwrap_or(0).max(0),
     )
 }
 
 /// 清理磁盘上无人引用的本体碎片（`dry_run=true` 只统计）。
-#[tauri::command]
+///
+/// `async`：要遍历媒体目录并逐个删文件。
+#[tauri::command(async)]
 pub fn kb_usage_clean(
     app: AppHandle,
     state: State<AppState>,
@@ -913,6 +931,172 @@ pub fn kb_file_get(state: State<AppState>, id: i64) -> Result<KbFile> {
     files::get(&conn, id)
 }
 
+/// 改用户元数据：评分 / 标签 / 注释（只传要改的字段）。返回更新后的节点。
+#[tauri::command]
+pub fn kb_meta_set(state: State<AppState>, input: KbMetaInput) -> Result<KbFile> {
+    let conn = state.db.lock();
+    let fid = files::set_meta(&conn, input.id, input.rating, input.tags, input.note)?;
+    files::get(&conn, fid)
+}
+
+/* ---------- 目录列举与回收站（文件管理器，见 listing.rs / files.rs） ---------- */
+
+/// 列一层目录：文件管理器的 `ls`。一次带回大小、时间、模态、钉住、归类与子项数。
+///
+/// `async`（= 派到线程池）：这里要等索引追赶（`drain_before_query` 最长 1.5 秒），
+/// 同步命令会把界面一起冻住 —— 而这是**每次进目录**都会走的路径。
+#[tauri::command(async)]
+pub fn kb_list_dir(
+    app: AppHandle,
+    state: State<AppState>,
+    path: String,
+) -> Result<KbDirListing> {
+    worker::drain_before_query(&app, REFRESH_BUDGET)?;
+    let conn = state.db.lock();
+    listing::list_dir(&conn, &path)
+}
+
+/// 删除 = 移进回收站（系统文件拒绝；目录连整棵子树一起走）。可撤销：kb_trash_restore。
+///
+/// `async`（= 派到线程池）：目录删除要逐行 UPDATE + 删派生文档，行数可以上千，
+/// 同步命令会在主线程上一直握着 DB 锁（同 kb_list_dir 的理由）。
+#[tauri::command(async)]
+pub fn kb_trash(
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+    id: i64,
+) -> Result<KbTrashResult> {
+    let out = {
+        let conn = state.db.lock();
+        files::trash(&conn, id)?
+    };
+    hub.notify();
+    Ok(KbTrashResult {
+        file_id: out.file_id,
+        count: out.count,
+        path: out.path,
+    })
+}
+
+/// 回收站清单（最近删除的在前）。
+#[tauri::command]
+pub fn kb_trash_list(state: State<AppState>, limit: Option<i64>) -> Result<Vec<KbTrashEntry>> {
+    let conn = state.db.lock();
+    files::trash_list(&conn, limit.unwrap_or(200))
+}
+
+/// 从回收站恢复（批量）。逐条报告失败原因，不整体失败。
+///
+/// `async`：每行都要让位判断（名字被占时最多几十次占用查询），批量恢复是重活。
+#[tauri::command(async)]
+pub fn kb_trash_restore(
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+    ids: Vec<i64>,
+) -> Result<KbTrashBatchResult> {
+    let out = {
+        let conn = state.db.lock();
+        batch(&conn, &ids, |conn, id| files::untrash(conn, id))
+    };
+    hub.notify();
+    Ok(out)
+}
+
+/// 彻底删除（批量，回收站里的和还活着的都能删）。本体文件一并从磁盘清掉。
+///
+/// `async`：删完还要在磁盘上清理本体文件，批量时是主线程杀手。
+#[tauri::command(async)]
+pub fn kb_trash_purge(
+    app: AppHandle,
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+    ids: Vec<i64>,
+) -> Result<KbTrashBatchResult> {
+    let (out, refs) = {
+        let conn = state.db.lock();
+        let mut refs = Vec::new();
+        let mut done = 0;
+        let mut freed = 0;
+        let mut failed = Vec::new();
+        for id in &ids {
+            match files::purge(&conn, *id) {
+                Ok((n, r, bytes)) => {
+                    freed += bytes;
+                    refs.extend(r);
+                    done += n;
+                }
+                Err(e) => failed.push(e.to_string()),
+            }
+        }
+        (
+            KbTrashBatchResult {
+                done,
+                freed_bytes: freed,
+                failed,
+            },
+            refs,
+        )
+    };
+    remove_bodies(&app, &refs);
+    hub.notify();
+    Ok(out)
+}
+
+/// 清空回收站。
+///
+/// `async`：整站清空 = 逐行删 + 磁盘清理，与 kb_trash_purge 同一条重路径。
+#[tauri::command(async)]
+pub fn kb_trash_empty(
+    app: AppHandle,
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+) -> Result<KbTrashBatchResult> {
+    let (done, refs, freed) = {
+        let conn = state.db.lock();
+        files::empty_trash(&conn)?
+    };
+    remove_bodies(&app, &refs);
+    hub.notify();
+    Ok(KbTrashBatchResult {
+        done,
+        freed_bytes: freed,
+        failed: Vec::new(),
+    })
+}
+
+/// 逐条执行、逐条报告（批量删除/恢复不该被一条失败拖垮）。
+fn batch(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+    f: impl Fn(&rusqlite::Connection, i64) -> Result<files::TrashOutcome>,
+) -> KbTrashBatchResult {
+    let mut done = 0;
+    let mut failed = Vec::new();
+    for id in ids {
+        match f(conn, *id) {
+            Ok(o) => done += o.count,
+            Err(e) => failed.push(e.to_string()),
+        }
+    }
+    KbTrashBatchResult {
+        done,
+        freed_bytes: 0,
+        failed,
+    }
+}
+
+/// 删掉磁盘上的本体文件（数据库行已清）。
+fn remove_bodies(app: &AppHandle, refs: &[String]) {
+    if refs.is_empty() {
+        return;
+    }
+    if let Ok(root) = data_root(app) {
+        for rel in refs {
+            let _ = std::fs::remove_file(root.join(rel));
+        }
+    }
+}
+
 /* ---------- 模态层（docs/ai-workspace.md §2） ---------- */
 
 /// 上传/产出一个多模态节点：本体落盘 + 文本模态入索引。
@@ -1046,6 +1230,101 @@ pub fn kb_fs_undo(
     };
     hub.notify();
     Ok(n)
+}
+
+/* ---------- 与系统文件系统换手：拖入导入 / 导出到本地 ---------- */
+
+/// 导入一个磁盘上的本地文件（从系统文件管理器拖进来的路径）。
+///
+/// `async`：要读整个文件（上限 64MB，与前端上传同一条线），不能占主线程。
+/// 判 mime 只看扩展名（`assets::mime_of_name`）——拖进来的东西没有 mime 头可看。
+#[tauri::command(async)]
+pub fn kb_import_path(
+    app: AppHandle,
+    state: State<AppState>,
+    hub: State<'_, Arc<KbHub>>,
+    path: String,
+    dir: Option<String>,
+    name: Option<String>,
+) -> Result<KbFile> {
+    use base64::Engine as _;
+    let root = data_root(&app)?;
+    let src = PathBuf::from(&path);
+    let meta = std::fs::metadata(&src)
+        .map_err(|e| ReinError::Message(format!("读不到这个文件：{path}（{e}）")))?;
+    if meta.len() > assets::UPLOAD_CAP as u64 {
+        return Err(ReinError::Message(format!(
+            "文件超过 {}MB，暂不支持导入工作区",
+            assets::UPLOAD_CAP / 1024 / 1024
+        )));
+    }
+    let bytes = std::fs::read(&src)
+        .map_err(|e| ReinError::Message(format!("读不到这个文件：{path}（{e}）")))?;
+    let base = name
+        .filter(|n| !n.trim().is_empty())
+        .or_else(|| src.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "拖入的文件".to_string());
+    let mime = assets::mime_of_name(&base);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let target = match dir.map(|d| d.trim().trim_matches('/').to_string()) {
+        Some(d) if !d.is_empty() => format!("{d}/{base}"),
+        _ => base.clone(),
+    };
+    let id = {
+        let conn = state.db.lock();
+        assets::write_media(
+            &conn,
+            &root,
+            &KbMediaInput {
+                path: target,
+                name: Some(base),
+                mime,
+                data_base64: format!("data:;base64,{b64}"),
+                text: None,
+            },
+        )?
+    };
+    hub.notify();
+    let conn = state.db.lock();
+    files::get(&conn, id)
+}
+
+/// 导出到本地：文本写成文件、多模态拷贝本体，落在「下载/Rein」下，返回绝对路径。
+///
+/// 这是「拖出到系统」在各端都成立的替代动作（WebView 的拖出只在部分平台可用），
+/// 也是 binary 预览里那个「导出」按钮的真身。
+#[tauri::command(async)]
+pub fn kb_export_file(app: AppHandle, state: State<AppState>, id: i64) -> Result<String> {
+    let root = data_root(&app)?;
+    let out_dir = app
+        .path()
+        .download_dir()
+        .map_err(|e| ReinError::Message(format!("拿不到下载目录：{e}")))?
+        .join("Rein");
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| ReinError::Message(format!("建不了导出目录：{e}")))?;
+
+    let (name, content, refs) = {
+        let conn = state.db.lock();
+        let fid = files::resolve_file_id(&conn, id)?;
+        let f = files::get(&conn, fid)?;
+        let name = f.path.rsplit('/').next().unwrap_or("导出文件").to_string();
+        (name, f.content, assets::fs_refs(&conn, fid)?)
+    };
+
+    // 有多模态本体就优先导本体（那才是「原文件」）；否则把正文写成文本文件
+    let dest = out_dir.join(&name);
+    match refs.first() {
+        Some(rel) => {
+            let src = root.join(rel);
+            std::fs::copy(&src, &dest).map_err(|e| ReinError::Message(format!("写出失败：{e}")))?;
+        }
+        None => {
+            std::fs::write(&dest, content.as_bytes())
+                .map_err(|e| ReinError::Message(format!("写出失败：{e}")))?;
+        }
+    }
+    Ok(dest.to_string_lossy().to_string())
 }
 
 /* ---------- 全量注入区（§3.4） ---------- */

@@ -2,6 +2,7 @@
 
 import type { DailyTargets } from './nutrition'
 import type { MealType } from './diet'
+import type { KbEntry } from './kb'
 
 export interface ParsedFoodItem {
   foodId: number | null
@@ -143,6 +144,11 @@ export interface AiMessage {
   toolCalls?: ToolCallRecord[]
   /** kind=voice 时关联的纪要信息（payload 持久化；点气泡打开语音会话回看/重放） */
   voiceMeta?: { memoId: string; durationMs: number; words: number }
+  /**
+   * AI 挂出的工作区文件卡片（`present_file` 的产出；持久化在 payload.files）。
+   * 条目形状与文件管理器同一份（KbEntry）：点开就是阅读器 / 文件管理器里的那个文件。
+   */
+  files?: KbEntry[]
   /** 流式生成中（仅内存占位气泡；定稿/出错即清除，不持久化） */
   streaming?: boolean
 }
@@ -340,6 +346,10 @@ export interface OnlineCatalog {
   clientName: string | null
   /** 密钥可见的模型白名单（空 = 全部） */
   clientModels: string[]
+  /** 服务端给的账号状态原文（如「正常」「余额不足」）；缺省 = 服务端没报 */
+  clientStatus: string | null
+  /** 服务端给的账号备注原文（额度、限流原因…）；缺省 = 没有 */
+  clientNote: string | null
   models: OnlineModel[]
   error: string | null
   checkedAt: string
@@ -368,6 +378,143 @@ export interface OnlineSyncResult {
   updated: number
   removed: number
   models: AiModel[]
+}
+
+/* ---------- 提供商：服务商账号 + 模型目录（Rust modules/ai/providers.rs） ---------- */
+
+/** 模型类别（决定「启用」落到哪个执行位） */
+export type ProviderModelKind = 'llm' | 'vision' | 'asr' | 'embedding' | 'tts'
+
+/** 适配器支持的一种接入方式（表单里的「API 计划」选项） */
+export interface ProviderAdapterStyle {
+  id: string
+  label: string
+  /** 默认网关地址（可改；改错能一键恢复） */
+  baseUrl: string
+  note: string
+}
+
+/** 适配器专属凭据字段（按 secret 决定用密钥输入还是普通输入） */
+export interface ProviderAdapterField {
+  key: string
+  label: string
+  hint: string
+  secret: boolean
+  placeholder: string
+}
+
+/** 内置参考目录里的一条模型（接口不可用时兜底显示） */
+export interface ProviderPresetModel {
+  id: string
+  kind: ProviderModelKind
+  dim: number | null
+  note: string
+}
+
+/** 一个提供商适配器（静态注册表，Rust 是唯一真源，前端不另抄一份） */
+export interface ProviderAdapter {
+  id: string
+  label: string
+  /** 默认昵称：模型名前缀与折叠分组都用它 */
+  nickname: string
+  hint: string
+  docs: string
+  keyHint: string
+  /** 模型清单接口路径；空 = 该适配器没有 /models 接口 */
+  modelsPath: string
+  styles: ProviderAdapterStyle[]
+  kinds: ProviderModelKind[]
+  extraFields: ProviderAdapterField[]
+  preset: ProviderPresetModel[]
+}
+
+/** 提供商目录里的一条模型；启用状态由前端按执行位现算（见 stores/modelRoles） */
+export interface AiProviderModel {
+  providerId: number
+  modelId: string
+  kind: ProviderModelKind
+  /** api = /models 拉到；preset = 适配器内置参考；manual = 手填 */
+  origin: 'api' | 'preset' | 'manual'
+  /** 元信息 JSON（dim / priceInPerToken / priceOutPerToken / note） */
+  meta: string | null
+  fetchedAt: string
+}
+
+/** 解析后的元信息 */
+export interface ProviderModelMeta {
+  dim?: number
+  priceInPerToken?: number
+  priceOutPerToken?: number
+  note?: string
+}
+
+export interface AiProvider {
+  id: number
+  adapter: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  apiStyle: string
+  /** 适配器专属字段 JSON（如 {"appId":"…"}） */
+  extra: string | null
+  lastError: string | null
+  lastSyncAt: string | null
+  createdAt: string
+  updatedAt: string
+  models: AiProviderModel[]
+}
+
+export interface AiProviderInput {
+  id?: number | null
+  adapter: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  apiStyle: string
+  extra?: string | null
+}
+
+/** 一次拉取模型清单的结果（fromPreset = 接口没通、列的是内置参考） */
+export interface ProviderCatalog {
+  ok: boolean
+  /** ready | unauthorized | forbidden | not_found | unreachable | error | preset_only */
+  status: string
+  endpoint: string
+  error: string | null
+  models: AiProviderModel[]
+  elapsedMs: number
+  fromPreset: boolean
+  fetchedAt: string
+}
+
+/** 界面偏好：角色绑定 + 模型列表渲染声明（provider name display / folder） */
+export interface AiModelPrefs {
+  /** 多模态备选：auto | off | model:<ai_models.id> */
+  visionRef: string
+  /** ASR 绑定：voice | provider:<providerId>:<modelId> */
+  asrRef: string
+  /** 向量绑定：'' | local:<模型 id> | cloud:<providerId>:<modelId> */
+  embeddingRef: string
+  /** true = 模型名前加提供商昵称 */
+  providerNameDisplay: boolean
+  /** true = 按提供商折叠分组 */
+  providerNameFolder: boolean
+}
+
+/** 服务模型角色（模型页「服务模型」卡的四行） */
+export type ModelRole = 'llm' | 'vision' | 'asr' | 'embedding'
+
+/** 角色选择抽屉里的一行候选 */
+export interface ModelCandidate {
+  ref: string
+  label: string
+  sub: string
+  /** 提供商昵称（前缀与折叠分组用） */
+  provider: string
+  kind: ProviderModelKind
+  /** 行尾小胶囊（如「未探测」「需下载」） */
+  badge?: string
+  disabled?: boolean
 }
 
 /* ---------- 本机成本账本（金额一律纳元：1e-9 元） ---------- */

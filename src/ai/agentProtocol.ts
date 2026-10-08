@@ -88,6 +88,46 @@ export function blocksFromOutcome(outcome: AgentToolOutcome): unknown[] {
   return blocks
 }
 
+/** 结果里的图片块 → 过程卡要展示的那张图（无图返回 undefined） */
+export function imageFromToolResult(res: unknown): { base64: string; mime: string } | undefined {
+  const blocks = (res as RawToolResult | null)?.content
+  if (!Array.isArray(blocks)) return undefined
+  for (const b of blocks as { type?: string; data?: string; mimeType?: string }[]) {
+    if (b?.type === 'image' && typeof b.data === 'string') {
+      return { base64: b.data, mime: b.mimeType ?? 'image/png' }
+    }
+  }
+  return undefined
+}
+
+/**
+ * 工具结果里的**结构化载荷**：给前端自己用的那部分（不是回灌给模型的文本）。
+ *
+ * 三条来路，形状不同，这里统一收口：
+ * - 内核工具（Rust 注册表）：结果是工具返回值的紧凑 JSON 文本，载荷在根上（如 present_file 的 file）；
+ * - TS 工具：注册表把返回值包成 `{ok,data}` 信封，载荷在 data 里；
+ * - rawContent 工具（放大镜）：原始 AgentToolResult 自带 details 字段，直接用。
+ * 解不出来返回 null —— 前端只少一张卡片，不影响对话本身。
+ */
+export function toolDetailsFromResult(res: unknown): unknown {
+  const raw = res as { details?: unknown; content?: unknown } | null
+  if (raw?.details !== undefined) return raw.details
+  const blocks = Array.isArray(raw?.content) ? raw.content : null
+  const text = (blocks as { type?: string; text?: string }[] | null)?.find(
+    (b) => b?.type === 'text',
+  )?.text
+  if (typeof text !== 'string' || !text.trim()) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null // 纯文本结果（「已完成」之类）：没有结构化载荷
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const env = parsed as { ok?: unknown; data?: unknown }
+  return typeof env.ok === 'boolean' && 'data' in env ? env.data : parsed
+}
+
 /** 终稿 assistant 消息（含 thinking 块与 usage，供入口的读取函数消费） */
 export function finalMessage(
   text: string,

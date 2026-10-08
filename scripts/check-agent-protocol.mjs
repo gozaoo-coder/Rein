@@ -1,8 +1,9 @@
 /**
  * check-agent-protocol —— RustAgent 壳的纯逻辑断言（Node 直跑，不起浏览器）
  *
- * 覆盖 agentProtocol.ts：历史回灌的消息转换、工具结果编码、终稿构造、单步累积
- * （工具边界与重试的重置语义）。与内核的时序/副作用（事件订阅、工具回传）
+ * 覆盖 agentProtocol.ts：历史回灌的消息转换、工具结果编码（结构化载荷 / 结果图）、
+ * 终稿构造、单步累积（工具边界与重试的重置语义）；外加 chatFiles.ts 的
+ * 「工具结果 → 聊天文件卡片」判据。与内核的时序/副作用（事件订阅、工具回传）
  * 由 Rust 单测与浏览器 e2e 覆盖。
  *
  * 运行：node scripts/check-agent-protocol.mjs
@@ -11,10 +12,13 @@ import {
   blocksFromOutcome,
   emptyUsage,
   finalMessage,
+  imageFromToolResult,
   outcomeFromToolResult,
   StepAccumulator,
   toLlmMessages,
+  toolDetailsFromResult,
 } from '../src/ai/agentProtocol.ts'
+import { dedupeFiles, fileAttachmentOf, MAX_CHAT_FILES, PRESENT_FILE_TOOL } from '../src/ai/chatFiles.ts'
 
 let pass = 0
 let fail = 0
@@ -168,6 +172,60 @@ eq('零值用量形状完整', emptyUsage(), {
   eq('结果编码为 content 块（与 pi 的工具结果同形）', acc.toolResults[0].content, [
     { type: 'text', text: '{"ok":true,"data":{"loadedGroups":["diet"]}}' },
   ])
+}
+
+/* ---------- 工具结果里的结构化载荷与结果图（过程卡的文件卡片 / 放大镜靠它们） ---------- */
+
+eq(
+  '内核工具：结果 JSON 在根上，details 取根',
+  toolDetailsFromResult({ content: [{ type: 'text', text: '{"ok":true,"file":{"path":"笔记/a.md"}}' }] }),
+  { ok: true, file: { path: '笔记/a.md' } },
+)
+eq(
+  'TS 工具：{ok,data} 信封拆出 data',
+  toolDetailsFromResult({ content: [{ type: 'text', text: '{"ok":true,"data":{"zoomId":"z1"}}' }] }),
+  { zoomId: 'z1' },
+)
+eq(
+  'rawContent 工具：自带 details 原样透传',
+  toolDetailsFromResult({ content: [{ type: 'text', text: '看图' }], details: { zoomW: 512 } }),
+  { zoomW: 512 },
+)
+eq('纯文本结果没有结构化载荷', toolDetailsFromResult({ content: [{ type: 'text', text: '已完成' }] }), null)
+eq('空结果没有结构化载荷', toolDetailsFromResult(null), null)
+
+eq(
+  '结果图从图片块取（放大镜结果图）',
+  imageFromToolResult({
+    content: [{ type: 'text', text: '看图' }, { type: 'image', data: 'AAA', mimeType: 'image/jpeg' }],
+  }),
+  { base64: 'AAA', mime: 'image/jpeg' },
+)
+eq('没有图片块就没有结果图', imageFromToolResult({ content: [{ type: 'text', text: '看图' }] }), undefined)
+
+/* ---------- 工具结果 → 聊天文件卡片（present_file） ---------- */
+
+{
+  const payload = {
+    ok: true,
+    file: { id: 7, fileId: 3, path: '笔记/膝盖.md', name: '膝盖.md', kind: 'text', sourceType: 'note', size: 120 },
+    message: '已把「膝盖.md」挂到聊天里，用户可点开',
+  }
+  const f = fileAttachmentOf(PRESENT_FILE_TOOL, payload)
+  eq('present_file 的 file 变成卡片条目', [f?.path, f?.name, f?.size], ['笔记/膝盖.md', '膝盖.md', 120])
+  eq('缺项按空值兜底（不因为一个空字段丢整张卡）', [f?.title, f?.kind, f?.modalities, f?.tags], [
+    '膝盖.md',
+    'text',
+    [],
+    [],
+  ])
+  eq('别的工具不挂卡片（read_modal 的模态清单不算文件）', fileAttachmentOf('read_modal', payload), null)
+  eq('没有 file 字段不挂卡片', fileAttachmentOf(PRESENT_FILE_TOOL, { ok: true }), null)
+  eq('path 缺失不挂半张坏卡', fileAttachmentOf(PRESENT_FILE_TOOL, { file: { name: 'x' } }), null)
+  eq('载荷是字符串不炸', fileAttachmentOf(PRESENT_FILE_TOOL, 'nope'), null)
+
+  eq('同一路径只留一张（模型重试 / 同一轮多工具）', dedupeFiles([f, { ...f }, { ...f, path: '笔记/另一份.md' }]).length, 2)
+  ok('一条消息最多挂几张有上限', MAX_CHAT_FILES > 0 && MAX_CHAT_FILES <= 6, `MAX_CHAT_FILES=${MAX_CHAT_FILES}`)
 }
 
 console.log(`\n${pass}/${pass + fail} 通过`)

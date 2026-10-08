@@ -1318,7 +1318,9 @@ fn chat_attachment_doc(conn: &Connection, source_id: &str) -> Result<Option<Deri
 fn note_doc(conn: &Connection, id: &str) -> Result<Option<Derived>> {
     let row = conn
         .query_row(
-            "SELECT path, content, system, created_at, kind FROM kb_files WHERE id = ?1",
+            // 回收站里的文件视同不存在：返回 None 会让派生文档在重放时被删掉
+            "SELECT path, content, system, created_at, kind FROM kb_files
+             WHERE id = ?1 AND trashed_at IS NULL",
             [id],
             |r| {
                 Ok((

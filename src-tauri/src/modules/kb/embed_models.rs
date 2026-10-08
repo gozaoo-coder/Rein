@@ -226,6 +226,14 @@ fn download_file(
                     .map_err(|e| ReinError::Message(format!("写入模型文件失败：{e}")))?;
                 let mut buf = vec![0u8; 64 * 1024];
                 let mut done: u64 = 0;
+                // 进度按 1% 粒度上报：64 KB 一块会把事件刷爆（569 MB 的模型 ≈ 8700 次），
+                // 每次事件都会让前端重渲染一遍。总长度未知时退化为每 4 MB 一次。
+                let step = if total > 0 {
+                    (total / 100).max(64 * 1024)
+                } else {
+                    4 * 1024 * 1024
+                };
+                let mut next_emit = step;
                 loop {
                     if is_cancelled() {
                         drop(out);
@@ -242,9 +250,14 @@ fn download_file(
                     out.write_all(&buf[..n])
                         .map_err(|e| ReinError::Message(format!("写入模型文件失败：{e}")))?;
                     done += n as u64;
-                    on_progress(done, total);
+                    if done >= next_emit {
+                        on_progress(done, total);
+                        next_emit = done + step;
+                    }
                 }
                 drop(out);
+                // 收尾一定报一次：UI 靠它拿到 100%（否则最后一步可能永远显示不到满）
+                on_progress(done, total);
                 if done == 0 {
                     last_err = format!("{url} 返回空文件");
                     let _ = std::fs::remove_file(&tmp);
@@ -266,7 +279,7 @@ fn download_file(
     )))
 }
 
-/// 下载一个模型（两个文件）。`on_progress(file, done, total)` 用于上报进度。
+/// 下载一个模型（两个文件）。`on_progress(file, done, total)` 用于上报进度（1% 粒度）。
 pub fn download(
     data_dir: &Path,
     m: &LocalModel,
@@ -275,6 +288,9 @@ pub fn download(
     if m.bundled {
         return Ok(0); // 内置模型无需下载
     }
+    // 开始前清掉可能残留的取消标志：上一次下载结束后点过一次取消的话，
+    // 留下来的标志会让这一次刚开始就被判为「已取消」。
+    let _ = take_cancelled(m.id);
     let mut written = 0u64;
     for (file, rel, expect) in [
         ("model.onnx", "onnx/model_quantized.onnx", m.onnx_bytes),

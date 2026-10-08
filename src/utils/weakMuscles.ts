@@ -23,10 +23,14 @@
  *  4. 候选排序：用户练过的（有历史 = 不用重新学动作、重量也有底）优先，其次按库内既定顺序
  *     （内置课程/种子的顺序本身有教学质量含义）；同组最多两个动作（再多是堆量不是补弱）。
  *
+ * 上面第 3、4 条服务于**临时课**（库里没有合适的现成课时的兜底）。
+ * **优先的是现成课**：课程库里已配置好的课，训练目的若与弱项高度相似（`matchCourse`），
+ * 直接练它 —— 用户自己排过的处方比现场拼的草稿可信，也不必再学一遍新动作。
+ *
  * 评估粒度与练够分一致，是 10 个**评估组**（`config/muscles` 的 SCORE_GROUPS）而非 39 个肌束。
  */
 
-import { SCORE_GROUPS, type MuscleKey, type ScoreGroupKey } from '@/config/muscles'
+import { SCORE_GROUPS, type ActivationMap, type MuscleKey, type ScoreGroupKey } from '@/config/muscles'
 import { libraryMuscles } from '@/utils/libraryMuscles'
 import type { GroupScore } from '@/utils/trainingScore'
 import type { ExerciseRecord, PlanExercise, WorkoutPlan } from '@/types'
@@ -190,8 +194,18 @@ export function buildCatchupPlan(picks: CatchupPick[]): WorkoutPlan {
   }
 }
 
-/** 交给 AI 的那段话：把弱项与草稿都写进去，模型才有得改（不给它就只能瞎猜） */
-export function catchupPrompt(picks: CatchupPick[], plan: WorkoutPlan): string {
+/**
+ * 交给 AI 的那段话：把弱项与草稿都写进去，模型才有得改（不给它就只能瞎猜）。
+ *
+ * 有现成课时（`course`）把它写上，并把问题改成「这节课要不要动」—— 那种情况下用户要的是核对，
+ * 只递草稿会让模型从零重排一节，等于把课程库里那节正好对症、正等着开练的课白扔掉。
+ * 草稿为空（弱项全被现成课覆盖）时不再提草稿，免得让模型对着「我初步排的草稿：」后面一片空白。
+ */
+export function catchupPrompt(
+  picks: CatchupPick[],
+  plan: WorkoutPlan,
+  course?: CourseLite | null,
+): string {
   const lines = picks.map(
     (p) =>
       `· ${p.label}：本周练够分 ${p.score}，还差约 ${p.gap} 组（可练 ${p.exercises.map((e) => e.name).join('、')}）`,
@@ -199,14 +213,128 @@ export function catchupPrompt(picks: CatchupPick[], plan: WorkoutPlan): string {
   const draft = plan.exercises
     .map((e) => `${e.name} ${e.sets} 组 × ${e.reps ?? '—'} 次`)
     .join('；')
+  /** 课程在话里的称呼：带上副标（「背 · 肱二头 · 前臂」这种），模型才知道它是什么课 */
+  const named = course ? `「${course.name}」${course.subtitle ? `（${course.subtitle}）` : ''}` : ''
   return [
-    '帮我排一节临时加练课，目标是补上本周练得不够的肌群。',
+    course
+      ? `我的课程库里有${named}，训练目的与这些弱项高度一致，我打算练它。`
+      : '帮我排一节临时加练课，目标是补上本周练得不够的肌群。',
     '',
     '我的弱项：',
     ...lines,
+    ...(draft ? ['', `我初步排的草稿：${draft}`] : []),
     '',
-    `我初步排的草稿：${draft}`,
-    '',
-    '请据此给一份更合理的临时加练课（动作、组数、次数、组间休息），并说明为什么这样排。',
+    course
+      ? '请判断这节现成的课要不要调整：不用改就说可以练；要改就给出改后的安排（动作、组数、次数、组间休息）并说明理由。'
+      : '请据此给一份更合理的临时加练课（动作、组数、次数、组间休息），并说明为什么这样排。',
   ].join('\n')
+}
+
+/* ---------------- 现成课程：弱项 → 课程库里已配置好的那一节 ---------------- */
+
+/**
+ * 动作 → 肌群激活表。做成参数而不是直接 import store：本文件是纯函数层
+ * （文件头第一条纪律），不该知道 store 的存在；调用方传 `lib.musclesOf` 即可。
+ */
+export type MusclesResolver = (item: PlanExercise) => ActivationMap | null
+
+/**
+ * 课程主攻的评估组 = 这门课的**训练目的**。
+ *
+ * 与 `isPrimaryFor` 是同一个判据、相反的问法：那边问「这个动作主攻不主攻某组」，
+ * 这边问「这门课主攻哪几组」。粒度同样是 10 个评估组。
+ *
+ * 必须经 `musclesOf` 解析而不是读 `item.muscles` 就完事：课程条目只在 AI 写入时
+ * 才自带肌群表，内置课程/编辑器建的课只存 `exerciseId`，肌群在**动作库**里 ——
+ * 读条目字段会让内置课全都得到空表（这门课看起来没有任何训练目的）。
+ */
+export function courseGroups(exercises: PlanExercise[], musclesOf: MusclesResolver): ScoreGroupKey[] {
+  return SCORE_GROUPS.filter((g) =>
+    exercises.some((e) => {
+      const map = musclesOf(e) ?? {}
+      return g.members.some((m) => map[m] === 3)
+    }),
+  ).map((g) => g.key)
+}
+
+/**
+ * 「训练目的高度相似」的判据：课程的主攻组里至少 **2/3** 落在弱项上。
+ *
+ * 为什么不是「有交集就算」：全身课的主攻组覆盖一切，有交集永远成立 ——
+ * 于是任何弱项都会推出「练全身课」，那不是目的相似，是「什么都练一点」，
+ * 而且会把已经练够的组一起堆量（脏容量）。为什么不是 100%：推日（主攻 胸·肩·三头·核心）
+ * 在「胸肩三头都弱」的场景里显然该选，核心只是那节平板支撑顺带练到的，
+ * 不该因为这一组就判它「不像」。2/3 让一门课带一两个顺带的组，但不许带一半。
+ */
+const PURPOSE_FIT = 2 / 3
+
+/** 候选课程：只取匹配与开练要用的字段（纯函数不依赖 store 的记录全貌，冒烟也便于构造） */
+export interface CourseLite {
+  id: string
+  name: string
+  subtitle: string
+  workoutType: WorkoutPlan['workoutType']
+  exercises: PlanExercise[]
+  /** 预估时长（分钟）；null / 缺省 = 未标注 */
+  estDurationMin?: number | null
+}
+
+/** 弱项匹配到的现成课程 */
+export interface CoursePick<C extends CourseLite = CourseLite> {
+  /** 课程本身：含动作清单，调用方可直接 `session.start(course)` 开练 */
+  course: C
+  /** 课程主攻的评估组（训练目的），按 SCORE_GROUPS 顺序 */
+  groups: ScoreGroupKey[]
+  /** 命中的弱项，按传入顺序 —— 这门课能补上的正是这些 */
+  hits: GroupScore[]
+  /** 相似度 = 命中数 / 主攻组数（≥ PURPOSE_FIT 才可能入选） */
+  fit: number
+}
+
+/**
+ * 从课程库里挑出**训练目的与弱项高度相似**的那一节；挑不到返回 null
+ * （调用方回落到临时加练课 —— 现场拼的草稿仍是「库里没有」时的兜底）。
+ *
+ * 三个条件缺一不可：
+ *  1. **有命中**：至少主攻一个弱项组；
+ *  2. **够贴近**：`fit = 命中数 / 主攻组数 ≥ 2/3`（判据见 PURPOSE_FIT）；
+ *  3. **补到点子上**：最该补的那个组（`weak[0]`，调用方按「未练优先」排好序）
+ *     必须是它的主攻组 —— 只补到次要弱项的课，哪怕 100% 精准，也没解决最要紧的缺口。
+ *
+ * 排序：命中多的优先（一次补得更多）；同样多时主攻组少的优先（更专一，
+ * 往已练够的组叠的量更少）；仍并列时按传入顺序（课程库已按最近使用排序，
+ * 用户熟的那节在前）。
+ *
+ * **只收 strength 课**：加练补的是「还差几组」的量，HIIT / 拉伸课没有组数处方，
+ * 拿它顶上等于换了个练法，缺口还在。
+ */
+export function matchCourse<C extends CourseLite>(
+  weak: GroupScore[],
+  courses: C[],
+  musclesOf: MusclesResolver,
+): CoursePick<C> | null {
+  if (!weak.length) return null
+  const anchor = weak[0].group
+  let best: CoursePick<C> | null = null
+  for (const course of courses) {
+    if (course.workoutType !== 'strength') continue
+    const groups = courseGroups(course.exercises, musclesOf)
+    if (!groups.length || !groups.includes(anchor)) continue
+    const hits = weak.filter((w) => groups.includes(w.group))
+    if (!hits.length) continue
+    const fit = hits.length / groups.length
+    if (fit < PURPOSE_FIT) continue
+    // 只有**严格更好**才替换：并列时保留先遇到的（课程库顺序 = 最近使用的在前）
+    if (
+      best &&
+      !(
+        hits.length > best.hits.length ||
+        (hits.length === best.hits.length && groups.length < best.groups.length)
+      )
+    ) {
+      continue
+    }
+    best = { course, groups, hits, fit }
+  }
+  return best
 }

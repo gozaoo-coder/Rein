@@ -1,106 +1,63 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  BrainCircuit,
-  Eye,
-  Mic,
-  Pencil,
-  Plus,
-  RefreshCw,
-  SlidersHorizontal,
-  Sparkles,
-  Star,
-  Trash2,
-} from 'lucide-vue-next'
+import { Boxes, Mic, Plus, Server, Sparkles } from 'lucide-vue-next'
 
-import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import ModelFormSheet from '@/components/ai/ModelFormSheet.vue'
-import OnlineServiceCard from '@/components/ai/OnlineServiceCard.vue'
+import ModelListSheet from '@/components/ai/ModelListSheet.vue'
+import ModelPickerSheet from '@/components/ai/ModelPickerSheet.vue'
+import OnlineServiceSheet from '@/components/ai/OnlineServiceSheet.vue'
+import ProviderFormSheet from '@/components/ai/ProviderFormSheet.vue'
+import ProviderSheet from '@/components/ai/ProviderSheet.vue'
+import ServiceModelsCard from '@/components/ai/ServiceModelsCard.vue'
 import VoiceConfigSheet from '@/components/voice/VoiceConfigSheet.vue'
-import { formatCnyNano, formatUnitPrice } from '@/ai/cost'
+import { KIND_LABEL } from '@/ai/providerCatalog'
 import { voiceService } from '@/services/voiceService'
 import { useToast } from '@/composables/useToast'
+import { useModelRolesStore } from '@/stores/modelRoles'
 import { useModelsStore } from '@/stores/models'
-import type { AiModel, VoiceConfig } from '@/types'
+import { useOnlineServiceStore } from '@/stores/onlineService'
+import { useProvidersStore } from '@/stores/providers'
+import type { AiModel, AiProvider, ModelRole, VoiceConfig } from '@/types'
 
-/** 模型管理：在线服务导入 / 添加 · 编辑 · 删除 · 设默认，max_tokens=1 探测视觉·思考·努力。 */
-const store = useModelsStore()
+/**
+ * 管理模型（AI 页入口后的第一页）。三层结构，与「模型住在哪」一一对应：
+ *
+ * 1. **服务模型**：全应用四个模型接口（主 LLM / 多模态备选 / ASR / 向量）当前用哪个 ——
+ *    点一行开选择抽屉，选中即写到那个执行位；
+ * 2. **Rein 在线服务**：服务端下发的模型（地址 + 密钥 + 目录 + 调用条件 + 对账），
+ *    点开是独立一层抽屉；
+ * 3. **提供商**：服务商账号（适配器 + 接入方式 + 凭据）→ 拉一次 `/models` 就能看到
+ *    这家能提供的对话/视觉/识别/向量模型，逐条启用。
+ *
+ * 列表一律「页面里只放摘要，全部另开抽屉」：模型目录动辄几十条，在页面里展开会把
+ * 下面的内容一路推下去（DOM 重排 + 丢失滚动位置），抽屉则是独立一层。
+ */
+const models = useModelsStore()
+const providers = useProvidersStore()
+const roles = useModelRolesStore()
+const online = useOnlineServiceStore()
 const toast = useToast()
 const router = useRouter()
 
-/** 让 AI 帮我配置语音服务：跳 AI 页并预填请求（AI 有 voice 工具组，可诊断/填凭据/试听） */
-function askAiSetupVoice(): void {
-  void router.push({
-    path: '/ai',
-    query: { ask: '帮我检查语音对话服务的配置，有问题的话直接帮我修好并测试验证' },
-  })
-}
-
-onMounted(() => {
-  void store
-    .load()
-    .then(() => store.loadUsage())
-    .catch(() => toast.toast('模型列表加载失败'))
-  void loadVoiceConfig()
-})
-
-/** 在线服务导入完成：账本会多出几条记录，重新拉一次本机成本 */
-function onOnlineSynced(): void {
-  void store.loadUsage()
-}
-
-/** 单条模型的本机累计花费（含模型费与流量费拆分） */
-function costText(m: AiModel): string | null {
-  const u = store.usageOf(m)
-  if (!u || u.calls === 0) return null
-  return `${formatCnyNano(u.costTotalNano)} · ${u.calls} 次`
-}
-
+/** 选择抽屉（四行槽位共用） */
+const pickerOpen = ref(false)
+const pickerRole = ref<ModelRole | null>(null)
+/** 全部模型抽屉 */
+const listOpen = ref(false)
+/** 在线服务抽屉 */
+const onlineOpen = ref(false)
+/** 提供商详情 / 表单 */
+const providerOpen = ref(false)
+const providerTarget = ref<AiProvider | null>(null)
 const formOpen = ref(false)
-const editing = ref<AiModel | null>(null)
-const deleting = ref<AiModel | null>(null)
-
-function onAdd(): void {
-  editing.value = null
-  formOpen.value = true
-}
-
-function onEdit(m: AiModel): void {
-  editing.value = m
-  formOpen.value = true
-}
-
-function onSaved(id: number): void {
-  void store.runProbe(id)
-}
-
-function probe(m: AiModel): void {
-  void store.runProbe(m.id)
-}
-
-function setDefault(m: AiModel): void {
-  void store
-    .setDefault(m.id)
-    .then(() => toast.toast(`已设为默认：${m.name}`))
-    .catch(() => toast.toast('设置默认失败'))
-}
-
-const deleteActions = computed(() => [
-  { label: `删除「${deleting.value?.name ?? ''}」`, value: 'delete', danger: true },
-])
-
-function onDeleteAction(value: string): void {
-  if (value !== 'delete' || !deleting.value) return
-  const m = deleting.value
-  deleting.value = null
-  void store
-    .remove(m.id)
-    .then(() => toast.toast(`已删除 ${m.name}`))
-    .catch(() => toast.toast('删除失败'))
-}
+const formTarget = ref<AiProvider | null>(null)
+const formAdapter = ref('')
+/** 手动添加/编辑单条模型（进阶路径） */
+const modelFormOpen = ref(false)
+const editingModel = ref<AiModel | null>(null)
 
 /* ---- 豆包语音服务：一张卡管一对模型（ASR/TTS），独立于 LLM 列表 ---- */
 const voiceConfig = ref<VoiceConfig | null>(null)
@@ -117,20 +74,93 @@ function voiceConfigured(c: VoiceConfig | null): boolean {
 
 function onVoiceSaved(c: VoiceConfig): void {
   voiceConfig.value = c
+  // ASR 槽位读的就是这份配置，改完立刻回读
+  void roles.refreshTargets()
 }
 
-const capMeta = {
-  vision: { label: '视觉', icon: Eye },
-  thinking: { label: '思考', icon: Sparkles },
-  effort: { label: '努力', icon: SlidersHorizontal },
-} as const
+onMounted(() => {
+  void roles
+    .load()
+    .then(() => models.loadUsage())
+    .catch(() => toast.toast('模型列表加载失败'))
+  void loadVoiceConfig()
+})
+
+/** 让 AI 帮我配置：跳 AI 页并预填请求（模型/语音/提供商工具都是按需装载的） */
+function askAiSetup(): void {
+  void router.push({
+    path: '/ai',
+    query: { ask: '帮我检查模型与提供商的配置（主模型、语音识别、向量），有问题直接帮我修好并测试验证' },
+  })
+}
+
+function openPicker(role: ModelRole): void {
+  pickerRole.value = role
+  pickerOpen.value = true
+}
+
+function openProvider(p: AiProvider): void {
+  providerTarget.value = p
+  providerOpen.value = true
+}
+
+function addProvider(adapter = ''): void {
+  formTarget.value = null
+  formAdapter.value = adapter
+  formOpen.value = true
+}
+
+function editProvider(p: AiProvider): void {
+  providerOpen.value = false
+  formTarget.value = p
+  formAdapter.value = p.adapter
+  formOpen.value = true
+}
+
+function onProviderSaved(id: number): void {
+  const p = providers.providerOf(id)
+  if (p) {
+    providerTarget.value = p
+    providerOpen.value = true
+  }
+}
+
+function openModelForm(m: AiModel | null): void {
+  editingModel.value = m
+  modelFormOpen.value = true
+}
+
+function onModelSaved(id: number): void {
+  void models.runProbe(id)
+}
+
+/* ---- 提供商卡片摘要 ---- */
+const providerCards = computed(() =>
+  providers.providers.map((p) => ({
+    provider: p,
+    adapterLabel: providers.adapterOf(p.adapter)?.label ?? p.adapter,
+    summary: p.models.length
+      ? providers
+          .summaryOf(p)
+          .map((s) => `${s.count} ${KIND_LABEL[s.kind]}`)
+          .join(' · ')
+      : '还没有目录：进去拉一次模型列表',
+    error: p.lastError,
+  })),
+)
+
+const onlineTone = computed(() => {
+  if (online.ready) return 'ok'
+  if (!online.hasKey) return 'idle'
+  return 'warn'
+})
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="管理模型" subtitle="添加 AI 模型并测试能力后即可拍照识别" back>
+    <PageHeader title="管理模型" subtitle="选服务模型 · 接服务商 · 拉模型目录" back>
       <template #action>
-        <button class="hdr-btn accent" aria-label="添加模型" @click="onAdd">
+        <button class="hdr-btn accent" aria-label="添加提供商" @click="addProvider()">
           <Plus :size="19" />
         </button>
       </template>
@@ -139,93 +169,84 @@ const capMeta = {
     <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 页面框与吸顶页头站住，只有 item 位移
          （system/rubberScroll）。页头留在层外，拖动时不跟着漂 -->
     <div class="rubber-layer" data-rubber-content>
-      <div class="intro t-2">
-        <p>每条模型保存后会自动发送 <b>max_tokens=1</b> 的测试包，探测「视觉（图片上传）、thinking 开关、effort 档位」三项能力，结果以徽章展示。</p>
-      </div>
+      <!-- 1 · 服务模型：四个接口各用哪个，点一行换一个 -->
+      <ServiceModelsCard :loading="!roles.loaded" @pick="openPicker" />
 
-      <!-- 在线服务：服务端下发模型 + 服务密钥 + 双端成本 -->
-      <OnlineServiceCard @synced="onOnlineSynced" />
-
-      <ul v-if="store.models.length > 0" class="cards">
-        <li v-for="m in store.models" :key="m.id" class="card m-card">
-          <div class="row between top">
-            <div class="flex-1 min0">
-              <p class="m-name">
-                {{ m.name }}
-                <span v-if="m.source === 'online'" class="chip-onl">在线</span>
-                <span v-if="m.isDefault" class="chip-def">默认</span>
-              </p>
-              <p class="m-id t-2">{{ m.provider }} · {{ m.modelId }}</p>
-              <p v-if="formatUnitPrice(m) || costText(m)" class="m-cost t-3">
-                <span v-if="formatUnitPrice(m)">{{ formatUnitPrice(m) }}</span>
-                <span v-if="costText(m)" class="spent">{{ costText(m) }}</span>
-              </p>
-            </div>
-            <div class="acts">
-              <button
-                v-if="!m.isDefault"
-                class="act"
-                aria-label="设为默认"
-                @click="setDefault(m)"
-              >
-                <Star :size="16" />
-              </button>
-              <button class="act" aria-label="编辑模型" @click="onEdit(m)">
-                <Pencil :size="16" />
-              </button>
-              <button class="act" aria-label="删除模型" @click="deleting = m">
-                <Trash2 :size="16" class="danger" />
-              </button>
-            </div>
-          </div>
-
-          <div class="caps row">
-            <template v-for="(meta, key) in capMeta" :key="key">
-              <span class="cap" :class="`cap-${m[key] === true ? 'ok' : m[key] === false ? 'no' : 'unk'}`">
-                <component :is="meta.icon" :size="13" />
-                {{ meta.label }}
-                <span v-if="store.probing[m.id]" class="probe"><RefreshCw :size="11" class="spin" /></span>
-              </span>
-            </template>
-            <button
-              class="cap retest"
-              :disabled="store.probing[m.id]"
-              @click="probe(m)"
-            >
-              <RefreshCw :size="13" :class="{ spin: store.probing[m.id] }" />
-              重新测试
-            </button>
-          </div>
-
-          <p v-if="m.lastError" class="err t-3">{{ m.lastError }}</p>
-        </li>
-      </ul>
-
-      <section v-else class="empty card">
-        <EmptyState
-          :icon="BrainCircuit"
-          title="还没有 AI 模型"
-          hint="点右上角或下方按钮添加模型，DeepSeek 视觉模型 deepseek-v4-flash-vision-exp 可直接拍照识别食物"
-        />
-      </section>
-
-      <!-- 语音服务（语音对话功能的凭据与音色，豆包/Qwen 识别 + 豆包朗读） -->
-      <button class="card vcfg" @click="voiceOpen = true">
-        <span class="v-ic"><Mic :size="15" /></span>
+      <!-- 2 · Rein 在线服务：点开看状态（地址/密钥/目录/调用条件/对账） -->
+      <button class="card onl" @click="onlineOpen = true">
+        <span class="ic ic-onl"><Server :size="15" /></span>
         <span class="vt">
-          <b>语音服务
-            <i v-if="voiceConfigured(voiceConfig)" class="v-ok">已连接</i>
-            <i v-else class="v-no">未配置</i>
+          <b>
+            Rein 在线服务
+            <i class="chip" :class="`chip-${onlineTone}`">{{ online.statusText }}</i>
           </b>
-          <em>语音对话 · 实时转写与纪要朗读</em>
+          <em>{{ online.accountText }}</em>
         </span>
         <span class="v-go">›</span>
       </button>
-      <button class="card ai-setup" @click="askAiSetupVoice">
-        <span class="v-ic ic-spark"><Sparkles :size="15" /></span>
+
+      <!-- 3 · 提供商：服务商账号 → 模型目录 → 逐条启用 -->
+      <section class="prov">
+        <div class="row between center sec-head">
+          <b>提供商</b>
+          <button class="mini" @click="listOpen = true">
+            全部模型（{{ models.models.length }}）›
+          </button>
+        </div>
+
+        <ul v-if="providerCards.length > 0" class="pv-list">
+          <li v-for="c in providerCards" :key="c.provider.id">
+            <button class="card pv" @click="openProvider(c.provider)">
+              <span class="ic ic-pv">{{ c.provider.name.slice(0, 1) }}</span>
+              <span class="vt">
+                <b>
+                  {{ c.provider.name }}
+                  <i class="tag">{{ c.adapterLabel }}</i>
+                </b>
+                <em>{{ c.summary }}</em>
+                <em v-if="c.error" class="perr">{{ c.error }}</em>
+              </span>
+              <span class="v-go">›</span>
+            </button>
+          </li>
+        </ul>
+
+        <section v-else class="card empty">
+          <EmptyState
+            :icon="Boxes"
+            title="还没有提供商"
+            hint="添加一个服务商账号（火山方舟 / 百炼 / DeepSeek / 硅基流动…），拉一次模型列表就能逐条启用对话、视觉、识别与向量模型"
+          />
+        </section>
+
+        <button class="card add-pv" @click="addProvider()">
+          <span class="ic ic-add"><Plus :size="15" /></span>
+          <span class="vt">
+            <b>添加提供商</b>
+            <em>选适配器与接入方式，填 Key 后自动拉模型清单</em>
+          </span>
+          <span class="v-go">›</span>
+        </button>
+      </section>
+
+      <!-- 语音服务（凭据与音色；识别模型本身在上面「服务模型」里选） -->
+      <button class="card vcfg" @click="voiceOpen = true">
+        <span class="ic ic-voice"><Mic :size="15" /></span>
         <span class="vt">
-          <b>让 AI 帮我配置语音</b>
-          <em>聊天里直接诊断问题、填凭据、试听音色</em>
+          <b>
+            语音服务
+            <i v-if="voiceConfigured(voiceConfig)" class="tag ok-t">已连接</i>
+            <i v-else class="tag">未配置</i>
+          </b>
+          <em>识别与朗读的凭据 · 音色与语速 · 连通性测试</em>
+        </span>
+        <span class="v-go">›</span>
+      </button>
+      <button class="card ai-setup" @click="askAiSetup">
+        <span class="ic ic-spark"><Sparkles :size="15" /></span>
+        <span class="vt">
+          <b>让 AI 帮我配置</b>
+          <em>聊天里直接填 Key、拉模型、切换服务模型（工具按需装载）</em>
         </span>
         <span class="v-go">›</span>
       </button>
@@ -233,20 +254,54 @@ const capMeta = {
 
     <!-- 悬浮按钮移出页面层（Teleport）：页面层 translate 会改 fixed 后代的包含块，留在层内拖动时会跑位 -->
     <Teleport to="body">
-      <button class="fab row center" aria-label="添加模型" @click="onAdd">
+      <button class="fab row center" aria-label="添加提供商" @click="addProvider()">
         <Plus :size="17" />
-        添加模型
+        添加提供商
       </button>
     </Teleport>
 
-    <ModelFormSheet :open="formOpen" :model="editing" @close="formOpen = false" @saved="onSaved" />
-    <VoiceConfigSheet :open="voiceOpen" :config="voiceConfig" @close="voiceOpen = false" @saved="onVoiceSaved" />
-    <ActionSheet
-      :open="deleting !== null"
-      :title="`删除后照片识别将无法使用该模型`"
-      :actions="deleteActions"
-      @close="deleting = null"
-      @select="onDeleteAction"
+    <!-- 抽屉层：选择 / 全部模型 / 在线服务 / 提供商 / 表单 -->
+    <ModelPickerSheet
+      :open="pickerOpen"
+      :role="pickerRole"
+      @close="pickerOpen = false"
+      @add="pickerOpen = false; addProvider()"
+    />
+    <ModelListSheet
+      :open="listOpen"
+      @close="listOpen = false"
+      @add="listOpen = false; openModelForm(null)"
+      @edit="(m) => openModelForm(m)"
+    />
+    <OnlineServiceSheet
+      :open="onlineOpen"
+      @close="onlineOpen = false"
+      @synced="() => models.loadUsage()"
+    />
+    <ProviderSheet
+      :open="providerOpen"
+      :provider="providerTarget"
+      @close="providerOpen = false"
+      @edit="editProvider"
+    />
+    <ProviderFormSheet
+      :open="formOpen"
+      :provider="formTarget"
+      :initial-adapter="formAdapter"
+      @close="formOpen = false"
+      @saved="onProviderSaved"
+    />
+    <ModelFormSheet
+      :open="modelFormOpen"
+      :model="editingModel"
+      @close="modelFormOpen = false"
+      @saved="onModelSaved"
+    />
+    <VoiceConfigSheet
+      :open="voiceOpen"
+      :config="voiceConfig"
+      @close="voiceOpen = false"
+      @saved="onVoiceSaved"
     />
   </div>
 </template>
@@ -259,127 +314,64 @@ const capMeta = {
     100dvh - var(--safe-top) - var(--tabbar-h) - var(--safe-bottom) - var(--wbar-reserve, 0px)
   );
   overflow-y: auto;
-  /* 顶部那 10px 不写在这里 —— 滚动容器的上内边距会把页头顶下去，见下 */
   padding: 0 var(--page-pad-x) 96px;
   scrollbar-width: none;
 }
 
-/* 页头自己让开页面顶部那 10px。**不能**写成滚动容器的 padding-top：sticky 的粘滞位是
-   从容器「内容盒顶」起算的，容器带内边距时页头会被顶下去「内边距 + --ph-stick」那么多
-   （真机 safe-top=42 下实测落在 94 —— 页头上方留出一条 52px 的空白，滚起来也贴不住容器顶）。
-   挪到页头自己的 margin 上，未滚动时的静态位置一模一样，滚起来则一路贴到容器顶。
-   粘滞位与遮罩一并归零：页面盒本身已经让开了状态栏（.app-frame 的 padding-top，高度里
-   又扣过一次 --safe-top），滚动容器顶就是该贴住的位置；容器之上没有任何内容会滚过去，
-   遮罩不必向上铺（越上去也只会被容器裁掉）。与 AIPage 的 .msgs 同因同治。 */
+/* 页头自己让开页面顶部那 10px（理由见 AIPage 的 .msgs：写进滚动容器内边距会把
+   sticky 的粘滞位一起顶下去）。粘滞位与遮罩一并归零。 */
 .page :deep(.page-header) {
   --ph-stick: 0px;
   --ph-up: 0px;
   margin-top: 10px;
 }
 
-.intro {
-  font-size: var(--fs-caption);
-  line-height: 1.6;
-  padding: 2px 2px 12px;
-}
-
-.cards {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.m-card {
-  padding: 14px;
-}
-
-.m-name {
-  font-size: var(--fs-subhead);
-  font-weight: 700;
-}
-
-.chip-def {
-  margin-left: 6px;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-/* 在线服务导入的模型：与「默认」同族配色，避免引入新颜色 */
-.chip-onl {
-  margin-left: 6px;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.m-cost {
-  margin-top: 4px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 11px;
-}
-
-.m-cost .spent {
-  color: var(--text-2);
-  font-weight: 700;
-}
-
-.m-id {
-  margin-top: 3px;
-  font-size: var(--fs-caption);
-  word-break: break-all;
-}
-
-.acts {
-  display: flex;
-  gap: 2px;
-  flex: none;
-}
-
-.act {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-2);
-  background: var(--surface-2);
-}
-
-.act .danger {
-  color: var(--danger, #ff5257);
-}
-
-/* 语音服务卡 */
-.vcfg {
+.card {
   display: flex;
   align-items: center;
   gap: 11px;
   width: 100%;
   padding: 13px 14px;
-  margin-top: 12px;
   text-align: left;
 }
 
-.v-ic {
+.rubber-layer > * + * {
+  margin-top: 10px;
+}
+
+.ic {
   width: 36px;
   height: 36px;
-  border-radius: 12px;
+  border-radius: var(--radius-s);
   flex: none;
-  background: linear-gradient(135deg, #0a84ff, #1eeaef);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.ic-onl {
+  background: linear-gradient(135deg, #2f6bff, #5ac8fa);
+}
+
+.ic-voice {
+  background: linear-gradient(135deg, #0a84ff, #1eeaef);
+}
+
+.ic-spark {
+  background: linear-gradient(135deg, #7c5cff, #b48bff);
+}
+
+.ic-add,
+.ic-pv {
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-subhead);
+  font-weight: 800;
+}
+
+.ic-add {
+  color: var(--accent);
 }
 
 .vt {
@@ -391,26 +383,9 @@ const capMeta = {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
   font-size: var(--fs-subhead);
   font-weight: 700;
-}
-
-.vt b i {
-  font-style: normal;
-  font-size: 9px;
-  font-weight: 800;
-  border-radius: var(--radius-full);
-  padding: 2px 7px;
-}
-
-.vt b .v-ok {
-  background: var(--ok-soft);
-  color: var(--ok-strong);
-}
-
-.vt b .v-no {
-  background: var(--surface-2);
-  color: var(--text-3);
 }
 
 .vt em {
@@ -419,97 +394,93 @@ const capMeta = {
   color: var(--text-3);
   display: block;
   margin-top: 2px;
+  line-height: 1.45;
+  word-break: break-all;
 }
 
-/* 「让 AI 帮我配置语音」卡：复用 vcfg 布局，图标换主题色 */
-.ai-setup {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  padding: 13px 14px;
-  margin-top: 8px;
-  text-align: left;
+.vt em.perr {
+  color: var(--danger, #ff5257);
 }
 
-.ic-spark {
-  background: linear-gradient(135deg, #7c5cff, #b48bff);
+.chip,
+.tag {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: 800;
+  border-radius: var(--radius-full);
+  padding: 2px 7px;
+}
+
+.chip-ok {
+  background: var(--ok-soft);
+  color: var(--ok-strong);
+}
+
+.chip-idle {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+
+.chip-warn {
+  background: color-mix(in srgb, var(--danger, #ff5257) 14%, transparent);
+  color: var(--danger, #ff5257);
+}
+
+.tag {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.tag.ok-t {
+  background: var(--ok-soft);
+  color: var(--ok-strong);
 }
 
 .v-go {
   flex: none;
   color: var(--text-3);
-  font-size: 16px;
+  font-size: 17px;
 }
 
-.caps {
-  margin-top: 10px;
-  gap: 6px;
-  flex-wrap: wrap;
+.prov {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.cap {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  border-radius: var(--radius-full);
-  font-size: 11px;
+.sec-head b {
+  font-size: var(--fs-subhead);
   font-weight: 700;
-  background: var(--surface-2);
-  color: var(--text-3);
 }
 
-.cap-ok {
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-  color: var(--ok);
-}
-
-.cap-no {
-  background: color-mix(in srgb, var(--danger, #ff5257) 14%, transparent);
-  color: var(--danger, #ff5257);
-}
-
-.cap .probe {
-  display: inline-flex;
-}
-
-.retest {
-  border: unset;
-  color: var(--text-2);
-  background: transparent;
-}
-
-.retest:disabled {
-  opacity: 0.4;
-}
-
-.spin {
-  animation: rotate 0.9s linear infinite;
-}
-
-@keyframes rotate {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.err {
-  margin-top: 8px;
+.mini {
   font-size: var(--fs-caption);
-  line-height: 1.5;
-  word-break: break-all;
-  color: var(--text-3);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.pv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pv {
+  gap: 11px;
 }
 
 .empty {
-  margin-top: 6px;
+  display: block;
+  padding: 8px 14px;
 }
 
-/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------
-   这一页的内容都挂在 .rubber-layer 这个滚动层里（壳层的 .page 栅格管不到它），
-   桌面下把它自己铺成两栏栅格：说明段落 / 在线服务卡 / 模型列表仍然通栏，
-   底部两张「语音服务」「让 AI 帮我配置语音」并排 —— 否则它们会各自占着一整行、右半屏空着。 */
+.add-pv .vt b {
+  color: var(--accent);
+}
+
+/* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main） ----------
+   内容都挂在 .rubber-layer 里（壳层的 .page 栅格管不到它），这里自己铺成两栏：
+   服务模型 / 在线服务 / 提供商通栏，底部两张入口卡并排。 */
 .desk-main .rubber-layer {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -520,27 +491,19 @@ const capMeta = {
 .desk-main .rubber-layer > * {
   grid-column: 1 / -1;
   min-width: 0;
+  margin-top: 0;
 }
 
-/* 两张入口卡并排：它们高度一致（都是一行图标 + 两行文字），并排后读起来像一组工具 */
 .desk-main .rubber-layer > .vcfg,
 .desk-main .rubber-layer > .ai-setup {
   grid-column: span 1;
-  margin-top: 0;
 }
 
-/* 模型清单摊成多栏。用 auto-fit 而不是定死两栏：只配了一个模型时，
-   那一条也占满整行，不会在右半边留一块空白。 */
-.desk-main .rubber-layer > .cards {
+/* 提供商卡片摊成多栏：auto-fit 让只有一条时也占满整行 */
+.desk-main .pv-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: var(--desk-gap);
-}
-
-/* 间距交给栅格 gap。.cards 原本是 flex 列 + gap，卡片还各自带着 .card + .card 的 14px 外边距，
-   桌面换栅格后必须收掉，否则行距会变成 gap + 14px。 */
-.desk-main .rubber-layer > .cards > .card + .card {
-  margin-top: 0;
 }
 
 .fab {

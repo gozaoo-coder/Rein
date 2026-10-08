@@ -99,7 +99,15 @@ export const aiPlugin = definePlugin({
   desc: '对话、拍照识别与知识库',
   icon: Sparkles,
   accent: '--cat-study',
-  routes: ['ai', 'ai-models', 'ai-knowledge', 'ai-knowledge-files', 'ai-files'],
+  routes: [
+    'ai',
+    'ai-models',
+    'ai-knowledge',
+    'ai-knowledge-files',
+    'ai-files',
+    'ai-files-usage',
+    'ai-files-usage-large',
+  ],
   // 移动端 Dock 的 AI 是**右独立圆钮**（内核落点，由 TabBar 自己声明）；插件层只管导航轨
   nav: [{ route: 'ai', label: 'AI', icon: Sparkles, surfaces: ['rail'], order: 170 }],
   tools: [

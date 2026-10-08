@@ -262,6 +262,22 @@ pub fn find_large_files() -> RegisteredTool {
     }
 }
 
+pub fn present_file() -> RegisteredTool {
+    RegisteredTool {
+        name: "present_file",
+        group: "knowledge",
+        label: "挂出文件",
+        description: "把一个工作区文件作为**文件卡片**挂到聊天里给用户（卡片可点开阅读，目录卡片可跳进文件管理器）。用户会想点开看、或需要一份产物的场景才挂：刚写好的笔记、解压 / 导出出来的文件、他一直在找的那份东西 —— 讲完内容顺手挂一张，别只在文字里报个路径。path 用 glob_knowledge / write_note / list_archive 结果里的那个 path（少写 .md 后缀、或省掉「笔记/」根目录也认）。一次回复挂 1~3 张就够，铺满卡片反而没人看；纯内部整理（归类、建目录、钉住）不要挂。",
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "文件或目录路径，如 笔记/膝盖养护.md、未分类数据/解压/备份" }
+            },
+            "required": ["path"]
+        }),
+    }
+}
+
 pub fn list_memories() -> RegisteredTool {
     RegisteredTool {
         name: "list_memories",
@@ -359,8 +375,41 @@ fn opt_day(args: &Value, key: &str) -> Result<Option<String>> {
     Ok(Some(v.to_string()))
 }
 
+/// 本模块负责执行的名字。
+///
+/// `run` 先用它挡一道；测试用它断言「注册表 ⊆ 各域认领」。名单与下面 `run` 的
+/// match 分支必须一致——两处挨着写，漂移一眼可见；万一真漂了，`run_tool` 的
+/// 兜底守卫会报「已登记但没有执行器」，而不是静默不执行。
+pub fn handles(name: &str) -> bool {
+    matches!(
+        name,
+        "search_knowledge"
+            | "read_knowledge"
+            | "glob_knowledge"
+            | "write_note"
+            | "rename_note"
+            | "delete_note"
+            | "read_modal"
+            | "classify_move"
+            | "pin_file"
+            | "make_folder"
+            | "list_archive"
+            | "extract_archive"
+            | "workspace_usage"
+            | "find_large_files"
+            | "present_file"
+            | "list_memories"
+            | "remember"
+            | "edit_memory"
+            | "forget"
+    )
+}
+
 /// 分派执行；返回 None 表示名字不归本模块
 pub async fn run(app: &tauri::AppHandle, name: &str, args: &Value) -> Option<Result<Value>> {
+    if !handles(name) {
+        return None;
+    }
     Some(match name {
         "search_knowledge" => run_search(app, args).await,
         "read_knowledge" => run_read(app, args).await,
@@ -380,6 +429,7 @@ pub async fn run(app: &tauri::AppHandle, name: &str, args: &Value) -> Option<Res
         "extract_archive" => run_extract_archive(app, args).await,
         "workspace_usage" => run_workspace_usage(app, args).await,
         "find_large_files" => run_find_large_files(app, args).await,
+        "present_file" => run_present_file(app, args).await,
         _ => return None,
     })
 }
@@ -734,7 +784,7 @@ async fn run_extract_archive(app: &tauri::AppHandle, args: &Value) -> Result<Val
 
 async fn run_workspace_usage(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
     let top = super::num_arg(args, "top", 10.0).clamp(0.0, 50.0) as i64;
-    let r = kb::kb_usage(app.clone(), app.state::<AppState>(), Some(top))?;
+    let r = kb::kb_usage(app.clone(), app.state::<AppState>(), Some(top), None)?;
     Ok(json!({
         "ok": true,
         "total": r.total_bytes,
@@ -769,20 +819,50 @@ async fn run_workspace_usage(app: &tauri::AppHandle, args: &Value) -> Result<Val
 async fn run_find_large_files(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
     let limit = super::num_arg(args, "limit", 15.0).clamp(1.0, 50.0) as i64;
     let min_bytes = super::num_arg(args, "minBytes", 0.0).max(0.0) as i64;
-    let r = kb::kb_usage(app.clone(), app.state::<AppState>(), Some(limit))?;
-    let items: Vec<Value> = r
-        .largest
-        .iter()
-        .filter(|f| f.bytes >= min_bytes)
-        .map(|f| json!({
-            "id": f.id, "path": f.path, "kind": f.kind,
-            "bytes": f.bytes, "human": human_bytes(f.bytes),
-            "textBytes": f.text_bytes, "assetBytes": f.asset_bytes, "updatedAt": f.updated_at
-        }))
-        .collect();
+    // 直接走榜单查询：不跑整份占用报告（那份还要全表聚合 + 目录遍历 + 逐本体 stat，
+    // 「找大文件」用不上）；体积下限也在 SQL 里过滤。
+    let items: Vec<Value> = {
+        let state = app.state::<AppState>();
+        let conn = state.db.lock();
+        crate::modules::kb::usage::largest(&conn, limit, min_bytes)?
+            .iter()
+            .map(|f| {
+                json!({
+                    "id": f.id, "path": f.path, "kind": f.kind,
+                    "bytes": f.bytes, "human": human_bytes(f.bytes),
+                    "textBytes": f.text_bytes, "assetBytes": f.asset_bytes, "updatedAt": f.updated_at
+                })
+            })
+            .collect()
+    };
     Ok(json!({
         "total": items.len(),
         "items": items,
         "hint": "要删就先用 glob_knowledge 确认路径，再删除（用户明确要求时才删）。",
+    }))
+}
+
+/// 把一个工作区文件挂成聊天里的文件卡片。
+///
+/// 返回的是**单个条目的富元数据**（与文件管理器同一份投影，见 `listing::find_entry`）：
+/// 前端只认 `file` 字段，拿它画卡片（图标 / 名字 / 路径 / 体积 / 能否点开）；
+/// 找不到就报「工作区里没有这个路径」，让模型自己回头 glob 一次，而不是给个空卡片。
+async fn run_present_file(app: &tauri::AppHandle, args: &Value) -> Result<Value> {
+    let path = str_arg(args, "path")?.trim().to_string();
+    let entry = {
+        let state = app.state::<AppState>();
+        let conn = state.db.lock();
+        crate::modules::kb::listing::find_entry(&conn, &path)?
+    };
+    let Some(entry) = entry else {
+        return Err(ReinError::Message(format!(
+            "工作区里没有这个路径：{path}。先用 glob_knowledge 查（如 笔记/**、未分类数据/**），再按它返回的 path 调用本工具"
+        )));
+    };
+    let name = entry.name.clone();
+    Ok(json!({
+        "ok": true,
+        "file": entry,
+        "message": format!("已把「{name}」挂到聊天里，用户可点开"),
     }))
 }

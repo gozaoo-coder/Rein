@@ -18,6 +18,7 @@ import { buildCardStateBlock, MAX_MEMOS } from '@/ai/cardState'
 import { listCardOutcomes, recordCardOutcome } from '@/ai/cardOutcomes'
 import { findAppTool, resolveToolPlan } from '@/ai/tools/registry'
 import type { ToolGroup } from '@/ai/tools/types'
+import { dedupeFiles, fileAttachmentOf, MAX_CHAT_FILES } from '@/ai/chatFiles'
 import { useFeaturesStore } from '@/stores/features'
 import type { ChatTurn } from '@/ai/chat'
 import { DEFAULT_IMAGE_EDGE } from '@/utils/image'
@@ -29,6 +30,7 @@ import type {
   AiChatMessageInput,
   AiDocMeta,
   AiMessage,
+  KbEntry,
   MealType,
   ParsedFoodItem,
   ProcessSegment,
@@ -262,6 +264,7 @@ export const useAiStore = defineStore('ai', () => {
     if (m.thinking) meta.thinking = m.thinking
     if (m.quoteText) meta.quote = m.quoteText
     if (m.voiceMeta) meta.voice = m.voiceMeta
+    if (m.files?.length) meta.files = m.files
     return {
       id: m.id,
       role: m.role,
@@ -302,6 +305,7 @@ export const useAiStore = defineStore('ai', () => {
           images?: AiMessage['images']
           imgNote?: string
           voice?: AiMessage['voiceMeta']
+          files?: KbEntry[]
         }
         if (s.kind === 'food-parse') {
           m.items = p.items
@@ -321,6 +325,7 @@ export const useAiStore = defineStore('ai', () => {
         if (p.images) m.images = p.images
         if (p.imgNote) m.imgNote = p.imgNote
         if (p.voice) m.voiceMeta = p.voice
+        if (p.files?.length) m.files = p.files
       } catch {
         /* 损坏的历史 payload 忽略，卡片仍可展示文本 */
       }
@@ -492,24 +497,26 @@ export const useAiStore = defineStore('ai', () => {
 
       const { consolidateMemories, CONSOLIDATE_MAX_BATCHES } = await import('@/ai/memoryConsolidate')
       let changed = 0
+      // 疑似重复对：本地向量算，零模型成本；keyword 模式（无向量）返回空，自然降级。
+      // 一轮整理只查一次（批次之间内容会变，但它是「怀疑名单」，够用）。
+      const duplicates = await kbService.memoryDuplicates(undefined, 30).catch(() => [])
       for (let round = 0; round < CONSOLIDATE_MAX_BATCHES; round++) {
         const memories = await kbService.memories(undefined, 'all')
-        // 疑似重复对：本地向量算，零模型成本；keyword 模式（无向量）返回空，自然降级
-        const duplicates = await kbService.memoryDuplicates(undefined, 30).catch(() => [])
-        const { candidates, size, nextOffset } = await consolidateMemories({
+        const { candidates, nextOffset, coveredAll } = await consolidateMemories({
           config: cfg,
           memories,
           duplicates,
           offset: consolidateCursor,
         })
-        consolidateCursor = nextOffset
         if (candidates.length > 0) {
           const r = await kbService.memoryApply(candidates)
           invalidateCognitionCache()
           changed += r.added + r.updated + r.deleted + r.archived + r.restored
         }
-        // 一批就装下了（或本批没东西可动）→ 收工
-        if (size < memories.length) break
+        // 游标等落库成功之后再前进：apply 抛错时这一窗口下次还会被整理到
+        consolidateCursor = nextOffset
+        // 本批已经看过整个库 → 收工（库大于一批时才会继续轮转到下一批）
+        if (coveredAll) break
       }
       if (changed > 0 && force) toast.toast(`已整理 ${changed} 条长期记忆`)
       // 无论有无变更都记一次：整库健康时不该被反复检查打扰
@@ -692,6 +699,14 @@ export const useAiStore = defineStore('ai', () => {
   const streamSeq = ref(0)
   /** 本轮流式创建的消息（定稿时统一收尾/持久化） */
   let streamCreated: AiMessage[] = []
+  /**
+   * 本轮 AI 挂出的工作区文件（`present_file` 的结果，见 @/ai/chatFiles）。
+   *
+   * 为什么先在轮级攒着、定稿时才落到气泡上：工具调用发生在**过程气泡**里，
+   * 而正文（以及正文承载气泡）可能还没出现 —— 卡片跟着正文那条走才读得顺
+   * （「写了什么」与「产物在哪」在同一处），所以收尾时一次性挂上去。
+   */
+  let turnFiles: KbEntry[] = []
 
   function createBubble(id: string, withAnim: boolean): AiMessage {
     const msg: AiMessage = {
@@ -789,6 +804,7 @@ export const useAiStore = defineStore('ai', () => {
   function resetStreaming(): void {
     agg.reset()
     streamCreated = []
+    turnFiles = []
   }
 
   /** 历史恢复：从持久化消息重建气泡元数据（照搬 EffiBuddy restoreBubbleMetaFromHistory） */
@@ -890,6 +906,11 @@ export const useAiStore = defineStore('ai', () => {
     // 不能因为定稿解析这一下把用户刚才看到的内容清掉
     msg.text = parsed.trim() ? parsed : (msg.text ?? '')
     if (!msg.text.trim()) {
+      // 挂出的文件卡片也是内容：模型只调了 present_file 没说话时，消息要留下来承载卡片
+      if (msg.files?.length) {
+        persist(msg)
+        return
+      }
       // 模型没输出任何内容：撤掉空正文气泡（过程气泡已由 settleStreamMessages 落库），不写空消息。
       // 注意这里不再按「有没有过程段」豁免——撇开空文字本身就说明它没有正文可留，
       // 而承载过程段的气泡在 settleStreamMessages 里已另走一趟，不会走到这里。
@@ -989,6 +1010,7 @@ export const useAiStore = defineStore('ai', () => {
     busy.value = true
     // 本轮流式聚合状态：过程气泡 + 正文气泡按 EffiBuddy 聚合规则生成
     streamCreated = []
+    turnFiles = []
     // 增量基准：协议流回调给的是「累计全文」，按已展示长度切片投喂聚合器
     let textShown = ''
     let thinkingShown = ''
@@ -1100,6 +1122,9 @@ export const useAiStore = defineStore('ai', () => {
         },
         onToolEnd: (name, ok, brief, resultImage, details) => {
           agg.toolResult(name, { ok, brief, resultImage, details })
+          // present_file：工具结果里带 file 条目 → 本轮攒着，定稿时挂到正文气泡下（见 turnFiles）
+          const f = fileAttachmentOf(name, details)
+          if (f) turnFiles.push(f)
         },
       }, {
         cognition,
@@ -1128,6 +1153,10 @@ export const useAiStore = defineStore('ai', () => {
         streamCreated.push(bodyBubble)
       }
       settleStreamMessages(bodyBubble)
+      // 挂出的文件卡片落到正文气泡上：先挂再定稿，payload 一次写全（含空回复那一支）
+      if (turnFiles.length > 0) {
+        bodyBubble.files = dedupeFiles([...(bodyBubble.files ?? []), ...turnFiles]).slice(0, MAX_CHAT_FILES)
+      }
       await applyLlmReply(bodyBubble, r.text)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)

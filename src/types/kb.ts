@@ -224,6 +224,21 @@ export interface KbFile {
   createdAt: string
   updatedAt: string
   modalities: KbModalInfo[]
+  /** 用户评分 0..5（0 = 未评） */
+  rating: number
+  /** 用户标签 */
+  tags: string[]
+  /** 用户注释（自由文本） */
+  note: string
+}
+
+/** 改用户元数据：只传要改的字段，缺省不动 */
+export interface KbMetaInput {
+  /** 文档 id 或文件 id（与其余文件命令一致） */
+  id: number
+  rating?: number
+  tags?: string[]
+  note?: string
 }
 
 export interface KbFileInput {
@@ -241,6 +256,87 @@ export interface KbGlobHit {
   editable: boolean
   system: boolean
   occurredOn: string | null
+}
+
+/* ---------- 目录列举（kb/listing.rs）：文件管理器的一层视图 ---------- */
+
+/**
+ * 目录里的一个条目：一层的完整元数据。
+ * 列表 / 网格 / 详情都只吃这一份，不必为每个条目再查一次库。
+ */
+export interface KbEntry {
+  /** kb_docs.id（阅读器要的 id）；目录条目为 0 */
+  id: number
+  /** kb_files.id（真实文件才有）；派生投影没有文件实体 */
+  fileId: number | null
+  path: string
+  /** 路径末段（真实文件名） */
+  name: string
+  /** folder | text | image | audio | video | file */
+  kind: string
+  /** 目录条目为空串；文件条目是来源类别（note / todo / workout…） */
+  sourceType: string
+  title: string
+  system: boolean
+  editable: boolean
+  /** 字节数：文本按 UTF-8，多模态按本体，目录为自身占用 */
+  size: number
+  /** 目录的直接子项数（文件恒为 0） */
+  childCount: number
+  occurredOn: string | null
+  updatedAt: string
+  pinned: boolean
+  /** inbox | filed | manual | ''（派生投影没有归类状态） */
+  classifyState: string
+  /** 可用模态：text / image / audio / video / binary */
+  modalities: string[]
+  /** 用户评分 0..5（0 = 未评） */
+  rating: number
+  /** 用户标签（不进索引：标签是给人看的分类） */
+  tags: string[]
+  /** 有注释（注释正文走 kb_file_get，不进列表响应） */
+  hasNote: boolean
+}
+
+export interface KbDirListing {
+  path: string
+  entries: KbEntry[]
+  total: number
+  /** 大目录被上限截断 */
+  truncated: boolean
+}
+
+/* ---------- 回收站（kb/files.rs） ---------- */
+
+export interface KbTrashEntry {
+  fileId: number
+  /** 派生文档删除时已清掉，通常是 0 */
+  id: number
+  name: string
+  /** 回收站内的存放路径 */
+  path: string
+  /** 删除前的位置（恢复的目标） */
+  originalPath: string
+  kind: string
+  sourceType: string
+  size: number
+  system: boolean
+  trashedAt: string
+  updatedAt: string
+}
+
+export interface KbTrashResult {
+  fileId: number
+  /** 影响行数（目录会连带整棵子树） */
+  count: number
+  path: string
+}
+
+export interface KbTrashBatchResult {
+  done: number
+  freedBytes: number
+  /** 逐条失败原因（批量操作不整体失败） */
+  failed: string[]
 }
 
 /* ---------- 目录治理（ai-workspace §3.3） ---------- */
@@ -425,8 +521,8 @@ export interface KbArchiveItem {
   id: number
   path: string
   bytes: number
-  /** text | binary */
-  kind: string
+  /** 解压产物的落地形态（text = 进了检索的笔记；binary = 本体落盘的多模态节点） */
+  kind: 'text' | 'binary'
 }
 
 export interface KbArchiveReport {
@@ -488,11 +584,14 @@ export interface KbUsageCleanResult {
 
 /* ---------- 本地嵌入模型（kb/embed_models.rs） ---------- */
 
+/** 档位（与 Rust 注册表 embed_models::MODELS 的 tier 字段一一对应） */
+export type KbModelTier = 'light' | 'standard' | 'high' | 'multi'
+
 export interface KbEmbedModelInfo {
   id: string
   label: string
-  /** light | standard | high | multi */
-  tier: string
+  /** 档位；UI 按它排版与配色 */
+  tier: KbModelTier
   dim: number
   /** 注册表声明的下载体积 */
   bytes: number
@@ -519,8 +618,8 @@ export interface KbModelEvent {
   file: string
   done: number
   total: number
-  /** start | downloading | done | error */
-  phase: string
+  /** 下载阶段 */
+  phase: 'start' | 'downloading' | 'done' | 'error'
   message?: string
 }
 

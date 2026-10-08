@@ -230,6 +230,18 @@ fn audit(
     Ok(batch)
 }
 
+/// 单独记一条审计（回收站的删除/恢复用它）。返回新批次 id。
+pub fn audit_op(
+    conn: &Connection,
+    source: &str,
+    op: &str,
+    from: &str,
+    to: &str,
+    reason: &str,
+) -> Result<String> {
+    audit(conn, source, op, from, to, reason)
+}
+
 fn audit_in_batch(
     conn: &Connection,
     batch: &str,
@@ -264,11 +276,11 @@ pub fn move_to(
     source: &str,
 ) -> Result<MoveOutcome> {
     let fid = files::resolve_file_id(conn, id)?;
-    let (path, pinned): (String, i64) = conn
+    let (path, pinned, kind): (String, i64, String) = conn
         .query_row(
-            "SELECT path, pinned FROM kb_files WHERE id = ?1",
+            "SELECT path, pinned, kind FROM kb_files WHERE id = ?1",
             [fid],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
         .ok_or_else(|| ReinError::Message(format!("文件不存在：id={id}")))?;
@@ -323,12 +335,18 @@ pub fn move_to(
     } else {
         CLASSIFY_FILED
     };
+    // 目录 + 整棵子树一次搬完（只搬目录那一行，内容会留在旧路径下变成幽灵目录）
+    let tx = conn.unchecked_transaction()?;
     conn.execute(
         "UPDATE kb_files SET path = ?2, classify_state = ?3, updated_at = datetime('now') WHERE id = ?1",
         rusqlite::params![fid, to, classify],
     )?;
     index::mark_dirty(conn, "note", &fid.to_string())?;
+    if kind == FILE_KIND_FOLDER {
+        files::rewrite_subtree(&tx, &path, &to)?;
+    }
     let batch = audit(conn, source, "move", &path, &to, reason)?;
+    tx.commit()?;
     Ok(MoveOutcome {
         from: path,
         to,

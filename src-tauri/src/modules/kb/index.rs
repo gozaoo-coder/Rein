@@ -270,7 +270,7 @@ fn id_query(source_type: &str) -> Option<&'static str> {
               WHERE kind = 'doc' AND text LIKE '%附带文档《%'"
         }
         "memory" => "SELECT CAST(id AS TEXT) FROM kb_memories",
-        "note" => "SELECT CAST(id AS TEXT) FROM kb_files",
+        "note" => "SELECT CAST(id AS TEXT) FROM kb_files WHERE trashed_at IS NULL",
         _ => return None,
     })
 }

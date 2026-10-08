@@ -5,6 +5,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { aiService } from '@/services/aiService'
+import { useProvidersStore } from '@/stores/providers'
 import type { AiModel, AiModelInput, AiUsageSummary, AiUsageTotals } from '@/types'
 
 export const useModelsStore = defineStore('ai-models', () => {
@@ -50,10 +51,16 @@ export const useModelsStore = defineStore('ai-models', () => {
   }
 
   /** 需要看图的任务选模（自动降级链）：默认模型已证实视觉 → 直接用；
-   * 否则用任一已证实视觉的；全都没探测过时退回默认模型硬试（探测只是标记，不拦人）。 */
+   * 其次用户在多模态槽位指定的备选模型（visionRef = model:<id>）；
+   * 再次任一已证实视觉的；全都没探测过时退回默认模型硬试（探测只是标记，不拦人）。 */
   function bestVisionModel(): AiModel | null {
     const d = defaultModel()
     if (d?.vision === true) return d
+    const boundId = useProvidersStore().visionBoundId()
+    if (boundId !== null) {
+      const bound = models.value.find((m) => m.id === boundId && m.vision === true)
+      if (bound) return bound
+    }
     return models.value.find((m) => m.vision === true) ?? d
   }
 

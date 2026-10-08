@@ -58,6 +58,8 @@ const GROUP_OF: Record<string, AsideGroup> = {
   'ai-knowledge': 'ai',
   'ai-files': 'ai',
   'ai-knowledge-files': 'ai',
+  'ai-files-usage': 'ai',
+  'ai-files-usage-large': 'ai',
   nutrition: 'nutrition',
   'nutrition-adjust': 'nutrition',
   'nutrition-foods': 'nutrition',

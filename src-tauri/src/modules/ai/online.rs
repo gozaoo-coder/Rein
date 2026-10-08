@@ -47,7 +47,7 @@ fn normalize_base(raw: Option<String>) -> String {
     }
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(5))
         .timeout(PROBE_TIMEOUT)
@@ -56,7 +56,7 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
-fn read_json(resp: ureq::Response) -> std::result::Result<serde_json::Value, String> {
+pub(crate) fn read_json(resp: ureq::Response) -> std::result::Result<serde_json::Value, String> {
     let mut text = String::new();
     resp.into_reader()
         .take(MAX_BYTES)
@@ -65,7 +65,7 @@ fn read_json(resp: ureq::Response) -> std::result::Result<serde_json::Value, Str
     serde_json::from_str(&text).map_err(|e| format!("返回的不是 JSON：{e}"))
 }
 
-fn str_at(v: &serde_json::Value, key: &str) -> Option<String> {
+pub(crate) fn str_at(v: &serde_json::Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).map(|s| s.to_string())
 }
 
@@ -93,7 +93,7 @@ fn status_of_error_body(body: &serde_json::Value) -> String {
     .to_string()
 }
 
-fn message_of_error_body(body: &serde_json::Value) -> Option<String> {
+pub(crate) fn message_of_error_body(body: &serde_json::Value) -> Option<String> {
     body.get("error")
         .and_then(|e| e.get("message"))
         .and_then(|m| m.as_str())
@@ -158,6 +158,8 @@ fn fetch_catalog(base_url: Option<String>, api_key: Option<String>) -> Result<On
         traffic_scope: "egress".into(),
         client_name: None,
         client_models: Vec::new(),
+        client_status: None,
+        client_note: None,
         models: Vec::new(),
         error: None,
         checked_at: chrono::Utc::now().to_rfc3339(),
@@ -192,6 +194,12 @@ fn fetch_catalog(base_url: Option<String>, api_key: Option<String>) -> Result<On
                         .and_then(|m| m.as_array())
                         .map(|arr| arr.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                         .unwrap_or_default();
+                    // 账号可用性原文：服务端愿意说就原样透出（「余额不足」「已限流」…），
+                    // 没说时前端按状态码与白名单自己说人话
+                    out.client_status = str_at(client, "status").filter(|s| !s.trim().is_empty());
+                    out.client_note = str_at(client, "note")
+                        .or_else(|| str_at(client, "message"))
+                        .filter(|s| !s.trim().is_empty());
                 }
                 out.models = body
                     .get("data")

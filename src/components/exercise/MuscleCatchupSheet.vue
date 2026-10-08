@@ -1,52 +1,65 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Dumbbell, Play, Sparkles } from 'lucide-vue-next'
+import { Check, Dumbbell, Play, Sparkles } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { sessionService } from '@/services/sessionService'
 import { useAiStore } from '@/stores/ai'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
+import { usePlanStore } from '@/stores/plan'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
 import { openImmersive } from '@/system/sessionImmersive'
-import type { ScoreGroupKey } from '@/config/muscles'
+import { SCORE_GROUP_LABELS, type ScoreGroupKey } from '@/config/muscles'
+import type { WorkoutPlan, WorkoutPlanRecord } from '@/types'
 import type { GroupScore } from '@/utils/trainingScore'
 import {
   buildCatchupPlan,
   catchupPrompt,
   gapOf,
+  matchCourse,
   pickCatchup,
   type CatchupPick,
+  type CoursePick,
+  type MusclesResolver,
 } from '@/utils/weakMuscles'
 
 /**
- * 弱项加练：把「本周练得不够的肌群」变成一节**能直接开练的临时课程**。
+ * 弱项加练：把「本周练得不够的肌群」变成一节**能直接开练的课**。
  *
- * 分两层，刻意如此：
- *  1. **本地先排好**（纯函数，见 utils/weakMuscles）—— 打开即见，不依赖模型。
- *     补弱这件事的规则本身是确定的（缺多少组 → 用哪个主攻动作 → 补几组），
+ * 三层，按「库里有就先用库里的」排序：
+ *  0. **课程库里现成的那节**（`matchCourse`）—— 训练目的与弱项高度一致时直接推荐它。
+ *     用户自己配好的课有他的重量、习惯与历史，比现场拼的草稿可信；也没有理由让同一个人
+ *     把同一节课排两遍，一遍存进课程库、一遍现场拼。
+ *  1. **本地拼的临时课**（纯函数，见 utils/weakMuscles）—— 库里没有对症的课时打开即见，
+ *     不依赖模型。补弱这件事的规则本身是确定的（缺多少组 → 用哪个主攻动作 → 补几组），
  *     让模型从零生成反而会引入不可复核的自由度。
- *  2. **再交给 AI 细化** —— 草稿与弱项数据一起送过去，模型有得改。
- *     模型没配也不影响第一层：按钮退化成「看一眼我该练什么」。
+ *  2. **再交给 AI 细化** —— 弱项、现成课与草稿一起送过去，模型有得改。
+ *     模型没配也不影响前两层：按钮退化成「看一眼我该练什么」。
  *
- * 「临时」是真的临时：课程只活在内存里，`session.start()` 直接开练，
+ * 「临时」是真的临时：临时课只活在内存里，`session.start()` 直接开练，
  * **不写进课程库** —— 它是「今天补一下」，不是「我的训练计划」。
  */
 const props = defineProps<{ open: boolean; weak: GroupScore[] }>()
 const emit = defineEmits<{ close: [] }>()
 
 const lib = useExerciseLibStore()
+const plans = usePlanStore()
 const session = useSessionStore()
 const ai = useAiStore()
 const toast = useToast()
 const router = useRouter()
 
 const picks = ref<CatchupPick[]>([])
+const course = ref<CoursePick<WorkoutPlanRecord> | null>(null)
 const loading = ref(false)
 const starting = ref(false)
 const conflictOpen = ref(false)
+
+/** 动作 → 肌群表：与主页练卡同一句口径（库内数据优先，课程条目自带其次，名称规则兜底） */
+const planMuscles: MusclesResolver = (item) => lib.musclesOf(item)
 
 /** 用户练过的动作 id：优先从这些里挑（不用重新学动作，重量也有底） */
 async function loadHistoryIds(): Promise<Set<string>> {
@@ -61,12 +74,15 @@ async function loadHistoryIds(): Promise<Set<string>> {
 async function prepare(): Promise<void> {
   loading.value = true
   try {
-    await lib.ensureLoaded()
+    // 课程库与动作库一起等：匹配现成课要前者，挑主攻动作要后者
+    await Promise.all([lib.ensureLoaded(), plans.ensureLoaded()])
     const history = await loadHistoryIds()
     picks.value = pickCatchup(props.weak, lib.list, history)
+    course.value = matchCourse(props.weak, plans.plans, planMuscles)
   } catch (e) {
     console.warn('[catchup] 组装失败', e)
     picks.value = []
+    course.value = null
   } finally {
     loading.value = false
   }
@@ -81,6 +97,34 @@ watch(
 )
 
 const plan = computed(() => buildCatchupPlan(picks.value))
+
+/** 该评估组是不是这门课补到的弱项（模板里给 chip 上高亮） */
+function isHit(g: ScoreGroupKey): boolean {
+  return course.value?.hits.some((h) => h.group === g) ?? false
+}
+
+const hitLabels = computed(() => course.value?.hits.map((h) => h.label).join('、') ?? '')
+
+/** 现成课的规模：动作数 +（有标注才说的）预估时长 */
+const courseMeta = computed(() => {
+  const c = course.value?.course
+  if (!c) return ''
+  return `${c.exercises.length} 个动作${c.estDurationMin ? ` · 约 ${c.estDurationMin} 分钟` : ''}`
+})
+
+/** 开场白：说清这次优先走哪条路（有现成课就优先它） */
+const lede = computed(() =>
+  course.value
+    ? '课程库里有一节现成的课，训练目的与你的弱项高度一致 —— 优先练它；不想练它，就用下面的临时草稿。'
+    : '本周练得不够的肌群，已按缺口排好一节临时课程。它不会存进课程库 —— 开练即用，练完即弃。',
+)
+
+/** 「交给 AI 调整」的说明：有现成课时送去的是「核对这节课」，不是「从零重排」 */
+const hint = computed(() =>
+  course.value
+    ? '「交给 AI 调整」会把弱项、这节课与备选草稿一起送进对话，由模型判断现成的课要不要动 —— 那句话在 AI 页是直接发出的（与「交给 AI 排查」同一条路径），不需要再点一次发送。'
+    : '「交给 AI 调整」会把弱项与上面的草稿一起送进对话，由模型重新排一遍并说明理由 —— 那句话在 AI 页是直接发出的（与「交给 AI 排查」同一条路径），不需要再点一次发送。',
+)
 
 /**
  * 弱项 + 跳过的，**合成一个列表**。
@@ -116,11 +160,12 @@ const rows = computed<WeakRow[]>(() => {
 
 const totalSets = computed(() => plan.value.exercises.reduce((n, e) => n + e.sets, 0))
 
-async function startTraining(): Promise<void> {
-  if (!plan.value.exercises.length || starting.value) return
+/** 冲突（已有进行中的训练）走同一条出路：说清楚 + 去接续 */
+async function begin(p: WorkoutPlan): Promise<void> {
+  if (starting.value) return
   starting.value = true
   try {
-    const r = await session.start(plan.value)
+    const r = await session.start(p)
     if (r === 'conflict') {
       conflictOpen.value = true
       return
@@ -132,8 +177,20 @@ async function startTraining(): Promise<void> {
   }
 }
 
+/** 开练现成课：与开临时课同一条路，只是课来自课程库（session.start 里会维护「最近使用」） */
+async function startCourse(): Promise<void> {
+  const c = course.value?.course
+  if (!c) return
+  await begin(c)
+}
+
+async function startTraining(): Promise<void> {
+  if (!plan.value.exercises.length) return
+  await begin(plan.value)
+}
+
 /**
- * 交给 AI：带上弱项与草稿，跳到 AI 页让模型重排一遍。
+ * 交给 AI：带上弱项、（有现成课时的）现成课与草稿，跳到 AI 页让模型重排一遍。
  *
  * `askFrom` 递过去的那句话在 AI 页是**直接发送**的（与抢课「交给 AI 排查」同一条路径：
  * 那个场景下最缺的就是时间，不该再让人按一次发送）。这里同理 ——
@@ -141,10 +198,10 @@ async function startTraining(): Promise<void> {
  * 不承诺一个不存在的确认步骤。
  */
 function handToAi(): void {
-  ai.askFrom(catchupPrompt(picks.value, plan.value))
+  ai.askFrom(catchupPrompt(picks.value, plan.value, course.value?.course ?? null))
   emit('close')
   void router.push({ name: 'ai' })
-  toast.toast('已交给 AI，正在按弱项重排…')
+  toast.toast(course.value ? '已交给 AI，正在核对这节课…' : '已交给 AI，正在按弱项重排…')
 }
 
 function goConflict(): void {
@@ -157,9 +214,7 @@ function goConflict(): void {
 
 <template>
   <SheetModal :open="open" title="弱项加练" initial-snap="large" @close="emit('close')">
-    <p class="lede">
-      本周练得不够的肌群，已按缺口排好一节临时课程。它不会存进课程库 —— 开练即用，练完即弃。
-    </p>
+    <p class="lede">{{ lede }}</p>
 
     <!-- 弱项清单：先说清「缺什么」，再说「练什么」 -->
     <ul class="weaklist">
@@ -171,10 +226,26 @@ function goConflict(): void {
       </li>
     </ul>
 
+    <!-- 现成课程：课程库里已配置好的那一节，训练目的（= 主攻的评估组）与弱项高度一致。
+         命中的组高亮并打勾 —— 不写「相似度 0.67」这种数，课程冲谁排的一眼就能看出来。 -->
+    <section v-if="course" class="rc" data-testid="catchup-course">
+      <div class="rc-head row between">
+        <span class="rc-k">课程库里正好有</span>
+        <span class="rc-meta num">{{ courseMeta }}</span>
+      </div>
+      <p class="rc-name">{{ course.course.name }}</p>
+      <div class="rc-groups">
+        <span v-for="g in course.groups" :key="g" class="rc-g" :class="{ on: isHit(g) }">
+          <Check v-if="isHit(g)" :size="11" :stroke-width="3.2" aria-hidden="true" />{{ SCORE_GROUP_LABELS[g] }}
+        </span>
+      </div>
+      <p class="rc-why">主攻 {{ course.groups.length }} 组，其中 <b>{{ hitLabels }}</b> 正是你的弱项</p>
+    </section>
+
     <!-- 临时课程草稿 -->
     <div class="draft">
       <div class="dhead row between">
-        <span class="dt">临时课程草稿</span>
+        <span class="dt">临时课程草稿<template v-if="course">（备选）</template></span>
         <span class="ds num">{{ plan.exercises.length }} 个动作 · 共 {{ totalSets }} 组</span>
       </div>
       <ul v-if="plan.exercises.length" class="dlist">
@@ -185,34 +256,46 @@ function goConflict(): void {
         </li>
       </ul>
       <p v-else class="dhint t-3">
-        {{ loading ? '正在挑动作…' : '没有可补的肌群，或动作库里缺少对应的主攻动作。' }}
+        {{ loading ? '正在挑动作…' : course ? '这一节的弱项都由上面的课覆盖了，不必再拼草稿。' : '没有可补的肌群，或动作库里缺少对应的主攻动作。' }}
       </p>
     </div>
 
+    <!-- 有现成课时它是主操作（开课），临时草稿退成备选 —— 一次只有一枚实底按钮 -->
     <div class="acts">
       <button
+        v-if="course"
         class="primary row center"
         type="button"
+        data-testid="catchup-start-course"
+        :disabled="starting"
+        @click="startCourse"
+      >
+        <Play :size="16" fill="currentColor" />
+        {{ starting ? '准备中…' : `开练「${course.course.name}」` }}
+      </button>
+      <button
+        v-if="!course || plan.exercises.length"
+        class="row center"
+        :class="course ? 'ghost' : 'primary'"
+        type="button"
+        data-testid="catchup-start-draft"
         :disabled="!plan.exercises.length || starting"
         @click="startTraining"
       >
-        <Play :size="16" fill="currentColor" />
-        {{ starting ? '准备中…' : '开始训练' }}
+        <Play v-if="!course" :size="16" fill="currentColor" />
+        {{ starting ? '准备中…' : course ? '按临时草稿练' : '开始训练' }}
       </button>
       <button
         class="ghost row center"
         type="button"
-        :disabled="!plan.exercises.length"
+        :disabled="!course && !plan.exercises.length"
         @click="handToAi"
       >
         <Sparkles :size="15" />
         交给 AI 调整
       </button>
     </div>
-    <p class="hint">
-      「交给 AI 调整」会把弱项与上面的草稿一起送进对话，由模型重新排一遍并说明理由 ——
-      那句话在 AI 页是直接发出的（与「交给 AI 排查」同一条路径），不需要再点一次发送。
-    </p>
+    <p class="hint">{{ hint }}</p>
 
     <ActionSheet
       :open="conflictOpen"
@@ -266,6 +349,75 @@ function goConflict(): void {
   font-size: var(--fs-caption);
   line-height: 1.5;
   min-width: 0;
+}
+
+/* 现成课程：这张抽屉里唯一的**推荐**块，用 accent-soft 底与草稿的中性底分开。
+   色相交给前景（--accent-strong），底保持同色低透明 —— 与 tokens 里那条语义色约定一致。 */
+.rc {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-m);
+  background: var(--accent-soft);
+}
+
+.rc-head {
+  gap: 8px;
+}
+
+.rc-k {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.rc-meta {
+  flex: none;
+  font-size: var(--fs-micro);
+  /* 压在 accent-soft 上，比 text-3 提一档（text-3 在这层蓝底上只剩 ~3:1） */
+  color: var(--text-2);
+}
+
+.rc-name {
+  margin-top: 4px;
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+
+/* 主攻组 chip：命中的那几枚打勾 + 实底，其余保持素底 —— 一眼看出这门课冲谁排的 */
+.rc-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.rc-g {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.rc-g.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.rc-why {
+  margin-top: 8px;
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.rc-why b {
+  color: var(--text-1);
 }
 
 .draft {

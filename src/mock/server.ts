@@ -12,7 +12,11 @@ import type {
   AiChatMessageInput,
   AiModel,
   AiModelInput,
+  AiModelPrefs,
   AiProbeResult,
+  AiProvider,
+  AiProviderInput,
+  AiProviderModel,
   AiUsageByModel,
   AiUsageInput,
   AiUsageSummary,
@@ -47,6 +51,9 @@ import type {
   ProgramRecord,
   Profile,
   OnlineCatalog,
+  ProviderAdapter,
+  ProviderCatalog,
+  ProviderModelKind,
   ScheduleTodoInput,
   TargetAdjustProposal,
   TargetChange,
@@ -911,6 +918,12 @@ function buildMockCatalog(baseUrl: string, apiKey: string): OnlineCatalog {
     trafficScope: 'egress',
     clientName: ok ? '浏览器演示' : null,
     clientModels: [],
+    // 账号可用性：真服务端在 rein.client 里报 status/note，这里用开关模拟「余额不足」
+    clientStatus: ok && mockFlag('__REIN_MOCK_SERVICE_QUOTA_LOW__') ? '余额不足' : null,
+    clientNote:
+      ok && mockFlag('__REIN_MOCK_SERVICE_QUOTA_LOW__')
+        ? '余额不足：请到服务端后台充值后重试'
+        : null,
     models: ok
       ? MOCK_ONLINE_MODELS.map((m) => ({
           ...m,
@@ -938,6 +951,291 @@ function saveMockUsage(): void {
     localStorage.setItem(AI_USAGE_STORE_KEY, JSON.stringify(aiUsage))
   } catch {
     /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+/* ---- 提供商（服务商账号 + 模型目录）：与 Rust modules/ai/providers.rs 同契约 ----
+ *
+ * 浏览器模式没有 Rust，所以适配器注册表在这里再写一份（字段与 Rust 一一对应）。
+ * 拉模型清单不联网：按适配器给一份演示目录；密钥为空或开关置位时走「接口不通」分支，
+ * 于是「内置参考目录 + 失败原因」这条路径在浏览器里也能验。 */
+
+const PROVIDER_STORE_KEY = 'rein.mock.ai_providers.v1'
+const PREFS_STORE_KEY = 'rein.mock.ai_model_prefs.v1'
+
+/** 与 Rust ADAPTERS 同构的演示注册表 */
+const MOCK_ADAPTERS: ProviderAdapter[] = [
+  {
+    id: 'volc-ark',
+    label: '火山方舟',
+    nickname: '火山方舟',
+    hint: '方舟模型 API / Agent Plan 套餐：LLM、视觉、向量、语音识别都能从这一个账号取',
+    docs: 'https://www.volcengine.com/docs/82379',
+    keyHint: '方舟 API Key（控制台 › API Key 管理）',
+    modelsPath: '/models',
+    styles: [
+      {
+        id: 'ark',
+        label: '方舟模型 API',
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        note: '按量计费：Key 取自方舟控制台 › API Key 管理',
+      },
+      {
+        id: 'agent-plan',
+        label: 'Agent Plan API',
+        baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+        note: '套餐/计划：填套餐签发的 Key；网关地址与按量一致，若服务商给了专用域名请直接改地址',
+      },
+    ],
+    kinds: ['llm', 'vision', 'embedding', 'asr'],
+    extraFields: [
+      {
+        key: 'appId',
+        label: '语音 App ID',
+        hint: '只给「启用语音识别模型」用：火山语音控制台的 App ID（旧版凭据）',
+        secret: false,
+        placeholder: '选填',
+      },
+      {
+        key: 'accessToken',
+        label: '语音 Access Token',
+        hint: '旧版凭据的 Access Token；填了就走旧版鉴权，不填则用上面的 API Key（新版）',
+        secret: true,
+        placeholder: '选填',
+      },
+    ],
+    preset: [
+      { id: 'doubao-seed-1.6', kind: 'llm', dim: null, note: '方舟主力对话模型' },
+      { id: 'doubao-seed-1.6-thinking', kind: 'llm', dim: null, note: '带思考链的对话模型' },
+      { id: 'doubao-seed-1.6-vision', kind: 'vision', dim: null, note: '看图/多模态' },
+      { id: 'doubao-embedding-text-240715', kind: 'embedding', dim: null, note: '方舟文本向量（维度见服务商文档）' },
+      { id: 'volc.seedasr.sauc.duration', kind: 'asr', dim: null, note: '豆包流式语音识别 2.0（小时版 Resource-Id）' },
+    ],
+  },
+  {
+    id: 'dashscope',
+    label: '阿里云百炼',
+    nickname: '百炼',
+    hint: '通义千问系列：对话、视觉、向量与语音识别',
+    docs: 'https://help.aliyun.com/zh/model-studio/',
+    keyHint: 'DASHSCOPE_API_KEY',
+    modelsPath: '/models',
+    styles: [
+      {
+        id: 'compatible',
+        label: 'OpenAI 兼容模式',
+        baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        note: '百炼的 OpenAI 兼容端点；Key 即 DASHSCOPE_API_KEY',
+      },
+    ],
+    kinds: ['llm', 'vision', 'embedding', 'asr'],
+    extraFields: [],
+    preset: [
+      { id: 'qwen3-max', kind: 'llm', dim: null, note: '通义千问旗舰对话模型' },
+      { id: 'qwen-plus', kind: 'llm', dim: null, note: '均衡档对话模型' },
+      { id: 'qwen-vl-max', kind: 'vision', dim: null, note: '视觉理解' },
+      { id: 'text-embedding-v4', kind: 'embedding', dim: 1024, note: '文本向量（可降维）' },
+      { id: 'qwen-audio-3.0-asr-flash-streaming', kind: 'asr', dim: null, note: '流式语音识别' },
+    ],
+  },
+  {
+    id: 'deepseek',
+    label: 'DeepSeek',
+    nickname: 'DeepSeek',
+    hint: '官方 API：对话与视觉模型',
+    docs: 'https://api-docs.deepseek.com/',
+    keyHint: 'sk-…',
+    modelsPath: '/models',
+    styles: [
+      { id: 'openai', label: '官方 API', baseUrl: 'https://api.deepseek.com/v1', note: 'OpenAI 兼容；不带 /v1 也能用，这里统一带上' },
+    ],
+    kinds: ['llm', 'vision'],
+    extraFields: [],
+    preset: [
+      { id: 'deepseek-flash', kind: 'llm', dim: null, note: '轻量快档' },
+      { id: 'deepseek-v4-pro', kind: 'llm', dim: null, note: '高质档' },
+      { id: 'deepseek-v4-flash-vision-exp', kind: 'vision', dim: null, note: '视觉实验模型（拍照识别可用）' },
+    ],
+  },
+  {
+    id: 'siliconflow',
+    label: '硅基流动',
+    nickname: '硅基流动',
+    hint: '聚合网关：对话、视觉与向量',
+    docs: 'https://docs.siliconflow.cn/',
+    keyHint: 'sk-…',
+    modelsPath: '/models',
+    styles: [
+      { id: 'openai', label: 'OpenAI 兼容', baseUrl: 'https://api.siliconflow.cn/v1', note: '聚合网关地址；模型 ID 形如 组织/模型' },
+    ],
+    kinds: ['llm', 'vision', 'embedding'],
+    extraFields: [],
+    preset: [
+      { id: 'deepseek-ai/DeepSeek-V3', kind: 'llm', dim: null, note: '第三方托管的 DeepSeek V3' },
+      { id: 'Qwen/Qwen3-8B', kind: 'llm', dim: null, note: '小体积对话模型' },
+      { id: 'BAAI/bge-m3', kind: 'embedding', dim: 1024, note: '多语向量（1024 维）' },
+    ],
+  },
+  {
+    id: 'openai-compatible',
+    label: '自定义（OpenAI 兼容）',
+    nickname: '自定义',
+    hint: '任何 OpenAI 兼容网关：地址自己填，模型清单从 /models 拉',
+    docs: '',
+    keyHint: '服务商给的 Key',
+    modelsPath: '/models',
+    styles: [
+      { id: 'openai', label: 'OpenAI 兼容', baseUrl: '', note: '填服务商给的 base 地址（通常以 /v1 结尾）' },
+    ],
+    kinds: ['llm', 'vision', 'embedding'],
+    extraFields: [],
+    preset: [],
+  },
+]
+
+let mockProviders: AiProvider[] = []
+let mockProviderId = 0
+let mockPrefs: AiModelPrefs = {
+  visionRef: 'auto',
+  asrRef: 'voice',
+  embeddingRef: '',
+  providerNameDisplay: true,
+  providerNameFolder: true,
+}
+
+/** 与 Rust guess_kind 同一套词表（浏览器演示用） */
+function mockGuessKind(modelId: string): ProviderModelKind {
+  const s = modelId.toLowerCase()
+  if (/(embed|bge|gte-|text-embedding|vector)/.test(s)) return 'embedding'
+  if (/(asr|whisper|sensevoice|paraformer|sauc|seedasr|speech-to-text|transcription)/.test(s)) return 'asr'
+  if (/(tts|speech-synthesis|text-to-speech|voice-clone)/.test(s)) return 'tts'
+  if (/(vision|-vl|vl-|omni|visual|multimodal)/.test(s)) return 'vision'
+  return 'llm'
+}
+
+/** 适配器不提供的类别丢掉；视觉没有槽位时按对话收下（与 Rust accept_kind 同规则） */
+function mockAcceptKind(kind: ProviderModelKind, kinds: ProviderModelKind[]): ProviderModelKind | null {
+  if (kinds.includes(kind)) return kind
+  if ((kind === 'llm' || kind === 'vision') && kinds.includes('llm')) return 'llm'
+  return null
+}
+
+function saveMockProviders(): void {
+  try {
+    localStorage.setItem(PROVIDER_STORE_KEY, JSON.stringify(mockProviders))
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+function saveMockPrefs(): void {
+  try {
+    localStorage.setItem(PREFS_STORE_KEY, JSON.stringify(mockPrefs))
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+function loadMockProviders(): void {
+  try {
+    const raw = localStorage.getItem(PROVIDER_STORE_KEY)
+    if (raw) {
+      mockProviders = JSON.parse(raw) as AiProvider[]
+      mockProviderId = Math.max(0, ...mockProviders.map((p) => p.id))
+    }
+    const rawPrefs = localStorage.getItem(PREFS_STORE_KEY)
+    if (rawPrefs) mockPrefs = { ...mockPrefs, ...(JSON.parse(rawPrefs) as AiModelPrefs) }
+  } catch {
+    /* 损坏数据按空处理 */
+  }
+}
+
+function mockProviderModel(
+  providerId: number,
+  modelId: string,
+  kind: ProviderModelKind,
+  origin: 'api' | 'preset' | 'manual',
+  meta: string | null,
+): AiProviderModel {
+  return { providerId, modelId, kind, origin, meta, fetchedAt: new Date().toISOString() }
+}
+
+/** 拉目录（演示）：密钥为空或开关置位 → 接口不通 + 内置参考目录 */
+function buildMockProviderCatalog(
+  adapter: ProviderAdapter,
+  baseUrl: string,
+  apiKey: string,
+): ProviderCatalog {
+  const base = (baseUrl || adapter.styles[0]?.baseUrl || '').replace(/\/+$/, '')
+  const endpoint = `${base}${adapter.modelsPath}`
+  const offline = mockFlag('__REIN_MOCK_PROVIDER_OFFLINE__')
+  const presets = adapter.preset.map((p) =>
+    mockProviderModel(
+      0,
+      p.id,
+      p.kind,
+      'preset',
+      p.dim ? JSON.stringify({ dim: p.dim, note: p.note }) : JSON.stringify({ note: p.note }),
+    ),
+  )
+  if (!apiKey.trim() || offline) {
+    return {
+      ok: false,
+      status: offline ? 'unreachable' : 'unauthorized',
+      endpoint,
+      error: offline ? `无法连接 ${endpoint}` : '还没有填该提供商的密钥，模型清单需要密钥才能取到',
+      models: presets,
+      elapsedMs: 9,
+      fromPreset: true,
+      fetchedAt: new Date().toISOString(),
+    }
+  }
+  // 演示目录：内置参考 + 一条只在该适配器出现的「额外」模型，模拟接口清单比参考目录更全
+  const extra: Record<string, [string, ProviderModelKind][]> = {
+    'volc-ark': [['doubao-1.5-lite-32k', 'llm'], ['doubao-embedding-large-text-240915', 'embedding']],
+    dashscope: [['qwen-long', 'llm'], ['qwen-audio-turbo', 'asr']],
+    deepseek: [['deepseek-coder-v2', 'llm']],
+    siliconflow: [['THUDM/glm-4-9b-chat', 'llm']],
+    'openai-compatible': [['gpt-4o-mini', 'llm'], ['text-embedding-3-small', 'embedding']],
+  }
+  const apiModels = [
+    ...adapter.preset.map((p) => mockProviderModel(0, p.id, p.kind, 'api', null)),
+    ...(extra[adapter.id] ?? []).map(([id, kind]) => mockProviderModel(0, id, kind, 'api', null)),
+  ]
+  return {
+    ok: true,
+    status: 'ready',
+    endpoint,
+    error: null,
+    models: apiModels,
+    elapsedMs: 14,
+    fromPreset: false,
+    fetchedAt: new Date().toISOString(),
+  }
+}
+
+/** 写目录：ok 时以接口清单为准（清掉过期的 api 行、把 preset 提升成 api），失败只补参考 */
+function mockPersistModels(
+  provider: AiProvider,
+  models: AiProviderModel[],
+  ok: boolean,
+): void {
+  for (const m of models) {
+    const existing = provider.models.find((x) => x.modelId === m.modelId)
+    if (existing) {
+      if (ok) {
+        existing.kind = m.kind
+        existing.origin = 'api'
+        existing.meta = m.meta ?? existing.meta
+        existing.fetchedAt = m.fetchedAt
+      }
+    } else {
+      provider.models.push({ ...m, providerId: provider.id })
+    }
+  }
+  if (ok) {
+    const keep = new Set(models.map((m) => m.modelId))
+    provider.models = provider.models.filter((m) => m.origin !== 'api' || keep.has(m.modelId))
   }
 }
 
@@ -1014,6 +1312,7 @@ function saveAiChats(): void {
 }
 
 loadAiStore()
+loadMockProviders()
 
 const defaultTargets: DailyTargets = {
   kcal: 2000,
@@ -1933,6 +2232,16 @@ interface MockKbFile {
   classifyState: 'inbox' | 'filed' | 'manual'
   createdAt: string
   updatedAt: string
+  /** 删除时间（非空 = 在回收站里）。与 Rust kb_files.trashed_at 对应 */
+  trashedAt?: string | null
+  /** 删除前的位置（恢复的目标）。与 Rust kb_files.trash_from 对应 */
+  trashFrom?: string | null
+  /** 用户评分 0..5（0 = 未评） */
+  rating?: number
+  /** 用户标签（JSON 数组字符串，与 Rust 列同形） */
+  tags?: string
+  /** 用户注释 */
+  note?: string
 }
 
 /** 模态表示（kb_assets）。浏览器 mock 无法落盘，本体一律以内联 data URL 存在 ref 里 */
@@ -1986,8 +2295,10 @@ const KB_DOMAIN_ROOTS = [
 const kbKnownRoot = (seg: string): boolean =>
   KB_WRITABLE_ROOTS.includes(seg) || KB_DOMAIN_ROOTS.includes(seg)
 
-/** 把用户给的路径归位成合法路径（与 Rust files::normalize_path 同构） */
-function kbNormalizePath(raw: string): string {
+/** 把用户给的路径归位成合法路径（与 Rust files::normalize_path 同构）。
+ *  `dirLike`：目录不补扩展名；文件只在**末段完全没有点**时补 .md
+ *  （否则把 `晨会录音.wav` 改成 `晨会录音.wav.md`，扩展名就废了）。 */
+function kbNormalizePath(raw: string, dirLike = false): string {
   let p = raw.trim().replace(/^\/+/, '')
   if (!p) throw new Error('文件路径不能为空')
   if (p.split('/').some((seg) => seg === '..')) throw new Error(`路径不允许包含 ..：${p}`)
@@ -2001,7 +2312,10 @@ function kbNormalizePath(raw: string): string {
     .filter(Boolean)
     .map((seg) => kbSanitize(seg, 60))
     .join('/')
-  return p.endsWith('.md') ? p : `${p}.md`
+  if (dirLike) return p
+  if (p.endsWith('.md')) return p
+  const last = p.split('/').pop() ?? p
+  return last.includes('.') ? p : `${p}.md`
 }
 
 /** 媒体路径归位：保留扩展名，裸路径默认落收件箱（与 Rust files::normalize_media_path 同构） */
@@ -2073,6 +2387,45 @@ function kbFreePath(dir: string, basename: string): string {
     if (!taken) return path
   }
   throw new Error(`在 ${d}/ 下找不到可用文件名（${basename}）`)
+}
+
+/** 解压产物让位：保留包内层级，只对最后一段加 `-v2`（对齐 Rust archive::free_child_path）。 */
+function kbFreeChildPath(dir: string, inner: string): string {
+  const parts = inner.split('/')
+  const base = parts.pop() ?? inner
+  const prefix = parts.join('/')
+  const cut = base.lastIndexOf('.')
+  const stem = cut > 0 ? base.slice(0, cut) : base
+  const ext = cut > 0 ? base.slice(cut) : ''
+  for (let i = 0; i < 64; i++) {
+    const name = i === 0 ? base : `${stem}-v${i + 1}${ext}`
+    const path = prefix ? `${dir}/${prefix}/${name}` : `${dir}/${name}`
+    const taken = kbFiles.some((f) => f.path === path) || kbDocs.some((d) => d.path === path)
+    if (!taken) return path
+  }
+  throw new Error(`${dir}/ 下同名文件过多：${inner}`)
+}
+
+/** 解压落点目录让位：同名目录已存在就 `-2`、`-3`……（对齐 Rust archive::free_dir，绝不覆盖） */
+function kbFreeDir(dir: string): string {
+  for (let i = 0; i < 64; i++) {
+    const cand = i === 0 ? dir : `${dir}-${i + 1}`
+    const occupied =
+      kbFiles.some((f) => f.path === cand || f.path.startsWith(`${cand}/`)) ||
+      kbDocs.some((d) => d.path === cand || (d.path ?? '').startsWith(`${cand}/`))
+    if (!occupied) return cand
+  }
+  throw new Error(`找不到可用目录名：${dir}`)
+}
+
+/** 标签列解析：坏数据当空表（与 Rust files::parse_tags 同语义） */
+function kbParseTags(raw: string | undefined): string[] {
+  try {
+    const v = JSON.parse(raw ?? '[]') as unknown
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 /** 与 Rust chunk_text 同参数的简化分块（300 字 / 50 重叠），供 L2 分页与 totalChunks */
@@ -2269,7 +2622,19 @@ function loadMockMemoryDiffs(): void {
   if (mockMemoryDiffs.length) return
   try {
     const raw = localStorage.getItem(KB_DIFF_KEY)
-    if (raw) mockMemoryDiffs.push(...(JSON.parse(raw) as typeof mockMemoryDiffs))
+    if (!raw) return
+    const parsed = JSON.parse(raw) as unknown
+    // localStorage 是外部可写的：形状不对就当没有。页面直接读 at/payload，
+    // 塞进非对象数组会在渲染期抛错（那个报错离根因很远，很难查）
+    if (!Array.isArray(parsed)) return
+    for (const row of parsed) {
+      if (!row || typeof row !== 'object') continue
+      const at = (row as { at?: unknown }).at
+      const payload = (row as { payload?: unknown }).payload
+      if (typeof at === 'string' && payload && typeof payload === 'object') {
+        mockMemoryDiffs.push(row as (typeof mockMemoryDiffs)[number])
+      }
+    }
   } catch {
     /* 忽略 */
   }
@@ -2338,6 +2703,9 @@ function loadKbStore(): void {
           kind: x.kind ?? 'text',
           pinned: x.pinned ?? false,
           classifyState: x.classifyState ?? 'manual',
+          rating: x.rating ?? 0,
+          tags: x.tags ?? '[]',
+          note: x.note ?? '',
         })),
       )
       kbFileId = Math.max(kbFileId, ...list.map((x) => x.id), 0)
@@ -2576,6 +2944,20 @@ function mockEmbed(text: string, dim = 512): number[] {
   return norm > 0 ? v.map((x) => x / norm) : v
 }
 
+/** 查重扫描的记忆条数上限（与 Rust memory::DUP_SCAN_LIMIT 一致） */
+const DUP_SCAN_LIMIT = 400
+
+/** 记忆向量缓存：内容没变就不重算（查重在页面挂载与每轮整理都会被调用） */
+const mockMemVecCache = new Map<number, { content: string; vec: number[] }>()
+
+function mockMemVec(id: number, content: string): number[] {
+  const hit = mockMemVecCache.get(id)
+  if (hit && hit.content === content) return hit.vec
+  const vec = mockEmbed(content)
+  mockMemVecCache.set(id, { content, vec })
+  return vec
+}
+
 function mockCosine(a: number[], b: number[]): number {
   let s = 0
   for (let i = 0; i < Math.min(a.length, b.length); i++) s += a[i] * b[i]
@@ -2725,6 +3107,12 @@ function kbEnsureIndex(): void {
   // 系统文件（规范 / 系统提示词 / 用户记忆模板 / 收件箱）与用户文件
   kbEnsureSystemFiles()
   for (const f of kbFiles) {
+    // 回收站里的文件视同不存在：与 Rust source.rs::note_doc 的 trashed_at 过滤同语义
+    if (f.trashedAt) {
+      const di = kbDocs.findIndex((d) => d.sourceType === 'note' && d.sourceId === String(f.id))
+      if (di >= 0) kbDocs.splice(di, 1)
+      continue
+    }
     const base = f.path.split('/').pop() ?? f.path
     const docKind: MockKbDoc['kind'] =
       f.kind === 'folder'
@@ -5865,6 +6253,124 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return delay(undefined as T)
     }
 
+    /* ---- 提供商（服务商账号 + 模型目录） ---- */
+
+    case 'ai_provider_adapters':
+      return delay(structuredClone(MOCK_ADAPTERS) as T)
+
+    case 'ai_provider_list':
+      return delay(structuredClone(mockProviders) as T)
+
+    case 'ai_provider_save': {
+      const input = plain(args.input as AiProviderInput)
+      const adapter = MOCK_ADAPTERS.find((a) => a.id === input.adapter)
+      if (!adapter) throw new Error(`未知适配器：${input.adapter}`)
+      const base = (input.baseUrl ?? '').trim().replace(/\/+$/, '')
+      if (!base) throw new Error('服务地址不能为空')
+      const now = new Date().toISOString()
+      const style = adapter.styles.find((s) => s.id === input.apiStyle)?.id ?? adapter.styles[0]!.id
+      const name = (input.name ?? '').trim() || adapter.nickname
+      // 同 adapter + 同地址视为同一个账号（镜像 Rust）
+      let target = input.id
+        ? mockProviders.find((p) => p.id === input.id)
+        : mockProviders.find((p) => p.adapter === adapter.id && p.baseUrl === base)
+      if (target) {
+        Object.assign(target, {
+          adapter: adapter.id,
+          name,
+          baseUrl: base,
+          apiKey: (input.apiKey ?? '').trim(),
+          apiStyle: style,
+          extra: input.extra ?? null,
+          updatedAt: now,
+        })
+      } else {
+        target = {
+          id: ++mockProviderId,
+          adapter: adapter.id,
+          name,
+          baseUrl: base,
+          apiKey: (input.apiKey ?? '').trim(),
+          apiStyle: style,
+          extra: input.extra ?? null,
+          lastError: null,
+          lastSyncAt: null,
+          createdAt: now,
+          updatedAt: now,
+          models: [],
+        }
+        mockProviders.push(target)
+      }
+      saveMockProviders()
+      return delay(structuredClone(target) as T)
+    }
+
+    case 'ai_provider_delete': {
+      const id = Number(args.id)
+      mockProviders = mockProviders.filter((p) => p.id !== id)
+      saveMockProviders()
+      return delay(undefined as T)
+    }
+
+    case 'ai_provider_fetch': {
+      const adapterId = String(args.adapterId)
+      const adapter = MOCK_ADAPTERS.find((a) => a.id === adapterId)
+      if (!adapter) throw new Error(`未知适配器：${adapterId}`)
+      const catalog = buildMockProviderCatalog(
+        adapter,
+        String(args.baseUrl ?? ''),
+        String(args.apiKey ?? ''),
+      )
+      const id = args.id == null ? null : Number(args.id)
+      if (id != null) {
+        const p = mockProviders.find((x) => x.id === id)
+        if (p) {
+          mockPersistModels(p, catalog.models, catalog.ok)
+          p.lastError = catalog.error
+          p.lastSyncAt = catalog.fetchedAt
+          p.updatedAt = catalog.fetchedAt
+          saveMockProviders()
+          return delay(structuredClone({ ...catalog, models: p.models }) as T)
+        }
+      }
+      return delay(catalog as T)
+    }
+
+    case 'ai_provider_model_add': {
+      const providerId = Number(args.providerId)
+      const p = mockProviders.find((x) => x.id === providerId)
+      if (!p) throw new Error('提供商不存在')
+      const adapter = MOCK_ADAPTERS.find((a) => a.id === p.adapter)
+      const id = String(args.modelId ?? '').trim()
+      if (!id) throw new Error('模型 ID 不能为空')
+      const asked = String(args.kind ?? 'llm') as ProviderModelKind
+      const kind = (adapter?.kinds.includes(asked) ? asked : mockAcceptKind(mockGuessKind(id), adapter?.kinds ?? ['llm'])) ?? 'llm'
+      const existing = p.models.find((m) => m.modelId === id)
+      const row = mockProviderModel(providerId, id, kind, 'manual', (args.meta as string | null) ?? null)
+      if (existing) Object.assign(existing, { kind, origin: 'manual', meta: row.meta, fetchedAt: row.fetchedAt })
+      else p.models.push(row)
+      saveMockProviders()
+      return delay(structuredClone(existing ?? row) as T)
+    }
+
+    case 'ai_provider_model_remove': {
+      const p = mockProviders.find((x) => x.id === Number(args.providerId))
+      if (p) {
+        p.models = p.models.filter((m) => m.modelId !== String(args.modelId))
+        saveMockProviders()
+      }
+      return delay(undefined as T)
+    }
+
+    case 'ai_model_prefs_get':
+      return delay(structuredClone(mockPrefs) as T)
+
+    case 'ai_model_prefs_save': {
+      mockPrefs = { ...mockPrefs, ...plain(args.prefs as AiModelPrefs) }
+      saveMockPrefs()
+      return delay(structuredClone(mockPrefs) as T)
+    }
+
     /* ---- Rein 在线服务（浏览器演示：假服务端，但字段与真服务端一致） ---- */
 
     case 'online_service_settings_get':
@@ -6761,14 +7267,34 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       const f = kbFiles.find((x) => x.id === id)
       if (!f) throw new Error(`文件不存在：id=${id}`)
       if (f.system) throw new Error('该文件是系统文件（规范/），不能改名；它的内容随应用版本更新')
-      let path = kbNormalizePath(String(args.path ?? ''))
+      // 目录不补扩展名；文件不覆盖已有扩展名（与 Rust files::rename 同语义）
+      let path = kbNormalizePath(String(args.path ?? ''), f.kind === 'folder')
       if (kbIsReservedPath(path)) {
         const cut = path.lastIndexOf('/')
         path = kbFreePath(cut > 0 ? path.slice(0, cut) : '', cut > 0 ? path.slice(cut + 1) : path)
       }
       if (kbFiles.some((x) => x.path === path && x.id !== id)) throw new Error(`目标路径已存在：${path}`)
+      // 目录改名要带上整棵子树（与 Rust files::rewrite_subtree 同语义：
+      // 只改目录那一行的话，新目录空、旧名字变幽灵目录）
+      const oldPath = f.path
+      const kids =
+        f.kind === 'folder'
+          ? kbFiles
+              .filter((x) => !x.trashedAt && x.path.startsWith(`${oldPath}/`))
+              .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+          : []
+      const moved = kids.map((k) => ({ k, to: `${path}${k.path.slice(oldPath.length)}` }))
+      for (const m of moved) {
+        if (kbFiles.some((x) => x.path === m.to && x.id !== m.k.id)) {
+          throw new Error(`目标路径已存在：${m.to}`)
+        }
+      }
       f.path = path
       f.updatedAt = new Date().toISOString()
+      for (const m of moved) {
+        m.k.path = m.to
+        m.k.updatedAt = f.updatedAt
+      }
       saveKbFiles()
       kbIndexed = false
       kbEnsureIndex()
@@ -6808,7 +7334,345 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           modal: a.modal, mime: a.mime, bytes: a.bytes, durationMs: a.durationMs,
           transcriptState: a.transcriptState, derivedFrom: a.derivedFrom, source: 'asset',
         }))
-      return delay({ ...f, modalities: modals } as T)
+      return delay({ ...f, modalities: modals, rating: f.rating ?? 0, tags: kbParseTags(f.tags), note: f.note ?? '' } as T)
+    }
+
+    /* ---------- 文件管理器：一层列举 + 回收站（对应 Rust listing.rs / files.rs） ---------- */
+
+    case 'kb_list_dir': {
+      loadKbStore()
+      kbEnsureIndex()
+      const dir = String(args.path ?? '').trim().replace(/^\/+|\/+$/g, '')
+      if (dir.split('/').some((s) => s === '..')) throw new Error(`路径不允许包含 ..：${dir}`)
+      const prefix = dir ? `${dir}/` : ''
+      const inTrash = (p: string) => p === '回收站' || p.startsWith('回收站/')
+      const relOf = (p: string) => (p.startsWith(prefix) ? p.slice(prefix.length) : p)
+      /** 直接子项名（不在子目录里、也不在回收站里），否则 null */
+      const directOf = (p: string): string | null => {
+        const r = relOf(p)
+        return r && !r.includes('/') && !inTrash(p) ? r : null
+      }
+      const childNames = new Map<string, Set<string>>()
+      const folderNodes = new Map<string, MockKbFile>()
+      const noteChild = (parent: string, child: string) => {
+        const s = childNames.get(parent) ?? new Set<string>()
+        s.add(child)
+        childNames.set(parent, s)
+      }
+      const nodes = kbFiles.filter((f) => !f.trashedAt && f.path.startsWith(prefix))
+      for (const f of nodes) {
+        const d = directOf(f.path)
+        if (d) {
+          if (f.kind === 'folder') folderNodes.set(d, f)
+        } else {
+          const segs = relOf(f.path).split('/')
+          if (segs.length >= 2) noteChild(segs[0], segs[1])
+        }
+      }
+      const docsIn = kbDocs.filter((d) => d.path && d.path.startsWith(prefix))
+      for (const d of docsIn) {
+        if (directOf(d.path!)) continue
+        const segs = relOf(d.path!).split('/')
+        if (segs.length >= 2) noteChild(segs[0], segs[1])
+      }
+      const metaOf = (f: MockKbFile | undefined) => ({
+        rating: f?.rating ?? 0,
+        tags: kbParseTags(f?.tags),
+        hasNote: !!(f?.note && f.note.trim()),
+      })
+      const assetBytes = new Map<number, number>()
+      const assetModals = new Map<number, string[]>()
+      for (const a of kbAssets) {
+        if (a.modal !== 'text') assetBytes.set(a.fileId, (assetBytes.get(a.fileId) ?? 0) + a.bytes)
+        const list = assetModals.get(a.fileId) ?? []
+        if (!list.includes(a.modal)) list.push(a.modal)
+        assetModals.set(a.fileId, list)
+      }
+      const entries: Array<Record<string, unknown>> = []
+      const seen = new Set<string>()
+      const bytesOf = (f: MockKbFile | undefined, docId: number) =>
+        f ? f.content.length + (assetBytes.get(f.id) ?? 0) : (kbDocs.find((d) => d.id === docId)?.body.length ?? 0)
+      const dirNames = new Set<string>([...childNames.keys(), ...folderNodes.keys()])
+      for (const name of dirNames) {
+        const path = dir ? `${dir}/${name}` : name
+        const node = folderNodes.get(name)
+        if (seen.has(path)) continue
+        entries.push({
+          id: 0,
+          fileId: node?.id ?? null,
+          path,
+          name,
+          kind: 'folder',
+          sourceType: '',
+          title: name,
+          system: node?.system ?? false,
+          editable: false,
+          size: node ? node.content.length : 0,
+          childCount: childNames.get(name)?.size ?? 0,
+          occurredOn: null,
+          updatedAt: node?.updatedAt ?? '',
+          pinned: node?.pinned ?? false,
+          classifyState: node?.classifyState ?? '',
+          modalities: [] as string[],
+          ...metaOf(node),
+        })
+        seen.add(path)
+      }
+      for (const d of docsIn) {
+        const name = directOf(d.path!)
+        // 去重必须用 has 判断：Set.add 返回的是集合本身（永远 truthy），
+        // 写成 `!seen.add(x)` 这个守卫就永远不生效 —— 同一个文件会出两条。
+        if (!name || d.kind === 'folder' || seen.has(d.path!)) continue
+        seen.add(d.path!)
+        const node = kbFiles.find((x) => x.path === d.path && !x.trashedAt)
+        entries.push({
+          id: d.id,
+          fileId: node?.id ?? null,
+          path: d.path,
+          name,
+          kind: d.kind,
+          sourceType: d.sourceType,
+          title: d.title,
+          system: d.system || (node?.system ?? false),
+          editable: d.editable,
+          size: bytesOf(node, d.id),
+          childCount: 0,
+          occurredOn: d.occurredOn,
+          updatedAt: node?.updatedAt ?? d.updatedAt,
+          pinned: node?.pinned ?? false,
+          classifyState: node?.classifyState ?? '',
+          modalities: node ? (assetModals.get(node.id) ?? ['text']) : ['text'],
+          ...metaOf(node),
+        })
+      }
+      for (const f of nodes) {
+        const name = directOf(f.path)
+        if (!name || f.kind === 'folder' || seen.has(f.path)) continue
+        seen.add(f.path)
+        const modals = assetModals.get(f.id) ?? ['text']
+        const kind =
+          f.kind === 'multimodal'
+            ? modals.includes('video')
+              ? 'video'
+              : modals.includes('audio')
+                ? 'audio'
+                : modals.includes('image')
+                  ? 'image'
+                  : 'file'
+            : 'text'
+        entries.push({
+          id: 0,
+          fileId: f.id,
+          path: f.path,
+          name,
+          kind,
+          sourceType: 'note',
+          title: name.replace(/\.[a-z0-9]+$/i, ''),
+          system: f.system,
+          editable: !f.system,
+          size: f.content.length + (assetBytes.get(f.id) ?? 0),
+          childCount: 0,
+          occurredOn: null,
+          updatedAt: f.updatedAt,
+          pinned: f.pinned,
+          classifyState: f.classifyState,
+          modalities: modals,
+          ...metaOf(f),
+        })
+      }
+      entries.sort((a, b) => {
+        const ad = a.kind === 'folder' ? 0 : 1
+        const bd = b.kind === 'folder' ? 0 : 1
+        return ad - bd || String(a.path).localeCompare(String(b.path))
+      })
+      return delay(plain({ path: dir, entries, total: entries.length, truncated: false }) as T)
+    }
+
+    case 'kb_meta_set': {
+      loadKbStore()
+      const input = plain(args.input as { id: number; rating?: number; tags?: string[]; note?: string }) ?? { id: 0 }
+      const raw = Number(input.id)
+      const docHit = kbDocs.find((d) => d.id === raw && d.sourceType === 'note')
+      const id = docHit ? Number(docHit.sourceId) : raw
+      const f = kbFiles.find((x) => x.id === id)
+      if (!f) throw new Error(`文件不存在：id=${raw}`)
+      if (input.rating !== undefined) f.rating = Math.min(5, Math.max(0, Number(input.rating)))
+      if (input.tags !== undefined) {
+        // 去空、去重、限长（与 Rust files::set_meta 同规则）
+        const clean: string[] = []
+        for (const t of input.tags) {
+          const v = String(t).trim()
+          if (!v || clean.includes(v)) continue
+          clean.push(v.slice(0, 24))
+          if (clean.length >= 30) break
+        }
+        f.tags = JSON.stringify(clean)
+      }
+      if (input.note !== undefined) f.note = String(input.note).slice(0, 4000)
+      saveKbFiles()
+      const modals = kbAssets
+        .filter((a) => a.fileId === id)
+        .map((a) => ({
+          modal: a.modal, mime: a.mime, bytes: a.bytes, durationMs: a.durationMs,
+          transcriptState: a.transcriptState, derivedFrom: a.derivedFrom, source: 'asset',
+        }))
+      return delay({ ...f, modalities: modals, rating: f.rating ?? 0, tags: kbParseTags(f.tags), note: f.note ?? '' } as T)
+    }
+
+    case 'kb_import_path': {
+      // 浏览器没有任意路径的读权限：拖入走 File 对象（HTML5 drop）而不是路径
+      throw new Error('浏览器模式不支持按路径导入：请用「导入文件」按钮，或把文件拖进列表')
+    }
+
+    case 'kb_export_file': {
+      // 浏览器里的「导出」是下载（前端用 Blob 触发），没有「落盘路径」这个概念
+      throw new Error('浏览器模式没有本地下载目录：导出会直接触发下载')
+    }
+
+    case 'kb_trash': {
+      loadKbStore()
+      kbEnsureIndex()
+      const raw = Number(args.id)
+      const docHit = kbDocs.find((d) => d.id === raw && d.sourceType === 'note')
+      const id = docHit ? Number(docHit.sourceId) : raw
+      const f = kbFiles.find((x) => x.id === id && !x.trashedAt)
+      if (!f) throw new Error(`文件不存在或已在回收站：id=${id}`)
+      if (f.system) throw new Error('该文件是系统文件（规范/），不能删除；它的内容随应用版本更新')
+      const now = new Date().toISOString()
+      const rows = kbFiles.filter(
+        (x) => !x.trashedAt && (x.path === f.path || x.path.startsWith(`${f.path}/`)),
+      )
+      for (const row of rows) {
+        row.trashFrom = row.path
+        row.path = `回收站/${f.id}/${row.path}`
+        row.trashedAt = now
+        const di = kbDocs.findIndex((d) => d.sourceType === 'note' && d.sourceId === String(row.id))
+        if (di >= 0) kbDocs.splice(di, 1)
+      }
+      saveKbFiles()
+      return delay(plain({ fileId: f.id, count: rows.length, path: f.path }) as T)
+    }
+
+    case 'kb_trash_list': {
+      loadKbStore()
+      const limit = Math.min(Math.max(Number(args.limit ?? 200), 1), 500)
+      const rows = kbFiles
+        .filter((f) => !!f.trashedAt)
+        .sort((a, b) => String(b.trashedAt).localeCompare(String(a.trashedAt)) || b.id - a.id)
+        .slice(0, limit)
+        .map((f) => ({
+          fileId: f.id,
+          id: 0,
+          name: f.path.split('/').pop() ?? f.path,
+          path: f.path,
+          originalPath: f.trashFrom ?? f.path,
+          kind: f.kind === 'folder' ? 'folder' : f.kind === 'multimodal' ? 'file' : 'text',
+          sourceType: 'note',
+          size: f.content.length + (kbAssets.filter((a) => a.fileId === f.id).reduce((n, a) => n + a.bytes, 0)),
+          system: f.system,
+          trashedAt: f.trashedAt,
+          updatedAt: f.updatedAt,
+        }))
+      return delay(plain(rows) as T)
+    }
+
+    case 'kb_trash_restore': {
+      loadKbStore()
+      const ids = (Array.isArray(args.ids) ? args.ids : []).map((x) => Number(x))
+      let done = 0
+      const failed: string[] = []
+      for (const id of ids) {
+        const f = kbFiles.find((x) => x.id === id && !!x.trashedAt)
+        if (!f) {
+          failed.push(`该文件不在回收站里：id=${id}`)
+          continue
+        }
+        const now = new Date().toISOString()
+        const rows = kbFiles
+          .filter((x) => !!x.trashedAt && (x.path === f.path || x.path.startsWith(`${f.path}/`)))
+          .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+        // rows[0] 是子树根；后代跟着「新根 + 原后缀」落位（与 Rust files::untrash 同语义：
+        // 各按自己的原路径让位的话，根让位后子项会落进占用原名的那棵树里）
+        const oldRoot = rows[0]?.trashFrom ?? rows[0]?.path ?? ''
+        let newRoot = ''
+        for (const row of rows) {
+          const original = row.trashFrom ?? row.path
+          const candidate =
+            newRoot && original.startsWith(`${oldRoot}/`)
+              ? `${newRoot}${original.slice(oldRoot.length)}`
+              : original
+          const cut = candidate.lastIndexOf('/')
+          // 目标被占就让位（与 governance::free_path 同语义：加 -v2）
+          const back = kbFreePath(cut > 0 ? candidate.slice(0, cut) : '', cut > 0 ? candidate.slice(cut + 1) : candidate)
+          if (!newRoot) newRoot = back
+          row.path = back
+          row.trashedAt = null
+          row.trashFrom = null
+          row.updatedAt = now
+        }
+        saveKbFiles()
+        kbIndexed = false
+        kbEnsureIndex()
+        done += rows.length
+      }
+      return delay(plain({ done, freedBytes: 0, failed }) as T)
+    }
+
+    case 'kb_trash_purge': {
+      loadKbStore()
+      const ids = (Array.isArray(args.ids) ? args.ids : []).map((x) => Number(x))
+      let done = 0
+      let freedBytes = 0
+      const failed: string[] = []
+      for (const id of ids) {
+        const f = kbFiles.find((x) => x.id === id)
+        if (!f) {
+          failed.push(`文件不存在：id=${id}`)
+          continue
+        }
+        if (f.system) {
+          failed.push('该文件是系统文件（规范/），不能删除')
+          continue
+        }
+        const rows = kbFiles.filter((x) => x.path === f.path || x.path.startsWith(`${f.path}/`))
+        for (const row of rows) {
+          freedBytes +=
+            row.content.length +
+            kbAssets.filter((a) => a.fileId === row.id).reduce((n, a) => n + a.bytes, 0)
+          for (let i = kbAssets.length - 1; i >= 0; i--) {
+            if (kbAssets[i].fileId === row.id) kbAssets.splice(i, 1)
+          }
+          const di = kbDocs.findIndex((d) => d.sourceType === 'note' && d.sourceId === String(row.id))
+          if (di >= 0) kbDocs.splice(di, 1)
+          kbFiles.splice(kbFiles.indexOf(row), 1)
+          done += 1
+        }
+        saveKbFiles()
+        saveKbAssets()
+      }
+      return delay(plain({ done, freedBytes, failed }) as T)
+    }
+
+    case 'kb_trash_empty': {
+      loadKbStore()
+      let done = 0
+      let freedBytes = 0
+      const rows = kbFiles.filter((f) => !!f.trashedAt)
+      for (const row of rows) {
+        freedBytes +=
+          row.content.length +
+          kbAssets.filter((a) => a.fileId === row.id).reduce((n, a) => n + a.bytes, 0)
+        for (let i = kbAssets.length - 1; i >= 0; i--) {
+          if (kbAssets[i].fileId === row.id) kbAssets.splice(i, 1)
+        }
+        const di = kbDocs.findIndex((d) => d.sourceType === 'note' && d.sourceId === String(row.id))
+        if (di >= 0) kbDocs.splice(di, 1)
+        kbFiles.splice(kbFiles.indexOf(row), 1)
+        done += 1
+      }
+      saveKbFiles()
+      saveKbAssets()
+      return delay(plain({ done, freedBytes, failed: [] }) as T)
     }
 
     /* ---------- 模态层（对应 Rust kb_media_write / kb_media_get） ---------- */
@@ -6975,7 +7839,22 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       let batchId = ''
       const from = f.path
       if (to !== f.path) {
+        // 目录 + 整棵子树一起搬（与 Rust governance::move_to 同语义）
+        const kids =
+          f.kind === 'folder'
+            ? kbFiles.filter((x) => !x.trashedAt && x.path.startsWith(`${from}/`))
+            : []
+        const moved = kids.map((k) => ({ k, to: `${to}${k.path.slice(from.length)}` }))
+        for (const m of moved) {
+          if (kbFiles.some((x) => x.path === m.to && x.id !== m.k.id)) {
+            throw new Error(`目标路径已存在：${m.to}`)
+          }
+        }
         f.path = to
+        for (const m of moved) {
+          m.k.path = m.to
+          m.k.updatedAt = new Date().toISOString()
+        }
         f.classifyState = dir.startsWith('未分类数据') ? 'inbox' : 'filed'
         f.updatedAt = new Date().toISOString()
         batchId = kbAudit(src, 'move', from, to, String(args.reason ?? ''))
@@ -7154,45 +8033,40 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         only: (args.only as string[] | undefined) ?? [],
       })
       const now = new Date().toISOString()
+      // 落点目录让位（与 Rust 一致：同名目录加 -2，绝不覆盖既有内容）
+      const target = kbFreeDir(report.target)
       const items: Array<Record<string, unknown>> = []
       for (const f of report.files) {
-        const path = `${report.target}/${f.path}`
-        let row = kbFiles.find((x) => x.path === path)
-        if (f.text !== null) {
-          if (!row) {
-            row = {
-              id: ++kbFileId, path, content: f.text, system: false, kind: 'text',
-              pinned: false, classifyState: 'inbox', createdAt: now, updatedAt: now,
-            }
-            kbFiles.push(row)
-          } else {
-            row.content = f.text
-            row.updatedAt = now
-          }
-          items.push({ id: row.id, path, bytes: f.text.length, kind: 'text' })
-        } else {
-          if (!row) {
-            row = {
-              id: ++kbFileId, path, content: `【文件】${f.path}`, system: false, kind: 'multimodal',
-              pinned: false, classifyState: 'inbox', createdAt: now, updatedAt: now,
-            }
-            kbFiles.push(row)
-          }
+        // 不覆盖：同名产物自动 -v2（与 Rust free_child_path 同语义）
+        const path = kbFreeChildPath(target, f.path)
+        const row: MockKbFile = {
+          id: ++kbFileId,
+          path,
+          content: f.text !== null ? f.text : `【文件】${f.path}`,
+          system: false,
+          kind: f.text !== null ? 'text' : 'multimodal',
+          pinned: false,
+          classifyState: 'inbox',
+          createdAt: now,
+          updatedAt: now,
+        }
+        kbFiles.push(row)
+        if (f.text === null) {
           kbAssets.push({
             id: ++kbAssetId, fileId: row.id, modal: 'binary', mime: f.mime, ref: f.dataUrl,
             bytes: f.bytes, durationMs: null, transcriptState: 'done', derivedFrom: null, createdAt: now,
           })
-          items.push({ id: row.id, path, bytes: f.bytes, kind: 'binary' })
         }
+        items.push({ id: row.id, path, bytes: f.bytes, kind: f.text !== null ? 'text' : 'binary' })
       }
       saveKbFiles()
       saveKbAssets()
       kbIndexed = false
       kbEnsureIndex()
       return delay(plain({
-        format: report.format, target: report.target, extracted: items,
+        format: report.format, target, extracted: items,
         skipped: report.skipped, bytes: report.bytes, truncated: report.truncated,
-        message: `已解压到 ${report.target}/：${items.length} 个文件（浏览器 mock）`,
+        message: `已解压到 ${target}/：${items.length} 个文件（浏览器 mock）`,
       }) as T)
     }
 
@@ -7201,6 +8075,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'kb_usage': {
       loadKbStore()
       const top = Math.max(0, Math.min(Number(args.top ?? 20), 100))
+      const minBytes = Math.max(0, Number(args.minBytes ?? 0))
       const textBytesOf = (f: MockKbFile): number => new Blob([f.content]).size
       const assetsOf = (id: number): number =>
         kbAssets.filter((a) => a.fileId === id).reduce((s2, a) => s2 + a.bytes, 0)
@@ -7236,9 +8111,16 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           bytes: textBytesOf(f) + assetsOf(f.id),
           textBytes: textBytesOf(f), assetBytes: assetsOf(f.id), updatedAt: f.updatedAt,
         }))
+        .filter((f) => f.bytes >= minBytes)
         .sort((a, b) => b.bytes - a.bytes)
         .slice(0, top)
-      const indexBytes = kbDocs.reduce((s2, d) => s2 + new Blob([d.body ?? '']).size, 0)
+      // 索引口径与 Rust 一致：正文快照 + 分块文本 + 向量（mock 的向量按 512 维 f32 计）
+      const indexBytes = kbDocs.reduce((s2, d) => {
+        const src = kbFiles.find((f) => d.sourceType === 'note' && d.sourceId === String(f.id))
+        const chunks = kbChunkText(src ? src.content : (d.body ?? ''))
+        const chunkBytes = chunks.reduce((s3, t) => s3 + new Blob([t]).size, 0)
+        return s2 + new Blob([d.body ?? '']).size + chunkBytes + chunks.length * 512 * 4
+      }, 0)
       const slices = (m: Map<string, { bytes: number; count: number }>): Array<{ name: string; bytes: number; count: number }> =>
         [...m.entries()].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.bytes - a.bytes)
       const totalBytes = textBytes + assetBytes
@@ -7317,8 +8199,13 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       loadKbStore()
       const threshold = Number(args.threshold ?? 0.86)
       const limit = Number(args.limit ?? 30)
-      const active = kbMemories.filter((m) => !m.archivedAt)
-      const vecs = new Map(active.map((m) => [m.id, mockEmbed(m.content)]))
+      // 与 Rust 同口径：只扫描最近 DUP_SCAN_LIMIT 条（那边是 SQL 的 ORDER BY id DESC LIMIT 400），
+      // 否则 n² 在浏览器主线程上会随记忆库线性变慢
+      const active = kbMemories
+        .filter((m) => !m.archivedAt)
+        .sort((a, b) => b.id - a.id)
+        .slice(0, DUP_SCAN_LIMIT)
+      const vecs = new Map(active.map((m) => [m.id, mockMemVec(m.id, m.content)]))
       const pairs: Array<Record<string, unknown>> = []
       for (let i = 0; i < active.length; i++) {
         for (let j = i + 1; j < active.length; j++) {

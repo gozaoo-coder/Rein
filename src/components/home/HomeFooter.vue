@@ -10,8 +10,10 @@
  *     「练」卡同理（记运动 + 健康方案）。归属关系替代了边角位置。
  *   · 练卡的事实由**练够分**驱动，但「未练」优先于「分低」：本周没练、4 周内常练的部位
  *     先说（断练该捡回来），从没练过的组不凑热闹；分化今天定的课主攻了谁，就顺着它说。
- *   · 「立刻练」直接开练：有今天的课就开课，休息日排一节能补上未练/弱项的课，
- *     都没有就给弱项加练组一节临时课 —— 不让用户再去训练页翻。
+ *   · 「立刻练」直接开练：有今天的课就开课；休息日先排一节能补上未练/弱项的课（方案日程里的），
+ *     方案里没有就退到**课程库里训练目的与弱项高度相似的那一节**（用户自己配好的课，
+ *     见 utils/weakMuscles.matchCourse）；连这样的课都没有，才打开弱项加练抽屉拼一节临时课 ——
+ *     不让用户再去训练页翻。
  *
  * 插件层契约不变：成员全部从 `features.tools` 按 id 取，关掉模块 = 对应的卡/成员消失；
  * 没有落进任何区的工具（未来的插件）会落到末尾的工具行，不会凭空消失。
@@ -28,10 +30,10 @@ import MuscleCatchupSheet from '@/components/exercise/MuscleCatchupSheet.vue'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import { MEAL_LABELS, MEAL_ORDER } from '@/config/domain'
 import { fmtCents } from '@/config/ledger'
-import { SCORE_GROUPS, type ScoreGroupKey } from '@/config/muscles'
+import { type ScoreGroupKey } from '@/config/muscles'
 import type { ToolContribution } from '@/plugins'
 import type { ToolAction } from '@/plugins/types'
-import type { WorkoutPlanRecord } from '@/types'
+import type { WorkoutPlan } from '@/types'
 import { defaultRange, useCampusStore } from '@/stores/campus'
 import { useDietStore } from '@/stores/diet'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
@@ -51,7 +53,7 @@ import { diffDays, todayStr } from '@/utils/date'
 import { courseOnDate, programStatus } from '@/utils/programCycle'
 import { parseBlob } from '@/utils/programEngine'
 import { computeTrainingScore, type GroupScore, type TrainingScoreResult } from '@/utils/trainingScore'
-import { focusGroup, lapsedIdleGroups, weakGroups } from '@/utils/weakMuscles'
+import { focusGroup, lapsedIdleGroups, matchCourse, courseGroups, weakGroups, type MusclesResolver } from '@/utils/weakMuscles'
 
 const props = defineProps<{ date: string }>()
 
@@ -255,11 +257,20 @@ const weakList = computed<GroupScore[]>(() => (score.value ? weakGroups(score.va
 /** 本周没练但 4 周内常练 = 断练，该捡回来；从未练过的组不凑热闹 */
 const lapsedIdle = computed<GroupScore[]>(() => (score.value ? lapsedIdleGroups(score.value.groups) : []))
 
-/** 课程主攻的评估组（组内任一细肌群 3 档）—— 与 weakMuscles 的 isPrimaryFor 同口径 */
+/** 弱项加练的候选：断练未练的组在前，弱项随后（从未练过的不进加练） */
+const catchupWeak = computed<GroupScore[]>(() => [...lapsedIdle.value, ...weakList.value])
+
+/**
+ * 动作 → 肌群表：课程侧的统一入口（库内数据优先，课程条目自带其次，名称规则兜底）。
+ * 不能直接读 `item.muscles` —— 内置课程与编辑器建的课只存 `exerciseId`，肌群在动作库里，
+ * 读条目字段会让它们的「训练目的」全空。
+ */
+const planMuscles: MusclesResolver = (item) => lib.musclesOf(item)
+
+/** 课程主攻的评估组（= 课程训练目的）—— 与弱项加练同一口径 */
 function courseGroupKeys(courseId: string): ScoreGroupKey[] {
   const exs = planStore.byId(courseId)?.exercises
-  if (!exs?.length) return []
-  return SCORE_GROUPS.filter((g) => exs.some((e) => g.members.some((m) => e.muscles?.[m] === 3))).map((g) => g.key)
+  return exs?.length ? courseGroups(exs, planMuscles) : []
 }
 
 function courseCovers(courseId: string, group: ScoreGroupKey): boolean {
@@ -288,6 +299,15 @@ const recommendedCourse = computed<{ courseId: string; courseName: string } | nu
   return null
 })
 
+/**
+ * 课程库里训练目的与弱项高度相似的那一节（判据见 weakMuscles.matchCourse）。
+ *
+ * 与 `recommendedCourse` 的分工：那个只在**方案日程里**找（「我的计划里哪节课补得上」），
+ * 这个在整个课程库里找（「我配置过的课里，哪一节就是冲这些弱项排的」）—— 没有方案、
+ * 或方案里那几节课都不对症时，它才是「立刻练」的答案，末路才是现场拼的临时加练课。
+ */
+const coursePick = computed(() => matchCourse(catchupWeak.value, planStore.plans, planMuscles))
+
 /** 焦点组的课下一次排在哪天（分化每周一轮）——文案好说「明天腿日」 */
 const nextCourseDate = computed<string | null>(() => {
   const rec = recommendedCourse.value
@@ -314,12 +334,18 @@ const trainMain = computed(() => {
 
 const trainNote = computed(() => {
   const f = focus.value
+  /** 焦点组的现状：未练 / 练得不够（两条退路共用同一句话） */
+  const state = f ? (f.idle ? `${f.label}还没练` : `${f.label}练得不够`) : ''
+  /** 课程库里那节对症的现成课：「「拉日」正好补上」 */
+  const pickName = coursePick.value ? `「${coursePick.value.course.name}」正好补上` : ''
+
   if (status.value?.upcoming) {
     const first = status.value.startDate && parsed.value ? courseOnDate(parsed.value, status.value.startDate) : null
     return `${status.value.startDate.slice(5)} 开跑${first ? ` · 首日 ${first.courseName}` : ''}`
   }
   if (status.value?.ended) return '本期已结束 · 去生成成绩单'
   if (!program.active) {
+    if (f && coursePick.value) return `${state} · ${pickName}`
     if (f?.idle) return `${f.label}本周还没练 · 加练一次补上`
     if (f) return `本周${f.label}练得不够 · 排一份方案跟着练`
     return '排一份健康方案 · 训练跟着日程走'
@@ -333,8 +359,10 @@ const trainNote = computed(() => {
         ? `${f.label}还没练 · ${dayLabel(day)}「${rec.courseName}」正好补上`
         : `${f.label}还没练 · 排「${rec.courseName}」正好补上`
     }
-    if (f?.idle) return `${f.label}还没练 · 想练就来一次加练`
     if (f && rec) return `建议排「${rec.courseName}」· 想练就来一次加练`
+    // 方案里没有对症的课，但课程库里有目的高度一致的现成课 —— 立刻练直接开它
+    if (f && coursePick.value) return `${state} · ${pickName}`
+    if (f?.idle) return `${f.label}还没练 · 想练就来一次加练`
     return f ? '今天不排训练 · 想练就来一次加练' : '今天不排训练 · 想动就去运动页'
   }
   const n = planStore.byId(c.courseId)?.exercises.length
@@ -351,12 +379,20 @@ const startBusy = ref(false)
 const conflictOpen = ref(false)
 const catchupOpen = ref(false)
 
-/** 开练目标：今天的课优先；休息日排一节能补上焦点组的课；都没有就落到弱项加练 */
-const startPlan = computed<WorkoutPlanRecord | null>(() => {
+/**
+ * 开练目标，按「离今天多近」排：
+ * 今天的课 → 方案里能补上焦点组的那节 → **课程库里目的与弱项高度一致的现成课**
+ * → 都没有才打开弱项加练抽屉（现场拼临时课）。
+ *
+ * 第三档是这条链新加的：库里已经有一节冲这些弱项排好的课，就没有理由再拼一份草稿 ——
+ * 用户自己配的处方有他的重量与习惯，临时课只是「库里没有」时的兜底。
+ */
+const startPlan = computed<WorkoutPlan | null>(() => {
   const c = todayCourse.value
   if (c) return planStore.byId(c.courseId) ?? null
   const rec = recommendedCourse.value
-  return rec ? (planStore.byId(rec.courseId) ?? null) : null
+  if (rec) return planStore.byId(rec.courseId) ?? null
+  return coursePick.value?.course ?? null
 })
 
 const startReady = computed(() => startPlan.value != null || focus.value != null)
@@ -366,14 +402,11 @@ const startLabel = computed(() => {
   return p ? `立刻开练「${p.name}」` : '开练弱项加练'
 })
 
-/** 弱项加练的候选：断练未练的组在前，弱项随后（从未练过的不进加练） */
-const catchupWeak = computed<GroupScore[]>(() => [...lapsedIdle.value, ...weakList.value])
-
 async function startNow(e: MouseEvent): Promise<void> {
   if (startBusy.value) return
   const plan = startPlan.value
   if (!plan) {
-    catchupOpen.value = true /* 没有现成的课 → 组一节临时加练课 */
+    catchupOpen.value = true /* 库里连一节对症的课都没有 → 组一节临时加练课 */
     return
   }
   const origin = e.currentTarget as HTMLElement | null /* await 后 currentTarget 已置 null，同步先抓 */
@@ -432,7 +465,9 @@ async function loadScore(): Promise<void> {
   } catch (e) {
     console.warn('[home-footer] 练够分统计失败', e)
   }
-  if (features.isEnabled('program')) void planStore.ensureLoaded()
+  // 课程库：练卡的两个推荐（方案里那节课 / 课程库里对症的现成课）都要按它解析训练目的，
+  // 所以只要练卡在就加载 —— 不再挂在「健康方案」功能开关下（没排方案的人也在练）
+  void planStore.ensureLoaded()
 }
 
 onMounted(() => {
