@@ -1,6 +1,6 @@
 [package]
 name = "rein"
-version = "0.5.15"
+version = "0.5.16"
 description = "Rein · 全能生活助理"
 edition = "2021"
 rust-version = "1.77"
@@ -31,6 +31,11 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 # rustls 的 ring provider：reqwest 走 no-provider 后由我们在建 Client 前 install_default
 # （见 modules/ai/agent/llm/http.rs）。ring 是纯 Rust 实现，Android 交叉编译零原生依赖。
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# reqwest 的 TLS 根：显式喂 webpki roots 绕开「平台证书校验器」（reqwest 0.13 默认走
+# rustls-platform-verifier，Android 上要 Kotlin native 组件 + init 否则握手 panic 挂死，
+# 详见 llm/http.rs 的 rustls_webpki_client_config）。1.x 与 reqwest 的 pki-types 同代，
+# 语音 WS（rustls-tls-webpki-roots）用的就是这一套 Mozilla roots。
+webpki-roots = "1"
 async-trait = "0.1"
 url = "2"
 html2text = "0.17"
