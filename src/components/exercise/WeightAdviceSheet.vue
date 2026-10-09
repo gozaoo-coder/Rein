@@ -137,7 +137,7 @@ const lastDateShort = computed(() => {
               <div v-for="f in factors" :key="f.key" class="fbar">
                 <span class="flab">{{ f.label }}</span>
                 <span class="ftrack">
-                  <i class="ffill" :class="{ low: f.value < 1 }" :style="{ width: `${factorPct(f.value)}%` }" />
+                  <i class="ffill" :class="{ low: f.value < 1 }" :style="{ '--p': `${factorPct(f.value)}%` }" />
                   <i class="ftick" :style="{ left: `${FACTOR_TICK_PCT}%` }" />
                 </span>
                 <span class="fval num" :class="{ low: f.value < 1 }">×{{ f.value.toFixed(2) }}</span>
@@ -418,9 +418,11 @@ const lastDateShort = computed(() => {
 .ffill {
   position: absolute;
   inset: 0 auto 0 0;
+  width: 100%;
   border-radius: var(--radius-full);
   background: var(--c-exercise-deep);
-  transition: width var(--dur-slow) var(--ease-standard);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .ffill.low {

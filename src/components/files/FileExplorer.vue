@@ -4,12 +4,15 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CheckCheck,
   ChevronRight,
   ClipboardPaste,
+  Clock,
   Columns3,
   Copy,
   Download,
   Eye,
+  FilePlus2,
   FolderOpen,
   FolderPlus,
   Images,
@@ -24,8 +27,10 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Plus,
   RefreshCw,
   RotateCcw,
+  Rows3,
   Scissors,
   Search,
   FileArchive,
@@ -38,6 +43,7 @@ import {
 
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import { useToast } from '@/composables/useToast'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import { kbService } from '@/services/kbService'
 import { isTauri } from '@/services/transport'
 import { cachedThumbAny } from '@/files/thumbs'
@@ -85,7 +91,7 @@ import type {
   ViewMode,
 } from '@/files/types'
 import { useVirtualRows, type VRow } from '@/files/virtualRows'
-import { KB_SOURCE_LABELS, type KbArchiveListing, type KbSourceType } from '@/types'
+import { KB_SOURCE_LABELS, type KbArchiveListing, type KbHit, type KbSourceType } from '@/types'
 
 /**
  * 文件资源管理器（工作区视图）。
@@ -169,6 +175,174 @@ const keyword = ref('')
 /** 标签筛选（多选 = 都要满足） */
 const activeTags = ref<string[]>([])
 
+/* ---------- 形态：窄屏（手机）走另一套工具条与底部 dock ---------- */
+
+/** 手机端布局（工具条只留下搜索/添加/更多，底部出 dock）。宽屏维持桌面工作台那套。 */
+const narrow = useMediaQuery('(max-width: 640px)')
+
+/* ---------- 虚拟文件系统导航：最近文件 / 目录文件两种模式 ---------- */
+
+type NavMode = 'recent' | 'dir'
+
+const navMode = ref<NavMode>('dir')
+const recentItems = ref<FileItem[]>([])
+const recentLoading = ref(false)
+const recentLoaded = ref(false)
+
+/** KbHit → FileItem：最近模式要跟目录模式用同一个行组件（对齐、手势、勾选框都一样） */
+function hitToItem(h: KbHit): FileItem {
+  const name = h.path ? (h.path.split('/').pop() ?? h.title) : h.title
+  const cut = name.lastIndexOf('.')
+  return {
+    id: `kb:${h.path ?? `#${h.id}`}`,
+    uri: `kb://${h.path ?? ''}`,
+    name,
+    displayName: name,
+    sortName: name.toLowerCase(),
+    extension: cut > 0 ? name.slice(cut + 1).toLowerCase() : undefined,
+    kind: h.kind === 'folder' ? 'folder' : h.kind,
+    isDir: h.kind === 'folder',
+    // 最近模式的列表不带体积与 mtime：只有业务日期，把它当时间列显示
+    modifiedAt: h.occurredOn ? Date.parse(`${h.occurredOn}T00:00:00Z`) : undefined,
+    attributes: { hidden: false, readOnly: !h.editable, system: h.system },
+    permissions: {
+      canRead: true,
+      canWrite: h.editable && !h.system,
+      canDelete: h.editable && !h.system,
+      canRename: h.editable && !h.system,
+    },
+    childCount: 0,
+    rating: 0,
+    tags: h.tags ?? [],
+    hasNote: false,
+    pinned: false,
+    classifyState: '',
+    modalities: [],
+    cloudState: 'local',
+    providerId: 'kb',
+    docId: h.id,
+    sourceType: h.sourceType,
+    title: h.title,
+  }
+}
+
+/** 最近文件：跨目录的「最近动过」，列不出来（它跨目录），所以单独一种模式 */
+async function loadRecent(): Promise<void> {
+  if (recentLoading.value) return
+  recentLoading.value = true
+  try {
+    // 空查询 = 按日期倒序浏览最近内容（与后端约定的默认口径）
+    const hits = await kbService.search({ query: '', limit: 60 })
+    recentItems.value = hits.map(hitToItem)
+    recentLoaded.value = true
+  } catch (e) {
+    toast.toast(errMsg(e))
+  } finally {
+    recentLoading.value = false
+  }
+}
+
+async function setNavMode(mode: NavMode): Promise<void> {
+  if (mode === navMode.value) return
+  navMode.value = mode
+  sel.clear()
+  selectMode.value = false
+  keyword.value = ''
+  activeTags.value = []
+  details.value = null
+  if (mode === 'recent' && !recentLoaded.value) await loadRecent()
+  await nextTick()
+  vlist.reset()
+}
+
+/* ---------- 多选态（长按菜单进来；勾选框直接画在 item 上） ---------- */
+
+const selectMode = ref(false)
+
+function enterSelectMode(item?: FileItem): void {
+  selectMode.value = true
+  if (item) sel.selectOnly(item)
+}
+
+function exitSelectMode(): void {
+  selectMode.value = false
+  sel.clear()
+}
+
+/** 全选 / 全不选：按当前可见条目算（过滤后的那份，不是整个目录） */
+const allSelected = computed(() => {
+  const list = ordered.value
+  return list.length > 0 && list.every((i) => sel.has(i.id))
+})
+
+function toggleSelectAll(): void {
+  if (allSelected.value) sel.clear()
+  else sel.selectAll(ordered.value)
+}
+
+/**
+ * 底部功能栏的按钮能不能点：与菜单同一把尺子（provider.capability）。
+ * 最近模式里的条目大多没有文件实体（搜索结果只带 doc id），复制/剪切/删除会失败 ——
+ * 宁可信 greyed out，也不要「点了才报错」。原因在「更多」菜单里逐项写着。
+ */
+const dockCan = computed(() => {
+  const list = selectedItems.value
+  if (!list.length) return { copy: false, cut: false, del: false }
+  return {
+    copy: list.every((i) => provider.capability(i, 'copy').ok),
+    cut: list.every((i) => provider.capability(i, 'move').ok),
+    del: list.every((i) => provider.capability(i, 'delete').ok),
+  }
+})
+
+/* ---------- 新建文件 / 新建目录（手机端「添加」菜单的两个落点） ---------- */
+
+const newOpen = ref<'file' | 'folder' | null>(null)
+const newName = ref('')
+
+function startNew(kind: 'file' | 'folder'): void {
+  newOpen.value = kind
+  // 新建文件预填一个带扩展名的名字：空内容文件没有扩展名就「打不开」
+  newName.value = kind === 'file' ? '未命名.md' : ''
+}
+
+async function createNew(): Promise<void> {
+  const kind = newOpen.value
+  const name = newName.value.trim()
+  if (!kind || !name) return
+  if (kind === 'folder') {
+    const target = path.value ? `${path.value}/${name}` : name
+    await queue.run('mkdir', `新建目录 ${name}`, 1, async (ctx) => {
+      try {
+        await provider.mkdir(target)
+        ctx.step()
+      } catch (e) {
+        ctx.fail(errMsg(e))
+      }
+    })
+  } else {
+    const target = path.value ? `${path.value}/${name}` : name
+    await queue.run('mkdir', `新建文件 ${name}`, 1, async (ctx) => {
+      try {
+        // 知识库不接受空文件（Rust 与 mock 同判「文件内容不能为空」）：
+        // 给一行标题当种子，用户接着写即可
+        await kbService.fileWrite({ path: target, content: `# ${name}\n` })
+        ctx.step()
+      } catch (e) {
+        ctx.fail(errMsg(e))
+      }
+    })
+  }
+  newOpen.value = null
+  newName.value = ''
+  await refresh()
+  // 新建的文件直接进就地改名：名字本来就是占位的，顺手改成想要的
+  if (kind === 'file') {
+    const id = `kb:${path.value ? `${path.value}/${name}` : name}`
+    if (ordered.value.some((i) => i.id === id)) editingId.value = id
+  }
+}
+
 /* ---------- 压缩包内浏览（进 zip 看条目、选择性解压；压缩包不是目录，单独一层状态） ---------- */
 
 interface ArchiveState {
@@ -200,8 +374,6 @@ const searching = ref(false)
 const editingId = ref<string | null>(null)
 const details = ref<FileItem | null>(null)
 const batchOpen = ref(false)
-const newFolderOpen = ref(false)
-const newFolderName = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
 /** 拖拽中的条目（内部拖放；从系统拖入文件不在本期范围） */
 const dragItems = ref<FileItem[]>([])
@@ -282,10 +454,12 @@ async function withConflictPolicy(
 /* ---------- 数据 → 行 ---------- */
 
 /** 根目录的目录由「地标」卡片承担，列表里就不再重复列一遍 */
-const atRoot = computed(() => !path.value && !trashMode.value && !globalHits.value)
+const atRoot = computed(() => !path.value && !trashMode.value && !globalHits.value && navMode.value === 'dir')
 
 const sourceItems = computed<FileItem[]>(() => {
   if (archive.value) return archiveRows.value
+  // 最近模式：跨目录的最近内容，一层目录概念不适用
+  if (navMode.value === 'recent') return recentItems.value
   const base = trashMode.value
     ? trashItems.value
     : globalHits.value
@@ -639,6 +813,11 @@ async function refresh(): Promise<void> {
   const my = ++refreshSeq
   loading.value = true
   try {
+    // 最近模式也要跟着刷新：刚刚新建/删除的文件，这一屏就是它的家
+    if (navMode.value === 'recent' && recentLoaded.value) {
+      recentLoaded.value = false
+      await loadRecent()
+    }
     if (trashMode.value) {
       const items = await provider.listTrash()
       if (my !== refreshSeq) return
@@ -677,6 +856,10 @@ async function navigate(next: string, push = true): Promise<void> {
   details.value = null
   editingId.value = null
   sel.clear()
+  // 换目录就回到「目录文件」模式：刚从最近模式点进来一个文件夹，
+  // 停留在这个模式会让「上一步」与面包屑都指着一个看不见的目录
+  navMode.value = 'dir'
+  selectMode.value = false
   path.value = next
   await refresh()
   if (push) {
@@ -699,6 +882,8 @@ async function toggleTrash(): Promise<void> {
   globalHits.value = null
   keyword.value = ''
   sel.clear()
+  selectMode.value = false
+  navMode.value = 'dir'
   await refresh()
   await nextTick()
   vlist.reset()
@@ -739,15 +924,37 @@ function focusList(): void {
 
 /**
  * 指针能力：有 hover 的设备走桌面语义（单击选中、双击打开），
- * 触屏走移动语义（单击即打开）—— 触屏上没有 hover，「单击只选中」在手指下像点了没反应。
+ * 触屏走移动语义 —— 触屏上没有 hover，「单击只选中」在手指下像点了没反应，
+ * 所以移动端的单击/dblclick 语义在行组件里按 `touch` 分开处理（见 FileRow）。
  */
 const hoverFine = ref(true)
 let hoverMq: MediaQueryList | null = null
 
+/** 触屏语义：长按菜单、单击选中（文件夹单击直接打开）、双击打开 */
+const touch = computed(() => !hoverFine.value)
+
+/**
+ * 一次「激活」（单击）怎么算，按端分开：
+ *
+ * - **触屏多选态**：单击 = 切换选中（勾选框已经画出来了，点哪行都是选）；
+ * - **触屏最近模式**：单击 = 打开（那一屏全是文件，没有「进去」这个概念）；
+ * - **触屏目录模式**：文件夹单击直接打开；文件单击只选中（打开靠双击/菜单）；
+ * - **桌面**：单选（Shift 范围、Ctrl/Cmd 切换），打开一律靠双击。
+ */
 function activate(item: FileItem, ev: MouseEvent): void {
-  const plain = !ev.shiftKey && !ev.ctrlKey && !ev.metaKey
-  if (!hoverFine.value && plain) {
-    openItem(item)
+  if (touch.value && narrow.value) {
+    if (selectMode.value) {
+      // 多选态：单击 = **切换**选中（不是单选 —— 勾选框都画出来了，点哪行都是加/减）
+      if (ev.shiftKey) sel.click(item, ordered.value, { shift: true, toggle: false })
+      else sel.toggle(item)
+      return
+    }
+    if (navMode.value === 'recent' || item.isDir) {
+      openItem(item)
+      return
+    }
+    sel.selectOnly(item)
+    details.value = null
     return
   }
   const tag = (ev.target as HTMLElement | null)?.tagName
@@ -779,6 +986,19 @@ function openItem(item: FileItem): void {
 
 function up(): void {
   void navigate(parentOf(path.value))
+}
+
+/** 手机端唯一那颗「上一步」：先退目录层级，到根了就退历史，再没有就什么也不做 */
+function backOrUp(): void {
+  if (navMode.value === 'recent') {
+    void setNavMode('dir')
+    return
+  }
+  if (path.value) {
+    up()
+    return
+  }
+  if (canBack.value) void goHistory(-1)
 }
 
 /* ---------- 选择与剪贴板命令 ---------- */
@@ -1026,23 +1246,6 @@ async function applyBatchRename(pairs: { item: FileItem; name: string }[]): Prom
 }
 
 /* ---------- 新建目录 / 导入 ---------- */
-
-async function createFolder(): Promise<void> {
-  const name = newFolderName.value.trim()
-  if (!name) return
-  const target = path.value ? `${path.value}/${name}` : name
-  await queue.run('mkdir', `新建目录 ${name}`, 1, async (ctx) => {
-    try {
-      await provider.mkdir(target)
-      ctx.step()
-    } catch (e) {
-      ctx.fail(errMsg(e))
-    }
-  })
-  newFolderOpen.value = false
-  newFolderName.value = ''
-  await refresh()
-}
 
 function pickUpload(): void {
   fileInput.value?.click()
@@ -1394,10 +1597,11 @@ const menuOpen = ref(false)
 const menuAnchor = ref<HTMLElement | null>(null)
 const menuTargets = ref<FileItem[]>([])
 
-function openMenu(item: FileItem | null, ev: MouseEvent): void {
+/** 打开条目菜单：锚点是**那一行本身**（触屏长按没有坐标，右键才有），未选中项先选中 */
+function openMenu(item: FileItem | null, anchor: HTMLElement | null): void {
   if (item && !sel.has(item.id)) sel.selectOnly(item)
   menuTargets.value = item ? selectedItems.value : []
-  menuAnchor.value = (ev.currentTarget as HTMLElement | null) ?? scrollEl.value
+  menuAnchor.value = anchor ?? scrollEl.value
   menuOpen.value = true
 }
 
@@ -1479,6 +1683,13 @@ const menuActions = computed<MenuItem[]>(() => {
 
   const targets: MenuItem[] = MOVE_TARGETS.map((t) => ({ label: t, value: `move:${t}` }))
   const out: MenuItem[] = []
+  // 「多选」排在最前：触屏上这是进勾选态的正门（进去之后单击=选中，
+  // 底部功能栏给出全选/全不选/复制/剪切）
+  out.push({
+    label: '多选',
+    value: 'multiSelect',
+    icon: CheckCheck,
+  })
   if (one) {
     out.push(
       item(one.isDir ? '打开' : '在阅读器里打开', 'open', {
@@ -1553,6 +1764,10 @@ function onMenuSelect(value: string): void {
     return
   }
   switch (value) {
+    case 'multiSelect':
+      // 从菜单进多选：把当前这一行（或整批选中）带上，进去就能直接批量操作
+      enterSelectMode(one ?? undefined)
+      return
     case 'open':
       if (one) openItem(one)
       return
@@ -1606,8 +1821,7 @@ function onMenuSelect(value: string): void {
     case 'selectAll':
       return sel.selectAll(ordered.value)
     case 'mkdir':
-      newFolderOpen.value = true
-      newFolderName.value = ''
+      startNew('folder')
       return
     case 'refresh':
       return void refresh()
@@ -1619,9 +1833,19 @@ function onMenuSelect(value: string): void {
 const sortMenuOpen = ref(false)
 const groupMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
+/** 手机端「添加」菜单（新建文件 / 新建文件夹 / 上传文件） */
+const addMenuOpen = ref(false)
 const sortBtn = ref<HTMLElement | null>(null)
 const groupBtn = ref<HTMLElement | null>(null)
 const moreBtn = ref<HTMLElement | null>(null)
+const addBtn = ref<HTMLElement | null>(null)
+
+/** 手机端「添加」：三个入口，按用户给的顺序 */
+const addActions = computed<MenuItem[]>(() => [
+  { label: '新建文件', value: 'newFile', icon: FilePlus2 },
+  { label: '新建文件夹', value: 'newFolder', icon: FolderPlus },
+  { label: '上传文件', value: 'upload', icon: Upload },
+])
 
 const sortActions = computed<MenuItem[]>(() => {
   const mark = (k: SortKey) => (prefs.value.sortKey === k ? '✓ ' : '')
@@ -1691,6 +1915,87 @@ const moreActions = computed<MenuItem[]>(() => [
   },
 ])
 
+/**
+ * 手机端「更多」：视图控制、排序、分组**只在这里**（顶部工具条不放它们，太挤）。
+ * 子菜单复用同一批 computed（排序/分组/列都是现成的），所以两端永远同一份规则。
+ */
+const VIEW_LABEL: Record<ViewMode, string> = {
+  list: '列表',
+  grid: '网格',
+  gallery: '画廊',
+  columns: '分栏',
+}
+
+const ICON_LABEL: Record<IconSize, string> = { sm: '小', md: '中', lg: '大' }
+
+const viewModeActions = computed<MenuItem[]>(() => {
+  const mark = (m: ViewMode) => (prefs.value.viewMode === m ? '✓ ' : '')
+  const items: MenuItem[] = [
+    { label: `${mark('list')}列表`, value: 'view:list', icon: List },
+    { label: `${mark('grid')}网格`, value: 'view:grid', icon: LayoutGrid },
+    { label: `${mark('gallery')}画廊（图片与视频）`, value: 'view:gallery', icon: Images },
+    { label: `${mark('columns')}分栏`, value: 'view:columns', icon: Columns3 },
+  ]
+  if (prefs.value.viewMode === 'grid' || prefs.value.viewMode === 'gallery') {
+    const mk = (s: IconSize) => (prefs.value.iconSize === s ? '✓ ' : '')
+    items.push({
+      label: `图标大小（当前${ICON_LABEL[prefs.value.iconSize]}）`,
+      value: 'icon',
+      icon: Rows3,
+      children: [
+        { label: `${mk('sm')}小`, value: 'icon:sm' },
+        { label: `${mk('md')}中`, value: 'icon:md' },
+        { label: `${mk('lg')}大`, value: 'icon:lg' },
+      ],
+    })
+  }
+  return items
+})
+
+const mobileMoreActions = computed<MenuItem[]>(() => [
+  {
+    label: `视图：${VIEW_LABEL[prefs.value.viewMode]}`,
+    value: 'view',
+    icon: LayoutGrid,
+    children: viewModeActions.value,
+  },
+  { label: '排序', value: 'sort', icon: ArrowUpDown, children: sortActions.value },
+  { label: '分组与显示', value: 'group', icon: Layers, children: groupActions.value },
+  // 根目录在手机上只看得到文件（地标卡不展示），目录树是进子目录的正门 —— 桌面是工具条那颗 PanelLeft
+  {
+    label: `${prefs.value.showTree ? '✓ ' : ''}目录树`,
+    value: 'tree',
+    icon: PanelLeft,
+  },
+  // 桌面「更多」里的视图切换（切到网格/列表）在这里由上面的「视图」子菜单承担，剔掉避免重复
+  ...moreActions.value.filter((a) => a.value !== 'view'),
+  {
+    label: trashMode.value ? '退出回收站' : `回收站（${trashCount.value}）`,
+    value: 'trash',
+    icon: Trash2,
+  },
+])
+
+/**
+ * 「更多」菜单的总入口：子菜单的值各自路由回原来的处理器。
+ * 宽窄两档共用这一个函数（手机菜单的值是桌面集合的超集）——
+ * **不要**在模板里写成 `@select="narrow ? a : b"`：Vue 会把三元编译成
+ * `$event => (三元式)`，只求值出函数却从不调用，两档菜单会一起失灵。
+ */
+function onMoreMenuSelect(value: string): void {
+  if (value.startsWith('sort:') || value.startsWith('group:')) return onSortSelect(value)
+  if (value === 'trash') {
+    moreMenuOpen.value = false
+    return void toggleTrash()
+  }
+  if (value === 'tree') {
+    moreMenuOpen.value = false
+    prefs.value.showTree = !prefs.value.showTree
+    return
+  }
+  return onMoreSelect(value)
+}
+
 /** 列的显示开关（至少留一列，否则列表就空了） */
 function toggleColumn(key: string): void {
   const current =
@@ -1705,6 +2010,19 @@ function toggleColumn(key: string): void {
   prefs.value.columns = next.sort((a, b) => order.indexOf(a) - order.indexOf(b))
 }
 
+/** 手机端「添加」菜单：新建文件 / 新建文件夹 / 上传文件 */
+function onAddSelect(value: string): void {
+  addMenuOpen.value = false
+  switch (value) {
+    case 'newFile':
+      return startNew('file')
+    case 'newFolder':
+      return startNew('folder')
+    case 'upload':
+      return pickUpload()
+  }
+}
+
 function policyLabel(p: ConflictPolicy): string {
   return p === 'replace' ? '总是替换' : p === 'skip' ? '总是跳过' : '总是保留两者'
 }
@@ -1712,6 +2030,9 @@ function policyLabel(p: ConflictPolicy): string {
 function onMoreSelect(value: string): void {
   moreMenuOpen.value = false
   if (value.startsWith('col:')) return toggleColumn(value.slice(4))
+  // 手机端「更多」的子菜单值：视图模式与图标大小也走这里
+  if (value.startsWith('view:')) return setView(value.slice(5) as ViewMode)
+  if (value.startsWith('icon:')) return setIconSize(value.slice(5) as IconSize)
   switch (value) {
     case 'refresh':
       return void refresh()
@@ -1806,15 +2127,28 @@ defineExpose({ refresh, navigate, path })
 
 <template>
   <div class="fx">
-    <!-- 工具条：导航 + 过滤 + 视图 + 操作 -->
-    <div class="bar row">
-      <button class="icon" :disabled="!canBack" aria-label="后退" @click="goHistory(-1)">
-        <ChevronRight :size="16" class="flip" />
-      </button>
-      <button class="icon" :disabled="!canForward" aria-label="前进" @click="goHistory(1)">
-        <ChevronRight :size="16" />
-      </button>
-      <button class="icon" aria-label="上一级" :disabled="!path" @click="up">
+    <!-- 工具条：导航 + 过滤 + 视图 + 操作。
+         手机端只留四样：上一步、搜索、添加、更多 —— 视图/排序/分组全部收进「更多」，
+         屏幕才放得下一行真实的文件。宽屏维持桌面工作台那套（前进/后退/视图/树/回收站都在）。 -->
+    <div class="bar row" :class="{ mbar: narrow }">
+      <template v-if="!narrow">
+        <button class="icon" :disabled="!canBack" aria-label="后退" @click="goHistory(-1)">
+          <ChevronRight :size="16" class="flip" />
+        </button>
+        <button class="icon" :disabled="!canForward" aria-label="前进" @click="goHistory(1)">
+          <ChevronRight :size="16" />
+        </button>
+        <button class="icon" aria-label="上一级" :disabled="!path" @click="up">
+          <ArrowUp :size="16" />
+        </button>
+      </template>
+      <button
+        v-else
+        class="icon"
+        aria-label="上一步"
+        :disabled="navMode !== 'recent' && !path && !canBack"
+        @click="backOrUp"
+      >
         <ArrowUp :size="16" />
       </button>
 
@@ -1823,7 +2157,7 @@ defineExpose({ refresh, navigate, path })
         <input
           v-model="keyword"
           type="search"
-          :placeholder="trashMode ? '在回收站里过滤' : '过滤当前目录（回车在整个工作区找）'"
+          :placeholder="trashMode ? '在回收站里过滤' : navMode === 'recent' ? '过滤最近文件' : '过滤当前目录（回车在整个工作区找）'"
           aria-label="过滤文件"
           @keydown.enter.prevent="runGlobalSearch"
         >
@@ -1832,47 +2166,58 @@ defineExpose({ refresh, navigate, path })
         </button>
       </span>
 
-      <button class="icon" aria-label="新建目录" @click="newFolderOpen = !newFolderOpen; newFolderName = ''">
-        <FolderPlus :size="16" />
-      </button>
-      <button class="icon" aria-label="导入文件" @click="pickUpload">
-        <Upload :size="16" />
-      </button>
+      <!-- 添加（手机端）：菜单给 新建文件 / 新建文件夹 / 上传文件 -->
+      <template v-if="narrow">
+        <button ref="addBtn" class="icon" aria-label="添加" @click="addMenuOpen = true">
+          <Plus :size="16" />
+        </button>
+      </template>
+      <template v-else>
+        <button class="icon" aria-label="新建目录" @click="startNew('folder')">
+          <FolderPlus :size="16" />
+        </button>
+        <button class="icon" aria-label="导入文件" @click="pickUpload">
+          <Upload :size="16" />
+        </button>
+      </template>
       <input ref="fileInput" type="file" multiple class="hidden-input" @change="onUploadPicked">
 
-      <span class="seg">
-        <button class="segb" :class="{ on: prefs.viewMode === 'list' }" aria-label="列表视图" @click="setView('list')">
-          <List :size="15" />
+      <template v-if="!narrow">
+        <span class="seg">
+          <button class="segb" :class="{ on: prefs.viewMode === 'list' }" aria-label="列表视图" @click="setView('list')">
+            <List :size="15" />
+          </button>
+          <button class="segb" :class="{ on: prefs.viewMode === 'grid' }" aria-label="网格视图" @click="setView('grid')">
+            <LayoutGrid :size="15" />
+          </button>
+          <button class="segb" :class="{ on: prefs.viewMode === 'gallery' }" aria-label="画廊视图" @click="setView('gallery')">
+            <Images :size="15" />
+          </button>
+          <button class="segb" :class="{ on: prefs.viewMode === 'columns' }" aria-label="分栏视图" @click="setView('columns')">
+            <Columns3 :size="15" />
+          </button>
+        </span>
+        <button
+          class="icon"
+          :class="{ on: prefs.showTree }"
+          aria-label="目录树"
+          @click="prefs.showTree = !prefs.showTree"
+        >
+          <PanelLeft :size="16" />
         </button>
-        <button class="segb" :class="{ on: prefs.viewMode === 'grid' }" aria-label="网格视图" @click="setView('grid')">
-          <LayoutGrid :size="15" />
-        </button>
-        <button class="segb" :class="{ on: prefs.viewMode === 'gallery' }" aria-label="画廊视图" @click="setView('gallery')">
-          <Images :size="15" />
-        </button>
-        <button class="segb" :class="{ on: prefs.viewMode === 'columns' }" aria-label="分栏视图" @click="setView('columns')">
-          <Columns3 :size="15" />
-        </button>
-      </span>
-      <button
-        class="icon"
-        :class="{ on: prefs.showTree }"
-        aria-label="目录树"
-        @click="prefs.showTree = !prefs.showTree"
-      >
-        <PanelLeft :size="16" />
-      </button>
 
-      <button ref="sortBtn" class="icon" aria-label="排序" @click="sortMenuOpen = true">
-        <ArrowUpDown :size="16" />
-      </button>
-      <button ref="groupBtn" class="icon" aria-label="分组" @click="groupMenuOpen = true">
-        <Layers :size="16" />
-      </button>
+        <button ref="sortBtn" class="icon" aria-label="排序" @click="sortMenuOpen = true">
+          <ArrowUpDown :size="16" />
+        </button>
+        <button ref="groupBtn" class="icon" aria-label="分组" @click="groupMenuOpen = true">
+          <Layers :size="16" />
+        </button>
+      </template>
       <button ref="moreBtn" class="icon" aria-label="更多" @click="moreMenuOpen = true">
         <MoreHorizontal :size="16" />
       </button>
       <button
+        v-if="!narrow"
         class="icon trash-entry"
         :class="{ on: trashMode }"
         :aria-label="`回收站（${trashCount} 项）`"
@@ -1885,8 +2230,8 @@ defineExpose({ refresh, navigate, path })
       </button>
     </div>
 
-    <!-- 图标尺寸档（只在网格里出现） -->
-    <div v-if="prefs.viewMode === 'grid' && !trashMode" class="bar row sizing">
+    <!-- 图标尺寸档（只在网格里出现；手机端这一档收在「更多」里） -->
+    <div v-if="prefs.viewMode === 'grid' && !trashMode && !narrow" class="bar row sizing">
       <span class="t-3 label">图标</span>
       <span class="seg">
         <button class="segb" :class="{ on: prefs.iconSize === 'sm' }" @click="setIconSize('sm')">小</button>
@@ -1896,16 +2241,18 @@ defineExpose({ refresh, navigate, path })
       <span class="t-3 label">拖动条目到文件夹可以移动；按 Ctrl 拖动是复制</span>
     </div>
 
-    <!-- 新建目录（就地，不做弹窗） -->
-    <div v-if="newFolderOpen" class="card newfolder">
+    <!-- 新建文件 / 新建目录（就地，不做弹窗） -->
+    <div v-if="newOpen" class="card newfolder">
       <input
-        v-model="newFolderName"
-        placeholder="新目录名，如「知识」"
-        aria-label="新目录名"
-        @keyup.enter="createFolder"
+        v-model="newName"
+        :placeholder="newOpen === 'folder' ? '新目录名，如「知识」' : '新文件名，如「课程笔记.md」'"
+        :aria-label="newOpen === 'folder' ? '新目录名' : '新文件名'"
+        @keyup.enter="createNew"
       >
-      <button class="btn" :disabled="!newFolderName.trim()" @click="createFolder">创建</button>
-      <button class="btn ghost" @click="newFolderOpen = false">取消</button>
+      <button class="btn" :disabled="!newName.trim()" @click="createNew">
+        {{ newOpen === 'folder' ? '创建目录' : '创建文件' }}
+      </button>
+      <button class="btn ghost" @click="newOpen = null">取消</button>
     </div>
 
     <!-- 压缩包内浏览：条数与返回一起给，包内路径可逐级点回 -->
@@ -1940,6 +2287,10 @@ defineExpose({ refresh, navigate, path })
         </button>
       </template>
     </div>
+    <div v-else-if="navMode === 'recent' && !trashMode" class="crumbs row">
+      <button class="crumb cur" @click="setNavMode('dir')">最近文件</button>
+      <span class="t-3 crumb-note">跨目录 · 按最近修改</span>
+    </div>
     <div v-else-if="!trashMode && !globalHits" class="crumbs row">
       <button class="crumb" :class="{ cur: !crumbs.length }" @click="navigate('')">文件</button>
       <template v-for="(c, k) in crumbs" :key="k">
@@ -1972,8 +2323,9 @@ defineExpose({ refresh, navigate, path })
       <button class="btn ghost tiny" @click="toggleTrash">退出</button>
     </div>
 
-    <!-- 地标：根目录的命名空间（数据里没有对应目录也照样显示，这就是心智模型） -->
-    <section v-if="landmarkRows.length" class="card list landmarks">
+    <!-- 地标：根目录的命名空间（数据里没有对应目录也照样显示，这就是心智模型）。
+         手机端不展示：主内容区只留面包屑 + 功能 + 当前目录（用户要求）。 -->
+    <section v-if="!narrow && landmarkRows.length" class="card list landmarks">
       <h3 class="sec">工作区</h3>
       <ul>
         <li v-for="l in landmarkRows" :key="l.name">
@@ -1990,7 +2342,7 @@ defineExpose({ refresh, navigate, path })
       </ul>
     </section>
 
-    <p v-if="landmarkRows.length && ordered.length" class="sec files-sec">根目录文件</p>
+    <p v-if="!narrow && landmarkRows.length && ordered.length" class="sec files-sec">根目录文件</p>
 
     <!-- 列头（宽屏=表格式）：列来自列注册表（可在「列」菜单里增删），点列头排序 -->
     <div v-if="wide && prefs.viewMode === 'list' && !trashMode" class="thead row">
@@ -2013,8 +2365,9 @@ defineExpose({ refresh, navigate, path })
       </button>
     </div>
 
-    <!-- 标签筛选条：只在这一层出现过标签时出现 -->
-    <div v-if="tagOptions.length" class="bar row tagbar">
+    <!-- 标签筛选条：只在这一层出现过标签时出现（手机端收进「更多 → 分组与显示」的理念，
+         这一条是数据筛选不是视图筛选，留在页面上但只宽屏显示） -->
+    <div v-if="!narrow && tagOptions.length" class="bar row tagbar">
       <span class="t-3 label">标签</span>
       <button
         v-for="t in tagOptions.slice(0, 12)"
@@ -2064,7 +2417,7 @@ defineExpose({ refresh, navigate, path })
       tabindex="0"
       @keydown="onKeydown"
       @pointerdown="onBandStart"
-      @contextmenu.self.prevent="openMenu(null, $event)"
+      @contextmenu.self.prevent="openMenu(null, $event.target as HTMLElement)"
       @dragover.self.prevent
       @drop.self.prevent="onDropOnPath(path, $event)"
     >
@@ -2105,6 +2458,8 @@ defineExpose({ refresh, navigate, path })
             :wide="wide && !trashMode"
             :columns="columns"
             :paste-target="clip.count.value > 0 && v.row.data.item.isDir"
+            :touch="touch"
+            :select-mode="selectMode"
             @activate="activate"
             @open="openItem"
             @menu="openMenu"
@@ -2133,6 +2488,8 @@ defineExpose({ refresh, navigate, path })
             :drag-over="dropTarget === it.id"
             :editing="false"
             :paste-target="clip.count.value > 0 && it.isDir"
+            :touch="touch"
+            :select-mode="selectMode"
             @activate="activate"
             @open="openItem"
             @menu="openMenu"
@@ -2148,11 +2505,13 @@ defineExpose({ refresh, navigate, path })
         {{
           trashMode
             ? '回收站是空的'
-            : keyword
-              ? `当前目录没有名字含「${keyword}」的条目`
-              : path
-                ? '此目录还没有文件'
-                : '工作区还是空的'
+            : navMode === 'recent'
+              ? (recentLoading ? '正在读最近文件…' : '最近没有动过的文件')
+              : keyword
+                ? `当前目录没有名字含「${keyword}」的条目`
+                : path
+                  ? '此目录还没有文件'
+                  : '工作区还是空的'
         }}
       </p>
       <p v-if="loading" class="empty t-3">加载中…</p>
@@ -2253,8 +2612,8 @@ defineExpose({ refresh, navigate, path })
       />
     </section>
 
-    <!-- 状态栏：条目数 / 选中 / 体积 / 路径 -->
-    <p class="status t-3">
+    <!-- 状态栏：条目数 / 选中 / 体积 / 路径（手机端不占版面，dock 上已有计数） -->
+    <p v-if="!narrow" class="status t-3">
       <template v-if="trashMode">
         <span>回收站 · {{ trashItems.length }} 项</span>
       </template>
@@ -2266,7 +2625,66 @@ defineExpose({ refresh, navigate, path })
       </template>
     </p>
 
-    <!-- 菜单（bind 模式，各自锚定触发按钮） -->
+    <!-- 底部悬浮 dock（手机端）：虚拟文件系统导航 + 按需出现的功能栏。
+          Teleport 到 body：页面滚动层在超范围平移时带 transform，fixed 后代会跑位。 -->
+    <Teleport to="body">
+      <div v-if="narrow" class="fdock" :class="{ sel: selectMode }">
+        <!-- 导航：最近文件 / 目录文件 -->
+        <div v-if="!selectMode" class="fseg">
+          <button
+            type="button"
+            class="fseg-b"
+            :class="{ on: navMode === 'recent' }"
+            :aria-pressed="navMode === 'recent'"
+            @click="setNavMode('recent')"
+          >
+            <Clock :size="13" />
+            最近文件
+          </button>
+          <button
+            type="button"
+            class="fseg-b"
+            :class="{ on: navMode === 'dir' }"
+            :aria-pressed="navMode === 'dir'"
+            @click="setNavMode('dir')"
+          >
+            <FolderOpen :size="13" />
+            目录文件
+          </button>
+        </div>
+
+        <!-- 功能栏（多选态）：全选/全不选 + 复制/剪切/删除/更多，收尾「完成」 -->
+        <div v-else class="facts">
+          <button type="button" class="fact" @click="toggleSelectAll">
+            <CheckCheck :size="15" />
+            {{ allSelected ? '全不选' : '全选' }}
+          </button>
+          <button type="button" class="fact" :disabled="!dockCan.copy" @click="doCopy()">
+            <Copy :size="15" />
+            复制
+          </button>
+          <button type="button" class="fact" :disabled="!dockCan.cut" @click="doCut()">
+            <Scissors :size="15" />
+            剪切
+          </button>
+          <button type="button" class="fact danger" :disabled="!dockCan.del" @click="doTrash(selectedItems)">
+            <Trash2 :size="15" />
+            删除
+          </button>
+          <button
+            v-if="sel.count.value"
+            type="button"
+            class="fact"
+            @click="menuTargets = selectedItems; menuAnchor = null; menuOpen = true"
+          >
+            <MoreHorizontal :size="15" />
+          </button>
+          <button type="button" class="fact done" @click="exitSelectMode">完成</button>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 菜单（bind 模式，各自锚定触发按钮/行） -->
     <AppMenu
       :open="menuOpen"
       :actions="menuActions"
@@ -2274,6 +2692,14 @@ defineExpose({ refresh, navigate, path })
       title="文件操作"
       @close="menuOpen = false"
       @select="onMenuSelect"
+    />
+    <AppMenu
+      :open="addMenuOpen"
+      :actions="addActions"
+      :anchor="addBtn"
+      title="添加"
+      @close="addMenuOpen = false"
+      @select="onAddSelect"
     />
     <AppMenu
       :open="sortMenuOpen"
@@ -2293,12 +2719,15 @@ defineExpose({ refresh, navigate, path })
     />
     <AppMenu
       :open="moreMenuOpen"
-      :actions="moreActions"
+      :actions="narrow ? mobileMoreActions : moreActions"
       :anchor="moreBtn"
       title="更多"
       @close="moreMenuOpen = false"
-      @select="onMoreSelect"
+      @select="onMoreMenuSelect"
     />
+
+    <!-- dock 遮罩：给页面底部留出等量空白，最后一行不会被 dock 压住 -->
+    <div v-if="narrow" class="fdock-space" aria-hidden="true" />
   </div>
 </template>
 
@@ -2307,6 +2736,128 @@ defineExpose({ refresh, navigate, path })
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* ---------- 手机端工具条：只留 上一步 / 搜索 / 添加 / 更多 ---------- */
+
+/* 窄屏取消换行：四样东西必须一行装下，谁换行谁把列表顶出屏外 */
+.bar.mbar {
+  flex-wrap: nowrap;
+  gap: 5px;
+  padding: 6px 7px;
+}
+
+/* ---------- 底部悬浮 dock（虚拟文件系统导航 + 按需功能栏） ---------- */
+
+/* 位置与 AI 页输入条同一套公式：让开底部 Dock 导航（--dock-top）+ 一点空气，
+   别自己拼 safe-area / tabbar 高度。Teleport 到 body，所以这里等于视口底部。 */
+.fdock {
+  position: fixed;
+  left: var(--page-pad-x);
+  right: var(--page-pad-x);
+  bottom: calc(var(--dock-top) + 10px + var(--wbar-reserve, 0px));
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: var(--shadow-float);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.fdock::-webkit-scrollbar {
+  display: none;
+}
+
+/* 导航：最近文件 / 目录文件（分段胶囊） */
+.fseg {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+}
+
+.fseg-b {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-footnote);
+  font-weight: 700;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.fseg-b.on {
+  background: var(--surface);
+  color: var(--text-1);
+  box-shadow: var(--shadow-thumb);
+}
+
+/* 功能栏（多选态）：按需出现；选项多的时候横向滚，不换行挤成一团 */
+.facts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.fact {
+  flex: 1;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 44px;
+  padding: 6px 4px;
+  border-radius: var(--radius-m);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.fact:active {
+  background: var(--surface-2);
+}
+
+.fact:disabled {
+  opacity: 0.35;
+}
+
+.fact.danger {
+  color: var(--danger-strong);
+}
+
+.fact.done {
+  flex: none;
+  padding: 8px 12px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: #fff;
+}
+
+/* 给 dock 留白：页面滚到底时最后一行不被压住。
+   只加 dock 自身高度 + 间距 —— 页面自己的 --page-pad-bottom 已经让开了底部导航，
+   这里再把 --dock-top 加一遍会让页面底部多出一屏空白。 */
+.fdock-space {
+  height: 68px;
 }
 
 .bar {

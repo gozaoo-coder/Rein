@@ -156,7 +156,7 @@ const stats = computed(() => {
   transition: transform var(--dur-fast) var(--ease-standard);
 }
 
-/* 空档（上月/下月补位格）与悬停底色：透明格子上给一个可感知的按压态 */
+/* 空档（上月/下月补位格）：透明格子上给一个可感知的按压态 */
 .cell:not(.blank):active {
   background: color-mix(in srgb, var(--text-3) 8%, transparent);
   transform: scale(0.97);

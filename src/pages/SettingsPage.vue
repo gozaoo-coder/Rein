@@ -81,6 +81,8 @@ onMounted(() => {
 <template>
   <div class="page">
     <PageHeader title="设置" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 功能：插件开关入口 -->
     <section class="card d-full">
@@ -212,6 +214,7 @@ onMounted(() => {
         更新链路（多源 + 验签 + 安装）见 docs/UPDATES.md
       </p>
     </section>
+    </div>
   </div>
 </template>
 

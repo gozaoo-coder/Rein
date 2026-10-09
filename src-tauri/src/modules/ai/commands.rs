@@ -464,11 +464,13 @@ fn validate_ai_model(input: &AiModelInput) -> Result<()> {
     Ok(())
 }
 
-/// 模型列表：默认模型置顶。
+/// 模型列表：默认模型置顶，其余按 id **降序**（新加的在上）。
+/// 方向为降序是产品决定：模型清单只会越加越长，最新配上的那个最可能正是要用的，
+/// 放顶部比「最早那条永远排第一」更符合实际。
 #[tauri::command]
 pub fn ai_model_list(state: State<AppState>) -> Result<Vec<AiModel>> {
     let conn = state.db.lock();
-    let sql = format!("SELECT {AI_MODEL_COLS} FROM ai_models ORDER BY is_default DESC, id ASC");
+    let sql = format!("SELECT {AI_MODEL_COLS} FROM ai_models ORDER BY is_default DESC, id DESC");
     let mut stmt = conn.prepare(&sql)?;
     let models = stmt
         .query_map([], ai_model_from_row)?

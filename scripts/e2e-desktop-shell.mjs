@@ -89,22 +89,34 @@ try {
   check('.page 内容上限 = --desk-content 1040', shell.page.maxW === '1040px', '实测 ' + shell.page.maxW)
   check('<html data-shell="desk">（游离子孙据此适配）', shell.dataShell === 'desk', '实测 ' + shell.dataShell)
 
-  // 栅格子项摆放：.card 半栏、.d-full 通栏 —— 工具类的先后顺序靠这里守着
+  // 栅格子项摆放：.card 半栏、.d-full 通栏 —— 工具类的先后顺序靠这里守着。
+  // 卡片挂在页面的内容层里（.page > .rubber-layer，system/rubberScroll 的超伸层），
+  // 层镜像 .page 的两栏栅格，所以量的是层内的子项。
+  // 首页只有半栏卡；通栏卡到记账页量（那一页两种都有）。
   const spans = await page.evaluate(() => {
-    const kids = [...document.querySelectorAll('.page > *')]
+    const layer = document.querySelector('.page > .rubber-layer') ?? document.querySelector('.page')
+    const kids = [...layer.children]
     const half = kids.find((el) => el.classList.contains('card') && !el.classList.contains('d-full'))
-    const full = kids.find((el) => el.classList.contains('d-full'))
     const pageEl = document.querySelector('.page')
     return {
       halfCol: half ? getComputedStyle(half).gridColumn : null,
+      pageW: Math.round(pageEl.getBoundingClientRect().width),
+    }
+  })
+  check('.page > .card 缺省半栏', spans.halfCol === 'span 1', '实测 ' + spans.halfCol)
+  await goto(page, '#/ledger')
+  const fullSpans = await page.evaluate(() => {
+    const layer = document.querySelector('.page > .rubber-layer') ?? document.querySelector('.page')
+    const full = [...layer.children].find((el) => el.classList.contains('d-full'))
+    const pageEl = document.querySelector('.page')
+    return {
       fullCol: full ? getComputedStyle(full).gridColumn : null,
       fullW: full ? Math.round(full.getBoundingClientRect().width) : 0,
       pageW: Math.round(pageEl.getBoundingClientRect().width),
     }
   })
-  check('.page > .card 缺省半栏', spans.halfCol === 'span 1', '实测 ' + spans.halfCol)
-  check('.page > .card.d-full 通栏（工具类压过缺省）', spans.fullCol === '1 / -1', '实测 ' + spans.fullCol + ' / 宽 ' + spans.fullW)
-  check('通栏宽度 = 页面内容宽（两侧各留 34px）', spans.fullW > 0 && Math.abs(spans.fullW - (spans.pageW - 68)) <= 2, '通栏 ' + spans.fullW + ' / 页面 ' + spans.pageW)
+  check('.page > .card.d-full 通栏（工具类压过缺省）', fullSpans.fullCol === '1 / -1', '实测 ' + fullSpans.fullCol + ' / 宽 ' + fullSpans.fullW)
+  check('通栏宽度 = 页面内容宽（两侧各留 34px）', fullSpans.fullW > 0 && Math.abs(fullSpans.fullW - (fullSpans.pageW - 68)) <= 2, '通栏 ' + fullSpans.fullW + ' / 页面 ' + fullSpans.pageW)
 
   /* 宽形态页面不该被套栅格：AI 页自己那条阅读栏必须留着 */
   await goto(page, '#/ai')

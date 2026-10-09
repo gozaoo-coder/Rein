@@ -398,7 +398,8 @@ async function applyAndGenerate(): Promise<void> {
   transition:
     background var(--dur-fast) var(--ease-standard),
     color var(--dur-fast) var(--ease-standard),
-    border-color var(--dur-fast) var(--ease-standard);
+    border-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 .chip.on {
@@ -479,7 +480,9 @@ async function applyAndGenerate(): Promise<void> {
   color: var(--on-accent);
   font-size: var(--fs-callout);
   font-weight: 700;
-  transition: opacity var(--dur-fast) var(--ease-standard);
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 .primary:disabled {

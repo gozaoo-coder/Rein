@@ -111,6 +111,8 @@ async function nextPhase(): Promise<void> {
 <template>
   <div class="page">
     <PageHeader title="结营成绩单" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <section v-if="phase === 'loading'" class="card center empty">
       <span class="t-3">正在汇总执行数据…</span>
@@ -220,6 +222,7 @@ async function nextPhase(): Promise<void> {
         </p>
       </section>
     </template>
+    </div>
   </div>
 </template>
 
@@ -473,50 +476,50 @@ async function nextPhase(): Promise<void> {
 }
 
 /* 单张空态卡片在半栏里右半屏全空 —— 它本来就该是整屏一句话 */
-.desk-main .page > section.card.empty {
-  grid-row: 2;
+.desk-main .rubber-layer > section.card.empty {
+  grid-row: 1;
   grid-column: 1 / -1;
 }
 
 /* 完成度英雄区：一个环 + 四条数字，通栏居中才撑得住这页的气势 */
-.desk-main .page > section.pod.hero {
-  grid-row: 2;
+.desk-main .rubber-layer > section.pod.hero {
+  grid-row: 1;
   grid-column: 1 / -1;
 }
 
 /* 对照与报告是这页的正文：并排两栏，一屏读完「有没有用」 */
-.desk-main .page > section.pod.compare {
-  grid-row: 3;
+.desk-main .rubber-layer > section.pod.compare {
+  grid-row: 2;
   grid-column: 1;
 }
 
-.desk-main .page > section.pod.report {
-  grid-row: 3 / span 2;
+.desk-main .rubber-layer > section.pod.report {
+  grid-row: 2 / span 2;
   grid-column: 2;
 }
 
 /* 徽章是短列表，落在左栏对照下方 */
-.desk-main .page > section.pod.badges {
-  grid-row: 4;
+.desk-main .rubber-layer > section.pod.badges {
+  grid-row: 3;
   grid-column: 1;
 }
 
 /* 下一期建议与 CTA 保持通栏：一条结论 + 一枚决定下一步的按钮，
    横跨整屏读起来才是「结论 → 行动」的顺序 */
-.desk-main .page > section.callout {
+.desk-main .rubber-layer > section.callout {
+  grid-row: 4;
+  grid-column: 1 / -1;
+}
+
+.desk-main .rubber-layer > button.primary {
   grid-row: 5;
   grid-column: 1 / -1;
 }
 
-.desk-main .page > button.primary {
-  grid-row: 6;
-  grid-column: 1 / -1;
-}
-
 /* 栅格用 gap 管行距，卡片自身那 12px 的下边距要收掉 */
-.desk-main .page > .pod,
-.desk-main .page > .callout,
-.desk-main .page > .primary {
+.desk-main .rubber-layer > .pod,
+.desk-main .rubber-layer > .callout,
+.desk-main .rubber-layer > .primary {
   margin-bottom: 0;
 }
 </style>

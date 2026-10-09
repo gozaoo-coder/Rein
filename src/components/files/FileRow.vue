@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { ChevronRight, Lock, Pin } from 'lucide-vue-next'
+import { Check } from 'lucide-vue-next'
 
 import FileIcon from './FileIcon.vue'
+import { useLongPress } from '@/files/useLongPress'
 import { checkName, extChanged, formatFullWhen, formatWhen, kindLabel, splitExt } from '@/files/sort'
 import type { ColumnDef } from '@/files/registry'
 import type { FileItem } from '@/files/types'
@@ -12,9 +13,17 @@ import { humanBytes } from '@/utils/format'
 /**
  * 列表里的一行。
  *
- * 两套布局由 `wide` 切换（同一个组件，不是两个组件）：宽屏走表格式多列，
- * 窄屏走「名称 / 元信息」两行 —— 移动端把四列硬塞进 360px 只会挤成一条缝。
- * 两种布局共享同一份状态与交互（选择、拖拽、就地改名），所以不存在行为漂移。
+ * 布局由 `wide` 切换（同一个组件，不是两个组件）：宽屏走表格式多列，
+ * 窄屏走「名称 + 元信息」两行 —— 且**大小与日期是定宽右对齐的列**，
+ * 于是每一行的「名称 / 类型 / 大小 / 日期 / 状态」都对齐（移动端扫列表靠这个）。
+ *
+ * 手势分两套语义，由 `touch` 切换：
+ * - 触屏：单击选中（文件夹单击直接打开）、双击用默认方式打开、长按弹菜单；
+ *   多选态下（`selectMode`）行首出现勾选框，单击改为切换选中。
+ * - 桌面（细指针）：单击选中、双击打开、右键菜单（与前者一致，只是没有长按）。
+ *
+ * 「🔒 / 钉住」不再单独占行尾一格：它们走 FileIcon 的徽章，落在**图标右下角**，
+ * 行尾只留大小与日期两列，列才对齐得起来。
  */
 const props = withDefaults(
   defineProps<{
@@ -30,14 +39,18 @@ const props = withDefaults(
     columns?: ColumnDef[]
     /** 剪贴板非空时高亮「可以粘贴进来」的目录 */
     pasteTarget?: boolean
+    /** 触屏语义（长按菜单、单击选中/打开） */
+    touch?: boolean
+    /** 多选态：行首画勾选框，单击改为切换选中 */
+    selectMode?: boolean
   }>(),
-  { wide: false, pasteTarget: false, columns: () => [] },
+  { wide: false, pasteTarget: false, touch: false, selectMode: false, columns: () => [] },
 )
 
 const emit = defineEmits<{
   activate: [item: FileItem, ev: MouseEvent]
   open: [item: FileItem]
-  menu: [item: FileItem, ev: MouseEvent]
+  menu: [item: FileItem, anchor: HTMLElement | null]
   dragStart: [item: FileItem, ev: DragEvent]
   dragEnd: []
   /** 悬停（dragenter/dragover 期间持续触发）：只做高亮 */
@@ -66,18 +79,35 @@ const sizeLabel = computed(() => {
 
 const timeLabel = computed(() => formatWhen(props.item.modifiedAt))
 
+/** 第二行左半：类型（派生投影说来源，普通文件说扩展名） */
+const typeText = computed(() => {
+  if (props.item.isDir) return '文件夹'
+  if (sourceLabel.value) return sourceLabel.value
+  const ext = (props.item.extension ?? '').toUpperCase()
+  const kind = kindLabel(props.item.kind)
+  return ext ? `${kind} · ${ext}` : kind
+})
+
+/** 第二行右半：状态（只读 / 钉住 / 归类），没有就不占位 */
+const statusText = computed(() => {
+  const bits: string[] = []
+  if (props.item.attributes.system) bits.push('系统只读')
+  else if (props.item.attributes.readOnly) bits.push('只读')
+  if (props.item.pinned) bits.push('已钉住')
+  if (props.item.classifyState === 'inbox') bits.push('待归类')
+  else if (props.item.classifyState === 'filed') bits.push('已归类')
+  return bits.join(' · ')
+})
+
 const metaLine = computed(() => {
-  const bits = [kindLabel(props.item.kind)]
-  if (sourceLabel.value) bits.push(sourceLabel.value)
-  if (props.item.isDir) bits.push(sizeLabel.value)
-  else if (sizeLabel.value) bits.push(sizeLabel.value)
-  if (timeLabel.value) bits.push(timeLabel.value)
+  const bits = [typeText.value]
+  if (statusText.value) bits.push(statusText.value)
   return bits.join(' · ')
 })
 
 /** 读屏要读全：名称、类型、大小、修改时间、选中态（由 aria-selected 给） */
 const ariaLabel = computed(() => {
-  const bits = [props.item.name, kindLabel(props.item.kind)]
+  const bits = [props.item.name, typeText.value]
   if (props.item.isDir) bits.push(sizeLabel.value || '空目录')
   else if (props.item.size !== undefined) bits.push(humanBytes(props.item.size))
   if (props.item.modifiedAt) bits.push(`修改于 ${formatFullWhen(props.item.modifiedAt)}`)
@@ -125,6 +155,17 @@ function commitRename(): void {
   }
   emit('renameCommit', props.item, next)
 }
+
+/* ---------- 长按（触屏）→ 菜单（共享手势，含幽灵点击吞咽） ---------- */
+
+const longPress = useLongPress({
+  isTouch: () => props.touch && !props.editing,
+  onFire: (el) => emit('menu', props.item, el),
+})
+
+function onClick(ev: MouseEvent): void {
+  longPress.click(ev, (e) => emit('activate', props.item, e))
+}
 </script>
 
 <template>
@@ -139,15 +180,25 @@ function commitRename(): void {
     <div
       class="hit"
       :draggable="!editing"
-      @click="emit('activate', item, $event)"
+      @click="onClick"
       @dblclick="emit('open', item)"
-      @contextmenu.prevent="emit('menu', item, $event)"
+      @contextmenu.prevent="emit('menu', item, $event.currentTarget as HTMLElement)"
+      @pointerdown="longPress.down($event)"
+      @pointermove="longPress.move($event)"
+      @pointerup="longPress.cancel()"
+      @pointercancel="longPress.cancel()"
       @dragstart="emit('dragStart', item, $event)"
       @dragend="emit('dragEnd')"
       @dragover="emit('dragOver', item, $event)"
       @drop.stop="emit('drop', item, $event)"
     >
-      <FileIcon :item="item" :size="18" />
+      <!-- 多选态的勾选框：出现即表示「这一屏点是选中，不是打开」 -->
+      <span v-if="selectMode" class="ck" :class="{ on: selected }" aria-hidden="true">
+        <Check :size="12" :stroke-width="3" />
+      </span>
+
+      <!-- 图标 + 右下角徽章（🔒 / 钉住 / 云状态）：徽章归 FileIcon，行尾不再占格 -->
+      <FileIcon :item="item" :size="18" badges />
 
       <!-- 就地改名：默认只选中主文件名（见 watch） -->
       <template v-if="editing">
@@ -184,16 +235,15 @@ function commitRename(): void {
         </span>
       </template>
 
+      <!-- 窄屏：名称一行；第二行是「类型 · 状态」；大小与日期是定宽右对齐的两列 -->
       <template v-else>
         <span class="name-col">
           <b>{{ item.displayName }}</b>
           <small>{{ metaLine }}</small>
         </span>
+        <span class="num size">{{ sizeLabel }}</span>
+        <span class="num date">{{ timeLabel }}</span>
       </template>
-
-      <Lock v-if="item.attributes.system" :size="12" class="t-3 mark" />
-      <Pin v-else-if="item.pinned" :size="12" class="t-3 mark" />
-      <ChevronRight v-if="!editing && !wide" :size="15" class="t-3 chev" />
     </div>
   </li>
 </template>
@@ -212,14 +262,25 @@ function commitRename(): void {
   border-radius: var(--radius-m);
   cursor: default;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-.hit:hover {
-  background: var(--surface-2);
+/* 悬停只在真悬停设备生效：触屏点一下也会留下 :hover 底色 */
+@media (hover: hover) {
+  .hit:hover {
+    background: var(--surface-2);
+  }
 }
 
 .row.sel .hit {
   background: var(--accent-soft);
+}
+
+/* 压在选中底色之上、早于 .focus/.over：键盘焦点与拖放高亮继续优先 */
+.row .hit:active {
+  background: var(--surface-2);
 }
 
 /* 焦点与选中**用两种视觉**：只靠颜色区分选中态对看不见颜色的人等于没有状态 */
@@ -239,6 +300,26 @@ function commitRename(): void {
 /* 剪贴板非空时，目录行给出「可以放到这里」的暗示 */
 .row.dir.paste .hit {
   box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* 勾选框：多选态专用，空框描边、选中实底 */
+.ck {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  border: 1.5px solid var(--text-3);
+  background: var(--surface);
+  color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ck.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .name-col {
@@ -277,6 +358,26 @@ function commitRename(): void {
   font-size: var(--fs-caption);
 }
 
+/* 窄屏两列：定宽 + 右对齐 + 等宽数字 —— 每一行的大小与日期都对齐 */
+.num {
+  flex: none;
+  text-align: right;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.num.size {
+  width: 56px;
+}
+
+.num.date {
+  width: 66px;
+}
+
 .col {
   flex: none;
   font-size: var(--fs-caption);
@@ -294,11 +395,6 @@ function commitRename(): void {
 
 .col.end {
   text-align: right;
-}
-
-.mark,
-.chev {
-  flex: none;
 }
 
 .rename {

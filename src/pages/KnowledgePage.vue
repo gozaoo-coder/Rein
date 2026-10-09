@@ -699,6 +699,8 @@ function requestCloseEditor(): void {
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <div class="cards" :class="{ 'is-editing': !!editor }">
       <!-- 检索：这页 90% 的到访是搜一下 / 看看最近内容，放第一卡（桌面右栏上格） -->
@@ -1170,6 +1172,7 @@ function requestCloseEditor(): void {
         </p>
       </template>
     </SheetModal>
+    </div>
   </div>
 </template>
 
@@ -1316,6 +1319,17 @@ input {
 }
 .clickable {
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+/* 悬停只在真悬停设备生效：触屏点一下也会留下 :hover 底色 */
+@media (hover: hover) {
+  .clickable:hover {
+    background: var(--surface-2);
+  }
+}
+/* li 吃不到全局按压；cursor:pointer 已承诺可点，:active 兑成反馈 */
+.clickable:active {
+  background: var(--surface-2);
 }
 
 /* 长期记忆 */
@@ -1573,7 +1587,8 @@ textarea {
   height: 100%;
   background: var(--accent);
   transform-origin: 0 50%;
-  transition: transform 0.3s var(--ease-standard);
+  /* 索引进度连续推进：150ms 会跳，250ms 是肉眼连续的最小平滑值，与 OpQueueBar 同档 */
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 .err {
   font-size: var(--fs-caption);

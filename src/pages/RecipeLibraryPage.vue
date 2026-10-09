@@ -143,6 +143,8 @@ const aiTotal = computed(() =>
       :subtitle="`${RECIPES.length} 个模板 · 营养由食物库实算`"
       back
     />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- AI 定制入口（桌面上这条横幅通栏，理由见样式里的桌面段） -->
     <section class="card d-full ai-card">
@@ -253,6 +255,7 @@ const aiTotal = computed(() =>
         </template>
       </div>
     </SheetModal>
+    </div>
   </div>
 </template>
 

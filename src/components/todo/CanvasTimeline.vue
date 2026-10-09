@@ -746,8 +746,10 @@ onBeforeUnmount(() => {
     opacity var(--dur-fast) var(--ease-standard);
 }
 
-.blk:hover .blk-card {
-  box-shadow: var(--shadow-card);
+@media (hover: hover) {
+  .blk:hover .blk-card {
+    box-shadow: var(--shadow-card);
+  }
 }
 
 .blk.sel .blk-card {
@@ -835,9 +837,11 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-.ck:hover {
-  border-color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 18%, transparent);
+@media (hover: hover) {
+  .ck:hover {
+    border-color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+  }
 }
 
 .body {
@@ -944,8 +948,10 @@ onBeforeUnmount(() => {
     opacity var(--dur-fast) var(--ease-standard);
 }
 
-.stk-card:hover {
-  box-shadow: var(--shadow-card);
+@media (hover: hover) {
+  .stk-card:hover {
+    box-shadow: var(--shadow-card);
+  }
 }
 
 .stk-card.sel {
@@ -1015,9 +1021,11 @@ onBeforeUnmount(() => {
   transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-.edit:hover {
-  background: color-mix(in srgb, var(--text-1) 16%, transparent);
-  color: var(--text-1);
+@media (hover: hover) {
+  .edit:hover {
+    background: color-mix(in srgb, var(--text-1) 16%, transparent);
+    color: var(--text-1);
+  }
 }
 
 .edit svg {

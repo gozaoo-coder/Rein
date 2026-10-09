@@ -80,36 +80,52 @@ const weightAlert = computed(() =>
           <SegmentedControl v-model="view" :options="[...VIEW_OPTIONS]" />
         </template>
       </PageHeader>
-      <BentoOverview v-if="view === 'bento'" />
-      <DaySpine v-else />
+      <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+      <div class="rubber-layer" data-rubber-content>
+        <!-- 便当总览 / 一日脊柱同属「看今天」，切换时整块淡入而不是硬换 -->
+        <Transition name="fade">
+          <BentoOverview v-if="view === 'bento'" />
+          <DaySpine v-else />
+        </Transition>
+      </div>
     </template>
 
     <!-- ============ 移动端：状态条 + 一日时间线 + 动作堆 ============ -->
     <template v-else>
       <PageHeader title="今天" :subtitle="fmtDateCn(today)" />
 
-      <!-- 摄入总览：挂卡片壳（.card 自带的 20px 内边距与材质），
-           这样它与「今日画布」等卡片落在同一条竖线上；贴着页面底色时整块会散掉。 -->
-      <button class="card strip pressable" aria-label="摄入总览详情" @click="router.push('/nutrition')">
-        <IntakeOverview />
-      </button>
+      <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+      <div class="rubber-layer" data-rubber-content>
+        <!-- 摄入总览：挂卡片壳（.card 自带的 20px 内边距与材质），
+             这样它与「今日画布」等卡片落在同一条竖线上；贴着页面底色时整块会散掉。 -->
+        <button class="card strip pressable" aria-label="摄入总览详情" @click="router.push('/nutrition')">
+          <IntakeOverview />
+        </button>
 
-      <!-- 方案状态卡：执行期的常驻落点（今天练什么/走到哪/该复盘了），关掉模块整卡不出现 -->
-      <ProgramStatusCard v-if="features.isEnabled('program')" />
+        <!-- 方案状态卡：执行期的常驻落点（今天练什么/走到哪/该复盘了），关掉模块整卡不出现 -->
+        <ProgramStatusCard v-if="features.isEnabled('program')" />
 
-      <HomeCanvas :date="today" />
+        <HomeCanvas :date="today" />
 
-      <!-- 体重趋势异常提醒 -->
-      <section v-if="weightAlert && !weightDismissed" class="card warn-card">
-        <p class="t-2 warn-txt">{{ weightAlert.reason }}</p>
-        <div class="row" style="gap: 10px; margin-top: 12px">
-          <button class="warn-go pressable" @click="router.push('/program')">去复盘</button>
-          <button class="warn-later pressable" @click="weightDismissed = true">知道了</button>
-        </div>
-      </section>
+        <!-- 体重趋势异常提醒：出现/忽略都用栅格壳收高度，卡片自身只淡出 -->
+        <Transition name="warn">
+          <div v-if="weightAlert && !weightDismissed" class="warn-wrap">
+            <!-- 裸壳：卡片自带 padding，让它直接当轨道项的话 0fr 会剩一截卡内边距 -->
+            <div class="warn-inner">
+              <section class="card warn-card">
+                <p class="t-2 warn-txt">{{ weightAlert.reason }}</p>
+                <div class="row" style="gap: 10px; margin-top: 12px">
+                  <button class="warn-go pressable" @click="router.push('/program')">去复盘</button>
+                  <button class="warn-later pressable" @click="weightDismissed = true">知道了</button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </Transition>
 
-      <!-- 页脚动作区：课程条 / 吃 / 练 / 专注·钱 / 工具（HomeFooter 持有抽屉与就地动作） -->
-      <HomeFooter :date="today" />
+        <!-- 页脚动作区：课程条 / 吃 / 练 / 专注·钱 / 工具（HomeFooter 持有抽屉与就地动作） -->
+        <HomeFooter :date="today" />
+      </div>
     </template>
   </div>
 </template>
@@ -168,4 +184,57 @@ const weightAlert = computed(() =>
 }
 
 /* 页脚动作区（课程条 / 吃 / 练 / 专注·钱 / 工具）的样式在 HomeFooter.vue 里 */
+
+/* 桌面视图淡入淡出：内容整体更换，只走不透明度，进出场同向 */
+.fade-enter-active {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.fade-enter-from {
+  opacity: 0;
+}
+.fade-leave-active {
+  transition: none;
+}
+
+/* 体重趋势提醒：0fr↔1fr 壳收高度，卡片自身淡出；出现按入场时长、忽略走退场时长。
+   轨道项（.warn-inner）必须是裸壳：卡片的 padding 画在它身上，0fr 就收不到 0，
+   折叠后会留下一截卡内边距高的缝 */
+.warn-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: 14px;
+}
+
+.warn-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.warn-enter-active {
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-standard),
+    margin-top var(--dur-base) var(--ease-standard);
+}
+
+.warn-leave-active {
+  transition:
+    grid-template-rows var(--dur-fast) var(--ease-standard),
+    margin-top var(--dur-fast) var(--ease-standard);
+}
+
+.warn-enter-from,
+.warn-leave-to {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+}
+
+.warn-enter-active > .warn-inner > .card,
+.warn-leave-active > .warn-inner > .card {
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+.warn-enter-from > .warn-inner > .card,
+.warn-leave-to > .warn-inner > .card {
+  opacity: 0;
+}
 </style>

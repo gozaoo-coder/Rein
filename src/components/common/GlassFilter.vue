@@ -7,10 +7,10 @@ import { glassParams, type GlassParamKey } from '@/system/glassParams'
  * 液态玻璃的**滤镜定义**（位移贴图 + 位移链）—— 整条折射管线只有这一份实现。
  *
  * 为什么单独拆出来：`backdrop-filter: url(#id)` 这件事由两部分组成 ——
- * 引用它的那个**表面**（`GlassSurface.vue` 的根、页头两颗圆钮、四条悬浮条），
+ * 引用它的那个**表面**（`GlassSurface.vue` 的根、四条悬浮条、沉浸层控制层、AI 底栏输入条），
  * 与**被引用的那段滤镜**（位移贴图 + feDisplacementMap）。两者可以分开：
  * 表面只要在自己的 CSS / 内联样式里写上 `url(#id)`，滤镜定义可以来自任何地方
- * （同一份定义还能被多个表面共用 —— 页头三颗 38px 圆钮就是共用一张贴图）。
+ * （同一份定义还能被多个表面共用）。
  *
  * 拆的另一个理由是「两份定义必然漂」这条已经付过代价的教训：滤镜链一旦被抄成两份，
  * 改一处另一处就会悄悄落后，而表现只是「这块玻璃看着不太一样」。
@@ -25,7 +25,7 @@ import { glassParams, type GlassParamKey } from '@/system/glassParams'
  * 既然色散没有对应的产品设计，完整链整条删掉，`useCollapsed` 这个开关也随之消失。
  *
  * 量尺：默认量**自己的父元素**（把本组件放进那块玻璃里即可，尺寸/圆角自动跟着走，
- * 尺寸变了由 ResizeObserver 重烘）；给了 `w` / `h` 就按静态尺寸烘一次（页头那种固定规格）。
+ * 尺寸变了由 ResizeObserver 重烘）；给了 `w` / `h` 就按静态尺寸烘一次（固定规格的表面）。
  *
  * 重烘这条路（与从前一样，四件事都不改观感）：
  *   · 尺寸与参数算成一个指纹，没变就整段跳过（ResizeObserver 每帧都会回调）；
@@ -193,7 +193,7 @@ function updateMap(): void {
   const node = host()
   const rect = node?.getBoundingClientRect()
   // 元素还没布局（宽高为 0）时别生成贴图：0 宽的 viewBox 会让位移量算出 NaN，
-  // 整块玻璃会变成一片空白。静态尺寸（页头）不走这条路
+  // 整块玻璃会变成一片空白。静态尺寸不走这条路
   const w = Math.max(1, Math.round(props.w ?? rect?.width ?? 0))
   const h = Math.max(1, Math.round(props.h ?? rect?.height ?? 0))
   // 指纹里放的是 prop 上的圆角写法而不是解析后的像素：解析要 getComputedStyle，

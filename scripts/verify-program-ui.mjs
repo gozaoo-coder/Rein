@@ -46,6 +46,12 @@ async function shot(name) {
 try {
   await page.goto(`${APP}/#/program`, { waitUntil: 'domcontentloaded' })
   await page.waitForTimeout(2000)
+  // 静默更新检查的提示卡带全屏遮罩，会挡掉后面所有点击——先点掉（与其他 e2e 同款处理）
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.up-card button')].find((x) => x.textContent.trim() === '稍后')
+    b?.click()
+  })
+  await page.waitForTimeout(300)
 
   // mock 的 profile 缺性别与生日，方案引擎会判定「不可行」，无法走启用流程。
   // mock 是内存态（刷新即重置），所以必须在同一次会话内补全，并让 store 重新拉取。
@@ -276,7 +282,9 @@ try {
       experience: 'intermediate', targets: { kcal: 2000, protein: 140, carb: 200, fat: 60, sodiumMg: 1500, waterMl: 2100 },
       weightKgTarget: null, targetWeightKg: null,
     }
-    const courses = ['ppl-push', 'ppl-pull', 'ppl-legs', 'core', 'gym-fullbody'].map((id) => ({
+    // 课程池要覆盖 gym 周模板实际引用的 id（4 天/周档 = gym-upper + gym-lower），
+    // 否则 courseMap 查不到 → 训练日照不到课程 → 日程展开数为 0
+    const courses = ['gym-fullbody', 'gym-upper', 'gym-lower', 'ppl-push', 'ppl-pull', 'ppl-legs', 'core', 'home-hiit'].map((id) => ({
       id, name: id, equipment: 'gym', estDurationMin: 45,
     }))
     const plans = eng.buildProgramPlans(profile, shift(1), 2, courses, [], 0)

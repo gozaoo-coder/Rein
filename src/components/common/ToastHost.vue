@@ -81,11 +81,18 @@ const TOAST_FILL = 'color-mix(in srgb, var(--surface) 86%, transparent)'
   padding: 2px 0 2px 10px;
 }
 
-.toast-enter-active,
-.toast-leave-active {
+/* 出入同方向同向量：进来从下方 10px 升起、出去落回同一处，读作「同一条通道的
+   两个方向」而不是两套动画；退场一律快于入场 —— 离场是收尾，不该和接手的
+   下一步操作抢时间 */
+.toast-enter-active {
   transition:
     opacity var(--dur-base) var(--ease-standard),
     transform var(--dur-base) var(--ease-standard);
+}
+.toast-leave-active {
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 .toast-enter-from,
 .toast-leave-to {
@@ -101,11 +108,15 @@ html[data-motion='rich'] .toast {
   transform-origin: center bottom;
 }
 
-html[data-motion='rich'] .toast-enter-active,
-html[data-motion='rich'] .toast-leave-active {
+html[data-motion='rich'] .toast-enter-active {
   transition:
     opacity var(--dur-base) var(--ease-out),
     transform var(--dur-base) var(--ease-liquid);
+}
+html[data-motion='rich'] .toast-leave-active {
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-liquid);
 }
 
 html[data-motion='rich'] .toast-enter-from,

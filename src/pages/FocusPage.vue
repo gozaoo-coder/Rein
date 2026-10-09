@@ -24,6 +24,8 @@ onMounted(() => {
 <template>
   <div class="page">
     <PageHeader title="专注" subtitle="番茄钟 · 待办 · 日程" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 番茄钟 -->
     <PomodoroCard />
@@ -39,6 +41,7 @@ onMounted(() => {
          包一层的代价是这一个 div，换来的是「通栏」真的生效。 -->
     <div class="d-full">
       <ScheduleCard :date="today" />
+    </div>
     </div>
   </div>
 </template>

@@ -202,7 +202,7 @@ const depthOf = (p: string): number => (p ? p.split('/').length : 0)
 }
 
 .twist svg {
-  transition: transform 0.15s var(--ease-standard);
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
 .twist svg.open {

@@ -96,7 +96,7 @@ const meta = computed(() => {
   flex: none;
   color: var(--text-3);
   opacity: 0.5;
-  transition: opacity 120ms ease;
+  transition: opacity var(--dur-fast) var(--ease-standard);
 }
 
 @media (hover: hover) {

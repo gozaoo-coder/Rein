@@ -102,7 +102,9 @@ watch(
   font-weight: 200;
   letter-spacing: -3px;
   line-height: 1;
-  animation: ov-pop 550ms var(--ease-standard);
+  /* 数字节拍 1000ms：动画长过节拍，下一个数字会顶着上一个的余韵进场，
+     340ms 收在节拍内。keyframes 三段式 0→55%→100% 与 ease-out 配套，不动 */
+  animation: ov-pop 340ms var(--ease-out);
 }
 
 .big.go {
@@ -131,9 +133,12 @@ watch(
   }
 }
 
-.ov-fade-enter-active,
-.ov-fade-leave-active {
+/* 退场快于入场：倒数结束后遮罩该立刻让开画面，不等最后一帧 */
+.ov-fade-enter-active {
   transition: opacity var(--dur-base) var(--ease-standard);
+}
+.ov-fade-leave-active {
+  transition: opacity var(--dur-fast) var(--ease-standard);
 }
 .ov-fade-enter-from,
 .ov-fade-leave-to {

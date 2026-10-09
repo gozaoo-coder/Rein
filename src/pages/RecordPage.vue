@@ -104,6 +104,8 @@ async function attachTo(todo: Todo): Promise<void> {
 <template>
   <div class="page">
     <PageHeader title="录音" subtitle="录完可附加到任意待办" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 桌面栅格：壳层只会把 .page 的**直接子项**摊成两栏，而这一页要的是
          「录音台通栏 + take 区通栏（内部再摊两栏）」，所以自带一层 .d-grid 承接，
@@ -183,6 +185,7 @@ async function attachTo(todo: Todo): Promise<void> {
         </ul>
       </div>
     </SheetModal>
+    </div>
   </div>
 </template>
 
@@ -405,8 +408,11 @@ async function attachTo(todo: Todo): Promise<void> {
   color: var(--text-3);
 }
 
-.tdel:hover {
-  color: var(--danger);
+/* hover 反色只在真悬停设备生效：触屏点一下会粘在危险色上，像已经删掉了 */
+@media (hover: hover) {
+  .tdel:hover {
+    color: var(--danger);
+  }
 }
 
 .play {

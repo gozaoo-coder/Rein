@@ -495,7 +495,7 @@ const courseTotals = computed(() => {
           </div>
           <div v-for="m in muscleReminder.rows" :key="m.group" class="mv-row row">
             <span class="mv-n">{{ m.label }}</span>
-            <span class="mv-barwrap"><i class="mv-bar" :class="{ low: m.score.score < 60 }" :style="{ width: `${loadPct(m.score)}%` }" /></span>
+            <span class="mv-barwrap"><i class="mv-bar" :class="{ low: m.score.score < 60 }" :style="{ '--p': `${loadPct(m.score)}%` }" /></span>
             <span class="mv-num num">{{ m.score.score }}<small> 分</small></span>
             <span class="mv-st" :class="{ low: m.score.score < 60 }">{{ statusLabel(m.score) }}</span>
           </div>
@@ -727,10 +727,12 @@ const courseTotals = computed(() => {
 
 .mv-bar {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--c-exercise);
-  transition: width var(--dur-slow) var(--ease-standard);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 /* 不足（练够分 < 60）才染色提醒，其余保持中性主色 —— 练够与否只分这一条线 */

@@ -58,6 +58,13 @@ const metaLine = computed(() => {
   gap: 12px;
   padding: 12px 0;
   cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+/* 按压底色：li[role=button] 吃不到全局按压反馈，这里自补一层。
+   刻意不用 scale —— 通栏行缩放会从左右边缘豁出缺口（行宽=容器宽） */
+.item:active {
+  background: var(--surface-2);
 }
 
 /* 分隔线用 :not(:first-child)：跨组件实例的同级 li 依然成立 */

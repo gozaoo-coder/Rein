@@ -669,23 +669,32 @@ function onAxisClick(e: MouseEvent): void {
 }
 
 .sblk {
+  --sblk-grow: 1.4; /* 高亮放大倍率：旧 top:4→2 / height:10→14 绕中心对称生长，14/10 收成一处变量 */
   position: absolute;
   top: 4px;
-  height: 10px;
+  bottom: 4px; /* 由上下缘定高（条带 18px 里居中的 10px），scaleY 默认原点 center 即中线 */
   min-width: 3px;
   border-radius: 3px;
   border-right: 1.5px solid transparent;
   background: var(--spine-fill);
   background-clip: padding-box;
-  transition:
-    top var(--dur-fast) var(--ease-standard),
-    height var(--dur-fast) var(--ease-standard);
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
 .sblk.on {
-  top: 2px;
-  height: 14px;
-  box-shadow: var(--spine-shine), 0 0 0 1.5px color-mix(in srgb, var(--spine-c) 40%, transparent);
+  transform: scaleY(var(--sblk-grow));
+  box-shadow: var(--spine-shine);
+}
+
+/* 描环挪到 ::after 并反算缩放（scaleY(calc(1/var(--sblk-grow)))）：box-shadow/outline 都画在
+   被变换后的坐标系里，scaleY(1.4) 会把 1.5px 拉成 2.1px，且 outline 不跟圆角 */
+.sblk.on::after {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border: 1.5px solid color-mix(in srgb, var(--spine-c) 40%, transparent);
+  border-radius: 4.5px;
+  transform: scaleY(calc(1 / var(--sblk-grow)));
 }
 
 .strip .mhead {

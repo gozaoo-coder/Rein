@@ -35,6 +35,8 @@ function iconStyle(p: PluginSpec): Record<string, string> {
 <template>
   <div class="page">
     <PageHeader title="打开或关闭功能" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- d-full：开关清单这张卡通栏（壳层默认把 .page 的直接子级 .card 压成半栏） -->
     <section class="card d-full plist">
@@ -92,6 +94,7 @@ function iconStyle(p: PluginSpec): Record<string, string> {
       关闭后入口与页面一起隐藏，已有数据原样保留，随时可以再打开。子模块默认关闭，
       开启后它才真正开始工作（含后台任务）。更多模块正在接入这套插件层。
     </p>
+    </div>
   </div>
 </template>
 

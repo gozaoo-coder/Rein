@@ -29,6 +29,11 @@ use super::models::{
 
 /// app_meta 键：与语音（voice_config）、更新（update_settings_v1）同一套存储
 const META_KEY: &str = "online_service_v1";
+/// 最近一次**成功**拿到的目录快照。为什么单独存一份：目录只在内存里的话，
+/// 每次冷启动状态都退回「待连接」，而密钥明明还在本机 —— 界面于是每次打开
+/// 都显示没连上，点一下又连上（用户报的异常）。快照让第一眼就是上次的状态，
+/// 再由后台静默核对刷新。
+const META_KEY_CATALOG: &str = "online_service_catalog_v1";
 /// 服务端的默认模型别名：后台换模型不改客户端，我们只是「跟随」这个名字
 const AUTO_MODEL_ID: &str = "auto-model";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
@@ -109,6 +114,10 @@ fn meta_set(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<()> {
     crate::db::meta_set(conn, key, value)
 }
 
+fn meta_del(conn: &rusqlite::Connection, key: &str) -> Result<()> {
+    crate::db::meta_del(conn, key)
+}
+
 /* ---------- 设置（地址 + 密钥） ---------- */
 
 /// 读在线服务设置；没保存过时回落内置服务地址、密钥为空。
@@ -133,6 +142,11 @@ pub fn online_service_settings_save(
         saved_at: Some(chrono::Utc::now().to_rfc3339()),
     };
     let conn = state.db.lock();
+    // 密钥被清空（断开）时，目录快照一起清：否则界面上还挂着「已连接」，
+    // 而密钥已经没了 —— 那也是另一种「每次打开都不一样」。
+    if saved.api_key.is_empty() {
+        meta_del(&conn, META_KEY_CATALOG)?;
+    }
     meta_set(
         &conn,
         META_KEY,
@@ -244,14 +258,32 @@ fn parse_model(item: &serde_json::Value) -> OnlineModel {
 }
 
 /// 用服务密钥换模型目录：服务端回「这个密钥能用哪些模型 + 单价 + 流量价」。
+/// 成功时把目录写进快照（app_meta），供下次冷启动第一眼显示真状态。
 #[tauri::command]
 pub async fn online_service_catalog(
+    state: State<'_, AppState>,
     base_url: Option<String>,
     api_key: Option<String>,
 ) -> Result<OnlineCatalog> {
-    tauri::async_runtime::spawn_blocking(move || fetch_catalog(base_url, api_key))
+    let result = tauri::async_runtime::spawn_blocking(move || fetch_catalog(base_url, api_key))
         .await
-        .map_err(|e| ReinError::Message(format!("在线服务请求失败：{e}")))?
+        .map_err(|e| ReinError::Message(format!("在线服务请求失败：{e}")))??;
+    if result.ok {
+        if let Ok(raw) = serde_json::to_string(&result) {
+            let conn = state.db.lock();
+            // 快照写不进去不影响本次结果（只是下次冷启动看不到）
+            let _ = meta_set(&conn, META_KEY_CATALOG, &raw);
+        }
+    }
+    Ok(result)
+}
+
+/// 读上次成功拿到的目录快照（没有则 null）。前端启动时先渲染它，再静默核对。
+#[tauri::command]
+pub fn online_service_cached_catalog(state: State<AppState>) -> Result<Option<OnlineCatalog>> {
+    let conn = state.db.lock();
+    Ok(meta_get(&conn, META_KEY_CATALOG)
+        .and_then(|raw| serde_json::from_str::<OnlineCatalog>(&raw).ok()))
 }
 
 /* ---------- 服务端账本（对账用） ---------- */
@@ -469,6 +501,11 @@ pub async fn online_service_sync(
     }
 
     ensure_default_model(&tx, &base)?;
+
+    // 同步成功也是「目录有效」的一次证明：刷新快照，冷启动第一眼才对得上
+    if let Ok(raw) = serde_json::to_string(&catalog) {
+        let _ = meta_set(&tx, META_KEY_CATALOG, &raw);
+    }
 
     let sql = format!(
         "SELECT {AI_MODEL_COLS} FROM ai_models WHERE source = 'online' AND service_base = ?1 ORDER BY id ASC"

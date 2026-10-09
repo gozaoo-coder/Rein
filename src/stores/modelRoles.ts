@@ -254,10 +254,12 @@ export const useModelRolesStore = defineStore('ai-model-roles', () => {
 
   /* ---------- 候选（选择抽屉的数据源） ---------- */
 
-  /** 主 LLM / 多模态：已配置的对话模型（ai_models） */
+  /** 主 LLM / 多模态：已配置的对话模型（ai_models），**新配的在前**（与 ai_model_list 同向） */
   function llmCandidates(kind: 'llm' | 'vision'): ModelCandidate[] {
     const main = mainModel.value
-    return models.models.map((m) => ({
+    return [...models.models]
+      .sort((a, b) => b.id - a.id)
+      .map((m) => ({
       ref: `model:${m.id}`,
       label: m.name,
       sub: `${m.modelId}${m.lastError ? ' · 上次探测有备注' : ''}`,

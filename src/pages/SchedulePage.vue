@@ -166,6 +166,8 @@ watch([view, anchor], reload)
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 空态：还没绑定学校教务系统 -->
     <EmptyState
@@ -261,6 +263,7 @@ watch([view, anchor], reload)
       :fallback-course-name="detail?.name ?? ''"
       @close="detail = null"
     />
+    </div>
   </div>
 </template>
 
@@ -437,12 +440,6 @@ watch([view, anchor], reload)
 @keyframes spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spin {
-    animation-duration: 2.4s;
   }
 }
 </style>

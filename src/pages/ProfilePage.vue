@@ -105,6 +105,8 @@ function openEdit(): void {
 <template>
   <div class="page">
     <PageHeader title="我" />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 身份条：点头像区进约束/身体资料编辑；目标与 BMI 分档上卡面，省一趟抽屉 -->
     <button class="card id row" @click="openEdit">
@@ -189,6 +191,7 @@ function openEdit(): void {
 
     <!-- 个人约束编辑：分组行卡抽屉（身体数据 / 训练约束 + 钉底保存） -->
     <ConstraintsSheet :open="editOpen" @close="editOpen = false" />
+    </div>
   </div>
 </template>
 

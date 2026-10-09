@@ -238,6 +238,8 @@ function openLargeFiles(): void {
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <EmptyState
       v-if="failed && !usage"
@@ -476,6 +478,7 @@ function openLargeFiles(): void {
         </div>
       </section>
     </template>
+    </div>
   </div>
 </template>
 

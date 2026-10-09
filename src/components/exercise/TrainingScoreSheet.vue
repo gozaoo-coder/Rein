@@ -161,7 +161,7 @@ const lowConfidenceHint = computed(
                   <span class="sname">{{ s.label }}</span>
                   <span class="scal num">{{ pts(s.contribution) }} / {{ subMax(s.weight) }} 分</span>
                 </div>
-                <span class="subtrack"><i class="subfill" :style="{ width: `${s.score}%` }" /></span>
+                <span class="subtrack"><i class="subfill" :style="{ '--p': `${s.score}%` }" /></span>
               </li>
             </ul>
             <p v-if="d.key === 'intensity'" class="ncap sub-note">
@@ -225,7 +225,7 @@ const lowConfidenceHint = computed(
                   <span class="gname">{{ g.label }}</span>
                   <span class="gband">{{ g.idle ? '未练' : g.band }}</span>
                 </div>
-                <span class="gtrack"><i class="gbar" :class="`lv${g.level}`" :style="{ width: `${barW(g.score)}%` }" /></span>
+                <span class="gtrack"><i class="gbar" :class="`lv${g.level}`" :style="{ '--p': `${barW(g.score)}%` }" /></span>
               </div>
               <span class="gscore num">{{ g.idle ? '—' : g.score }}</span>
             </button>
@@ -426,7 +426,8 @@ const lowConfidenceHint = computed(
 
 .seg {
   height: 100%;
-  transition: width var(--dur-slow) var(--ease-standard);
+  /* 共轨堆叠构成条：只保留 flex width 不换结构，时长降一档跟上节奏 */
+  transition: width var(--dur-base) var(--ease-standard);
 }
 
 /* 三段之间留一道极细的缝：段色都偏饱和，紧贴会糊成一段读不出边界。
@@ -576,9 +577,11 @@ const lowConfidenceHint = computed(
 
 .subfill {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--c-exercise-deep);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
 }
 
 .sub-note {
@@ -666,9 +669,11 @@ const lowConfidenceHint = computed(
 
 .gbar {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
-  transition: width var(--dur-slow) var(--ease-standard);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .gdot {

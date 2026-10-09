@@ -448,8 +448,12 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-float);
-  /* 松手吸附 / 窗口尺寸变化时，组件高度平滑回到定位档位 */
-  transition: height 320ms var(--ease-sheet);
+  /* 松手吸附 / 窗口尺寸变化时，组件高度平滑回到定位档位。
+     用 height 而非 transform：transform 方案要求面板常驻最大档高度，会令 .foot 插槽
+     在中小档落到屏幕外、滚动容器 clientHeight 与可见高度脱钩、约 70 个使用方的布局
+     契约被改；而 height 一帧一次重排只发生在松手那一刻，拖拽跟手期间 .is-dragging 已
+     transition:none，不影响手感。吸附是「修正」不是「登场」，250ms 取 --dur-base。 */
+  transition: height var(--dur-base) var(--ease-sheet);
 }
 
 .panel.is-dragging {
@@ -598,9 +602,11 @@ html[data-motion='rich'] .backdrop-leave-to {
 
 /* 双类压过 .panel.is-dragging 的 transition:none：下扔关闭发生在拖拽中，
    元素带着 is-dragging 进入离场（v-if 切走后 class 不再 diff），若被清零
-   Vue 会判定 0 时长并跳过滑出动画 */
+   Vue 会判定 0 时长并跳过滑出动画。
+   退场一律快于入场（Toast/CountdownOverlay 同律）：280→250 让本文件最后一个
+   魔法时长归位 */
 .panel.sheet-leave-active {
-  transition: transform 280ms var(--ease-sheet);
+  transition: transform var(--dur-base) var(--ease-sheet);
 }
 .sheet-enter-from,
 .sheet-leave-to {

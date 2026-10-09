@@ -82,11 +82,19 @@ function openReview(): void {
       </span>
       <ChevronRight :size="15" class="chev" />
     </button>
-    <button v-if="due" class="due pressable" @click="openReview">
-      <Wand2 :size="14" />
-      <span class="grow">距上次复盘已满一周，看看数据怎么调</span>
-      <b class="go">本周复盘</b>
-    </button>
+    <!-- 到期行：出现/消失用栅格壳收高度（退出比进入快，行内不加外边距故不掺 margin） -->
+    <Transition name="due">
+      <div v-if="due" class="due-wrap">
+        <!-- 裸壳：按钮自带 padding/border-top，直接当轨道项 0fr 收不干净 -->
+        <div class="due-shell">
+          <button class="due pressable" @click="openReview">
+            <Wand2 :size="14" />
+            <span class="grow">距上次复盘已满一周，看看数据怎么调</span>
+            <b class="go">本周复盘</b>
+          </button>
+        </div>
+      </div>
+    </Transition>
   </section>
 </template>
 
@@ -170,5 +178,31 @@ function openReview(): void {
 .due .go {
   flex: none;
   font-weight: 700;
+}
+
+/* 到期行的进出场外壳：0fr↔1fr 收高度；出现走入场时长、消失走退场时长。
+   轨道项（.due-shell）保持裸壳：按钮自身的 padding/border-top 若画在轨道项上，
+   折叠后会留下一截按钮内边距高的缝 */
+.due-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.due-shell {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.due-enter-active {
+  transition: grid-template-rows var(--dur-base) var(--ease-standard);
+}
+
+.due-leave-active {
+  transition: grid-template-rows var(--dur-fast) var(--ease-standard);
+}
+
+.due-enter-from,
+.due-leave-to {
+  grid-template-rows: 0fr;
 }
 </style>

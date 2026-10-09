@@ -451,6 +451,8 @@ function changesText(a: ProgramAdjustment): string {
 <template>
   <div class="page">
     <PageHeader title="健康方案" subtitle="程序算基线 · 日程级安排 · AI 只复盘调参" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 加载 -->
     <section v-if="phase === 'loading'" class="card center empty">
@@ -464,6 +466,9 @@ function changesText(a: ProgramAdjustment): string {
 
     <!-- 生成流：约束向导内联在方案页上，改完当场重算 -->
     <template v-else-if="phase === 'setup'">
+      <!-- phase 分支整体随 v-else-if 挂载/卸载，包 <Transition> 永远不会触发：
+           Vue 只在 Transition 常驻、其子元素 v-if 翻转时才播过渡，不陪跑死代码。
+           阶段切换的观感保持瞬时（旧行为），淡入只留在真正会翻转的子结构上。 -->
       <ProgramConstraints
         :stale="constraintsStale"
         :generating="generating"
@@ -523,13 +528,15 @@ function changesText(a: ProgramAdjustment): string {
         </button>
         <div class="strip-bar" aria-hidden="true"><i :style="{ transform: `scaleX(${status.progress})` }" /></div>
         <div class="strip-detail" :class="{ open: stripOpen }">
-          <ul class="stats num">
-            <li><em>每日热量</em><b>{{ Math.round(blob.params.targets.kcal) }}<i>大卡</i></b></li>
-            <li><em>蛋白</em><b>{{ Math.round(blob.params.targets.protein) }}<i>g</i></b></li>
-            <li><em>热量偏移</em><b>{{ blob.params.kcalDelta > 0 ? '+' : '' }}{{ blob.params.kcalDelta }}</b></li>
-            <li><em>BMR/TDEE</em><b>{{ blob.params.bmr }}/{{ blob.params.tdee }}</b></li>
-          </ul>
-          <p class="strip-meta num">{{ status.startDate }} ~ {{ status.endDate }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</p>
+          <div class="strip-detail-inner">
+            <ul class="stats num">
+              <li><em>每日热量</em><b>{{ Math.round(blob.params.targets.kcal) }}<i>大卡</i></b></li>
+              <li><em>蛋白</em><b>{{ Math.round(blob.params.targets.protein) }}<i>g</i></b></li>
+              <li><em>热量偏移</em><b>{{ blob.params.kcalDelta > 0 ? '+' : '' }}{{ blob.params.kcalDelta }}</b></li>
+              <li><em>BMR/TDEE</em><b>{{ blob.params.bmr }}/{{ blob.params.tdee }}</b></li>
+            </ul>
+            <p class="strip-meta num">{{ status.startDate }} ~ {{ status.endDate }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</p>
+          </div>
         </div>
       </section>
 
@@ -686,6 +693,7 @@ function changesText(a: ProgramAdjustment): string {
       :tier="evidenceTier"
       @close="evidenceOpen = false"
     />
+    </div>
   </div>
 </template>
 
@@ -699,7 +707,7 @@ function changesText(a: ProgramAdjustment): string {
   gap: 14px;
 }
 
-.page > .card + .card {
+.rubber-layer > .card + .card {
   margin-top: 0; /* 全局规则的 14px 已由 gap 提供，避免叠加 */
 }
 
@@ -724,7 +732,9 @@ function changesText(a: ProgramAdjustment): string {
   color: var(--on-accent);
   font-size: var(--fs-callout);
   font-weight: 700;
-  transition: opacity var(--dur-fast) var(--ease-standard);
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 .primary:disabled {
@@ -821,11 +831,12 @@ function changesText(a: ProgramAdjustment): string {
 
 .strip .chev {
   flex: none;
-  transition: transform var(--dur-base) var(--ease-sheet);
+  transition: transform var(--dur-fast) var(--ease-sheet);
 }
 
 .strip .chev.open {
   transform: rotate(90deg);
+  transition: transform var(--dur-base) var(--ease-sheet);
 }
 
 /* 周期进度：细条替代被删掉的周期地图，「走到哪了」一眼可见 */
@@ -846,17 +857,25 @@ function changesText(a: ProgramAdjustment): string {
 }
 
 .strip-detail {
-  overflow: hidden;
-  max-height: 0;
+  display: grid;
+  grid-template-rows: 0fr;
   opacity: 0;
   transition:
-    max-height var(--dur-sheet) var(--ease-sheet),
-    opacity var(--dur-base) var(--ease-standard);
+    grid-template-rows var(--dur-fast) var(--ease-sheet),
+    opacity var(--dur-fast) var(--ease-standard);
 }
 
 .strip-detail.open {
-  max-height: 160px;
+  grid-template-rows: 1fr;
   opacity: 1;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-sheet),
+    opacity var(--dur-base) var(--ease-standard);
+}
+
+.strip-detail-inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 .strip-detail .stats {
@@ -1150,15 +1169,15 @@ function changesText(a: ProgramAdjustment): string {
 /* ============================================================
    桌面（壳层只在 ≥ DESKTOP_MIN 时渲染 .desk-main，所以这里不写断点）
    这页在桌面上是「通栏状态条 + 通栏操作区 + 两条并排清单」，每块内部都有自己的
-   栅格，不需要壳层再分栏；选择器带上 section 元素名压过 .page > .card 的半栏规则。
+   栅格，不需要壳层再分栏；选择器带上 section 元素名压过 .rubber-layer > .card 的半栏规则。
    ============================================================ */
 
-.desk-main .page > section.card.warn,
-.desk-main .page > section.card.acts,
-.desk-main .page > section.card.hist,
-.desk-main .page > section.card.log,
-.desk-main .page > section.card.empty,
-.desk-main .page > section.head-strip {
+.desk-main .rubber-layer > section.card.warn,
+.desk-main .rubber-layer > section.card.acts,
+.desk-main .rubber-layer > section.card.hist,
+.desk-main .rubber-layer > section.card.log,
+.desk-main .rubber-layer > section.card.empty,
+.desk-main .rubber-layer > section.head-strip {
   grid-column: 1 / -1;
 }
 

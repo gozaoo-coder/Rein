@@ -678,8 +678,10 @@ const HHMM = minToHHmm
   transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-.dh:hover {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .dh:hover {
+    background: var(--surface-2);
+  }
 }
 
 .dh.today {
@@ -757,8 +759,10 @@ const HHMM = minToHHmm
   transition: box-shadow var(--dur-fast) var(--ease-standard), transform var(--dur-base) var(--ease-spring);
 }
 
-.blk:hover .card {
-  box-shadow: var(--shadow-card);
+@media (hover: hover) {
+  .blk:hover .card {
+    box-shadow: var(--shadow-card);
+  }
 }
 
 .blk.sel .card {
@@ -811,9 +815,11 @@ const HHMM = minToHHmm
   padding: 0;
 }
 
-.ck:hover {
-  border-color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 18%, transparent);
+@media (hover: hover) {
+  .ck:hover {
+    border-color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+  }
 }
 
 .bmin {
@@ -854,9 +860,11 @@ const HHMM = minToHHmm
   color: var(--text-2);
 }
 
-.more:hover {
-  background: color-mix(in srgb, var(--text-1) 18%, transparent);
-  color: var(--text-1);
+@media (hover: hover) {
+  .more:hover {
+    background: color-mix(in srgb, var(--text-1) 18%, transparent);
+    color: var(--text-1);
+  }
 }
 
 /* 拖拽影子 */
@@ -909,8 +917,10 @@ const HHMM = minToHHmm
   transition: transform var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
 }
 
-.pchip:hover {
-  box-shadow: var(--shadow-card);
+@media (hover: hover) {
+  .pchip:hover {
+    box-shadow: var(--shadow-card);
+  }
 }
 
 .pchip:active {
@@ -946,9 +956,11 @@ const HHMM = minToHHmm
   cursor: pointer;
 }
 
-.padd:hover {
-  color: var(--accent);
-  border-color: var(--accent);
+@media (hover: hover) {
+  .padd:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
 }
 
 .hint {

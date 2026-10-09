@@ -40,6 +40,8 @@ const quickOpen = ref(false)
 <template>
   <div class="page">
     <PageHeader title="营养全览" subtitle="能量 · 宏量与微量元素详解" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 快捷入口 -->
     <ul class="quick">
@@ -77,6 +79,7 @@ const quickOpen = ref(false)
 
     <!-- 弹层 -->
     <SmartAddSheet :open="quickOpen" mode="food" :date="today" @close="quickOpen = false" />
+    </div>
   </div>
 </template>
 

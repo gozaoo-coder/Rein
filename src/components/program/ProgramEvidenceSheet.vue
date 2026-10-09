@@ -166,7 +166,10 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
     <div class="ev">
       <SegmentedControl v-model="tab" :options="options" />
 
-      <section class="card">
+      <!-- 切 tab 即整组更换：key 保证旧 tab 先离开再进场（否则同结构复用节点，Transition 不触发） -->
+      <Transition name="fade">
+        <div :key="tab" class="ev-body">
+          <section class="card">
         <header class="card-head">
           <b>{{ curve.title }}</b>
           <span class="unit">{{ curve.axisLabel }}</span>
@@ -356,6 +359,8 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
         社交时差 = 工作日与休息日「睡眠中点」的差值。当前版本尚未记录睡眠数据，
         这里只展示其与档位选择的关系；接入睡眠记录后即可把你的位置标到曲线上。
       </p>
+        </div>
+      </Transition>
 
       <button class="primary" @click="emit('close')">明白了</button>
     </div>
@@ -367,6 +372,23 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
   display: grid;
   gap: 12px;
   padding-bottom: 20px;
+}
+
+/* tab 内容组沿用 .ev 的间距：曲线卡 / 表格卡 / 结论文本之间由它接管 */
+.ev-body {
+  display: grid;
+  gap: 12px;
+}
+
+/* 切 tab 的进出场：内容整体更换，只走不透明度且进出同向 */
+.fade-enter-active {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.fade-enter-from {
+  opacity: 0;
+}
+.fade-leave-active {
+  transition: none;
 }
 
 .card {

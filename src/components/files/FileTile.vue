@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Lock, Pin } from 'lucide-vue-next'
+import { Check } from 'lucide-vue-next'
 
 import FileIcon from './FileIcon.vue'
+import { useLongPress } from '@/files/useLongPress'
 import { formatWhen, kindLabel } from '@/files/sort'
 import type { FileItem, IconSize } from '@/files/types'
 import { humanBytes } from '@/utils/format'
@@ -10,6 +11,9 @@ import { humanBytes } from '@/utils/format'
 /**
  * 网格里的一块。图标尺寸按档位给（小/中/大），信息只留「名称 + 一行元信息」——
  * 网格的价值在于一眼扫过视觉特征（图片缩略图），塞满文字反而看不清。
+ *
+ * 手势与 FileRow 同一套（触屏长按菜单 / 多选态勾选框 / 双击打开），
+ * 「🔒 / 钉住」走 FileIcon 的徽章（图标右下角），不再在 .art 里另画一个角标。
  */
 const props = withDefaults(
   defineProps<{
@@ -21,14 +25,18 @@ const props = withDefaults(
     editing: boolean
     iconSize?: IconSize
     pasteTarget?: boolean
+    /** 触屏语义（长按菜单） */
+    touch?: boolean
+    /** 多选态：左上角画勾选框，单击改为切换选中 */
+    selectMode?: boolean
   }>(),
-  { iconSize: 'md', pasteTarget: false },
+  { iconSize: 'md', pasteTarget: false, touch: false, selectMode: false },
 )
 
 const emit = defineEmits<{
   activate: [item: FileItem, ev: MouseEvent]
   open: [item: FileItem]
-  menu: [item: FileItem, ev: MouseEvent]
+  menu: [item: FileItem, anchor: HTMLElement | null]
   dragStart: [item: FileItem, ev: DragEvent]
   dragEnd: []
   /** 悬停（dragover 期间持续触发）：只做高亮 */
@@ -59,6 +67,17 @@ const ariaLabel = computed(() => {
   if (props.cut) bits.push('待剪切')
   return bits.join('，')
 })
+
+/* ---------- 长按（触屏）→ 菜单（共享手势，含幽灵点击吞咽） ---------- */
+
+const longPress = useLongPress({
+  isTouch: () => props.touch && !props.editing,
+  onFire: (el) => emit('menu', props.item, el),
+})
+
+function onClick(ev: MouseEvent): void {
+  longPress.click(ev, (e) => emit('activate', props.item, e))
+}
 </script>
 
 <template>
@@ -70,9 +89,13 @@ const ariaLabel = computed(() => {
     :aria-selected="selected"
     :aria-label="ariaLabel"
     :draggable="!editing"
-    @click="emit('activate', item, $event)"
+    @click="onClick"
     @dblclick="emit('open', item)"
-    @contextmenu.prevent="emit('menu', item, $event)"
+    @contextmenu.prevent="emit('menu', item, $event.currentTarget as HTMLElement)"
+    @pointerdown="longPress.down($event)"
+    @pointermove="longPress.move($event)"
+    @pointerup="longPress.cancel()"
+    @pointercancel="longPress.cancel()"
     @dragstart="emit('dragStart', item, $event)"
     @dragend="emit('dragEnd')"
     @dragover="emit('dragOver', item, $event)"
@@ -80,8 +103,9 @@ const ariaLabel = computed(() => {
   >
     <div class="art">
       <FileIcon :item="item" :size="ICON_PX[iconSize]" badges />
-      <Lock v-if="item.attributes.system" :size="11" class="corner" />
-      <Pin v-else-if="item.pinned" :size="11" class="corner" />
+      <span v-if="selectMode" class="ck" :class="{ on: selected }" aria-hidden="true">
+        <Check :size="12" :stroke-width="3" />
+      </span>
     </div>
     <b class="cap">{{ item.displayName }}</b>
     <small class="sub">{{ metaLine }}</small>
@@ -100,14 +124,23 @@ const ariaLabel = computed(() => {
   text-align: center;
   cursor: default;
   user-select: none;
+  transition: background-color var(--dur-fast) var(--ease-standard);
 }
 
-.tile:hover {
-  background: var(--surface-2);
+/* 悬停只在真悬停设备生效：触屏点一下也会留下 :hover 底色 */
+@media (hover: hover) {
+  .tile:hover {
+    background: var(--surface-2);
+  }
 }
 
 .tile.sel {
   background: var(--accent-soft);
+}
+
+/* 早于 .focus/.over：键盘焦点与拖放高亮继续优先 */
+.tile:active {
+  background: var(--surface-2);
 }
 
 .tile.focus {
@@ -131,11 +164,26 @@ const ariaLabel = computed(() => {
   height: 60px;
 }
 
-.corner {
+/* 多选态勾选框：落在缩略图左上角，与图标右下角的 🔒 徽章错开 */
+.ck {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
-  color: var(--text-3);
+  left: -4px;
+  top: -4px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  border: 1.5px solid var(--text-3);
+  background: var(--surface);
+  color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ck.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .cap {

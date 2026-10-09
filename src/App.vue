@@ -205,8 +205,10 @@ onMounted(() => {
       @open-palette="paletteOpen = true"
     />
     <main class="desk-main" :class="{ wide: deskWide }">
-      <!-- 超范围平移层（桌面）：到边拖动时整页位移，只写 transform、不改布局（system/rubberScroll） -->
-      <div data-rubber-content>
+      <!-- 整页包装：平时只是路由出口的壳。页面自己挂了内容层（.page > .rubber-layer）
+           时超伸平移落在那一层上（system/rubberScroll 的 layerFor 会下钻找到它）；
+           只有没挂内容层的页面才回退到整页平移（那时标题栏会跟着动）。 -->
+      <div data-rubber-shell>
         <RouterView v-slot="{ Component }">
           <Transition name="page">
             <component :is="Component" />
@@ -221,8 +223,9 @@ onMounted(() => {
 
   <!-- 移动端（原结构）：内容居中窄栏 + 底部标签导航 -->
   <div v-else class="app-frame">
-    <!-- 超范围平移层（移动端）：页面内容整体位移；TabBar 留在层外保持定格 -->
-    <div data-rubber-page>
+    <!-- 整页包装（= 页面级超伸的兜底层）：页面自己挂了内容层时只动内容层，
+         标题栏留在层外不动；没挂内容层的旧页面才整页平移 -->
+    <div data-rubber-shell>
       <RouterView v-slot="{ Component }">
         <Transition name="page">
           <component :is="Component" />

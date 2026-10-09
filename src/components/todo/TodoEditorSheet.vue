@@ -929,8 +929,10 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-s);
 }
 
-.arow:hover {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .arow:hover {
+    background: var(--surface-2);
+  }
 }
 
 .amain {
@@ -979,8 +981,10 @@ onBeforeUnmount(() => {
   color: var(--text-3);
 }
 
-.adel:hover {
-  color: var(--danger);
+@media (hover: hover) {
+  .adel:hover {
+    color: var(--danger);
+  }
 }
 
 .aprev {

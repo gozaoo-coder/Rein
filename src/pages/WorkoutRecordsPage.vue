@@ -215,6 +215,8 @@ function openDetail(w: Workout): void {
 <template>
   <div class="page">
     <PageHeader title="全部运动记录" subtitle="按日 / 周 / 年回顾你的每一次训练" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <SegmentedControl v-model="view" :options="viewOptions" class="seg" />
 
@@ -272,6 +274,7 @@ function openDetail(w: Workout): void {
 
     <!-- 运动详情抽屉（Teleport；保证页面单根） -->
     <WorkoutDetailDrawer :open="detailOpen" :workout="detailWorkout" @close="detailOpen = false" />
+    </div>
   </div>
 </template>
 
@@ -284,9 +287,9 @@ function openDetail(w: Workout): void {
   margin-bottom: 14px;
 }
 
-/* 视图 / 周期切换的轻过渡 */
+/* 视图 / 周期切换的轻过渡 —— 连点翻周会反复重启，时长短到看不出重启 */
 .content {
-  animation: rise var(--dur-base) var(--ease-standard);
+  animation: rise var(--dur-fast) var(--ease-out);
 }
 
 @keyframes rise {

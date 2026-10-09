@@ -47,7 +47,9 @@ const emit = defineEmits<{
       <span v-if="loading" class="cnt t-3">加载中…</span>
     </div>
 
-    <div class="row between center flags">
+    <!-- 渲染声明与计数**一律左对齐**：两条声明是「这一列按什么画」的开关，
+         跟左边搜索框同一条起始线；计数跟着声明走，不再甩到容器另一头。 -->
+    <div class="row center flags">
       <div class="row gap">
         <button
           type="button"
@@ -95,8 +97,11 @@ const emit = defineEmits<{
   font-size: var(--fs-subhead);
 }
 
+/* 声明 + 计数整体贴左：flex-wrap 让窄屏时计数自然落到下一行，仍从最左开始 */
 .flags {
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
 .flag {

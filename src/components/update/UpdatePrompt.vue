@@ -252,17 +252,16 @@ async function skip(): Promise<void> {
   opacity: 0;
 }
 
-.upcard-enter-active {
-  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
-}
+.upcard-enter-active,
 .upcard-leave-active {
-  transition: opacity var(--dur-fast) var(--ease-standard);
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
 }
+
 .upcard-enter-from,
 .upcard-leave-to {
   opacity: 0;
-}
-.upcard-enter-from {
   transform: translate(-50%, calc(-50% + 14px));
 }
 </style>

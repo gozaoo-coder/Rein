@@ -117,6 +117,8 @@ onMounted(async () => {
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 会话过期时给一条明确的路，而不是让用户自己去「课表配置」里翻 -->
     <EmptyState
@@ -159,7 +161,7 @@ onMounted(async () => {
             <span class="prog-label">学分进度</span>
             <span class="prog-num num">{{ progress.got }} / {{ progress.need }}</span>
           </div>
-          <div class="bar"><div class="fill" :style="{ width: `${progress.pct * 100}%` }" /></div>
+          <div class="bar"><div class="fill" :style="{ transform: `scaleX(${progress.pct})` }" /></div>
           <p class="prog-hint">
             已修学分取自习成绩单；要求学分为培养方案总学分。仅统计已出成绩的课程。
           </p>
@@ -202,6 +204,7 @@ onMounted(async () => {
 
       <p v-if="info.printedTime" class="foot">{{ info.printedTime }}</p>
     </template>
+    </div>
   </div>
 </template>
 
@@ -287,10 +290,12 @@ onMounted(async () => {
 }
 
 .fill {
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
   background: var(--accent);
-  transition: width var(--dur-sheet) var(--ease-standard);
+  transform-origin: left center;
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .prog-hint {

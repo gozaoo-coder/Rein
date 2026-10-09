@@ -510,14 +510,7 @@ const shortcutHints = [
   opacity: 0;
 }
 
-.cmdk-enter-active .panel {
-  animation: cmdk-in var(--dur-base) var(--ease-out);
-}
-
-@keyframes cmdk-in {
-  from {
-    opacity: 0;
-    transform: translateY(-8px) scale(0.985);
-  }
-}
+/* 面板自己不再播入场动画：⌘K 是每天上百次的键盘入口，遮罩 + 整层 150ms 淡入
+   已经是全部反馈。原先是外层淡入、面板再淡入并位移一次 —— 两段叠成双重淡入，
+   而键盘路径上这段位移毫无信息量，只会让⌘K 显慢。 */
 </style>

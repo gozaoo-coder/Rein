@@ -22,7 +22,7 @@
  *     差的只在材质 —— 玻璃带逐像素一致；极致另验卡片等内容层也铺上玻璃
  *     （--glass-panel-fill + 背景模糊）
  *   9 运动沉浸页的分层契约（控制层折射 / 内容层实底 / 不许玻璃套玻璃）
- *  10 悬浮件与页头：页头圆钮走**真折射**（几颗 38px 共用一份滤镜定义）、
+ *  10 悬浮件与页头：四条悬浮条走**真折射**、页头圆钮相邻并成一壳共用一次 url()（2026-10-09）、
  *     悬浮条在收起沉浸层后同样折射（高画质档退回毛玻璃）、
  *     极致档**在流卡片**的落影是内容层那一档而非悬浮玻璃那份（亮暗两色）
  *
@@ -1361,8 +1361,15 @@ async function main() {
     // ---------- 10 悬浮件的折射 + 极致档在流卡片的落影 ----------
     //
     // 三件事各有一条不变量：
-    //  ① **页头的圆钮走真折射**（不是只有 backdrop-filter: blur）。这一档叫「液态玻璃」，
-    //     只挂 blur 的那一版在超高下与高画质档读起来是同一层糊 —— 名字在、材质不在；
+    //  ① **页头圆钮留在折射名单里，但相邻的并成一壳、共用一次背景滤镜**（2026-10-09）。
+    //     实测背景：课表页超高档下「每挂一块 url() 就是一次独立的背景滤镜」，三颗圆钮能占掉
+    //     0.36ms/帧，而超高相对高画质的全部增量只有 0.4ms 上下。撤下折射不是办法 ——
+    //     页头背后是滚动的页面内容，折射看得见（换成 blur 后页头带 33% 的像素变了，
+    //     最大差 135/255）。改成「动作区相邻圆钮并成一壳」：返回键仍自己一片，
+    //     动作区只挂一次。实测合成净成本 +0.45 → +0.125ms/帧（课表周视图滚动，同页同负载），
+    //     而页头按钮带的像素差最大 5/255、变化像素 ≤0.26%。
+    //     这里钉死四件事：返回键仍走 url()；壳挂 url() 且壳内圆钮自己不挂（不叠两层）；
+    //     壳的滤镜定义已烘、引用可解析；accent 变体照旧不玻璃化；
     //  ② **四条悬浮条同样是折射件**（运动 / 录音 / 语音 / 抢课）：它们是控制层的悬浮件、
     //     底下真的有内容经过，正是折射该去的地方。这里量的是**真的渲染着的那一条**
     //     （开一次训练 → 收起沉浸层 → 浮条回到屏幕上），不是被隐藏壳挡住的状态；
@@ -1380,10 +1387,19 @@ async function main() {
           h: Math.round(el.getBoundingClientRect().height),
         }
       }
+      // 动作区的折射壳：相邻圆钮共用一次背景滤镜（壳自己什么都不画）
+      const bar = document.querySelector('.page-header .ph-bar')
       const defs = [...document.querySelectorAll('.page-header .gdefs')]
       return {
         tier: document.documentElement.dataset.perf,
         glass: document.documentElement.dataset.glass,
+        bar: bar
+          ? {
+              filter: String(getComputedStyle(bar).backdropFilter || 'none'),
+              box: (() => { const r = bar.getBoundingClientRect(); return Math.round(r.width) + 'x' + Math.round(r.height) })(),
+              inside: [...bar.querySelectorAll('.hdr-btn')].map(read),
+            }
+          : null,
         // accent 变体是主操作 CTA，刻意留在实底（与 Dock 页签同一套「主操作不玻璃化」的约定），
         // 所以这里只看玻璃化的那些
         btns: [...document.querySelectorAll('.page-header .back, .page-header .hdr-btn:not(.accent)')].map(read),
@@ -1394,59 +1410,79 @@ async function main() {
           mapBaked: !!d.querySelector('feImage')?.getAttribute('href'),
           prims: d.querySelector('filter')?.children.length ?? 0,
         })),
-        // 引用必须解析得到：写错 id 时 Chromium 是**静默忽略**整条的
-        // （表现是「这颗圆钮什么材质都没有」，而 DOM 里一切看着都对）
         resolved: !!document.getElementById('glass-filter-header'),
       }
     })()`
 
     await setTier('ultra')
-    // ① AI 页：两颗非 accent 的 .hdr-btn（走 :slotted(.hdr-btn) 那条路）
+    // ① AI 页：两颗动作钮（一颗 accent 主操作 + 一颗玻璃钮），走 :slotted(.hdr-btn) 那条路
     await cdp('Page.navigate', { url: `${APP}/#/ai` })
     await sleep(2200)
     if (await evalJS(dismiss)) await sleep(400)
     const headerUltra = await evalJS(HEADER_GLASS_PROBE)
     await shot('header-glass-ultra')
+    // 壳自己什么都不画，只决定「背后被采样几次」：挂一次 url()，壳里的圆钮各自退掉滤镜
+    // （不再 N 次独立背景滤镜），但材质一点不动。
+    const glassInside = (headerUltra.bar?.inside ?? []).filter((b) => !b.cls.includes('accent'))
     ok(
-      '超高 · 页头图标钮（各页的 .hdr-btn）在折射（url(#…) 位移管线，不是只有 blur）',
-      headerUltra.btns.length >= 2 &&
-        // 计算值里 url() 是**带引号**回放的（url("#glass-filter-header")），
-        // 拿不带引号的字面量比会永远为假 —— 先去掉引号再比
-        headerUltra.btns.every((b) => b.filter.replace(/"/g, '').includes('url(#glass-filter-header)')) &&
-        headerUltra.btns.every((b) => b.w === 38 && b.h === 38),
-      `${headerUltra.btns.length} 颗 · ${headerUltra.btns.map((b) => `${b.cls.split(' ')[0]}=${b.filter}`).join(' | ')} · 尺寸 ${headerUltra.btns.map((b) => `${b.w}×${b.h}`).join(' ')}`,
+      '超高 · 动作区圆钮并成一壳：壳挂 url()，玻璃钮自己不挂、材质不动',
+      !!headerUltra.bar &&
+        headerUltra.bar.filter.replace(/"/g, '').includes('url(#glass-filter-actions-') &&
+        glassInside.length >= 1 &&
+        glassInside.every((b) => b.filter === 'none') &&
+        glassInside.every((b) => b.w === 38 && b.h === 38) &&
+        glassInside.every((b) => b.shadow.includes('inset')),
+      headerUltra.bar
+        ? `壳 ${headerUltra.bar.box} · ${headerUltra.bar.filter.slice(0, 42)} · 壳内 ${headerUltra.bar.inside.map((b) => `${b.cls.split(' ')[0]}=${b.filter}`).join(' | ')}`
+        : '没有壳',
     )
     ok(
-      '超高 · 页头的滤镜定义只有一份且贴图已烘（几颗 38px 圆钮共用，不是各烘一张）',
-      headerUltra.defs.length === 1 &&
-        headerUltra.defs[0].display !== 'none' &&
-        headerUltra.defs[0].mapBaked &&
-        headerUltra.defs[0].id === 'glass-filter-header' &&
+      '超高 · 壳里的 accent 主操作钮仍是实底（不玻璃化、也没有滤镜）',
+      (headerUltra.bar?.inside ?? []).filter((b) => b.cls.includes('accent')).length === 0 ||
+        (headerUltra.bar?.inside ?? []).filter((b) => b.cls.includes('accent')).every((b) => !b.filter.includes('url(')),
+      (headerUltra.bar?.inside ?? []).filter((b) => b.cls.includes('accent')).map((b) => b.filter).join(' | ') || '壳里没有 accent 钮',
+    )
+    ok(
+      '超高 · 两份滤镜定义都已烘且引用可解析（返回键 38×38 静态 + 动作壳按自身尺寸）',
+      headerUltra.defs.length === 2 &&
+        headerUltra.defs.every((d) => d.mapBaked && d.display !== 'none') &&
+        headerUltra.defs.some((d) => d.id === 'glass-filter-header') &&
+        headerUltra.defs.some((d) => /glass-filter-actions-/.test(d.id)) &&
         headerUltra.resolved,
-      `定义 ${headerUltra.defs.length} 份 · ${JSON.stringify(headerUltra.defs[0])} · 引用可解析=${headerUltra.resolved}`,
+      `定义 ${headerUltra.defs.length} 份 · ${headerUltra.defs.map((d) => d.id).join(' | ')}`,
     )
     ok(
       '超高 · 页头圆钮的玻璃光学层都在（受光边 / 内圈描边 / 上缘焦散）',
-      headerUltra.btns.every((b) => b.shadow.includes('inset')),
-      `缺 inset 的：${headerUltra.btns.filter((b) => !b.shadow.includes('inset')).length} 颗`,
-    )
-    ok(
-      '超高 · accent 主操作钮不参与玻璃化（留在实底，与页签那条约定一致）',
-      headerUltra.accents.length === 0 || headerUltra.accents.every((b) => !b.filter.includes('url(')),
-      headerUltra.accents.map((b) => b.filter).join(' | ') || '本页没有 accent 钮',
+      headerUltra.btns.length >= 1 && headerUltra.btns.every((b) => b.shadow.includes('inset')),
+      `${headerUltra.btns.length} 颗 · 缺 inset 的：${headerUltra.btns.filter((b) => !b.shadow.includes('inset')).length} 颗`,
     )
 
-    // ② 二级页的返回键：同一个 id、同一份规则（返回键是 PageHeader 自己的，图标钮在插槽里 —— 两条路都要走通）
+    // ② 二级页 /ai/models：只有一颗 accent 主操作钮 —— **壳不许挂滤镜**（没有圆钮要为它付钱），
+    //    返回键仍自己一片。:has(> .hdr-btn:not(.accent)) 就是这道净网。
     await cdp('Page.navigate', { url: `${APP}/#/ai/models` })
     await sleep(2200)
     if (await evalJS(dismiss)) await sleep(400)
-    const headerBack = await evalJS(HEADER_GLASS_PROBE)
+    const modelsUltra = await evalJS(HEADER_GLASS_PROBE)
     ok(
-      '超高 · 返回键与图标钮共用同一份折射定义（返回键也走 url() 管线）',
-      headerBack.btns.some((b) => b.cls.includes('back')) &&
-        headerBack.btns.every((b) => b.filter.replace(/"/g, '').includes('url(#glass-filter-header)')) &&
-        headerBack.defs.length === 1,
-      `${headerBack.btns.map((b) => `${b.cls.split(' ')[0]}=${b.filter}`).join(' | ')} · 定义 ${JSON.stringify(headerBack.defs)}`,
+      '超高 · 二级页：返回键自己折射；只有 accent 钮时壳不挂滤镜（:has() 净网）',
+      modelsUltra.btns.some((b) => b.cls.includes('back')) &&
+        modelsUltra.btns.filter((b) => b.cls.includes('back')).every((b) => b.filter.replace(/"/g, '').includes('url(#glass-filter-header)')) &&
+        !!modelsUltra.bar && !modelsUltra.bar.filter.includes('url('),
+      `返回键 ${modelsUltra.btns.filter((b) => b.cls.includes('back')).map((b) => b.filter).join(' | ') || '无'} · 壳 ${modelsUltra.bar ? modelsUltra.bar.box + ' / ' + modelsUltra.bar.filter.slice(0, 24) : '无'}`,
+    )
+
+    // ③ 待办页：返回键 + 一颗玻璃动作钮 —— 两条路同时成立（各挂一次，不合并成一整条）
+    await cdp('Page.navigate', { url: `${APP}/#/todos` })
+    await sleep(2200)
+    if (await evalJS(dismiss)) await sleep(400)
+    const todosUltra = await evalJS(HEADER_GLASS_PROBE)
+    ok(
+      '超高 · 返回键与动作壳各挂一次 url()（两条路都通，不叠）',
+      todosUltra.btns.filter((b) => b.cls.includes('back')).every((b) => b.filter.replace(/"/g, '').includes('url(#glass-filter-header)')) &&
+        !!todosUltra.bar && todosUltra.bar.filter.replace(/"/g, '').includes('url(#glass-filter-actions-') &&
+        (todosUltra.bar?.inside ?? []).length >= 1 &&
+        (todosUltra.bar?.inside ?? []).every((b) => b.filter === 'none' && b.w === 38 && b.h === 38 && b.shadow.includes('inset')),
+      `壳 ${todosUltra.bar ? todosUltra.bar.box : '无'} · 壳内 ${(todosUltra.bar?.inside ?? []).map((b) => `${b.w}×${b.h}=${b.filter}`).join(' | ')}`,
     )
 
     await setTier('high')
@@ -1454,16 +1490,15 @@ async function main() {
     await sleep(2200)
     if (await evalJS(dismiss)) await sleep(400)
     const headerHigh = await evalJS(HEADER_GLASS_PROBE)
-    // 高画质起页头圆钮就是玻璃盘（半透明底 + blur + 光学内层），只是没有折射 ——
-    // 「不启用折射也要把玻璃的其余效果开起来」这条在页头上同样成立。滤镜定义不挂
-    // （GlassFilter 只在 liquidGlass 为真时渲染），所以 defs 应为 0。
+    // 高画质档：data-glass=off，壳不挂 url()，圆钮各自退回 blur 那层玻璃盘 ——
+    // 「不启用折射也要把玻璃的其余效果开起来」这条在页头上同样成立（2026-09-25 起）。
     ok(
-      '高画质 · 页头圆钮已是玻璃盘（blur + 光学内层），只是不挂折射',
-      headerHigh.btns.length >= 2 &&
-        headerHigh.defs.length === 0 &&
+      '高画质 · 壳不挂折射，圆钮各自是玻璃盘（blur + 光学内层）',
+      !!headerHigh.bar &&
+        !headerHigh.bar.filter.includes('url(') &&
         headerHigh.btns.every((b) => !b.filter.includes('url(') && b.filter.includes('blur(')) &&
         headerHigh.btns.every((b) => b.shadow.includes('inset')),
-      `${headerHigh.btns.length} 颗 · 定义 ${headerHigh.defs.length} 份 · ${headerHigh.btns.map((b) => b.filter).join(' | ')}`,
+      `壳 ${headerHigh.bar ? headerHigh.bar.filter.slice(0, 30) : '无'} · ${headerHigh.btns.map((b) => b.filter).join(' | ')}`,
     )
 
     // 悬浮条：走产品里的真实入口开一次训练，再把沉浸层收起来 —— 这样量到的是**屏幕上真的

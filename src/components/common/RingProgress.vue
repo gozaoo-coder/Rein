@@ -58,7 +58,9 @@ svg {
   stroke-linecap: round;
   transform: rotate(-90deg);
   transform-origin: 50px 50px;
-  transition: stroke-dashoffset 700ms var(--ease-sheet);
+  /* 环是跟手补数控件：700ms 追不上数值变化；dashoffset 是描边位移，前快后缓
+     才像弧长在长 → --dur-slow 配 --ease-out */
+  transition: stroke-dashoffset var(--dur-slow) var(--ease-out);
 }
 
 .center {

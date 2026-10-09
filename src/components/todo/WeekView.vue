@@ -86,7 +86,7 @@ function onKey(e: KeyboardEvent, date: string): void {
           {{ c.total ? `${c.done}/${c.total}` : '–' }}
         </span>
         <div class="wd-bar">
-          <i class="wd-fill" :class="{ full: c.total > 0 && c.done >= c.total }" :style="{ '--p': `${c.total ? (c.done / c.total) * 100 : 0}%` }" />
+          <i class="wd-fill" :class="{ full: c.total > 0 && c.done >= c.total }" :style="{ '--p': c.total ? c.done / c.total : 0 }" />
         </div>
       </div>
     </div>
@@ -143,8 +143,10 @@ function onKey(e: KeyboardEvent, date: string): void {
     box-shadow var(--dur-fast) var(--ease-standard);
 }
 
-.wcell:hover {
-  box-shadow: var(--shadow-card);
+@media (hover: hover) {
+  .wcell:hover {
+    box-shadow: var(--shadow-card);
+  }
 }
 
 .wcell.selected {
@@ -198,10 +200,12 @@ function onKey(e: KeyboardEvent, date: string): void {
 .wd-fill {
   display: block;
   height: 100%;
-  width: var(--p, 0%);
+  width: 100%;
+  transform: scaleX(var(--p, 0));
+  transform-origin: left center;
   border-radius: inherit;
   background: var(--accent);
-  transition: width var(--dur-base) var(--ease-standard);
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .wd-fill.full {

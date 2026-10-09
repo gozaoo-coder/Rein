@@ -40,7 +40,7 @@ const rootEl = ref<HTMLElement | null>(null)
 const posEl = ref<HTMLElement | null>(null)
 const { slot, form, pressing, dragging, onPointerDown, expandFromBlob } = useDragDock(posEl)
 
-/* ---------- 材质：超高档起换**真折射**（与 Dock / 页头圆钮同一条管线）----------
+/* ---------- 材质：超高档起换**真折射**（与 Dock / 沉浸层控制层同一条管线）----------
  * `.glass-surface` 那份是「模糊 + 令牌」的毛玻璃：档位升级只换令牌，超高下它仍然只是
  * 一层糊，拿不到折射。而这一条是**悬浮件**（浮在页面内容之上、底下真的有东西会动），
  * 正是苹果那条「折射给控制层的离散件」的适用对象。

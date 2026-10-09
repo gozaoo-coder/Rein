@@ -398,7 +398,7 @@ const notes = computed(() => {
             <b class="num" :class="{ tight: cap.tight }">{{ cap.text }}</b>
           </div>
           <div class="cap-bar">
-            <i :style="{ width: `${cap.pct}%` }" :class="{ full: cap.full, tight: cap.tight }" />
+            <i :style="{ transform: `scaleX(${cap.pct / 100})` }" :class="{ full: cap.full, tight: cap.tight }" />
           </div>
           <span class="cap-note" :class="{ full: cap.full }">{{ cap.label }}</span>
         </div>
@@ -687,9 +687,11 @@ const notes = computed(() => {
 .cap-bar i {
   display: block;
   height: 100%;
+  width: 100%;
+  transform-origin: left center;
   border-radius: inherit;
   background: var(--accent);
-  transition: width var(--dur-base) var(--ease-standard);
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .cap-bar i.tight {

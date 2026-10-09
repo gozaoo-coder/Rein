@@ -187,17 +187,27 @@ function iconOf(item: FileItem) {
   font-size: var(--fs-caption);
 }
 
-.item:hover {
-  background: var(--surface-2);
-}
+/* 悬停只在真悬停设备生效：触屏点一下也会留下 :hover 底色 */
+@media (hover: hover) {
+  .item:hover {
+    background: var(--surface-2);
+  }
 
-.pane.deep .item:hover {
-  background: var(--surface-2);
+  .pane.deep .item:hover {
+    background: var(--surface-2);
+  }
 }
 
 .item.on {
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+
+/* transform:none 显式关掉全局 button:active 的 scale —— 分栏行是横条，
+   缩回去会压扁行内文字 */
+.item:active {
+  background: var(--surface-2);
+  transform: none;
 }
 
 .item.file {

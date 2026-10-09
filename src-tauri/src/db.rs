@@ -1436,6 +1436,11 @@ pub(crate) fn meta_set(conn: &Connection, key: &str, value: &str) -> crate::erro
     Ok(())
 }
 
+pub(crate) fn meta_del(conn: &Connection, key: &str) -> crate::error::Result<()> {
+    conn.execute("DELETE FROM app_meta WHERE key = ?1", [key])?;
+    Ok(())
+}
+
 /// 测试用：对给定连接跑完整迁移（含知识库的 FTS 表与全部触发器）。
 /// 生产路径是 `init()`，它会额外做种子导入；测试不需要种子。
 #[cfg(test)]

@@ -120,6 +120,8 @@ const ICON_BTN = 54
 <template>
   <div class="page">
     <PageHeader title="画质预览" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 暗场标本台：一整幅壁纸 + 三层陈列。台子铺到页面两侧边缘，读成一整块暗场 -->
     <section class="bench" aria-label="液态玻璃示例">
@@ -269,6 +271,7 @@ const ICON_BTN = 54
 
     <!-- 参数调节面板：自带暗场预览，改的就是全局那份可调参数（system/glassParams） -->
     <GlassTunerSheet :open="tunerOpen" @close="tunerOpen = false" />
+    </div>
   </div>
 </template>
 

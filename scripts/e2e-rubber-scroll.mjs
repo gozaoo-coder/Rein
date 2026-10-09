@@ -5,6 +5,11 @@
  * D 松手：弹簧回位后 transform 清空
  * E 页中拖动：不接管（transform 恒空、原生滚动正常）
  * F band 期间 TabBar 纹丝不动（只平移页面层）
+ * G 内层容器（首页画布时间轴，内容层 .inner）
+ * H 横向条（版式对照页 pill 导航，自平移 x 轴）
+ * I 页面级 band 走「容器不动、只内容动」：页头全程纹丝不动（顶边/底边各一遍），
+ *   且从原生滚动切入超伸的瞬间平移量恰好等于手指越边行程（无多余 offset），
+ *   松手弹簧归位后页头回到原处
  */
 import { chromium } from 'playwright-core'
 
@@ -43,7 +48,7 @@ const cdp = await context.newCDPSession(page)
 await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
 
 await page.goto(`${BASE}/#/`)
-await page.waitForSelector('[data-rubber-page]', { state: 'attached' })
+await page.waitForSelector('[data-rubber-shell]', { state: 'attached' })
 await page.waitForTimeout(1400) // 等静默更新检查把提示卡弹出来（它带全屏遮罩，挡触摸）
 await dismissUpdate(page)
 await page.waitForTimeout(300)
@@ -64,13 +69,38 @@ async function drag(x0, y0, x1, y1, steps = 4) {
   }
 }
 
+/** 页面级平移层：页面把「页头之后的内容」挂成内容层（.page > .rubber-layer），
+ *  容器框与吸顶页头留在层外（system/rubberScroll 的 layerFor 解析）。 */
 const layer = () =>
-  page.locator('[data-rubber-page]').evaluate((el) => {
+  page.locator('.page > .rubber-layer').evaluate((el) => {
     const cs = getComputedStyle(el).transform
     return { ty: cs === 'none' ? 0 : new DOMMatrixReadOnly(cs).m42, raw: el.style.transform }
   })
+const headerTop = () =>
+  page.locator('.page-header').first().evaluate((el) => el.getBoundingClientRect().top)
 const scrollY = () => page.evaluate(() => window.scrollY)
 const toTop = () => page.evaluate(() => window.scrollTo(0, 0))
+
+/** 记录页面收到的每一个 touch 事件的 clientY 与当时的平移量（喂给 I 组断言）。
+ *  监听器挂在模块自己的监听之后注册：同一事件上它排后面跑，读到的就是本模块
+ *  刚写下的 transform。band 的越边行程以「送达过的坐标」为基准 —— 浏览器吞掉的
+ *  move 不越边，不算进 over。 */
+await page.evaluate(() => {
+  window.__trace = []
+  const layer = () => document.querySelector('.page > .rubber-layer')
+  const ty = () => {
+    const cs = getComputedStyle(layer()).transform
+    return cs === 'none' ? 0 : new DOMMatrixReadOnly(cs).m42
+  }
+  window.addEventListener('touchstart', (e) => {
+    window.__trace = [{ y: e.touches[0]?.clientY ?? 0, ty: ty(), start: true }]
+  })
+  window.addEventListener('touchmove', (e) => {
+    window.__trace.push({ y: e.touches[0]?.clientY ?? 0, ty: ty() })
+  })
+})
+const trace = () => page.evaluate(() => window.__trace.slice())
+const moves = () => page.evaluate(() => window.__moves.slice())
 
 /**
  * 选一个「纯页面内容」落点：从该点向上到 body 之间没有可滚动的祖先、
@@ -165,6 +195,102 @@ ok(
   settled.raw === '' && Math.abs(settled.ty) < 0.01,
   `raw="${settled.raw}" ty=${settled.ty}`,
 )
+
+/* ---------- I：容器不动、只内容动 + 切入超伸无跳变 ----------
+   页面把页头之后的内容挂成内容层（.page > .rubber-layer）：容器框与吸顶页头留在
+   层外，band 全程只有内容位移。老实现把整页（含 sticky 页头）当层，滚到边缘切入
+   超伸的瞬间页头会跟着内容一起被拽走 —— 即「异常地额外 offset 一下」。 */
+{
+  const X = 210
+  const Y = 300
+
+  /** 慢拖 count 步、每步步长 step；返回 {ys, tys, hdrs, sys} 逐步快照 */
+  async function stepDrag(dy, count, step) {
+    await send('touchStart', X, Y)
+    const ys = []
+    const tys = []
+    const hdrs = []
+    const sys = []
+    for (let i = 1; i <= count; i++) {
+      const y = Y + dy * i * step
+      await send('touchMove', X, y)
+      await page.waitForTimeout(14)
+      ys.push(y)
+      tys.push((await layer()).ty)
+      hdrs.push(await headerTop())
+      sys.push(await scrollY())
+    }
+    return { ys, tys, hdrs, sys }
+  }
+
+  /** 从轨迹里核对：平移量恰为 dy·f(越边行程)（dy=1 下拉 / -1 上拖），不能多跳 */
+  function checkEdge(name, tr, dy) {
+    const firstBand = tr.findIndex((p) => !p.start && Math.abs(p.ty) > 0.05)
+    ok(`${name} 出现超伸`, firstBand >= 1, `首次平移在第 ${firstBand + 1} 个送达事件`)
+    if (firstBand < 1) return
+    const base = tr[firstBand - 1].y
+    let worst = 0
+    for (let j = firstBand; j < tr.length; j++) {
+      const over = Math.abs(tr[j].y - base)
+      worst = Math.max(worst, Math.abs(tr[j].ty - dy * f(over)))
+    }
+    ok(`${name} 平移量 = f(手指越边行程)，无多余 offset`, worst < 1.5, `最大偏差 ${worst.toFixed(2)}px`)
+  }
+
+  /* ---- 底边：滚到底后向上拖过底边 ---- */
+  const max = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)
+  await page.evaluate((m) => window.scrollTo(0, m), max)
+  await page.waitForTimeout(200)
+  const hb = await headerTop()
+  const syB = await scrollY()
+  ok('I0a 滚到底后页头钉在视口顶', hb === 0, `header.top=${hb}`)
+  const bottom = await stepDrag(-1, 6, 8)
+  await send('touchEnd', 0, 0)
+  await page.waitForTimeout(900)
+  ok(
+    'I1a 底边超伸全程页头纹丝不动',
+    bottom.hdrs.every((h) => Math.abs(h - hb) < 0.5),
+    `页头: ${bottom.hdrs.map((h) => h.toFixed(1)).join(', ')}（基准 ${hb}）`,
+  )
+  ok(
+    'I2a 底边超伸期间页面本身不滚动',
+    bottom.sys.every((s) => s === syB),
+    `scrollY: ${bottom.sys.join(', ')}`,
+  )
+  checkEdge('I3a 底边', await trace(), -1)
+  const afterBottom = await layer()
+  ok(
+    'I4a 松手弹簧归位、页头回原处',
+    afterBottom.raw === '' && Math.abs((await headerTop()) - hb) < 0.5,
+    `raw="${afterBottom.raw}" header.top=${(await headerTop()).toFixed(1)}`,
+  )
+
+  /* ---- 顶边：回顶部后向下拖过顶边 ---- */
+  await toTop()
+  await page.waitForTimeout(200)
+  const hb2 = await headerTop()
+  const syT = await scrollY()
+  const top = await stepDrag(1, 6, 8)
+  await send('touchEnd', 0, 0)
+  await page.waitForTimeout(900)
+  ok(
+    'I1b 顶边超伸全程页头纹丝不动',
+    top.hdrs.every((h) => Math.abs(h - hb2) < 0.5),
+    `页头: ${top.hdrs.map((h) => h.toFixed(1)).join(', ')}（基准 ${hb2}）`,
+  )
+  ok(
+    'I2b 顶边超伸期间页面本身不滚动',
+    top.sys.every((s) => s === syT),
+    `scrollY: ${top.sys.join(', ')}`,
+  )
+  checkEdge('I3b 顶边', await trace(), 1)
+  const afterTop = await layer()
+  ok(
+    'I4b 松手弹簧归位、页头回原处',
+    afterTop.raw === '' && Math.abs((await headerTop()) - hb2) < 0.5,
+    `raw="${afterTop.raw}" header.top=${(await headerTop()).toFixed(1)}`,
+  )
+}
 
 /* ---------- E：页中拖动不接管 ---------- */
 await page.evaluate(() => window.scrollTo(0, 200))

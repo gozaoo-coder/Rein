@@ -90,7 +90,8 @@ const rows = computed<Row[]>(() => {
         badge: active ? '使用中' : undefined,
       }
     })
-    .sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label))
+    // 类别内按名称**降序**：与「服务模型选项」同向（新版模型名通常更长更新，排在上方）
+    .sort((a, b) => a.kind.localeCompare(b.kind) || b.label.localeCompare(a.label))
 })
 
 async function activate(row: Row): Promise<void> {

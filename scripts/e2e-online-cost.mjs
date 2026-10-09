@@ -255,7 +255,7 @@ async function main() {
     await clickByText('获取模型列表')
     await waitFor(`document.querySelectorAll('.onl .list .m').length > 0`, 10000, '模型清单返回')
     const ids = await catalogIds()
-    ok('清单只列服务端下发的模型', ids.length === 3 && ids.includes('deepseek-flash'), ids.join(' · '))
+    ok('清单只列服务端下发的模型', ids.length === 4 && ids.some((i) => i.includes('deepseek-flash')), ids.join(' · '))
     ok('清单带官方单价（未定价的显示「未定价」）', (await sheetText()).includes('每百万 tokens'))
     ok(
       '账号调用条件说人话（本账号无限制 / 白名单）',
@@ -271,7 +271,7 @@ async function main() {
     await clickByText('全部模型')
     await waitFor(`document.querySelectorAll('.all .m-card').length >= 3`, 10000, '模型落库')
     const cards = await modelCards()
-    ok('导入的模型出现在「全部模型」里', cards.length === 3, JSON.stringify(cards.map((c) => c.name)))
+    ok('导入的模型出现在「全部模型」里', cards.length === 4, JSON.stringify(cards.map((c) => c.name)))
     ok('导入的模型带「在线」徽章', cards.every((c) => c.online), JSON.stringify(cards))
     ok(
       '模型卡显示服务端下发的单价',

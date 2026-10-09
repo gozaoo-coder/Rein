@@ -67,6 +67,8 @@ function openFile(f: KbUsageFile): void {
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <EmptyState
       v-if="failed && !usage"
@@ -104,6 +106,7 @@ function openFile(f: KbUsageFile): void {
       </p>
       <p v-if="capped" class="foot">只列前 {{ TOP }} 个 —— 榜单按体积倒序，更大的都在里面了。</p>
     </section>
+    </div>
   </div>
 </template>
 

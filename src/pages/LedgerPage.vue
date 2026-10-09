@@ -104,6 +104,8 @@ const emptyCopy = computed(() => {
         </div>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 桌面：左统计 / 右流水的主从构图。
          .board 在移动端就是普通的一列（内容与顺序**完全不变**），桌面才分成两栏 ——
@@ -169,6 +171,7 @@ const emptyCopy = computed(() => {
 
     <LedgerEntrySheet :open="entryOpen" :entry="editing" @close="entryOpen = false" @saved="entryOpen = false" />
     <BudgetSheet :open="budgetOpen" @close="budgetOpen = false" @saved="budgetOpen = false" />
+    </div>
   </div>
 </template>
 

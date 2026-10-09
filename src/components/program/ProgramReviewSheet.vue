@@ -169,104 +169,107 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
 <template>
   <SheetModal :open="open" title="AI 本周复盘" initial-snap="large" @close="emit('close')">
     <div class="review">
-      <template v-if="phase === 'running'">
-        <p class="t-2 center wait">正在汇总最近 7 天的执行数据并交给模型分析…</p>
-        <!-- 流式：诊断文本边生成边上屏，定稿后切入下方完整卡片流 -->
-        <section v-if="diagnosis" class="card">
-          <header class="card-head">
-            <b>诊断</b>
-            <span class="tag">AI</span>
-          </header>
-          <p class="diag">{{ diagnosis }}<span class="caret" aria-hidden="true" /></p>
-        </section>
-      </template>
+      <!-- 三阶段各自成节：keyed 容器让切换时旧分支真正离开（否则 v-if/v-else 直接替换，Transition 不触发） -->
+      <Transition name="fade">
+        <div v-if="phase === 'running'" key="running" class="rbody">
+          <p class="t-2 center wait">正在汇总最近 7 天的执行数据并交给模型分析…</p>
+          <!-- 流式：诊断文本边生成边上屏，定稿后切入下方完整卡片流 -->
+          <section v-if="diagnosis" class="card">
+            <header class="card-head">
+              <b>诊断</b>
+              <span class="tag">AI</span>
+            </header>
+            <p class="diag">{{ diagnosis }}<span class="caret" aria-hidden="true" /></p>
+          </section>
+        </div>
 
-      <template v-else-if="phase === 'error'">
-        <p class="err">{{ error }}</p>
-        <button class="primary" @click="emit('retry')">重试</button>
-      </template>
+        <div v-else-if="phase === 'error'" key="error" class="rbody">
+          <p class="err">{{ error }}</p>
+          <button class="primary" @click="emit('retry')">重试</button>
+        </div>
 
-      <template v-else>
-        <!-- 数据先行：先自己看数据，再看 AI 怎么说 -->
-        <section v-if="compare" class="card">
-          <header class="card-head">
-            <b>本周执行度</b>
-            <span class="t-3">本周 vs 上周</span>
-          </header>
-          <div class="bars">
-            <div v-for="p in compare.points" :key="p.label" class="bar-row">
-              <div class="bar-top">
-                <span>{{ p.label }}</span>
-                <span class="num">
-                  {{ p.prev }} → {{ p.now }} {{ p.unit }}
-                  <b class="arrow" :class="arrowOf(p).cls">{{ arrowOf(p).text }}</b>
-                </span>
-              </div>
-              <div class="bar-track">
-                <i class="bar-fill" :style="{ transform: `scaleX(${compareBar(p)})` }" />
+        <div v-else key="done" class="rbody">
+          <!-- 数据先行：先自己看数据，再看 AI 怎么说 -->
+          <section v-if="compare" class="card">
+            <header class="card-head">
+              <b>本周执行度</b>
+              <span class="t-3">本周 vs 上周</span>
+            </header>
+            <div class="bars">
+              <div v-for="p in compare.points" :key="p.label" class="bar-row">
+                <div class="bar-top">
+                  <span>{{ p.label }}</span>
+                  <span class="num">
+                    {{ p.prev }} → {{ p.now }} {{ p.unit }}
+                    <b class="arrow" :class="arrowOf(p).cls">{{ arrowOf(p).text }}</b>
+                  </span>
+                </div>
+                <div class="bar-track">
+                  <i class="bar-fill" :style="{ transform: `scaleX(${compareBar(p)})` }" />
+                </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <section class="card">
-          <header class="card-head">
-            <b>诊断</b>
-            <span class="tag">AI</span>
-          </header>
-          <p class="diag">{{ diagnosis }}</p>
-        </section>
+          <section class="card">
+            <header class="card-head">
+              <b>诊断</b>
+              <span class="tag">AI</span>
+            </header>
+            <p class="diag">{{ diagnosis }}</p>
+          </section>
 
-        <!-- 建议卡片化：逐条采纳 -->
-        <section v-if="cards.length" class="card">
-          <header class="card-head">
-            <b>建议（可逐条采纳）</b>
-            <span class="tag num">已选 {{ selectedCount }} / {{ cards.length }}</span>
-          </header>
-          <div v-for="f in cards" :key="f.key" class="sug">
-            <button
-              class="check"
-              :class="{ on: selected[f.key] }"
-              :aria-pressed="!!selected[f.key]"
-              :aria-label="`采纳：${f.title}`"
-              @click="selected[f.key] = !selected[f.key]"
-            >
-              {{ selected[f.key] ? '✓' : '' }}
-            </button>
-            <div class="sug-body">
-              <p class="sug-title" :class="{ dim: !selected[f.key] }">{{ f.title }}</p>
-              <p class="sug-reason">{{ f.reason }}</p>
-              <span v-if="cardChange(f)" class="tag num">{{ cardChange(f)!.before }} → {{ cardChange(f)!.after }}</span>
-              <span v-if="cardChange(f) && isClamped(f, cardChange(f))" class="tag clamp">超出安全范围 · 已钳制</span>
+          <!-- 建议卡片化：逐条采纳 -->
+          <section v-if="cards.length" class="card">
+            <header class="card-head">
+              <b>建议（可逐条采纳）</b>
+              <span class="tag num">已选 {{ selectedCount }} / {{ cards.length }}</span>
+            </header>
+            <div v-for="f in cards" :key="f.key" class="sug">
+              <button
+                class="check"
+                :class="{ on: selected[f.key] }"
+                :aria-pressed="!!selected[f.key]"
+                :aria-label="`采纳：${f.title}`"
+                @click="selected[f.key] = !selected[f.key]"
+              >
+                {{ selected[f.key] ? '✓' : '' }}
+              </button>
+              <div class="sug-body">
+                <p class="sug-title" :class="{ dim: !selected[f.key] }">{{ f.title }}</p>
+                <p class="sug-reason">{{ f.reason }}</p>
+                <span v-if="cardChange(f)" class="tag num">{{ cardChange(f)!.before }} → {{ cardChange(f)!.after }}</span>
+                <span v-if="cardChange(f) && isClamped(f, cardChange(f))" class="tag clamp">超出安全范围 · 已钳制</span>
+              </div>
             </div>
-          </div>
-        </section>
-        <section v-else class="card">
-          <p class="diag t-2">数据不足以支持调整，建议保持现参数再观察一周。</p>
-        </section>
+          </section>
+          <section v-else class="card">
+            <p class="diag t-2">数据不足以支持调整，建议保持现参数再观察一周。</p>
+          </section>
 
-        <!-- 实时汇总：将变更为 -->
-        <section v-if="finalChanges.length" class="card final">
-          <header class="card-head">
-            <b class="accent">将变更为</b>
-          </header>
-          <ul class="final-rows num">
-            <li v-for="c in finalChanges" :key="c.field">
-              <span>{{ c.label }}</span>
-              <b>{{ c.before }} → {{ c.after }}</b>
-            </li>
+          <!-- 实时汇总：将变更为 -->
+          <section v-if="finalChanges.length" class="card final">
+            <header class="card-head">
+              <b class="accent">将变更为</b>
+            </header>
+            <ul class="final-rows num">
+              <li v-for="c in finalChanges" :key="c.field">
+                <span>{{ c.label }}</span>
+                <b>{{ c.before }} → {{ c.after }}</b>
+              </li>
+            </ul>
+          </section>
+
+          <ul v-if="advice.length" class="advice">
+            <li v-for="a in advice" :key="a">{{ a }}</li>
           </ul>
-        </section>
 
-        <ul v-if="advice.length" class="advice">
-          <li v-for="a in advice" :key="a">{{ a }}</li>
-        </ul>
-
-        <button v-if="selectedCount" class="primary" @click="apply">
-          应用这 {{ selectedCount }} 条并重排日程
-        </button>
-        <p v-if="selectedCount" class="foot">日程将从今天起重排，已完成的记录不受影响</p>
-      </template>
+          <button v-if="selectedCount" class="primary" @click="apply">
+            应用这 {{ selectedCount }} 条并重排日程
+          </button>
+          <p v-if="selectedCount" class="foot">日程将从今天起重排，已完成的记录不受影响</p>
+        </div>
+      </Transition>
     </div>
   </SheetModal>
 </template>
@@ -276,6 +279,23 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   display: grid;
   gap: 12px;
   padding-bottom: 20px;
+}
+
+/* 阶段容器沿用原 .review 的间距：卡片与文案之间的间距由它接管 */
+.rbody {
+  display: grid;
+  gap: 12px;
+}
+
+/* 三阶段切换的进出场：内容整体更换，只走不透明度且进出同向 */
+.fade-enter-active {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.fade-enter-from {
+  opacity: 0;
+}
+.fade-leave-active {
+  transition: none;
 }
 
 .wait {
@@ -428,7 +448,8 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   justify-content: center;
   transition:
     background var(--dur-fast) var(--ease-standard),
-    border-color var(--dur-fast) var(--ease-standard);
+    border-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 .check.on {

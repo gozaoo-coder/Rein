@@ -219,6 +219,8 @@ async function onSaveEdit(payload: {
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <EmptyState
       v-if="!tasks.length"
@@ -392,6 +394,7 @@ async function onSaveEdit(payload: {
       @close="editing = null"
       @save="onSaveEdit"
     />
+    </div>
   </div>
 </template>
 
@@ -590,6 +593,11 @@ async function onSaveEdit(payload: {
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--accent-strong);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.link:active {
+  transform: scale(0.96);
 }
 
 .hint {
@@ -622,6 +630,11 @@ async function onSaveEdit(payload: {
   background: var(--accent);
   border-radius: var(--radius-full);
   padding: 9px 22px;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.cta:active {
+  transform: scale(0.96);
 }
 
 /* ============================================================

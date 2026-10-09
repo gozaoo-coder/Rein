@@ -347,6 +347,8 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 视图切换 + 智能排程 -->
     <div class="toolbar row">
@@ -479,6 +481,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
       @toggle="onToggle"
     />
     <SmartAddSheet :open="addOpen" :date="canvasDate" @close="addOpen = false" />
+    </div>
   </div>
 </template>
 

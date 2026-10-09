@@ -136,7 +136,7 @@ export const liquidGlass = computed(
 )
 
 /**
- * 实际生效的折射管线 —— GlassSurface / 页头 / 悬浮条都按它决定挂不挂那段滤镜。
+ * 实际生效的折射管线 —— GlassSurface / 悬浮条 / 沉浸层控制层都按它决定挂不挂那段滤镜。
  *
  * **只有一条**：feImage + 1×feDisplacementMap + feGaussianBlur（3 个原语）。
  * 上游那条完整链是「三次位移 + 三色矩阵 + 两次 screen 复合」，为的是色散；

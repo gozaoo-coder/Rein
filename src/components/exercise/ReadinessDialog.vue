@@ -179,7 +179,7 @@ watch(
                     v-if="delta !== 0"
                     class="rd-dbar"
                     :class="delta < 0 ? 'neg' : 'pos'"
-                    :style="{ width: `${effectW}%` }"
+                    :style="{ '--p': `${effectW}%` }"
                   />
                 </span>
                 <p class="rd-psub">今日状态系数 ×{{ factor?.toFixed(2) }}（相对「一般」的 ×1.00）</p>
@@ -191,7 +191,7 @@ watch(
                   <span class="rd-pv num">{{ FEELING_LABEL[feeling ?? 'fair'] }} · {{ feelingScore }} 分</span>
                 </div>
                 <span class="rd-strack">
-                  <i class="rd-sbar" :class="toneOf(sel)" :style="{ width: `${feelingScore}%` }" />
+                  <i class="rd-sbar" :class="toneOf(sel)" :style="{ '--p': `${feelingScore}%` }" />
                 </span>
                 <p class="rd-psub">体感在练够分里占 20%（增肌）–30%（减脂）</p>
               </div>
@@ -433,17 +433,22 @@ watch(
   position: absolute;
   top: 0;
   bottom: 0;
-  transition: width var(--dur-slow) var(--ease-standard);
+  width: 100%;
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .rd-dbar.pos {
   left: 50%;
+  /* 右行长到零线右侧：clip 从右端裁掉（100% − --p），只留左起一段；
+     圆帽给末端侧，贴零线那侧直角才接得上中线 */
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round 0 var(--radius-full) var(--radius-full) 0);
   border-radius: 0 var(--radius-full) var(--radius-full) 0;
   background: var(--c-exercise);
 }
 
 .rd-dbar.neg {
   right: 50%;
+  clip-path: inset(0 0 0 calc(100% - var(--p, 0%)) round var(--radius-full) 0 0 var(--radius-full));
   border-radius: var(--radius-full) 0 0 var(--radius-full);
   background: var(--danger);
 }
@@ -459,9 +464,11 @@ watch(
 
 .rd-sbar {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
-  transition: width var(--dur-slow) var(--ease-standard);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  transition: clip-path var(--dur-base) var(--ease-standard);
 }
 
 .rd-sbar.tone-good {

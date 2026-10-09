@@ -184,11 +184,12 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
     <!-- 2. 做什么 -->
     <section class="sec">
       <h2 class="sec-t">做什么</h2>
-      <div class="grid">
+      <TransitionGroup appear name="pop" tag="div" class="grid">
         <button
-          v-for="q in quickAsks"
+          v-for="(q, i) in quickAsks"
           :key="q.id"
           class="qa"
+          :style="{ '--i': i }"
           @click="emit('ask', q.text)"
         >
           <i class="qa-ic" :style="{ background: q.bg, color: q.fg }">
@@ -199,7 +200,7 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
             <em>{{ q.hint }}</em>
           </span>
         </button>
-      </div>
+      </TransitionGroup>
       <p class="qa-tip">点一下只是把话递给你 —— 接下来你说多少、问什么，AI 那边自己判断。</p>
     </section>
 
@@ -373,6 +374,19 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
   font-size: var(--fs-micro);
   line-height: 1.5;
   color: var(--text-3);
+}
+
+/* 看板入场：六格按 --i 递增延迟依次淡入上移。appear 让空会话刚挂上时也播一遍。
+   transition 不用 @keyframes —— 会话清空后看板可能立刻重建，动画必须可打断。 */
+.pop-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out) calc(var(--i, 0) * var(--enter-stagger, 40ms)),
+    transform var(--dur-base) var(--ease-out) calc(var(--i, 0) * var(--enter-stagger, 40ms));
+}
+
+.pop-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 /* ---------- 草稿 / 会话 ---------- */

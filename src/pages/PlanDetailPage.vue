@@ -69,6 +69,8 @@ async function doDelete(): Promise<void> {
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <EmptyState
       v-if="ready && !plan"
@@ -130,6 +132,7 @@ async function doDelete(): Promise<void> {
 
     <!-- 动作详情抽屉：激活肌群 / 训练参数 / 要点 -->
     <ExerciseDetailDrawer :open="detailEx != null" :exercise="detailEx" @close="detailEx = null" />
+    </div>
   </div>
 </template>
 

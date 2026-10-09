@@ -868,23 +868,25 @@ async function onMenuSelect(value: string): Promise<void> {
                现在存草稿在解析卡上，而查看入口并进了左上角「历史」菜单。 -->
 
       <!-- 引用条 -->
-      <div v-if="quote" class="quote-bar row">
-        <p class="q-text flex-1">引用：{{ quote.text ?? '[图片]' }}</p>
-        <button class="q-x" aria-label="取消引用" @click="quote = null">
-          <X :size="14" />
-        </button>
-      </div>
+      <Transition name="pop">
+        <div v-if="quote" class="quote-bar row">
+          <p class="q-text flex-1">引用：{{ quote.text ?? '[图片]' }}</p>
+          <button class="q-x" aria-label="取消引用" @click="quote = null">
+            <X :size="14" />
+          </button>
+        </div>
+      </Transition>
 
       <!-- @纪要 chips（发送时注入纪要内容） -->
-      <div v-if="memoRefs.length > 0" class="memo-refs">
+      <TransitionGroup name="pop" tag="div" class="memo-refs">
         <span v-for="m in memoRefs" :key="m.id" class="memo-chip">
           @ {{ m.title }}<button class="mx" aria-label="移除纪要引用" @click="removeMemoRef(m.id)"><X :size="10" :stroke-width="3" /></button>
         </span>
-      </div>
+      </TransitionGroup>
 
       <!-- 待发送附图芯片（可多张累积：相机连拍 + 图库多选，随下一条消息发出） -->
-      <div v-if="attachments.length > 0" class="attach-row">
-        <div v-for="(a, i) in attachments" :key="i" class="attach-chip">
+      <TransitionGroup v-if="attachments.length > 0" name="pop" tag="div" class="attach-row">
+        <div v-for="(a, i) in attachments" :key="i" class="attach-chip" :style="{ '--i': i }">
           <img
             :src="`data:image/jpeg;base64,${a.small ?? a.full}`"
             alt="待发送图片"
@@ -893,7 +895,7 @@ async function onMenuSelect(value: string): Promise<void> {
             <X :size="11" :stroke-width="3" />
           </button>
         </div>
-      </div>
+      </TransitionGroup>
 
       <!-- 待发送文档芯片（解析结果 + 内嵌图勾选，随下一条消息发出） -->
       <div v-if="docAtt" class="attach-row doc-attach">
@@ -994,19 +996,21 @@ async function onMenuSelect(value: string): Promise<void> {
         暂无草稿。拍照识别后点「存草稿箱」，稍后可以回来继续改重量再写入。
       </div>
       <ul v-else class="dlist">
-        <li v-for="d in drafts" :key="d.id" class="drow" @click="editDraft(d)">
-          <img
-            v-if="d.thumbBase64"
-            :src="`data:image/jpeg;base64,${d.thumbBase64}`"
-            alt="草稿缩略图"
-            class="dthumb"
-          >
-          <div v-else class="dthumb ph"><Camera :size="16" /></div>
-          <div class="dinfo flex-1">
-            <p class="dtitle">{{ d.items.map((it) => it.foodName).join('、') }}</p>
-            <p class="dmeta">{{ fmtDraftTime(d.createdAt) }} · {{ d.items.length }} 项</p>
-          </div>
-          <button class="ddel" aria-label="删除草稿" @click.stop="deleteDraft(d.id)">
+        <li v-for="d in drafts" :key="d.id" class="drow">
+          <button class="drow-main" @click="editDraft(d)">
+            <img
+              v-if="d.thumbBase64"
+              :src="`data:image/jpeg;base64,${d.thumbBase64}`"
+              alt="草稿缩略图"
+              class="dthumb"
+            >
+            <div v-else class="dthumb ph"><Camera :size="16" /></div>
+            <div class="dinfo flex-1">
+              <p class="dtitle">{{ d.items.map((it) => it.foodName).join('、') }}</p>
+              <p class="dmeta">{{ fmtDraftTime(d.createdAt) }} · {{ d.items.length }} 项</p>
+            </div>
+          </button>
+          <button class="ddel" aria-label="删除草稿" @click="deleteDraft(d.id)">
             <Trash2 :size="15" />
           </button>
         </li>
@@ -1260,6 +1264,14 @@ async function onMenuSelect(value: string): Promise<void> {
 .msg {
   margin-bottom: 10px;
   display: flex;
+  /* 长按期间的按压反馈。只换底色不缩放：消息行是通栏容器，
+     transform 会把正文宽度一起改掉 */
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+.msg:active {
+  background-color: var(--surface-2);
+  border-radius: var(--radius-m);
 }
 
 .msg.user {
@@ -1393,7 +1405,16 @@ async function onMenuSelect(value: string): Promise<void> {
   align-items: center;
   gap: 10px;
   padding: 9px 0;
-  cursor: pointer;
+}
+
+/* 编辑入口铺满整行：行本身不再是 click 目标，键盘焦点与读屏都落在这颗按钮上 */
+.drow-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
 }
 
 .drow + .drow {
@@ -1733,7 +1754,11 @@ async function onMenuSelect(value: string): Promise<void> {
   align-items: center;
   justify-content: center;
   color: var(--text-1);
-  transition: background-color var(--dur-fast) var(--ease-standard);
+  /* transform 必须显式带上：scoped transition 会覆盖 base.css 里 button 的全局过渡，
+     少了它 :active 的 scale(0.96) 就变成瞬贴 */
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 .cam:active {
@@ -1778,7 +1803,10 @@ async function onMenuSelect(value: string): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color var(--dur-fast) var(--ease-standard);
+  /* 同 .cam：transform 不能不写，否则覆盖掉全局 button 的按压过渡 */
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 /* 有文字或附图时点亮（Kimi 式：灰 → 主色）。主操作不玻璃化 —— 与 Dock 的 .accent、
@@ -1790,6 +1818,20 @@ async function onMenuSelect(value: string): Promise<void> {
 
 .send:disabled {
   opacity: 0.5;
+}
+
+/* 引用条 / 纪要 chips / 附图 chips 的入场：可打断的 CSS transition，不用 @keyframes ——
+   连拍、连选时会连续插入，transition 能被下一次进入直接接管而不会各播各的。
+   延迟按 --i 递增，附图多张时依次落位。 */
+.pop-enter-active {
+  transition:
+    opacity var(--dur-fast) var(--ease-out) calc(var(--i, 0) * var(--enter-stagger, 40ms)),
+    transform var(--dur-fast) var(--ease-out) calc(var(--i, 0) * var(--enter-stagger, 40ms));
+}
+
+.pop-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 /* ============================================================

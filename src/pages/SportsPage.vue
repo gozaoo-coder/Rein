@@ -36,6 +36,8 @@ const manualOpen = ref(false)
 <template>
   <div class="page">
     <PageHeader title="运动" :subtitle="`本周 ${ex.weekMinutes} 分钟 · ${ex.weekKcal} 大卡`" />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 整卡可点 → 全部运动记录二级页 -->
     <ExerciseWeekCard link-to="/sports/records" />
@@ -82,6 +84,7 @@ const manualOpen = ref(false)
 
     <!-- 手动记运动 -->
     <AddWorkoutSheet :open="manualOpen" @close="manualOpen = false" />
+    </div>
   </div>
 </template>
 

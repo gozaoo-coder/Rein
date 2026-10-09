@@ -23,6 +23,7 @@ import {
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import FileExplorer from '@/components/files/FileExplorer.vue'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import { kbService, invalidateUsage, usageCached } from '@/services/kbService'
 import { humanBytes } from '@/utils/format'
 import { useAiStore } from '@/stores/ai'
@@ -49,6 +50,8 @@ import {
 
 const ai = useAiStore()
 const toast = useToast()
+/** 手机端（与文件管理器同一断点）：那里「最近内容」由底部 dock 的最近文件模式承担 */
+const narrowPhone = useMediaQuery('(max-width: 640px)')
 /** 「去原页面」用：派生投影只是索引，正文要看真身就得回它自己的页面 */
 const router = useRouter()
 /** 深链参数（`?dir=` 目录 / `?path=` 文件）：空间总览页的目录行与大文件行带着它们跳进来 */
@@ -598,7 +601,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <PageHeader back title="文件" subtitle="AI 工作区的虚拟文件系统">
+    <PageHeader back title="AI工作区">
       <!-- 空间总览的入口：**只在页头**（曾占页内第一张卡）。只显示总大小 ——
            分类明细在总览页里讲，这一颗的职责就是「一眼看到占了多少」。 -->
       <template #action>
@@ -613,6 +616,8 @@ onMounted(async () => {
         </button>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 阅读器 -->
     <section v-if="reader" class="card reader">
@@ -848,8 +853,10 @@ onMounted(async () => {
     <template v-else>
       <FileExplorer ref="explorer" :landmarks="NAMESPACES" @open="(it) => it.docId && openDoc(it.docId)" />
 
-      <!-- 最近内容：跨工作区的「最近动过」，列不出来（它跨目录），所以单列一张卡 -->
-      <section v-if="recent.length && !explorerPath" class="card list list-recent">
+      <!-- 最近内容：跨工作区的「最近动过」，列不出来（它跨目录），所以单列一张卡。
+           手机端不展示：那里由文件管理器底部 dock 的「最近文件」模式承担，
+           主内容区只留面包屑 + 功能 + 当前目录。 -->
+      <section v-if="!narrowPhone && recent.length && !explorerPath" class="card list list-recent">
         <h3 class="sec">最近内容</h3>
         <ul>
           <li v-for="h in recent" :key="`${h.sourceType}-${h.id}`">
@@ -865,6 +872,7 @@ onMounted(async () => {
         </ul>
       </section>
     </template>
+    </div>
   </div>
 </template>
 
@@ -1312,7 +1320,7 @@ li + li .item {
 /* 阅读器：正文一行 80+ 字就没人读得下去。这页没有侧栏可放元信息，
    所以把阅读卡收成一张居中的定宽卡（≈ 820px，约 55 字/行），
    两侧留白是对称的——看上去是「一张阅读卡」，不是「右边空着」。 */
-.desk-main .page > .card.reader {
+.desk-main .rubber-layer > .card.reader {
   max-width: 820px;
   margin-inline: auto;
 }

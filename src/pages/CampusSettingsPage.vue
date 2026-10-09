@@ -335,6 +335,8 @@ onMounted(async () => {
 <template>
   <div class="page">
     <PageHeader title="课表配置与设置" subtitle="绑定学校教务系统后自动同步课表" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 桌面栅格：壳层只把 .page 的**直接子项**摊成两栏，而这一页里有两张卡
          需要通栏（见 .desk-main 那段注释），所以自带一层 .d-grid 承接。
@@ -669,6 +671,7 @@ onMounted(async () => {
       @close="confirmOpen = false"
       @select="onDanger"
     />
+    </div>
   </div>
 </template>
 

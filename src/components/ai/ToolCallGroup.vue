@@ -181,11 +181,17 @@ function openDetail(c: ProcessToolCall): void {
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background 120ms ease;
+  /* transform 必须显式带上：scoped transition 会覆盖 base.css 里 button 的全局过渡，
+     少了它 :active 的 scale(0.96) 就变成瞬贴 */
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
-.tool-item:hover {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .tool-item:hover {
+    background: var(--surface-2);
+  }
 }
 
 .tool-icon {
@@ -234,12 +240,16 @@ function openDetail(c: ProcessToolCall): void {
   display: inline-flex;
   color: var(--text-3);
   opacity: 0.45;
-  transition: opacity 120ms ease, transform 120ms ease;
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
-.tool-item:hover .tool-chevron {
-  opacity: 1;
-  transform: translateX(1px);
+@media (hover: hover) {
+  .tool-item:hover .tool-chevron {
+    opacity: 1;
+    transform: translateX(1px);
+  }
 }
 
 /* 执行中的状态小圆点：呼吸动画 */

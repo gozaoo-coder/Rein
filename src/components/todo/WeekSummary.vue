@@ -84,7 +84,7 @@ const insight = computed(() => {
           <i
             v-for="(s, i) in stats.perDay"
             :key="i"
-            :style="{ height: `${Math.max(6, (s.total ? s.done / s.total : 0) * 100)}%` }"
+            :style="{ transform: `scaleY(${Math.max(0.06, s.total ? s.done / s.total : 0)})` }"
             :class="{ hi: dates[i] === today }"
           />
         </div>
@@ -165,9 +165,11 @@ const insight = computed(() => {
 
 .bars i {
   flex: 1;
+  height: 100%;
+  transform-origin: bottom center;
   border-radius: 4px 4px 2px 2px;
   background: var(--accent-soft);
-  transition: height var(--dur-base) var(--ease-standard);
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .bars i.hi {

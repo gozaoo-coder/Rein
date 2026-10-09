@@ -14,11 +14,8 @@
  * - 点击标题行可随时手动展开/折叠
  */
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
-import { animate } from 'animejs'
 import { Brain, ChevronDown } from 'lucide-vue-next'
 import ToolCallGroup from './ToolCallGroup.vue'
-import { motionOn } from '@/system/motion'
-import { perfDegraded } from '@/system/perf'
 import type { ProcessSegment } from '@/types'
 
 const props = withDefaults(
@@ -100,35 +97,16 @@ function stopTicker(): void {
 
 onUnmounted(() => {
   stopTicker()
-  // 清理自动折叠定时器与进行中的伸开/闭合动画
+  // 只清理自动折叠定时器：开合是纯 CSS transition，组件卸载时随之消失，
+  // 不存在要继续打断的 JS 动画
   if (collapseTimer) {
     clearTimeout(collapseTimer)
     collapseTimer = null
   }
-  stopBodyAnim()
 })
 
 // 进行中 → 展开；全部完成 → 短暂延迟后自动折叠
 let collapseTimer: ReturnType<typeof setTimeout> | null = null
-
-// 伸开/闭合动画的统一引用：快速 toggle、自动展开打断残留折叠动画时 pause
-let bodyAnim: ReturnType<typeof animate> | null = null
-
-// 免动画档：动效关掉（用户档位或系统减弱动效 —— 由 system/motion 合成一个答案），
-// 或运行时性能降级（system/perf）。
-// 伸开/闭合补的是 maxHeight——每帧都要重排，是这里最贵的一段。降级判定必须**单独留着**：
-// motion 层在掉帧时只是把档位退回「默认」，而默认档照样补 maxHeight。
-const skipAnim = computed(() => !motionOn.value || perfDegraded.value)
-
-/** 打断残留动画并释放内联 maxHeight（恢复 CSS 自然高度） */
-function stopBodyAnim(): void {
-  if (bodyAnim) {
-    bodyAnim.pause()
-    bodyAnim = null
-  }
-  const el = bodyRef.value
-  if (el && el.style.maxHeight) el.style.maxHeight = ''
-}
 
 watch(
   busy,
@@ -138,8 +116,7 @@ watch(
       collapseTimer = null
     }
     if (b && !was) {
-      // 进行中 → 立即展开；先打断可能仍在运行的折叠动画（防内容被强制收起）
-      stopBodyAnim()
+      // 进行中 → 立即展开。CSS transition 天然可打断，不需要手动 pause 残留动画
       collapsed.value = false
     } else if (!b && was) {
       // 空闲：仅当过程彻底结束（正文已输出 / 流已结束）才自动折叠。
@@ -180,63 +157,23 @@ function toggle(): void {
   else collapseNow()
 }
 
-// 展开：打断残留折叠动画后，手动展开带 240ms 高度动画（ease out(3)），
-// 完成后定位到底部；reduced-motion 下瞬时显示
+// 展开：高度过渡改走 CSS grid 轨道（1fr ↔ 0fr），JS 只翻状态并把内容定位到底部
 function expandNow(): void {
-  stopBodyAnim()
   collapsed.value = false
   nextTick(() => {
     const el = bodyRef.value
-    if (!el) return
-    if (skipAnim.value) {
-      el.scrollTop = el.scrollHeight
-      return
-    }
-    const target = el.scrollHeight
-    el.style.maxHeight = '0px'
-    void el.offsetHeight // 强制 reflow，确保动画从 0 起步
-    bodyAnim = animate(el, {
-      maxHeight: ['0px', `${target}px`],
-      duration: 240,
-      ease: 'out(3)',
-      onComplete: () => {
-        bodyAnim = null
-        el.style.maxHeight = ''
-        el.scrollTop = el.scrollHeight
-      },
-    })
+    if (el) el.scrollTop = el.scrollHeight
   })
 }
 
-// 闭合：仅高度变小动画（不做透明度变化）。
-// 起点用当前可视高度（offsetHeight）而非内容高度（scrollHeight）——
-// max-height:320px 上限下二者不一致，用 scrollHeight 会让动画前段"假停顿"
+// 闭合：只翻状态。不再补 maxHeight —— 动画终点是内容自然高度，完成后清除
+// 内联样式会当场跳回 .process-scroll 的 320px 上限，CSS 轨道没有这个问题
 function collapseNow(): void {
   if (collapseTimer) {
     clearTimeout(collapseTimer)
     collapseTimer = null
   }
-  const el = bodyRef.value
-  if (!el) {
-    collapsed.value = true
-    return
-  }
-  stopBodyAnim()
-  if (skipAnim.value) {
-    collapsed.value = true
-    return
-  }
-  const start = Math.min(el.offsetHeight, el.scrollHeight)
-  bodyAnim = animate(el, {
-    maxHeight: [`${start}px`, '0px'],
-    duration: 200,
-    ease: 'inOut(2)',
-    onComplete: () => {
-      bodyAnim = null
-      collapsed.value = true
-      el.style.maxHeight = ''
-    },
-  })
+  collapsed.value = true
 }
 
 // 内容签名：思考文字 / 工具状态变化时滚动到底部（流式跟随）
@@ -285,8 +222,14 @@ const titleText = computed(() => {
 
 <template>
   <div class="process-section" :class="{ collapsed }">
-    <!-- 合并标题行：点击切换折叠 -->
-    <div class="process-header" @click="toggle">
+    <!-- 合并标题行：点击切换折叠。用 button 而不是 div —— 折叠开关是纯键盘可达的控件 -->
+    <button
+      type="button"
+      class="process-header"
+      :aria-expanded="!collapsed"
+      aria-controls="process-body"
+      @click="toggle"
+    >
       <span class="process-icon"><Brain :size="14" /></span>
       <span class="process-title">{{ titleText }}</span>
       <span v-if="busy" class="process-dots">
@@ -295,16 +238,18 @@ const titleText = computed(() => {
       <span class="process-arrow" :class="{ collapsed }">
         <ChevronDown :size="12" />
       </span>
-    </div>
+    </button>
 
-    <!-- 展开内容：思考文字与工具执行结果按到达顺序穿插展示 -->
-    <div v-show="!collapsed" ref="bodyRef" class="process-body">
-      <!-- 超范围平移层：到边拖动时内容位移；包裹层镜像弹性列布局，只承载 transform -->
-      <div class="rubber-layer" data-rubber-content>
-        <template v-for="(seg, i) in segments" :key="i">
-          <div v-if="seg.kind === 'reasoning'" class="process-reasoning">{{ seg.text }}</div>
-          <ToolCallGroup v-else :calls="[seg.call]" />
-        </template>
+    <!-- 展开内容：grid 壳只收轨道，视觉与滚动全在中层 -->
+    <div id="process-body" class="process-body">
+      <div ref="bodyRef" class="process-scroll">
+        <!-- 超范围平移层：到边拖动时内容位移；包裹层镜像弹性列布局，只承载 transform -->
+        <div class="rubber-layer" data-rubber-content>
+          <template v-for="(seg, i) in segments" :key="i">
+            <div v-if="seg.kind === 'reasoning'" class="process-reasoning">{{ seg.text }}</div>
+            <ToolCallGroup v-else :calls="[seg.call]" />
+          </template>
+        </div>
       </div>
     </div>
   </div>
@@ -331,11 +276,17 @@ const titleText = computed(() => {
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  transition: background 120ms ease;
+  /* 必须带 transform：scoped transition 会整条覆盖 base.css 里 button 的全局过渡，
+     少了这项按压反馈（:active 的 scale(0.96)）就变成瞬贴 */
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
-.process-header:hover {
-  background: var(--surface-2);
+@media (hover: hover) {
+  .process-header:hover {
+    background: var(--surface-2);
+  }
 }
 
 .process-icon {
@@ -389,7 +340,7 @@ const titleText = computed(() => {
   line-height: 1;
   flex: none;
   color: var(--text-3);
-  transition: transform 150ms ease;
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
 /* 折叠时箭头由下转右（chevron-down 旋转 -90°），带过渡 */
@@ -397,26 +348,56 @@ const titleText = computed(() => {
   transform: rotate(-90deg);
 }
 
-/* 展开内容：左侧细线标识层级，缩进与上下 margin 加大，与标题行/正文明确区分；
-   整块可滚动（思考 + 工具穿插后统一滚动），overflow-y:auto 供流式跟随；
-   overflow:hidden 由折叠动画时临时覆盖（collapseNow 内联 maxHeight） */
+/* 折叠壳：grid 轨道从 1fr 收到 0fr。用轨道过渡而不是补 maxHeight ——
+   动画终点是内容自然高度，完成后清除内联样式会当场跳回 320px 上限 */
 .process-body {
-  margin: 8px 0 6px 8px;
-  padding: 2px 0 2px 12px;
-  border-left: 2px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--dur-base) var(--ease-out);
+}
+
+.process-section.collapsed .process-body {
+  grid-template-rows: 0fr;
+}
+
+/* 低性能档：每帧重排的轨道过渡直接关掉，开合退化为瞬时 */
+html[data-perf='low'] .process-body {
+  transition: none;
+}
+
+/* 滚动层：原 .process-body 的全部视觉都搬到这里 ——
+   左侧细线标识层级，缩进与上下 margin 加大，与标题行/正文明确区分；
+   整块可滚动（思考 + 工具穿插后统一滚动），overflow-y:auto 供流式跟随 */
+/* 轨道项自己不带任何 margin/padding/border：grid 的 0fr 折叠以轨道项的
+   **外尺寸**为下限，间距画在它身上会剩一截收不掉（经典 0fr 手势的坑）。
+   缩进、层级细线与上下间距全部下沉到滚动内容层 .rubber-layer —— 它在
+   滚动容器内、随内容滚，不参与轨道尺寸计算。 */
+.process-scroll {
+  min-height: 0;
   max-height: 320px;
   overflow-y: auto;
   overflow-x: hidden;
+  visibility: visible;
+  transition: visibility 0s;
 }
 
-/* 超范围平移层：镜像 .process-body 的弹性列布局（只承载 transform，不改观感） */
+/* 折叠到终点才隐藏：内容仍完整参与轨道过渡，只是收起后不再可聚焦、不被读到 */
+.process-section.collapsed .process-scroll {
+  visibility: hidden;
+  transition: visibility 0s var(--dur-base);
+}
+
+/* 超范围平移层：镜像 .process-scroll 的弹性列布局（只承载 transform，不改观感）。
+   缩进 / 层级细线 / 上下间距也在这里：轨道项 .process-scroll 必须保持「裸壳」
+   才能让 0fr 收到 0（见 .process-scroll 注释）。 */
 .rubber-layer {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  margin: 8px 0 6px 8px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--line);
+  min-width: 0;
 }
 
 .process-reasoning {
@@ -429,11 +410,11 @@ const titleText = computed(() => {
   overflow-wrap: anywhere;
 }
 
-.process-body::-webkit-scrollbar {
+.process-scroll::-webkit-scrollbar {
   width: 6px;
 }
 
-.process-body::-webkit-scrollbar-thumb {
+.process-scroll::-webkit-scrollbar-thumb {
   background: var(--line-strong);
   border-radius: var(--radius-s);
 }
@@ -445,6 +426,11 @@ const titleText = computed(() => {
   }
   .process-dots .dot {
     animation: none;
+  }
+  /* 折叠时 visibility 的延时要跟着归零：reduce 下轨道过渡已是瞬时的，
+     留着 delay 会让内容晚一个 --dur-base 才消失 */
+  .process-section.collapsed .process-scroll {
+    transition-delay: 0s;
   }
 }
 </style>

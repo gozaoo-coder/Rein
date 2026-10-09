@@ -303,7 +303,7 @@ async function main() {
     ok('搜索过滤（qwen）', await setInput('.panel .bar .finder input', 'qwen'))
     await sleep(250)
     const rowsFiltered = await pickerRows()
-    ok('过滤后只剩百炼那条', rowsFiltered.length === 1 && rowsFiltered[0].text.includes('qwen'), JSON.stringify(rowsFiltered))
+    ok('过滤后只剩百炼那条', rowsFiltered.length === 1 && rowsFiltered[0].text.includes('百炼') && rowsFiltered[0].sub.includes('qwen'), JSON.stringify(rowsFiltered))
     ok('清空搜索', await setInput('.panel .bar .finder input', ''))
     await sleep(250)
 

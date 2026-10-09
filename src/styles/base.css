@@ -64,7 +64,7 @@ body {
    手机壳（< DESKTOP_MIN）：固定层与栏同宽、居中。视口比 --frame-max 窄时它就是整屏，
    与手机上逐像素一致；更宽时窗口两侧留给中性底 —— 那栏才读得出是「一块屏」。
    `position: fixed` 让它不随文档滚：「光钉在屏幕左上、内容从它下面滚过去」与从前相同。
-   层挂在 .app-frame 上、**不在** [data-rubber-page] 里：超范围平移只动内容，光不动。
+   层挂在 .app-frame 上、**不在** [data-rubber-shell] 里：超范围平移只动内容，光不动。
    桌面壳：整窗一块光，与从前一致。
 
    z-index: -1 落在根层叠上下文的负数层 —— 盖住画布底色、被一切在流内容盖住
@@ -791,6 +791,48 @@ html[data-motion='rich'] .glow-layer:active::after {
 
 .desk-main .page > .d-half,
 .desk-main .page > .card.d-half {
+  grid-column: span 1;
+}
+
+/* ---------- 页面级超伸层（system/rubberScroll）----------
+   页面把「页头之后的内容」挂成 .rubber-layer：容器框与吸顶页头留在层外，到边拖动时
+   只有内容位移，标题栏纹丝不动（层解析见 rubberScroll 的 layerFor）。
+   层只承载 transform、不改观感 —— 布局方式整体继承父级：栅格跟母同栏、弹性列同向
+   同距、块级照旧。所以 .page 是栅格还是弹性列、桌面还是移动端，都不必为层再写
+   一遍几何。只挂在 .page 的直接子级：抽屉 / 浮层 / 内层滚动区的层各管各的镜像。 */
+.page > .rubber-layer {
+  display: inherit;
+  gap: inherit;
+  grid-template-columns: inherit;
+  flex-direction: inherit;
+  align-items: inherit;
+  align-content: inherit;
+  justify-content: inherit;
+  min-width: 0;
+}
+
+/* 桌面栅格的子项摆放同步跟到层里（上面那几条 .page > 的规则留给页头与没挂层的
+   页面兜底：层自己占满整行，真正的两栏由层内部承担）。排法同上：先缺省、后显式。 */
+.desk-main .page > .rubber-layer > * {
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+.desk-main .page > .rubber-layer > .card {
+  grid-column: span 1;
+}
+
+.desk-main .page > .rubber-layer > .card + .card {
+  margin-top: 0;
+}
+
+.desk-main .page > .rubber-layer > .d-full,
+.desk-main .page > .rubber-layer > .card.d-full {
+  grid-column: 1 / -1;
+}
+
+.desk-main .page > .rubber-layer > .d-half,
+.desk-main .page > .rubber-layer > .card.d-half {
   grid-column: span 1;
 }
 

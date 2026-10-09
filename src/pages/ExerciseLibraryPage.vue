@@ -118,6 +118,8 @@ function onSaved(e: ExerciseRecord): void {
       title="动作库"
       :subtitle="`${lib.list.length} 个动作 · 课程的唯一动作来源`"
     />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <div class="searchrow row">
       <Search :size="15" />
@@ -215,6 +217,7 @@ function onSaved(e: ExerciseRecord): void {
       @close="formOpen = false"
       @saved="onSaved"
     />
+    </div>
   </div>
 </template>
 

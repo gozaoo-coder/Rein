@@ -198,6 +198,8 @@ onMounted(async () => {
 <template>
   <div class="page">
     <PageHeader title="软件更新" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 桌面栅格：壳层只把 .page 的**直接子项**摊成两栏，而这一页的四张主卡
          高矮差得远，两两并排必然在行尾留下空白 —— 桌面上每张都通栏，改在
@@ -243,7 +245,7 @@ onMounted(async () => {
       <!-- 进度 -->
       <div v-if="download && download.phase !== 'idle'" class="progress-box">
         <div class="pbar">
-          <i class="pfill" :style="{ width: `${downloadedPercent}%` }" />
+          <i class="pfill" :style="{ transform: `scaleX(${downloadedPercent / 100})` }" />
         </div>
         <div class="row between t-3 tiny">
           <span>{{ PHASE_TEXT[download.phase] }}<template v-if="download.phase === 'downloading'"> · {{ fmtSpeed(download.bytesPerSec) }}</template></span>
@@ -418,6 +420,7 @@ onMounted(async () => {
       安装包在下载完成后会用内置公钥做 Ed25519 验签，签名不符或摘要不符的包一律不安装。
       清单本身也带签名 —— 服务端只能分发你签过名的更新。
     </p>
+    </div>
   </div>
 </template>
 
@@ -484,8 +487,10 @@ onMounted(async () => {
 .pfill {
   display: block;
   height: 100%;
+  width: 100%;
+  transform-origin: left center;
   background: var(--accent);
-  transition: width var(--dur-base) var(--ease-standard);
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .progress-box > .row {

@@ -50,6 +50,27 @@ fn install_crypto_provider() {
     });
 }
 
+/// 构造「ring provider + 显式 webpki roots」的 rustls ClientConfig。
+///
+/// reqwest 0.13 默认走 rustls-platform-verifier 的**平台证书校验器**：Android 上那
+/// 要求 app 预装 Kotlin native 组件（`org.rustls.platformverifier.CertificateVerifier`）
+/// 并在启动时 init_with_env；没这套装配时握手在 worker 线程直接 panic、run 任务无声
+/// 终止，前端只看到三个点转不完（真机复现：deepseek 请求握手 panic 后 done/error 都
+/// 不回来，busy 永远不清）。Rein 的 LLM 只连公网 API，信任源与语音 WS
+/// （`rustls-tls-webpki-roots`）、web 工具（ureq）取同一套 Mozilla roots。
+/// 代价：用户自装 CA（抓包 / 企业代理）暂不被信任，需要时在这里补 roots。
+fn rustls_webpki_client_config() -> rustls::ClientConfig {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("TLS 默认协议版本")
+    .with_root_certificates(roots)
+    .with_no_client_auth()
+}
+
 /// OpenAI 兼容 Chat Completions 客户端
 pub struct OpenAiCompatBackend {
     http: reqwest::Client,
@@ -73,9 +94,12 @@ impl OpenAiCompatBackend {
         Self {
             // 不设总超时（流式可以很長）；连接与「块间空闲」给死线，
             // 防止端点挂起把 ai_probe / agent run 无限吊住
+            // tls_backend_preconfigured：显式给 TLS 配置，绕开 reqwest 0.13 默认的
+            // 平台证书校验器（Android 上未装配会 panic 挂死，见 rustls_webpki_client_config）
             http: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .read_timeout(std::time::Duration::from_secs(60))
+                .tls_backend_preconfigured(rustls_webpki_client_config())
                 .build()
                 .expect("reqwest Client 构建失败"),
             compat: Compat::detect(&base_url),
@@ -432,5 +456,34 @@ mod tests {
         assert!(err.contains("429"), "错误应带状态码: {err}");
         assert!(err.contains("rate limited"), "错误应带响应体: {err}");
         assert!(err.contains("retry-after=12"), "Retry-After 应透传: {err}");
+    }
+
+    // ---------------------------------------------------------
+    // TLS 冒烟（默认忽略，需联网）：真连一次公网 HTTPS
+    // ---------------------------------------------------------
+
+    /// 断言「预配置 rustls + webpki roots」这条 TLS 路径能完成公网握手。
+    ///
+    /// 防的是 reqwest 0.13 默认平台校验器那类**静默故障**：Android 上未装配
+    /// Kotlin 组件时请求既不成功也不报错，直接挂死（真机症状 = 聊天卡三个点）。
+    /// 假 key 打 deepseek：握手成功必回 401，握手/证书失败则报传输层错误。
+    /// 手动验证：`cargo test -p rein webpki_tls -- --ignored`
+    #[tokio::test]
+    #[ignore = "需联网；手动跑：cargo test -p rein webpki_tls -- --ignored"]
+    async fn webpki_tls_completes_handshake_with_public_host() {
+        let backend =
+            OpenAiCompatBackend::new("https://api.deepseek.com/v1", "sk-invalid", "deepseek-chat");
+        let result = backend.complete(&test_req()).await;
+        match result {
+            // 假 key 正常不该成功；真成功了说明对方免鉴权，也不影响断言
+            Ok(_) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("LLM 请求失败"),
+                    "应是确定的 HTTP 状态码而非传输层/TLS 错误：{msg}"
+                );
+            }
+        }
     }
 }

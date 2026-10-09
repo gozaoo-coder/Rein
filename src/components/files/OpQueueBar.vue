@@ -142,7 +142,8 @@ function statusText(op: FileOp): string {
   border-radius: var(--radius-full);
   background: var(--accent);
   transform-origin: left center;
-  transition: transform 0.2s var(--ease-standard);
+  /* 进度按文件 tick 连续跳变：250ms 是抹平跳跃的最小可感值，与 KnowledgePage .bar i 同档 */
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .fail {

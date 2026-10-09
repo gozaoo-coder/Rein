@@ -32,6 +32,8 @@ function fmtUsed(lastUsedAt: string | null): string {
 <template>
   <div class="page">
     <PageHeader back title="全部课程" subtitle="最近使用的排在前面" />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 内置课程新版本：不再自动覆盖，交给用户三选一 -->
     <PlanSeedUpgradeBanner />
@@ -66,6 +68,7 @@ function fmtUsed(lastUsedAt: string | null): string {
         </li>
       </ul>
     </section>
+    </div>
   </div>
 </template>
 

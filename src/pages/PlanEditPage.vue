@@ -202,6 +202,8 @@ async function save(): Promise<void> {
 <template>
   <div class="page">
     <PageHeader back :title="isNew ? '新建课程' : '编辑课程'" :subtitle="`约 ${estMin} 分钟 · ${exercises.length} 个动作`" />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <template v-if="ready">
       <!-- 基本信息 -->
@@ -225,69 +227,75 @@ async function save(): Promise<void> {
         </div>
       </section>
 
-      <!-- 动作列表 -->
-      <section v-for="(e, i) in exercises" :key="e.id" class="card excard">
-        <div class="row between exhead">
-          <span class="exidx num">动作 {{ i + 1 }}</span>
-          <div class="row ops">
-            <button aria-label="上移" :disabled="i === 0" @click="moveExercise(i, -1)">
-              <ArrowUp :size="15" />
-            </button>
-            <button aria-label="下移" :disabled="i === exercises.length - 1" @click="moveExercise(i, 1)">
-              <ArrowDown :size="15" />
-            </button>
-            <button aria-label="删除动作" class="danger" @click="removeExercise(i)">
-              <X :size="15" />
-            </button>
+      <!-- 动作列表：每张卡自带栅格壳，增删与上下移都在壳上做过渡 -->
+      <TransitionGroup tag="div" name="ex" class="exlist">
+        <div v-for="(e, i) in exercises" :key="e.id" class="exrow">
+          <div class="excell">
+            <section class="card excard">
+            <div class="row between exhead">
+              <span class="exidx num">动作 {{ i + 1 }}</span>
+              <div class="row ops">
+                <button aria-label="上移" :disabled="i === 0" @click="moveExercise(i, -1)">
+                  <ArrowUp :size="15" />
+                </button>
+                <button aria-label="下移" :disabled="i === exercises.length - 1" @click="moveExercise(i, 1)">
+                  <ArrowDown :size="15" />
+                </button>
+                <button aria-label="删除动作" class="danger" @click="removeExercise(i)">
+                  <X :size="15" />
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <span class="flabel">动作</span>
+              <button class="expick row" type="button" @click="openPicker(i)">
+                <span class="col expickmain">
+                  <span class="exname" :class="{ empty: !e.exerciseId }">
+                    {{ e.exerciseId ? exName(e) : '点击从动作库选择' }}
+                  </span>
+                  <span class="exmeta t-3">{{ exMeta(e) }}</span>
+                </span>
+                <span class="expickop">选择</span>
+              </button>
+            </div>
+
+            <div class="field">
+              <span class="flabel">类型</span>
+              <SegmentedControl
+                class="typeseg"
+                :options="[
+                  { value: 'strength', label: '力量' },
+                  { value: 'timed', label: '计时' },
+                  { value: 'cardio', label: '有氧' },
+                ]"
+                :model-value="e.kind"
+                @update:model-value="switchKind(e, $event)"
+              />
+            </div>
+
+            <template v-if="e.kind === 'strength'">
+              <NumberStepper v-model="e.sets" :step="1" :min="1" :max="20" label="组数" unit="组" />
+              <NumberStepper v-model="e.reps!" :step="1" :min="1" :max="100" label="每组次数" unit="次" />
+              <NumberStepper v-model="e.weightKg!" :step="2.5" :min="0" :max="500" label="建议重量" unit="kg" />
+            </template>
+            <template v-else-if="e.kind === 'timed'">
+              <NumberStepper v-model="e.sets" :step="1" :min="1" :max="20" label="组数" unit="组" />
+              <NumberStepper v-model="e.targetSec!" :step="5" :min="10" :max="3600" label="每组目标" unit="秒" />
+            </template>
+            <template v-else>
+              <NumberStepper v-model="e.durationMin!" :step="5" :min="5" :max="300" label="时长" unit="分钟" />
+            </template>
+            <NumberStepper v-model="e.restSec" :step="15" :min="0" :max="300" label="组间休息" unit="秒" />
+
+            <label class="field">
+              <span class="flabel">动作要点</span>
+              <textarea v-model="e.tips" rows="2" maxlength="120" placeholder="发力细节、注意事项（训练中展示）" />
+            </label>
+          </section>
           </div>
         </div>
-
-        <div class="field">
-          <span class="flabel">动作</span>
-          <button class="expick row" type="button" @click="openPicker(i)">
-            <span class="col expickmain">
-              <span class="exname" :class="{ empty: !e.exerciseId }">
-                {{ e.exerciseId ? exName(e) : '点击从动作库选择' }}
-              </span>
-              <span class="exmeta t-3">{{ exMeta(e) }}</span>
-            </span>
-            <span class="expickop">选择</span>
-          </button>
-        </div>
-
-        <div class="field">
-          <span class="flabel">类型</span>
-          <SegmentedControl
-            class="typeseg"
-            :options="[
-              { value: 'strength', label: '力量' },
-              { value: 'timed', label: '计时' },
-              { value: 'cardio', label: '有氧' },
-            ]"
-            :model-value="e.kind"
-            @update:model-value="switchKind(e, $event)"
-          />
-        </div>
-
-        <template v-if="e.kind === 'strength'">
-          <NumberStepper v-model="e.sets" :step="1" :min="1" :max="20" label="组数" unit="组" />
-          <NumberStepper v-model="e.reps!" :step="1" :min="1" :max="100" label="每组次数" unit="次" />
-          <NumberStepper v-model="e.weightKg!" :step="2.5" :min="0" :max="500" label="建议重量" unit="kg" />
-        </template>
-        <template v-else-if="e.kind === 'timed'">
-          <NumberStepper v-model="e.sets" :step="1" :min="1" :max="20" label="组数" unit="组" />
-          <NumberStepper v-model="e.targetSec!" :step="5" :min="10" :max="3600" label="每组目标" unit="秒" />
-        </template>
-        <template v-else>
-          <NumberStepper v-model="e.durationMin!" :step="5" :min="5" :max="300" label="时长" unit="分钟" />
-        </template>
-        <NumberStepper v-model="e.restSec" :step="15" :min="0" :max="300" label="组间休息" unit="秒" />
-
-        <label class="field">
-          <span class="flabel">动作要点</span>
-          <textarea v-model="e.tips" rows="2" maxlength="120" placeholder="发力细节、注意事项（训练中展示）" />
-        </label>
-      </section>
+      </TransitionGroup>
 
       <button class="add row center" @click="addExercise">
         <Plus :size="17" /> 添加动作
@@ -305,6 +313,7 @@ async function save(): Promise<void> {
         @close="pickerIdx = null"
       />
     </template>
+    </div>
   </div>
 </template>
 
@@ -395,8 +404,60 @@ async function save(): Promise<void> {
   color: var(--c-exercise-deep);
 }
 
-.excard {
+/* 动作行壳：0fr↔1fr 收高度，卡的间距职责从 .excard 移到这一层 */
+.exlist {
+  display: contents;
+}
+
+.exrow {
+  display: grid;
+  grid-template-rows: 1fr;
   margin-top: 14px;
+}
+
+/* 裸壳：动作卡自带 padding，直接当轨道项 0fr 收不干净，会剩一截卡内边距 */
+.excell {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 桌面壳层原先靠 .rubber-layer > .card「占半栏」+ min-width:0 摆动作卡；
+   卡被 .exrow 包着后这两条都命中不到，这里补齐（带 .page 前缀压过壳层那串同特指度规则） */
+.desk-main .page > .rubber-layer > .exlist > .exrow {
+  min-width: 0;
+  grid-column: span 1;
+}
+
+.desk-main .exrow {
+  margin-top: 0;
+}
+
+.ex-enter-active {
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-standard),
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+
+.ex-enter-from {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.ex-leave-active {
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-standard),
+    opacity var(--dur-fast) var(--ease-standard);
+}
+
+.ex-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.ex-move {
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .exhead {
@@ -469,8 +530,8 @@ async function save(): Promise<void> {
 
 /* 基本信息只有名称/副标题/类型三格，半栏放不满、右半屏还会空着；
    拉通一行后三格横排 —— 表单的「表头」在桌面上就该是一条，而不是一列拉到底。 */
-.desk-main .page > section.card.basics {
-  /* 选择器带上 section/元素名，才压得过壳层给 .page > .card 定的「占半栏」 */
+.desk-main .rubber-layer > section.card.basics {
+  /* 选择器带上 section/元素名，才压得过壳层给 .rubber-layer > .card 定的「占半栏」 */
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: 1fr 1fr 1.5fr;
@@ -479,12 +540,12 @@ async function save(): Promise<void> {
 }
 
 /* 横排之后原来那条「字段之间的上分隔线」方向就错了，改用栅格间距分隔 */
-.desk-main .page > section.card.basics .field + .field {
+.desk-main .rubber-layer > section.card.basics .field + .field {
   border-top: none;
 }
 
 /* 类型分段控件在横排里吃满自己那一格：否则右边会留出一段无意义的空白 */
-.desk-main .page > section.card.basics .typeseg {
+.desk-main .rubber-layer > section.card.basics .typeseg {
   width: 100%;
 }
 
@@ -494,11 +555,11 @@ async function save(): Promise<void> {
 
 /* 「添加动作 / 保存修改」两枚收尾按钮并排放到底部：
    各占半栏比两条 970px 长的通栏按钮更像一次表单提交。 */
-.desk-main .page > button.add {
+.desk-main .rubber-layer > button.add {
   grid-column: 1;
 }
 
-.desk-main .page > button.save {
+.desk-main .rubber-layer > button.save {
   grid-column: 2;
 }
 </style>

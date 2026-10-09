@@ -615,6 +615,8 @@ onBeforeUnmount(() => {
         </template>
       </template>
     </PageHeader>
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <EmptyState
       v-if="!campus.hasAccount"
@@ -919,6 +921,7 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </SheetModal>
+    </div>
   </div>
 </template>
 
@@ -933,9 +936,9 @@ onBeforeUnmount(() => {
    桌面宽屏的价值是**一屏多放几块**，不是把每一块拉长。所以这三块收在 820 居中，
    批次卡与教学班名单仍各自按 auto-fit 摊开（它们的行多，宽一点是赚的）。
    :deep 是因为这三块的根元素在组件自己身上。 */
-.desk-main .page > :deep(.grab),
-.desk-main .page > :deep(.plan),
-.desk-main .page > :deep(.open-course) {
+.desk-main .rubber-layer > :deep(.grab),
+.desk-main .rubber-layer > :deep(.plan),
+.desk-main .rubber-layer > :deep(.open-course) {
   max-width: 820px;
   margin-inline: auto;
 }
@@ -1035,6 +1038,11 @@ onBeforeUnmount(() => {
   background: var(--accent);
   border-radius: var(--radius-full);
   padding: 9px 22px;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.cta:active {
+  transform: scale(0.96);
 }
 
 .cta.ghost {
@@ -1544,11 +1552,5 @@ onBeforeUnmount(() => {
 /* 栅格用 gap 管列间距，批次卡自带的那条 margin-bottom 会把它撑成两倍 */
 .desk-main .turn-grid > .turn {
   margin-bottom: 0;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spin {
-    animation-duration: 2.4s;
-  }
 }
 </style>

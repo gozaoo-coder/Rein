@@ -206,11 +206,13 @@ function openPage(): void {
   text-overflow: ellipsis;
 }
 
-.rdock-enter-active,
+/* 出入不对称：入场 250、退场 150（同向量同向，见下方 .rdock-*-from/to 的位移） */
+.rdock-enter-active {
+  transition: opacity var(--dur-base) var(--ease-sheet), transform var(--dur-base) var(--ease-sheet);
+}
+
 .rdock-leave-active {
-  transition:
-    opacity var(--dur-sheet) var(--ease-sheet),
-    transform var(--dur-sheet) var(--ease-sheet);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 
 .rdock-enter-from,

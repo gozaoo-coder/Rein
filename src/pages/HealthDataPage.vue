@@ -340,6 +340,8 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
 <template>
   <div class="page">
     <PageHeader title="第三方数据管理" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 1. 状态与授权 -->
     <section class="card">
@@ -521,6 +523,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
       :series="detail?.series ?? null"
       @close="detailOpen = false"
     />
+    </div>
   </div>
 </template>
 
@@ -679,6 +682,10 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
   gap: 12px;
   padding: 9px 0;
   cursor: pointer;
+}
+
+.mrow:active {
+  background: var(--surface-2);
 }
 
 .mrow + .mrow {

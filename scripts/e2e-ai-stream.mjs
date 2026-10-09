@@ -313,9 +313,11 @@ async function main() {
     ok('16 结束后跳动圆点消失', await evalJS(`document.querySelectorAll('.process-dots .dot').length === 0`))
     await waitFor(`document.querySelector('.process-section').classList.contains('collapsed')`, 6000, '自动折叠')
     ok('17 结束后自动折叠（600ms 延迟）', true)
+    // 折叠走 grid 轨道 0fr（不是 display:none）。轨道过渡 250ms，等落定再断言
+    await sleep(450)
     ok(
       '18 折叠后展开区隐藏',
-      await evalJS(`getComputedStyle(document.querySelector('.process-body')).display === 'none'`),
+      await evalJS(`getComputedStyle(document.querySelector('.process-body')).gridTemplateRows.startsWith('0px')`),
     )
     await shot('2-collapsed')
 

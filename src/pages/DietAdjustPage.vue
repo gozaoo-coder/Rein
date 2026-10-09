@@ -43,6 +43,8 @@ watch(targets, () => {
   <div class="page">
     <!-- 桌面这几张卡要显式排一遍，所以每个根元素上都挂一个定位用的类（类会合并到组件根元素上） -->
     <PageHeader class="lp-head" title="饮食调整" subtitle="方案计算 · AI 建议 · 手动微调" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 方案计算器 -->
     <TargetCalculator class="lp-calc" />
@@ -61,6 +63,7 @@ watch(targets, () => {
       </header>
       <TargetsEditor v-model="targets" />
     </section>
+    </div>
   </div>
 </template>
 
@@ -94,26 +97,26 @@ watch(targets, () => {
    而页头这种占满整行的子项会一路找到最后一行才落地（页头被挤到卡片下面去）。
 
    本页是**显式排布**，所以列位置自己写死（不用 .d-full 那套缺省）。 */
-.desk-main .page > .lp-head {
+.desk-main .rubber-layer > .lp-head {
   grid-row: 1;
 }
 
-.desk-main .page > .lp-calc {
+.desk-main .rubber-layer > .lp-calc {
   grid-column: 1 / 2;
   grid-row: 2 / span 2;
 }
 
-.desk-main .page > .lp-body {
+.desk-main .rubber-layer > .lp-body {
   grid-column: 2 / 3;
   grid-row: 2;
 }
 
-.desk-main .page > .lp-ai {
+.desk-main .rubber-layer > .lp-ai {
   grid-column: 2 / 3;
   grid-row: 3;
 }
 
-.desk-main .page > .lp-targets {
+.desk-main .rubber-layer > .lp-targets {
   grid-column: 1 / -1;
   grid-row: 4;
 }
@@ -121,16 +124,16 @@ watch(targets, () => {
 /* 手动微调通栏后，六个步进器摊成两列（NumberStepper 自己的行内布局不动，只是两两并排）。
    分隔线只画在第二行往后：栅格是两列三行，原规则 `.grid > * + *` 会给右列顶格也画一条，
    悬在卡片顶上很突兀。 */
-.desk-main .page > .lp-targets :deep(.grid) {
+.desk-main .rubber-layer > .lp-targets :deep(.grid) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: var(--desk-gap);
 }
 
-.desk-main .page > .lp-targets :deep(.grid > * + *) {
+.desk-main .rubber-layer > .lp-targets :deep(.grid > * + *) {
   border-top: 0;
 }
 
-.desk-main .page > .lp-targets :deep(.grid > *:nth-child(n + 3)) {
+.desk-main .rubber-layer > .lp-targets :deep(.grid > *:nth-child(n + 3)) {
   border-top: 0.5px solid var(--line);
 }
 </style>

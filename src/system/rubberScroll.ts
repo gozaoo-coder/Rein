@@ -16,9 +16,15 @@
    两类层（超范围位移落在谁身上）—— 接入时先选类型，再选标记：
      A · item 超伸：容器框不动，内部内容层位移（iOS 观感；吸顶页头、圆角、
          背景都留在原地）。凡「容器本身就是一块视觉框架」都用它：
-       data-rubber-page    文档滚动页层（App.vue，唯一）
-       data-rubber-content 容器内容层（解析规则 scroller > [data-rubber-content]，
-                           或给现成的单一内容子节点直接打标）
+       data-rubber-content 容器内容层。页面级滚动区（移动端滚文档 / 桌面滚
+                           .desk-main）要的是「页头不动、只内容动」：页面把
+                           页头之后的内容挂成内容层 ——
+                           .page > PageHeader + .rubber-layer，
+                           层解析会按文档序下钻找到它（findContentLayer /
+                           layerFor）。抽屉 / 内层滚动容器则是 .body > .rubber-layer
+                           的直接子层。
+                           壳层的整页包装（App.vue）改标 data-rubber-shell，
+                           只在页面自己没挂内容层时兜底（那时页头仍会跟着动）。
      B · 容器自身超伸：滚动框整体位移。只给「位移的就是它本身」的小容器：
        data-rubber-self    横向条 / 纯文本盒 / 列表块这类自身即主体的滚动体
      **页面级滚动区一律走 A**（整页框内自滚动的那些：ModelsPage .page、
@@ -143,12 +149,50 @@ function atEdge(c: Candidate, a: Axis, d: number): boolean {
 }
 
 /* ---------- 层解析 ---------- */
-function layerFor(scroller: HTMLElement): HTMLElement | null {
-  if (scroller === document.scrollingElement) {
-    return document.querySelector<HTMLElement>('[data-rubber-page]')
+/** 该元素自身是不是一个滚动框（overflow auto|scroll）：下钻找层时遇到就止步 */
+function isScrollerBox(el: Element): boolean {
+  const cs = getComputedStyle(el)
+  return /(auto|scroll)/.test(cs.overflowX) || /(auto|scroll)/.test(cs.overflowY)
+}
+
+/**
+ * 按文档序找第一个 `[data-rubber-content]`，**不跨进别的滚动容器**。
+ *
+ * 页面级滚动区（移动端滚文档、桌面滚 .desk-main）的层通常不在滚动框的直接子级：
+ * 页面把「页头之后的内容」挂成内容层（.page > .rubber-layer），容器框与吸顶页头
+ * 便留在层外 —— 超伸时只有内容位移，标题栏纹丝不动（接入约定见文件头「两类层」）。
+ * 这里从滚动框（桌面）或壳层整页包装（移动）按文档序下钻找到它；遇到别的滚动框
+ * 就止步——那是链上另一个容器，它的层归它自己那一场 band。
+ */
+function findContentLayer(root: Element): HTMLElement | null {
+  for (const child of Array.from(root.children)) {
+    const el = child as HTMLElement
+    if (el.hasAttribute('data-rubber-content')) return el
+    if (isScrollerBox(el)) continue
+    const found = findContentLayer(el)
+    if (found) return found
   }
+  return null
+}
+
+function layerFor(scroller: HTMLElement): HTMLElement | null {
   if (scroller.hasAttribute('data-rubber-self')) return scroller
-  return scroller.querySelector<HTMLElement>(':scope > [data-rubber-content]')
+  // 直接子层：抽屉 / 内层滚动容器的主流形态（.body > .rubber-layer）
+  const direct = scroller.querySelector<HTMLElement>(':scope > [data-rubber-content]')
+  if (direct) return direct
+  // 页面级滚动区：壳层整页包装只是兜底，真正的层在页面自己的内容层里。
+  // 文档滚动从壳层包装找起（它包着当前页），而不是从 <html> 扫全文档。
+  const root: Element =
+    scroller === document.scrollingElement
+      ? (document.querySelector('[data-rubber-shell]') ?? document.documentElement)
+      : scroller
+  const found = findContentLayer(root)
+  if (found) return found
+  // 兜底：页面没挂自己的内容层时整页平移（保留旧行为，页头会跟着动）
+  if (scroller === document.scrollingElement) {
+    return document.querySelector<HTMLElement>('[data-rubber-shell]')
+  }
+  return scroller.querySelector<HTMLElement>(':scope > [data-rubber-shell]')
 }
 
 /**
@@ -375,17 +419,27 @@ function onTouchMove(e: TouchEvent): void {
   // 否则取「已到边且有层」的最深容器开始 band
   for (const c of chain) {
     if (!c.layer || !(axis === 'y' ? c.y : c.x) || !atEdge(c, axis, d)) continue
+    /* 这一下位移里，先被原生滚动「刚刚好吃到边」的那一段不算超伸：atEdge 的容差
+       （EDGE_EPS）内 scrollTop 未必正好贴边，不扣掉就会在从滚动切入超伸的瞬间
+       多平移最多 1px —— 观感即「内容莫名多跳一下」。扣掉后曲线从贴边那一点起算，
+       与拖动速率严格对齐（f'(0)=1），到边前后观感连续。 */
+    const room = Math.max(
+      0,
+      d > 0 ? scrollPos(c.el, axis) : scrollMax(c.el, axis) - scrollPos(c.el, axis),
+    )
+    const over = Math.abs(d) - room
+    if (over <= 0) return // 余量还没吃完：这一段仍旧交给原生（到边前的最后一像素）
     band = {
       layer: c.layer,
       axis,
       edge: d > 0 ? 'start' : 'end',
       dir: d > 0 ? 1 : -1,
-      over: Math.abs(d),
-      peak: Math.abs(d),
+      over,
+      peak: over,
     }
     c.layer.style.willChange = 'transform'
-    samples = [{ t: performance.now(), over: band.over }]
-    writeLayer(band, band.dir * offset(band.over))
+    samples = [{ t: performance.now(), over }]
+    writeLayer(band, band.dir * offset(over))
     if (e.cancelable) e.preventDefault()
     return
   }

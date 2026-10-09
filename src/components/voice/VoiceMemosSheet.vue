@@ -149,7 +149,12 @@ async function onDelete(m: VoiceMemo): Promise<void> {
   align-items: center;
   gap: 10px;
   padding: 13px 2px;
+  border-radius: var(--radius-s);
   cursor: pointer;
+}
+
+.row:active {
+  background: var(--surface-2);
 }
 
 .row + .row {

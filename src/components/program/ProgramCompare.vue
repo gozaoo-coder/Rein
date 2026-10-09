@@ -78,100 +78,104 @@ const peakWeekIdx = computed(() => {
   <div class="cmp">
     <SegmentedControl v-model="view" :options="viewOptions" />
 
-    <!-- 01 · 参数对比矩阵 -->
-    <section v-if="view === 'matrix'" class="pod">
-      <table class="matrix">
-        <thead>
-          <tr>
-            <th class="corner" />
-            <th
-              v-for="p in orderedPlans"
-              :key="p.tier"
-              :class="{ on: p.tier === selectedTier, off: !p.feasible }"
-            >
-              <button
-                class="col-hit"
-                :aria-pressed="p.tier === selectedTier"
-                :disabled="!p.feasible"
-                @click="emit('select', p.tier)"
+    <!-- 01 · 参数对比矩阵：随视图生灭，进出只淡不飞 -->
+    <Transition name="fade">
+      <section v-if="view === 'matrix'" class="pod">
+        <table class="matrix">
+          <thead>
+            <tr>
+              <th class="corner" />
+              <th
+                v-for="p in orderedPlans"
+                :key="p.tier"
+                :class="{ on: p.tier === selectedTier, off: !p.feasible }"
               >
-                {{ p.tierLabel }}<span v-if="!p.feasible" class="off-tag">不可用</span>
-              </button>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in rows" :key="row.label" :class="{ strong: row.strong }">
-            <td class="row-label">{{ row.label }}</td>
-            <td
-              v-for="(v, i) in row.values"
-              :key="i"
-              class="num"
-              :class="{ on: orderedPlans[i]?.tier === selectedTier }"
-            >
-              {{ v }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+                <button
+                  class="col-hit"
+                  :aria-pressed="p.tier === selectedTier"
+                  :disabled="!p.feasible"
+                  @click="emit('select', p.tier)"
+                >
+                  {{ p.tierLabel }}<span v-if="!p.feasible" class="off-tag">不可用</span>
+                </button>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in rows" :key="row.label" :class="{ strong: row.strong }">
+              <td class="row-label">{{ row.label }}</td>
+              <td
+                v-for="(v, i) in row.values"
+                :key="i"
+                class="num"
+                :class="{ on: orderedPlans[i]?.tier === selectedTier }"
+              >
+                {{ v }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
-    <!-- 02 · 强度预览 -->
-    <section v-else class="pod">
-      <header class="pod-head">
-        <b>{{ selPlan?.tierLabel }}档 · 4 周负荷</b>
-      </header>
+      <!-- 02 · 强度预览 -->
+      <section v-else class="pod">
+        <header class="pod-head">
+          <b>{{ selPlan?.tierLabel }}档 · 4 周负荷</b>
+        </header>
 
-      <!-- 档位切换：紧贴标题，切换即重画网格 -->
-      <div class="tier-pick">
-        <button
-          v-for="p in orderedPlans"
-          :key="p.tier"
-          class="chip"
-          :class="{ on: p.tier === selectedTier, off: !p.feasible }"
-          :aria-pressed="p.tier === selectedTier"
-          :disabled="!p.feasible"
-          @click="emit('select', p.tier)"
-        >
-          {{ p.tierLabel }}
-        </button>
-      </div>
-
-      <div class="grid">
-        <div class="week-row head">
-          <span class="wlabel" />
-          <div class="cells">
-            <span v-for="w in weekdayHead" :key="w" class="wd">{{ w }}</span>
-          </div>
-          <span class="wtotal" />
+        <!-- 档位切换：紧贴标题，切换即重画网格 -->
+        <div class="tier-pick">
+          <button
+            v-for="p in orderedPlans"
+            :key="p.tier"
+            class="chip"
+            :class="{ on: p.tier === selectedTier, off: !p.feasible }"
+            :aria-pressed="p.tier === selectedTier"
+            :disabled="!p.feasible"
+            @click="emit('select', p.tier)"
+          >
+            {{ p.tierLabel }}
+          </button>
         </div>
-        <div v-for="(w, wi) in weeks" :key="w.label" class="week-row">
-          <span class="wlabel">{{ w.label }}</span>
-          <div class="cells">
-            <!-- 首行星期占位：把第 1 天推到它真正的星期列 -->
-            <span v-for="b in w.lead" :key="`b${b}`" class="cell blank" aria-hidden="true" />
-            <span
-              v-for="c in w.cells"
-              :key="c.date"
-              class="cell"
-              :class="[loadClass(c.min), { rest: c.rest }]"
-            >
-              {{ c.rest ? '休' : (c.label ?? '·') }}
-            </span>
+
+        <div class="grid">
+          <div class="week-row head">
+            <span class="wlabel" />
+            <div class="cells">
+              <span v-for="w in weekdayHead" :key="w" class="wd">{{ w }}</span>
+            </div>
+            <span class="wtotal" />
           </div>
-          <span class="wtotal num" :class="{ hot: wi === peakWeekIdx }">{{ w.totalMin }}′</span>
+          <div v-for="(w, wi) in weeks" :key="w.label" class="week-row">
+            <span class="wlabel">{{ w.label }}</span>
+            <div class="cells">
+              <!-- 首行星期占位：把第 1 天推到它真正的星期列 -->
+              <span v-for="b in w.lead" :key="`b${b}`" class="cell blank" aria-hidden="true" />
+              <span
+                v-for="c in w.cells"
+                :key="c.date"
+                class="cell"
+                :class="[loadClass(c.min), { rest: c.rest }]"
+              >
+                {{ c.rest ? '休' : (c.label ?? '·') }}
+              </span>
+            </div>
+            <span class="wtotal num" :class="{ hot: wi === peakWeekIdx }">{{ w.totalMin }}′</span>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </Transition>
 
     <!-- 动态解说：选中变化时实时改写 -->
-    <section v-if="diff && view === 'matrix'" class="pod">
-      <header class="pod-head">
-        <b>差在哪</b>
-        <span class="pill ghost">{{ diff.title }}</span>
-      </header>
-      <p class="explain">{{ diff.text }}</p>
-    </section>
+    <Transition name="fade">
+      <section v-if="diff && view === 'matrix'" class="pod">
+        <header class="pod-head">
+          <b>差在哪</b>
+          <span class="pill ghost">{{ diff.title }}</span>
+        </header>
+        <p class="explain">{{ diff.text }}</p>
+      </section>
+    </Transition>
 
     <section class="pod">
       <header class="pod-head">
@@ -181,13 +185,15 @@ const peakWeekIdx = computed(() => {
       <p class="explain">{{ fitText }}</p>
     </section>
 
-    <section v-if="view === 'load' && rhythm" class="pod">
-      <header class="pod-head">
-        <b>强度节奏</b>
-        <span v-if="peakWeekIdx > 0" class="pill warn">第 {{ peakWeekIdx + 1 }} 周最累</span>
-      </header>
-      <p class="explain">{{ rhythm }}</p>
-    </section>
+    <Transition name="fade">
+      <section v-if="view === 'load' && rhythm" class="pod">
+        <header class="pod-head">
+          <b>强度节奏</b>
+          <span v-if="peakWeekIdx > 0" class="pill warn">第 {{ peakWeekIdx + 1 }} 周最累</span>
+        </header>
+        <p class="explain">{{ rhythm }}</p>
+      </section>
+    </Transition>
 
     <button
       class="primary"
@@ -262,6 +268,9 @@ const peakWeekIdx = computed(() => {
   text-align: center;
   font-size: var(--fs-caption);
   font-variant-numeric: tabular-nums;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
 
 .matrix .corner,
@@ -315,6 +324,9 @@ const peakWeekIdx = computed(() => {
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-1);
+  transition:
+    color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 th.on .col-hit {
@@ -434,7 +446,9 @@ th.off {
   color: var(--text-2);
   transition:
     background var(--dur-fast) var(--ease-standard),
-    color var(--dur-fast) var(--ease-standard);
+    color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 .chip.on {
@@ -456,10 +470,23 @@ th.off {
   color: var(--on-accent);
   font-size: var(--fs-callout);
   font-weight: 700;
-  transition: opacity var(--dur-fast) var(--ease-standard);
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
 }
 
 .primary:disabled {
   opacity: 0.45;
+}
+
+/* 视图/解说块的进出场：内容整体更换，只走不透明度且进出同向 */
+.fade-enter-active {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.fade-enter-from {
+  opacity: 0;
+}
+.fade-leave-active {
+  transition: none;
 }
 </style>

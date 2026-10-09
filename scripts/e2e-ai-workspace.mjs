@@ -326,7 +326,13 @@ async function main() {
     await sleep(700)
     const hash = await evalJS('location.hash')
     ok('UI：从历史菜单进入文件管理器', String(hash) === '#/ai/files', String(hash))
-    await waitFor("document.body.innerText.includes('虚拟文件系统')", 8000, '文件管理器渲染')
+    /* 文件管理器段落按**桌面形态**断言（地标卡 / 回收站入口 / 列头都是宽屏元素）。
+       窄窗（≤640px）下这些都被移动端改造收起来了 —— 那一套由 e2e-files-mobile.mjs 覆盖。
+       这里把视口撑到桌面宽再断言：matchMedia('(max-width: 640px)') 与容器 ResizeObserver
+       都会跟上，页面重渲染成宽屏布局。 */
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1512, height: 945, deviceScaleFactor: 1, mobile: false })
+    await sleep(900)
+    await waitFor("document.body.innerText.includes('AI工作区')", 8000, '文件管理器渲染')
     let text = await evalJS('document.body.innerText')
     ok(
       'UI：命名空间覆盖四区',

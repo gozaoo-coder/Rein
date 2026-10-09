@@ -309,23 +309,13 @@ async function main() {
     ok('4 未滚动时无 scrolled 类', !s.scrolledClass)
     ok('5 渐进模糊层已就位（5 层）', s.layerCount === 5, `层数=${s.layerCount}`)
     ok(
-      '6 每层带 backdrop-filter: blur',
-      String(s.layerBlur).includes('blur'),
-      String(s.layerBlur),
-    )
-    ok(
       '7 每层带 mask 梯度（限定纵向区间）',
       String(s.layerMask).includes('linear-gradient'),
       String(s.layerMask),
     )
-    const layerBlurs = await evalJS(
-      `[...document.querySelectorAll('.ph-mask .pblur span')].map(s => getComputedStyle(s).backdropFilter)`,
-    )
-    ok(
-      '8 各层模糊量递增（越靠上叠加越浓）',
-      new Set(layerBlurs).size === layerBlurs.length && layerBlurs[0] !== layerBlurs[4],
-      layerBlurs.join(' | '),
-    )
+    // 6 / 8（各层带 blur、模糊量递增）挪到滚动之后测：顶端静止时整条 backdrop-filter
+    // 是**故意**摘掉的（性能修复：背后只有页面底色，糊与不糊像素相同）——在顶端取
+    // 计算样式只会得到 none，那是设计不是缺陷。
     await shot('1-mobile-top')
 
     /* ---------- 2 滚动后：页头贴顶 + 遮罩显形 ---------- */
@@ -335,6 +325,20 @@ async function main() {
     ok('9 滚动生效', sc.top > 0, `经 ${sc.via} 滚到 ${sc.top}`)
     ok('10 滚动后模糊层显形', s.spanOpacity === '1', `层 opacity=${s.spanOpacity}`)
     ok('11 滚动后挂上 scrolled 类', s.scrolledClass)
+    // 6 / 8 在这里测（顶端是故意摘滤镜的，见上方注释）：滚动后各层必须真带 blur，且量递增
+    const layerBlurs = await evalJS(
+      `[...document.querySelectorAll('.ph-mask .pblur span')].map(s => getComputedStyle(s).backdropFilter)`,
+    )
+    ok(
+      '6 滚动后每层带 backdrop-filter: blur',
+      layerBlurs.every((b) => String(b).includes('blur')),
+      layerBlurs.join(' | '),
+    )
+    ok(
+      '8 各层模糊量递增（越靠上叠加越浓）',
+      new Set(layerBlurs).size === layerBlurs.length && layerBlurs[0] !== layerBlurs[4],
+      layerBlurs.join(' | '),
+    )
     ok(
       '12 页头仍贴容器顶（未被滚走）',
       Math.abs(s.headerTop - s.viewportTop) <= 1,

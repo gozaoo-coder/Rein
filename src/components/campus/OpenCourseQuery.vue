@@ -371,4 +371,8 @@ onMounted(init)
 .dim { color: var(--text-2); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation-duration: 3s; }
+}
 </style>

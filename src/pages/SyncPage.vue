@@ -223,6 +223,8 @@ onUnmounted(() => {
 <template>
   <div class="page">
     <PageHeader title="多设备同步" back />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <!-- 桌面栅格：壳层只把 .page 的**直接子项**摊成两栏，而这一页要的是
          「本机 | 已配对设备 并排 + 加一台设备通栏」，所以自带一层 .d-grid 承接。
@@ -337,6 +339,7 @@ onUnmounted(() => {
       @close="peerSheet = null"
       @select="onPeerAction"
     />
+    </div>
   </div>
 </template>
 

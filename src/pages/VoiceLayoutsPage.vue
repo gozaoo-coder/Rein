@@ -158,7 +158,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     </header>
 
     <!-- 版式舞台 -->
-    <div class="stage" :class="current.width">
+    <!-- 超范围平移层：顶栏留在层外，到边拖动时只有舞台位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
+      <div class="stage" :class="current.width">
       <!-- ① 单栏时间轴 -->
       <section v-if="active === 1" class="v v1">
         <div class="vhead">
@@ -356,6 +358,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           </div>
         </footer>
       </section>
+      </div>
     </div>
   </div>
 </template>

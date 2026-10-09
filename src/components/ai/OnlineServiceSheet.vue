@@ -92,8 +92,9 @@ watch(
     await online.load()
     baseUrl.value = online.settings.baseUrl
     apiKey.value = online.settings.apiKey
-    // 打开即静默连一次：抽屉第一眼就该显示「能用哪些模型 + 调用条件」
-    if (online.hasKey && !online.catalog) await connect(true)
+    // 打开即静默核对一次：第一眼是上次成功的目录（不再每次都显示「待连接」），
+    // 核对完自动更正；失败不覆盖快照，错误原文照显示在状态卡里，可主动重试
+    if (online.hasKey) await online.refresh(true)
   },
 )
 
@@ -188,17 +189,18 @@ async function importPicked(): Promise<void> {
       </section>
 
       <!-- 可用模型（服务端下发） -->
-      <section v-if="online.models.length > 0" class="card">
-        <div class="row between center">
-          <p class="l">可用模型（{{ online.models.length }}）</p>
-          <button
-            type="button"
-            class="mini"
-            @click="online.pickAll(pickedCount !== online.models.length)"
-          >
-            {{ pickedCount === online.models.length ? '全不选' : '全选' }}
-          </button>
-        </div>
+      <section v-if="online.models.length > 0" class="card cornered">
+        <!-- 胶囊按钮固定在本卡右上角（不是跟在标签文字右边）：标签自己一行，
+             操作是「这张卡的动作」，位置钉死才不会随标签长短左右漂 -->
+        <button
+          type="button"
+          class="pill"
+          :aria-label="pickedCount === online.models.length ? '全部取消勾选' : '全部勾选'"
+          @click="online.pickAll(pickedCount !== online.models.length)"
+        >
+          {{ pickedCount === online.models.length ? '全不选' : '全选' }}
+        </button>
+        <p class="l">可用模型（{{ online.models.length }}）</p>
         <ModelListToolbar
           :query="query"
           :count="filtered.length"
@@ -243,13 +245,18 @@ async function importPicked(): Promise<void> {
       </section>
 
       <!-- 成本：两端各算一份 -->
-      <section class="card cost">
-        <div class="row between center">
-          <p class="l">成本对账</p>
-          <button type="button" class="mini" :disabled="!online.hasKey" @click="online.refreshUsage()">
-            刷新服务端
-          </button>
-        </div>
+      <section class="card cost cornered">
+        <button
+          type="button"
+          class="pill"
+          :disabled="!online.hasKey"
+          aria-label="刷新服务端账本"
+          @click="online.refreshUsage()"
+        >
+          <RefreshCw :size="12" />
+          刷新服务端
+        </button>
+        <p class="l">成本对账</p>
         <div class="crow">
           <span>本机累计（估算）</span>
           <b>{{ formatCnyNano(models.totalCostNano) }}</b>
@@ -401,10 +408,40 @@ async function importPicked(): Promise<void> {
   opacity: 0.4;
 }
 
-.mini {
+/* 胶囊按钮（不再是文字链接）：有底、有圆角、有内边距，才读得出「这是一个可点的按钮」。
+   位置由 .cornered 钉在卡片右上角。 */
+.pill {
+  position: absolute;
+  top: 11px;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-1);
   font-size: var(--fs-micro);
   font-weight: 700;
-  color: var(--accent);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+.pill:active {
+  transform: scale(0.95);
+}
+
+.pill:disabled {
+  opacity: 0.45;
+}
+
+/* 右上角有操作：标签给右侧留出胶囊的宽度，长标题才不会被压到按钮底下 */
+.cornered {
+  position: relative;
+}
+
+.cornered > .l {
+  padding-right: 92px;
 }
 
 .list {

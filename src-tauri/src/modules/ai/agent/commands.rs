@@ -206,9 +206,12 @@ pub async fn ai_agent_run(
     }));
 
     let hub_arc: Arc<AgentHub> = Arc::clone(&hub);
+    let panic_hub = Arc::clone(&hub_arc);
     let task_run_id = run_id.clone();
     let task_app = app.clone();
     let task_context = Arc::clone(&context);
+    // run 任务自然收尾（done/error 都算）时发信号；任务没发信号就消失 = panic 或被取消
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
     let handle = tauri::async_runtime::spawn(async move {
         let result = run_turn(
             backend.as_ref(),
@@ -249,6 +252,7 @@ pub async fn ai_agent_run(
             }
         }
         hub_arc.finish(&task_run_id);
+        let _ = done_tx.send(());
     });
 
     hub.register(
@@ -257,6 +261,31 @@ pub async fn ai_agent_run(
         Arc::clone(&bridge),
         context,
     );
+
+    // panic 兜底：tokio worker 里一旦 panic（reqwest/rustls 上游 bug 等），run 循环
+    // 会无声终止——done / error 都不发，前端卡在三个点永远转（Android 平台证书校验器
+    // 未初始化时就是这样挂死的）。run 没发结束信号且仍在 hub 表里 = panic 而死：
+    // 补发 Error 让前端解卡并清掉残留。取消路径已把 run 摘掉，不会误伤。
+    let panic_app = app.clone();
+    let panic_run_id = run_id.clone();
+    tauri::async_runtime::spawn(async move {
+        if done_rx.await.is_ok() {
+            return; // 正常收尾：done / error 已由 run 任务自己发过
+        }
+        if !panic_hub.active_runs().contains(&panic_run_id) {
+            return; // 用户主动取消：前端已自行收敛
+        }
+        eprintln!("[ai-agent] run died without a finishing signal (panic?)");
+        let _ = panic_app.emit(
+            AGENT_EVENT,
+            AgentEvent::Error {
+                run_id: panic_run_id.clone(),
+                message: "AI 内核异常退出，请重试".to_string(),
+            },
+        );
+        panic_hub.finish(&panic_run_id);
+    });
+
     Ok(run_id)
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ChevronLeft } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
@@ -37,6 +37,12 @@ const root = ref<HTMLElement | null>(null)
 const scrolled = useScrolled(root)
 /** 丰富档的滚动边缘：向下滚收起、向上滚还原（判定与理由见 composables/useScrolled） */
 const collapsed = useScrollCollapsed(root)
+
+/** 动作区折射壳的滤镜 id：与返回键那份（glass-filter-header，固定 38×38）各一份 ——
+ *  壳的尺寸随圆钮数量变，得让它自己量、自己烘（见下方模板与 .ph-bar 的注释）。 */
+const actionFilterId = `glass-filter-actions-${Math.random().toString(36).slice(2, 12)}`
+/** 壳的取样方式：折射可用时是 url()，否则 none（壳本身不画任何东西，只决定背后被采样几次） */
+const barStyle = computed(() => ({ '--ph-bar-filter': liquidGlass.value ? `url(#${actionFilterId})` : 'none' }))
 
 /** 粗指针（手机 / 平板）＝ 合成预算最紧的一档：渐进模糊收成 2 层。
  *  实测（2026-10-05 主页滚动卡顿报告，scripts/.tmp-perf-attribute.mjs，**滚动态**）：
@@ -105,7 +111,15 @@ function goBack(): void {
       <p v-if="subtitle">{{ subtitle }}</p>
     </div>
     <span v-else class="flex-1" />
-    <slot name="action" />
+    <!-- 动作区的**折射壳**：里面每颗圆钮各自挂 url() 时，一次滚动要为 N 次独立的背景
+         滤镜付钱（实测课表页三颗占 0.36ms/帧，而超高相对高画质的全部增量只有 0.4ms 上下）。
+         相邻圆钮并成一壳、**只挂一次** url()，圆钮自己的材质（底 / 受光边 / 光学内层 / 命中区）
+         一概不动 —— 变的只是「背后被采样几次」。壳的尺寸由 GlassFilter 量自己，圆钮加减
+         （选课页的批量态、各页不同的动作数）都自动跟上。 -->
+    <span v-if="$slots.action" class="ph-bar" :style="barStyle">
+      <GlassFilter v-if="liquidGlass" :id="actionFilterId" />
+      <slot name="action" />
+    </span>
   </header>
 </template>
 
@@ -207,7 +221,10 @@ html:is([data-perf='ultra'], [data-perf='extreme']) .page-header.scrolled .ph-sc
 html[data-motion='rich'] .page-header h1,
 html[data-motion='rich'] .page-header p,
 html[data-motion='rich'] .page-header .back,
-html[data-motion='rich'] .page-header :slotted(.hdr-btn) {
+html[data-motion='rich'] .page-header :slotted(.hdr-btn),
+/* 动作区壳跟着一起缩：壳是这一组圆钮同用的那次背景采样，壳不缩就会出现"钮缩了、
+   折射边没缩"的一道错位。放进来之后整组当一颗缩。 */
+html[data-motion='rich'] .page-header .ph-bar {
   transform-origin: left bottom;
   transition: scale var(--dur-base) var(--ease-out);
 }
@@ -215,8 +232,14 @@ html[data-motion='rich'] .page-header :slotted(.hdr-btn) {
 html[data-motion='rich'] .page-header.collapsed h1,
 html[data-motion='rich'] .page-header.collapsed p,
 html[data-motion='rich'] .page-header.collapsed .back,
-html[data-motion='rich'] .page-header.collapsed :slotted(.hdr-btn) {
+html[data-motion='rich'] .page-header.collapsed .ph-bar {
   scale: 0.94;
+}
+
+/* 壳已在缩，壳里的圆钮就不要再各自缩一次 —— 两层 scale 会叠成 0.883，整组比标题还小。
+   摘掉的是圆钮那份，壳那份留着（整组一起缩）。 */
+html[data-motion='rich'] .page-header.collapsed .ph-bar > :slotted(.hdr-btn) {
+  scale: 1;
 }
 
 .back {
@@ -281,6 +304,16 @@ html[data-motion='rich'] .page-header.collapsed :slotted(.hdr-btn) {
   white-space: nowrap;
 }
 
+/* 动作区折射壳（见模板里那段注释）：与页头同一套横向节奏（gap 12、底部对齐、不伸长），
+   所以包进来之后**一个像素都不挪**。壳没有底、没有命中区 —— 它只是背后那次采样的承载。 */
+.ph-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex: none;
+  min-width: 0;
+}
+
 /* 丰富档：按压定向光晕（位置来自 composables/usePressGlow，显隐交给 :active）。
    这两处圆钮走 background-image 那一层，不用 ::after —— 它们的 ::after 已经被
    44×44 的命中区占掉了（见上面的 .back::after）。accent 变体也一并点亮：
@@ -302,17 +335,16 @@ html[data-motion='rich'] .page-header :slotted(.hdr-btn):active {
    · 高画质：玻璃盘 = 半透明底 + blur + 光学内层（就是下面这一条）。这一档没有折射，
      但圆钮仍要是玻璃 —— 与 Dock / 卡片同一份材质，不能只剩它们两颗是实底白圆
      （用户要求：不启用折射也要把玻璃的其余效果开起来）；
-   · 超高 / 极致：把下面那层 blur 整条换成折射（再往下的 [data-glass='collapsed'] 那条）。
+   · 超高 / 极致：**采样方式换成折射**（再往下的两条：返回键自己一片、动作区共一壳）。
 
    **超高起要的是真折射，不是又一层 backdrop-filter: blur**（2026-09-25 修）：这一档叫
    「液态玻璃」，而只挂 blur 的那一版在超高下与高画质档读起来是同一层糊 —— 名字在，材质不在。
-   位移贴图与滤镜链来自 common/GlassFilter.vue，与底部 Dock / 沉浸层控制层**同一份实现**
-   （38px 静态尺寸烘一张，同页几颗圆钮共用）。
+   位移贴图与滤镜链来自 common/GlassFilter.vue，与底部 Dock / 沉浸层控制层**同一份实现**。
 
    曾经不这么做的理由是「38px 的圆上折射带只有一两像素、还要压着页头那层渐进模糊」——
-   实测下来这两条都不成立：折射带窄是**参数**问题（同样的 38px 在出厂参数下可见，
-   GlassFilter 按元素尺寸烘贴图，与小尺寸的既有标定一致），而它压在渐进模糊之上只意味着
-   「折射的是一层已经糊开的底」——那正是玻璃压在毛玻璃上的正常样子，不是画不出来。
+   实测下来这两条都不成立：折射带窄是**参数**问题（38px 用同一组出厂参数照样看得见），
+   而它压在渐进模糊之上只意味着「折射的是一层已经糊开的底」—— 那正是玻璃压在毛玻璃上
+   的正常样子，不是画不出来。
 
    底薄了会不会读不清：圆钮坐落在页头正上方，背后是已经糊过一遍的内容；亮色主题下
    页面本身是浅的，档位给出的半透明白（+ 折射）合成出来仍接近白。全屏暗场页面（跑步）不走
@@ -345,11 +377,38 @@ html[data-perf]:not([data-perf='low']) .page-header :slotted(.hdr-btn:not(.accen
    （0,5,1），而 data-glass='collapsed' 单独只有 (0,4,1) —— 不加这一截，超高 / 极致下
    模糊会盖住折射，页头圆钮就退回"高画质那层糊"了。data-glass='collapsed' 本就只在
    超高 / 极致出现（low 的管线恒为 off），所以 [data-perf]:not([data-perf='low'])
-   在这里只是把权重顶到 (0,6,1)、确保折射永远赢，不改变匹配范围。 */
-html[data-glass='collapsed'][data-perf]:not([data-perf='low']) .page-header .back,
-html[data-glass='collapsed'][data-perf]:not([data-perf='low']) .page-header :slotted(.hdr-btn:not(.accent)) {
+   在这里只是把权重顶到 (0,6,1)、确保折射永远赢，不改变匹配范围。
+
+   返回键仍自己一片（它左边没有别的圆钮可合并），动作区的圆钮走下面 .ph-bar 那条 ——
+   一次滚动只采样一次，而不是 N 次。 */
+html[data-glass='collapsed'][data-perf]:not([data-perf='low']) .page-header .back {
   backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
   -webkit-backdrop-filter: url(#glass-filter-header) saturate(var(--glass-sat));
+}
+
+/* ---------- 动作区的折射壳：相邻圆钮共用一次背景滤镜 ----------
+   壳自己**什么都不画**（没有底、没有描边、没有命中区），只负责「背后被采样几次」：
+   里面每颗圆钮仍画自己的玻璃盘（底 / 受光边 / 光学内层 / 44×44 命中区一概不动），
+   变的只有取样方式从「每颗一次」变成「整个动作区一次」。
+
+   :has() 是这里的净网：插槽里只有 accent 主操作钮 或 根本不是玻璃钮（记账的月份导航、
+   选课的批量态）时，壳不挂滤镜 —— 没有圆钮要为它付钱，也不会把一颗实底钮背后的
+   页面白白折射一遍。Chromium 才认 backdrop-filter: url()，所以这条门只用在这一条路上。
+
+   --ph-bar-filter 由脚本写（折射可用时是该壳自己的滤镜 id，否则 none），这里不硬编码 id ——
+   每个页头实例的壳各自一份 GlassFilter，同尺寸的贴图按 URL 缓存共享（见 GlassFilter）。 */
+html[data-glass='collapsed'][data-perf]:not([data-perf='low']) .page-header .ph-bar:has(> .hdr-btn:not(.accent)) {
+  backdrop-filter: var(--ph-bar-filter) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: var(--ph-bar-filter) saturate(var(--glass-sat));
+}
+
+/* 壳里的圆钮退掉自己那份滤镜：壳已经在折射了，圆钮再挂一层就是「url() 叠在自己父亲的
+   url() 上」—— 位移会算在一层已经被位移过的底上，白花一次全条采样。材质（底 / 光学层）
+   仍由上面那条高画质规则给，这里只摘 backdrop-filter。
+   权重 (0,8,1) 压过上面两条 url() 规则 (0,7,1)，且排在其后，双保险。 */
+html[data-glass='collapsed'][data-perf]:not([data-perf='low']) .page-header .ph-bar > :slotted(.hdr-btn:not(.accent)) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* 系统要求「减弱透明度」时退回实底 —— 与 .glass-surface 的退化同一条语义

@@ -569,7 +569,7 @@ function bumpKm(delta: number): void {
 
       <span v-if="r.phase === 'running' || r.phase === 'paused'" class="chip dist glass-surface">
         <span class="lab num">{{ distChipText }}</span>
-        <span v-if="r.goalKind !== 'open'" class="bar"><i :style="{ width: goalBarWidth }" /></span>
+        <span v-if="r.goalKind !== 'open'" class="bar"><i :style="{ '--p': goalBarWidth }" /></span>
       </span>
 
       <span v-if="r.phase === 'paused'" class="paused-badge glass-surface">已暂停 · 计时停止</span>
@@ -809,7 +809,9 @@ function bumpKm(delta: number): void {
   background: var(--hero-bg);
   overflow: hidden;
   touch-action: none; /* 手势：单指平移 / 双指捏合，不触发页面滚动 */
-  transition: filter var(--dur-sheet) var(--ease-standard);
+  /* 保留 filter 语义（只把时长降到 base）：暂停要的是整个舞台＋HUD 一起冻住，
+     遮罩层只能压暗轨迹、动不了浮在上面的 chip 与徽标 */
+  transition: filter var(--dur-base) var(--ease-standard);
 }
 
 .run-page.paused .hero {
@@ -993,10 +995,14 @@ function bumpKm(delta: number): void {
 
 .dist .bar i {
   display: block;
+  width: 100%;
   height: 100%;
   border-radius: 2px;
   background: var(--hero-route-line);
-  transition: width 1s linear;
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  /* 1s linear 保留：距离入账是 1s 一次的阶跃，linear 把台阶抹成匀速 ramp；
+     换 ease 会让每次 retarget 都多一处速度断点 */
+  transition: clip-path 1s linear;
 }
 
 /* 暂停徽标 —— 材质同 chip（.glass-surface + .stage-dark 令牌）。
@@ -1082,9 +1088,12 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   opacity: 1;
 }
 
-/* 收起档：只露出 peek（把手 + 时长/千卡行） */
-.drawer.collapsed {
+/* 收起档：只露出 peek（把手 + 时长/千卡行）。
+   收起比展开短一档（.drawer 基础规则是 dur-sheet）——展开是"生长"，收起只是让位；
+   :not(.dragging) 让拖拽中不挂过渡，位移只跟手指 */
+.drawer.collapsed:not(.dragging) {
   transform: translateY(calc(100% - 176px));
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 .drawer.dragging {
@@ -1273,12 +1282,18 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   gap: 6px;
   font-size: var(--fs-title3);
   font-weight: 700;
-  transition: all var(--dur-base) var(--ease-standard);
+  transition:
+    transform var(--dur-base) var(--ease-standard),
+    background-color var(--dur-base) var(--ease-standard),
+    color var(--dur-base) var(--ease-standard);
 }
 
-.gobtn:hover {
-  background: var(--c-exercise);
-  color: #1a2b00;
+/* hover 只在真悬停设备生效（触屏上点一下会粘在反色态，误以为已进入确认） */
+@media (hover: hover) {
+  .gobtn:hover {
+    background: var(--c-exercise);
+    color: #1a2b00;
+  }
 }
 
 .gobtn:active {

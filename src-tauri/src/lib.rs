@@ -193,6 +193,7 @@ pub fn run() {
             modules::ai::online::online_service_settings_get,
             modules::ai::online::online_service_settings_save,
             modules::ai::online::online_service_catalog,
+            modules::ai::online::online_service_cached_catalog,
             modules::ai::online::online_service_usage,
             modules::ai::online::online_service_sync,
             // ai · 提供商（适配器注册表 + 账号 + 模型目录）

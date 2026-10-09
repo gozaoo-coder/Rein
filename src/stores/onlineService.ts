@@ -22,6 +22,8 @@ export const useOnlineServiceStore = defineStore('online-service', () => {
   /** 目录里被勾选的模型 id（导入用） */
   const picked = ref<string[]>([])
   const loaded = ref(false)
+  /** 本会话是否已经静默核对过一次（load 里用，避免每次进页面都打服务端） */
+  let autoChecked = false
 
   const hasKey = computed(() => settings.value.apiKey.trim().length > 0)
   const models = computed(() => catalog.value?.models ?? [])
@@ -74,13 +76,31 @@ export const useOnlineServiceStore = defineStore('online-service', () => {
     }
   })
 
+  /**
+   * 读设置 + 上次成功的目录快照。
+   *
+   * 快照是「每次打开都显示待连接」那个异常的解法：密钥存在本机，凭什么冷启动
+   * 就装作没连上？先渲染上次的状态，再由后台静默核对一次（见下面的 autoChecked）。
+   */
   async function load(force = false): Promise<void> {
     if (loaded.value && !force) return
     try {
-      settings.value = await onlineService.settingsGet()
+      const [s, cached] = await Promise.all([
+        onlineService.settingsGet(),
+        // 快照读失败只是没有「上次」，不影响任何功能
+        onlineService.cachedCatalog().catch(() => null),
+      ])
+      settings.value = s
+      if (cached && !catalog.value) catalog.value = cached
       loaded.value = true
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
+    }
+    // 有密钥就后台核对一次（每会话一次，不跟着每次进页面打服务端）：
+    // 白名单变了、模型撤了，这一页会自己更正
+    if (hasKey.value && !autoChecked) {
+      autoChecked = true
+      void refresh(false)
     }
   }
 
@@ -99,15 +119,21 @@ export const useOnlineServiceStore = defineStore('online-service', () => {
     error.value = null
   }
 
-  /** 拉模型目录：失败也回结构（catalog.status 区分「密钥错」「服务端没配」「连不上」） */
-  async function refresh(): Promise<OnlineCatalog | null> {
+  /**
+   * 拉模型目录：失败也回结构（catalog.status 区分「密钥错」「服务端没配」「连不上」）。
+   *
+   * `silent = true`（后台核对）时，**失败不覆盖**上一次成功的目录：启动瞬间的
+   * 网络抖动不该把「已连接」翻成「无法连接」再闪回来。错误照记（打开抽屉就能看到
+   * 原文与重试），用户主动点「获取模型列表」才是权威结果，一律写入。
+   */
+  async function refresh(silent = false): Promise<OnlineCatalog | null> {
     if (!settings.value.baseUrl.trim() && !settings.value.apiKey.trim()) return null
     loading.value = true
     error.value = null
     try {
       await saveSettings({})
       const result = await onlineService.catalog(settings.value.baseUrl, settings.value.apiKey)
-      catalog.value = result
+      if (result.ok || !silent || !catalog.value) catalog.value = result
       if (!result.ok) error.value = result.error
       // 首次拉到目录时默认全选，用户少点一次
       if (result.ok && picked.value.length === 0) picked.value = result.models.map((m) => m.id)

@@ -124,7 +124,8 @@ impl Default for OnlineServiceSettings {
 }
 
 /// 服务端下发的单个模型：能不能用、单价多少都由服务端说了算。
-#[derive(Debug, Clone, Serialize)]
+/// Deserialize 也要：目录快照要能从 app_meta 里读回来（冷启动第一眼显示上次的状态）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineModel {
     pub id: String,
@@ -140,7 +141,7 @@ pub struct OnlineModel {
 }
 
 /// 一次「密钥换目录」的结果：能用哪些模型、单价多少、流量怎么计。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OnlineCatalog {
     pub base_url: String,

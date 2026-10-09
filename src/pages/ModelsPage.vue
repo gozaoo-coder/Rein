@@ -79,6 +79,9 @@ function onVoiceSaved(c: VoiceConfig): void {
 }
 
 onMounted(() => {
+  // 在线服务先读一次（设置 + 上次成功的目录快照 + 后台核对）：否则这张卡在
+  // 打开过抽屉之前一直显示「未配置服务密钥」，而密钥明明在本机
+  void online.load()
   void roles
     .load()
     .then(() => models.loadUsage())

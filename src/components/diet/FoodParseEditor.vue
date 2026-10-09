@@ -296,6 +296,7 @@ function onPicked(f: Food): void {
 
 <style scoped>
 .fpl {
+  position: relative;
   display: flex;
   flex-direction: column;
 }
@@ -328,18 +329,19 @@ function onPicked(f: Food): void {
 }
 
 .fprl-leave-active {
-  overflow: hidden;
-  max-height: 120px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  transform-origin: top center;
+  pointer-events: none; /* 退场期间压在兄弟行上方，不许再被点到 */
   transition:
-    opacity 200ms var(--ease-standard),
-    max-height 200ms var(--ease-standard);
+    opacity var(--dur-base) var(--ease-standard),
+    transform var(--dur-base) var(--ease-standard);
 }
 
 .fprl-leave-to {
   opacity: 0;
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
+  transform: scaleY(0);
 }
 
 .info {

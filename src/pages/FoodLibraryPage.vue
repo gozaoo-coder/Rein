@@ -199,6 +199,8 @@ function fmtG(n: number): string {
 <template>
   <div class="page">
     <PageHeader back title="饮食库" :subtitle="`共 ${all.length} 种食物 · 数值为每 100 克`" />
+    <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
+    <div class="rubber-layer" data-rubber-content>
 
     <div class="finder row">
       <Search :size="17" class="t-3" />
@@ -291,6 +293,7 @@ function fmtG(n: number): string {
 
     <!-- 记录弹层：无食物 = 搜索选择；抽屉记录 = 带入食物直接进数量/餐次 -->
     <FoodPickerSheet :open="recordOpen" :initial-food="recordFood" @close="recordOpen = false" />
+    </div>
   </div>
 </template>
 

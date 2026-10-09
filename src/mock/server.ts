@@ -889,10 +889,13 @@ function saveAiModels(): void {
 /* ---- Rein 在线服务（浏览器演示的假服务端） + 本机成本账本 ---- */
 
 const ONLINE_STORE_KEY = 'rein.mock.online_service.v1'
+const ONLINE_CATALOG_STORE_KEY = 'rein.mock.online_catalog.v1'
 const AI_USAGE_STORE_KEY = 'rein.mock.ai_usage.v1'
 
 let mockOnlineSettings = { baseUrl: 'http://47.100.36.179:8787', apiKey: '', savedAt: null as string | null }
 let aiUsage: (AiUsageInput & { at: string })[] = []
+/** 最近一次成功拿到的目录快照 —— 与 Rust 的 app_meta `online_service_catalog_v1` 同角色 */
+let mockOnlineCatalog: OnlineCatalog | null = null
 
 /** 演示用目录：与真服务端 /v1/models 的 rein 扩展字段同构 */
 const MOCK_ONLINE_MODELS = [
@@ -941,6 +944,15 @@ function buildMockCatalog(baseUrl: string, apiKey: string): OnlineCatalog {
 function saveMockOnline(): void {
   try {
     localStorage.setItem(ONLINE_STORE_KEY, JSON.stringify(mockOnlineSettings))
+  } catch {
+    /* localStorage 不可用时退化为内存态 */
+  }
+}
+
+function saveMockOnlineCatalog(): void {
+  try {
+    if (mockOnlineCatalog) localStorage.setItem(ONLINE_CATALOG_STORE_KEY, JSON.stringify(mockOnlineCatalog))
+    else localStorage.removeItem(ONLINE_CATALOG_STORE_KEY)
   } catch {
     /* localStorage 不可用时退化为内存态 */
   }
@@ -1243,6 +1255,8 @@ function loadMockOnlineAndUsage(): void {
   try {
     const rawOnline = localStorage.getItem(ONLINE_STORE_KEY)
     if (rawOnline) mockOnlineSettings = { ...mockOnlineSettings, ...(JSON.parse(rawOnline) as typeof mockOnlineSettings) }
+    const rawCatalog = localStorage.getItem(ONLINE_CATALOG_STORE_KEY)
+    if (rawCatalog) mockOnlineCatalog = JSON.parse(rawCatalog) as OnlineCatalog
     const rawUsage = localStorage.getItem(AI_USAGE_STORE_KEY)
     if (rawUsage) aiUsage = JSON.parse(rawUsage) as typeof aiUsage
   } catch {
@@ -6383,14 +6397,27 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         apiKey: (input.apiKey ?? '').trim(),
         savedAt: new Date().toISOString(),
       }
+      // 密钥被清空（断开）时快照一起清 —— 与 Rust online_service_settings_save 同构
+      if (!mockOnlineSettings.apiKey) {
+        mockOnlineCatalog = null
+        saveMockOnlineCatalog()
+      }
       saveMockOnline()
       return delay(structuredClone(mockOnlineSettings) as T)
     }
 
     case 'online_service_catalog': {
       const catalog = buildMockCatalog(String(args.baseUrl ?? mockOnlineSettings.baseUrl), String(args.apiKey ?? ''))
+      // 成功才写快照：下次「冷启动」第一眼渲染上次的状态，后台再静默核对
+      if (catalog.ok) {
+        mockOnlineCatalog = catalog
+        saveMockOnlineCatalog()
+      }
       return delay(catalog as T)
     }
+
+    case 'online_service_cached_catalog':
+      return delay(structuredClone(mockOnlineCatalog) as T)
 
     case 'online_service_usage': {
       const days = Number(args.days ?? 30)
@@ -6418,6 +6445,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'online_service_sync': {
       const catalog = buildMockCatalog(String(args.baseUrl ?? mockOnlineSettings.baseUrl), String(args.apiKey ?? ''))
       if (!catalog.ok) throw new Error(catalog.error ?? '在线服务不可用')
+      // 同步成功同样是「目录有效」的一次证明：刷新快照（Rust 同构）
+      mockOnlineCatalog = catalog
+      saveMockOnlineCatalog()
       const wantedIds = ((args.modelIds as string[] | null) ?? []).filter(Boolean)
       const wanted = catalog.models.filter((m) => wantedIds.length === 0 || wantedIds.includes(m.id))
       const base = catalog.baseUrl

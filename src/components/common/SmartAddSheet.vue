@@ -617,9 +617,10 @@ function clearAll(): void {
     transform var(--dur-fast) var(--ease-standard);
 }
 
+/* 与 .tdl-enter-from 同向量：进来往上长、出去往下退 —— 一升一缩会读成两套动画 */
 .tdl-leave-to {
   opacity: 0;
-  transform: scale(0.96);
+  transform: translateY(8px);
 }
 
 /* AI 揭晓时刻：逐条浮出（stagger 40ms，不阻塞交互；reduced-motion 全局归零） */

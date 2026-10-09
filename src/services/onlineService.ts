@@ -24,6 +24,9 @@ export const onlineService = {
   catalog: (baseUrl: string | null, apiKey: string) =>
     invoke<OnlineCatalog>('online_service_catalog', { baseUrl, apiKey }),
 
+  /** 上次成功拿到的目录快照（启动时先渲染它，再静默核对；没有则 null） */
+  cachedCatalog: () => invoke<OnlineCatalog | null>('online_service_cached_catalog', {}),
+
   /** 服务端记的账（权威口径，用来跟本机账本对账） */
   usage: (baseUrl: string | null, apiKey: string, days = 30) =>
     invoke<OnlineUsage>('online_service_usage', { baseUrl, apiKey, days }),

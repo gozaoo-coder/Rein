@@ -742,6 +742,9 @@ const CONTENT_LEAVE_MS = 140
 const CONTENT_LEAVE_GAP = 20
 const CONTENT_SHELL_DELAY = 130
 
+/** WAAPI 的 easing 是字符串直解析、var() 不被替换，故把令牌值读一次缓存 */
+const EASE_OUT = getComputedStyle(document.documentElement).getPropertyValue('--ease-out').trim() || 'cubic-bezier(0.33, 1, 0.68, 1)'
+
 function layoutFor(el: HTMLElement): ContentLayout {
   let layout = contentLayouts.get(el)
   if (!layout) {
@@ -809,7 +812,7 @@ function choreoContentLeave(): void {
         {
           duration: CONTENT_LEAVE_MS,
           delay: i * CONTENT_LEAVE_GAP,
-          easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+          easing: EASE_OUT,
           fill: 'backwards',
         },
       )
@@ -1456,10 +1459,6 @@ watch(immersiveOpen, (open) => {
   box-shadow: none;
 }
 
-.session-layer.is-morphing :deep(.wstep.cur) {
-  animation: none !important;
-}
-
 /* 淡入层：不透明底 + 全部内容的统一 opacity 载体——形变初期只见材质壳
    长大，内容随后浮现；收起时先淡出内容再缩回，压扁过程不可见。
    底部安全区在这里处理：底簇按它上浮，内容区也据它留出末段内边距。 */
@@ -1658,7 +1657,8 @@ watch(immersiveOpen, (open) => {
   flex: 1;
   gap: 12px;
   padding: 24px 26px;
-  animation: fadeUp var(--dur-sheet) var(--ease-standard);
+  /* 与丰富档 CONTENT_ENTER_MS=260 同档：组间切换每天数十次，420ms 跟不上手速 */
+  animation: fadeUp var(--dur-base) var(--ease-standard);
 }
 
 @keyframes fadeUp {
@@ -1837,7 +1837,8 @@ watch(immersiveOpen, (open) => {
 .wstep.cur {
   background: var(--text-1);
   color: var(--bg);
-  animation: cellbreath 1.6s infinite;
+  /* 呼吸循环已删：它引用的 keyframes 全仓没有定义（静默失效），而当前步 chip 本就是
+     整列最强的反色、信息已足；无限循环还会与形变的 rAF 抢帧。 */
 }
 
 .wstep.done {
@@ -1984,10 +1985,11 @@ watch(immersiveOpen, (open) => {
      （苹果对禁用态的要求是「仍然可读」，不是「看不见」）。 */
   color: var(--text-2);
   cursor: default;
+  /* 不补 box-shadow 过渡：一组做完整排 tile 集体改态时会重绘投影（绘制属性不归
+     合成器），当前组那格的投影走瞬时到位即可 */
   transition:
     background-color var(--dur-base) var(--ease-standard),
     color var(--dur-base) var(--ease-standard),
-    box-shadow var(--dur-base) var(--ease-standard),
     transform var(--dur-fast) var(--ease-standard);
 }
 
