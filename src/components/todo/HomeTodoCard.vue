@@ -65,6 +65,7 @@ onMounted(() => {
 }
 
 .add {
+  position: relative;
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -72,9 +73,23 @@ onMounted(() => {
   color: var(--text-1);
 }
 
+/* 卡头「+」：30px 圆钮是排版规格，命中区撑到 44×44（PageHeader .back 同款惯用法） */
+.add::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+
 .all-link {
+  position: relative;
   gap: 1px;
-  padding: 5px 2px 5px 10px;
+  /* 纵向补到 44（原来 5px 内边距只有约 26px 高）；横向左侧吃 10px 内边距 */
+  padding: 12px 2px 12px 10px;
   font-size: var(--fs-footnote);
   font-weight: 600;
   color: var(--text-2);

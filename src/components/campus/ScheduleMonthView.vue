@@ -188,13 +188,15 @@ const stats = computed(() => {
   min-width: 0;
 }
 
+/* 课程色条：整面 soft tint（课表三视图同一档浓度，与日视图 / 周视图同画法），
+   不再靠 2px 左边框（side-tab 收编）。底色混的是承载它的 --surface（牌面），
+   与原先混 transparent 再压到牌面上等效，但合成关系更明确。 */
 .chip {
   font-size: var(--fs-micro);
   line-height: 1.3;
   padding: 1px 4px;
   border-radius: var(--radius-s);
-  border-left: 2px solid var(--blk);
-  background: color-mix(in srgb, var(--blk) 16%, transparent);
+  background: color-mix(in srgb, var(--blk) 12%, var(--surface));
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;

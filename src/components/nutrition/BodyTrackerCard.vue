@@ -336,7 +336,8 @@ header > div > p {
 .stats em {
   display: block;
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 「体重」是字段小帽，与相邻的单位后缀（11px）不同 —— 要读 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -352,6 +353,7 @@ header > div > p {
 .stats b i {
   font-style: normal;
   font-weight: 400;
+  /* 大数后的单位后缀（kg / cm），装饰性微字 */
   font-size: var(--fs-micro);
   color: var(--text-3);
   margin-left: 2px;
@@ -362,7 +364,8 @@ header > div > p {
   align-items: center;
   gap: 2px;
   margin-top: 2px;
-  font-size: var(--fs-micro);
+  /* 「↓0.4」这类变化是体重趋势的结论，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
@@ -381,7 +384,8 @@ header > div > p {
   border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  /* BMI 分档是健康结论词，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 
@@ -409,7 +413,8 @@ header > div > p {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: var(--fs-micro);
+  /* 「近 10 次体重 · 最低/最高」是趋势摘要，是要读的数 */
+  font-size: var(--fs-caption);
 }
 
 .trend svg {
@@ -422,7 +427,8 @@ header > div > p {
 .axis {
   display: flex;
   justify-content: space-between;
-  font-size: var(--fs-micro);
+  /* 趋势图左右两个日期刻度 */
+  font-size: var(--fs-caption);
 }
 
 .axis i {
@@ -459,7 +465,8 @@ header > div > p {
   border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  /* 段首的状态词（「已记录」），必须读得出 */
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 

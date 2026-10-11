@@ -363,7 +363,7 @@ async function onTry(): Promise<void> {
 .auto-notice {
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   padding: 6px 10px;
   margin-top: 6px;
 }
@@ -371,16 +371,18 @@ async function onTry(): Promise<void> {
 .warn-notice {
   font-size: var(--fs-caption);
   line-height: 1.6;
-  color: var(--c-warn, #b45309);
-  background: rgba(245, 158, 11, 0.12);
-  border-radius: 8px;
+  /* --c-warn 这个 token 从来不存在，原先的 #b45309 回退值就是真实生效值，
+     且在暗色下对比度不足；收口到有明暗两档的 warn 家族 */
+  color: var(--warn-strong);
+  background: var(--warn-soft);
+  border-radius: var(--radius-xs);
   padding: 6px 10px;
   margin-top: 6px;
 }
 
 .divider {
   height: 1px;
-  background: var(--surface-3, var(--surface-2));
+  background: var(--surface-3);
   margin: 14px 0 4px;
 }
 
@@ -392,7 +394,7 @@ async function onTry(): Promise<void> {
   flex-wrap: wrap;
   margin-top: 6px;
   padding: 7px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   background: var(--ok-soft);
   color: var(--ok-strong);
   font-size: var(--fs-caption);
@@ -403,7 +405,7 @@ async function onTry(): Promise<void> {
   padding: 3px 10px;
   border-radius: var(--radius-full);
   background: var(--ok);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-caption);
   font-weight: 700;
 }
@@ -440,14 +442,14 @@ async function onTry(): Promise<void> {
 .mode-seg {
   display: flex;
   background: var(--surface-2);
-  border-radius: 9px;
+  border-radius: var(--radius-s);
   padding: 2px;
 }
 
 .mode-seg button {
   flex: 1;
   height: 30px;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);

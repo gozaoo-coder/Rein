@@ -197,7 +197,7 @@ async function doDelete(): Promise<void> {
   font-size: var(--fs-micro);
   font-weight: 700;
   padding: 3px 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: rgba(30, 234, 239, 0.14);
   color: #00858a;
 }
@@ -217,12 +217,12 @@ async function doDelete(): Promise<void> {
   margin-top: 14px;
   gap: 7px;
   height: 52px;
-  border-radius: 26px;
+  border-radius: var(--radius-xl);
   background: var(--text-1);
   color: var(--bg);
   font-size: var(--fs-body);
   font-weight: 700;
-  box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22);
+  box-shadow: var(--shadow-float);
 }
 
 .del {

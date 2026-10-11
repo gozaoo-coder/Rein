@@ -257,6 +257,7 @@ function bump(delta: number): void {
 
 .kcal em {
   font-style: normal;
+  /* 「大卡」单位后缀，装饰性微字 */
   font-size: var(--fs-micro);
   font-weight: 400;
   color: var(--text-3);

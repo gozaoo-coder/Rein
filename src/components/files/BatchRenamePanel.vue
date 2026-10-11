@@ -211,7 +211,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 3px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -297,11 +297,11 @@ watch(
 
 .badge {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .more {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .err {

@@ -48,8 +48,10 @@ function goDetail(): void {
 }
 
 .more {
+  position: relative;
   gap: 1px;
-  padding: 5px 10px;
+  /* 「详情」是进入下一层的唯一入口，纵向补到 44（原来 5px 内边距只有约 26px 高） */
+  padding: 12px 10px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: var(--fs-caption);

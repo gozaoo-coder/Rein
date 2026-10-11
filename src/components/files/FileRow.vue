@@ -319,7 +319,7 @@ function onClick(ev: MouseEvent): void {
 .ck.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .name-col {
@@ -411,6 +411,6 @@ function onClick(ev: MouseEvent): void {
   display: block;
   margin-top: 2px;
   color: var(--danger-strong);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 </style>

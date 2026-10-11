@@ -412,7 +412,8 @@ function onPicked(f: Food): void {
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-3);
-  font-size: var(--fs-micro);
+  /* 「换一个」是用户要点的按钮，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
@@ -439,7 +440,8 @@ function onPicked(f: Food): void {
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-3);
-  font-size: var(--fs-micro);
+  /* 「未匹配」这类状态词必须读得出 */
+  font-size: var(--fs-caption);
   font-weight: 700;
   vertical-align: 1px;
 }
@@ -530,6 +532,7 @@ function onPicked(f: Food): void {
 }
 
 .del {
+  position: relative;
   width: 30px;
   height: 30px;
   flex: none;
@@ -539,6 +542,18 @@ function onPicked(f: Food): void {
   justify-content: center;
   background: transparent;
   color: var(--text-3);
+}
+
+/* 30px 圆钮是排版规格，命中区撑到 44×44（PageHeader .back 同款惯用法） */
+.del::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
 }
 
 .del:active {

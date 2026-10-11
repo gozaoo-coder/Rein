@@ -140,7 +140,8 @@ const insight = computed(() => {
 }
 
 .lab span {
-  font-size: 10px;
+  /* 环心「{完成}/{总数} 完成」是周总结的主读数，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -150,7 +151,8 @@ const insight = computed(() => {
 }
 
 .cap {
-  font-size: var(--fs-micro);
+  /* 「按天完成率」是图表标题 */
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-3);
 }
@@ -179,7 +181,8 @@ const insight = computed(() => {
 .days {
   display: flex;
   gap: 7px;
-  font-size: 10px;
+  /* 柱状图下的周几刻度，与 .cap（图表标题）同档 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 

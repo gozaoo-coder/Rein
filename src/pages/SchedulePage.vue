@@ -393,7 +393,7 @@ watch([view, anchor], reload)
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   color: var(--text-2);
   transition: transform var(--dur-fast) var(--ease-standard);
 }

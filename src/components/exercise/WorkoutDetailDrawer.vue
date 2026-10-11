@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import ActionSheet from '@/components/common/ActionSheet.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { sessionService } from '@/services/sessionService'
 import { EFFORT_LABELS, WORKOUT_META } from '@/config/domain'
 import { SCORE_GROUP_LABELS, SCORE_GROUP_OF, type Level, type MuscleKey, type ScoreGroupKey } from '@/config/muscles'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
+import { useExerciseStore } from '@/stores/exercise'
 import { useNutritionStore } from '@/stores/nutrition'
 import { usePlanStore } from '@/stores/plan'
 import { fmtClock, fmtPace } from '@/stores/run'
@@ -28,7 +30,33 @@ const props = defineProps<{
   workout: Workout | null
 }>()
 
-defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: [] }>()
+
+/* ---------- 删除这次训练（抽屉内的显式入口） ----------
+ * 第一轮把行尾删除钮改成了 ActionSheet 确认层，且触态下 .del 整个隐藏 ——
+ * 触屏用户在列表里失去了删除路径。详情抽屉是他们看完这次训练后的自然落点，
+ * 所以这里给一条显式、可见的「删除这次训练」入口，并接同一套确认层。
+ *
+ * 接线方式：**抽屉自管 + emit close**。父级（WorkoutRecordsPage）只绑了 @close，
+ * 没有 @remove 这类契约，删父文件不在本次改动范围内；而删除落的是同一个
+ * store（useExerciseStore.remove），父级列表由它驱动，删完自动刷新。
+ * 因此抽屉自己开确认层、自己落库，成功后关掉自己即可。 */
+const exerciseStore = useExerciseStore()
+const delOpen = ref(false)
+
+/** 只开门，不删除 —— 破坏性操作必须过确认层 */
+function askDelete(): void {
+  if (props.workout) delOpen.value = true
+}
+
+async function confirmDelete(value: string): Promise<void> {
+  if (value !== 'delete') return
+  const id = props.workout?.id
+  delOpen.value = false
+  if (id == null) return
+  await exerciseStore.remove(id)
+  emit('close')
+}
 
 type Detail =
   | { source: 'run'; startedAt: string; snap: RunSnapshot }
@@ -532,8 +560,21 @@ const courseTotals = computed(() => {
       </template>
 
       <p v-if="workout.note" class="note t-3">{{ workout.note }}</p>
+
+      <!-- 删除入口：触态下列表行尾的删除钮是隐藏的，这里是可见的那一条。
+           不加图标只留文字，放在内容末尾（不占首屏），不与上面的数据抢层级。 -->
+      <button type="button" class="del-row" @click="askDelete">删除这次训练</button>
     </template>
   </SheetModal>
+
+  <!-- 删除确认层：与 WorkoutRecordsPage 行尾删除钮同一套（ActionSheet + danger 项） -->
+  <ActionSheet
+    :open="delOpen"
+    title="删除这次训练记录？"
+    :actions="[{ label: '删除', value: 'delete', danger: true }]"
+    @select="confirmDelete"
+    @close="delOpen = false"
+  />
 </template>
 
 <style scoped>
@@ -571,7 +612,7 @@ const courseTotals = computed(() => {
 .routebox {
   position: relative;
   margin-top: 14px;
-  border-radius: 18px;
+  border-radius: var(--radius-l);
   padding: 10px 10px 8px;
   background: var(--hero-bg);
   background-image:
@@ -613,7 +654,8 @@ const courseTotals = computed(() => {
 
 .goal {
   margin: 4px 4px 2px;
-  font-size: var(--fs-micro);
+  /* 「目标 5 km · 已达成」是用户自己定的目标与结论，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--hero-text-dim);
 }
 
@@ -633,7 +675,7 @@ const courseTotals = computed(() => {
 .bar {
   flex: 1;
   height: 14px;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   background: var(--surface-2);
   overflow: hidden;
 }
@@ -657,6 +699,7 @@ const courseTotals = computed(() => {
 
 .splitrow .v .unit {
   margin-left: 2px;
+  /* 配速值后的单位后缀（km/h），装饰性微字 */
   font-size: var(--fs-micro);
   font-weight: 500;
   color: var(--text-3);
@@ -675,7 +718,7 @@ const courseTotals = computed(() => {
 .mvol {
   margin-top: 12px;
   padding: 13px 14px;
-  border-radius: 16px;
+  border-radius: var(--radius-m);
   background: var(--surface-2);
 }
 
@@ -753,7 +796,8 @@ const courseTotals = computed(() => {
 }
 
 .mv-st {
-  font-size: var(--fs-micro);
+  /* 「运动充分」这类档名是练够分的结论词，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 700;
   text-align: right;
   color: var(--text-3);
@@ -765,14 +809,15 @@ const courseTotals = computed(() => {
 
 .mv-note {
   margin-top: 7px;
-  font-size: var(--fs-micro);
+  /* 分数口径说明，是「怎么读这个数」的解释文字 */
+  font-size: var(--fs-caption);
   line-height: 1.55;
   color: var(--text-3);
 }
 
 .cell {
   background: var(--surface-2);
-  border-radius: 16px;
+  border-radius: var(--radius-m);
   padding: 14px 16px;
 }
 
@@ -789,7 +834,8 @@ const courseTotals = computed(() => {
 }
 
 .cell .k {
-  font-size: var(--fs-micro);
+  /* 统计格字段名（「完成组数」）不吃 11px；同格的单位后缀（.v .sub）已在 callout 档 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
   margin-top: 2px;
 }
@@ -826,7 +872,7 @@ const courseTotals = computed(() => {
 
 .chip {
   padding: 5px 11px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--c-exercise-soft);
   color: var(--c-exercise-deep);
   font-size: var(--fs-caption);
@@ -850,5 +896,24 @@ const courseTotals = computed(() => {
 .note {
   margin-top: 14px;
   font-size: var(--fs-caption);
+}
+
+/* 删除入口：一条独立的危险动作行。放在内容流末尾而不是钉底 —— 抽屉内容可滚动，
+   钉底会一直占着一块；这里是「看完再决定」的位置，也远离上面的数据区，不易误触。
+   文案用「删除」两字 + danger 色，不说「确定」「移除」这类含糊词。 */
+.del-row {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 12px 0;
+  border-top: 0.5px solid var(--line);
+  text-align: center;
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.del-row:active {
+  opacity: 0.55;
 }
 </style>

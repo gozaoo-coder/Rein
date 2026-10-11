@@ -15,7 +15,23 @@
   --app-ambient: radial-gradient(1200px 700px at 18% -10%, #ffffff 0%, #eef0f4 48%, #e6e8ee 100%);
   --surface: #ffffff;
   --surface-2: #f2f2f4; /* 分段控件、次级按钮、内嵌灰底 */
-  --surface-translucent: rgba(255, 255, 255, 0.72); /* 导航 / 标签栏毛玻璃 */
+  /* 第三级表面：中性灰阶梯往下的第三档（#ffffff → #f2f2f4 → #ebebed）。给**贴在白卡上、
+     必须被读出来**的二级元素用 —— 静音标签、行分隔线、说明胶囊。它们落在 --surface 上，
+     只有 --surface-2 一档太浅（分隔线尤其会看不出来）；而此前用 var(--line) 当回退的
+     组件渲染出来正是这个灰度（7% 黑压在白上约 #f0f0f0），收成令牌后观感不变、还深了一档。
+     暗色**不能照抄压深** —— 那里没有比 --bg #000 更深的灰可用，阶梯整个翻向提亮，
+     值见暗色块。 */
+  --surface-3: #ebebed;
+  /* 卡片内的二级分组面（base.css 的 .card.sub 用它）：比母卡再退一档的一口「浅井」。
+     **不用实色灰** —— 拿文字色混透明：它压在什么底上，就自动比那档底深 / 浅一档。
+     亮色 --text-1 近黑，4% 落在白卡上约 #f6f6f6；暗色 --text-1 提亮成 #f5f5f7，
+     同一支公式在深卡上提亮成约 #252027 —— 亮暗两档都不必另写死一个值，且母卡换成
+     玻璃底（--glass-panel-fill）时这口井跟着退，不会白卡配深井。
+     4% 是「看得出分层、又不抢正文」的一档；再深就该去用 --surface-2 / --surface-3。 */
+  --surface-inset: color-mix(in srgb, var(--text-1) 4%, transparent);
+  /* 上一行的「减弱透明度」实底等值：RT 块（base.css）按「顶令牌」哲学把 --surface-inset
+     顶成它。亮色 = 4% 井压白卡的精确不透明结果（255-(255-29)×0.04 ≈ 246）。 */
+  --surface-inset-solid: #f6f6f6;
   --scrim: rgba(0, 0, 0, 0.4); /* 全屏遮罩，弹层统一深浅 */
   --switch-knob: #ffffff; /* 开关滑块：亮暗色同为白（iOS 规格），暗色下靠影子托底 */
 
@@ -147,21 +163,32 @@
    *   实底档直接当文字用对比度不够（`--ok` 落在 `--ok-soft` 上只有 1.95:1），
    *   而这类文字往往是「赢/满员/故障」这类最要紧的状态词，看不清等于没写。
    */
-  /* 实底档的蓝，压深过一档：#007aff 上压白字实测只有 4.02:1，
-     而它承载的恰恰是按钮上 12–15px 的小字（主操作）。
-     #006ee8 是**能满足 4.5:1 的最小改动**（白字 4.78:1），肉眼看仍是同一支 iOS 蓝，
-     顺带把它当图标/描边用时的对比也从 4.02 提到 4.78。
+  /* 实底档的蓝。它有两类用法，**都要过 AA（4.5:1）**，各自实测：
+       ① 白字压在它上面（--on-accent 主按钮，承载 12–15px 的小字主操作）：5.65:1 ✓
+       ② 它自己当图标 / 链接 / 强调描边，压在画布 --bg #f5f5f7 上：5.19:1 ✓
+     #007aff 当年只量了 ①（白字 4.02:1）；#006ee8 修好了 ①（4.78:1）却漏了 ② ——
+     压在 #f5f5f7 上实测 4.39:1，差 0.11 到 AA。#0062d6 让两类一起过，肉眼仍是同一支
+     iOS 蓝（G/B 各压 12/18 级，色相不动）。
      暗色档**故意不动**，理由写在那个块里。 */
-  --accent: #006ee8;
-  --accent-soft: rgba(0, 110, 232, 0.12);
+  --accent: #0062d6;
+  /* soft 与主色**同源同色相、只是浓度不同**（12%；暗色块同构，是 --accent 的 18%）——
+     主色换档它必须跟着换，否则 soft 底会悄悄漂回旧蓝。 */
+  --accent-soft: rgba(0, 98, 214, 0.12);
   --accent-strong: #0a5ec2; /* accent-soft 底或白底上的文字蓝 */
   --on-accent: #ffffff; /* accent 及语义色实底按钮 / 分类彩底图标的前景白 */
+  /* 实底档的绿。**真源** —— --c-protein / --cat-workout / --led-income / --led-salary
+     都由它派生（这几个名字在亮暗两档都是同一支 iOS 绿，各挂一份值只会让「换绿」
+     要改四处、还容易漏）：改色只改这一行，派生名自动跟随。 */
   --ok: #34c759;
   --ok-soft: rgba(52, 199, 89, 0.16); /* 完成态 soft 底 */
   --ok-strong: #248a3d; /* ok-soft 底上的文字绿（亮色加深保对比，暗色提亮） */
+  /* 实底档的橙。**真源** —— --cat-work 由它派生（亮暗两档同值）。
+     注意 --led-food **不**派生：它在暗色块提亮成 #ff9f0a，与 --warn 故意分叉。 */
   --warn: #ff9500;
   --warn-soft: rgba(255, 149, 0, 0.14); /* 警告 soft 底（原先散落在各组件里 color-mix，收进来一份） */
   --warn-strong: #8a5300; /* warn-soft 底上仍读得清的文字橙 */
+  /* 实底档的红。**真源** —— --c-sodium / --led-expense / --led-medical 由它派生
+     （亮暗两档同值），改色只改这一行。 */
   --danger: #ff3b30;
   --danger-soft: rgba(255, 59, 48, 0.12); /* 危险操作 soft 底 */
   --danger-strong: #c1271d; /* danger-soft 底上的文字红 */
@@ -189,47 +216,51 @@
   --hero-route-glow: rgba(146, 232, 42, 0.65);
 
   /* 宏量营养素 */
-  --c-protein: #34c759;
+  --c-protein: var(--ok); /* 派生：与 --ok 同色（iOS 绿，亮暗两档同值），换色只改 --ok */
   --c-carb: #ff9f0a;
   --c-fat: #ffcc00;
-  --c-sodium: #ff3b30;
-  --c-water: #007aff;
+  --c-sodium: var(--danger); /* 派生：与 --danger 同色（iOS 红，亮暗两档同值） */
+  --c-water: var(--accent); /* 饮水：跟随主色（不再单独持一支与 accent 脱节的旧蓝 #007aff） */
 
   /* ---------- 待办分类色 ---------- */
+  /* 中性灰（iOS systemGray）。**真源** —— --led-housing / --led-other / --sto-db
+     由它派生：这三个域都拿它当「misc / 中性」用，亮暗两档同值（暗色不提亮）。 */
   --cat-general: #8e8e93;
-  --cat-workout: #34c759;
+  --cat-workout: var(--ok); /* 派生：与 --ok 同色（亮暗两档同值） */
+  /* 待办「健康」分类的系统粉。**真源** —— --led-entertainment 由它派生（亮暗两档同值）。 */
   --cat-health: #ff2d55;
   --cat-study: #5856d6;
-  --cat-work: #ff9500;
+  --cat-work: var(--warn); /* 派生：与 --warn 同色（亮暗两档同值） */
   /* 课表派生行的兜底色。课程块优先用教务自带的 bgc（与学生网页上看到的一致），
      这条只在教务没给配色时生效。 */
   --cat-class: #32ade6;
 
   /* ---------- 记账域色 ---------- */
-  --led-expense: #ff3b30; /* 支出（语义固定，亮暗色同用） */
-  --led-income: #34c759; /* 收入 */
-  --led-food: #ff9500;
-  --led-transport: #007aff;
-  --led-shopping: #af52de;
-  --led-entertainment: #ff2d55;
-  --led-housing: #8e8e93;
-  --led-medical: #ff3b30;
+  --led-expense: var(--danger); /* 支出（语义固定，亮暗色同用）；派生：与 --danger 同色 */
+  --led-income: var(--ok); /* 收入；派生：与 --ok 同色（亮暗两档同值） */
+  --led-food: #ff9500; /* 独立持色：暗色块提亮为 #ff9f0a，与 --warn 故意分叉，不收编 */
+  --led-transport: var(--accent); /* 交通：跟随主色（暗色块那支本就是 #0a84ff，与 --accent 同源） */
+  --led-shopping: #af52de; /* 独立持色：暗色块提亮为 #bf5af2 */
+  --led-entertainment: var(--cat-health); /* 派生：与 --cat-health 同色（亮暗两档同值） */
+  --led-housing: var(--cat-general); /* 派生：与 --cat-general 同色 */
+  --led-medical: var(--danger); /* 派生：与 --danger 同色 */
   --led-education: #5e5ce6;
   --led-bills: #32ade6;
   --led-travel: #00c7be;
-  --led-salary: #34c759;
+  --led-salary: var(--ok); /* 派生：与 --ok 同色 */
   --led-bonus: #ffd60a;
   --led-refund: #30d158;
-  --led-other: #8e8e93;
+  --led-other: var(--cat-general); /* 派生：与 --cat-general 同色 */
 
   /* ---------- 工作区存储域色（空间总览） ----------
-     四条账各自的颜色：文本 / 本体 是**真源**，索引 / 数据库 是**派生缓存**。
-     文本直接跟随主色（它在多数工作区里是最大的一支，也该与全站主色一致）；
-     另外三支要在亮暗两档都成立，暗色块里各提亮一档 —— 与记账分类色同一条理由。 */
+     四条账各自的颜色。--sto-text 跟随主色（它在多数工作区里是最大的一支，也该与
+     全站主色一致）；--sto-asset / --sto-index 独立持色，暗色块里各提亮一档 —— 与
+     记账分类色同一条理由（索引的暗色值与 --led-bills 相同，是两处独立声明，不是
+     var() 派生，改一处另一处不跟）；--sto-db 收编为 --cat-general 的派生。 */
   --sto-text: var(--accent);
-  --sto-asset: #af52de;
-  --sto-index: #32ade6;
-  --sto-db: #8e8e93;
+  --sto-asset: #af52de; /* 独立持色：暗色块提亮为 #bf5af2（与 --led-shopping 同值但互不派生） */
+  --sto-index: #32ade6; /* 独立持色：暗色块提亮为 #5ac8fa（与 --led-bills 同值但互不派生） */
+  --sto-db: var(--cat-general); /* 派生：与 --cat-general 同色 */
 
   /* ---------- 圆角 ---------- */
   --radius-xs: 6px;
@@ -245,6 +276,13 @@
     0 12px 32px rgba(0, 0, 0, 0.05),
     0 40px 80px rgba(0, 0, 0, 0.04);
   --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.12);
+  /* 浮条的**拖拽抬起档**：悬浮条 / 浮钮被抓住（伴随 scale 1.03）时换上的重落影。
+     与 --shadow-float（静置档）成对，同一套「自适应深浅」的理由见 --glass-shadow /
+     --glass-shadow-lifted：抬升态的影子必须明显重于静置档，才读得出「被拿起来了」——
+     直接用静置档的话，亮色下 0.3 掉到 0.12、14px 掉到 4px，抓取反馈几乎消失。
+     亮色沿用原三处浮条拖拽影的实测值；暗色没有比黑更深的可用，按 --shadow-float
+     同取向压重（0.12→0.6），这里 0.3→0.55 才压得住黑底。 */
+  --shadow-float-lift: 0 14px 36px rgba(0, 0, 0, 0.3);
   --shadow-thumb: 0 1px 4px rgba(0, 0, 0, 0.12), 0 0 0 0.5px var(--line); /* 分段滑块 / 步进小圆钮 */
 
   /* ---------- 字体 ---------- */
@@ -336,7 +374,17 @@
     --app-ambient: radial-gradient(1200px 700px at 18% -10%, #16161a 0%, #0b0b0d 52%, #000000 100%);
     --surface: #1c1c1e;
     --surface-2: #2c2c2e;
+    /* 第三级表面：暗色这里**提亮**一档而不是压深 —— 没有比 --bg #000 更深的灰可用，
+       阶梯只能往上走（方向与亮色档相反、语义相同）。取苹果暗色三档灰的第三格，
+       与 --surface-2 保持一档可辨的差，分隔线 / 静音标签在黑底卡上才显形。 */
+    --surface-3: #3a3a3c;
     --surface-translucent: rgba(28, 28, 30, 0.72);
+    /* 与亮色同一支公式，方向随 --text-1 自动翻转：暗色 --text-1 是 #f5f5f7，
+       4% 落在深卡（--surface #1c1c1e）上约 #252027 —— 比 --surface-2 再收一档，
+       不与表面阶梯（#1c1c1e → #2c2c2e → #3a3a3c）撞车。 */
+    --surface-inset: color-mix(in srgb, var(--text-1) 4%, transparent);
+    /* 实底等值：4% 井压深卡（--surface #1c1c1e）的精确不透明结果。 */
+    --surface-inset-solid: #252527;
 
     --glass-fill: rgba(40, 40, 46, 0.5);
     --glass-rim-hi: rgba(255, 255, 255, 0.45);
@@ -392,6 +440,7 @@
 
     --shadow-card: none;
     --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.6);
+    --shadow-float-lift: 0 14px 36px rgba(0, 0, 0, 0.55);
     /* 与 --shadow-card 同义的「没有落影」，但它得能进 box-shadow 的多层列表
        （none 出现在列表里会让整条声明失效）—— 理由见亮色档那份注释 */
     --glass-panel-shadow: 0 0 0 rgba(0, 0, 0, 0);
@@ -415,8 +464,13 @@
     --sto-asset: #bf5af2;
     --sto-index: #5ac8fa;
 
-    /* 记账分类色：暗色整体提亮一档，保持对比度 */
-    --led-transport: #0a84ff;
+    /* 记账分类色：暗色整体提亮一档，保持对比度。
+       --led-transport **不在这里覆写** —— 亮色块它就是 var(--accent)，暗色里
+       自动解析成 --accent 的暗色值（#0a84ff）；再写一份只会和主色静默分叉。
+       --led-income / --led-salary / --led-expense / --led-medical / --led-housing /
+       --led-other / --led-entertainment 同理：亮色块已收编为派生，真源（--ok /
+       --danger / --cat-general / --cat-health）在暗色同样不覆写，派生值自动跟随
+       —— 灰族 --cat-general 暗色不提亮，派生也依旧是 #8e8e93。 */
     --led-shopping: #bf5af2;
     --led-education: #7d7aff;
     --led-bills: #5ac8fa;

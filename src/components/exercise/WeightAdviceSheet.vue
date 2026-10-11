@@ -226,7 +226,8 @@ const lastDateShort = computed(() => {
 .htag {
   padding: 3px 9px;
   border-radius: var(--radius-full);
-  font-size: var(--fs-micro);
+  /* 「今日建议」是这块的结论标签，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--c-exercise-deep);
   background: var(--surface-2);
@@ -295,7 +296,8 @@ const lastDateShort = computed(() => {
 }
 
 .btag {
-  font-size: var(--fs-micro);
+  /* 「四步」是计算链的段首计数 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -378,7 +380,7 @@ const lastDateShort = computed(() => {
 /* 终点节点：建议重量是整条链的结论，加重 */
 .cnode.final .ndot {
   background: var(--c-exercise-deep);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .nval.final {

@@ -87,7 +87,7 @@ function fmtUsed(lastUsedAt: string | null): string {
   color: var(--bg);
   font-size: var(--fs-body);
   font-weight: 700;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-float);
 }
 
 .item {
@@ -122,7 +122,7 @@ function fmtUsed(lastUsedAt: string | null): string {
   font-size: var(--fs-micro);
   font-weight: 700;
   padding: 3px 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: rgba(146, 232, 42, 0.16);
   color: #5ba800;
 }

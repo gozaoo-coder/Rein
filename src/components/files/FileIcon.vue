@@ -158,6 +158,6 @@ watch(
 }
 
 .badge.err {
-  color: var(--danger, #d9534f);
+  color: var(--danger);
 }
 </style>

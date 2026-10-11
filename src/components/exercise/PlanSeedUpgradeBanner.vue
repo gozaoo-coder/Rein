@@ -90,7 +90,7 @@ const ACTIONS = [
   flex: none;
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-m);
   background: var(--c-exercise-soft);
   color: var(--c-exercise-deep);
 }

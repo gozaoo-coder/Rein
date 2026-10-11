@@ -134,6 +134,31 @@ svg {
   scrollbar-width: none;
 }
 
+/* ---------- 「这里可以横滑」的 affordance ----------
+   滚动条被全局藏掉（上面两条）之后，「可滚」本身不能跟着消失：横滑容器没有滚动条
+   可暗示，右缘直接被裁，用户只会读成「内容坏了 / 就这么多」。补一个**右缘渐隐**
+   宣告「右边还有、可以滑」——内容滚到边缘之下时化开，正是 HomeCanvas 的 .pool
+   的做法（18px 渐隐带），这里收上 global 一份，横滑容器登记即用。
+
+   两个入口：
+     · `.fade-x` 工具类 —— 正规用法：哪个横滑容器要，就在自己组件的 class 上
+       加一个（HomeCanvas 的 .pool 自带等价声明，不必回填）；
+     · 选择器里登记的 .hwrap / .pills / .cols —— **已核实全库仅一处使用、且就是
+       横滑容器**的现存类（周时间线 / 语音布局导航 / 文件栏浏览器，横滑最高频的
+       三处），先接上、不等组件侧改动。
+   ⚠️ 登记表只收「全库单处使用且就是横滑容器」的类：.chips / .strip / .splitrow /
+   .pool / .groups 这些名字在别处也挂、且有的根本不是横滑容器（.strip 在 HomePage
+   是一张卡片，.chips 在课程详情/筛选里是 wrap 容器），全局登记会误伤非滚动元素
+   —— 它们以及所有新横滑容器一律走 .fade-x。纵滑列表（消息流）不适用：纵向两端
+   常被内容顶着，渐隐只会吃掉正文，那需要按组件做顶/底指示，不在这份里。 */
+.fade-x,
+.hwrap,
+.pills,
+.cols {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+}
+
 /* 数字统一等宽，避免跳动 */
 .num {
   font-variant-numeric: tabular-nums;
@@ -168,6 +193,23 @@ button:active,
 
 .card + .card {
   margin-top: 14px;
+}
+
+/* 卡片内的**二级分组面**（SettingsPage 的 .rows、SyncPage 的 .frow 这类「一组行」）：
+   整组垫在一口浅井上，与母卡面分出层次。用 .card.sub 而不是另起一个类 —— 它仍然是卡
+   （直接挂在 .page 下时，桌面上照样进半栏栅格、照样吃 hover 抬影那套规则），只是**降一档**：
+     底   --surface-inset（4% 文字色混透明的浅井；母卡换成玻璃底时它跟着退）
+     圆角 --radius-l（比 .card 的 --radius-xl 收一档，读出「里面那一层」）
+     内距 14px（与 --desk-gap、.card + .card 的 14px 同值，换栏后垂直节奏不变）
+     投影 none —— 嵌在卡里的面再压落影，只会把母卡切成两截
+   .card.sub 的特指度（0,2,0）压过高画质档的玻璃规则（:where(...) .card，0,1,0），
+   所以它在任何画质档都保持这口实底，不跟着母卡变玻璃 —— 二级面就该是「退一档」，
+   而不是「也变成玻璃」。 */
+.card.sub {
+  background: var(--surface-inset);
+  border-radius: var(--radius-l);
+  box-shadow: none;
+  padding: 14px;
 }
 
 /* ---------- 少量布局工具类 ---------- */
@@ -572,6 +614,9 @@ html[data-perf='low'] .stage-dark {
     --glass-insets: inset 0 0 0 rgba(255, 255, 255, 0);
     --sheet-card-fill: var(--surface);
     --sheet-card-halo: 0 0 0 rgba(0, 0, 0, 0);
+    /* 二级浅井（.card.sub）同样退实底：它不走玻璃令牌，顶这一个就够了 ——
+       同一条「顶令牌而不是逐选择器追」的哲学，新用 --surface-inset 的面自动跟退。 */
+    --surface-inset: var(--surface-inset-solid);
   }
 
   .glass-surface {

@@ -39,11 +39,14 @@ const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 const deskWide = computed(() => route.meta.desk === 'wide')
 
 /**
- * 桌面键盘层（只在桌面挂）：⌘K 命令面板、⌘1–4 一级页、⌘I 信息栏。
+ * 桌面键盘层：⌘K 命令面板、⌘1–4 一级页、⌘I 信息栏。
  *
  * 为什么由壳层统一收：快捷键**不能分布在各页**（同一组合在两个页面里含义不同，
  * 用户就再也不敢按）；而这些都是「壳层的动作」—— 换页、开关窗格、叫出面板。
  * 页面自己的键位仍留在页面里（如 Esc 关抽屉），壳层只认这一组不冲突的。
+ *
+ * 挂载条件见下方 `hasKeyboard`：按设备能力（有精确指针/实体键盘）挂，
+ * 与窗口宽度无关 —— 窄窗口的桌面用户同样要能键盘导航。
  *
  * 输入焦点要排除：在输入框 / 文本域 / contenteditable 里按 ⌘1 应该照常输入，
  * 只有 ⌘K 与 ⌘I 这类带修饰键、输入法不会吃掉的组合才允许穿透。
@@ -162,17 +165,33 @@ watch(
  */
 const updatePrompt = ref(false)
 
-/* 键盘层随桌面壳一起挂/卸：窄屏没有导航轨与信息栏，⌘1–4 / ⌘I 在那里没有意义，
-   而 ⌘K 面板本身也不渲染 —— 监听器跟着 isDesktop 走，两种形态各自只有一份真相。 */
+/**
+ * 桌面键盘层（⌘K 命令面板、⌘1–4 一级页、⌘I 信息栏）的挂载条件是**设备能力**，
+ * 不是窗口宽度：`hover: hover and pointer: fine` = 有实体键盘/精确指针的设备。
+ *
+ * 为什么与 isDesktop 解耦：三窗格壳（desk-frame）与 ⌘K 面板的渲染是**布局**决策，
+ * 跟着宽度走；快捷键是**输入能力**决策，跟着设备走。从前监听器跟着 isDesktop 走，
+ * 于是窄窗口的桌面用户（分屏、半宽、外接显示器上把窗口拉窄）完全没有键盘导航。
+ * 触屏（hover: none）依旧不挂监听，与从前一样纯手势操作。
+ */
+const hasKeyboard = useMediaQuery('(hover: hover) and (pointer: fine)')
+
 watch(
-  isDesktop,
+  hasKeyboard,
   (on) => {
     if (on) window.addEventListener('keydown', onDeskKey)
     else window.removeEventListener('keydown', onDeskKey)
-    /* 壳层形态写到 <html> 上：**teleport 到 body 的元素（悬浮钮 / 悬浮条 / 提示条）
-       不在 .desk-main 里**，它们既用不了 .desk-main 那条祖先规则，也读不到
-       「现在是不是桌面」。写一个属性出去，这些游离子孙就能各自适配 —
-       与 data-perf / data-motion / data-immersive 同一条做法。 */
+  },
+  { immediate: true },
+)
+
+/* 壳层形态写到 <html> 上：**teleport 到 body 的元素（悬浮钮 / 悬浮条 / 提示条）
+   不在 .desk-main 里**，它们既用不了 .desk-main 那条祖先规则，也读不到
+   「现在是不是桌面」。写一个属性出去，这些游离子孙就能各自适配 —
+   与 data-perf / data-motion / data-immersive 同一条做法。 */
+watch(
+  isDesktop,
+  (on) => {
     document.documentElement.dataset.shell = on ? 'desk' : 'mobile'
   },
   { immediate: true },

@@ -181,7 +181,7 @@ function commit(): void {
   justify-content: center;
   min-height: 44px;
   padding: 2px 0;
-  border-radius: var(--radius-s, 6px);
+  border-radius: var(--radius-s);
   color: inherit;
 }
 

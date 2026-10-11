@@ -457,7 +457,8 @@ html[data-perf]:not([data-perf='low']) .dock-pill {
 }
 
 .dw {
-  font-size: var(--fs-micro);
+  /* 周几标签是「哪天练了」的读法依据，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 600;
   line-height: 1.1;
 }
@@ -600,7 +601,8 @@ html[data-perf]:not([data-perf='low']) .dock-pill {
   align-items: baseline;
   justify-content: space-between;
   gap: 4px;
-  font-size: var(--fs-micro);
+  /* 营养素名 + 数值，是要读的数，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-3);
   white-space: nowrap;

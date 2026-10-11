@@ -5,11 +5,12 @@ import { Trash2 } from 'lucide-vue-next'
 import SheetModal from '@/components/common/SheetModal.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import ActionSheet from '@/components/common/ActionSheet.vue'
-import { categoriesOf, fmtCents } from '@/config/ledger'
+import { categoriesOf, categoryOf, fmtCents } from '@/config/ledger'
 import { useToast } from '@/composables/useToast'
 import { useLedgerStore } from '@/stores/ledger'
 import { addDays, fmtDateCn, todayStr } from '@/utils/date'
 import type { LedgerEntry, LedgerKind } from '@/types'
+import type { LedgerCategory } from '@/config/ledger'
 
 /** 记一笔 / 编辑账目：分类宫格 + 数字键盘 + 日期 + 备注（编辑态附加删除）。 */
 const props = defineProps<{
@@ -55,6 +56,52 @@ watch(
 )
 
 const grid = computed(() => categoriesOf(kind.value))
+
+/* ---------------- 最近分类 ----------------
+ * 「记一笔」是全 app 最高频的动作，而支出宫格有 10 格 —— 第一个决策点平铺 10 个选项
+ * 已超出工作记忆上限，高频用户每次都从头找同一格。这里把最近用过的 4 个分类
+ * 提到宫格上方一行（additive：宫格原样保留，一行只是捷径，不是替换）。
+ * 存储键：`rein.ledgerRecentCats.v1`（key 数组，最多 4 个、最新在前、同一 key 去重）。
+ * 写入时机：每次成功保存之后（新增与编辑都记，支出与收入都记）。
+ */
+
+const RECENT_KEY = 'rein.ledgerRecentCats.v1'
+const RECENT_MAX = 4
+
+function readRecentCats(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY)
+    const list = raw ? (JSON.parse(raw) as unknown) : []
+    if (!Array.isArray(list)) return []
+    // 分类表改版后旧 key 可能已不存在：存的时候就过滤掉，别在横条上渲染空气
+    return list.filter((x): x is string => typeof x === 'string' && categoryOf(x) !== undefined).slice(0, RECENT_MAX)
+  } catch {
+    // 隐私模式下 localStorage 读写会抛：没有横条照样能记账，不该因此崩
+    return []
+  }
+}
+
+const recentKeys = ref<string[]>(readRecentCats())
+
+/** 记一次使用：顶到最前、去重、只留最近 4 个 */
+function pushRecentCat(key: string): void {
+  if (!key) return
+  const next = [key, ...recentKeys.value.filter((k) => k !== key)].slice(0, RECENT_MAX)
+  recentKeys.value = next
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next))
+  } catch {
+    /* 本地存储不可用时只丢历史，不影响本次记账 */
+  }
+}
+
+/** 横条只显示**当前 kind 宫格里存在**的分类（换支出/收入时跨类的记录不出现） */
+const recentCats = computed<LedgerCategory[]>(() => {
+  const inGrid = new Set(grid.value.map((c) => c.key))
+  return recentKeys.value
+    .map((k) => categoryOf(k))
+    .filter((c): c is LedgerCategory => c !== undefined && inGrid.has(c.key))
+})
 
 function switchKind(k: string): void {
   kind.value = k as LedgerKind
@@ -103,6 +150,8 @@ async function save(): Promise<void> {
       await store.create(input)
       toast.toast('已记一笔')
     }
+    // 记账成功才记「最近」：保存失败（离线/引擎报错）的分类不该占位
+    pushRecentCat(category.value)
     emit('saved')
     emit('close')
   } finally {
@@ -139,6 +188,24 @@ async function onConfirmDelete(value: string): Promise<void> {
         ]"
         @update:model-value="switchKind"
       />
+
+      <!-- 最近分类：只用最近用过的 4 个，横向一排；没有历史时整行不渲染 -->
+      <div v-if="recentCats.length" class="recent">
+        <span class="recent-tag">最近</span>
+        <button
+          v-for="c in recentCats"
+          :key="c.key"
+          type="button"
+          class="cat recent-cat"
+          :class="{ on: category === c.key }"
+          @click="category = c.key"
+        >
+          <i :style="{ background: c.colorVar }">
+            <component :is="c.icon" :size="18" :stroke-width="2" />
+          </i>
+          <span>{{ c.label }}</span>
+        </button>
+      </div>
 
       <!-- 分类宫格 -->
       <div class="cats">
@@ -227,7 +294,8 @@ async function onConfirmDelete(value: string): Promise<void> {
   gap: 4px;
   padding: 2px 0 4px;
   border-radius: var(--radius-m);
-  font-size: var(--fs-micro);
+  /* 分类磁贴的名字（「餐饮」）是要读的字段名，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -254,6 +322,35 @@ async function onConfirmDelete(value: string): Promise<void> {
 
 .cat.on span {
   color: var(--text-1);
+}
+
+/* 「最近」行：分类格同一套语言，只把视觉重量降一档（图标 42→30、标签更紧），
+   横向铺开不换行；窄屏放 4 枚也够。 */
+.recent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recent-tag {
+  flex: none;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-3);
+}
+
+.recent-cat {
+  flex: 1 1 0;
+  /* 别让单个历史项被拉成通栏一行：上限 88px，剩下的空间留在行尾 */
+  max-width: 88px;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+}
+
+.recent-cat i {
+  width: 30px;
+  height: 30px;
 }
 
 .amount {

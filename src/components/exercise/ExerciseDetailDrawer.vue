@@ -166,7 +166,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   font-size: var(--fs-micro);
   font-weight: 700;
   padding: 3px 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: rgba(30, 234, 239, 0.14);
   color: #00858a;
 }
@@ -267,7 +267,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
 
 .cell {
   background: var(--surface-2);
-  border-radius: 14px;
+  border-radius: var(--radius-m);
   padding: 12px 14px;
 }
 

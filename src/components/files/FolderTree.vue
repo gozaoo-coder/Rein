@@ -174,7 +174,7 @@ const depthOf = (p: string): number => (p ? p.split('/').length : 0)
 
 .head {
   padding: 2px 6px 6px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .nodes {
@@ -242,7 +242,7 @@ const depthOf = (p: string): number => (p ? p.split('/').length : 0)
 .cnt {
   flex: none;
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 </style>

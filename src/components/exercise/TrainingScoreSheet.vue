@@ -80,15 +80,21 @@ function barW(score: number): number {
   return Math.max(0, Math.min(100, score))
 }
 
-/** 三维构成（顺序即图表里的堆叠顺序）。Dimension 自带 key/label，这里只补配色类名 */
+/** 三维构成（顺序即图表里的堆叠顺序）。Dimension 自带 key/label，这里补配色类名，
+    外加堆叠几何：--x = 本段左缘的累计偏移（%），--s = 本段占满分的比例（0..1） */
 const dims = computed(() => {
   const g = current.value
   if (!g) return []
+  let acc = 0
   return [
     { ...g.frequency, cls: 'dim-frequency' },
     { ...g.intensity, cls: 'dim-intensity' },
     { ...g.feeling, cls: 'dim-feeling' },
-  ]
+  ].map((d) => {
+    const x = acc
+    acc += pts(d.contribution)
+    return { ...d, x, s: pts(d.contribution) / 100 }
+  })
 })
 
 /** 强度分支：规范的 40% / 30% / 30% */
@@ -182,7 +188,7 @@ const lowConfidenceHint = computed(
                 :key="d.key"
                 class="seg"
                 :class="d.cls"
-                :style="{ width: `${pts(d.contribution)}%` }"
+                :style="{ '--x': `${d.x}%`, '--s': `${d.s}` }"
               />
             </div>
             <p class="ncap">彩段是各维度实际拿到的分，灰底是还没拿到的分。</p>
@@ -416,7 +422,7 @@ const lowConfidenceHint = computed(
 /* 条底 = "还没拿到的分"；三段彩色 = 三个维度实际贡献的分。总宽恒为满分的 100 分，
    所以"条还差多少"与"分还差多少"是同一个数，不用再解释一遍。 */
 .comp {
-  display: flex;
+  position: relative;
   height: 16px;
   margin-top: 12px;
   border-radius: var(--radius-full);
@@ -424,16 +430,26 @@ const lowConfidenceHint = computed(
   background: var(--surface-2);
 }
 
+/* 共轨堆叠构成条：定位走 translateX（累计偏移）、定量走 scaleX，全程只动 transform。
+   width 每帧都要重排（本项目的既有反模式），transform 只走合成。
+   段自身铺满整条轨道，靠模板给的 --x / --s 放到该在的位置、缩到该有的宽度。 */
 .seg {
-  height: 100%;
-  /* 共轨堆叠构成条：只保留 flex width 不换结构，时长降一档跟上节奏 */
-  transition: width var(--dur-base) var(--ease-standard);
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  transform-origin: left center;
+  transform: translateX(var(--x, 0%)) scaleX(var(--s, 0));
+  transition: transform var(--dur-base) var(--ease-standard);
 }
 
 /* 三段之间留一道极细的缝：段色都偏饱和，紧贴会糊成一段读不出边界。
-   缝色取卡片自己的底（极致档卡片是 0.92 白，写死 --surface 这条缝就没了） */
+   缝色取卡片自己的底（极致档卡片是 0.92 白，写死 --surface 这条缝就没了）。
+   偏移按 1/--s 放大来抵消 scaleX：写死 -1px 的话这道缝会被缩成零点几个像素，
+   撞完还在成品上仍是整整 1px。 */
 .seg + .seg {
-  box-shadow: -1px 0 0 0 var(--sheet-card-fill);
+  box-shadow: calc(-1px / var(--s, 1)) 0 0 0 var(--sheet-card-fill);
 }
 
 .dim-frequency {
@@ -498,7 +514,7 @@ const lowConfidenceHint = computed(
 /* 终点节点：合计是整条链的结论，绿底白字（与重量建议抽屉的「今天建议」同款） */
 .cnode.final .ndot {
   background: var(--c-exercise-deep);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* 标题前的小色点：把节点和构成条的段色对上号（点本身回归编号，不再承担配色） */

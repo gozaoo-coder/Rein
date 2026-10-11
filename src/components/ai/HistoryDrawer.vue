@@ -126,7 +126,7 @@ function onMask(): void {
   border-radius: var(--radius-l) 0 0 var(--radius-l);
   display: flex;
   flex-direction: column;
-  padding: var(--safe-top, 0px) 0 0;
+  padding: var(--safe-top) 0 0;
 }
 
 .dk-head {
@@ -153,6 +153,7 @@ function onMask(): void {
 }
 
 .dk-close {
+  position: relative;
   width: 34px;
   height: 34px;
   flex: none;
@@ -164,10 +165,17 @@ function onMask(): void {
   justify-content: center;
 }
 
+/* 34 的关闭钮命中区撑到 44：与「新建」之间只隔 8px，横向各扩 5px 刚好不越界 */
+.dk-close::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+
 .dk-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 10px calc(var(--safe-bottom, 0px) + 14px);
+  padding: 4px 10px calc(var(--safe-bottom) + 14px);
   scrollbar-width: none;
 }
 

@@ -647,8 +647,8 @@ const menuActions = computed<MenuItem[]>(() => {
   return acts
 })
 
-async function onMenuSelect(value: string): Promise<void> {
-  const m = menuTarget.value
+async function onMenuSelect(value: string, target: AiMessage | null = menuTarget.value): Promise<void> {
+  const m = target
   menuTarget.value = null
   if (!m) return
   if (value === 'copy' && m.text) {
@@ -658,6 +658,33 @@ async function onMenuSelect(value: string): Promise<void> {
     quote.value = m
   } else if (value === 'retract') {
     void ai.retract(m.id)
+  }
+}
+
+/**
+ * 消息行的键盘路径：长按菜单原先只有指针能开（触屏长按 / 桌面右键），键盘用户一条都碰不到。
+ * 给 .msg 一个可聚焦的组：Enter 开同一份菜单，c / q / Backspace 直通 onMenuSelect 里
+ * 已有的三个动作 —— 同一套语义、同一条实现，不另起一份逻辑。
+ * 只在焦点落在消息行自身时响应：行内按钮（折叠推理块等）继续用自己的键。
+ */
+function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
+  if (e.target !== e.currentTarget || e.metaKey || e.ctrlKey || e.altKey) return
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    menuAnchor.value = e.currentTarget as HTMLElement
+    menuTarget.value = m
+    return
+  }
+  const k = e.key.toLowerCase()
+  if (k === 'c' && m.text) {
+    e.preventDefault()
+    void onMenuSelect('copy', m)
+  } else if (k === 'q') {
+    e.preventDefault()
+    void onMenuSelect('quote', m)
+  } else if (e.key === 'Backspace' && m.role === 'user') {
+    e.preventDefault()
+    void onMenuSelect('retract', m)
   }
 }
 </script>
@@ -708,11 +735,16 @@ async function onMenuSelect(value: string): Promise<void> {
         <AiBoard v-if="ai.messages.length === 0" @ask="askFromBoard" @drafts="openDrafts" />
 
         <template v-for="m in ai.messages" :key="m.id">
+          <!-- 键盘可达：整行是一个可聚焦组，Enter 开长按同款菜单，c/q/Backspace 直通三个动作 -->
           <div
             v-if="showMsg(m)"
             :id="`msg-${m.id}`"
             class="msg"
             :class="[m.role]"
+            role="group"
+            tabindex="0"
+            :aria-label="`${m.role === 'user' ? '我' : 'AI'} 的消息（回车打开操作菜单）`"
+            @keydown="onMsgKey($event, m)"
             @pointerdown="onPressStart($event, m)"
             @pointermove="onPressMove($event)"
             @pointerup="onPressEnd"
@@ -1075,20 +1107,22 @@ async function onMenuSelect(value: string): Promise<void> {
   --cb-bottom: 26px;
 }
 
-/* 消息长按菜单：禁用原生文本选择避免冲突（复制走菜单） */
-.msg {
+/* 消息长按菜单：长按窗口内禁用原生文本选择，避免与「长按弹菜单」抢手势。
+   只压 :active 这一拍 —— 原先整行 user-select:none 把常规拖选复制也一起禁了，
+   而复制本来就是浏览器原生就能做的事（菜单里的「复制」只是同一条路更短一截）。
+   键盘焦点沿用全局那条 :focus-visible 焦点环：整行可聚焦，焦点一眼能看见。 */
+.msg:active {
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* 引用块（气泡内） */
+/* 引用块（气泡内）：强调改走整面 accent soft tint，不再靠左边框（side-tab 收编） */
 .qblock {
   max-width: 82%;
   padding: 6px 10px;
-  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
   border-radius: var(--radius-m);
-  background: var(--surface-2);
-  color: var(--text-2);
+  color: var(--text-1);
   font-size: var(--fs-caption);
   line-height: 1.4;
   overflow: hidden;
@@ -1120,6 +1154,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .q-x {
+  position: relative;
   width: 26px;
   height: 26px;
   flex: none;
@@ -1130,6 +1165,13 @@ async function onMenuSelect(value: string): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 26 的圆钮命中区撑到 44：接头像位置不动，只把可点范围放大 */
+.q-x::after {
+  content: '';
+  position: absolute;
+  inset: -9px;
 }
 
 /* 照片气泡 */
@@ -1186,7 +1228,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .dc-meta {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -1314,7 +1356,7 @@ async function onMenuSelect(value: string): Promise<void> {
 
 .msg.user .bubble {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-bottom-right-radius: var(--radius-xs);
 }
 
@@ -1456,6 +1498,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .ddel {
+  position: relative;
   width: 32px;
   height: 32px;
   flex: none;
@@ -1465,6 +1508,14 @@ async function onMenuSelect(value: string): Promise<void> {
   justify-content: center;
   background: transparent;
   color: var(--text-3);
+}
+
+/* 删除是草稿行唯一带破坏性的钮：纵向撑到 44，横向不外扩（左边就是「打开草稿」那一大片，
+   外扩会把落在行尾的点击从打开改成删除） */
+.ddel::after {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
 }
 
 .ddel:active {
@@ -1510,7 +1561,7 @@ async function onMenuSelect(value: string): Promise<void> {
   padding: 10px 18px;
   border-radius: var(--radius-full);
   background: var(--ok);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-subhead);
   font-weight: 700;
 }
@@ -1580,6 +1631,14 @@ async function onMenuSelect(value: string): Promise<void> {
   color: var(--text-2);
 }
 
+/* 20px 的移除角标是最容易点空的钮：外扩 12 到 44×44。它压在缩略图上，
+   而缩略图本身没有别的动作（芯片只负责「看 + 移除」），不会抢走任何点击。 */
+.attach-x::after {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+
 /* 待发送文档芯片（文档卡 + 内嵌图勾选网格） */
 .doc-attach {
   flex-direction: column;
@@ -1624,7 +1683,7 @@ async function onMenuSelect(value: string): Promise<void> {
 
 .doc-img small {
   display: block;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
   text-align: center;
   padding: 2px 0 3px;
@@ -1654,7 +1713,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .doc-hint {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -1665,7 +1724,7 @@ async function onMenuSelect(value: string): Promise<void> {
   border-radius: var(--radius-l);
   border-bottom-right-radius: var(--radius-xs);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   text-align: left;
   display: flex;
   flex-direction: column;
@@ -1676,7 +1735,7 @@ async function onMenuSelect(value: string): Promise<void> {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
   opacity: 0.92;
 }
@@ -1687,7 +1746,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .voice-bub .vb-go {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   opacity: 0.8;
 }
@@ -1719,6 +1778,7 @@ async function onMenuSelect(value: string): Promise<void> {
 }
 
 .memo-chip .mx {
+  position: relative;
   flex: none;
   display: flex;
   align-items: center;
@@ -1727,6 +1787,13 @@ async function onMenuSelect(value: string): Promise<void> {
   height: 14px;
   border-radius: 50%;
   background: rgba(0, 122, 255, 0.18);
+}
+
+/* 14px 的移除钮：横向扩 6（往左是 chip 的圆角边）、纵向扩 15，凑到 44 一档 */
+.memo-chip .mx::after {
+  content: '';
+  position: absolute;
+  inset: -15px 0 -15px -6px;
 }
 
 /* 气泡内 Markdown（MdText 渲染的内容不带 pre-line，由块级元素控制行距） */
@@ -1813,7 +1880,7 @@ async function onMenuSelect(value: string): Promise<void> {
    页头的主操作钮同一条约定：实底主色才是「点这里」的那一个。 */
 .send.ready {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .send:disabled {

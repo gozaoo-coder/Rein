@@ -127,7 +127,7 @@ async function onDelete(m: VoiceMemo): Promise<void> {
 .search input {
   width: 100%;
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   background: var(--surface-2);
   font-size: var(--fs-subhead);
 }
@@ -190,6 +190,7 @@ async function onDelete(m: VoiceMemo): Promise<void> {
 }
 
 .play {
+  position: relative;
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -202,6 +203,7 @@ async function onDelete(m: VoiceMemo): Promise<void> {
 }
 
 .del {
+  position: relative;
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -215,5 +217,13 @@ async function onDelete(m: VoiceMemo): Promise<void> {
 .del:active {
   color: var(--danger);
   background: var(--danger-soft);
+}
+
+/* 30 的圆钮（播放 / 删除）命中区撑到 44：同行控件隔 10px，四向外扩 7px 不越界 */
+.play::after,
+.del::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
 }
 </style>

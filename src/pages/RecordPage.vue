@@ -277,7 +277,7 @@ async function attachTo(todo: Todo): Promise<void> {
   padding: 9px 18px;
   border-radius: var(--radius-full);
   background: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-footnote);
   font-weight: 700;
 }
@@ -376,7 +376,8 @@ async function attachTo(todo: Todo): Promise<void> {
 }
 
 .sub {
-  font-size: var(--fs-micro);
+  /* 「14:03 · 1.2 MB」是这条录音的身份信息，不吃 11px */
+  font-size: var(--fs-caption);
 }
 
 .tacts {

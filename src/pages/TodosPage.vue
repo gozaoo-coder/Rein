@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { CalendarDays, ListTodo, Plus, Sparkles } from 'lucide-vue-next'
+import { Plus, Sparkles } from 'lucide-vue-next'
 
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { useToast } from '@/composables/useToast'
 import { useScheduleUndo } from '@/composables/useScheduleUndo'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { DESKTOP_MIN } from '@/config/domain'
@@ -38,6 +39,17 @@ const isDesktop = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 
 type Segment = 'canvas' | 'week' | 'list'
 const segment = ref<Segment>('canvas')
+/**
+ * 视图分段：画布 / 周 / 清单。
+ * 换用共享 SegmentedControl —— 它带 roving tabindex、左右方向键与 radiogroup 语义；
+ * 原先手搓的 role=tablist 给读屏的心智模型是错的（读屏会以为下面有一块跟着换的
+ * 页签内容），而且没有方向键支持。
+ */
+const VIEW_OPTIONS: { value: Segment; label: string }[] = [
+  { value: 'canvas', label: '画布' },
+  { value: 'week', label: '周' },
+  { value: 'list', label: '清单' },
+]
 const canvasDate = ref(todayStr())
 const today = todayStr()
 
@@ -352,17 +364,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
 
     <!-- 视图切换 + 智能排程 -->
     <div class="toolbar row">
-      <div class="segrow" role="tablist" aria-label="视图">
-        <button role="tab" class="seg" :class="{ on: segment === 'canvas' }" :aria-selected="segment === 'canvas'" data-testid="seg-canvas" @click="segment = 'canvas'">
-          <CalendarDays :size="14" /> 画布
-        </button>
-        <button role="tab" class="seg" :class="{ on: segment === 'week' }" :aria-selected="segment === 'week'" data-testid="seg-week" @click="segment = 'week'">
-          周
-        </button>
-        <button role="tab" class="seg" :class="{ on: segment === 'list' }" :aria-selected="segment === 'list'" data-testid="seg-list" @click="segment = 'list'">
-          <ListTodo :size="14" /> 清单
-        </button>
-      </div>
+      <SegmentedControl v-model="segment" :options="VIEW_OPTIONS" class="viewseg" aria-label="视图" />
       <button
         v-if="segment === 'canvas'"
         class="ai-btn"
@@ -496,32 +498,14 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
   margin-bottom: 12px;
 }
 
-.segrow {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-m);
-  background: var(--surface-2);
-}
-
-.seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 13px;
-  border-radius: var(--radius-s);
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-  color: var(--text-2);
-  transition:
-    background-color var(--dur-fast) var(--ease-standard),
-    color var(--dur-fast) var(--ease-standard);
-}
-
-.seg.on {
-  background: var(--surface);
-  color: var(--text-1);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+/* 视图分段：共享 SegmentedControl（radiogroup + roving tabindex + 方向键）。
+   它自带 --surface-2 轨道，选中段的滑块阴影走 var(--shadow-thumb) 令牌 ——
+   原先手搓轨道上那条 0 1px 3px 魔法阴影随规则一起退场，由共享组件接管。
+   这里只管布局：定宽让三段均分（与课表页同规格），且不拉伸，
+   把剩余空间留给右边的「智能排程」按钮。 */
+.viewseg {
+  flex: none;
+  width: 132px;
 }
 
 .ai-btn {
@@ -534,7 +518,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
   color: var(--on-accent);
   font-size: var(--fs-footnote);
   font-weight: 700;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 4px 14px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-float);
 }
 
 .ai-btn:disabled {

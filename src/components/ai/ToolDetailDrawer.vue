@@ -99,7 +99,7 @@ const argsText = computed(() => (shown.value ? prettyJson(shown.value.arguments)
 
 .state {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   padding: 3px 9px;
   border-radius: var(--radius-full);
@@ -123,7 +123,7 @@ const argsText = computed(() => (shown.value ? prettyJson(shown.value.arguments)
 .rawname {
   min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   overflow-wrap: anywhere;
 }

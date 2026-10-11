@@ -199,7 +199,7 @@ function saveNote(): void {
 
 .val {
   margin-left: 6px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .tags {
@@ -217,7 +217,7 @@ function saveNote(): void {
   border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent-strong);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .x {
@@ -239,7 +239,7 @@ function saveNote(): void {
 
 .adder input {
   width: 72px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-1);
 }
 
@@ -260,7 +260,7 @@ function saveNote(): void {
 
 .hint {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .savelink {
@@ -268,6 +268,6 @@ function saveNote(): void {
   align-items: center;
   gap: 3px;
   color: var(--accent);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 </style>

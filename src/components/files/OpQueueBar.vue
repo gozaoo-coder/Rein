@@ -104,22 +104,31 @@ function statusText(op: FileOp): string {
 
 .stat {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
 .mini {
+  position: relative;
   flex: none;
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--surface);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
+}
+
+/* 这几个小胶囊（约 18 高）是操作条上唯一的控制点：命中区纵向各扩 8px，
+   正好填满 .op 那一行（8px 内距 + 18px 钮），不会溢到相邻的操作行上。 */
+.mini::after {
+  content: '';
+  position: absolute;
+  inset: -8px -4px;
 }
 
 .mini.resume {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .mini.icon {
@@ -151,7 +160,7 @@ function statusText(op: FileOp): string {
   align-items: center;
   gap: 5px;
   margin-top: 4px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--danger-strong);
 }
 

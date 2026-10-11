@@ -360,7 +360,7 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
 
 .qa-t em {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 500;
   color: var(--text-3);
   white-space: nowrap;
@@ -371,7 +371,7 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
 .qa-tip {
   margin-top: 10px;
   padding-left: 2px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.5;
   color: var(--text-3);
 }
@@ -423,7 +423,7 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
 .dr em {
   display: block;
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;

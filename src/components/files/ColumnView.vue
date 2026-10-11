@@ -164,7 +164,7 @@ function iconOf(item: FileItem) {
 
 .pt {
   padding: 6px 9px 4px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .list {
@@ -233,7 +233,7 @@ function iconOf(item: FileItem) {
 
 .sz {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .empty {

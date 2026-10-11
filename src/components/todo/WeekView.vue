@@ -163,7 +163,8 @@ function onKey(e: KeyboardEvent, date: string): void {
 }
 
 .wd-label {
-  font-size: var(--fs-micro);
+  /* 「周一」是周视图里的定位信息，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -173,7 +174,8 @@ function onKey(e: KeyboardEvent, date: string): void {
 }
 
 .wd-date {
-  font-size: var(--fs-micro);
+  /* 日号是定位信息，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 

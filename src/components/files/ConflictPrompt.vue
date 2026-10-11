@@ -99,7 +99,7 @@ const remember = ref(false)
   border-radius: var(--radius-full);
   background: var(--warn-soft);
   color: var(--warn-strong);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .acts {

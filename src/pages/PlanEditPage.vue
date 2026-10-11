@@ -515,7 +515,7 @@ async function save(): Promise<void> {
   color: var(--bg);
   font-size: var(--fs-body);
   font-weight: 700;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-float);
 }
 
 .save:disabled {

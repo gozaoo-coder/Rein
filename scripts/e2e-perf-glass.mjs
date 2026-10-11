@@ -373,7 +373,9 @@ async function main() {
     await sleep(2400)
     if (await evalJS(dismiss)) await sleep(400)
     const rtCard = await evalJS(`(() => {
-      const el = document.querySelector('.card')
+      /* 探针量的是「内容层玻璃退实底」这条契约，取第一张**玻璃卡** ——
+         .card.sub 是刻意不铺玻璃的二级浅井（base.css .card.sub 注释），不在本契约内。 */
+      const el = document.querySelector('.card:not(.sub)')
       if (!el) return null
       const cs = getComputedStyle(el)
       return {
@@ -1666,7 +1668,7 @@ async function main() {
         dark: matchMedia('(prefers-color-scheme: dark)').matches,
         panelShadow,
         floatShadow,
-        cards: [...document.querySelectorAll('.card')].slice(0, 6).map((c) => getComputedStyle(c).boxShadow),
+        cards: [...document.querySelectorAll('.card:not(.sub)')].slice(0, 6).map((c) => getComputedStyle(c).boxShadow),
         qas: [...document.querySelectorAll('.qa')].slice(0, 4).map((c) => getComputedStyle(c).boxShadow),
       }
     })()`
@@ -1705,7 +1707,8 @@ async function main() {
     await sleep(2400)
     if (await evalJS(dismiss)) await sleep(400)
     const hiCard = await evalJS(`(() => {
-      const el = document.querySelector('.card')
+      /* 同 RT 探针：量的是玻璃铺开契约，取第一张玻璃卡；.card.sub 是刻意的非玻璃二级面。 */
+      const el = document.querySelector('.card:not(.sub)')
       if (!el) return null
       const cs = getComputedStyle(el)
       const probe = document.createElement('div')

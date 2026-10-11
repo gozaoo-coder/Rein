@@ -496,7 +496,7 @@ function onAxisClick(e: MouseEvent): void {
   bottom: 5px;
   min-width: 3px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
   text-align: left;
   color: var(--on-accent);
@@ -713,7 +713,7 @@ function onAxisClick(e: MouseEvent): void {
   gap: 10px;
   padding: 11px 8px;
   margin: 0 -8px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-standard);
 }

@@ -439,7 +439,8 @@ async function save(): Promise<void> {
 
 .rhint {
   margin-left: 7px;
-  font-size: var(--fs-micro);
+  /* 「点选排除，食谱会自动避开」是操作指令，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 400;
   color: var(--text-3);
   font-style: normal;

@@ -447,7 +447,7 @@ onBeforeUnmount(() => {
               aria-valuemin="0"
               aria-valuemax="100"
             >
-              <i :style="{ width: `${Math.round(settleProgress * 100)}%` }" />
+              <i :style="{ transform: `scaleX(${settleProgress})` }" />
             </span>
             <span class="vs-subtxt" :class="{ num: voice.autoSettle, err: !!voice.lastError }">{{ liveNote }}</span>
           </div>
@@ -846,7 +846,7 @@ onBeforeUnmount(() => {
 
 .vs-title small {
   display: block;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-3);
   margin-top: 1px;
@@ -959,12 +959,14 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* 宽度每 250ms 走一格（runtime 的计时器），300ms 的线性过渡把它接成连续生长 */
+/* 填充铺满整条轨道，从左缘用 scaleX 生长（每 250ms 走一格，300ms 的线性过渡把它接成连续生长）。
+   不走 width：width 每帧都要重排（本项目的既有反模式），transform 只走合成。 */
 .vs-prog i {
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
+  right: 0;
   border-radius: inherit;
   background: linear-gradient(
     90deg,
@@ -972,7 +974,8 @@ onBeforeUnmount(() => {
     var(--led-shopping)
   );
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--on-accent) 35%, transparent);
-  transition: width 300ms linear;
+  transform-origin: left center;
+  transition: transform 300ms linear;
 }
 
 /* 暂停时条不再生长（elapsed 冻住），颜色也一起退掉 —— 状态是同一件事 */
@@ -983,7 +986,7 @@ onBeforeUnmount(() => {
 
 .vs-subtxt {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 600;
   /* 11px 的说明文字要能读：--text-3 在白底上只有 3.6:1，这一档提到 --text-2 */
   color: var(--text-2);
@@ -1113,7 +1116,7 @@ onBeforeUnmount(() => {
 .vm-ic {
   width: 34px;
   height: 34px;
-  border-radius: 11px;
+  border-radius: var(--radius-s);
   background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
   color: var(--led-shopping);
   display: flex;
@@ -1169,7 +1172,7 @@ onBeforeUnmount(() => {
 .pl-cur,
 .pl-dur {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
   flex: none;
 }
@@ -1212,7 +1215,7 @@ onBeforeUnmount(() => {
   display: flex;
   margin-top: 12px;
   background: var(--surface-2);
-  border-radius: 9px;
+  border-radius: var(--radius-s);
   padding: 2px;
 }
 
@@ -1223,7 +1226,7 @@ onBeforeUnmount(() => {
   left: 2px;
   width: calc(50% - 2px);
   background: var(--surface);
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   box-shadow: var(--shadow-thumb);
   transition: transform var(--dur-base) var(--ease-standard);
 }
@@ -1240,7 +1243,7 @@ onBeforeUnmount(() => {
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
 }
 
 .seg button.on {
@@ -1290,7 +1293,7 @@ onBeforeUnmount(() => {
 }
 
 .ov-sec > h5 {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
   color: var(--text-3);
   letter-spacing: 0.5px;
@@ -1324,7 +1327,7 @@ onBeforeUnmount(() => {
   width: 17px;
   height: 17px;
   margin-top: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   font-size: 10px;
   font-weight: 800;
   display: flex;
@@ -1372,7 +1375,7 @@ onBeforeUnmount(() => {
   height: 14px;
   padding: 0 3px;
   margin-left: 4px;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   vertical-align: 2px;
   background: var(--accent-soft);
   color: var(--accent);
@@ -1387,7 +1390,7 @@ onBeforeUnmount(() => {
   gap: 9px;
   padding: 10px 12px;
   background: var(--surface);
-  border-radius: 12px;
+  border-radius: var(--radius-m);
   box-shadow: var(--shadow-card);
   margin-top: 8px;
 }
@@ -1416,7 +1419,7 @@ onBeforeUnmount(() => {
 .todo-li .tt em {
   font-style: normal;
   display: block;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   font-weight: 500;
   margin-top: 1px;
@@ -1507,7 +1510,7 @@ onBeforeUnmount(() => {
 
 /* 11px 的说明文字用 --text-3 只有约 2.3:1，读不清；提到 --text-2（≈4.9:1） */
 .vs-hint {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
   margin-top: 8px;
 }

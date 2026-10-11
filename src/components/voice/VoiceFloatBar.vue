@@ -151,7 +151,7 @@ const dockSegs = computed(() =>
   flex-direction: column;
   justify-content: center;
   gap: 5px;
-  border-radius: 20px;
+  border-radius: var(--radius-l);
 }
 
 .dock-body.pressing {
@@ -165,7 +165,7 @@ const dockSegs = computed(() =>
 
 .dock-body.dragging {
   transform: scale(1.03);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-float-lift);
 }
 
 .layer {
@@ -317,10 +317,11 @@ const dockSegs = computed(() =>
 }
 
 .abtn {
+  position: relative;
   flex: none;
   height: 34px;
   padding: 0 13px;
-  border-radius: 17px;
+  border-radius: var(--radius-m);
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -331,6 +332,13 @@ const dockSegs = computed(() =>
 
 .abtn:active {
   transform: scale(0.94);
+}
+
+/* 34 高的胶囊命中区撑到 44：横向各扩 3px（条内只隔 7px），纵向 5px */
+.abtn::after {
+  content: '';
+  position: absolute;
+  inset: -5px -3px;
 }
 
 .abtn.end {

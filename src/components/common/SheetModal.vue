@@ -448,11 +448,17 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   box-shadow: var(--shadow-float);
-  /* 松手吸附 / 窗口尺寸变化时，组件高度平滑回到定位档位。
-     用 height 而非 transform：transform 方案要求面板常驻最大档高度，会令 .foot 插槽
-     在中小档落到屏幕外、滚动容器 clientHeight 与可见高度脱钩、约 70 个使用方的布局
-     契约被改；而 height 一帧一次重排只发生在松手那一刻，拖拽跟手期间 .is-dragging 已
-     transition:none，不影响手感。吸附是「修正」不是「登场」，250ms 取 --dur-base。 */
+  /* 【动效契约例外 · 登记】本项目唯一一处动布局属性（height）的过渡，特此登记。
+     用途：松手吸附 / 窗口尺寸变化时，组件高度平滑回到定位档位（吸附是「修正」，
+     不是「登场」；登场走本文件末尾的 .sheet-enter/leave，那是纯 transform）。
+     为什么不能换成 transform：高度不是装饰，它是 .body 滚动容器与 .foot 固定操作区
+     的尺寸基准。transform 方案要求面板常驻最大档高度、再把可见区裁回来 ——
+     中小档下这一裁会把顶部的拖动条一起切掉（手柄没了，档位再也调不回来），
+     .body 的 clientHeight 也会与可见高度脱钩（约 70 个调用方的布局契约、
+     以及全课抽屉经 defineExpose 拿 bodyEl 做的「滚到当前项」定位，一起被改）。
+     代价可控：height 的一帧一次重排只发生在松手/改窗口尺寸那一刻，不跟手 ——
+     拖拽期间 .is-dragging 已是 transition:none；开关动效与减弱动效时由 base.css
+     的全局规则把 duration 压成 0.01ms。250ms 取 --dur-base。 */
   transition: height var(--dur-base) var(--ease-sheet);
 }
 

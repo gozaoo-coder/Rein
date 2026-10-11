@@ -43,20 +43,24 @@ const quickOpen = ref(false)
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
-    <!-- 快捷入口 -->
-    <ul class="quick">
+    <!-- 快捷入口：三个一级动作收成一组。外框用 .card.sub（base.css：surface-inset 浅井 /
+         radius-l / 14px 内距 / 无影）—— 三格各自仍是白面磁贴（QuickTile 自带），
+         浅井只负责把它们读成「一组快捷入口」，而不是三张互不相干的卡。 -->
+    <ul class="card sub quick">
       <li>
         <QuickTile label="记饮食" icon-bg="color-mix(in srgb, var(--c-intake) 12%, transparent)" icon-color="var(--c-intake)" @click="quickOpen = true">
           <Camera :size="20" />
         </QuickTile>
       </li>
       <li>
-        <QuickTile label="改目标" icon-bg="rgba(255, 149, 0, 0.14)" icon-color="var(--warn)" @click="router.push('/nutrition/adjust')">
+        <!-- --warn-soft 与手写 rgba 同值同色相；--cat-study 是待办分类色里的学习紫，
+             图标本色就在 soft 底上，不另起一份 rgba -->
+        <QuickTile label="改目标" icon-bg="var(--warn-soft)" icon-color="var(--warn)" @click="router.push('/nutrition/adjust')">
           <SlidersHorizontal :size="20" />
         </QuickTile>
       </li>
       <li>
-        <QuickTile label="AI 助手" icon-bg="rgba(88, 86, 214, 0.14)" icon-color="var(--cat-study)" @click="router.push('/ai')">
+        <QuickTile label="AI 助手" icon-bg="var(--accent-soft)" icon-color="var(--cat-study)" @click="router.push('/ai')">
           <Sparkles :size="20" />
         </QuickTile>
       </li>
@@ -88,10 +92,12 @@ const quickOpen = ref(false)
   padding: 10px var(--page-pad-x) var(--page-pad-bottom);
 }
 
+/* 快捷三格：外框是 .card.sub（base.css），这里只管「三列等宽 + 10px 间距」。
+   与下方卡片的间距交给全局 `.card + .card`（14px）—— 它现在也是 .card 了，
+   原来的 margin-bottom 收掉，否则会叠成 28px */
 .quick {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  margin-bottom: 14px;
 }
 </style>

@@ -157,6 +157,22 @@ const allSources: KbSourceType[] = [
   'food', 'program', 'program_meal', 'voice_memo', 'chat_message', 'memory',
 ]
 
+/**
+ * 索引范围开关分组：11 个来源一次平铺会超出工作记忆上限，按**来源的自然族系**分组
+ * （族系从 KB_SOURCE_LABELS 的命名与各源所属模块推断，见 src/types/kb.ts:32）：
+ *   · 训练与身体 —— 运动记录 / 训练课程 / 体测数据
+ *   · 饮食与方案 —— 饮食记录 / 自建食物 / 健康方案 / 方案菜单
+ *   · 日程与任务 —— 日程与附件
+ *   · 对话与记忆 —— 语音纪要 / 历史聊天 / 长期记忆
+ * 每簇 ≤4 枚；开关本身的 v-model 与逐类点击行为一概不变（additive）。
+ */
+const sourceGroups: { label: string; items: KbSourceType[] }[] = [
+  { label: '训练与身体', items: ['workout', 'plan', 'body_metric'] },
+  { label: '饮食与方案', items: ['meal', 'food', 'program', 'program_meal'] },
+  { label: '日程与任务', items: ['todo'] },
+  { label: '对话与记忆', items: ['voice_memo', 'chat_message', 'memory'] },
+]
+
 const sourceEnabled = ref<Record<string, boolean>>({})
 
 const progressPct = computed(() => {
@@ -418,6 +434,15 @@ function onModeChange(v: string): void {
 async function toggleSource(t: KbSourceType): Promise<void> {
   const next = !(sourceEnabled.value[t] ?? true)
   sourceEnabled.value = { ...sourceEnabled.value, [t]: next }
+  await saveSettings(true)
+}
+
+/** 全选 / 清空：一次把 11 个来源整族置开或置关（省得逐枚点 11 下）。
+ *  落库口径与逐类开关完全一致（缺省视为开启，所以「关」要显式写 false）。 */
+async function setAllSources(on: boolean): Promise<void> {
+  const next: Record<string, boolean> = {}
+  for (const t of allSources) next[t] = on
+  sourceEnabled.value = next
   await saveSettings(true)
 }
 
@@ -1118,17 +1143,27 @@ function requestCloseEditor(): void {
           <h3>索引范围</h3>
         </div>
         <p class="hint">告诉 AI 可以从哪些记录里找知识，点一下即生效。</p>
+        <!-- 批量操作：11 枚逐个点太啰嗦；只用整族开关的用户仍可回到下面逐枚微调 -->
+        <div class="src-actions">
+          <button type="button" class="src-act" @click="setAllSources(true)">全选</button>
+          <button type="button" class="src-act" @click="setAllSources(false)">清空</button>
+          <span class="hint">关闭的来源不建索引、不参与检索</span>
+        </div>
         <div class="toggles">
-          <button
-            v-for="t in allSources"
-            :key="t"
-            type="button"
-            class="toggle"
-            :class="{ on: sourceEnabled[t] ?? true }"
-            @click="toggleSource(t)"
-          >
-            {{ KB_SOURCE_LABELS[t] }}
-          </button>
+          <!-- 组头占满一行，把 11 枚开关拆成几簇；开关本身一字未改 -->
+          <template v-for="g in sourceGroups" :key="g.label">
+            <span class="src-grp">{{ g.label }}</span>
+            <button
+              v-for="t in g.items"
+              :key="t"
+              type="button"
+              class="toggle"
+              :class="{ on: sourceEnabled[t] ?? true }"
+              @click="toggleSource(t)"
+            >
+              {{ KB_SOURCE_LABELS[t] }}
+            </button>
+          </template>
         </div>
         <div class="switch-row">
           <span>会话结束时自动提炼长期记忆</span>
@@ -1289,7 +1324,7 @@ input {
 }
 .hpath {
   font-family: ui-monospace, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   min-width: 0;
   overflow: hidden;
@@ -1374,7 +1409,7 @@ input {
   color: var(--danger);
 }
 .snr-grid span {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
   text-align: center;
 }
@@ -1427,7 +1462,7 @@ input {
 .badge {
   padding: 1px 7px;
   border-radius: var(--radius-full);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 .badge.arch {
   background: var(--surface-2);
@@ -1475,7 +1510,7 @@ input {
 .op.del-arm {
   padding: 6px 12px;
   background: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-caption);
   font-weight: 600;
 }
@@ -1573,7 +1608,7 @@ textarea {
   color: var(--text-1);
 }
 .stats span {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
 }
 .bar {
@@ -1660,6 +1695,40 @@ textarea {
   border-color: transparent;
   color: var(--accent);
 }
+
+/* 全选 / 清空一行：沿用抽屉里按钮的语言但不抢主色（批量操作，不是主行动） */
+.src-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.src-actions .hint {
+  /* 挤不下时整行换行，别让说明文字把两个按钮压扁 */
+  margin-top: 0;
+  margin-left: auto;
+  text-align: right;
+}
+.src-act {
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+/* 分组小头：占满一行断开 flex 换行，把 11 枚开关分成几簇；视觉重量比 .toggle 低一档 */
+.src-grp {
+  flex-basis: 100%;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-3);
+}
+.src-grp:first-child {
+  margin-top: 0;
+}
 .switch-row {
   display: flex;
   align-items: center;
@@ -1711,7 +1780,7 @@ textarea {
 }
 .model-label i {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   padding: 1px 6px;
   border-radius: var(--radius-full);
 }
@@ -1720,7 +1789,7 @@ textarea {
   color: var(--on-accent);
 }
 .model-label .need-dl {
-  background: var(--surface-3, var(--surface-2));
+  background: var(--surface-3);
   color: var(--text-2);
   border: 1px solid var(--line-strong);
 }
@@ -1730,7 +1799,7 @@ textarea {
   line-height: 1.5;
 }
 .model-meta {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 .model-ops {
@@ -1809,7 +1878,7 @@ textarea {
   font-size: var(--fs-footnote);
 }
 .test-meta {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 .ranks {
@@ -1851,7 +1920,7 @@ textarea {
 }
 .mono {
   font-family: ui-monospace, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -1905,7 +1974,7 @@ textarea {
   color: var(--text-2);
 }
 .diff-line {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 

@@ -738,7 +738,7 @@ onMounted(() => {
 }
 
 .hf-dim {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -783,8 +783,9 @@ onMounted(() => {
   position: absolute;
   top: -2px;
   font-style: normal;
-  font-size: 10px;
-  line-height: 8px;
+  /* 课条两端的上下课时刻：它是「现在是在哪节课里」的定位依据 */
+  font-size: var(--fs-caption);
+  line-height: var(--fs-caption);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -851,7 +852,7 @@ onMounted(() => {
 .hf-zn {
   margin-left: auto;
   min-width: 0;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -911,10 +912,12 @@ onMounted(() => {
 }
 
 .hf-member {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 11px;
+  /* 成员钮：纵向补到 44（上面是主要动作区，横向不外扩，免得挤到旁边的成员） */
+  padding: 11px 11px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: var(--fs-caption);
@@ -982,7 +985,7 @@ onMounted(() => {
   align-items: center;
   gap: 4px;
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -1000,6 +1003,8 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+/* 单位后缀（「大卡」「分钟」）压在 display 级大数旁边，是装饰性微字，按规定可留在
+   11px 档；同行真正承载信息的 .hf-fk / .hf-fn / .hf-zn 已全部提到 --fs-caption */
 .hf-fv em {
   margin-left: 2px;
   font-style: normal;
@@ -1009,7 +1014,7 @@ onMounted(() => {
 }
 
 .hf-fn {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -1025,10 +1030,12 @@ onMounted(() => {
 }
 
 .hf-chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 12px;
+  /* 工具钮：同上，纵向补到 44 */
+  padding: 11px 12px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: var(--fs-caption);

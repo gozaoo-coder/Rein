@@ -294,7 +294,8 @@ watch(
   border-radius: var(--radius-full);
   background: var(--danger-soft);
   color: var(--c-sodium);
-  font-size: var(--fs-micro);
+  /* 「高钠」是健康状态词，读不出来等于没标 */
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 
@@ -328,12 +329,14 @@ watch(
 
 .mpct {
   margin-top: 4px;
-  font-size: var(--fs-micro);
+  /* 供能占比，是要读的数 */
+  font-size: var(--fs-caption);
 }
 
 .note {
   margin-top: 14px;
-  font-size: var(--fs-micro);
+  /* 兜底说明（「没有可用的过程快照」这类），是要照着做的提示 */
+  font-size: var(--fs-caption);
 }
 
 /* 悬浮记录按钮：sticky 吸附在抽屉底部；负 margin 抵消 .body 的内边距贴到边缘，
@@ -352,12 +355,12 @@ watch(
   width: 100%;
   gap: 7px;
   height: 52px;
-  border-radius: 26px;
+  border-radius: var(--radius-xl);
   background: var(--text-1);
   color: var(--bg);
   font-size: var(--fs-body);
   font-weight: 700;
-  box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22);
+  box-shadow: var(--shadow-float);
   pointer-events: auto;
 }
 </style>

@@ -7,7 +7,8 @@ import { motionRich } from '@/system/motion'
 
 /** iOS 分段控件：滑块随选中项平移。 */
 const props = defineProps<{
-  options: { value: string; label: string }[]
+  /** testid 可选：缺省时按 `seg-<value>` 派生（e2e 依赖这个约定定位待办页分段） */
+  options: { value: string; label: string; testid?: string }[]
   modelValue: string
 }>()
 
@@ -64,6 +65,7 @@ function onKey(e: KeyboardEvent, i: number): void {
       class="seg-item glow-layer"
       :class="{ on: o.value === modelValue }"
       :aria-checked="o.value === modelValue"
+      :data-testid="o.testid ?? `seg-${o.value}`"
       :tabindex="o.value === modelValue ? 0 : -1"
       @click="pick(o.value)"
       @keydown="onKey($event, i)"

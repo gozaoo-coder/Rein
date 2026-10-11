@@ -1974,7 +1974,7 @@ watch(immersiveOpen, (open) => {
   height: 52px;
   /* 同心：16 = 玻璃轨圆角 22 − 行内边距 6（.tiles）。热身重量格与正式组格同一档 ——
      从前是两个值（52 与 58 两种高度、17 与无圆角两种角），同一块轨里换模式会跳一下 */
-  border-radius: 16px;
+  border-radius: var(--radius-m);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2026,12 +2026,12 @@ watch(immersiveOpen, (open) => {
   min-width: 240px;
   height: 54px;
   padding: 0 38px;
-  border-radius: 27px;
+  border-radius: var(--radius-xl);
   background: var(--text-1);
   color: var(--bg);
   font-size: var(--fs-headline);
   font-weight: 600;
-  box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22);
+  box-shadow: var(--shadow-float);
   transition:
     transform var(--dur-slow) var(--ease-spring),
     background-color var(--dur-fast) var(--ease-standard);

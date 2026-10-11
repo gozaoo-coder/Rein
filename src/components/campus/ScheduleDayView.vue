@@ -150,14 +150,16 @@ function place(e: ScheduleEntry): string {
   gap: 8px;
 }
 
+/* 课程色整面 soft tint（课表三视图同一档浓度：基础 12% / 强调 20%），
+   不再靠左边框做强调条（side-tab 收编）—— 色相由整面 tint 承担，
+   与周视图 .blk、月视图 .chip 是同一套画法。 */
 .row {
   display: flex;
   gap: 10px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--blk) 12%, var(--surface));
   border-radius: var(--radius-l);
   box-shadow: var(--shadow-card);
-  border-left: 3px solid var(--blk);
-  padding: 12px 14px 12px 10px;
+  padding: 12px 14px;
   cursor: pointer;
   transition: transform var(--dur-fast) var(--ease-standard);
 }
@@ -167,9 +169,9 @@ function place(e: ScheduleEntry): string {
   outline-offset: 2px;
 }
 
+/* 「正在进行」= tint 加浓一档（三视图共用的强调级） */
 .row.now {
-  border-left-width: 4px;
-  background: color-mix(in srgb, var(--blk) 8%, var(--surface));
+  background: color-mix(in srgb, var(--blk) 20%, var(--surface));
 }
 
 .row:active {

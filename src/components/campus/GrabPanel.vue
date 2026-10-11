@@ -678,7 +678,7 @@ function handToAi(): void {
 }
 
 .live {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--accent-strong);
   background: var(--accent-soft);
@@ -705,7 +705,7 @@ function handToAi(): void {
 
 /* 那句「距出手」的小标签：说明下面这个数字是什么 */
 .cd-label {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
   margin-top: 2px;
 }
@@ -736,7 +736,7 @@ function handToAi(): void {
   align-items: center;
   flex-wrap: wrap;
   gap: 0 6px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -770,10 +770,10 @@ function handToAi(): void {
   min-height: 30px;
   padding: 5px 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-2);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   cursor: pointer;
 }
 
@@ -791,15 +791,15 @@ function handToAi(): void {
 }
 
 .pf-sum {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .pf-sum.ok {
-  color: var(--ok, var(--accent-strong));
+  color: var(--ok);
 }
 
 .pf-sum.bad {
-  color: var(--danger, #c0392b);
+  color: var(--danger);
 }
 
 .pf-list {
@@ -815,7 +815,7 @@ function handToAi(): void {
   display: flex;
   gap: 6px;
   align-items: flex-start;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.5;
 }
 
@@ -843,11 +843,11 @@ function handToAi(): void {
 }
 
 .pf-list li.ok .pf-mark {
-  color: var(--ok, var(--accent-strong));
+  color: var(--ok);
 }
 
 .pf-list li.bad .pf-mark {
-  color: var(--danger, #c0392b);
+  color: var(--danger);
 }
 
 /* T-0 前后换形态：整块板染色 + 描边，余光里也能看出「正在出手」 */
@@ -875,7 +875,7 @@ function handToAi(): void {
   align-items: center;
   flex-wrap: wrap;
   gap: 0 5px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -921,7 +921,7 @@ function handToAi(): void {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--warn-strong);
   line-height: 1.4;
   margin-top: 4px;
@@ -932,7 +932,7 @@ function handToAi(): void {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--warn-strong);
   background: color-mix(in srgb, var(--warn) 10%, transparent);
   border-radius: var(--radius-m);
@@ -959,14 +959,14 @@ function handToAi(): void {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--warn-strong);
   line-height: 1.45;
 }
 
 /* 被教务拒绝的那句原话：它是「为什么停了」的唯一直接证据 */
 .why {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   margin-top: 4px;
   line-height: 1.45;
   word-break: break-word;
@@ -1005,7 +1005,7 @@ function handToAi(): void {
   align-items: center;
   gap: 6px;
   padding: 8px 0 4px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-2);
 }
 
@@ -1027,7 +1027,7 @@ function handToAi(): void {
 
 .ord {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--accent-strong);
   background: var(--accent-soft);
@@ -1066,7 +1066,7 @@ function handToAi(): void {
 }
 
 .meta {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.4;
   overflow: hidden;
   display: -webkit-box;
@@ -1080,7 +1080,7 @@ function handToAi(): void {
 
 .chip {
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   padding: 1px 8px;
   border-radius: var(--radius-full);

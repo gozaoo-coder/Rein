@@ -223,6 +223,7 @@ function onReset(): void {
 }
 
 .unit {
+  /* 「kcal」单位后缀，装饰性微字 */
   font-size: var(--fs-micro);
   color: var(--text-3);
 }
@@ -246,7 +247,7 @@ function onReset(): void {
 
 .opt.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .range {
@@ -281,7 +282,7 @@ function onReset(): void {
 .reset {
   padding: 0 20px;
   height: 48px;
-  border-radius: 24px;
+  border-radius: var(--radius-l);
   background: var(--surface-2);
   font-size: var(--fs-body);
   font-weight: 600;
@@ -291,11 +292,11 @@ function onReset(): void {
 .apply {
   flex: 1;
   height: 48px;
-  border-radius: 24px;
+  border-radius: var(--radius-l);
   background: var(--text-1);
   color: var(--bg);
   font-size: var(--fs-body);
   font-weight: 700;
-  box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22);
+  box-shadow: var(--shadow-float);
 }
 </style>

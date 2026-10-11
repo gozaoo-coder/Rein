@@ -193,7 +193,8 @@ const trendEmpty = computed(() =>
 .num-cell em {
   display: block;
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 「本月支出」是三个格子的字段名，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -298,7 +299,8 @@ h3 {
 
 .donut-center em {
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 环心小帽（「本月支出」）是字段名，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -398,7 +400,8 @@ h3 {
 }
 
 .m-lbl {
-  font-size: var(--fs-micro);
+  /* 六个月柱下的月份刻度 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 

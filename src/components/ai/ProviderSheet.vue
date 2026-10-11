@@ -186,7 +186,7 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
 
 .style {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   padding: 2px 8px;
   border-radius: var(--radius-full);
@@ -214,7 +214,7 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
   gap: 5px;
   font-size: var(--fs-caption);
   line-height: 1.5;
-  color: var(--danger, #ff5257);
+  color: var(--danger);
   word-break: break-all;
 }
 

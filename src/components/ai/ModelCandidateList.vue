@@ -176,7 +176,7 @@ function isOn(c: ModelCandidate): boolean {
 
 .badge {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
   padding: 2px 7px;
   border-radius: var(--radius-full);

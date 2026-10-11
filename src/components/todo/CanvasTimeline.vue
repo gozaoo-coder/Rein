@@ -672,7 +672,9 @@ onBeforeUnmount(() => {
   top: 1px;
   transform: translateY(-50%);
   padding: 2px 6px;
-  font-size: var(--fs-micro);
+  /* 「现在」是定位词；白字压 --danger-strong 只有 5.87:1，11px 粗体勉强够，
+     提一档到 12px 更稳，且不撑高（line-height: 1）+ 视觉仍是角标 */
+  font-size: var(--fs-caption);
   font-weight: 700;
   line-height: 1;
   white-space: nowrap;
@@ -828,6 +830,7 @@ onBeforeUnmount(() => {
 
 /* 勾选框：尺寸 = 首行行高（--ck），于是它与文字同档、在首行里天生居中，不需要 margin 补偿 */
 .ck {
+  position: relative;
   flex: none;
   width: var(--ck);
   height: var(--ck);
@@ -835,6 +838,20 @@ onBeforeUnmount(() => {
   border: 1.5px solid var(--line-strong);
   background: transparent;
   padding: 0;
+}
+
+/* 触达：视觉尺寸是排版规格（--ck 跟随首行行高），不该为触控改掉；但 44 是拇指下限，
+   而勾选是画布上最高频的动作。用 ::after 把命中区撑到 44×44（PageHeader .back 同款惯用法），
+   排版一格不变。它盖住的是同一格日程内的空白，不会抢到邻块的点击。 */
+.ck::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
 }
 
 @media (hover: hover) {
@@ -892,7 +909,8 @@ onBeforeUnmount(() => {
 }
 
 .blk.ghost .body b {
-  font-size: var(--fs-micro);
+  /* 时段标题（「第 3 节」这类）是日历块上的信息，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-2);
 }
@@ -973,6 +991,7 @@ onBeforeUnmount(() => {
 }
 
 .stk-more {
+  position: relative;
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -982,10 +1001,22 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--text-1) 8%, transparent);
-  font-size: var(--fs-micro);
+  /* 「展开同时段 N 项」是操作按钮，不吃 11px；下方 .compact 里另有降档规则 */
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-2);
   white-space: nowrap;
+}
+
+/* 展开钮：高 18px 的密集控件，命中区纵向撑到 44（横向不外扩：右侧就是编辑钮） */
+.stk-more::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
 }
 
 .stk-more:active {
@@ -1007,6 +1038,7 @@ onBeforeUnmount(() => {
 /* 卡片右下角编辑钮：比勾选框低一档的次级控件（勾选框与行高等大，它是一枚角标），
    紧凑再缩一档；最小块高也放得下 */
 .edit {
+  position: relative;
   flex: none;
   align-self: flex-end;
   margin-left: auto;
@@ -1031,6 +1063,19 @@ onBeforeUnmount(() => {
 .edit svg {
   width: 9px;
   height: 9px;
+}
+
+/* 编辑钮：11~14px 的图标钮，::after 把命中区撑到 44×44（与 .ck 同一条理由）；
+   它贴在块右下角，外扩出的圆形只盖住本块内的空白。 */
+.edit::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
 }
 
 /* 同时段清单 */
@@ -1091,7 +1136,8 @@ onBeforeUnmount(() => {
 
 .stk-hint {
   margin-top: 10px;
-  font-size: var(--fs-micro);
+  /* 「点条目在画布上置顶并查看详情」是操作指令，不吃 11px */
+  font-size: var(--fs-caption);
 }
 
 .compact .stk-more {
@@ -1113,8 +1159,10 @@ onBeforeUnmount(() => {
   font-size: var(--fs-caption);
 }
 
-/* 紧凑档：降到 --fs-micro（11px）并抬高一点 —— 每小时只有 48px（`/todos` 在窄视口
-   也用这一档），字号再大就该压到邻块上了。 */
+/* 紧凑档的整点/结束时刻：这里**保留 11px** 是量出来的取舍，不是漏改 ——
+   紧凑档每小时只有 48px（`/todos` 在窄视口也用这一档），时刻戳从块内移到块外
+   那一行（.bmin-start top: -13px），字号再大就会压到上邻块的标题。
+   时刻戳本身是定位信息，但它旁边就是块标题（.tt，12px），对照即可读出。 */
 .compact .bmin {
   font-size: var(--fs-micro);
 }

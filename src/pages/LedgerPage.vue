@@ -112,8 +112,9 @@ const emptyCopy = computed(() => {
          495px 高的统计卡独占一栏、整列流水交给右栏，省掉的是眼睛在
          「月份数字 ↔ 流水条目」之间来回横跳的距离。 -->
     <div class="board d-full">
-      <!-- 本月统计 + 预算 + 趋势 -->
-      <LedgerStats @edit-budget="budgetOpen = true" />
+      <!-- 本月统计 + 预算 + 趋势。桌面左栏定宽 360px（见样式末尾的桌面段）；
+           桌面主从构图里它退成 .card.sub 那口浅井（配角），移动端恢复普通卡片外观 -->
+      <LedgerStats class="card sub flow-card" @edit-budget="budgetOpen = true" />
 
       <div class="flow">
         <!-- 筛选：关键词 + 分类（分类胶囊按本月实际用到的分类生成）。
@@ -136,7 +137,7 @@ const emptyCopy = computed(() => {
               <span>记一笔</span>
             </button>
           </div>
-          <div v-if="usedCats.length > 0" class="chips" data-rubber-self>
+          <div v-if="usedCats.length > 0" class="chips fade-x" data-rubber-self>
             <button class="chip" :class="{ on: filterCat === null }" @click="filterCat = null">全部</button>
             <button
               v-for="key in usedCats"
@@ -222,6 +223,25 @@ const emptyCopy = computed(() => {
   align-items: start;
 }
 
+/* 左栏定宽那格采用 .card.sub（base.css：--surface-inset 浅井底 / radius-l / 14px 内距 / 无影）
+   —— 桌面主从构图里右栏流水是主角，统计是配角，就该退一档而不是又冒出一块带影白卡。
+   移动端一列时它不是「二级分组」而是这一屏的主卡：恢复普通卡片外观，否则画布上
+   一块没影的浅井会让整页发平。两条规则都带 .page / .desk-main 前缀（特指度高过
+   base.css 的 .card.sub），谁覆盖谁不靠样式表注入顺序去赌。 */
+.page .flow-card {
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  padding: 20px;
+}
+
+.desk-main .flow-card {
+  background: var(--surface-inset);
+  border-radius: var(--radius-l);
+  box-shadow: none;
+  padding: 14px;
+}
+
 /* 筛选 */
 .filters {
   display: flex;
@@ -294,7 +314,10 @@ const emptyCopy = computed(() => {
   align-items: center;
   gap: 5px;
   flex: none;
-  padding: 6px 11px;
+  /* 高 40px：分类胶囊与「全部」是筛选的主控件（实测约 30px 高），
+     40 是拇指能稳准落到的下限，横向滚动行为不变 */
+  min-height: 40px;
+  padding: 0 13px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: var(--fs-footnote);
@@ -337,11 +360,13 @@ const emptyCopy = computed(() => {
 }
 
 /* 主操作现在全端就这一处（悬浮钮已取消），命中区必须够拇指：视觉高度跟着搜索框
-   （35px），命中区按项目惯例（PageHeader 的 .back / .hdr-btn）撑到 44 —— 只上下扩，
-   不横向扩：左边就是搜索框，横向扩会把它右端那一段的点击抢走。 */
+   （35px），命中区按项目惯例（PageHeader 的 .back / .hdr-btn）撑到 44 —— 上下各外扩 5px
+   即成 45px 高；横向**只向左**外扩 5px（右侧留给屏幕边缘，横向扩出去也点不到）。
+   左边就是搜索框：扩出来的 5px 从按钮自己的左缘算起，而 .searchrow 上另有 8px gap，
+   两段命中区之间净剩 3px，不会把搜索框右端那一段的点击抢走。 */
 .add-inline::after {
   content: '';
   position: absolute;
-  inset: -5px 0;
+  inset: -5px 0 -5px -5px;
 }
 </style>

@@ -206,7 +206,8 @@ const rawRows = computed<RawRow[]>(() => {
 .stats em {
   display: block;
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 统计格的字段小帽，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -233,6 +234,7 @@ const rawRows = computed<RawRow[]>(() => {
 .stats b i {
   font-style: normal;
   font-weight: 400;
+  /* 大数后的单位后缀，装饰性微字 */
   font-size: var(--fs-micro);
   color: var(--text-3);
   margin-left: 2px;
@@ -247,7 +249,8 @@ const rawRows = computed<RawRow[]>(() => {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: var(--fs-micro);
+  /* 「近 N 次 · 最低/最高」是趋势摘要，是要读的数 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -261,7 +264,8 @@ const rawRows = computed<RawRow[]>(() => {
 .axis {
   display: flex;
   justify-content: space-between;
-  font-size: var(--fs-micro);
+  /* 趋势图左右两个日期刻度 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -311,7 +315,8 @@ const rawRows = computed<RawRow[]>(() => {
   border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  /* 段首状态词（「已记录」），必须读得出 */
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 
@@ -335,6 +340,7 @@ const rawRows = computed<RawRow[]>(() => {
 .raw .val i {
   font-style: normal;
   font-weight: 400;
+  /* 数值后的单位后缀，装饰性微字 */
   font-size: var(--fs-micro);
   color: var(--text-3);
 }

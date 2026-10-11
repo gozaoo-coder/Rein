@@ -591,7 +591,8 @@ const HHMM = minToHHmm
   width: 40px;
   text-align: right;
   transform: translateY(-6px);
-  font-size: var(--fs-micro);
+  /* 整点刻度是「这一格是几点」的定位信息，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -600,7 +601,8 @@ const HHMM = minToHHmm
   left: 2px;
   width: 40px;
   text-align: right;
-  font-size: 10px;
+  /* 当下时刻是时间线的定位词，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--danger);
 }
@@ -699,7 +701,8 @@ const HHMM = minToHHmm
 }
 
 .dh .lab {
-  font-size: var(--fs-micro);
+  /* 日期头小帽（「周一」）是定位信息 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -710,7 +713,8 @@ const HHMM = minToHHmm
 
 .dh .cnt {
   margin-left: auto;
-  font-size: var(--fs-micro);
+  /* 「3 项」是这一格的计数，是要读的状态 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -794,7 +798,8 @@ const HHMM = minToHHmm
 
 .tt {
   min-width: 0;
-  font-size: var(--fs-micro);
+  /* 块内标题就是待办本身，是这一屏最该读的东西 */
+  font-size: var(--fs-caption);
   font-weight: 600;
   line-height: var(--blk-lh, 16px);
   display: -webkit-box;
@@ -829,7 +834,9 @@ const HHMM = minToHHmm
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 9px;
+  /* 块下的开始时刻（「09:00」）是日程的定位信息：原先 9px 是为了塞进矮块，
+     提到 --fs-caption（12px）后仍收在块外那一行，line-height: 1 保住不撑高块 */
+  font-size: var(--fs-caption);
   line-height: 1;
   color: var(--text-3);
   pointer-events: none;
@@ -939,7 +946,8 @@ const HHMM = minToHHmm
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-micro);
+  /* 堆叠面板里的条目标题 */
+  font-size: var(--fs-caption);
   font-weight: 600;
 }
 
@@ -965,7 +973,8 @@ const HHMM = minToHHmm
 
 .hint {
   margin: 0;
-  font-size: var(--fs-micro);
+  /* 面板提示句，操作指令 */
+  font-size: var(--fs-caption);
 }
 
 @media (max-width: 720px) {

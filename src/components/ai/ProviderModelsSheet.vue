@@ -249,7 +249,7 @@ const isManual = (row: Row): boolean => {
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-3);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 
@@ -294,7 +294,7 @@ const isManual = (row: Row): boolean => {
   display: block;
   margin-top: 2px;
   color: var(--text-3);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.45;
 }
 
@@ -304,7 +304,7 @@ const isManual = (row: Row): boolean => {
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
 }
 
@@ -321,11 +321,12 @@ const isManual = (row: Row): boolean => {
   border-radius: var(--radius-full);
   background: var(--ok-soft);
   color: var(--ok-strong);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
 }
 
 .rm {
+  position: relative;
   flex: none;
   width: 28px;
   height: 28px;
@@ -334,6 +335,13 @@ const isManual = (row: Row): boolean => {
   align-items: center;
   justify-content: center;
   color: var(--text-3);
+}
+
+/* 28 的移除钮命中区撑到 44：它在行尾，横向只管往左扩到条目自身宽度内 */
+.rm::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
 }
 
 .manual {

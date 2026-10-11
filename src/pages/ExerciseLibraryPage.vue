@@ -268,7 +268,7 @@ function onSaved(e: ExerciseRecord): void {
   border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   line-height: 16px;
   text-align: center;
@@ -355,7 +355,7 @@ function onSaved(e: ExerciseRecord): void {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--c-exercise-soft);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--c-exercise-deep);
 }

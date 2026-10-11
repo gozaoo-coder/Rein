@@ -2827,7 +2827,7 @@ defineExpose({ refresh, navigate, path })
   min-width: 44px;
   padding: 6px 4px;
   border-radius: var(--radius-m);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-1);
   white-space: nowrap;
@@ -2850,7 +2850,7 @@ defineExpose({ refresh, navigate, path })
   padding: 8px 12px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* 给 dock 留白：页面滚到底时最后一行不被压住。
@@ -2884,6 +2884,14 @@ defineExpose({ refresh, navigate, path })
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-2);
+}
+
+/* 工具条图标钮：视觉 28×28（6px 内距 + 16px 图标）一个像素都不动，只把命中区撑到 44 高。
+   横向各外扩 3px：同排钮之间只隔 5–6px（.mbar 5px），外扩多了会互相吃掉点击。 */
+.icon::after {
+  content: '';
+  position: absolute;
+  inset: -8px -3px;
 }
 
 .icon:disabled {
@@ -2921,10 +2929,19 @@ defineExpose({ refresh, navigate, path })
 }
 
 .clear {
+  position: relative;
   flex: none;
   padding: 2px;
   border-radius: var(--radius-full);
   color: var(--text-3);
+}
+
+/* 清空搜索：13px 图标 + 2px 内距只有约 17px，是整条工具栏里最难点的钮。
+   纵向撑到 33；向左外扩 6px（往右是 .find 的圆角边，再扩就出条了）。 */
+.clear::after {
+  content: '';
+  position: absolute;
+  inset: -8px -6px;
 }
 
 .seg {
@@ -2936,10 +2953,19 @@ defineExpose({ refresh, navigate, path })
 }
 
 .segb {
+  position: relative;
   padding: 4px 10px;
   border-radius: var(--radius-full);
   font-size: var(--fs-caption);
   color: var(--text-2);
+}
+
+/* 分段钮自身只有约 23 高（图标 + 4px 内距）：纵向各扩 9px，
+   连同 .seg 的 2px 内距，整块分段控件达到 44 —— 拇指不用瞄着图标按。 */
+.segb::after {
+  content: '';
+  position: absolute;
+  inset: -9px 0;
 }
 
 .segb.on {
@@ -2950,16 +2976,19 @@ defineExpose({ refresh, navigate, path })
 
 .trash-entry .dot {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  min-width: 14px;
-  padding: 0 3px;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  padding: 0 4px;
   border-radius: var(--radius-full);
   background: var(--danger);
-  color: #fff;
-  font-size: 9px;
+  color: var(--on-accent);
+  /* 回收站项数：原为 9px，缩在任何一档缩放下都读不出来 —— 数字是这条的唯一信息量，
+     提到 caption 一档，章子跟着从 14 长到 18 */
+  font-size: var(--fs-caption);
   font-style: normal;
-  line-height: 14px;
+  font-weight: 700;
+  line-height: 18px;
   text-align: center;
 }
 
@@ -3017,7 +3046,7 @@ defineExpose({ refresh, navigate, path })
 .arcbar small {
   display: block;
   margin-top: 2px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .arcto {
@@ -3048,7 +3077,7 @@ defineExpose({ refresh, navigate, path })
 
 .tagchip i {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -3154,7 +3183,7 @@ li + li .item {
   align-items: center;
   gap: 3px;
   flex: none;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -3200,7 +3229,7 @@ li + li .item {
 
 .galnote {
   padding: 2px 2px 0;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 /* 虚拟滚动容器 */
@@ -3275,7 +3304,7 @@ li + li .item {
 }
 
 .gh-count {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .empty {
@@ -3296,7 +3325,7 @@ li + li .item {
   flex-wrap: wrap;
   gap: 4px 8px;
   padding: 2px 2px 0;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .mono {

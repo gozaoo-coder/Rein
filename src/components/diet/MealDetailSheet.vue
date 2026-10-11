@@ -444,7 +444,8 @@ watch(
   border-radius: var(--radius-full);
   background: var(--danger-soft);
   color: var(--c-sodium);
-  font-size: var(--fs-micro);
+  /* 「高钠」是健康状态词，读不出来等于没标 */
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 
@@ -454,12 +455,14 @@ watch(
 
 .mpct {
   margin-top: 4px;
-  font-size: var(--fs-micro);
+  /* 供能占比，是要读的数 */
+  font-size: var(--fs-caption);
 }
 
 .note {
   margin-top: 14px;
-  font-size: var(--fs-micro);
+  /* 兜底说明（「没有可用的过程快照」这类），是要照着做的提示 */
+  font-size: var(--fs-caption);
 }
 
 /* 删除入口：抽屉固定操作区，内容从下方滚过时不被顶走 */
@@ -470,7 +473,7 @@ watch(
   gap: 7px;
   width: 100%;
   height: 48px;
-  border-radius: 24px;
+  border-radius: var(--radius-l);
   background: var(--danger-soft);
   color: var(--danger);
   font-size: var(--fs-body);

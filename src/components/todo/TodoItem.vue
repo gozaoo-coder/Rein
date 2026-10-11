@@ -62,6 +62,7 @@ const editorOpen = ref(false)
 }
 
 .check {
+  position: relative;
   width: 24px;
   height: 24px;
   flex: none;
@@ -74,6 +75,17 @@ const editorOpen = ref(false)
   transition:
     background-color var(--dur-fast) var(--ease-standard),
     border-color var(--dur-fast) var(--ease-standard);
+}
+
+/* 24px 的勾选框是列表行的排版规格，命中区撑到 44×44（PageHeader .back 同款惯用法） */
+.check::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 
 /* 对勾弹入：120ms 不拖累连点 */
@@ -148,8 +160,22 @@ const editorOpen = ref(false)
 
 .edit,
 .del {
+  position: relative;
   color: var(--text-3);
   padding: 2px;
+}
+
+/* 行尾编辑/删除：16px 图标 + 2px 内边距 ≈ 20px 见方，命中区纵向外扩到 44
+   （横向不外扩，两颗相隔 8px，扩出去会互相抢） */
+.edit::after,
+.del::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 44px;
+  transform: translate(-50%, -50%);
 }
 
 .item:hover .ops {

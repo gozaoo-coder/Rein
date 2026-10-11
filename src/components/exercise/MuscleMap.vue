@@ -696,7 +696,7 @@ figcaption {
   color: var(--text-2);
   padding: 2px 9px;
   border: 0.5px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: transparent;
 }
 

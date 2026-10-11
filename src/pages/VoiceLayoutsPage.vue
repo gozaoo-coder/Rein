@@ -827,7 +827,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 .mini-body .stream li {
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   padding-left: 8px;
   padding-right: 8px;
   margin-left: -8px;

@@ -333,7 +333,7 @@ function fmtG(n: number): string {
 
 .chip.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .tools {
@@ -397,6 +397,7 @@ function fmtG(n: number): string {
 
 .kcal em {
   font-style: normal;
+  /* 「大卡」单位后缀贴在 15px 的热量数旁，是装饰性微字 */
   font-size: var(--fs-micro);
   font-weight: 400;
   color: var(--text-3);
@@ -420,7 +421,8 @@ function fmtG(n: number): string {
 .mline {
   display: flex;
   gap: 8px;
-  font-size: var(--fs-micro);
+  /* 三段宏量克数是「这一份含多少蛋白/碳水/脂肪」，是要读的数，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-2);
 }
 

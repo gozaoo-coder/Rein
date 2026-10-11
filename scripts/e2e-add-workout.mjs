@@ -5,7 +5,8 @@
 import { chromium } from 'playwright-core'
 
 const EXE = 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-const BASE = 'http://localhost:1430'
+/** 与其它 e2e 同一条约定：1430 落在本机保留端口段（EACCES）时用 REIN_E2E_URL 指向可用实例 */
+const BASE = process.env.REIN_E2E_URL ?? 'http://localhost:1430'
 let pass = 0
 let fail = 0
 

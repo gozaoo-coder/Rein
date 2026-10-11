@@ -216,13 +216,15 @@ function openEdit(): void {
   background: var(--surface-2);
 }
 
+/* 头像章底色是 c-intake→#ff6482 的实色（不是半透明浅底），白字压得住，
+   取 --on-accent 而不是裸 #fff —— 语义与 --accent 实底钮同源 */
 .avatar {
   width: 38px;
   height: 38px;
   flex: none;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--c-intake), #ff6482);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 16px;
   font-weight: 700;
 }
@@ -346,7 +348,8 @@ function openEdit(): void {
 
 .s-sub {
   max-width: 100%;
-  font-size: var(--fs-micro);
+  /* 副标读的是「蛋白 100g · 碳水…」这类要照着配餐的比例，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -363,7 +366,8 @@ function openEdit(): void {
 .clist em {
   display: block;
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 格上小帽（「训练」「器械」）是要读的字段名，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -381,7 +385,8 @@ function openEdit(): void {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 0.5px solid color-mix(in srgb, var(--text-1) 10%, transparent);
-  font-size: var(--fs-micro);
+  /* 这句说明方案怎么用这些约束，是要照着做的话，不吃 11px */
+  font-size: var(--fs-caption);
 }
 
 /* 约束 → 方案 的直达链路：一行，强调色文字（约束是方案的输入，去向要显眼但别抢编辑胶囊） */

@@ -582,7 +582,7 @@ onMounted(async () => {
 }
 
 .stxt em.bad {
-  color: var(--danger, #d9534f);
+  color: var(--danger);
 }
 
 .url {
@@ -645,7 +645,7 @@ onMounted(async () => {
   gap: 6px;
   margin-top: 8px;
   font-size: var(--fs-caption);
-  color: var(--danger, #d9534f);
+  color: var(--danger);
   line-height: 1.5;
 }
 

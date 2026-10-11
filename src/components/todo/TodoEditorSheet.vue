@@ -971,13 +971,16 @@ onBeforeUnmount(() => {
 .asize {
   flex: none;
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 附件体积（「1.2 MB」）是附件条目上的读数，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
 .adel {
+  position: relative;
   flex: none;
-  padding: 6px;
+  /* 补齐到 44（图标 13px + 6px 内边距 ≈ 25px 见方） */
+  padding: 15px;
   color: var(--text-3);
 }
 
@@ -1044,14 +1047,16 @@ onBeforeUnmount(() => {
 .q-head {
   align-self: end;
   text-align: center;
-  font-size: var(--fs-micro);
+  /* 四象限表头（「重要」「紧急」）是坐标轴名，要吃 11px 以上 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
   padding-bottom: 1px;
 }
 
 .q-side {
   align-self: center;
-  font-size: var(--fs-micro);
+  /* 四象限侧栏坐标名（「紧急」「不紧急」） */
+  font-size: var(--fs-caption);
   color: var(--text-3);
   padding-right: 3px;
 }
@@ -1083,7 +1088,8 @@ onBeforeUnmount(() => {
 
 .q-cell em {
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 象限格内的条数是计数读数 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 

@@ -181,7 +181,7 @@ watch(
      内缩量由调用处给 —— 58px 的底栏药丸要 4/5px，32px 的分段控件只要 2px，
      写死一头必然不对。 */
   padding: var(--thumb-inset-y, 4px) var(--thumb-inset-x, 5px);
-  background: var(--glass-blob, #fff);
+  background: var(--glass-blob);
   background-clip: content-box;
   border-radius: var(--radius-full);
   translate: calc(var(--i) * 100%) 0;

@@ -342,27 +342,25 @@ const onlineTone = computed(() => {
   margin-top: 10px;
 }
 
+/* 图标徽章统一 token-soft（与设置页 .fic、同步页 .fic 同一套画法）：
+   整面 accent-soft 底 + accent 图标。原先三个入口各配一支手写渐变 hex，
+   现在收成同一档软底 —— 语义交给图标本身，颜色不再各说各话。
+   中性档（提供商首字 / 添加）保持 --surface-2 + 文字档灰，添加入口用 accent 图标。 */
 .ic {
   width: 36px;
   height: 36px;
   border-radius: var(--radius-s);
   flex: none;
-  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.ic-onl {
-  background: linear-gradient(135deg, #2f6bff, #5ac8fa);
-}
-
-.ic-voice {
-  background: linear-gradient(135deg, #0a84ff, #1eeaef);
-}
-
+.ic-onl,
+.ic-voice,
 .ic-spark {
-  background: linear-gradient(135deg, #7c5cff, #b48bff);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .ic-add,
@@ -402,13 +400,13 @@ const onlineTone = computed(() => {
 }
 
 .vt em.perr {
-  color: var(--danger, #ff5257);
+  color: var(--danger);
 }
 
 .chip,
 .tag {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
   border-radius: var(--radius-full);
   padding: 2px 7px;
@@ -425,8 +423,8 @@ const onlineTone = computed(() => {
 }
 
 .chip-warn {
-  background: color-mix(in srgb, var(--danger, #ff5257) 14%, transparent);
-  color: var(--danger, #ff5257);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 
 .tag {
@@ -442,7 +440,7 @@ const onlineTone = computed(() => {
 .v-go {
   flex: none;
   color: var(--text-3);
-  font-size: 17px;
+  font-size: var(--fs-headline);
 }
 
 .prov {
@@ -519,7 +517,7 @@ const onlineTone = computed(() => {
   padding: 13px 24px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   box-shadow: var(--shadow-float);
   font-size: var(--fs-headline);
   font-weight: 700;

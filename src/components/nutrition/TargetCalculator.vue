@@ -331,7 +331,8 @@ function onConfirm(value: string): void {
 .cells em {
   display: block;
   font-style: normal;
-  font-size: var(--fs-micro);
+  /* 字段小帽，与相邻的单位后缀（11px）区分开：要读 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -347,6 +348,7 @@ function onConfirm(value: string): void {
 
 .cv i {
   font-style: normal;
+  /* 单位后缀，装饰性微字，可留在 11px 档 */
   font-size: var(--fs-micro);
   color: var(--text-3);
   margin-left: 1px;

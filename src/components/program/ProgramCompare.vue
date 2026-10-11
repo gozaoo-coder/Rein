@@ -307,11 +307,11 @@ const peakWeekIdx = computed(() => {
 
 .matrix thead th.on {
   color: var(--accent);
-  border-radius: 8px 8px 0 0;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
 }
 
 .matrix tbody tr:last-child td.on {
-  border-radius: 0 0 8px 8px;
+  border-radius: 0 0 var(--radius-xs) var(--radius-xs);
 }
 
 .matrix tr.strong td {
@@ -389,7 +389,7 @@ th.off {
 
 .cell {
   aspect-ratio: 1;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   display: flex;
   align-items: center;
   justify-content: center;

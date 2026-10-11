@@ -164,6 +164,8 @@ function onItemClick(a: MenuItem, e: MouseEvent, levelIdx: number): void {
     const next = levels.value[levelIdx + 1]
     if (next && next.openedFrom === a.value) {
       levels.value = levels.value.slice(0, levelIdx + 1)
+      // 收起后最深层就是本层：键盘下标跟到被点开的那一项上
+      activeIdx.value = Math.max(levels.value[levelIdx].items.findIndex((it) => it.value === a.value), 0)
     } else {
       levels.value = levels.value.slice(0, levelIdx + 1)
       levels.value.push({
@@ -172,6 +174,8 @@ function onItemClick(a: MenuItem, e: MouseEvent, levelIdx: number): void {
         openedFrom: a.value,
         style: null,
       })
+      // 子层开了：后续方向键该走子层，下标从子层第一项起算
+      activeIdx.value = 0
     }
     void layout()
     return
@@ -184,27 +188,188 @@ function closeAll(): void {
   emit('close')
 }
 
+/** Esc 关闭：把焦点还给触发按钮（用户在键盘上「回得去」） */
+function closeMenu(): void {
+  // 先还焦点再关：anchor 的 focus() 会派发 blur/focus，顺序反了 focus 会落在 body 上
+  props.anchor?.focus({ preventScroll: true })
+  closeAll()
+}
+
 function onViewportChange(): void {
   // 视口变化后锚定位置不可信，直接收起，行为可预期
   if (props.open && bindMode.value) closeAll()
 }
 
+/* ---------- 键盘可达：打开即聚焦、方向键行走、Home/End、Esc 归还焦点 ----------
+   面板 Teleport 到 body 尾部，直接 Tab 会从触发按钮一路跳到页面末尾之外 —— 那条
+   「Tab 顺序陷阱」只能靠把焦点管理接过来解决：↑↓ 在本层菜单项间移动（跳过禁用项）、
+   Home/End 去首尾、→ 开子层或推进已开的子层、← 收起最深层并把焦点还给父项、
+   Esc 关整层并还焦给触发按钮。Tab 改为在菜单项之间循环，不让焦点跑到页面别处。
+   鼠标路径一概不动：焦点用 preventScroll 落位，不触发滚动收起。 */
+
+const sheetEl = ref<HTMLElement | null>(null)
+function setSheet(el: unknown): void {
+  sheetEl.value = el instanceof HTMLElement ? el : null
+}
+
+/** 某一层（dialog 恒为 0）的菜单按钮 DOM；取消键不参与行走 */
+function itemsOf(i: number): HTMLElement[] {
+  const root = bindMode.value ? panelEls.get(i) : sheetEl.value
+  if (!root) return []
+  return Array.from(root.querySelectorAll<HTMLElement>('.item:not(.cancel)'))
+}
+
+/** 当前面板的（数据, DOM）两份同序清单：bind 取最深层，dialog 取底部面板 */
+function currentPanel(): { data: MenuItem[]; els: HTMLElement[] } {
+  if (bindMode.value) {
+    const i = Math.max(levels.value.length - 1, 0)
+    return { data: levels.value[i]?.items ?? [], els: itemsOf(i) }
+  }
+  return { data: flatActions.value.filter((f) => !f.header).map((f) => f.item), els: itemsOf(0) }
+}
+
+/** 键盘焦点在当前层内的下标；打开时落在第一项上 */
+const activeIdx = ref(0)
+
+function focusAt(idx: number): void {
+  activeIdx.value = idx
+  currentPanel().els[idx]?.focus({ preventScroll: true })
+}
+
+function moveFocus(dir: 1 | -1): void {
+  const { data } = currentPanel()
+  const n = data.length
+  if (!n) return
+  let idx = activeIdx.value
+  for (let k = 0; k < n; k++) {
+    idx = (idx + dir + n) % n
+    if (!data[idx].disabled) break
+  }
+  focusAt(idx)
+}
+
+function edgeFocus(which: 'first' | 'last'): void {
+  const { data } = currentPanel()
+  if (which === 'first') {
+    const i = data.findIndex((d) => !d.disabled)
+    if (i >= 0) focusAt(i)
+  } else {
+    for (let i = data.length - 1; i >= 0; i--) {
+      if (!data[i].disabled) {
+        focusAt(i)
+        return
+      }
+    }
+  }
+}
+
+/** → ：开子层（未开时）或把焦点推进已开的子层 */
+function openOrEnterChild(): boolean {
+  if (!bindMode.value) return false
+  const levelIdx = levels.value.length - 1
+  const panel = currentPanel()
+  const it = panel.data[activeIdx.value]
+  if (!it?.children?.length) return false
+  const next = levels.value[levelIdx + 1]
+  if (next && next.openedFrom === it.value) {
+    focusAt(0)
+    return true
+  }
+  levels.value = levels.value.slice(0, levelIdx + 1)
+  levels.value.push({
+    items: it.children,
+    anchorRect: panel.els[activeIdx.value]?.getBoundingClientRect() ?? null,
+    openedFrom: it.value,
+    style: null,
+  })
+  void layout()
+  activeIdx.value = 0
+  void nextTick(() => focusAt(0))
+  return true
+}
+
+/** ← ：收起最深层，焦点还给打开它的那一项 */
+function closeChild(): boolean {
+  if (!bindMode.value || levels.value.length < 2) return false
+  const parent = levels.value[levels.value.length - 2]
+  const openedFrom = levels.value[levels.value.length - 1].openedFrom
+  levels.value = levels.value.slice(0, -1)
+  void layout()
+  const idx = parent.items.findIndex((it) => it.value === openedFrom)
+  focusAt(Math.max(idx, 0))
+  return true
+}
+
+/** 焦点不在菜单里时（翻到页面别处的输入框）不抢方向键；Esc 仍然全局有效 */
+function focusInMenu(t: EventTarget | null): boolean {
+  if (!(t instanceof Node)) return false
+  if (sheetEl.value?.contains(t)) return true
+  for (const el of panelEls.values()) if (el.contains(t)) return true
+  return props.anchor === t || (props.anchor?.contains(t) ?? false)
+}
+
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && props.open) closeAll()
+  if (!props.open) return
+  switch (e.key) {
+    case 'Escape':
+      closeMenu()
+      return
+    case 'ArrowDown':
+      if (focusInMenu(e.target)) {
+        e.preventDefault()
+        moveFocus(1)
+      }
+      return
+    case 'ArrowUp':
+      if (focusInMenu(e.target)) {
+        e.preventDefault()
+        moveFocus(-1)
+      }
+      return
+    case 'Home':
+      if (focusInMenu(e.target)) {
+        e.preventDefault()
+        edgeFocus('first')
+      }
+      return
+    case 'End':
+      if (focusInMenu(e.target)) {
+        e.preventDefault()
+        edgeFocus('last')
+      }
+      return
+    case 'ArrowRight':
+      if (focusInMenu(e.target) && openOrEnterChild()) e.preventDefault()
+      return
+    case 'ArrowLeft':
+      if (focusInMenu(e.target) && closeChild()) e.preventDefault()
+      return
+    case 'Tab':
+      // 面板在 body 尾部：Tab 会跳出菜单跳到页面末尾。改成菜单内循环，Esc 仍然是出口
+      if (focusInMenu(e.target)) {
+        e.preventDefault()
+        moveFocus(e.shiftKey ? -1 : 1)
+      }
+      return
+  }
 }
 
 watch(
   () => props.open,
   (open) => {
-    if (open && bindMode.value) {
-      levels.value = [
-        {
-          items: props.actions,
-          anchorRect: props.anchor!.getBoundingClientRect(),
-          style: null,
-        },
-      ]
-      void layout()
+    if (open) {
+      activeIdx.value = 0
+      if (bindMode.value) {
+        levels.value = [
+          {
+            items: props.actions,
+            anchorRect: props.anchor!.getBoundingClientRect(),
+            style: null,
+          },
+        ]
+      }
+      // 等面板量完尺寸再落焦点；preventScroll 保证 focus 不当成滚动把菜单收掉
+      void layout().then(() => edgeFocus('first'))
       window.addEventListener('resize', onViewportChange)
       window.addEventListener('scroll', onViewportChange, true)
       window.addEventListener('keydown', onKeydown)
@@ -258,6 +423,7 @@ const flatHasIcon = computed(() => flatActions.value.some((f) => !f.header && !!
           :class="{ 'with-ic': levelHasIcon(lv.items) }"
           :style="lv.style ?? undefined"
           role="menu"
+          :aria-label="i === 0 ? title : undefined"
         >
           <!-- 超范围平移层：面板自身带定位/入场动画，不能自平移，改包一层只写 transform -->
           <div class="rubber-layer" data-rubber-content>
@@ -289,7 +455,7 @@ const flatHasIcon = computed(() => flatActions.value.some((f) => !f.header && !!
         <div v-if="open" class="mask" @click="closeAll" />
       </Transition>
       <Transition name="am-card">
-        <div v-if="open" class="sheet" role="dialog" :aria-label="title ?? '操作'">
+        <div v-if="open" class="sheet" :ref="(el) => setSheet(el)" role="dialog" :aria-label="title ?? '操作'">
           <p v-if="title" class="stitle">{{ title }}</p>
           <template v-for="(f, fi) in flatActions" :key="`${f.item.value}-${fi}`">
             <p v-if="f.header" class="group" :style="{ paddingLeft: `${12 + f.depth * 22}px` }">

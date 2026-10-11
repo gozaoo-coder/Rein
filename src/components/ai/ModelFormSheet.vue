@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { useToast } from '@/composables/useToast'
 import { useModelsStore } from '@/stores/models'
 import { useOnlineServiceStore } from '@/stores/onlineService'
@@ -267,16 +268,9 @@ async function save(): Promise<void> {
 
       <div class="row between center">
         <p class="l">设为默认</p>
-        <button
-          class="toggle"
-          :class="{ on: isDefault }"
-          role="switch"
-          :aria-checked="isDefault"
-          aria-label="设为默认"
-          @click="isDefault = !isDefault"
-        >
-          <i />
-        </button>
+        <!-- 共享 ToggleSwitch（51×31 iOS 规格）：替掉原先自造的 52×31 开关，
+             role=switch + aria-checked 与 spring 滑块都由共享组件负责 -->
+        <ToggleSwitch v-model="isDefault" label="设为默认" />
       </div>
 
       <button type="button" class="save" :disabled="!canSave" @click="save">
@@ -383,37 +377,6 @@ async function save(): Promise<void> {
 .edge-hint {
   font-size: var(--fs-caption);
   line-height: 1.5;
-}
-
-/* 默认开关（iOS 风格） */
-.toggle {
-  width: 52px;
-  height: 31px;
-  flex: none;
-  border-radius: var(--radius-full);
-  background: var(--text-3);
-  position: relative;
-  transition: background var(--dur-fast) var(--ease-standard);
-}
-
-.toggle i {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: var(--shadow-thumb);
-  transition: transform var(--dur-fast) var(--ease-spring);
-}
-
-.toggle.on {
-  background: var(--ok);
-}
-
-.toggle.on i {
-  transform: translateX(21px);
 }
 
 .save {

@@ -227,7 +227,7 @@ function openDetail(c: ProcessToolCall): void {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 

@@ -940,7 +940,7 @@ function bumpKm(delta: number): void {
   position: absolute;
   z-index: 4;
   padding: 9px 13px;
-  border-radius: 16px;
+  border-radius: var(--radius-m);
   color: var(--hero-text);
 }
 
@@ -1063,8 +1063,8 @@ function bumpKm(delta: number): void {
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  border-radius: 22px 22px 0 0;
-  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  box-shadow: var(--shadow-float);
   overflow: hidden;
   transform: translateY(0);
   transition: transform var(--dur-sheet) var(--ease-standard);
@@ -1126,7 +1126,7 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 .hbtn {
   width: 30px;
   height: 30px;
-  border-radius: 15px;
+  border-radius: var(--radius-m);
   color: var(--c-exercise);
   display: flex;
   align-items: center;
@@ -1152,7 +1152,7 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   display: flex;
   gap: 2px;
   padding: 2px;
-  border-radius: 12px;
+  border-radius: var(--radius-m);
   overflow: hidden;
 }
 
@@ -1161,7 +1161,7 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 .mseg button {
   position: relative;
   padding: 4px 11px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   font-size: var(--fs-micro);
   font-weight: 600;
   color: var(--text-3);
@@ -1224,7 +1224,7 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   align-self: center;
   min-width: 64px;
   height: 44px;
-  border-radius: 22px;
+  border-radius: var(--radius-l);
   font-size: var(--fs-callout);
   font-weight: 600;
 }
@@ -1416,18 +1416,18 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   min-width: 240px;
   height: 54px;
   padding: 0 38px;
-  border-radius: 27px;
+  border-radius: var(--radius-xl);
   background: var(--text-1);
   color: var(--bg);
   font-size: var(--fs-headline);
   font-weight: 600;
-  box-shadow: 0 8px 20px rgba(29, 29, 31, 0.22);
+  box-shadow: var(--shadow-float);
 }
 
 /* 次按钮：控制层玻璃 —— 材质走 .glass-surface（全仓一份定义），这里只补几何 */
 .ghost {
   height: 50px;
-  border-radius: 25px;
+  border-radius: var(--radius-xl);
   padding: 0 24px;
   font-size: var(--fs-callout);
   font-weight: 600;

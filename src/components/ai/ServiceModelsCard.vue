@@ -81,7 +81,7 @@ const ICONS = {
 }
 
 .head .sub {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 ul {
@@ -108,6 +108,9 @@ li + li .slot {
   visibility: hidden;
 }
 
+/* 四个槽位徽章统一 token-soft（与设置页 / 同步页 / 模型页的图标章同一套）：
+   整面 accent-soft 底 + accent 图标，撤掉四支手写渐变 hex；
+   槽位区分靠图标（对话 / 看图 / 语音 / 向量），不靠颜色。 */
 .ic {
   width: 32px;
   height: 32px;
@@ -116,23 +119,14 @@ li + li .slot {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
 }
 
-.ic-llm {
-  background: linear-gradient(135deg, #2f6bff, #5ac8fa);
-}
-
-.ic-vision {
-  background: linear-gradient(135deg, #7c5cff, #b48bff);
-}
-
-.ic-asr {
-  background: linear-gradient(135deg, #0a84ff, #1eeaef);
-}
-
+.ic-llm,
+.ic-vision,
+.ic-asr,
 .ic-embedding {
-  background: linear-gradient(135deg, #ff9f0a, #ffd60a);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .txt {
@@ -145,7 +139,7 @@ li + li .slot {
 
 .label {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-3);
 }
@@ -187,12 +181,12 @@ li + li .slot {
   display: block;
   margin-top: 3px;
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.45;
 }
 
 .warn-line {
-  color: var(--danger, #ff5257);
+  color: var(--danger);
 }
 
 .lock-line {
@@ -202,6 +196,6 @@ li + li .slot {
 .go {
   flex: none;
   color: var(--text-3);
-  font-size: 17px;
+  font-size: var(--fs-headline);
 }
 </style>

@@ -304,7 +304,7 @@ async function onEndPick(value: string): Promise<void> {
   flex-direction: column;
   justify-content: center;
   gap: 5px;
-  border-radius: 20px;
+  border-radius: var(--radius-l);
 }
 
 /* 抓取反馈：按下轻收、抓住抬升 */
@@ -338,7 +338,7 @@ async function onEndPick(value: string): Promise<void> {
 
 .dock-body.dragging {
   transform: scale(1.03);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-float-lift);
 }
 
 /* 两层内容同位交叉淡变；隐藏层延迟到淡出结束后才真正不可见 */
@@ -472,7 +472,7 @@ async function onEndPick(value: string): Promise<void> {
   flex: none;
   height: 38px;
   padding: 0 15px;
-  border-radius: 19px;
+  border-radius: var(--radius-l);
   font-size: var(--fs-footnote);
   font-weight: 700;
   transition: transform var(--dur-fast) var(--ease-standard);

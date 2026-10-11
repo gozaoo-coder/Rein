@@ -211,7 +211,7 @@ h2 {
   flex: none;
   width: 19px;
   height: 19px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   border: 1.5px solid var(--line-strong);
   display: flex;
   align-items: center;

@@ -177,7 +177,7 @@ async function skip(): Promise<void> {
 }
 
 .up-must {
-  color: var(--danger, #d9534f);
+  color: var(--danger);
 }
 
 .up-notes {
@@ -205,7 +205,7 @@ async function skip(): Promise<void> {
   gap: 6px;
   margin-top: 10px;
   font-size: var(--fs-caption);
-  color: var(--danger, #d9534f);
+  color: var(--danger);
 }
 
 .up-actions {

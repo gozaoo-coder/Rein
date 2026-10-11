@@ -90,7 +90,7 @@ const route = useRoute()
   height: 26px;
   flex: none;
   margin-bottom: 22px;
-  border-radius: 8px;
+  border-radius: var(--radius-xs);
   background: conic-gradient(from 210deg, var(--c-intake), var(--c-exercise), var(--c-balance), var(--c-intake));
 }
 

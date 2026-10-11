@@ -7,6 +7,7 @@ import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import ExerciseBars from '@/components/exercise/ExerciseBars.vue'
 import WorkoutRow from '@/components/exercise/WorkoutRow.vue'
 import WorkoutDetailDrawer from '@/components/exercise/WorkoutDetailDrawer.vue'
+import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useExerciseStore } from '@/stores/exercise'
 import type { Workout } from '@/types'
@@ -210,6 +211,28 @@ function openDetail(w: Workout): void {
   detailWorkout.value = w
   detailOpen.value = true
 }
+
+/* ---------- 删除确认（破坏性操作：先确认再落库） ---------- */
+
+const delOpen = ref(false)
+const delTarget = ref<Workout | null>(null)
+
+/** 行尾删除钮唯一入口：只开门，不删除 */
+function askDelete(w: Workout): void {
+  delTarget.value = w
+  delOpen.value = true
+}
+
+/** 删除会级联抹掉该次训练的逐组力量记录并令力量曲线失效，
+ *  故只有确认层里明确选中「删除」才真正落库。 */
+async function confirmDelete(value: string): Promise<void> {
+  if (value !== 'delete') return
+  const target = delTarget.value
+  delOpen.value = false
+  delTarget.value = null
+  if (!target) return
+  await ex.remove(target.id)
+}
 </script>
 
 <template>
@@ -264,7 +287,7 @@ function openDetail(w: Workout): void {
                 :workout="w"
                 :show-date="false"
                 @detail="openDetail(w)"
-                @remove="ex.remove(w.id)"
+                @remove="askDelete(w)"
               />
             </ul>
           </div>
@@ -274,6 +297,15 @@ function openDetail(w: Workout): void {
 
     <!-- 运动详情抽屉（Teleport；保证页面单根） -->
     <WorkoutDetailDrawer :open="detailOpen" :workout="detailWorkout" @close="detailOpen = false" />
+
+    <!-- 删除确认层：行尾删除钮只负责开门，删除本身必须过这一层 -->
+    <ActionSheet
+      :open="delOpen"
+      title="删除这次训练记录？"
+      :actions="[{ label: '删除', value: 'delete', danger: true }]"
+      @select="confirmDelete"
+      @close="delOpen = false"
+    />
     </div>
   </div>
 </template>

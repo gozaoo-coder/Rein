@@ -404,8 +404,9 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   gap: 2px;
   padding: 4px 5px;
   border-radius: var(--radius-s);
-  border-left: 3px solid var(--blk);
-  background: color-mix(in srgb, var(--blk) 14%, var(--surface));
+  /* 课程色整面 soft tint（课表三视图同一档浓度：与日视图 .row、月视图 .chip 同画法），
+     不再靠 3px 左边框（side-tab 收编） */
+  background: color-mix(in srgb, var(--blk) 12%, var(--surface));
   text-align: left;
   overflow: hidden;
   cursor: pointer;

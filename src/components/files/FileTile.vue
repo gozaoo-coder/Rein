@@ -183,7 +183,7 @@ function onClick(ev: MouseEvent): void {
 .ck.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .cap {
@@ -205,7 +205,7 @@ function onClick(ev: MouseEvent): void {
 
 .sub {
   width: 100%;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;

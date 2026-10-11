@@ -272,7 +272,7 @@ const aiTotal = computed(() =>
   width: 38px;
   height: 38px;
   flex: none;
-  border-radius: 12px;
+  border-radius: var(--radius-m);
   background: var(--accent);
   color: var(--on-accent);
 }

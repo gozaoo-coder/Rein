@@ -428,7 +428,8 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 0;
   transform: translateY(-6px);
-  font-size: var(--fs-micro);
+  /* 整点刻度是「这一格是几点」的定位信息，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -485,7 +486,8 @@ button.block {
 }
 
 .block b {
-  font-size: var(--fs-micro);
+  /* 块上的开始时刻是日程的定位信息，不吃 11px */
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-2);
   flex: none;
@@ -533,7 +535,8 @@ button.block {
   border-radius: var(--radius-full);
   background: var(--danger);
   color: var(--on-accent);
-  font-size: 10px;
+  /* 「现在」是定位词；白字压 --danger 只有 3.55:1，12px 正好压过 AA 门槛 */
+  font-size: var(--fs-caption);
 }
 
 .now-btn {

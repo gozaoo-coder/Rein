@@ -250,7 +250,8 @@ watch(
   border-radius: var(--radius-full);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: var(--fs-micro);
+  /* 状态胶囊（「已记录」这类）是状态词 */
+  font-size: var(--fs-caption);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -386,7 +387,8 @@ watch(
 
 .ai-tag {
   margin-top: 10px;
-  font-size: var(--fs-micro);
+  /* 助手结论的一句话，是要读的建议 */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -458,7 +460,8 @@ watch(
 
 /* 生成中的流式活动摘要（匹配食材…） */
 .ai-status {
-  font-size: var(--fs-micro);
+  /* 生成中的活动摘要（「匹配食材…」）是状态播报，不吃 11px */
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 </style>

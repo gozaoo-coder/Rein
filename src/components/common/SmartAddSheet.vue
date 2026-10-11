@@ -651,7 +651,7 @@ function clearAll(): void {
   height: 24px;
   flex: none;
   margin-top: 1px;
-  border-radius: 7px;
+  border-radius: var(--radius-xs);
   border: 1.5px solid var(--line-strong);
   display: flex;
   align-items: center;

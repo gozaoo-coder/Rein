@@ -953,11 +953,20 @@ li + li .item {
 }
 
 .back {
+  position: relative;
   flex: none;
   padding: 6px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-2);
+}
+
+/* 阅读器左上角「返回列表」：18px 图标 + 6px 内距只有 30，命中区撑到 44。
+   横向上扩 7px —— 右边是标题（flex 1），外扩不会碰到别的钮。 */
+.back::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
 }
 
 .rtitle {
@@ -970,7 +979,7 @@ li + li .item {
 .rpath {
   margin-top: 2px;
   font-family: ui-monospace, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   word-break: break-all;
 }
@@ -989,7 +998,7 @@ li + li .item {
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-2);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 
 .pill.ro {
@@ -1007,7 +1016,7 @@ li + li .item {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   border: 1px solid var(--line);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -1059,7 +1068,7 @@ li + li .item {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 .arc-size {
   color: var(--text-3);
@@ -1067,7 +1076,7 @@ li + li .item {
 }
 .arc-skip {
   color: var(--danger);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
 }
 .arc-extract {
   display: grid;
@@ -1206,9 +1215,11 @@ li + li .item {
   margin-top: 12px;
 }
 
+/* 兜底正文块：强调改走整面 soft tint（中性色的对应档就是 --surface-2），
+   不再靠左边框（side-tab 收编） */
 .fallback {
   padding: 10px 12px;
-  border-left: 3px solid var(--line-strong);
+  background: var(--surface-2);
   color: var(--text-2);
 }
 

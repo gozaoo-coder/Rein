@@ -84,7 +84,7 @@ const meta = computed(() => {
 }
 
 .fc-meta {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;

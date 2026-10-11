@@ -112,7 +112,7 @@ const emit = defineEmits<{
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-3);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 
@@ -122,7 +122,7 @@ const emit = defineEmits<{
 }
 
 .cnt {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   flex: none;
 }
 </style>

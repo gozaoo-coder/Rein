@@ -52,16 +52,18 @@ const html = computed(() => {
 .md :deep(code) {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.9em;
-  background: rgba(0, 0, 0, 0.06);
+  /* 底色取 --text-1 的混合而不是写死黑：写死的 6% 黑贴在暗色画布上等于没贴，
+     气泡在亮暗两档都存在，合成后两档都读得出来 */
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
   padding: 1px 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
 }
 
 .md :deep(.md-pre) {
   margin: 6px 0 2px;
   padding: 9px 11px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
   overflow-x: auto;
 }
 
@@ -75,10 +77,30 @@ const html = computed(() => {
   margin-top: 6px;
 }
 
+/* 引用块：不用「3px 左边框强调条」——那是全库最泛滥的一块 slop。
+   改成一整面 soft tint 底（与 AIPage 的引用块 .qblock、各处提示条同一套语言：
+   靠面不靠线），tint 取 --text-1 的混合，亮暗两档各自成立。
+   连续多行引用会渲染成相邻的几个 .md-quote：相邻选择器把缝、内侧圆角与内侧
+   留白收掉，让它们读成一面底里的一段话，而不是一排碎块。 */
 .md :deep(.md-quote) {
-  padding-left: 9px;
-  border-left: 3px solid var(--line-strong);
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
   color: var(--text-2);
+}
+
+.md :deep(.md-quote + .md-quote) {
+  margin-top: 0;
+  padding-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* 后面还跟着引用的那行：下圆角与下留白一并让给段尾 */
+.md :deep(.md-quote:has(+ .md-quote)) {
+  padding-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 /* 表格：与全应用的表（.wtable / .matrix）同一套语言 —— 只有行分隔线，没有网格。

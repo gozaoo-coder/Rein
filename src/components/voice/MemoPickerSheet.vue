@@ -89,7 +89,7 @@ function fmtWhen(iso: string): string {
 .search input {
   width: 100%;
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   background: var(--surface-2);
   font-size: var(--fs-subhead);
 }
@@ -110,7 +110,7 @@ function fmtWhen(iso: string): string {
   align-items: center;
   gap: 10px;
   padding: 9px 2px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   cursor: pointer;
 }
 
@@ -125,7 +125,7 @@ function fmtWhen(iso: string): string {
 .ic {
   width: 30px;
   height: 30px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   flex: none;
   background: var(--accent-soft);
   color: var(--accent);
@@ -156,7 +156,7 @@ function fmtWhen(iso: string): string {
 
 .mt em {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 </style>

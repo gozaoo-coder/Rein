@@ -115,7 +115,7 @@ function reset(): void {
 }
 
 .box.bad {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger, #ff5257) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent);
 }
 
 .ic {
@@ -137,9 +137,9 @@ function reset(): void {
   gap: 3px;
   padding: 5px 9px;
   border-radius: var(--radius-full);
-  background: var(--surface-3, var(--line));
+  background: var(--surface-3);
   color: var(--text-2);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
 }
 
@@ -150,6 +150,6 @@ function reset(): void {
 }
 
 .hint.warn {
-  color: var(--danger, #ff5257);
+  color: var(--danger);
 }
 </style>

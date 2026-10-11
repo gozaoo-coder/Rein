@@ -105,7 +105,7 @@ onMounted(() => {
         <h2 class="gtitle">番茄钟</h2>
         <span class="num t-3">今日专注 {{ pomo.todayFocusMin }} 分钟</span>
       </header>
-      <div class="rows">
+      <div class="card sub rows">
         <NumberStepper v-model="pomo.settings.focusMin" label="专注时长" unit="分钟" :step="5" :min="5" :max="120" />
         <NumberStepper v-model="pomo.settings.breakMin" label="短休息" unit="分钟" :step="1" :min="1" :max="30" />
         <NumberStepper v-model="pomo.settings.longBreakMin" label="长休息" unit="分钟" :step="5" :min="5" :max="60" />
@@ -121,11 +121,8 @@ onMounted(() => {
       </header>
       <SegmentedControl v-model="perfChoice" class="perfseg" :options="PERF_OPTIONS" />
       <p class="pnote t-3">
-        四档都是手动钉死的固定档，不会在后台自己切。低端机选「流畅」：玻璃顶成实底、
-        关掉模糊与循环动画；「高画质」是四层毛玻璃的基线；「超高」在其上再开液态玻璃，
-        折射走塌缩管线（全程序只有这一条链，10 个原语降到 3 个）；「极致」与超高的折射
-        管线完全相同，差别只在材质 —— 光学层更深一档，并把玻璃材质铺到卡片、抽屉、
-        菜单、操作面板与快捷磁贴，材质分层对齐苹果的 Liquid Glass 规范。
+        四档都是固定的，不会在后台自己切。低端机选「流畅」：玻璃顶成实底、关掉模糊与循环动画；
+        其余三档画质逐档更透，也更吃性能；跑不动时会自动往下降一档。
       </p>
 
       <button class="frow row" @click="router.push({ name: 'settings-perf' })">
@@ -148,13 +145,11 @@ onMounted(() => {
       </header>
       <SegmentedControl v-model="motionChoice" class="perfseg" :options="MOTION_OPTIONS" />
       <p class="pnote t-3">
-        「默认」就是现在这一套，不加任何装饰；「丰富」在它之上再加液态玻璃的动作 ——
-        底栏与分段控件的液态融合与形变、跟随按压点的定向光晕、抽屉与菜单的透镜式进出、
-        页头随滚动收缩与还原。「关闭」不做任何补间：状态直接切换，循环动画也停住。
+        「默认」就是现在这一套，不加装饰；「丰富」多加液态动作；「关闭」不做补间，状态直接切换。
+        画质档位管「玻璃画不画得出来」，这里管「界面动不动」——两件事互不影响。
       </p>
       <p class="pnote t-3">
-        动效与画质互不影响：画质档位管的是「这块玻璃画不画得出来」，这里管的是
-        「界面要不要动」。掉帧降级时丰富档会自动退回默认，不会一边掉帧一边加合成。
+        选「丰富」后如果一直掉帧，会自动退回「默认」，不会一边掉帧一边加重负担。
       </p>
     </section>
 
@@ -229,7 +224,8 @@ onMounted(() => {
   color: var(--text-2);
 }
 
-.ghead + .rows {
+/* 番茄钟卡内行组与卡头之间恒为 4px（.rows 成了 .card.sub，原来的 .ghead + .rows 4px 保留） */
+.ghead + .card.sub {
   margin-top: 4px;
 }
 
@@ -271,12 +267,8 @@ onMounted(() => {
   text-overflow: ellipsis;
 }
 
-/* 设置行组：行间细线，首行不留线 */
-.rows {
-  display: grid;
-  grid-template-columns: 1fr;
-}
-
+/* 设置行组：整组垫在 .card.sub 那口浅井上（底 / 圆角 / 内距 / 无影都在 base.css 里），
+   这里只留「行间细线，首行不留线」这一条分组自己的规则 */
 .rows > * + * {
   border-top: 0.5px solid var(--line);
 }
@@ -298,9 +290,10 @@ onMounted(() => {
   border-top: 0.5px solid var(--line);
 }
 
+/* 说明段（.pnote）解释的是「这档是干什么的、会怎样」，属于要读的正文，不吃 11px */
 .pnote {
   margin-top: 10px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.7;
 }
 </style>

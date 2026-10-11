@@ -23,6 +23,20 @@ import type { PairStatus, SyncPeerInfo, SyncRunResult, SyncRunStats, SyncStatus 
  */
 const { toast } = useToast()
 
+/** 同步链上的失败只给一句平白中文，原始错误进控制台 ——
+ *  Rust 侧的错误串（端口占用 / 打洞超时 / 密文校验失败…）是给开发看的诊断信息，
+ *  原样进 toast 只会把「配对失败」说成一串英文路径与行号。 */
+const SYNC_ERRORS = {
+  pairStart: '开码失败，请重试',
+  pairClaim: '配对失败，请重试',
+  run: '同步没成功，请稍后重试',
+} as const
+
+function failToast(key: keyof typeof SYNC_ERRORS, e: unknown): void {
+  console.warn(`[sync] ${key} 失败`, e)
+  toast(SYNC_ERRORS[key])
+}
+
 const status = ref<SyncStatus | null>(null)
 const busy = ref(false)
 const offer = ref<string | null>(null)
@@ -118,7 +132,7 @@ async function pairStart(): Promise<void> {
     // 另一台输完码这边就该收尾；过期由服务端判，这里只管问
     pollTimer = window.setInterval(() => void pollOnce(), 2000)
   } catch (e) {
-    toast(`开码失败：${String(e)}`)
+    failToast('pairStart', e)
   } finally {
     busy.value = false
   }
@@ -148,7 +162,7 @@ async function claim(): Promise<void> {
     await refresh()
     toast(`配对完成：${st.peer?.name || '已加入同步组'}`)
   } catch (e) {
-    toast(`配对没成：${String(e)}`)
+    failToast('pairClaim', e)
   } finally {
     busy.value = false
   }
@@ -162,7 +176,7 @@ async function runNow(): Promise<void> {
     await syncService.run()
   } catch (e) {
     busy.value = false
-    toast(`同步起不来：${String(e)}`)
+    failToast('run', e)
     return
   }
   // 结果由 sync://result 事件送回来；万一事件没到（例如浏览器里的 mock），
@@ -202,9 +216,12 @@ onMounted(async () => {
     const first = payload.stats?.[0] ?? null
     lastRun.value = first
     if (payload.error) {
-      toast(`同步失败：${payload.error}`)
+      // 结果事件里的 error 同样是诊断串：控制台留原文，toast 只说结论
+      console.warn('[sync] 同步结果返回错误', payload.error)
+      toast('同步没成功，请稍后重试')
     } else if (payload.errors && payload.errors.length > 0) {
-      toast(`部分设备没同步成：${payload.errors.join('；')}`)
+      console.warn('[sync] 部分设备同步失败', payload.errors)
+      toast('部分设备没同步成，请稍后重试')
     } else if (first) {
       toast(`${first.pathLabel} · 收到 ${first.applied} 条，用时 ${secs(first.ms)} 秒`)
     } else {
@@ -233,7 +250,7 @@ onUnmounted(() => {
     <!-- 本机 -->
     <section class="card">
       <h2 class="gtitle">本机</h2>
-      <div class="rows">
+      <div class="card sub rows">
         <div class="frow row">
           <i class="fic"><Smartphone :size="17" /></i>
           <span class="col ftxt">
@@ -274,7 +291,7 @@ onUnmounted(() => {
       />
 
       <template v-else>
-        <div class="rows">
+        <div class="card sub rows">
           <button v-for="p in peers" :key="p.device" class="frow row" @click="openPeer(p)">
             <i class="fic"><Link2 :size="17" /></i>
             <span class="col ftxt">
@@ -298,7 +315,7 @@ onUnmounted(() => {
     <!-- 加一台设备：桌面上通栏后内部再分两栏（见 .desk-main 那段注释） -->
     <section class="card d-full add-card">
       <h2 class="gtitle">加一台设备</h2>
-      <div class="rows">
+      <div class="card sub rows">
         <div class="frow row">
           <i class="fic"><KeyRound :size="17" /></i>
           <span class="col ftxt">
@@ -354,10 +371,9 @@ onUnmounted(() => {
   color: var(--text-2);
 }
 
-/* 分组行：行间细线，首行不留线（与设置页同一套） */
+/* 分组行：整组挂在 .card.sub 那口浅井上（底 / 圆角 / 内距 / 无影都在 base.css 里），
+   这里只留「行间细线，首行不留线」与卡头之下那 4px（与设置页同一套） */
 .rows {
-  display: grid;
-  grid-template-columns: 1fr;
   margin-top: 4px;
 }
 
@@ -438,7 +454,7 @@ onUnmounted(() => {
   padding: 10px 16px;
   border-radius: var(--radius-full);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: var(--fs-body);
   font-weight: 600;
   transition: opacity var(--dur-fast) var(--ease-standard);
@@ -477,9 +493,10 @@ onUnmounted(() => {
   font-size: var(--fs-caption);
 }
 
+/* 说明段：解释的是机制而非状态，字号同设置页（≥12px） */
 .pnote {
   margin-top: 12px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.7;
 }
 
@@ -528,7 +545,7 @@ onUnmounted(() => {
 }
 
 /* 「在这台开码」与它会吐出的那串码同栏；两段说明与输入框同栏 */
-.desk-main .add-card > .rows,
+.desk-main .add-card > .card.sub,
 .desk-main .add-card > .code {
   grid-column: 1;
 }
@@ -538,7 +555,7 @@ onUnmounted(() => {
   grid-column: 2;
 }
 
-/* 右栏首行是句小字，加个与 .rows 同值的 4px 起始偏移，两栏的第一行才齐平 */
+/* 右栏首行是句小字，加个与 .card.sub 同值的 4px 起始偏移，两栏的第一行才齐平 */
 .desk-main .add-card > .pnote {
   margin-top: 4px;
 }

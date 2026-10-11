@@ -311,16 +311,18 @@ async function importPicked(): Promise<void> {
   gap: 7px;
 }
 
+/* 头部徽章：统一 token-soft（与设置页 / 同步页 / 模型页的图标章同一套），
+   整面 accent-soft 底 + accent 图标，撤掉手写渐变 hex */
 .ic {
   width: 26px;
   height: 26px;
   border-radius: var(--radius-s);
   flex: none;
-  background: linear-gradient(135deg, #2f6bff, #5ac8fa);
-  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .head-card b {
@@ -330,7 +332,7 @@ async function importPicked(): Promise<void> {
 
 .chip {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
   border-radius: var(--radius-full);
   padding: 3px 9px;
@@ -347,8 +349,8 @@ async function importPicked(): Promise<void> {
 }
 
 .chip-warn {
-  background: color-mix(in srgb, var(--danger, #ff5257) 14%, transparent);
-  color: var(--danger, #ff5257);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 
 .acct {
@@ -369,7 +371,7 @@ async function importPicked(): Promise<void> {
   gap: 5px;
   font-size: var(--fs-caption);
   line-height: 1.5;
-  color: var(--danger, #ff5257);
+  color: var(--danger);
   word-break: break-all;
 }
 
@@ -422,7 +424,7 @@ async function importPicked(): Promise<void> {
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-1);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   transition: transform var(--dur-fast) var(--ease-standard);
 }
@@ -490,7 +492,7 @@ async function importPicked(): Promise<void> {
 .tick.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .mt b {
@@ -502,7 +504,7 @@ async function importPicked(): Promise<void> {
 
 .mt em {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 
@@ -528,7 +530,7 @@ async function importPicked(): Promise<void> {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   color: var(--text-3);
   margin-bottom: 4px;
 }
@@ -546,7 +548,7 @@ async function importPicked(): Promise<void> {
 
 .steps code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   background: var(--surface-2);
   border-radius: var(--radius-xs);
   padding: 1px 4px;

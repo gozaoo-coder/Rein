@@ -223,7 +223,7 @@ function capTone(v: boolean | null): string {
 
 .chip-def,
 .chip-onl {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 800;
   padding: 2px 7px;
   border-radius: var(--radius-full);
@@ -253,6 +253,7 @@ function capTone(v: boolean | null): string {
 }
 
 .act {
+  position: relative;
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -267,8 +268,16 @@ function capTone(v: boolean | null): string {
   opacity: 0.4;
 }
 
+/* 30 的圆钮命中区纵向撑到 44；横向不外扩 —— 同排四颗只隔 2px，
+   再扩就会把相邻那颗的点击吃到自己里。 */
+.act::after {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+
 .act .danger {
-  color: var(--danger, #ff5257);
+  color: var(--danger);
 }
 
 .caps {
@@ -280,7 +289,7 @@ function capTone(v: boolean | null): string {
 .cap {
   padding: 3px 8px;
   border-radius: var(--radius-full);
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   background: var(--surface-2);
   color: var(--text-3);
@@ -292,12 +301,12 @@ function capTone(v: boolean | null): string {
 }
 
 .cap-no {
-  background: color-mix(in srgb, var(--danger, #ff5257) 14%, transparent);
-  color: var(--danger, #ff5257);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 
 .err {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   word-break: break-all;
 }
 

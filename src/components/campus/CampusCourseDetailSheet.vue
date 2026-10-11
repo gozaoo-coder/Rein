@@ -777,7 +777,7 @@ const notes = computed(() => {
   display: grid;
   place-items: center;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);

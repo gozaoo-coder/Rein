@@ -154,6 +154,7 @@ function checkPrefix(): void {
 }
 
 .mini {
+  position: relative;
   flex: none;
   width: 30px;
   height: 30px;
@@ -166,6 +167,13 @@ function checkPrefix(): void {
 
 .mini:active {
   background: var(--line);
+}
+
+/* 密钥行里两颗 30 圆钮：纵向撑到 44，横向不外扩（两颗之间只隔 2px） */
+.mini::after {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
 }
 
 .mini:disabled {

@@ -56,6 +56,30 @@ const style = computed(
   () => adapter.value?.styles.find((s) => s.id === styleId.value) ?? adapter.value?.styles[0],
 )
 
+/**
+ * 适配器分组：注册表里带了默认服务地址的是「内置适配器」（选完就能用，地址随接入方式带出），
+ * 一条默认地址都没有、endpoint 要自己填的归「自定义」。
+ *
+ * 分组规则不是前端另抄一份名单，而是从 AdapterInfo 本身推出来的，所以后端
+ * `modules/ai/providers.rs` 的 `ADAPTERS` 现在与将来都自动一致：目前正是
+ * 火山方舟 / 阿里云百炼 / DeepSeek / 硅基流动 4 张内置 + openai-compatible 1 张自定义。
+ * 5 张纵向卡片一次平铺超出工作记忆上限，两个组头把「选谁」拆成两步
+ * （additive：卡片结构、选中态、点击行为一概不变）。
+ */
+const customAdapters = computed(() =>
+  providers.adapters.filter((a) => a.styles.every((s) => s.baseUrl === '')),
+)
+const builtinAdapters = computed(() =>
+  providers.adapters.filter((a) => !customAdapters.value.some((c) => c.id === a.id)),
+)
+/** 渲染顺序：内置在前、自定义在后；空组连组头一起不渲染 */
+const adapterGroups = computed(() =>
+  [
+    { label: '内置适配器', items: builtinAdapters.value },
+    { label: '自定义', items: customAdapters.value },
+  ].filter((g) => g.items.length > 0),
+)
+
 watch(
   () => props.open,
   (open) => {
@@ -181,25 +205,29 @@ async function onDelete(value: string): Promise<void> {
 <template>
   <SheetModal :open="open" :title="editing ? '编辑提供商' : '添加提供商'" initial-snap="large" @close="emit('close')">
     <div class="form">
-      <!-- 适配器：新建时可选；编辑时锁定（换适配器等于换一个账号） -->
+      <!-- 适配器：新建时可选；编辑时锁定（换适配器等于换一个账号）。
+           分两组呈现（内置 / 自定义）：卡片本身与从前逐字一致，只多两个组头。 -->
       <div class="field">
         <p class="l">适配器</p>
         <div class="adapters">
-          <button
-            v-for="a in providers.adapters"
-            :key="a.id"
-            type="button"
-            class="ad"
-            :class="{ on: a.id === adapterId, locked: editing }"
-            :disabled="editing && a.id !== adapterId"
-            @click="pickAdapter(a.id)"
-          >
-            <b>{{ a.label }}</b>
-            <small>{{ a.hint }}</small>
-            <span class="kinds">
-              <i v-for="k in a.kinds" :key="k">{{ KIND_LABEL[k] }}</i>
-            </span>
-          </button>
+          <template v-for="(g, gi) in adapterGroups" :key="`${gi}-${g.label}`">
+            <p class="grp">{{ g.label }}</p>
+            <button
+              v-for="a in g.items"
+              :key="a.id"
+              type="button"
+              class="ad"
+              :class="{ on: a.id === adapterId, locked: editing }"
+              :disabled="editing && a.id !== adapterId"
+              @click="pickAdapter(a.id)"
+            >
+              <b>{{ a.label }}</b>
+              <small>{{ a.hint }}</small>
+              <span class="kinds">
+                <i v-for="k in a.kinds" :key="k">{{ KIND_LABEL[k] }}</i>
+              </span>
+            </button>
+          </template>
         </div>
       </div>
 
@@ -362,6 +390,14 @@ async function onDelete(value: string): Promise<void> {
   gap: 8px;
 }
 
+/* 组头：比字段标签再降一档（小号 + --text-3），把 5 张卡片拆成「内置 / 自定义」两步，
+   而不是靠卡片本身的边框或缩进去扮演分组（那会改变卡片自己的视觉重量） */
+.grp {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-3);
+}
+
 .ad {
   display: flex;
   flex-direction: column;
@@ -400,11 +436,11 @@ async function onDelete(value: string): Promise<void> {
 
 .kinds i {
   font-style: normal;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   font-weight: 700;
   padding: 2px 7px;
   border-radius: var(--radius-full);
-  background: var(--surface-3, var(--line));
+  background: var(--surface-3);
   color: var(--text-2);
 }
 
@@ -479,7 +515,7 @@ async function onDelete(value: string): Promise<void> {
   gap: 6px;
   padding: 11px 0;
   border-radius: var(--radius-m);
-  color: var(--danger, #ff5257);
+  color: var(--danger);
   font-size: var(--fs-footnote);
   font-weight: 700;
 }
@@ -495,7 +531,7 @@ async function onDelete(value: string): Promise<void> {
 }
 
 .note.bad {
-  color: var(--danger, #ff5257);
+  color: var(--danger);
 }
 
 .hint {
@@ -505,7 +541,7 @@ async function onDelete(value: string): Promise<void> {
 
 .hint code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   background: var(--surface-2);
   border-radius: var(--radius-xs);
   padding: 1px 4px;
