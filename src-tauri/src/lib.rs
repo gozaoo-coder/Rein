@@ -39,10 +39,16 @@ pub fn run() {
             // 知识库：状态 + 后台索引线程。
             // 索引线程要读写与应用同一份数据库，所以先完成 db::init（其中的迁移已建好 kb_* 表）
             // 并把状态 manage 进去，再启动线程。
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| format!("无法定位应用数据目录：{e}"))?;
+            // 数据目录与 db::init 同源（认 REIN_DATA_DIR 开关）：测试实例的 rein.db、
+            // voice_sessions、同步状态必须整袋搬走，不能一半在生产目录里。
+            let data_dir = crate::db::data_dir(app.handle())?;
+            // 隔离实例的录音播放：tauri.conf.json 的 asset 协议白名单写死了
+            // $APPDATA/voice_sessions/*，隔离目录不在其内，录音会被 403 播不出来。
+            // 运行时补上这一条 —— 只在隔离时补，不悄悄放宽生产实例的作用域。
+            if crate::db::isolated() {
+                app.asset_protocol_scope()
+                    .allow_directory(data_dir.join("voice_sessions"), true)?;
+            }
             let hub = std::sync::Arc::new(modules::kb::worker::KbHub::new(data_dir.clone()));
             hub.start(app.handle().clone());
             app.manage(hub);

@@ -8,12 +8,68 @@ use tauri::Manager;
 
 use crate::error::{ReinError, Result};
 
+use std::path::PathBuf;
+
+/// 数据目录整体搬家的环境变量。桌面端有效；未设置时行为与从前一字不差。
+pub const DATA_DIR_ENV: &str = "REIN_DATA_DIR";
+
+/// 应用数据目录解析——**全应用只认这一处**，各域不许再各自 `app_data_dir()`。
+///
+/// 为什么需要它：真机探针（`scripts/voice-real-release-probe.mjs` 等）会直接拉起
+/// release exe，用的却是与用户真身账号完全相同的数据目录——测试录音、冒烟训练
+/// 全落进 rein.db，用户在自己库里翻到一堆测试数据（2026-10-10 事故）。有了这个开关，
+/// 探针 / CI / 手动冒烟可以把**整个**数据目录（rein.db、voice_sessions、sync_*、
+/// updates、rescue 脚本）指到一处临时目录，与生产库物理隔离。
+///
+/// 契约：
+/// - 未设置（或空串 / 纯空白）= 走 Tauri 的 `app_data_dir()`，用户真身路径；
+/// - 设置了 = **只认它**，且目录建不出来就直接报错——绝不静默回退到生产目录。
+///   一个拼错的环境变量若是悄悄写进用户真库，比启动失败危险得多；
+/// - 相对路径按当前工作目录拼成绝对路径（exe 的 CWD 随启动方式变，不能赌）。
+pub fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
+    match env_override(std::env::var(DATA_DIR_ENV).ok()).as_deref() {
+        Some(raw) => resolve_override_dir(raw),
+        None => app
+            .path()
+            .app_data_dir()
+            .map_err(|e| ReinError::Message(format!("无法定位应用数据目录：{e}"))),
+    }
+}
+
+/// 本次运行是否跑在隔离数据目录里。供按需放宽**运行时**作用域用
+/// （如 asset 协议：tauri.conf.json 里的白名单写死了 `$APPDATA/voice_sessions/*`，
+/// 隔离目录不在其内；见 lib.rs 的补作用域逻辑）。
+pub fn isolated() -> bool {
+    env_override(std::env::var(DATA_DIR_ENV).ok()).is_some()
+}
+
+/// 环境值清洗：空串 / 纯空白视为没设 —— shell 里 `set REIN_DATA_DIR=` 是常事，
+/// 它必须被当作「用真身目录」而不是「根目录」。
+fn env_override(raw: Option<String>) -> Option<String> {
+    raw.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// 「设了开关」这一边：只认环境变量，建不出目录就报错——绝不回退生产目录。
+fn resolve_override_dir(raw: &str) -> Result<PathBuf> {
+    let mut dir = PathBuf::from(raw.trim());
+    if !dir.is_absolute() {
+        let cwd = std::env::current_dir().map_err(|e| {
+            ReinError::Message(format!("REIN_DATA_DIR 是相对路径且读不到工作目录：{e}"))
+        })?;
+        dir = cwd.join(dir);
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        ReinError::Message(format!(
+            "REIN_DATA_DIR 指向的目录创建失败（{e}）：{}\n（不回退到生产数据目录——请修正路径后重试）",
+            dir.display()
+        ))
+    })?;
+    Ok(dir)
+}
+
 /// 打开（必要时创建）应用数据目录下的 SQLite 库，并完成迁移与种子。
 pub fn init(app: &tauri::AppHandle) -> Result<Connection> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| ReinError::Message(format!("无法定位应用数据目录：{e}")))?;
+    let dir = data_dir(app)?;
     std::fs::create_dir_all(&dir)?;
 
     let conn = Connection::open(dir.join("rein.db"))?;
@@ -1704,4 +1760,63 @@ fn migrate(conn: &Connection) -> Result<()> {
         ))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod data_dir_tests {
+    use super::*;
+
+    /// 空串 / 纯空白 = 没设开关。shell 里 `set REIN_DATA_DIR=` 是常事，
+    /// 它必须被当作「用真身目录」而不是「根目录」。
+    #[test]
+    fn blank_env_counts_as_unset() {
+        for raw in [None, Some("".to_string()), Some("   ".to_string()), Some("\t\n".to_string())] {
+            assert_eq!(env_override(raw), None, "空值应视为未设置");
+        }
+        assert_eq!(
+            env_override(Some("  C:\\scratch  ".to_string())),
+            Some("C:\\scratch".to_string()),
+            "有值时应去掉两端空白"
+        );
+    }
+
+    /// 绝对路径原样采用（Windows 下反斜杠、盘符都不过滤），且目录要真被建出来——
+    /// 生产路径不预建就开不了库。
+    #[test]
+    fn absolute_override_used_verbatim_and_created() {
+        let base = std::env::temp_dir().join(format!("rein-datadir-{}", std::process::id()));
+        let target = base.join("nested").join("scratch");
+        let _ = std::fs::remove_dir_all(&base);
+
+        let dir = resolve_override_dir(target.to_str().unwrap()).unwrap();
+        assert_eq!(dir, target, "隔离目录必须原样生效，不能悄悄改写");
+        assert!(target.is_dir());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 相对路径按 CWD 拼绝对 —— exe 的工作目录随启动方式变，不能赌。
+    #[test]
+    fn relative_override_becomes_absolute() {
+        let dir = resolve_override_dir("rein-scratch").unwrap();
+        assert!(dir.is_absolute(), "相对路径必须先拼成绝对路径");
+        assert_eq!(dir.file_name().unwrap(), "rein-scratch");
+    }
+
+    /// 建不出来的目录必须报错（且错误里带上路径）——静默回退到生产目录
+    /// 正是 2026-10-10 事故的成因，这条契约不能破。
+    #[test]
+    fn uncreatable_dir_errors_instead_of_falling_back() {
+        // 用一个**文件**当目录：create_dir_all 必失败
+        let file = std::env::temp_dir().join(format!("rein-notadir-{}", std::process::id()));
+        std::fs::write(&file, b"x").unwrap();
+        let err = resolve_override_dir(file.to_str().unwrap()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("REIN_DATA_DIR"), "错误应点名环境变量：{msg}");
+        assert!(
+            msg.contains(&file.display().to_string()),
+            "错误应带上坏路径：{msg}"
+        );
+        let _ = std::fs::remove_file(&file);
+    }
 }

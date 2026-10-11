@@ -28,10 +28,9 @@ use super::{
 const REFRESH_BUDGET: Duration = Duration::from_millis(1500);
 
 /// 应用数据目录 = 模态本体的根（workspace/media 与语音 wav 都在它下面）。
+/// 与 db::init 同源（认 REIN_DATA_DIR 开关），测试实例整袋隔离。
 fn data_root(app: &AppHandle) -> Result<PathBuf> {
-    app.path()
-        .app_data_dir()
-        .map_err(|e| ReinError::Message(format!("无法定位应用数据目录：{e}")))
+    crate::db::data_dir(app)
 }
 
 fn parse_tags(raw: &str) -> Vec<String> {

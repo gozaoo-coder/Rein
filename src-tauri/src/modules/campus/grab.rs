@@ -2932,7 +2932,7 @@ fn active_task_exists(conn: &Connection, account_id: i64, turn_id: &str, lesson_
 /// 「投递了半天没反应」是最难查的一种故障，不能让它在静默里发生。
 /// 解析不了的文件会被挪成 `.bad.json`：不重试、不瘫痪引擎，原件还在，能查。
 fn drain_intake(app: &AppHandle, account_id: i64) -> Option<String> {
-    let dir = app.path().app_data_dir().ok()?;
+    let dir = crate::db::data_dir(app).ok()?;
     let path = dir.join(INTAKE_FILE);
     if !path.exists() {
         return None;

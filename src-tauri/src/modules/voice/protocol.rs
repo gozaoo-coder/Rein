@@ -100,12 +100,7 @@ impl AsrEvent {
 }
 
 pub fn voice_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
-    use tauri::Manager;
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| ReinError::Message(format!("应用数据目录不可用：{e}")))?
-        .join("voice_sessions");
+    let dir = crate::db::data_dir(app)?.join("voice_sessions");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }

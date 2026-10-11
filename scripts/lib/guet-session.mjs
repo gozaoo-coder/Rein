@@ -32,9 +32,13 @@ export const TOKEN_EXPIRED = '选课令牌已失效'
 
 export const DEFAULT_BASE = 'https://bkjwtest.guet.edu.cn'
 
-/** 本地 App 数据库。账号是唯一事实来源，工具只读。 */
+/** 本地 App 数据库。账号是唯一事实来源，工具只读。
+ *  设了 REIN_DATA_DIR 就跟隔离实例的库走（App 端同一个开关）。 */
 export function defaultDbPath() {
-  return path.join(process.env.APPDATA ?? '', 'com.gozaoo.rein', 'rein.db')
+  return path.join(
+    process.env.REIN_DATA_DIR ?? path.join(process.env.APPDATA ?? '', 'com.gozaoo.rein'),
+    'rein.db',
+  )
 }
 
 /* ─────────────────────────── 登录公钥 ─────────────────────────── */

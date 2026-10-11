@@ -13,6 +13,12 @@
  *
  * 前置：`npm run app:dev` 已起（带上面的环境变量）
  * 运行：node scripts/e2e-app-campus.mjs
+ *
+ * **数据隔离（2026-10-10 加）**：app:dev 起的实例默认用与用户真身账号相同的
+ * %APPDATA%/com.gozaoo.rein——这里的登录与同步会真实写进用户的 rein.db。
+ * 要跑隔离实例，起 app:dev 时设 REIN_DATA_DIR 指向临时目录即可
+ * （exe/dev 同一条路，见 src-tauri/src/db.rs 的 data_dir）：
+ *   REIN_DATA_DIR=%TEMP%\rein-e2e-app-data npm run app:dev
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { presetFeatureFlags } from './lib/features.mjs'

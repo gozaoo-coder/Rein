@@ -95,11 +95,7 @@ fn snapshot(app: &AppHandle, state: &AppState, hub: &UpdateHub) -> UpdateSnapsho
 }
 
 fn updates_dir(app: &AppHandle) -> Result<PathBuf> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| ReinError::Message(format!("无法定位应用数据目录：{e}")))?
-        .join("updates");
+    let dir = crate::db::data_dir(app)?.join("updates");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }

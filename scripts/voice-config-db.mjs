@@ -1,8 +1,16 @@
-/** 检查/预写 voice_config 到桌面 App DB（App 停止时执行） */
+/** 检查/预写 voice_config 到桌面 App DB（App 停止时执行）
+ *
+ * 数据隔离：设了 REIN_DATA_DIR 就写隔离实例（与 voice-real-release-probe.mjs 拉起
+ * 的 exe 同一个值），没设才写生产库 %APPDATA%/com.gozaoo.rein/rein.db。
+ */
 import { DatabaseSync } from 'node:sqlite'
 import { readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
 
-const DB = `${process.env.APPDATA}/com.gozaoo.rein/rein.db`
+const DB = path.join(
+  process.env.REIN_DATA_DIR ?? `${process.env.APPDATA}/com.gozaoo.rein`,
+  'rein.db',
+)
 const db = new DatabaseSync(DB)
 
 const cmd = process.argv[2] ?? 'get'

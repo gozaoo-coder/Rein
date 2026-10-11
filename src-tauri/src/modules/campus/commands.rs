@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use chrono::{Datelike, Duration, Local, NaiveDate, Utc};
 use rusqlite::Connection;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
 use crate::error::{ReinError, Result};
 use crate::state::{AppState, CampusHub, CourseSelectToken, Db, PendingLogin};
@@ -3367,11 +3367,7 @@ pub fn campus_curl_export(
         },
     );
 
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| ReinError::Message(format!("无法定位应用数据目录：{e}")))?
-        .join("rescue");
+    let dir = crate::db::data_dir(&app)?.join("rescue");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("rescue-{}.sh", Local::now().format("%Y%m%d-%H%M%S")));
     std::fs::write(&path, script.as_bytes())?;
