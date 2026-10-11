@@ -1,10 +1,12 @@
 {
   "name": "rein",
   "private": true,
-  "version": "0.5.16",
+  "version": "0.5.17",
   "description": "Rein · 全能生活助理（Tauri + Vue + Rust）",
   "type": "module",
   "scripts": {
+    "sweep-temp": "node scripts/sweep-temp.mjs",
+    "predev": "node scripts/sweep-temp.mjs",
     "dev": "vite",
     "build": "vue-tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview",
@@ -14,6 +16,7 @@
     "heic:fixture": "node scripts/fetch-heic-fixture.mjs",
     "icon": "node scripts/gen-icon.mjs",
     "tauri": "tauri",
+    "preapp:dev": "node scripts/sweep-temp.mjs",
     "app:dev": "tauri dev",
     "app:build": "tauri build"
   },
