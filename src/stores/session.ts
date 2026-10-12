@@ -14,6 +14,7 @@ import { defineStore } from 'pinia'
 
 import { sessionService } from '@/services/sessionService'
 import { estimateKcal } from '@/config/domain'
+import { useToast } from '@/composables/useToast'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useExerciseStore } from '@/stores/exercise'
 import { useNutritionStore } from '@/stores/nutrition'
@@ -88,6 +89,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   /** 最近一次落盘失败（SessionPage 顶部显示警示，不阻塞训练） */
   const persistError = ref('')
+  /**
+   * 最近一次结束/放弃动作本身失败（写库未成功）。与 persistError 同族：
+   * 失败原样抛给调用点 toast 原因，本地**不**收尾 —— 层与总结态保留、会话
+   * 仍 active，用户可原样重试（同一 sessionId）。
+   */
+  const finishError = ref('')
 
   /** 检测到 active 会话但不属于训练课（如跑步）时，指引用户前往的正确页面 */
   const foreignRoute = ref<string | null>(null)
@@ -469,46 +476,58 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   /**
    * 开始新训练。已有进行中会话时返回 'conflict'（conflictRoute 指向应接续的
    * 页面：训练课 /session 或跑步 /session/run），由调用方给出「前往继续」。
+   *
+   * 失败回执：本函数内可抛的 await 有三处（getActive / 建议与上次重量 /
+   * session_start），统一在此 toast 一条「开课失败：<原因>」再原样抛出 ——
+   * 提示方式由 store 决定、service 层不吞错（ARCHITECTURE §3）；调用方只需
+   * catch 复位按钮，无需各自再提示。
    */
   async function start(p: WorkoutPlan): Promise<'ok' | 'conflict'> {
-    const existing = await sessionService.getActive()
-    if (existing) {
-      if (existing.planId === RUN_PLAN_ID) {
-        foreignRoute.value = '/session/run'
+    try {
+      const existing = await sessionService.getActive()
+      if (existing) {
+        if (existing.planId === RUN_PLAN_ID) {
+          foreignRoute.value = '/session/run'
+          return 'conflict'
+        }
+        await applyRecord(existing)
         return 'conflict'
       }
-      await applyRecord(existing)
-      return 'conflict'
+      // 深拷贝动作列表：会话内允许临时换动作，不能直接改 planStore 里那份课程
+      plan.value = { ...p, exercises: p.exercises.map(cloneExercise) }
+      sessionId.value = null
+      startedAtIso.value = new Date().toISOString()
+      exIndex.value = 0
+      setIndex.value = 1
+      doneSets.value = {}
+      extraSets.value = {}
+      skippedSets.value = {}
+      restIsTemp.value = false
+      restWarmup.value = false
+      readiness.value = null
+      advice.value = null
+      finishError.value = ''
+      await Promise.all([
+        loadAdvice(), // 建议要在预填之前算好（weightFor 以它为先）
+        loadLastWeights(p.exercises.map((e) => e.exerciseId)),
+      ])
+      weight.value = p.exercises[0] ? weightFor(p.exercises[0]) : 0
+      const rec = await sessionService.start({
+        planId: p.id,
+        planName: p.name,
+        startedAt: startedAtIso.value,
+        state: { doneSets: {}, exIndex: 0, setIndex: 1, weight: weight.value, phase: 'exercise' },
+      })
+      sessionId.value = rec.id
+      beginExercise()
+      await persist()
+      void usePlanStore().touch(p.id) // 维护「最近使用」排序
+      return 'ok'
+    } catch (e: unknown) {
+      // 只发一次、成功路径不发；写库未开始/已开始都不构成残留（session_start 未返回即无 active 行）
+      useToast().toast(`开课失败：${e instanceof Error ? e.message : String(e)}`)
+      throw e
     }
-    // 深拷贝动作列表：会话内允许临时换动作，不能直接改 planStore 里那份课程
-    plan.value = { ...p, exercises: p.exercises.map(cloneExercise) }
-    sessionId.value = null
-    startedAtIso.value = new Date().toISOString()
-    exIndex.value = 0
-    setIndex.value = 1
-    doneSets.value = {}
-    extraSets.value = {}
-    skippedSets.value = {}
-    restIsTemp.value = false
-    restWarmup.value = false
-    readiness.value = null
-    advice.value = null
-    await Promise.all([
-      loadAdvice(), // 建议要在预填之前算好（weightFor 以它为先）
-      loadLastWeights(p.exercises.map((e) => e.exerciseId)),
-    ])
-    weight.value = p.exercises[0] ? weightFor(p.exercises[0]) : 0
-    const rec = await sessionService.start({
-      planId: p.id,
-      planName: p.name,
-      startedAt: startedAtIso.value,
-      state: { doneSets: {}, exIndex: 0, setIndex: 1, weight: weight.value, phase: 'exercise' },
-    })
-    sessionId.value = rec.id
-    beginExercise()
-    await persist()
-    void usePlanStore().touch(p.id) // 维护「最近使用」排序
-    return 'ok'
   }
 
   /** 动作浅拷贝（热身组与肌群表也复制一层，保证会话内改动不外溢到课程库） */
@@ -1000,24 +1019,37 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     const noteParts = [`${done}/${total} 组完成`]
     if (done < total) noteParts.push('提前结束')
     if (volume > 0) noteParts.push(`总容量约 ${volume} kg`)
-    await sessionService.finish({
-      id: sessionId.value,
-      name: plan.value.name,
-      workoutType: plan.value.workoutType,
-      date: todayStr(),
-      durationMin: duration,
-      intensity: 'moderate',
-      kcal,
-      note: noteParts.join(' · '),
-      sets: buildSetRows(),
-    })
+    try {
+      await sessionService.finish({
+        id: sessionId.value,
+        name: plan.value.name,
+        workoutType: plan.value.workoutType,
+        date: todayStr(),
+        durationMin: duration,
+        intensity: 'moderate',
+        kcal,
+        note: noteParts.join(' · '),
+        sets: buildSetRows(),
+      })
+    } catch (e) {
+      // 写库本身失败：记态并原样抛，调用点 toast 原因；本地不收尾，会话仍 active 可重试
+      finishError.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+    finishError.value = ''
     const result = { durationMin: duration, kcal, volume, done }
     const exStore = useExerciseStore()
-    await Promise.all([
-      exStore.loadWeek(todayStr()),
-      useNutritionStore().loadSummary(todayStr()),
-    ])
-    exStore.bumpStrength() // 力量曲线卡失效缓存重拉（页面常驻后不再靠重挂载刷新）
+    try {
+      await Promise.all([
+        exStore.loadWeek(todayStr()),
+        useNutritionStore().loadSummary(todayStr()),
+      ])
+      exStore.bumpStrength() // 力量曲线卡失效缓存重拉（页面常驻后不再靠重挂载刷新）
+    } catch (e) {
+      // 结束语义已达成（记录已落库）：刷新失败只给非阻塞提示，绝不阻断本地收尾
+      console.warn('[session] 保存后刷新失败', e)
+      useToast().toast('已保存，但统计刷新失败')
+    }
     endLocal()
     return result
   }
@@ -1030,7 +1062,13 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   /** 外部放弃（如主页恢复卡） */
   async function discardById(id: number): Promise<void> {
-    await sessionService.abort(id)
+    try {
+      await sessionService.abort(id)
+    } catch (e) {
+      // 同 finishAndSave：放弃失败也保留会话与总结态，供原样重试
+      finishError.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
     if (sessionId.value === id) endLocal()
   }
 
@@ -1048,6 +1086,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     reps.value = null
     extraSets.value = {}
     skippedSets.value = {}
+    finishError.value = ''
   }
 
   /* ---------- 中断恢复 ---------- */
@@ -1210,6 +1249,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     timedElapsed,
     overlay,
     persistError,
+    finishError,
     foreignRoute,
     currentEx,
     exDoneSets,

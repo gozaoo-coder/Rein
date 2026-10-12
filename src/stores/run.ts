@@ -16,6 +16,7 @@ import { defineStore } from 'pinia'
 import { EXERCISE_KCAL_GOAL, estimateRunKcal } from '@/config/domain'
 import { sessionService } from '@/services/sessionService'
 import { trackingService } from '@/services/trackingService'
+import { useToast } from '@/composables/useToast'
 import { useExerciseStore } from '@/stores/exercise'
 import { useNutritionStore } from '@/stores/nutrition'
 import { todayStr } from '@/utils/date'
@@ -42,6 +43,11 @@ export const useRunStore = defineStore('run', () => {
   const distanceM = ref(0)
   const gpsStatus = ref<GpsStatus>('off')
   const persistError = ref('')
+  /**
+   * 最近一次保存/放弃本身失败（写库未成功）。与 persistError 同族：原样抛给
+   * 调用点 toast 原因，本地**不**收尾 —— 总结态保留、会话仍 active，可原样重试。
+   */
+  const finishError = ref('')
   /** 服务端存在进行中的训练课（非跑步）→ RunPage 弹「前往继续」 */
   const courseConflict = ref(false)
   /** 轨迹面包屑（仅 running 时记录；t=累计运动毫秒、alt=GPS 海拔，供详情页分段配速/爬升） */
@@ -339,22 +345,35 @@ export const useRunStore = defineStore('run', () => {
     if (paceSec != null) noteParts.push(`配速 ${fmtPace(paceSec)}`)
     if (manualKm != null && finalKm !== km.value) noteParts.push('距离手动补填')
     if (sessionId.value) {
-      await sessionService.finish({
-        id: sessionId.value,
-        name: '户外跑',
-        workoutType: 'run',
-        date: todayStr(),
-        durationMin,
-        intensity: tier,
-        kcal: kcalFinal,
-        note: noteParts.length > 0 ? noteParts.join(' · ') : null,
-        sets: [], // 跑步无逐组重量
-      })
+      try {
+        await sessionService.finish({
+          id: sessionId.value,
+          name: '户外跑',
+          workoutType: 'run',
+          date: todayStr(),
+          durationMin,
+          intensity: tier,
+          kcal: kcalFinal,
+          note: noteParts.length > 0 ? noteParts.join(' · ') : null,
+          sets: [], // 跑步无逐组重量
+        })
+      } catch (e) {
+        // 写库失败：记态并原样抛，调用点 toast 原因；本地不收尾，会话仍 active 可重试
+        finishError.value = e instanceof Error ? e.message : String(e)
+        throw e
+      }
+      finishError.value = ''
     }
-    await Promise.all([
-      useExerciseStore().loadWeek(todayStr()),
-      useNutritionStore().loadSummary(todayStr()),
-    ])
+    try {
+      await Promise.all([
+        useExerciseStore().loadWeek(todayStr()),
+        useNutritionStore().loadSummary(todayStr()),
+      ])
+    } catch (e) {
+      // 记录已落库、结束语义已达成：刷新失败只给非阻塞提示，绝不阻断本地收尾
+      console.warn('[run] 保存后刷新失败', e)
+      useToast().toast('已保存，但统计刷新失败')
+    }
     resetLocal()
     return { durationMin, kcal: kcalFinal, km: finalKm, paceSec }
   }
@@ -362,12 +381,25 @@ export const useRunStore = defineStore('run', () => {
   /** 放弃本次跑步（已确认）：关闭会话，不写记录 */
   async function discard(): Promise<void> {
     const id = sessionId.value
-    if (id) await sessionService.abort(id)
+    if (id) {
+      try {
+        await sessionService.abort(id)
+      } catch (e) {
+        // 同 save：放弃失败保留总结态，供原样重试
+        finishError.value = e instanceof Error ? e.message : String(e)
+        throw e
+      }
+    }
     resetLocal()
   }
 
   async function discardById(id: number): Promise<void> {
-    await sessionService.abort(id)
+    try {
+      await sessionService.abort(id)
+    } catch (e) {
+      finishError.value = e instanceof Error ? e.message : String(e)
+      throw e
+    }
     if (sessionId.value === id) resetLocal()
   }
 
@@ -384,6 +416,7 @@ export const useRunStore = defineStore('run', () => {
     paceInstantSecPerKm.value = null
     gpsStatus.value = 'off'
     persistError.value = ''
+    finishError.value = ''
     courseConflict.value = false
     phase.value = 'idle'
   }
@@ -444,6 +477,7 @@ export const useRunStore = defineStore('run', () => {
     distanceM,
     gpsStatus,
     persistError,
+    finishError,
     courseConflict,
     trackPoints,
     paceInstantSecPerKm,

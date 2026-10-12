@@ -473,10 +473,16 @@ function onEndPick(value: string): void {
   if (value === 'save') {
     void saveNow()
   } else if (value === 'discard') {
-    void s.discard().then(() => {
-      toast('已放弃本次训练')
-      closeImmersiveNow()
-    })
+    void s
+      .discard()
+      .then(() => {
+        toast('已放弃本次训练')
+        closeImmersiveNow()
+      })
+      .catch((e: unknown) => {
+        // 放弃失败：层与总结态保留，可原样再点（会话仍 active）
+        toast(e instanceof Error ? e.message : '放弃失败，请重试')
+      })
   }
 }
 
@@ -485,10 +491,15 @@ function onRestAdd(value: string): void {
 }
 
 async function saveNow(): Promise<void> {
-  const r = await s.finishAndSave()
-  if (r) toast(`已保存 ${r.done} 组 · 约 ${r.durationMin} 分钟 · ${r.kcal} 大卡`)
-  // 会话已关闭、悬浮条随之消失：直接关层，不做形变动画
-  closeImmersiveNow()
+  try {
+    const r = await s.finishAndSave()
+    if (r) toast(`已保存 ${r.done} 组 · 约 ${r.durationMin} 分钟 · ${r.kcal} 大卡`)
+    // 会话已关闭、悬浮条随之消失：直接关层，不做形变动画
+    closeImmersiveNow()
+  } catch (e: unknown) {
+    // 写库本身失败：层与总结态保留，按钮可再点（重试用同一 sessionId）
+    toast(e instanceof Error ? e.message : '保存失败，请重试')
+  }
 }
 
 /* ---------- container transform：悬浮条 ⇄ 全屏形变 ---------- */
@@ -989,8 +1000,11 @@ watch(immersiveOpen, (open) => {
     >
       <!-- 同步失败警示：留在页面流首位（**不是**滚动区里），所以永远不会被浮起的顶簇
            盖住；它占的高度由 ResizeObserver 量成 --warn-h，顶簇据此整体下移同样的距离，
-           内容区（在它之后的流里）自然也让出这一段。 -->
-      <p v-if="s.persistError" ref="warnEl" class="warn">⚠ 进度同步失败：{{ s.persistError }}</p>
+           内容区（在它之后的流里）自然也让出这一段。
+           保存/放弃失败（finishError）优先展示：它比快照失败更需要用户在原位重试。 -->
+      <p v-if="s.finishError || s.persistError" ref="warnEl" class="warn">
+        {{ s.finishError ? `⚠ 结束失败：${s.finishError}` : `⚠ 进度同步失败：${s.persistError}` }}
+      </p>
 
       <!-- 内容区（内容层：全程不透明，不参与玻璃）。上下缘用遮罩渐隐而不是硬边：
            滚到玻璃底下的内容「溶解」进背景，而不是被一条横线切断。

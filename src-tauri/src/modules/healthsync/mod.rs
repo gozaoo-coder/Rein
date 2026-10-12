@@ -53,6 +53,10 @@ pub(crate) struct Pending {
     pub max_hr: Option<f64>,
     /// 用户当前的 UTC 偏移（秒），导出方向把墙上时间折算成 Instant 用
     pub utc_offset_seconds: i64,
+    /// 本轮的读取下界（`YYYY-MM-DD`）。是 apply_pull 的唯一状态载体：
+    /// 窗口回收发生在 step（比 start 晚一拍），那时得靠它区分
+    /// 「窗口内、HC 里真的没了」和「窗口外、本轮根本没读」。
+    pub window_start: String,
     /// 本轮起草时刻：Kotlin 侧要是崩了不会有文件落地，靠它超时收场
     pub started: std::time::Instant,
 }
@@ -150,8 +154,10 @@ pub(crate) fn dispatch(webview: &tauri::Webview<tauri::Wry>, method: &'static st
             .l()?
             .into();
         let called = match arg {
-            // deleteRecord(recordId)，以及 requestPermissions(mode) / startWrite(path)
-            // —— 都走 (Context, String) 这一个签名，Kotlin 侧按方法名解释参数
+            // 带参调用点：requestPermissions(mode) 与 deleteRecord(recordId)，
+            // 以及 startRead(since) —— 都走 (Context, String) 这一个签名，
+            // Kotlin 侧按方法名解释参数。
+            // （startWrite 不走这里：它的入参是约定好的文件名，以 None 发起。）
             Some(text) => {
                 let arg = env.new_string(text)?;
                 env.call_static_method(

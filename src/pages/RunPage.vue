@@ -505,9 +505,14 @@ function onEndPick(value: string): void {
 }
 
 async function doDiscard(): Promise<void> {
-  await r.discard()
-  toast('已放弃本次跑步')
-  void router.replace('/sports')
+  try {
+    await r.discard()
+    toast('已放弃本次跑步')
+    void router.replace('/sports')
+  } catch (e) {
+    // 放弃失败：总结/暂停态保留，可原样再点（会话仍 active）
+    toast(e instanceof Error ? e.message : '放弃失败，请重试')
+  }
 }
 
 async function doSave(): Promise<void> {
@@ -516,11 +521,16 @@ async function doSave(): Promise<void> {
   // 但那依赖隐式转字符串，属于「碰巧对」，与上面两处保持同一写法。
   const parsed = Number.parseFloat(String(manualKmText.value ?? ''))
   const manualKm = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null
-  const result = await r.save(manualKm)
-  const parts = [`已保存跑步 ${result.durationMin} 分钟 · ${result.kcal} 大卡`]
-  if (result.km != null) parts.push(`${result.km.toFixed(2)} km`)
-  toast(parts.join(' · '))
-  void router.replace('/sports')
+  try {
+    const result = await r.save(manualKm)
+    const parts = [`已保存跑步 ${result.durationMin} 分钟 · ${result.kcal} 大卡`]
+    if (result.km != null) parts.push(`${result.km.toFixed(2)} km`)
+    toast(parts.join(' · '))
+    void router.replace('/sports')
+  } catch (e) {
+    // 写库本身失败：停在总结页、保留补填距离，按钮可再点（重试用同一 sessionId）
+    toast(e instanceof Error ? e.message : '保存失败，请重试')
+  }
 }
 
 function bumpKm(delta: number): void {
@@ -575,7 +585,8 @@ function bumpKm(delta: number): void {
       <span v-if="r.phase === 'paused'" class="paused-badge glass-surface">已暂停 · 计时停止</span>
     </section>
 
-    <p v-if="r.persistError" class="warn">⚠ 进度同步失败：{{ r.persistError }}</p>
+    <p v-if="r.finishError" class="warn">⚠ 结束失败：{{ r.finishError }}</p>
+    <p v-else-if="r.persistError" class="warn">⚠ 进度同步失败：{{ r.persistError }}</p>
 
     <!-- ========== 亮区 · 可拖拽抽屉 ========== -->
     <main

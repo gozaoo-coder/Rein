@@ -287,18 +287,18 @@ async function main() {
     await sleep(800)
     await evalJS(`document.querySelector('.vcfg')?.click()`)
     await waitFor(`!!document.querySelector('.form .mode-seg')`, 5000, '配置抽屉')
-    // 第一层：自动模式下输入 Qwen baseURL → 程序自动替选 Qwen 并提示
-    ok('H1 自动层：输入 qwen baseURL → 自动选中 Qwen + 提示', await (async () => {
+    // 第一层：自动模式下输入百炼 baseURL → 程序自动替选百炼并提示
+    ok('H1 自动层：输入百炼 baseURL → 自动选中百炼 + 提示', await (async () => {
       await typeInputAt(0, 'wss://dashscope.aliyuncs.com/api-ws/v1/inference')
       await sleep(400)
       return evalJS(`(() => {
         const seg = document.querySelector('.form .mode-seg')
-        const qwenOn = [...seg.querySelectorAll('button')].find(b => b.textContent === 'Qwen')?.classList.contains('on')
+        const bailianOn = [...seg.querySelectorAll('button')].find(b => b.textContent === '百炼')?.classList.contains('on')
         const notice = document.querySelector('.form .auto-notice')?.textContent ?? ''
-        return !!qwenOn && notice.includes('Qwen')
+        return !!bailianOn && notice.includes('百炼')
       })()`)
     })())
-    // 自动层换向：qwen 删了填 doubao → 撤回并改选豆包
+    // 自动层换向：百炼地址删了填 doubao → 撤回并改选豆包
     ok('H2 自动层换向：填 doubao baseURL → 自动改选豆包', await (async () => {
       await typeInputAt(0, 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_async')
       await sleep(400)
@@ -309,22 +309,22 @@ async function main() {
         return !!doubaoOn && notice.includes('豆包')
       })()`)
     })())
-    // 第二层：手动选 Qwen（touched）后 baseURL 指向 doubao → 只推荐不强改
+    // 第二层：手动选百炼（touched）后 baseURL 指向 doubao → 只推荐不强改
     ok('H3 手选层：仅弹推荐气泡，不覆盖选择', await (async () => {
       await evalJS(`(() => {
         const seg = document.querySelector('.form .mode-seg')
-        ;[...seg.querySelectorAll('button')].find(b => b.textContent === 'Qwen')?.click()
+        ;[...seg.querySelectorAll('button')].find(b => b.textContent === '百炼')?.click()
       })()`)
       await sleep(300)
-      const stillQwen = await evalJS(`(() => {
+      const stillBailian = await evalJS(`(() => {
         const seg = document.querySelector('.form .mode-seg')
-        return [...seg.querySelectorAll('button')].find(b => b.textContent === 'Qwen')?.classList.contains('on')
+        return [...seg.querySelectorAll('button')].find(b => b.textContent === '百炼')?.classList.contains('on')
       })()`)
       const bubble = await evalJS(`(() => {
         const s = document.querySelector('.form .suggestion')
         return !!s && s.textContent.includes('豆包') && !!s.querySelector('.sgo')
       })()`)
-      return stillQwen && bubble
+      return stillBailian && bubble
     })())
     ok('H4 点「切换到豆包」→ 接受推荐', await (async () => {
       await evalJS(`document.querySelector('.form .suggestion .sgo')?.click()`)
@@ -337,15 +337,15 @@ async function main() {
     ok('H5 「忽略」→ 气泡消失且选择保持', await (async () => {
       await evalJS(`(() => {
         const seg = document.querySelector('.form .mode-seg')
-        ;[...seg.querySelectorAll('button')].find(b => b.textContent === 'Qwen')?.click()
+        ;[...seg.querySelectorAll('button')].find(b => b.textContent === '百炼')?.click()
       })()`)
       await sleep(300)
       await evalJS(`document.querySelector('.form .suggestion .sgx')?.click()`)
       await sleep(300)
       return evalJS(`(() => {
         const seg = document.querySelector('.form .mode-seg')
-        const qwenOn = [...seg.querySelectorAll('button')].find(b => b.textContent === 'Qwen')?.classList.contains('on')
-        return !!qwenOn && !document.querySelector('.form .suggestion')
+        const bailianOn = [...seg.querySelectorAll('button')].find(b => b.textContent === '百炼')?.classList.contains('on')
+        return !!bailianOn && !document.querySelector('.form .suggestion')
       })()`)
     })())
     // 不保存，关闭抽屉（保持原配置给后续用例）

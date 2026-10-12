@@ -334,7 +334,7 @@ export async function startRecording(): Promise<boolean> {
   }
   if (!claimMic('voice')) {
     stopMedia()
-    voice.lastError = '麦克风被录音功能占用中'
+    voice.lastError = '麦克风被其他功能占用中'
     return false
   }
   try {

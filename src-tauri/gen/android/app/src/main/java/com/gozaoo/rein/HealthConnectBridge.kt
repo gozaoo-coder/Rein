@@ -40,6 +40,7 @@ import org.json.JSONObject
 import java.io.File
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import kotlin.reflect.KClass
@@ -84,6 +85,16 @@ object HealthConnectBridge {
 
   /** 数据起点：运动会话读「有记录以来」。HC 里不可能有 2000 年以前的运动记录。 */
   private val EPOCH: Instant = Instant.parse("2000-01-01T00:00:00Z")
+
+  /**
+   * 会话读取下界的前移量。Rust 传来的下界是「本地日期」，而 HC 的时间是 UTC 瞬时 ——
+   * 一条本地日期刚好等于下界的记录，其瞬时最多可能早于该日 UTC 零点 18 小时
+   * （java.time.ZoneOffset 的偏移上限 +18:00）。前移 24h（> 18h）保证
+   * 「本地日期 ≥ 下界」的记录一定落在读取窗口内，于是 Rust 侧「窗口内镜像不被误删」
+   * 的不变量成立。⚠ 调到 18h 以内会重新引入跨时区记录被误判删除的问题；
+   * 改这里必须连带复核 Rust 侧 commands.rs 里 seen_superset 的同一不变量。
+   */
+  private val WINDOW_MARGIN: Duration = Duration.ofHours(24)
 
   /** 体征指标的回看窗口：按天聚合的镜像值，90 天对预览与状态计算都够用 */
   private val METRICS_WINDOW = Duration.ofDays(90)
@@ -238,14 +249,25 @@ object HealthConnectBridge {
       false
     }
 
-  /** 读 HC 的运动会话（含配对出的消耗/距离/心率）+ 体征指标，写 pull.json */
+  /**
+   * 读 HC 的运动会话（含配对出的消耗/距离/心率）+ 体征指标，写 pull.json。
+   *
+   * `since` 是 Rust 传来的读取下界（`YYYY-MM-DD`）—— 用户可配「同步起始日期」，
+   * 或由程序自动取本机最早导入记录。空串或不可解析一律回退 [`EPOCH`]：
+   * 宁可多读，也别让一个坏参数把窗口收到错的起点。
+   *
+   * 注意体征指标的 90 天窗口**不受** `since` 影响：那是每轮整表替换的本地预览镜像，
+   * 放开到全历史只会让它无界增长（见 Rust 侧 outOfScope）。
+   */
   @JvmStatic
-  fun startRead(context: Context) {
+  fun startRead(context: Context, since: String) {
     val app = context.applicationContext
     scope.launch {
       try {
         val client = clientOrNull(app) ?: return@launch fail(app, "Health Connect 不可用")
         val now = Instant.now()
+        // 会话读取下界：把日期锚到 UTC 零点再前移 WINDOW_MARGIN，且不早于 EPOCH
+        val readFrom = windowStartOf(since)
         // 授权集合一次取齐，后面每个读取按自己的权限独立放行：
         // 只授了「运动」组的用户照常导课，体征部分留空 —— 而不是让一个
         // SecurityException 炸掉整轮同步。
@@ -258,7 +280,7 @@ object HealthConnectBridge {
           }
         val sessions =
           if ("android.permission.health.READ_EXERCISE" in granted) {
-            readAll(client, ExerciseSessionRecord::class, EPOCH, now)
+            readAll(client, ExerciseSessionRecord::class, readFrom, now)
           } else {
             emptyList()
           }
@@ -603,6 +625,21 @@ object HealthConnectBridge {
       null
     }
   }
+
+  /**
+   * Rust 传来的窗口下界（`YYYY-MM-DD`）→ 会话读取的 UTC 下界 Instant。
+   *
+   * 空串或不可解析回退 [`EPOCH`]；前移后若早于 EPOCH 也夹回 EPOCH ——
+   * 「从头拉全部」用的就是 2000-01-01，前移 24h 会越过 EPOCH。
+   */
+  private fun windowStartOf(since: String): Instant =
+    try {
+      val anchor =
+        LocalDate.parse(since).atStartOfDay(ZoneOffset.UTC).toInstant().minus(WINDOW_MARGIN)
+      maxOf(EPOCH, anchor)
+    } catch (e: Exception) {
+      EPOCH
+    }
 
   /** 失败路径：只写 state.json 的 error，**不写结果文件**（Rust 据此立刻收场） */
   private suspend fun fail(context: Context, message: String) {

@@ -33,9 +33,9 @@ import type {
 } from '@/types'
 
 /** 提供商适配器 → 本机语音管线的适配器（Rust voice/asr.rs 支持的那两个） */
-const ASR_ADAPTER_MAP: Record<string, { adapter: 'doubao' | 'qwen'; label: string }> = {
+const ASR_ADAPTER_MAP: Record<string, { adapter: 'doubao' | 'bailian'; label: string }> = {
   'volc-ark': { adapter: 'doubao', label: '豆包' },
-  dashscope: { adapter: 'qwen', label: 'Qwen' },
+  dashscope: { adapter: 'bailian', label: '百炼' },
 }
 
 /** 提供商 extra JSON → 对象（坏了当空） */
@@ -148,7 +148,7 @@ export const useModelRolesStore = defineStore('ai-model-roles', () => {
     const c = voiceConfig.value
     if (!c) return { model: '', adapterLabel: '', configured: false, providerName: '' }
     const mapped = c.asrAdapter === 'auto' ? '' : c.asrAdapter
-    const adapterLabel = mapped === 'doubao' ? '豆包' : mapped === 'qwen' ? 'Qwen' : '自动识别'
+    const adapterLabel = mapped === 'doubao' ? '豆包' : mapped === 'bailian' || mapped === 'qwen' ? '百炼' : '自动识别'
     const parsed = parseRef(providers.prefs.asrRef)
     let providerName = ''
     if (parsed.scheme === 'provider' && parsed.b === c.asrResourceId) {
@@ -239,7 +239,7 @@ export const useModelRolesStore = defineStore('ai-model-roles', () => {
           : '语音对话与纪要转写用，先在提供商里启用识别模型',
         ok: asr.configured,
         interactive: true,
-        warn: asr.adapterLabel === 'Qwen' ? '识别走 Qwen：朗读需另配豆包凭据（语音服务里填）' : undefined,
+        warn: asr.adapterLabel === '百炼' ? '识别走百炼：朗读需另配豆包凭据（语音服务里填）' : undefined,
       },
       {
         role: 'embedding',
@@ -419,7 +419,7 @@ export const useModelRolesStore = defineStore('ai-model-roles', () => {
     if (model.kind === 'asr') {
       const mapped = ASR_ADAPTER_MAP[provider.adapter]
       if (!mapped) {
-        throw new Error(`${adapter?.label ?? provider.adapter} 的识别接口还没适配到本机语音管线，先用「语音服务」里的豆包/Qwen`)
+        throw new Error(`${adapter?.label ?? provider.adapter} 的识别接口还没适配到本机语音管线，先用「语音服务」里的豆包/百炼`)
       }
       const extra = parseExtra(provider.extra)
       const legacy = mapped.adapter === 'doubao' && !!extra.appId?.trim() && !!extra.accessToken?.trim()
@@ -437,7 +437,7 @@ export const useModelRolesStore = defineStore('ai-model-roles', () => {
       }
       await voiceService.configSave(next)
       await refreshTargets()
-      const tail = mapped.adapter === 'qwen' ? '；朗读（TTS）要另配豆包凭据' : ''
+      const tail = mapped.adapter === 'bailian' ? '；朗读（TTS）要另配豆包凭据' : ''
       return `语音识别已切到「${model.modelId}」（${mapped.label} 适配器，用 ${provider.name} 的凭据）${tail}`
     }
 

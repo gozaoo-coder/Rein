@@ -35,6 +35,9 @@ async function quickStart(e: MouseEvent, p: WorkoutPlanRecord): Promise<void> {
     const r = await session.start(p)
     if (r === 'conflict') conflictOpen.value = true
     else openImmersive(origin)
+  } catch {
+    // 开课失败的可视回执由 store 内的 toast 负责（session.start 原样抛）；
+    // 这里只吞掉拒绝，避免 unhandled rejection，finally 复位播放键供重试。
   } finally {
     startingId.value = ''
   }

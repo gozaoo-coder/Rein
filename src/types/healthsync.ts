@@ -2,8 +2,10 @@
  * 第三方健康数据域类型 · 与 Rust `modules/healthsync` 对应。
  *
  * 这一域自己不落新表：导入的运动记录就写进 `workouts`（靠 `source` 区分本地/导入），
- * 所以这里只有「同步状态」与「一次同步的回执」两组类型。
+ * 所以这里只有「同步状态」「一次同步的回执」与「给用户看的记录行」三组类型。
  */
+
+import type { Intensity } from './exercise'
 
 /**
  * Health Connect 在本机的可用性。
@@ -32,6 +34,36 @@ export interface HealthSyncStatus {
   importedCount: number
   /** 已导出到 HC 的本地记录数 */
   exportedCount: number
+  /**
+   * 「自动」模式下此刻会采用的读取下界日期（本机最早一条导入记录）。
+   * 无导入记录时为 null —— 页面据此告诉用户「还没有导入记录，将读取全部历史」。
+   * 刻意取导入记录而不是体征镜像：后者每轮整表替换、只含近 90 天。
+   */
+  autoWindowStart: string | null
+}
+
+/**
+ * 一条第三方运动记录（只读展示用）。
+ *
+ * 与 `exercise` 域的 `Workout` 不同：这里多一个 `source`（导入 / 本机）——
+ * 正是它让「手机同步进来的」和「本机记的」在同一个列表里分得开；少的是
+ * effort/sessionId/createdAt 这些 Rein 内部字段，后端也不投影它们。
+ */
+export interface HealthSyncWorkout {
+  id: number
+  name: string
+  /** 运动类型键：导入记录的正常值是 `WORKOUT_META` 的键，脏数据可能落在集合外 */
+  type: string
+  date: string
+  startMin: number | null
+  durationMin: number
+  kcal: number
+  /** 与 `exercise` 同口径的客观强度档 */
+  intensity: Intensity
+  note: string | null
+  source: 'health_connect' | 'local'
+  /** Health Connect 侧的记录 id：导入记录才有，本机记录为 null */
+  externalId: string | null
 }
 
 /** 一次同步的进度相位：前端按 `pending` 继续轮询，其余都是终态 */

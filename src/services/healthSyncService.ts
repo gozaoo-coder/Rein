@@ -5,6 +5,7 @@ import type {
   HealthMetricSeries,
   HealthSyncStatus,
   HealthSyncStep,
+  HealthSyncWorkout,
 } from '@/types'
 import { invoke } from './transport'
 
@@ -25,13 +26,28 @@ export const healthSyncService = {
   /** 开关「把本地记录回写进 Health Connect」 */
   setPush: (enabled: boolean) => invoke<void>('health_sync_set_push', { enabled }),
 
-  /** 起一轮同步（不阻塞）。返回 pending 表示已让原生侧去读，接着轮询 `step`。 */
-  start: (push: boolean, maxHr: number | null, utcOffsetSeconds: number) =>
-    invoke<HealthSyncStep>('health_sync_start', { push, maxHr, utcOffsetSeconds }),
+  /**
+   * 起一轮同步（不阻塞）。返回 pending 表示已让原生侧去读，接着轮询 `step`。
+   * `windowStart` 是运动会话的读取下界：null = 程序自动（取本机最早导入记录，
+   * 无数据回退 2000-01-01）；'2000-01-01' = 从头拉全部；其余 'YYYY-MM-DD' = 用户自定义。
+   */
+  start: (
+    push: boolean,
+    maxHr: number | null,
+    utcOffsetSeconds: number,
+    windowStart?: string | null,
+  ) => invoke<HealthSyncStep>('health_sync_start', { push, maxHr, utcOffsetSeconds, windowStart }),
 
   /** 推进一步。相位不再是 pending 时结束轮询。 */
   step: () => invoke<HealthSyncStep>('health_sync_step'),
 
   /** 健康数据查询：每个指标的镜像序列（90 天窗口全量，预览与详情共用） */
   metrics: () => invoke<HealthMetricSeries[]>('health_metrics_all'),
+
+  /**
+   * 本机存着的第三方运动记录：导入进来的（source='health_connect'）+
+   * 没填开始时间、回写时被跳过的本机记录（source='local' && startMin=null）。
+   * 前端按这两块分开展示。
+   */
+  workouts: () => invoke<HealthSyncWorkout[]>('health_sync_workouts'),
 }

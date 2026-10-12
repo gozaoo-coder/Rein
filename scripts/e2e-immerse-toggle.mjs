@@ -112,6 +112,9 @@ try {
   await waitFor(layerVisible, 8000, '沉浸层打开')
   const hash1 = await evalJS('location.hash')
   ok('T1 开始课程开沉浸层且 hash 不变', !hash1.includes('session'), hash1)
+  // R2：session.start 只在失败时 toast「开课失败」——成功路径误发等于给用户假报错。
+  const t1toasts = await evalJS(`document.querySelector('.toast-host')?.textContent ?? ''`)
+  ok('T1b 成功开课不误发「开课失败」提示', !t1toasts.includes('开课失败'), t1toasts)
 
   /* ---------- T2. 收起 → 壳与 Dock 落点侧先就位，收尾零位移（落位溶解） ---------- */
   await evalJS(`(() => {

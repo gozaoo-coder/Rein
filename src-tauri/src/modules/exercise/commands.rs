@@ -16,13 +16,41 @@ pub fn list_workouts(
     end_date: String,
 ) -> Result<Vec<Workout>> {
     let conn = state.db.lock();
+    list_workouts_on(&conn, &start_date, &end_date)
+}
+
+/// `list_workouts` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
+/// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
+pub(crate) fn list_workouts_on(
+    conn: &rusqlite::Connection,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<Workout>> {
     let sql = format!(
         "SELECT {WORKOUT_COLS} FROM workouts WHERE date BETWEEN ?1 AND ?2 \
          ORDER BY date DESC, (start_min IS NULL), start_min"
     );
     let mut stmt = conn.prepare(&sql)?;
     let list = stmt
-        .query_map([&start_date, &end_date], workout_from_row)?
+        .query_map([start_date, end_date], workout_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(list)
+}
+
+/// 对外网关专用：带 SQL 侧 `LIMIT` 的 `list_workouts`（contract §6.4「禁止无界全表」）。
+pub(crate) fn list_workouts_on_limited(
+    conn: &rusqlite::Connection,
+    start_date: &str,
+    end_date: &str,
+    limit: i64,
+) -> Result<Vec<Workout>> {
+    let sql = format!(
+        "SELECT {WORKOUT_COLS} FROM workouts WHERE date BETWEEN ?1 AND ?2 \
+         ORDER BY date DESC, (start_min IS NULL), start_min LIMIT ?3"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let list = stmt
+        .query_map((start_date, end_date, limit), workout_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(list)
 }
@@ -62,6 +90,35 @@ pub fn create_workout(
     note: Option<String>,
 ) -> Result<Workout> {
     let conn = state.db.lock();
+    create_workout_on(
+        &conn,
+        name,
+        workout_type,
+        date,
+        start_min,
+        duration_min,
+        intensity,
+        effort,
+        kcal,
+        note,
+    )
+}
+
+/// `create_workout` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
+/// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_workout_on(
+    conn: &rusqlite::Connection,
+    name: String,
+    workout_type: String,
+    date: String,
+    start_min: Option<i64>,
+    duration_min: f64,
+    intensity: Option<String>,
+    effort: Option<i64>,
+    kcal: f64,
+    note: Option<String>,
+) -> Result<Workout> {
     conn.execute(
         "INSERT INTO workouts (name, type, date, start_min, duration_min, kcal, intensity, effort, note, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -121,4 +178,48 @@ pub fn delete_workout(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn fresh() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    /// 对外网关专用的 LIMIT 变体：SQL 侧限行（contract §6.4）。
+    #[test]
+    fn list_workouts_on_limited_caps_rows_in_sql() {
+        let conn = fresh();
+        for i in 0..5 {
+            create_workout_on(
+                &conn,
+                format!("w{i}"),
+                "run".into(),
+                "2026-09-23".into(),
+                None,
+                30.0,
+                None,
+                None,
+                100.0,
+                None,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            list_workouts_on(&conn, "2026-09-01", "2026-09-30").unwrap().len(),
+            5
+        );
+        assert_eq!(
+            list_workouts_on_limited(&conn, "2026-09-01", "2026-09-30", 2)
+                .unwrap()
+                .len(),
+            2,
+            "LIMIT 生效"
+        );
+    }
 }

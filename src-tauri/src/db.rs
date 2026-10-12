@@ -1430,6 +1430,49 @@ ALTER TABLE kb_files ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE kb_files ADD COLUMN note TEXT NOT NULL DEFAULT '';
 "#;
 
+/// 0042 · 对外服务网关的凭据与审计（contract `docs/EXTERNAL-API.md` §6.5，见 modules/gateway）。
+///
+/// `ext_clients` 是「外部客户端 × 本机授权」的唯一真源。几处刻意设计：
+///
+/// - `token_hash` 只存 `sha256(token)` 的 hex，**明文令牌永不落库**（与 `ai_models.api_key`、
+///   同步 `identity` 私钥同一条纪律：库里只有派生值）。NULL 表示还没「始终允许」过。
+/// - `decision` 是这台客户端当前的授权结论。`allow` = 始终允许（带 `scopes`、带 `token_hash`）；
+///   `deny` = 用户拒绝过（设置页删掉这行即回到无记录）；`ignore` = 只留限频痕迹、**无任何授权**
+///   （用户点了「忽略」）—— 读授权时一律只认 `allow`，`ignore` 与 `deny` 一样不可放行。
+///   之所以给「忽略」留一行而不是只放内存：30s 静默窗口与「连续 3 次后静默挂起」要跨重连生效，
+///   而这些计数天然属于这台客户端的持久记录（`last_prompt_at` / `prompt_count`）。
+/// - `revoked_at` 用置位而不是删行：撤销后审计仍能对上 client_id，设置页也能显示「已撤销」。
+/// - `scopes` 是 JSON 字符串数组（如 `["schedule.read"]`），精确匹配、无通配。
+///
+/// `ext_audit` 刻意**不设外键**：删客户端不带走「它当时做了什么」的历史
+/// （先例见 0030 `campus_ai_actions`、0026 `ai_usage`）。
+///
+/// 两张表都**不进** `sync/tables.rs` 白名单：把凭据复制到第二台设备是一个安全决定，
+/// 不该由同步默认替用户做（先例：`campus_accounts`、`ai_models.api_key`）。
+/// `enabled` / `bindMode` / `port` / `gateway.pairToken` 走 `app_meta`，不另立状态表
+/// （先例见 0036 注释；`app_meta` 不参与多设备同步）。
+const MIGRATION_0042: &str = r#"
+CREATE TABLE ext_clients (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL DEFAULT '',
+  token_hash TEXT,                          -- sha256(token) hex；NULL 直到「始终允许」签发
+  scopes TEXT NOT NULL DEFAULT '[]',        -- JSON 数组，如 ["schedule.read","workout.read"]
+  decision TEXT NOT NULL,                   -- allow | deny | ignore（ignore = 只留限频记录，无授权）
+  last_ip TEXT, last_seen_at TEXT,
+  created_at TEXT NOT NULL, decided_at TEXT, updated_at TEXT NOT NULL, revoked_at TEXT,
+  last_prompt_at TEXT, prompt_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE ext_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL, client_id TEXT,         -- 无外键：删客户端不带走历史
+  method TEXT NOT NULL, scope TEXT NOT NULL,
+  decision TEXT NOT NULL,
+  detail TEXT, ip TEXT, duration_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_ext_audit_at ON ext_audit(at DESC);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1472,6 +1515,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0039,
     MIGRATION_0040,
     MIGRATION_0041,
+    MIGRATION_0042,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

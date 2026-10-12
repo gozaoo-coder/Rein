@@ -25,6 +25,54 @@ fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
     crate::db::meta_set(conn, key, value)
 }
 
+/// 适配器解析（三处调用点共用一份，避免漂移）：
+/// 显式选择优先 —— 'bailian' 与其历史值 'qwen' 同为百炼/DashScope 协议；
+/// 'auto' 按 baseURL/模型关键词识别，识别不出回落豆包。
+fn resolve_kind(asr_adapter: &str, base_url: &str, model: &str) -> AsrAdapterKind {
+    match asr_adapter {
+        "doubao" => AsrAdapterKind::Doubao,
+        "bailian" | "qwen" => AsrAdapterKind::DashScope,
+        _ => AsrAdapterKind::detect(base_url, model).unwrap_or(AsrAdapterKind::Doubao),
+    }
+}
+
+/// 适配器 → 前端状态字符串（百炼一律报 'bailian'，历史 'qwen' 不再产出）
+fn kind_name(kind: AsrAdapterKind) -> &'static str {
+    match kind {
+        AsrAdapterKind::Doubao => "doubao",
+        AsrAdapterKind::DashScope => "bailian",
+    }
+}
+
+/// 按配置拼一次会话参数（探测与真实会话同源）
+fn session_params(cfg: &VoiceConfig, kind: AsrAdapterKind) -> AsrSessionParams {
+    let trimmed = cfg.asr_base_url.trim();
+    let url = if trimmed.is_empty() {
+        kind.default_url().to_string()
+    } else {
+        trimmed.to_string()
+    };
+    AsrSessionParams {
+        url,
+        app_key: cfg.app_key.trim().to_string(),
+        access_key: cfg.access_key.trim().to_string(),
+        credential_mode: cfg.mode.clone(),
+        model: cfg.asr_resource_id.trim().to_string(),
+    }
+}
+
+/// 建一个适配器实例（探测与真实会话同源）
+fn build_adapter(kind: AsrAdapterKind, params: AsrSessionParams) -> super::asr::AnyAsrAdapter {
+    match kind {
+        AsrAdapterKind::Doubao => {
+            super::asr::AnyAsrAdapter::Doubao(super::asr::DoubaoAdapter::new(params))
+        }
+        AsrAdapterKind::DashScope => {
+            super::asr::AnyAsrAdapter::DashScope(super::asr::DashScopeAdapter::new(params))
+        }
+    }
+}
+
 /* ---------------- 配置 ---------------- */
 
 #[tauri::command]
@@ -55,23 +103,14 @@ pub async fn voice_config_status(state: State<'_, AppState>) -> Result<VoiceStat
         serde_json::from_str(&raw).unwrap_or_default()
     };
     drop(conn);
-    let asr_adapter = match cfg.asr_adapter.as_str() {
-        "doubao" => "doubao".into(),
-        "qwen" => "qwen".into(),
-        _ => AsrAdapterKind::detect(&cfg.asr_base_url, &cfg.asr_resource_id)
-            .map(|k| {
-                if k == AsrAdapterKind::Qwen {
-                    "qwen"
-                } else {
-                    "doubao"
-                }
-            })
-            .unwrap_or("doubao")
-            .into(),
-    };
+    let kind = resolve_kind(
+        &cfg.asr_adapter,
+        &cfg.asr_base_url,
+        &cfg.asr_resource_id,
+    );
     Ok(VoiceStatus {
         asr_ready: cfg.configured(),
-        asr_adapter,
+        asr_adapter: kind_name(kind).into(),
         tts_ready: cfg.tts_configured(),
         tts_standalone: cfg.tts_standalone(),
     })
@@ -133,35 +172,12 @@ pub async fn voice_asr_probe(app: AppHandle) -> Result<()> {
     if !cfg.configured() {
         return Err(ReinError::Message("尚未配置识别凭据".into()));
     }
-    let kind = match cfg.asr_adapter.as_str() {
-        "doubao" => AsrAdapterKind::Doubao,
-        "qwen" => AsrAdapterKind::Qwen,
-        _ => AsrAdapterKind::detect(&cfg.asr_base_url, &cfg.asr_resource_id)
-            .unwrap_or(AsrAdapterKind::Doubao),
-    };
-    let url = {
-        let trimmed = cfg.asr_base_url.trim();
-        if trimmed.is_empty() {
-            kind.default_url().to_string()
-        } else {
-            trimmed.to_string()
-        }
-    };
-    let params = AsrSessionParams {
-        url,
-        app_key: cfg.app_key.trim().to_string(),
-        access_key: cfg.access_key.trim().to_string(),
-        credential_mode: cfg.mode.clone(),
-        model: cfg.asr_resource_id.trim().to_string(),
-    };
-    let mut adapter = match kind {
-        AsrAdapterKind::Doubao => {
-            super::asr::AnyAsrAdapter::Doubao(super::asr::DoubaoAdapter::new(params))
-        }
-        AsrAdapterKind::Qwen => {
-            super::asr::AnyAsrAdapter::Qwen(super::asr::QwenAdapter::new(params))
-        }
-    };
+    let kind = resolve_kind(
+        &cfg.asr_adapter,
+        &cfg.asr_base_url,
+        &cfg.asr_resource_id,
+    );
+    let mut adapter = build_adapter(kind, session_params(&cfg, kind));
     // 建连 + 首控包；有误直接抛具体错误（鉴权/资源 ID/网络）
     adapter.connect().await?;
     adapter.finish_input().await?;
@@ -211,28 +227,12 @@ pub async fn voice_asr_start(
         }
     };
     // 适配器解析：显式选择优先；auto 按 baseURL/模型关键词识别，识别不出回落豆包
-    let kind = match cfg.asr_adapter.as_str() {
-        "doubao" => AsrAdapterKind::Doubao,
-        "qwen" => AsrAdapterKind::Qwen,
-        _ => AsrAdapterKind::detect(&cfg.asr_base_url, &cfg.asr_resource_id)
-            .unwrap_or(AsrAdapterKind::Doubao),
-    };
-    let url = {
-        let trimmed = cfg.asr_base_url.trim();
-        if trimmed.is_empty() {
-            kind.default_url().to_string()
-        } else {
-            trimmed.to_string()
-        }
-    };
-    let params = AsrSessionParams {
-        url,
-        app_key: cfg.app_key.trim().to_string(),
-        access_key: cfg.access_key.trim().to_string(),
-        credential_mode: cfg.mode.clone(),
-        model: cfg.asr_resource_id.trim().to_string(),
-    };
-    let tx = protocol::spawn_asr_session(app, session_id.clone(), kind, params)?;
+    let kind = resolve_kind(
+        &cfg.asr_adapter,
+        &cfg.asr_base_url,
+        &cfg.asr_resource_id,
+    );
+    let tx = protocol::spawn_asr_session(app, session_id.clone(), kind, session_params(&cfg, kind))?;
     hub.sessions.lock().unwrap().insert(session_id, tx);
     Ok(())
 }

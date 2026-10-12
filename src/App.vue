@@ -13,6 +13,7 @@ import VoiceSessionView from '@/components/voice/VoiceSessionView.vue'
 import VoiceFloatBar from '@/components/voice/VoiceFloatBar.vue'
 import SessionOverlay from '@/components/exercise/SessionOverlay.vue'
 import UpdatePrompt from '@/components/update/UpdatePrompt.vue'
+import GatewayAuthSheet from '@/components/settings/GatewayAuthSheet.vue'
 import ToastHost from '@/components/common/ToastHost.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { DESKTOP_MIN } from '@/config/domain'
@@ -273,6 +274,8 @@ onMounted(() => {
   <CommandPalette v-if="isDesktop" :open="paletteOpen" @close="paletteOpen = false" />
   <!-- 启动检查到新版本时的更新卡片（立即更新 / 稍后 / 跳过此版本） -->
   <UpdatePrompt :open="updatePrompt" @close="updatePrompt = false" />
+  <!-- 外部程序授权弹窗：单例 runtime 驱动，任何外部连接请求进来都由它唤起（system/externalAccessRuntime） -->
+  <GatewayAuthSheet />
   <ToastHost />
 </template>
 

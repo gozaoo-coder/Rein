@@ -26,7 +26,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension};
@@ -34,6 +34,7 @@ use serde_json::{Map, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::error::Result;
+use crate::modules::gateway::{ChangeEvent, ChangeFeed};
 
 use super::blobs::BlobStore;
 use super::identity;
@@ -157,12 +158,14 @@ fn next_hlc(conn: &Connection) -> Result<i64> {
     Ok(v)
 }
 
-fn append_log(conn: &Connection, uuid: &str, hlc: i64) -> Result<()> {
+/// 追加一条复制日志，返回它的 `sync_log.seq`（`INTEGER PRIMARY KEY AUTOINCREMENT`）。
+/// 变更事件带上 seq，订阅者据此判断有没有丢事件（遇 `Lagged` 一律全量重查）。
+fn append_log(conn: &Connection, uuid: &str, hlc: i64) -> Result<i64> {
     conn.execute(
         "INSERT INTO sync_log (uuid, hlc) VALUES (?1, ?2)",
         rusqlite::params![uuid, hlc],
     )?;
-    Ok(())
+    Ok(conn.last_insert_rowid())
 }
 
 fn mapped_uuid(conn: &Connection, kind: &str, local_id: &str) -> Result<Option<String>> {
@@ -283,23 +286,60 @@ fn build_row(conn: &Connection, store: &BlobStore, spec: &'static TableSpec, row
     Ok(Some(Value::Object(map)))
 }
 
-/// 一条脏记录 → `sync_objects` + `sync_log`。返回受影响的 uuid（无需处理时为 None）。
+/// 一次 `capture` 的结论：只有真正产生了新版本（新对象 / 新版本 / 墓碑）才算 `Changed`。
+///
+/// 之所以要三态而不是旧的 `Option<String>`：`Some(uuid)` 里混着「内容未变」的假事件
+/// （`build_row` 后比对 blob 相同就跳过，见下方注释），如果照它广播，外部订阅者会被
+/// 一条没变化的通知叫醒、白查一次，而远端 apply 的幂等写入还会自激成事件风暴。
+/// `Unchanged` 覆盖「未登记表 / 不满足 filter / 行不存在 / 内容未变」——对广播一律沉默。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaptureOutcome {
+    /// 没有产生新版本：不该广播。
+    Unchanged,
+    /// 产生了新对象 / 新版本 / 墓碑：`seq` 是 `sync_log.seq`，`at` 是这次改动的 hlc。
+    Changed {
+        uuid: String,
+        kind: String,
+        seq: i64,
+        deleted: bool,
+        at: i64,
+    },
+}
+
+impl CaptureOutcome {
+    /// 受影响的 uuid（`Unchanged` 时为 `None`）。兼容旧调用点的取值习惯。
+    /// 目前只有测试用（生产路径用模式匹配取 `Changed` 的字段）。
+    #[allow(dead_code)]
+    pub fn uuid(&self) -> Option<&str> {
+        match self {
+            CaptureOutcome::Changed { uuid, .. } => Some(uuid),
+            CaptureOutcome::Unchanged => None,
+        }
+    }
+
+    /// 是否产生了新版本。
+    pub fn is_changed(&self) -> bool {
+        matches!(self, CaptureOutcome::Changed { .. })
+    }
+}
+
+/// 一条脏记录 → `sync_objects` + `sync_log`。返回这次改动的结论（见 [`CaptureOutcome`]）。
 pub fn capture(
     conn: &Connection,
     store: &BlobStore,
     me: &str,
     raw: &Raw,
-) -> Result<Option<String>> {
+) -> Result<CaptureOutcome> {
     let spec = match tables::spec(&raw.table) {
         Some(s) => s,
-        None => return Ok(None),
+        None => return Ok(CaptureOutcome::Unchanged),
     };
     // 只同步符合条件的行（内置食物、内置动作、系统文件）
     if let Some(cond) = spec.filter {
         let sql = format!("SELECT COUNT(*) FROM {} WHERE rowid = ?1 AND {cond}", spec.name);
         let hit: i64 = conn.query_row(&sql, [raw.rowid], |r| r.get(0))?;
         if hit == 0 {
-            return Ok(None);
+            return Ok(CaptureOutcome::Unchanged);
         }
     }
 
@@ -319,7 +359,7 @@ pub fn capture(
                 Some(s) => s,
                 None => match mapped_uuid(conn, spec.name, &local_id)? {
                     Some(u) => u,
-                    None => return Ok(None),
+                    None => return Ok(CaptureOutcome::Unchanged),
                 },
             }
         }
@@ -329,7 +369,7 @@ pub fn capture(
             None => {
                 if raw.op == 'd' {
                     // 从没告诉过别人，删了也不用通知谁
-                    return Ok(None);
+                    return Ok(CaptureOutcome::Unchanged);
                 }
                 let u = uuid::Uuid::new_v4().to_string();
                 remember_map(conn, spec.name, &local_id, &u)?;
@@ -347,15 +387,21 @@ pub fn capture(
             rusqlite::params![uuid, hlc, me],
         )?;
         if updated == 0 {
-            return Ok(None);
+            return Ok(CaptureOutcome::Unchanged);
         }
-        append_log(conn, &uuid, hlc)?;
-        return Ok(Some(uuid));
+        let seq = append_log(conn, &uuid, hlc)?;
+        return Ok(CaptureOutcome::Changed {
+            uuid,
+            kind: spec.name.to_string(),
+            seq,
+            deleted: true,
+            at: hlc,
+        });
     }
 
     let row = match build_row(conn, store, spec, raw.rowid)? {
         Some(v) => v,
-        None => return Ok(None),
+        None => return Ok(CaptureOutcome::Unchanged),
     };
     let payload = serde_json::json!({ "v": 1, "row": row }).to_string();
     // 内容没变就别新增版本：应用远端对象会写库、写库又触发钩子，少了这条两台设备
@@ -369,7 +415,7 @@ pub fn capture(
         .optional()?;
     if let Some((blob, deleted)) = existing {
         if deleted == 0 && blob == payload {
-            return Ok(Some(uuid));
+            return Ok(CaptureOutcome::Unchanged);
         }
     }
     conn.execute(
@@ -379,8 +425,14 @@ pub fn capture(
            device = excluded.device, deleted = 0, blob = excluded.blob",
         rusqlite::params![uuid, spec.name, hlc, me, payload],
     )?;
-    append_log(conn, &uuid, hlc)?;
-    Ok(Some(uuid))
+    let seq = append_log(conn, &uuid, hlc)?;
+    Ok(CaptureOutcome::Changed {
+        uuid,
+        kind: spec.name.to_string(),
+        seq,
+        deleted: false,
+        at: hlc,
+    })
 }
 
 /// 存量补录（第一次运行，或某张表的结构变了）。
@@ -418,7 +470,9 @@ pub fn backfill(conn: &Connection, store: &BlobStore, me: &str) -> Result<Backfi
                 rowid,
                 op: 'u',
             };
-            if capture(conn, store, me, &raw)?.is_some() {
+            // backfill 复用 capture，但**显式不广播**：首启补录会一口气产出成百上千条
+            // `Changed`，推给外部订阅者只会刷屏。广播只在真正的增量处理点做（见 `capture_batch`）。
+            if capture(conn, store, me, &raw)?.is_changed() {
                 stats.captured += 1;
             }
         }
@@ -478,6 +532,13 @@ pub struct SyncHub {
     data_dir: PathBuf,
     dirty: Arc<Dirty>,
     running: AtomicBool,
+    /// 对外网关的变更广播 hub（contract §6.2）。没有它时捕获照常工作，只是不广播 ——
+    /// 网关没开、外部没人连的时候，同步不该因为「没有订阅者」而变形。
+    ///
+    /// 由服务与授权层在 manage `GatewayHub` 时用 [`SyncHub::set_feed`] 接上：
+    /// 网关**绝不能自己再装一个 `update_hook`**（rusqlite/SQLite 的钩子是单槽的，
+    /// 再注册会静默顶掉这一个，见 `install_hook`）。
+    feed: OnceLock<Arc<ChangeFeed>>,
 }
 
 impl SyncHub {
@@ -486,7 +547,23 @@ impl SyncHub {
             data_dir,
             dirty,
             running: AtomicBool::new(true),
+            feed: OnceLock::new(),
         })
+    }
+
+    /// 接上变更广播 hub（幂等：先到者生效）。由 `lib.rs` 启动网关时调用。
+    pub fn set_feed(&self, feed: Arc<ChangeFeed>) {
+        let _ = self.feed.set(feed);
+    }
+
+    /// 把一批变更投递给订阅者。**必须在 DB 锁外调用**（见类型注释与 contract §6.2）。
+    fn publish(&self, events: &[ChangeEvent]) {
+        let Some(feed) = self.feed.get() else {
+            return;
+        };
+        for ev in events {
+            feed.publish(ev.clone());
+        }
     }
 
     pub fn start(self: &Arc<Self>, app: AppHandle) {
@@ -519,26 +596,62 @@ impl SyncHub {
         }
     }
 
+    /// 捕获一批脏记录，把**真正产生新版本**的行变成变更事件（内容未变 / 未登记的不进事件）。
+    /// 纯 DB 读写，调用方负责持锁；投递（[`SyncHub::publish`]）由调用方在锁外做。
+    fn capture_events(
+        conn: &Connection,
+        store: &BlobStore,
+        me: &str,
+        batch: &[Raw],
+    ) -> Result<Vec<ChangeEvent>> {
+        let mut events = Vec::new();
+        for raw in batch {
+            if let CaptureOutcome::Changed {
+                uuid,
+                kind,
+                seq,
+                deleted,
+                at,
+            } = capture(conn, store, me, raw)?
+            {
+                events.push(ChangeEvent {
+                    seq,
+                    kind,
+                    uuid,
+                    deleted,
+                    at,
+                });
+            }
+        }
+        Ok(events)
+    }
+
     fn capture_batch(&self, app: &AppHandle, store: &BlobStore, batch: &[Raw]) -> Result<()> {
         let state = app.state::<crate::state::AppState>();
-        let conn = state.db.lock();
-        let me = identity::ensure(&conn)?.device_id;
-        for raw in batch {
-            capture(&conn, store, &me, raw)?;
-        }
+        // 锁内只做捕获（读行、拼对象、写 sync_objects/sync_log），事件收集完立刻松锁；
+        // 投递在锁外 —— 广播的分发路径不该有任何机会重入 SQLite 连接（`engine.rs:9`）。
+        let events = {
+            let conn = state.db.lock();
+            let me = identity::ensure(&conn)?.device_id;
+            Self::capture_events(&conn, store, &me, batch)?
+        };
+        self.publish(&events);
         Ok(())
     }
 
     /// 立刻把脏队列落成对象。同步会话开始前调用 —— 否则刚改的东西会落在这一次之后，
     /// 用户看到的就是「点了同步，刚才那条没过去」。
+    ///
+    /// 注意：调用方（`sync_run`）是**自己持锁**再传 `&conn` 进来的，所以这里的投递发生在
+    /// 那把锁仍被持有的期间。`broadcast::send` 只碰广播自己的内部锁、不重入 DB 连接，
+    /// 与契约 §6.2 担心的「钩子回调里重入连接」是两回事；保持这个签名可不动同步调用点。
     pub fn flush(&self, conn: &Connection, store: &BlobStore, me: &str) -> Result<usize> {
         let batch = self.dirty.drain(0);
-        for raw in &batch {
-            capture(conn, store, me, raw)?;
-        }
+        let events = Self::capture_events(conn, store, me, &batch)?;
         if !batch.is_empty() {
             set_pending(0);
         }
+        self.publish(&events);
         Ok(batch.len())
     }
 
@@ -618,7 +731,9 @@ mod tests {
             },
         )
         .unwrap()
-        .unwrap();
+        .uuid()
+        .unwrap()
+        .to_string();
         assert!(!uuid.is_empty());
         let objs = objects(&e.conn);
         assert_eq!(objs.len(), 1);
@@ -644,13 +759,17 @@ mod tests {
             .unwrap();
         let first = capture(&e.conn, &e.store, &e.me, &Raw { table: "todos".into(), rowid: 1, op: 'i' })
             .unwrap()
-            .unwrap();
+            .uuid()
+            .unwrap()
+            .to_string();
         e.conn
             .execute("UPDATE todos SET title = 'b' WHERE id = 1", [])
             .unwrap();
         let second = capture(&e.conn, &e.store, &e.me, &Raw { table: "todos".into(), rowid: 1, op: 'u' })
             .unwrap()
-            .unwrap();
+            .uuid()
+            .unwrap()
+            .to_string();
         assert_eq!(first, second, "同一行必须落到同一个 uuid");
         let objs = objects(&e.conn);
         assert_eq!(objs.len(), 1);
@@ -669,9 +788,9 @@ mod tests {
         e.conn
             .execute("INSERT INTO todos (id, title, created_at) VALUES (5, 'x', 'now')", [])
             .unwrap();
-        assert!(capture(&e.conn, &e.store, &e.me, &Raw { table: "todos".into(), rowid: 5, op: 'd' })
+        assert!(!capture(&e.conn, &e.store, &e.me, &Raw { table: "todos".into(), rowid: 5, op: 'd' })
             .unwrap()
-            .is_none());
+            .is_changed());
         assert!(objects(&e.conn).is_empty());
 
         // 同步过的行：删除写墓碑
@@ -682,7 +801,9 @@ mod tests {
         e.conn.execute("DELETE FROM todos WHERE id = 6", []).unwrap();
         let uuid = capture(&e.conn, &e.store, &e.me, &Raw { table: "todos".into(), rowid: 6, op: 'd' })
             .unwrap()
-            .unwrap();
+            .uuid()
+            .unwrap()
+            .to_string();
         assert!(!uuid.is_empty());
         let objs = objects(&e.conn);
         assert_eq!(objs.len(), 1);
@@ -770,7 +891,9 @@ mod tests {
             .unwrap();
         let uuid = capture(&e.conn, &e.store, &e.me, &Raw { table: "profile".into(), rowid: 1, op: 'u' })
             .unwrap()
-            .unwrap();
+            .uuid()
+            .unwrap()
+            .to_string();
         assert_eq!(uuid, "singleton:profile");
         let blob = objects(&e.conn).remove(0).3;
         assert!(blob.contains("小陈"));
@@ -789,7 +912,9 @@ mod tests {
             .unwrap();
         let uuid = capture(&e.conn, &e.store, &e.me, &Raw { table: "ai_chats".into(), rowid: 1, op: 'i' })
             .unwrap()
-            .unwrap();
+            .uuid()
+            .unwrap()
+            .to_string();
         assert_eq!(uuid, "c-1");
     }
 
@@ -803,9 +928,9 @@ mod tests {
                 [],
             )
             .unwrap();
-        assert!(capture(&e.conn, &e.store, &e.me, &Raw { table: "foods".into(), rowid: 9, op: 'i' })
+        assert!(!capture(&e.conn, &e.store, &e.me, &Raw { table: "foods".into(), rowid: 9, op: 'i' })
             .unwrap()
-            .is_none());
+            .is_changed());
     }
 
     #[test]

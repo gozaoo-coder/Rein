@@ -33,7 +33,7 @@ impl Dev {
         }
     }
 
-    /// 模拟变更钩子：捕获一行
+    /// 模拟变更钩子：捕获一行（返回受影响的 uuid，未产生新版本时为 None）
     fn touch(&self, table: &str, rowid: i64, op: char) -> Option<String> {
         capture(
             &self.conn,
@@ -46,6 +46,8 @@ impl Dev {
             },
         )
         .unwrap()
+        .uuid()
+        .map(str::to_string)
     }
 
     /// 把本机复制日志里的对象发给对方
@@ -139,9 +141,11 @@ fn apply_does_not_echo() {
     let objects_before = b.objects();
     let logs_before = b.logs();
     let rowid = b.int("SELECT rowid FROM todos");
-    // 模拟「应用写库触发的钩子」被同步线程捞起来
+    // 模拟「应用写库触发的钩子」被同步线程捞起来：内容与已存对象一致，
+    // 既不该产生新版本，也不该发出变更事件（`None`）——否则外部订阅者会被
+    // 一条没变化的通知叫醒，远端 apply 的幂等写入还会自激成事件风暴。
     let uuid = b.touch("todos", rowid, 'u');
-    assert!(uuid.is_some());
+    assert!(uuid.is_none(), "内容没变就不该产生变更事件");
     assert_eq!(b.objects(), objects_before, "内容没变就不该新增版本");
     assert_eq!(b.logs(), logs_before, "内容没变就不该写复制日志");
 }

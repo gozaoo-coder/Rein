@@ -37,6 +37,9 @@ import type {
   GrabSettings,
   GrabIntent,
   GrabMatch,
+  GatewayAuthRequest,
+  GatewayClient,
+  GatewayStatus,
   GrabState,
   GrabTurnBrief,
   LedgerEntry,
@@ -158,6 +161,49 @@ let healthLastSync: string | null = null
 let healthImported = 12
 let healthExported = 0
 let healthSteps = 0
+
+/**
+ * health_sync_workouts 的静态样例。
+ *
+ * mock 的 `workouts` 数组（本文件里由 `list_workouts` / `add_workout` 维护）**没有 source**，
+ * 结构上造不出「Health Connect 导入记录」；要模拟导入块只能在命令层直接给样例。
+ * 两条各代表一个展示块：health_connect = 手机同步进来的；local + startMin=null =
+ * 没填开始时间、回写 HC 时会被跳过的本机记录。真机数据由 Rust 从 workouts 表读。
+ */
+function healthSyncWorkoutsSample(): unknown[] {
+  return [
+    {
+      id: 90001,
+      name: '晨跑',
+      type: 'run',
+      date: '2024-03-15',
+      startMin: 440,
+      durationMin: 32,
+      kcal: 286,
+      intensity: 'high',
+      note: null,
+      source: 'health_connect',
+      externalId: 'hc-session-90001',
+    },
+    {
+      id: 90002,
+      name: '瑜伽',
+      type: 'yoga',
+      date: '2024-06-02',
+      startMin: null,
+      durationMin: 45,
+      kcal: 150,
+      intensity: 'low',
+      note: '补录时没填开始时间',
+      source: 'local',
+      externalId: null,
+    },
+  ]
+}
+
+/** 样例里最早一条导入记录的日期：与 health_sync_workouts 样例第一条一致，
+ *  也就是「自动」模式此刻会采用的下界 */
+const HEALTH_AUTO_WINDOW_START = '2024-03-15'
 
 /** 体征预览的样例缓存（首次生成后固定，dev 迭代时数据不跳） */
 let healthMetricsCache: unknown[] | null = null
@@ -1047,7 +1093,9 @@ const MOCK_ADAPTERS: ProviderAdapter[] = [
       { id: 'qwen-plus', kind: 'llm', dim: null, note: '均衡档对话模型' },
       { id: 'qwen-vl-max', kind: 'vision', dim: null, note: '视觉理解' },
       { id: 'text-embedding-v4', kind: 'embedding', dim: 1024, note: '文本向量（可降维）' },
-      { id: 'qwen-audio-3.0-asr-flash-streaming', kind: 'asr', dim: null, note: '流式语音识别' },
+      { id: 'paraformer-realtime-v2', kind: 'asr', dim: null, note: '实时语音识别（中文，句子级定稿；推荐）' },
+      { id: 'qwen-audio-3.1-asr-flash-streaming', kind: 'asr', dim: null, note: '流式语音识别（通义千问音频）' },
+      { id: 'fun-asr-realtime', kind: 'asr', dim: null, note: 'Fun-ASR 实时识别' },
     ],
   },
   {
@@ -2111,6 +2159,57 @@ async function playMockRun(runId: string, script: MockAgentStep[]): Promise<void
     tools: toolCount,
     durationMs: 0,
   })
+}
+
+/* ---------------- 外部访问（对外服务网关，modules/gateway 同契约） ---------------- */
+
+/**
+ * 浏览器 mock 的事件出口：gatewayService 在非 Tauri 环境把两个订阅挂到这里
+ * （真机的事件由 Rust 侧 `gateway://authorization-required` / `gateway://authorization-changed` 发出）。
+ */
+export const mockGateway: {
+  onRequired: ((e: unknown) => void) | null
+  onChanged: ((s: unknown) => void) | null
+} = { onRequired: null, onChanged: null }
+
+/** 演示态：默认关（与真机一致 —— 用户开了才监听）。字段与 `GatewayStatus` 同形。 */
+const gwState: GatewayStatus = { enabled: false, bindMode: 'local', port: null, pairToken: null, pendingCount: 0, clients: [], blocked: [] }
+const gwPending: GatewayAuthRequest[] = []
+
+function gwStatus(): GatewayStatus {
+  return {
+    ...gwState,
+    pendingCount: gwPending.length,
+    clients: gwState.clients.map((c) => ({ ...c })),
+    blocked: gwState.blocked.map((b) => ({ ...b })),
+  }
+}
+
+/** 真机每次改动都发 changed；mock 照发，设置页因此不必轮询。 */
+function gwChanged(): void {
+  mockGateway.onChanged?.(gwStatus())
+}
+
+/** e2e / 调试入口：伪造一条待裁决的授权请求（可选覆盖字段）；窗口上留了同名钩子。 */
+export function mockGatewayPrompt(patch: Partial<GatewayAuthRequest> = {}): void {
+  const req: GatewayAuthRequest = {
+    requestId: `mock-req-${gwPending.length + 1}`,
+    clientId: 'mock-client-1',
+    clientName: '（mock）外部程序',
+    origin: null,
+    ip: '127.0.0.1',
+    scopes: ['schedule.read'],
+    createdAt: new Date().toISOString(),
+    timeoutMs: 30000,
+    ...patch,
+  }
+  gwPending.push(req)
+  mockGateway.onRequired?.(req)
+}
+
+if (typeof window !== 'undefined') {
+  const w = window as unknown as { __REIN_MOCK_GATEWAY_PROMPT__?: (patch?: Partial<GatewayAuthRequest>) => void }
+  w.__REIN_MOCK_GATEWAY_PROMPT__ = mockGatewayPrompt
 }
 
 /* ---------------- 语音对话（modules/voice 同契约） ---------------- */
@@ -5672,6 +5771,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         lastSyncAt: healthLastSync,
         importedCount: healthImported,
         exportedCount: healthExported,
+        autoWindowStart: HEALTH_AUTO_WINDOW_START,
       } as T)
     }
 
@@ -5684,6 +5784,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     }
 
     case 'health_sync_start': {
+      // windowStart 在 mock 里刻意忽略：这里只推进相位，真实读取窗口对 UI 迭代没有可见影响
       healthSteps = 0
       return delay({ phase: 'pending', report: null, message: null } as T)
     }
@@ -5718,6 +5819,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     case 'health_metrics_all':
       return delay(healthMetricsSample() as T)
+
+    case 'health_sync_workouts':
+      return delay(healthSyncWorkoutsSample() as T)
 
     case 'save_pomodoro_session': {
       const s: PomodoroSession = { ...(args.session as Omit<PomodoroSession, 'id'>), id: ++pomodoroSeq }
@@ -6955,10 +7059,13 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return delay(undefined as T)
     case 'voice_config_status': {
       const s = `${voiceConfig.asrBaseUrl} ${voiceConfig.asrResourceId}`.toLowerCase()
+      // 'qwen' 与 'bailian' 同协议（百炼/DashScope）：状态统一报 bailian
       const adapter = voiceConfig.asrAdapter === 'auto'
-        ? (/(qwen|dashscope|aliyun)/.test(s) ? 'qwen' : 'doubao')
-        : voiceConfig.asrAdapter
-      const asrReady = adapter === 'qwen'
+        ? (/(qwen|dashscope|aliyun|bailian|paraformer|fun-asr)/.test(s) ? 'bailian' : 'doubao')
+        : voiceConfig.asrAdapter === 'qwen'
+          ? 'bailian'
+          : voiceConfig.asrAdapter
+      const asrReady = adapter === 'bailian'
         ? !!voiceConfig.appKey
         : voiceConfig.mode === 'new'
           ? !!voiceConfig.appKey
@@ -9575,6 +9682,71 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'update_prune_cache':
       return delay(0 as T)
 
+    // 数据维护（清除软件数据）：mock 只负责把三步流程走通（选档 → 清单 → 长按），
+    // 数字是演示范本，不对应任何真实库
+    case 'data_clear_preview': {
+      const scope = String(args.scope)
+      const items = (
+        scope === 'cache'
+          ? [
+              { key: 'cache-0', label: '更新安装包缓存', count: null, bytes: 0 },
+              { key: 'cache-1', label: '嵌入模型文件（需要时重新下载）', count: null, bytes: 92_630_976 },
+            ]
+          : scope === 'ai'
+            ? [
+                { key: 'ai-0', label: 'AI 聊天会话', count: 4, bytes: null },
+                { key: 'ai-1', label: 'AI 长期记忆', count: 17, bytes: null },
+                { key: 'ai-2', label: 'AI 用量统计', count: 66, bytes: null },
+                { key: 'ai-3', label: '语音纪要与录音', count: 3, bytes: 1_877_095 },
+              ]
+            : scope === 'business'
+              ? [
+                  { key: 'business-0', label: '饮食记录与食物库', count: 128, bytes: null },
+                  { key: 'business-1', label: '训练记录与逐组数据', count: 42, bytes: null },
+                  { key: 'business-2', label: '训练课程（内置课重启后自动补回）', count: 8, bytes: null },
+                  { key: 'business-3', label: '动作库（内置动作重启后自动补回）', count: 56, bytes: null },
+                  { key: 'business-4', label: '待办', count: 23, bytes: null },
+                  { key: 'business-5', label: '记账流水与预算', count: 210, bytes: null },
+                  { key: 'business-6', label: '身体指标与目标参数', count: 19, bytes: null },
+                  { key: 'business-7', label: '第三方健康数据镜像', count: 0, bytes: null },
+                  { key: 'business-8', label: '健康方案、菜单与采购勾选', count: 2, bytes: null },
+                  { key: 'business-9', label: '番茄钟记录', count: 31, bytes: null },
+                  { key: 'business-10', label: '校园课表、抢课任务与选课记录', count: 0, bytes: null },
+                ]
+              : [
+                  { key: 'factory-0', label: '全部业务数据（同「业务与健康数据」档）', count: 559, bytes: null },
+                  { key: 'factory-1', label: 'AI 聊天、长期记忆与语音纪要（含录音）', count: 90, bytes: 1_877_095 },
+                  { key: 'factory-2', label: 'AI 配置：模型、提供商与密钥', count: 3, bytes: null },
+                  { key: 'factory-3', label: 'AI 工作区文件与知识库索引', count: 12, bytes: 33_554_432 },
+                  { key: 'factory-4', label: '多设备同步：配对、设备身份与对账数据', count: 0, bytes: null },
+                  { key: 'factory-5', label: '应用设置与凭据（语音凭据、更新设置等）', count: 9, bytes: null },
+                  { key: 'factory-6', label: '更新安装包与嵌入模型缓存', count: null, bytes: 92_630_976 },
+                  { key: 'factory-7', label: '教务救援导出脚本', count: null, bytes: 0 },
+                ]
+      )
+      return delay({
+        scope,
+        items,
+        totalBytes: items.reduce((sum, it) => sum + (it.bytes ?? 0), 0),
+        restartsApp: scope !== 'cache',
+      } as T)
+    }
+
+    case 'data_clear': {
+      const scope = String(args.scope)
+      return delay({
+        scope,
+        freedBytes: scope === 'cache' ? 92_630_976 : scope === 'factory' ? 128_062_503 : 1_877_095,
+        removedTables: scope === 'cache' ? [] : ['（mock）已按清单清空对应表'],
+        removedDirs: scope === 'cache' ? ['updates', 'models'] : scope === 'factory' ? ['（mock）数据目录已清'] : ['voice_sessions'],
+        failures: [],
+      } as T)
+    }
+
+    case 'data_app_restart':
+      // 浏览器演示里没有进程可重启；真机走到这里会退出并重新拉起
+      return delay(undefined as T)
+
     case 'online_service_status': {
       const offline = mockFlag('__REIN_MOCK_SERVICE_OFFLINE__')
       const base = (args.baseUrl as string | null) ?? updateSettings.sources[0]?.url.replace(/\/updates\/.*$/, '') ?? ''
@@ -9604,6 +9776,67 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         checkedAt: new Date().toISOString(),
         elapsedMs: offline ? 3000 : 84,
       } as T)
+    }
+
+    /* ---- 外部访问（对外服务网关）：6 条管理命令，与 modules/gateway/commands.rs 同名 ---- */
+
+    case 'gateway_status':
+      return delay(gwStatus() as T)
+
+    case 'gateway_set_enabled': {
+      const on = !!args.enabled
+      gwState.enabled = on
+      // 真机开启时按设置绑定、把**实际**端口写回；mock 固定 17650（真机被占会顺延、全占退系统分配）
+      gwState.port = on ? 17650 : null
+      // 关闭 = 断链，本次会话授权随之消亡（contract §5.1）；「始终允许」的行留下
+      if (!on) gwState.clients = gwState.clients.filter((c) => c.grant === 'always')
+      gwChanged()
+      return delay(gwStatus() as T)
+    }
+
+    case 'gateway_set_bind': {
+      gwState.bindMode = args.bindMode === 'lan' ? 'lan' : 'local'
+      const want = args.port === null || args.port === undefined ? null : Number(args.port)
+      gwState.port = gwState.enabled ? (want ?? 17650) : null
+      gwChanged()
+      return delay(gwStatus() as T)
+    }
+
+    case 'gateway_authorization_pending':
+      return delay(gwPending.map((r) => ({ ...r })) as T)
+
+    case 'gateway_authorization_respond': {
+      const req = gwPending.find((r) => r.requestId === String(args.requestId))
+      if (!req) throw new Error('该授权请求不存在或已被处理')
+      const decision = String(args.decision)
+      const scopes = (Array.isArray(args.scopes) ? args.scopes : []).map(String)
+      const at = gwPending.indexOf(req)
+      // 「忽略」不落决策、连接继续挂起（30s 限频）—— 请求留在队列里
+      if (decision !== 'ignore' && at !== -1) gwPending.splice(at, 1)
+      if (decision === 'allow-session' || decision === 'allow-always') {
+        const granted: GatewayClient = {
+          clientId: req.clientId,
+          name: req.clientName,
+          grant: decision === 'allow-always' ? 'always' : 'session',
+          scopes,
+          lastSeen: decision === 'allow-always' ? new Date().toISOString() : null,
+          online: true,
+          ip: null,
+        }
+        gwState.clients = [...gwState.clients.filter((c) => c.clientId !== req.clientId), granted]
+        gwChanged()
+      }
+      // 「拒绝」在真机上会记 deny 行并以 1008 关连；deny 行不进已授权列表（build_status 会跳过）
+      return delay({} as T)
+    }
+
+    case 'gateway_revoke_client': {
+      const id = String(args.clientId)
+      gwState.clients = gwState.clients.filter((c) => c.clientId !== id)
+      // 拒绝 / 已撤销 / 静默：解除 = 从「被拦下」清单移除（回到无记录）。
+      gwState.blocked = gwState.blocked.filter((b) => b.clientId !== id)
+      gwChanged()
+      return delay(gwStatus() as T)
     }
 
     default:

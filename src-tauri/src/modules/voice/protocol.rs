@@ -141,7 +141,9 @@ async fn run_asr_session(
 ) -> Result<()> {
     let mut adapter = match kind {
         AsrAdapterKind::Doubao => AnyAsrAdapter::Doubao(super::asr::DoubaoAdapter::new(params)),
-        AsrAdapterKind::Qwen => AnyAsrAdapter::Qwen(super::asr::QwenAdapter::new(params)),
+        AsrAdapterKind::DashScope => {
+            AnyAsrAdapter::DashScope(super::asr::DashScopeAdapter::new(params))
+        }
     };
 
     // 音频落盘文件（pcm → 结束后包装 wav）

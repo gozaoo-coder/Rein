@@ -74,7 +74,7 @@ export async function startRecording(opts?: { onTake?: (t: RecTake) => void }): 
   if (!claimMic('recorder')) {
     stream.getTracks().forEach((t) => t.stop())
     stream = null
-    recorder.lastError = '麦克风被语音对话占用中'
+    recorder.lastError = '麦克风被其他功能占用中'
     return false
   }
   try {

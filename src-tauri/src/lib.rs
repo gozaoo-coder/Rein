@@ -67,7 +67,35 @@ pub fn run() {
             // 与知识库/抢课同形 —— 先 manage 好状态再启动线程，线程每轮借那把唯一的连接。
             let sync_hub = modules::sync::engine::SyncHub::new(data_dir.clone(), dirty);
             sync_hub.start(app.handle().clone());
+            // 对外服务网关：进程内状态（连接会话表 / 待决授权队列 / 变更广播 hub）。
+            // 变更广播必须挂在同步已经装好的那把 update_hook 上 —— 网关**绝不**自装第二个钩子
+            // （rusqlite 的钩子单槽，再注册会静默顶掉同步捕获，见 sync/engine.rs）。
+            let gateway = std::sync::Arc::new(modules::gateway::auth::GatewayHub::new());
+            sync_hub.set_feed(std::sync::Arc::clone(&gateway.feed));
             app.manage(sync_hub);
+            // 服务默认不启动：只有设置里开过（app_meta `gateway.enabled=1`）才在启动时监听。
+            {
+                let st = app.state::<AppState>();
+                let (on, bind, port) = {
+                    let conn = st.db.lock();
+                    (
+                        modules::gateway::store::get_enabled(&conn),
+                        modules::gateway::store::get_bind_mode(&conn),
+                        modules::gateway::store::get_port(&conn),
+                    )
+                };
+                if on {
+                    if let Err(e) = modules::gateway::server::start(
+                        app.handle().clone(),
+                        std::sync::Arc::clone(&gateway),
+                        bind,
+                        port,
+                    ) {
+                        eprintln!("对外网关启动失败：{e}");
+                    }
+                }
+            }
+            app.manage(gateway);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -122,6 +150,7 @@ pub fn run() {
             modules::healthsync::commands::health_sync_start,
             modules::healthsync::commands::health_sync_step,
             modules::healthsync::commands::health_metrics_all,
+            modules::healthsync::commands::health_sync_workouts,
             // pomodoro
             modules::pomodoro::commands::save_pomodoro_session,
             modules::pomodoro::commands::list_pomodoro_sessions,
@@ -368,8 +397,19 @@ pub fn run() {
             modules::update::commands::update_install,
             modules::update::commands::update_progress,
             modules::update::commands::update_prune_cache,
+            // maintenance（数据维护：分层清除软件数据）
+            modules::maintenance::commands::data_clear_preview,
+            modules::maintenance::commands::data_clear,
+            modules::maintenance::commands::data_app_restart,
             // online（Rein 在线服务：更新分发之外的在线能力探测；模型网关为预留接口）
             modules::update::online::online_service_status,
+            // gateway（对外服务网关的管理面：开关 / 绑定 / 状态 / 授权裁决 / 撤销）
+            modules::gateway::commands::gateway_status,
+            modules::gateway::commands::gateway_set_enabled,
+            modules::gateway::commands::gateway_set_bind,
+            modules::gateway::commands::gateway_authorization_pending,
+            modules::gateway::commands::gateway_authorization_respond,
+            modules::gateway::commands::gateway_revoke_client,
         ])
         .run(tauri::generate_context!())
         .expect("Rein 启动失败");

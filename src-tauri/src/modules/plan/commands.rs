@@ -64,6 +64,12 @@ pub fn apply_plan_seed_keep(state: State<AppState>) -> Result<PlanSeedStatus> {
 #[tauri::command]
 pub fn list_workout_plans(state: State<AppState>) -> Result<Vec<PlanRecord>> {
     let conn = state.db.lock();
+    list_workout_plans_on(&conn)
+}
+
+/// `list_workout_plans` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
+/// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
+pub(crate) fn list_workout_plans_on(conn: &rusqlite::Connection) -> Result<Vec<PlanRecord>> {
     let sql = format!(
         "SELECT {PLAN_COLS} FROM workout_plans \
          ORDER BY (last_used_at IS NULL), last_used_at DESC, updated_at DESC"
@@ -78,7 +84,12 @@ pub fn list_workout_plans(state: State<AppState>) -> Result<Vec<PlanRecord>> {
 #[tauri::command]
 pub fn get_workout_plan(state: State<AppState>, id: String) -> Result<PlanRecord> {
     let conn = state.db.lock();
-    plan_by_id(&conn, &id)
+    get_workout_plan_on(&conn, &id)
+}
+
+/// `get_workout_plan` 的本体：只拆锁，转调已有的 [`plan_by_id`]。
+pub(crate) fn get_workout_plan_on(conn: &rusqlite::Connection, id: &str) -> Result<PlanRecord> {
+    plan_by_id(conn, id)
 }
 
 /// 新建或整体更新一门课程（前端每次提交全量字段）。

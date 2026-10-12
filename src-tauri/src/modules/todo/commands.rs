@@ -5,6 +5,7 @@ use tauri::State;
 use crate::error::Result;
 use crate::state::AppState;
 use chrono::{Datelike, Duration, NaiveDate, Utc};
+use rusqlite::OptionalExtension;
 
 use super::models::{
     RecRule, Todo, TodoAttachment, TodoDayCount, TodoDistribution, TodoPage, TodoSubtask,
@@ -122,6 +123,16 @@ pub fn list_todos(
     end_date: String,
 ) -> Result<Vec<Todo>> {
     let conn = state.db.lock();
+    list_todos_on(&conn, &start_date, &end_date)
+}
+
+/// `list_todos` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用。
+/// 网关拿的必须是同一把 `state.db.lock()`（contract §6.1 单连接铁律，钩子按连接注册）。
+pub(crate) fn list_todos_on(
+    conn: &rusqlite::Connection,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<Todo>> {
     let sql = format!(
         "SELECT {COLS} FROM todos \
          WHERE date IS NOT NULL AND date BETWEEN ?1 AND ?2 \
@@ -129,7 +140,7 @@ pub fn list_todos(
     );
     let mut stmt = conn.prepare(&sql)?;
     let todos = stmt
-        .query_map([&start_date, &end_date], from_row)?
+        .query_map([start_date, end_date], from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(todos)
 }
@@ -139,6 +150,11 @@ pub fn list_todos(
 /// 供「全部待办」页与虚拟时间线使用。
 pub fn list_all_todos(state: State<AppState>) -> Result<Vec<Todo>> {
     let conn = state.db.lock();
+    list_all_todos_on(&conn)
+}
+
+/// `list_all_todos` 的本体（见 [`list_todos_on`]）。
+pub(crate) fn list_all_todos_on(conn: &rusqlite::Connection) -> Result<Vec<Todo>> {
     let sql = format!(
         "SELECT {COLS} FROM todos \
          ORDER BY (status = 'done'), (date IS NULL), date, (start_min IS NULL), start_min, priority DESC, id"
@@ -146,6 +162,44 @@ pub fn list_all_todos(state: State<AppState>) -> Result<Vec<Todo>> {
     let mut stmt = conn.prepare(&sql)?;
     let todos = stmt
         .query_map([], from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(todos)
+}
+
+/// 对外网关专用：带 SQL 侧 `LIMIT` 的 `list_todos`（contract §6.4「每页 LIMIT，禁止无界全表」）。
+/// 前端命令仍用无 LIMIT 的 [`list_todos_on`]（时间线要全量），网关这条只服务外部调用。
+pub(crate) fn list_todos_on_limited(
+    conn: &rusqlite::Connection,
+    start_date: &str,
+    end_date: &str,
+    limit: i64,
+) -> Result<Vec<Todo>> {
+    let sql = format!(
+        "SELECT {COLS} FROM todos \
+         WHERE date IS NOT NULL AND date BETWEEN ?1 AND ?2 \
+         ORDER BY date, (start_min IS NULL), start_min, priority DESC, id \
+         LIMIT ?3"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let todos = stmt
+        .query_map((start_date, end_date, limit), from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(todos)
+}
+
+/// 对外网关专用：带 SQL 侧 `LIMIT` 的 `list_all_todos`（见 [`list_todos_on_limited`]）。
+pub(crate) fn list_all_todos_on_limited(
+    conn: &rusqlite::Connection,
+    limit: i64,
+) -> Result<Vec<Todo>> {
+    let sql = format!(
+        "SELECT {COLS} FROM todos \
+         ORDER BY (status = 'done'), (date IS NULL), date, (start_min IS NULL), start_min, priority DESC, id \
+         LIMIT ?1"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let todos = stmt
+        .query_map((limit,), from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(todos)
 }
@@ -258,6 +312,37 @@ pub fn create_todo(
     attachments: Option<Vec<TodoAttachment>>,
 ) -> Result<Todo> {
     let conn = state.db.lock();
+    create_todo_on(
+        &conn,
+        title,
+        notes,
+        date,
+        start_min,
+        duration_min,
+        category,
+        priority,
+        rec_rule,
+        subtasks,
+        attachments,
+    )
+}
+
+/// `create_todo` 的本体（见 [`list_todos_on`]）。对外网关的 `schedule.create` 走它，
+/// 只带契约 §4.4 允许的字段，`rec_rule`/`subtasks`/`attachments` 一律传 `None`。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_todo_on(
+    conn: &rusqlite::Connection,
+    title: String,
+    notes: Option<String>,
+    date: Option<String>,
+    start_min: Option<i64>,
+    duration_min: Option<i64>,
+    category: Option<String>,
+    priority: Option<i64>,
+    rec_rule: Option<RecRule>,
+    subtasks: Option<Vec<TodoSubtask>>,
+    attachments: Option<Vec<TodoAttachment>>,
+) -> Result<Todo> {
     let now = Utc::now().to_rfc3339();
     let category = category.unwrap_or_else(|| "general".into());
     conn.execute(
@@ -295,6 +380,13 @@ pub fn create_todo(
 #[tauri::command]
 pub fn update_todo(state: State<AppState>, todo: Todo) -> Result<Todo> {
     let conn = state.db.lock();
+    update_todo_on(&conn, &todo)
+}
+
+/// `update_todo` 的本体（见 [`list_todos_on`]）。仍是**全量覆盖**语义：
+/// 调用方给的 `Todo` 缺哪些非暴露列，就把那些列写成空 —— 需要保值的调用方自己先补齐
+/// （对外网关照 contract §10 在 handler 层拒绝带附件的待办并保留原 rec_rule/subtasks）。
+pub(crate) fn update_todo_on(conn: &rusqlite::Connection, todo: &Todo) -> Result<Todo> {
     // 模板改动后 rec_key 跟随自身日期，保持"模板 = 首日实例"不变式
     let rec_key: Option<String> = if todo.rec_rule.is_some() {
         todo.date.as_ref().map(|d| format!("{}:{}", todo.id, d))
@@ -329,8 +421,22 @@ pub fn update_todo(state: State<AppState>, todo: Todo) -> Result<Todo> {
 #[tauri::command]
 pub fn delete_todo(state: State<AppState>, id: i64) -> Result<()> {
     let conn = state.db.lock();
+    delete_todo_on(&conn, id)
+}
+
+/// `delete_todo` 的本体（见 [`list_todos_on`]）。
+pub(crate) fn delete_todo_on(conn: &rusqlite::Connection, id: i64) -> Result<()> {
     conn.execute("DELETE FROM todos WHERE id = ?1", [id])?;
     Ok(())
+}
+
+/// 按 id 取一行（不存在返回 `None`）。供对外网关的 `schedule.update` 读取**非暴露列**
+/// （`rec_rule`/`subtasks`/`attachments`/`course_session_id`）用 —— 外部 DTO 不带这些字段，
+/// 直接全量覆盖会把它们清空（contract §10）。tauri 命令侧没有这个入口的需求，故只对
+/// 网关开放（`pub(crate)`）。
+pub(crate) fn get_todo_on(conn: &rusqlite::Connection, id: i64) -> Result<Option<Todo>> {
+    let sql = format!("SELECT {COLS} FROM todos WHERE id = ?1");
+    Ok(conn.query_row(&sql, [id], from_row).optional()?)
 }
 
 #[tauri::command]
@@ -480,6 +586,37 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         crate::db::migrate_for_test(&conn).unwrap();
         conn
+    }
+
+    /// 对外网关专用的 LIMIT 变体：SQL 侧就限行，别让外部拉全表（contract §6.4）。
+    #[test]
+    fn limited_list_variants_cap_rows_in_sql() {
+        let conn = fresh();
+        for i in 0..10 {
+            conn.execute(
+                "INSERT INTO todos (title, category, priority, status, created_at) \
+                 VALUES (?1, 'general', 0, 'todo', 'now')",
+                [format!("t{i}")],
+            )
+            .unwrap();
+        }
+        assert_eq!(list_all_todos_on(&conn).unwrap().len(), 10, "前端用的本体仍返回全量");
+        assert_eq!(list_all_todos_on_limited(&conn, 3).unwrap().len(), 3, "LIMIT 生效");
+        assert_eq!(list_all_todos_on_limited(&conn, 100).unwrap().len(), 10, "未超限则全给");
+
+        conn.execute("UPDATE todos SET date = '2026-09-23'", []).unwrap();
+        assert_eq!(
+            list_todos_on_limited(&conn, "2026-09-01", "2026-09-30", 4)
+                .unwrap()
+                .len(),
+            4,
+            "日期窗变体同样带 LIMIT"
+        );
+        assert_eq!(
+            list_todos_on(&conn, "2026-09-01", "2026-09-30").unwrap().len(),
+            10,
+            "前端用的本体不受影响"
+        );
     }
 
     fn rule(freq: &str, weekdays: Vec<i64>, interval_days: i64, end_date: Option<&str>) -> RecRule {

@@ -1,7 +1,8 @@
 /** 语音对话域类型 · 与 Rust `modules/voice` 对应 */
 
-/** ASR 适配器：auto = 按 baseURL/模型名关键词自动识别（程序替选）；显式选择后只推荐不强改 */
-export type AsrAdapter = 'auto' | 'doubao' | 'qwen'
+/** ASR 适配器：auto = 按 baseURL/模型名关键词自动识别（程序替选）；显式选择后只推荐不强改。
+ *  bailian = 阿里云百炼（DashScope）实时语音识别；'qwen' 是同一协议的历史值（读到即迁移为 bailian）。 */
+export type AsrAdapter = 'auto' | 'doubao' | 'bailian' | 'qwen'
 
 /** 朗读（豆包 TTS）独立凭据：appKey 为空 = 继承识别凭据 */
 export interface TtsCredential {
@@ -14,8 +15,8 @@ export interface TtsCredential {
 export interface VoiceStatus {
   /** 识别（ASR）凭据已配置 */
   asrReady: boolean
-  /** 识别实际走的适配器（auto 解析后）：doubao | qwen */
-  asrAdapter: 'doubao' | 'qwen'
+  /** 识别实际走的适配器（auto 解析后）：doubao | bailian（历史值 qwen 同义） */
+  asrAdapter: 'doubao' | 'bailian' | 'qwen'
   /** 朗读（TTS）凭据与音色已齐，可合成 */
   ttsReady: boolean
   /** 朗读是否使用独立凭据（false = 继承识别凭据） */

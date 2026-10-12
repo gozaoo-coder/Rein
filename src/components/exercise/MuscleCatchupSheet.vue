@@ -172,6 +172,9 @@ async function begin(p: WorkoutPlan): Promise<void> {
     }
     emit('close')
     openImmersive(null)
+  } catch {
+    // 开课失败的可视回执由 store 内的 toast 负责（session.start 原样抛）；
+    // 这里只吞掉拒绝，避免 unhandled rejection，finally 复位按钮供重试。
   } finally {
     starting.value = false
   }

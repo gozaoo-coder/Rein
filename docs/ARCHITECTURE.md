@@ -48,6 +48,8 @@
 | `resources/foods.json` | 种子数据单一来源 | 运行时可变数据 |
 | `resources/exercises.json` | 动作库种子（0025）：内置动作的唯一来源，由 `scripts/gen-exercises.mjs` 生成 —— 手写 SPEC（处方、要点、别名为手写；**肌群表必须显式给 `m`**，不再按名推导）+ `scripts/catalog/dataset.mjs`（exercises-dataset 精选子集，见 `resources/exercises.SOURCE.md`），禁止手改 | 运行时可变数据（用户自建动作落库，不回写种子） |
 | `src-tauri/src/modules/update/*` | 在线更新：多源清单（自建服务 + GitHub）+ 清单/安装包**双验签** + 断点续传 + 平台安装（Windows NSIS · Android APK）。设置在 `app_meta`（`update_settings_v1`），下载物落 `<app_data>/updates/`，进度走 `update://progress` 事件 | 把签名校验做成可选项；在前端推算下载进度；在 Rust 侧装配模型配置 |
+| `src-tauri/src/modules/maintenance/*` | 数据维护：分层清除软件数据（设置 › 数据 › 清除软件数据，`DataClearSheet` 两段确认：统计清单 + 长按 1.5s）。四档深度 cache / ai / business / factory，**档与档互不包含**；preview 与 clear 共用同一份分组定义（确认页清单 = 真删范围）；factory 动态枚举全库用户表（FTS5 走 delete-all，清空期间关外键、结束即还原），磁盘上只留数据库本件；除缓存档外清完由前端调 `data_app_restart` 重启（报告先回包再退进程，与 update_install 同纪律） | 按静态清单追迁移新表（factory 靠动态枚举自跟上）；清空事务里动连接级 pragma 不还原 |
+| `src-tauri/src/modules/gateway/*` | 对外服务网关（设置 › 外部访问，`ExternalAccessSection` + `GatewayAuthSheet`）：`tokio-tungstenite` WS 服务，六条握手闸门（绑回环/Origin/Host/首帧令牌/逐次 scope/参数收紧），四态授权（本次会话内存 `conn_id→ConnGrant`、始终允许落 `ext_clients` + `sha256` 令牌、忽略限频、拒绝），15 条 `schedule.*`/`workout.*`/`pomodoro.*` 方法由 WS 私有 router 分发（**不注册成 tauri 命令**）。设置与运行态只写 `app_meta`（`gateway.*`）；凭据/审计落 `ext_clients`/`ext_audit`（**不进同步白名单**）。变更推送复用同步已装的**唯一** `update_hook`（`sync/engine.rs`），网关**绝不**自己再装钩子 | 自己 `Connection::open`（会绕过同步钩子）；注册第二个 update_hook（顶掉同步捕获）；把 `ext_*` 放进 `sync/tables.rs` |
 | `server/*` | **Rein 在线服务**（部署在阿里云 ECS，systemd `rein-services`）：更新清单与安装包分发、发布/回滚/镜像管理接口、（预留）OpenAI 兼容模型网关。零依赖 Node，无构建步骤 | 持有更新签名私钥（服务端只能分发别人签过名的字节）；把业务数据放进这个进程 |
 | `scripts/release/*` | 发布工具链：`keygen`（生成 Ed25519 密钥对并同步公钥到三处）/ `publish`（签名 + 组装两套清单 + 推服务端/发 GitHub Release）/ `verify`（以客户端视角复核）/ `e2e`（本地起服务端跑完整链路）/ `deploy-server`（部署到 ECS） | 被前端或 Rust 代码 import；把私钥或管理令牌写进源码 |
 | `src-tauri/gen/android/.../RunTrackingService.kt` · `TrackingBridge.kt` | 跑步前台保活（Android 原生侧，与 MainActivity 同为手工维护；`tauri android init` 重新生成会丢） | 业务逻辑、SQL |
@@ -173,7 +175,7 @@
 | `/ai/files/space` | ai-files-usage | 空间总览（二级内容页：**入口是文件页页头右侧那颗「总大小」文字胶囊**，不占页内位置。真源构成条（文本 / 本体）与派生缓存（索引 / 数据库，单列一组且不计入总量 —— 它们的字节本来就在数据库文件内部）各一条；目录占用（文本 + 本体，按一级目录，可点进对应目录）/ 大文件前三名摘要（可点开阅读器，完整榜单在下一级页）/ 索引来源 / 本体模态四张分布卡；维护卡做碎片回收（两段确认）与丢失本体提示。数据来自 `kb_usage`，走 `usageCached` 会话级备忘） |
 | `/ai/files/space/large` | ai-files-usage-large | 大文件（三级页：**完整榜单**，最多 100 条，按体积倒序，行渲染与大文件摘要共用 `components/kb/UsageFileList.vue`（条长 = 相对最大文件、颜色 = 文本 / 本体）；点一行按路径深链进文件管理器打开阅读器。总览页只留前三名，榜单本身不挤在总览里） |
 | `/me` | me | 我 |
-| `/settings` | settings | 设置（二级内容页：功能分组入口 + 番茄钟完整配置 + 关于；入口在「我 › 设置」，原设置抽屉已升级为页面） |
+| `/settings` | settings | 设置（二级内容页：功能分组入口 + 番茄钟完整配置 + 数据（清除软件数据：四档深度两段确认）+ 关于；入口在「我 › 设置」，原设置抽屉已升级为页面） |
 | `/settings/features` | settings-features | 打开或关闭功能（三级页：插件层的逐项开关，列表来自 `src/plugins` 里 `toggleable` 的声明） |
 | `/settings/update` | settings-update | 软件更新（三级页：版本/多源状态/下载进度/安装/更新源与通道设置 + Rein 在线服务探测；入口在「设置 › 关于 › 软件更新」，启动时也会静默检查并在有新版本时 toast 一次） |
 | `/settings/perf` | settings-perf | 画质预览（三级页：超高档的液态玻璃长什么样 —— 仅图标按钮 / 图标+文字按钮 / 底部栏（圆 + 药丸 + 圆，并列留缝；**与应用里的 Dock 共用同一份样式**，逐项一致）；可就地切档看折射与退化的差别；**动效档位也在这里就地切**（关闭 / 默认 / 丰富，台上标本跟着变 —— 丰富档下点页签能看见活动底的融合与形变，另有「试一下」按钮让底栏走一格）；台下入口拉开**液态玻璃参数调节面板**（12 项可调参数 + 自带暗场预览）；入口在「设置 › 性能 › 液态玻璃预览」） |

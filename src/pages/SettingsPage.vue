@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronRight, HeartPulse, RefreshCw, Sparkles, ToggleLeft } from 'lucide-vue-next'
+import { ChevronRight, HeartPulse, RefreshCw, Sparkles, ToggleLeft, Trash2 } from 'lucide-vue-next'
 
+import DataClearSheet from '@/components/settings/DataClearSheet.vue'
+import ExternalAccessSection from '@/components/settings/ExternalAccessSection.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -19,6 +21,9 @@ import { PERF_MODES, liquidGlass, perfMode, setPerfMode, type PerfMode } from '@
 const router = useRouter()
 const pomo = usePomodoroStore()
 const update = useUpdateStore()
+
+/** 清除软件数据抽屉（四档深度 + 两段确认，见 DataClearSheet） */
+const clearOpen = ref(false)
 
 /** 功能行副标：列出可开关模块，一眼看到有哪些功能可关 */
 const featureNames = computed(() => toggleablePlugins().map((p) => p.name).join(' · '))
@@ -172,6 +177,9 @@ onMounted(() => {
       </button>
     </section>
 
+    <!-- 外部访问：对外服务网关（开关 / 绑定模式 / 端口 / 已授权程序） -->
+    <ExternalAccessSection />
+
     <!-- 第三方数据管理 -->
     <section class="card">
       <h2 class="gtitle">第三方数据管理</h2>
@@ -187,6 +195,21 @@ onMounted(() => {
           <b>第三方数据管理</b>
           <em class="t-3">健康数据授权、同步手环/运动 App 的记录</em>
         </span>
+      </button>
+    </section>
+
+    <!-- 数据：分层清除（缓存 / AI 会话 / 业务数据 / 恢复出厂），危险区入口用危险色 -->
+    <section class="card">
+      <h2 class="gtitle">数据</h2>
+      <button class="frow row" data-testid="settings-data-clear" @click="clearOpen = true">
+        <i class="fic" style="background: var(--danger-soft); color: var(--danger)">
+          <Trash2 :size="18" />
+        </i>
+        <span class="col ftxt">
+          <b>清除软件数据</b>
+          <em class="t-3">缓存 · AI 会话 · 业务数据 · 恢复出厂，四档深度可选</em>
+        </span>
+        <ChevronRight :size="16" class="t-3" />
       </button>
     </section>
 
@@ -210,6 +233,9 @@ onMounted(() => {
       </p>
     </section>
     </div>
+
+    <!-- 清除软件数据：选档 → 真实统计清单 → 长按确认（两段确认都在抽屉里完成） -->
+    <DataClearSheet :open="clearOpen" @close="clearOpen = false" />
   </div>
 </template>
 

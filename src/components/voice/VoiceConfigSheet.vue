@@ -11,13 +11,14 @@ import type { AsrAdapter, TtsCredential, VoiceConfig } from '@/types'
  *
  * ASR 适配器双层选择机制：
  * - 第一层（用户未手选 = 「自动」）：检测 baseURL/模型名关键词 → 程序自动替选适配器并提示；
- *   关键词变化自动换向（qwen 删了填 doubao → 自动改选豆包），清空后回到「自动」。
- * - 第二层（用户已手选豆包/Qwen）：只弹推荐气泡（一键切换/忽略），绝不覆盖用户选择。
- * 凭据：豆包 = 旧版 App ID+Token / 新版 API Key；Qwen = DASHSCOPE_API_KEY（Bearer）。
+ *   关键词变化自动换向（百炼删了填 doubao → 自动改选豆包），清空后回到「自动」。
+ * - 第二层（用户已手选豆包/百炼）：只弹推荐气泡（一键切换/忽略），绝不覆盖用户选择。
+ * 凭据：豆包 = 旧版 App ID+Token / 新版 API Key；百炼 = API Key（Bearer，DASHSCOPE_API_KEY）。
+ * 历史值 'qwen' 与 'bailian' 是同一协议（百炼/DashScope），读到时在表单里迁移为百炼。
  *
  * 朗读（豆包 TTS）凭据独立分区：
  * - 默认「跟随识别凭据」（豆包适配器下零配置可用）；
- * - 识别配 Qwen 时豆包 TTS 无法继承凭据 → 提示并要求独立凭据才能朗读；
+ * - 识别配百炼时豆包 TTS 无法继承凭据 → 提示并要求独立凭据才能朗读；
  * - 「独立凭据」开启后填写豆包凭据，保存进 ttsCredential（识别配置不受影响）。
  * 连通性测试：识别（WS 建连即结束）与朗读（试听任意音色）分开验证。 */
 const props = defineProps<{ open: boolean; config: VoiceConfig | null }>()
@@ -25,23 +26,35 @@ const emit = defineEmits<{ close: []; saved: [config: VoiceConfig] }>()
 
 const toast = useToast()
 
+/** 双适配器世界的键（auto 之外的两种具体选择） */
+type AdapterKey = 'doubao' | 'bailian'
+
 const ADAPTER_META = {
   doubao: {
     label: '豆包',
     defaultUrl: 'wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_async',
     defaultModel: 'volc.seedasr.sauc.duration',
   },
-  qwen: {
-    label: 'Qwen',
+  bailian: {
+    label: '百炼',
     defaultUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
-    defaultModel: 'qwen-audio-3.0-asr-flash-streaming',
+    // 2026-10-12 实测：run-task 协议下 paraformer-realtime-v2 / qwen-audio-3.1-asr-flash-streaming
+    // / fun-asr-realtime 都可用，默认取中文效果最稳的 paraformer。
+    defaultModel: 'paraformer-realtime-v2',
   },
 } as const
 
+/** 百炼（DashScope）实时识别可用模型（参考清单，可手填别的） */
+const BAILIAN_MODELS = [
+  'paraformer-realtime-v2',
+  'qwen-audio-3.1-asr-flash-streaming',
+  'fun-asr-realtime',
+] as const
+
 /** 关键词 → 适配器（与 Rust AsrAdapterKind::detect 同一套词表） */
-function detectAdapter(url: string, model: string): 'doubao' | 'qwen' | null {
+function detectAdapter(url: string, model: string): AdapterKey | null {
   const s = `${url} ${model}`.toLowerCase()
-  if (/(qwen|dashscope|aliyun)/.test(s)) return 'qwen'
+  if (/(qwen|dashscope|aliyun|bailian|paraformer|fun-asr)/.test(s)) return 'bailian'
   if (/(doubao|volc|openspeech|bytedance|seedasr)/.test(s)) return 'doubao'
   return null
 }
@@ -66,22 +79,22 @@ const speed = ref(1)
 /** 用户手动点过具体适配器（离开「自动」层） */
 const adapterTouched = ref(false)
 /** 第一层自动替选的结果（提示条展示；字段清空后撤回回「自动」） */
-const autoApplied = ref<'doubao' | 'qwen' | null>(null)
+const autoApplied = ref<AdapterKey | null>(null)
 /** 第二层推荐气泡（不强改，可忽略） */
-const suggestion = ref<'doubao' | 'qwen' | null>(null)
-const suggestionDismissed = ref<'doubao' | 'qwen' | null>(null)
+const suggestion = ref<AdapterKey | null>(null)
+const suggestionDismissed = ref<AdapterKey | null>(null)
 
 /** 表单生效中的适配器（自动层下 = 关键词识别结果，识别不出回落豆包） */
-const effectiveAdapter = ref<'doubao' | 'qwen'>('doubao')
+const effectiveAdapter = ref<AdapterKey>('doubao')
 
-/** 朗读凭据是否不可用（识别配 Qwen 且未开独立凭据 → 豆包 TTS 无法继承） */
+/** 朗读凭据是否不可用（识别配百炼且未开独立凭据 → 豆包 TTS 无法继承） */
 const ttsBlocked = ref(false)
 
 /** 双层选择求值：baseURL/模型名变化与手动切换适配器时都要跑一遍 */
 function evaluateAdapter(): void {
   const detected = detectAdapter(asrBaseUrl.value, asrResourceId.value)
-  effectiveAdapter.value = adapter.value === 'qwen' ? 'qwen' : detected ?? 'doubao'
-  ttsBlocked.value = effectiveAdapter.value === 'qwen' && !ttsStandaloneOn.value
+  effectiveAdapter.value = adapter.value !== 'auto' ? (adapter.value as AdapterKey) : detected ?? 'doubao'
+  ttsBlocked.value = effectiveAdapter.value === 'bailian' && !ttsStandaloneOn.value
   if (!detected) {
     // 关键词消失：自动替选的撤回到「自动」
     if (autoApplied.value && !adapterTouched.value) {
@@ -138,6 +151,8 @@ watch(
     appKey.value = c?.appKey ?? ''
     accessKey.value = c?.accessKey ?? ''
     adapter.value = c?.asrAdapter ?? 'auto'
+    // 历史值 'qwen' 与 'bailian' 同协议（百炼/DashScope）：读到即迁移，下次保存落新值
+    if (adapter.value === 'qwen') adapter.value = 'bailian'
     adapterTouched.value = c?.asrAdapterUserPicked === true
     asrBaseUrl.value = c?.asrBaseUrl ?? ''
     const tc = c?.ttsCredential
@@ -249,7 +264,7 @@ async function onTry(): Promise<void> {
       <div class="mode-seg">
         <button :class="{ on: adapter === 'auto' }" @click="pickAdapter('auto')">自动识别</button>
         <button :class="{ on: adapter === 'doubao' }" @click="pickAdapter('doubao')">豆包</button>
-        <button :class="{ on: adapter === 'qwen' }" @click="pickAdapter('qwen')">Qwen</button>
+        <button :class="{ on: adapter === 'bailian' }" @click="pickAdapter('bailian')">百炼</button>
       </div>
       <!-- 第一层：自动替选提示 -->
       <p v-if="autoApplied" class="auto-notice">
@@ -290,10 +305,19 @@ async function onTry(): Promise<void> {
       </template>
 
       <template v-else>
-        <label class="f-label">API Key（DASHSCOPE_API_KEY）</label>
+        <label class="f-label">API Key（DASHSCOPE_API_KEY · Bearer）</label>
         <input v-model="appKey" type="password" autocomplete="new-password" placeholder="阿里云百炼 API Key">
         <label class="f-label">识别 ASR · 模型名</label>
-        <input v-model="asrResourceId" type="text" class="mono" placeholder="qwen-audio-3.0-asr-flash-streaming">
+        <input
+          v-model="asrResourceId"
+          type="text"
+          class="mono"
+          list="bailian-asr-models"
+          placeholder="paraformer-realtime-v2"
+        >
+        <datalist id="bailian-asr-models">
+          <option v-for="m in BAILIAN_MODELS" :key="m" :value="m" />
+        </datalist>
       </template>
 
       <div class="acts">
@@ -310,7 +334,7 @@ async function onTry(): Promise<void> {
         <button :class="{ on: ttsStandaloneOn }" @click="toggleTtsStandalone(true)">独立凭据</button>
       </div>
       <p v-if="ttsBlocked" class="warn-notice">
-        识别适配器是 Qwen，朗读凭据无法继承（豆包 TTS 只认豆包凭据）——请切换到「独立凭据」填入豆包 Key，否则纪要朗读不可用。
+        识别适配器是百炼，朗读凭据无法继承（豆包 TTS 只认豆包凭据）——请切换到「独立凭据」填入豆包 Key，否则纪要朗读不可用。
       </p>
 
       <template v-if="ttsStandaloneOn">

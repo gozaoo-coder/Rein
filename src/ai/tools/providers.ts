@@ -266,7 +266,7 @@ export const providerTools: AppTool[] = [
       return {
         slots: [dump('llm'), dump('vision'), dump('asr'), dump('embedding')],
         message:
-          '换模型：set_model_role(role, ref)。ref 形如 model:3（对话模型）/ voice（沿用语音服务那套）/ provider:2:qwen-audio-3.0-asr-flash-streaming / local:bge-base-zh-v1.5-int8 / cloud:1:text-embedding-v4 / keyword（不用向量模型）。',
+          '换模型：set_model_role(role, ref)。ref 形如 model:3（对话模型）/ voice（沿用语音服务那套）/ provider:2:paraformer-realtime-v2 / local:bge-base-zh-v1.5-int8 / cloud:1:text-embedding-v4 / keyword（不用向量模型）。',
       }
     },
   }),

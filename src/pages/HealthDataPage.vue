@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, type Component } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
 import {
   AlertTriangle,
   Check,
@@ -13,7 +13,9 @@ import {
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import HealthWorkoutList from '@/components/health/HealthWorkoutList.vue'
 import MetricDetailSheet from '@/components/health/MetricDetailSheet.vue'
 import { useToast } from '@/composables/useToast'
 import { healthSyncService } from '@/services/healthSyncService'
@@ -28,7 +30,13 @@ import {
   type HealthCategoryKey,
   type HealthMetricMeta,
 } from '@/config/healthMetrics'
-import type { HealthMetricSeries, HealthSyncReport, HealthSyncStatus } from '@/types'
+import { todayStr } from '@/utils/date'
+import type {
+  HealthMetricSeries,
+  HealthSyncReport,
+  HealthSyncStatus,
+  HealthSyncWorkout,
+} from '@/types'
 
 /** 每组数据源行的图标（config 里的 key → lucide 组件） */
 const CATEGORY_ICONS: Record<HealthCategoryKey, Component> = {
@@ -67,6 +75,97 @@ const metrics = ref<HealthMetricSeries[]>([])
 const message = ref<string | null>(null)
 const loading = ref(true)
 const syncing = ref(false)
+/** 本机存着的第三方运动记录（导入块 + 缺开始时间块），同步后与进页时各拉一次 */
+const syncWorkouts = ref<HealthSyncWorkout[]>([])
+
+/* ---------------- 同步起始日偏好 ----------------
+   三态：自动（程序取本机最早导入记录）/ 从头拉全部 / 自定义日期。
+   这个偏好**只存本机 localStorage**，不写 app_meta —— 避免与 push 开关那套口径形成双写。
+   传值给 Rust：auto → null（Rust 侧解析），all → '2000-01-01'，custom → 所选日期。 */
+const WINDOW_KEY = 'rein.healthSync.windowStart'
+const WINDOW_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+/** 「从头拉全部」的显式起始日：也是 Rust 侧无导入记录时的回退值 */
+const WINDOW_ALL_DATE = '2000-01-01'
+
+const WINDOW_OPTIONS = [
+  { value: 'auto', label: '自动' },
+  { value: 'all', label: '从头拉全部' },
+  { value: 'custom', label: '自定义' },
+]
+/** 用户在分段控件里选的模式；与 customDate 分开存，切走再切回不丢已填日期 */
+const windowMode = ref<'auto' | 'all' | 'custom'>('auto')
+const customDate = ref('')
+
+/** 读回偏好：认 'all' 与日期串，其余（含损坏值）一律按自动 */
+function loadWindowPref(): void {
+  let raw: string | null = null
+  try {
+    raw = localStorage.getItem(WINDOW_KEY)
+  } catch {
+    /* 隐私模式读不到，按自动处理 */
+  }
+  if (raw === 'all') {
+    windowMode.value = 'all'
+  } else if (raw && WINDOW_DATE_RE.test(raw)) {
+    windowMode.value = 'custom'
+    customDate.value = raw
+  } else {
+    windowMode.value = 'auto'
+  }
+}
+
+/** 写回偏好：只有落到有效值才写，避免把空日期当成一个假的「自定义」存进去 */
+function persistWindowPref(): void {
+  const v = windowMode.value === 'custom' ? customDate.value : windowMode.value
+  try {
+    localStorage.setItem(WINDOW_KEY, v)
+  } catch {
+    /* 写不进去也不影响本次同步：传参照旧按当前模式算 */
+  }
+}
+
+function onWindowMode(v: string): void {
+  if (v !== 'auto' && v !== 'all' && v !== 'custom') return
+  // 刚切到自定义且还没填过日期时给个今天，免得分段控件说「自定义」、实际却按自动传
+  if (v === 'custom' && !customDate.value) customDate.value = todayStr()
+  windowMode.value = v
+}
+
+// 进页即回填上次选择；之后模式或日期一变就写回本机
+loadWindowPref()
+watch([windowMode, customDate], persistWindowPref)
+
+/** 当前模式对应的 windowStart：null = 自动，'2000-01-01' = 全部，其余 = 自定义日期 */
+function windowStartValue(): string | null {
+  if (windowMode.value === 'all') return WINDOW_ALL_DATE
+  if (windowMode.value === 'custom') {
+    return WINDOW_DATE_RE.test(customDate.value) ? customDate.value : null
+  }
+  return null
+}
+
+/** 分段控件下方的一句说明：三态各说清「这一轮会从哪里读」 */
+const windowHint = computed(() => {
+  if (windowMode.value === 'all') return `将从 ${WINDOW_ALL_DATE} 起读取全部历史（含早于首次导入的记录）`
+  if (windowMode.value === 'custom') {
+    return customDate.value
+      ? `将从 ${customDate.value} 起读取`
+      : '请选择起始日期'
+  }
+  const d = status.value?.autoWindowStart
+  return d
+    ? `程序按本机最早一条导入记录（${d}）起读`
+    : '还没有导入记录，将读取全部历史'
+})
+
+/** 导入进来的记录（手机同步） */
+const importedWorkouts = computed(() =>
+  syncWorkouts.value.filter((w) => w.source === 'health_connect'),
+)
+/** 没填开始时间、回写时被跳过的本机记录 —— 就是同步报告里「跳过 N」那句话对应的明细 */
+const missingStartWorkouts = computed(() =>
+  syncWorkouts.value.filter((w) => w.source === 'local' && w.startMin == null),
+)
 
 /** 同步要读全部历史，轮询上限给足；超时是异常路径，正常几秒内就结束 */
 const POLL_INTERVAL_MS = 400
@@ -145,6 +244,7 @@ async function converge() {
 async function firstLoad() {
   await converge()
   await loadMetrics()
+  await loadSyncWorkouts()
 }
 
 /** 拉预览：桌面端没有数据源，跳过；失败不阻塞本页（卡片按空态展示） */
@@ -152,6 +252,16 @@ async function loadMetrics() {
   if (!supported.value) return
   try {
     metrics.value = await healthSyncService.metrics()
+  } catch {
+    /* 空态即可 */
+  }
+}
+
+/** 拉本机第三方运动记录：与预览同款门控（桌面端没有数据源就跳过） */
+async function loadSyncWorkouts() {
+  if (!supported.value) return
+  try {
+    syncWorkouts.value = await healthSyncService.workouts()
   } catch {
     /* 空态即可 */
   }
@@ -213,6 +323,7 @@ function onVisibility() {
   if (document.visibilityState === 'visible') {
     void converge()
     void loadMetrics()
+    void loadSyncWorkouts()
   }
 }
 
@@ -237,6 +348,7 @@ async function runSync() {
       pushEnabled.value,
       maxHr,
       utcOffsetSeconds(),
+      windowStartValue(),
     )
     let step = started
     for (let i = 0; i < POLL_MAX && step.phase === 'pending'; i++) {
@@ -251,8 +363,9 @@ async function runSync() {
         step.report.imported + step.report.updated + step.report.removed +
         step.report.exported + step.report.reExported
       toast(total > 0 ? `同步完成，共处理 ${total} 条` : '同步完成，没有变化')
-      // 体征镜像刚被整表替换，预览跟着重拉一次
+      // 体征镜像刚被整表替换，预览跟着重拉一次；导入/回写也变了，记录列表同拉
       await loadMetrics()
+      await loadSyncWorkouts()
     } else if (step.phase === 'pending') {
       message.value = '同步超时，请重试'
       toast(message.value)
@@ -416,6 +529,28 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
           />
         </div>
 
+        <!-- 同步起始日：只作用于从手机读取运动记录的起点（体征镜像窗口不动）。
+             三态里「从头拉全部」是用过窄窗口后回到全量的唯一恢复出口。 -->
+        <div class="frow window">
+          <span class="col ftxt">
+            <b>同步起始日期</b>
+            <small>从这一天之后开始读取手机里的运动记录；设置只存在本机</small>
+          </span>
+          <SegmentedControl
+            :options="WINDOW_OPTIONS"
+            :model-value="windowMode"
+            @update:model-value="onWindowMode"
+          />
+          <input
+            v-if="windowMode === 'custom'"
+            v-model="customDate"
+            type="date"
+            class="date-input"
+            aria-label="同步起始日期"
+          />
+          <p class="sub">{{ windowHint }}</p>
+        </div>
+
         <p v-if="blockedReason" class="hint">
           <AlertTriangle :size="14" /> {{ blockedReason }}
         </p>
@@ -432,7 +567,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
           <span v-if="report.metricsImported">体征 {{ report.metricsImported }} 天</span>
           <span v-if="report.exported">回写 {{ report.exported }}</span>
           <span v-if="report.reExported">重写 {{ report.reExported }}</span>
-          <span v-if="report.skipped">跳过 {{ report.skipped }}（没填开始时间）</span>
+          <span v-if="report.skipped">跳过 {{ report.skipped }}（没填开始时间，见下方）</span>
           <span v-if="!report.imported && !report.updated && !report.removed && !report.exported && !report.reExported">
             读到 {{ report.scanned }} 条，没有变化
           </span>
@@ -482,6 +617,32 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
             <ChevronRight :size="14" class="mchev" />
           </div>
         </div>
+      </template>
+    </section>
+
+    <!-- 3.5 本机第三方运动记录：进口块（手机同步进来的）+ 缺开始时间块（回写被跳过的本机记录）。
+         只读展示 —— 补填与删除仍在「全部运动记录」页。 -->
+    <section class="card">
+      <h2 class="gtitle">本机第三方运动记录</h2>
+
+      <template v-if="!supported">
+        <p class="empty">接入 Health Connect 后，这里会列出从手机同步进来的运动记录</p>
+      </template>
+      <template v-else>
+        <h3 class="mtitle">从手机同步进来的</h3>
+        <HealthWorkoutList v-if="importedWorkouts.length" :items="importedWorkouts" />
+        <p v-else class="empty">
+          {{ readGranted ? '还没有导入记录 —— 在上面同步一次即可' : '先完成「运动」组授权再同步' }}
+        </p>
+
+        <h3 class="mtitle">没填开始时间的本机记录</h3>
+        <p class="empty">这些是回写 Health Connect 时被跳过的本机记录（HC 里没开始时间就没处安放）</p>
+        <HealthWorkoutList
+          v-if="missingStartWorkouts.length"
+          :items="missingStartWorkouts"
+          :show-source="false"
+        />
+        <p v-else class="empty">没有这一类记录</p>
       </template>
     </section>
 
@@ -654,6 +815,38 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
   border-top: 1px solid var(--line);
   color: var(--text-2);
   font-size: var(--fs-caption);
+}
+
+/* ---- 同步起始日期 ---- */
+
+/* 与普通 .frow 并排不同：这行是竖排的（标题在上、分段控件与说明在下），
+   分段控件要占满整行宽度，不能被标题挤成窄条 */
+.window {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+/* 竖排里标题块按内容高，不参与纵向伸缩 */
+.window .ftxt {
+  flex: none;
+}
+
+.sub {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+  line-height: 1.4;
+}
+
+.date-input {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-footnote);
 }
 
 /* ---- 健康数据预览 ---- */

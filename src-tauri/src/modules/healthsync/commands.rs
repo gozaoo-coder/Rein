@@ -38,7 +38,7 @@ use crate::state::AppState;
 use super::adapter;
 use super::models::{
     Change, HcMetricRow, HcReadPayload, HcWritePayload, HealthMetricPoint, HealthMetricSeries,
-    LocalWorkout, SyncReport, SyncStatus, WorkoutDraft,
+    HealthWorkoutRow, LocalWorkout, SyncReport, SyncStatus, WorkoutDraft,
 };
 use super::{
     read_json, remove_file, write_json, Pending, Stage, PENDING, PULL_FILE, PUSH_FILE, STATE_FILE,
@@ -48,6 +48,10 @@ use super::{
 /// 「把本地记录也写进 HC」的开关（默认关：那是往外写用户系统健康数据的事，得用户点头）
 const PUSH_KEY: &str = "health_sync.push_enabled";
 const LAST_SYNC_KEY: &str = "health_sync.last_sync_at";
+
+/// 读取下界的兜底值：HC 里不可能有 2000 年以前的运动记录
+/// （与 Kotlin `HealthConnectBridge.EPOCH` 同源，两侧口径一致）。
+const FLOOR_DATE: &str = "2000-01-01";
 
 /// 单步等待上限：Kotlin 侧异常时文件不会落地，靠它收场而不是无限轮询
 const STEP_TIMEOUT: Duration = Duration::from_secs(45);
@@ -128,6 +132,7 @@ pub fn health_sync_status(
     let conn = state.db.lock();
     let imported_count = count(&conn, "source = 'health_connect'")?;
     let exported_count = count(&conn, "external_id IS NOT NULL AND source = 'local'")?;
+    let auto_start = auto_window_start(&conn)?;
     Ok(SyncStatus {
         supported: supported(),
         // 读取授权要走 HC 的 binder，只能在协程里算，所以 state.json 是**异步**写出来的。
@@ -148,6 +153,7 @@ pub fn health_sync_status(
         last_sync_at: meta_get(&conn, LAST_SYNC_KEY),
         imported_count,
         exported_count,
+        auto_window_start: auto_start,
     })
 }
 
@@ -186,6 +192,11 @@ pub fn health_sync_set_push(
 }
 
 /// 起一轮同步（不阻塞）。返回 `pending` 就表示已经让 Kotlin 去读了。
+///
+/// `window_start` 是读取下界的三态：`None` = 程序自动（最早导入记录，无则 2000）；
+/// `Some("2000-01-01")` = 从头拉全部；其他合法 `YYYY-MM-DD` = 用户自定义。
+/// 它只经 JNI 传给 Kotlin 当读取起点，并留在本轮 Pending 里给回收逻辑做 guard；
+/// 不进 app_meta（这个偏好只存前端 localStorage，避免死键与双写）。
 #[tauri::command]
 pub fn health_sync_start(
     app: tauri::AppHandle,
@@ -194,6 +205,7 @@ pub fn health_sync_start(
     push: bool,
     max_hr: Option<f64>,
     utc_offset_seconds: i64,
+    window_start: Option<String>,
 ) -> Result<SyncStep> {
     if !supported() {
         return Ok(SyncStep::phase("unsupported"));
@@ -212,10 +224,17 @@ pub fn health_sync_start(
         return Ok(SyncStep::phase("needs_auth"));
     }
     let push = push && bridge.write_granted;
-    if push {
+
+    // 取锁是**无条件**的：关着回写时原来根本不碰连接，窗口就没地方算了。
+    // 窗口必须在 remove_file(PULL_FILE) 之前定下来 —— 之后 step 读到的 pull.json
+    // 就是按这个下界读的，回收逻辑要与它同口径。
+    let window = {
         let conn = state.db.lock();
-        meta_set(&conn, PUSH_KEY, "1")?;
-    }
+        if push {
+            meta_set(&conn, PUSH_KEY, "1")?;
+        }
+        resolve_window(&conn, window_start.as_deref())?
+    };
 
     // 文件即信号：清掉旧的，等 Kotlin 写新的那份（见模块说明）
     remove_file(&app, PULL_FILE);
@@ -229,9 +248,10 @@ pub fn health_sync_start(
         push,
         max_hr,
         utc_offset_seconds,
+        window_start: window.clone(),
         started: Instant::now(),
     });
-    super::dispatch(&webview, "startRead", None);
+    super::dispatch(&webview, "startRead", Some(window));
     Ok(SyncStep::phase("pending"))
 }
 
@@ -281,7 +301,7 @@ pub fn health_sync_step(
                     // 每条语句各自提交（各写一次 WAL），90 天窗口下就是几百次提交；
                     // 而且中途失败会把镜像留在「已清空、未填满」的半截状态。
                     let tx = conn.unchecked_transaction()?;
-                    let counts = apply_pull(&tx, &payload, pending.max_hr)?;
+                    let counts = apply_pull(&tx, &payload, pending.max_hr, &pending.window_start)?;
                     let metrics = apply_metrics(&tx, &payload.metrics)?;
                     tx.commit()?;
                     (counts, metrics)
@@ -408,6 +428,43 @@ pub fn health_metrics_all(state: State<AppState>) -> Result<Vec<HealthMetricSeri
     Ok(series)
 }
 
+/// 本机存的第三方运动记录全量（只读）：导入记录 + 缺开始时间的本机记录。
+///
+/// 给健康数据页分两块展示：一块是 HC 同步进来的镜像（`source='health_connect'`），
+/// 一块是回写 HC 时因缺开始时间被跳过的本机记录（`source='local' AND start_min IS NULL`
+/// —— 用户那句「没填开始时间」的字面集，与 build_push 里的 skipped 计数同源）。
+/// 复用 [`LOCAL_COLS`] + [`row_to_local`]，不另抄一份列清单 —— 抄了就得跟着
+/// `workouts` 表结构一起改。
+#[tauri::command]
+pub fn health_sync_workouts(state: State<AppState>) -> Result<Vec<HealthWorkoutRow>> {
+    let conn = state.db.lock();
+    let sql = format!(
+        "SELECT {LOCAL_COLS} FROM workouts \
+         WHERE source = 'health_connect' OR start_min IS NULL \
+         ORDER BY date DESC, (start_min IS NULL), start_min"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map([], row_to_local)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows
+        .into_iter()
+        .map(|lw| HealthWorkoutRow {
+            id: lw.id,
+            name: lw.draft.name,
+            r#type: lw.draft.workout_type,
+            date: lw.draft.date,
+            start_min: lw.draft.start_min,
+            duration_min: lw.draft.duration_min,
+            kcal: lw.draft.kcal,
+            intensity: lw.draft.intensity,
+            note: lw.draft.note,
+            source: lw.source,
+            external_id: lw.external_id,
+        })
+        .collect())
+}
+
 /// 移除传播：删掉某条导出记录的 HC 副本（由 `delete_workout` 调用）
 pub(crate) fn propagate_delete(webview: &tauri::Webview<tauri::Wry>, record_id: &str) {
     super::dispatch(webview, "deleteRecord", Some(record_id.to_string()));
@@ -449,6 +506,32 @@ fn apply_metrics(conn: &rusqlite::Connection, rows: &[HcMetricRow]) -> Result<i6
     Ok(rows.len() as i64)
 }
 
+/// 自动模式的下界：本机最早一条导入记录的日期。
+///
+/// **只查 workouts，绝不查 health_metrics**：那张表每轮整表替换、只含近 90 天
+/// （apply_metrics 全量 DELETE + 重插，Kotlin 侧 METRICS_WINDOW=90 天），
+/// `MIN(day)` 永远落在近 90 天内 —— 拿它当「最早数据」会把默认下界从 2000
+/// 悄悄收到约 90 天。`workouts.date` 是导入记录自带的本地日期，才是对的锚。
+fn auto_window_start(conn: &rusqlite::Connection) -> Result<Option<String>> {
+    Ok(conn.query_row(
+        "SELECT MIN(date) FROM workouts WHERE source = 'health_connect'",
+        [],
+        |r| r.get::<_, Option<String>>(0),
+    )?)
+}
+
+/// 本轮读取下界：用户自定义优先 → 自动（最早导入记录）→ 兜底 [`FLOOR_DATE`]。
+///
+/// 自定义串用 chrono 校验 `YYYY-MM-DD`，非法一律按自动处理 ——
+/// 宁可多读，也别让一个手滑的输入把窗口收到错的地方。
+fn resolve_window(conn: &rusqlite::Connection, custom: Option<&str>) -> Result<String> {
+    if let Some(s) = custom {
+        if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() {
+            return Ok(s.to_string());
+        }
+    }
+    Ok(auto_window_start(conn)?.unwrap_or_else(|| FLOOR_DATE.to_string()))
+}
 
 fn supported() -> bool {
     cfg!(target_os = "android")
@@ -482,12 +565,19 @@ struct PullCounts {
 /// - 本地有、内容变了 → 覆盖（`updated`）
 /// - HC 里没有了、本地却还有镜像 → 删掉（`removed`）
 ///
-/// 最后一条是**基于「本次读全了」的前提**：Kotlin 是「从有记录以来」读的，
-/// 所以 `seen` 就是 HC 侧的完整集合。读失败时不会走到这里（文件不会落地）。
+/// 最后一条的前提是「`seen` 就是 HC 侧该有的完整集合」。用户可配读取下界之后，
+/// 这个前提要补一句：只对**窗口内**成立 —— 窗口外的记录本轮根本没读，
+/// 所以回收（[`seen_superset`]）与断链都必须按 `window_start` 收窄，
+/// 否则会把窗口外的旧镜像全判成「HC 里已删」而误删。
+///
+/// `window_start` 之前的记录在主循环里直接跳过：不导入、**也不进 seen**
+/// （进 seen 就等于宣称「HC 里这条还在窗口内」，但事实是没读）。于是 24h 的
+/// 读取前移只会让 Kotlin 多读几条回来、不会多导，镜像也不受牵连。
 fn apply_pull(
     conn: &rusqlite::Connection,
     payload: &HcReadPayload,
     max_hr: Option<f64>,
+    window_start: &str,
 ) -> Result<PullCounts> {
     let mut counts = PullCounts::default();
     let local = load_by_external_id(conn)?;
@@ -499,12 +589,18 @@ fn apply_pull(
         if adapter::is_own_export(rec) {
             continue;
         }
+        let draft = adapter::to_draft(rec, max_hr);
+        // 窗口下界之前的记录：用户要的是这个起点之后的数据，直接跳过。
+        // 这里比的是**记录自带的本地日期**，与回收 guard 同口径。
+        // 注意跳过发生在 tombstones/seen 之前 —— 既不导入也不进 seen。
+        if draft.date.as_str() < window_start {
+            continue;
+        }
         if tombstones.contains(&rec.id) {
             continue;
         }
         seen.insert(rec.id.clone());
 
-        let draft = adapter::to_draft(rec, max_hr);
         match adapter::classify(local.get(&rec.id), &draft, rec.last_modified_epoch_ms) {
             Change::Insert => {
                 insert_imported(conn, &rec.id, rec.last_modified_epoch_ms, &draft)?;
@@ -524,7 +620,7 @@ fn apply_pull(
     }
 
     // 镜像回收：HC 侧已经删掉的记录，本地这份也收掉
-    for id in seen_superset(&local, &seen) {
+    for id in seen_superset(&local, &seen, window_start) {
         conn.execute("DELETE FROM workouts WHERE id = ?1", [id])?;
         counts.removed += 1;
     }
@@ -536,6 +632,12 @@ fn apply_pull(
     let all_hc_ids: HashSet<&str> = payload.records.iter().map(|r| r.id.as_str()).collect();
     for lw in local.values() {
         if lw.source != "local" {
+            continue;
+        }
+        // 窗口外的导出记录不受本轮影响：本轮没读那一段，判不出它的 HC 副本
+        // 是真被删了还是只是没读到 —— 不加这个 guard 会把窗口外的外键全清掉，
+        // 让它们下一轮重复导出。
+        if lw.draft.date.as_str() < window_start {
             continue;
         }
         let dangling = lw
@@ -554,12 +656,20 @@ fn apply_pull(
     Ok(counts)
 }
 
-/// 需要回收的本地镜像 id 列表（只碰 `source = 'health_connect'` 的行）
-fn seen_superset(local: &HashMap<String, LocalWorkout>, seen: &HashSet<String>) -> Vec<i64> {
+/// 需要回收的本地镜像 id 列表（只碰 `source = 'health_connect'` 的行）。
+///
+/// `window_start` 之外的一律不动：本轮读取是从这个下界起的，那段 HC 数据
+/// 根本没读到，`seen` 里没有它们不代表「HC 里没了」。
+fn seen_superset(
+    local: &HashMap<String, LocalWorkout>,
+    seen: &HashSet<String>,
+    window_start: &str,
+) -> Vec<i64> {
     local
         .values()
         .filter(|lw| {
             lw.source == "health_connect"
+                && lw.draft.date.as_str() >= window_start
                 && lw
                     .external_id
                     .as_deref()
@@ -752,6 +862,7 @@ fn update_workout(conn: &rusqlite::Connection, id: i64, draft: &WorkoutDraft) ->
 
 #[cfg(test)]
 mod tests {
+    use super::super::models::HcExerciseRecord;
     use super::*;
 
     fn db() -> rusqlite::Connection {
@@ -877,5 +988,93 @@ mod tests {
         .unwrap();
         assert_eq!(with.metrics.len(), 1);
         assert_eq!(with.metrics[0].metric, "steps");
+    }
+
+    /// 一条 HC 运动会话记录（偏移固定 +8h，与 adapter 测试里的 rec() 同口径）
+    fn hc_rec(id: &str, start_ms: i64) -> HcExerciseRecord {
+        HcExerciseRecord {
+            id: id.into(),
+            exercise_type: 56,
+            title: None,
+            notes: None,
+            start_epoch_ms: start_ms,
+            end_epoch_ms: start_ms + 60 * 60_000,
+            utc_offset_seconds: 8 * 3600,
+            last_modified_epoch_ms: Some(1_700_000_000_000),
+            data_origin: Some("com.mi.health".into()),
+            kcal: None,
+            distance_m: None,
+            avg_heart_rate: None,
+        }
+    }
+
+    /// (本地日期, 时) → epoch 毫秒，偏移固定 +8h
+    fn epoch_ms(y: i32, mo: u32, d: u32, hour: u32) -> i64 {
+        use chrono::TimeZone;
+        let offset = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+        let naive = chrono::NaiveDate::from_ymd_opt(y, mo, d)
+            .unwrap()
+            .and_hms_opt(hour, 0, 0)
+            .unwrap();
+        offset.from_local_datetime(&naive).unwrap().timestamp_millis()
+    }
+
+    /// 窗口外的旧镜像不受回收影响：本轮从 2024-01-01 起读，2023 那条的
+    /// 「HC 里已删」判定不成立，必须原样留着。
+    #[test]
+    fn window_reclamation_spares_rows_before_the_window() {
+        let conn = db();
+        let mut inside = draft();
+        inside.date = "2024-06-01".into();
+        insert_imported(&conn, "hc-inside", Some(1), &inside).unwrap();
+        let mut before = draft();
+        before.date = "2023-06-01".into();
+        insert_imported(&conn, "hc-before", Some(2), &before).unwrap();
+
+        // 本轮什么都没读到（seen 为空）：只有窗口内的镜像该被回收
+        let payload = HcReadPayload {
+            records: vec![],
+            metrics: vec![],
+        };
+        let counts = apply_pull(&conn, &payload, None, "2024-01-01").unwrap();
+
+        assert_eq!(counts.removed, 1, "只该回收窗口内那一条");
+        let dates: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT date FROM workouts WHERE source = 'health_connect'")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            rows
+        };
+        assert_eq!(
+            dates,
+            vec!["2023-06-01".to_string()],
+            "窗口外那条必须原样留着"
+        );
+    }
+
+    /// 窗口下界之前的记录既不落库也不进 seen —— 24h 前移只多读、不多导。
+    #[test]
+    fn pre_window_records_are_not_imported() {
+        let conn = db();
+        let payload = HcReadPayload {
+            records: vec![hc_rec("hc-old", epoch_ms(2023, 12, 31, 10))],
+            metrics: vec![],
+        };
+        // 记录本地日期 2023-12-31，下界 2024-01-01：应整个跳过
+        let counts = apply_pull(&conn, &payload, None, "2024-01-01").unwrap();
+        assert_eq!(counts.imported, 0, "窗口下界之前的记录不导入");
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workouts WHERE source = 'health_connect'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "窗口下界之前不落库");
     }
 }

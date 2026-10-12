@@ -5,11 +5,23 @@
 //! - **豆包**（docs/6561/1354869）：自定义二进制帧（4B header + 大端 size + payload），
 //!   上行 payload gzip，**下行实测未压缩**（compression 标志=0，flags bit0 标记 4B sequence）；
 //!   鉴权 X-Api-App-Key/Access-Key（旧版）或 X-Api-Key（新版）；`utterances[].definite` 显式定句。
-//! - **Qwen/DashScope**（官方 SDK 1.27.4 权威核对）：JSON 控制消息 + 二进制音频帧，
-//!   鉴权 `Authorization: Bearer <key>`；run-task(streaming=duplex, task_group=audio, task=asr,
-//!   function=recognition) → task-started → 二进制 PCM 帧 → finish-task；
+//! - **百炼 / DashScope**（阿里云 Model Studio 实时语音识别）：
+//!   JSON 控制消息 + 二进制音频帧，鉴权 `Authorization: Bearer <API Key>`；
+//!   run-task(streaming=duplex, task_group=audio, task=asr, function=recognition)
+//!   → task-started → 二进制 PCM 帧 → finish-task；
 //!   服务端事件 header.event = task-started / result-generated / task-finished / task-failed，
 //!   `payload.output.sentence = {begin_time, end_time, text}`，**end_time 非 null 即句终**。
+//!
+//!   2026-10-12 真实凭据实测（本文件末尾有回归测试）：
+//!   · 顶层字段名必须是 **`header`（单数）**；写成 `headers` 服务端直接
+//!     `InvalidParameter Missing required parameter 'header'`（历史实现就是这个坑，
+//!     百炼一路从来没通）——finish-task 同样要带 `streaming: "duplex"`。
+//!   · 已验模型（同一 run-task 协议、同一端点，句子级定稿与豆包同体验）：
+//!     `paraformer-realtime-v2`（默认，中文）、`qwen-audio-3.1-asr-flash-streaming`、
+//!     `fun-asr-realtime`。
+//!   · `qwen3-asr-flash-realtime` 是**另一套 session 协议**（/api-ws/v1/realtime，
+//!     session.update + input_audio_buffer.append），本层不支持；实测手动提交模式下
+//!     长音频会 `model repeat output happened` / 输出重复，暂不接入。
 //!
 //! 新增厂商 = 实现本 trait + 在 `AnyAsrAdapter` 枚举里加一个分支。
 
@@ -33,15 +45,22 @@ const MAX_PAYLOAD: usize = 16 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsrAdapterKind {
     Doubao,
-    Qwen,
+    /// 百炼（阿里云 Model Studio / DashScope）。配置里的 'qwen' 是历史值，同一个适配器。
+    DashScope,
 }
 
 impl AsrAdapterKind {
     /// 按 baseURL / 模型名关键词识别厂商（前端双层自动选择的后端兜底）
     pub fn detect(base_url: &str, model: &str) -> Option<Self> {
         let s = format!("{} {}", base_url, model).to_lowercase();
-        if s.contains("qwen") || s.contains("dashscope") || s.contains("aliyun") {
-            Some(Self::Qwen)
+        if s.contains("qwen")
+            || s.contains("dashscope")
+            || s.contains("aliyun")
+            || s.contains("bailian")
+            || s.contains("paraformer")
+            || s.contains("fun-asr")
+        {
+            Some(Self::DashScope)
         } else if s.contains("doubao")
             || s.contains("volc")
             || s.contains("openspeech")
@@ -58,7 +77,8 @@ impl AsrAdapterKind {
         match self {
             // 豆包流式语音识别模型 2.0 端点（/plan/ 路径，官方配置指南 2026-09）
             Self::Doubao => "wss://openspeech.bytedance.com/api/v3/plan/sauc/bigmodel_async",
-            Self::Qwen => "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+            // 百炼实时语音识别（run-task 协议；qwen3-asr-flash-realtime 的 /realtime 不走这里）
+            Self::DashScope => "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
         }
     }
 }
@@ -67,13 +87,13 @@ impl AsrAdapterKind {
 #[derive(Debug, Clone)]
 pub struct AsrSessionParams {
     pub url: String,
-    /// 豆包：App ID / API Key；Qwen：DASHSCOPE_API_KEY
+    /// 豆包：App ID / API Key；百炼（DashScope）：API Key（Bearer）
     pub app_key: String,
-    /// 豆包旧版 Access Token（Qwen 不用）
+    /// 豆包旧版 Access Token（百炼不用）
     pub access_key: String,
     /// 豆包 legacy = App ID + Token，new = 仅 API Key
     pub credential_mode: String,
-    /// 豆包 Resource-Id / Qwen 模型名
+    /// 豆包 Resource-Id / 百炼模型名（如 paraformer-realtime-v2）
     pub model: String,
 }
 
@@ -371,9 +391,9 @@ impl AsrAdapter for DoubaoAdapter {
     }
 }
 
-/* ---------------- Qwen / DashScope ---------------- */
+/* ---------------- 百炼 / DashScope ---------------- */
 
-pub struct QwenAdapter {
+pub struct DashScopeAdapter {
     ws: Option<Ws>,
     params: AsrSessionParams,
     /// task-started 已收到（之后才能发二进制音频）
@@ -386,7 +406,7 @@ pub struct QwenAdapter {
     done: bool,
 }
 
-impl QwenAdapter {
+impl DashScopeAdapter {
     pub fn new(params: AsrSessionParams) -> Self {
         Self {
             ws: None,
@@ -410,12 +430,14 @@ impl QwenAdapter {
             .ok_or_else(|| ReinError::Message("ASR 连接未建立".into()))?
             .send(Message::Text(msg.to_string()))
             .await
-            .map_err(|e| ReinError::Message(format!("Qwen ASR 发送失败：{e}")))
+            .map_err(|e| ReinError::Message(format!("百炼 ASR 发送失败：{e}")))
     }
 
+    /// run-task：**字段名必须是 header（单数）** —— 写 headers 服务端报
+    /// `InvalidParameter Missing required parameter 'header'`（2026-10-12 实测）。
     async fn send_run_task(&mut self) -> Result<()> {
         let msg = serde_json::json!({
-            "headers": { "action": "run-task", "task_id": self.task_id, "streaming": "duplex" },
+            "header": { "action": "run-task", "task_id": self.task_id, "streaming": "duplex" },
             "payload": {
                 "task_group": "audio",
                 "task": "asr",
@@ -428,9 +450,10 @@ impl QwenAdapter {
         self.send_text(msg).await
     }
 
+    /// finish-task：同样带 header（单数）+ streaming=duplex
     async fn send_finish_task(&mut self) -> Result<()> {
         let msg = serde_json::json!({
-            "headers": { "action": "finish-task", "task_id": self.task_id },
+            "header": { "action": "finish-task", "task_id": self.task_id, "streaming": "duplex" },
             "payload": { "input": {} },
         });
         self.send_text(msg).await
@@ -445,13 +468,13 @@ impl QwenAdapter {
                 .ok_or_else(|| ReinError::Message("ASR 连接未建立".into()))?
                 .send(Message::Binary(pcm))
                 .await
-                .map_err(|e| ReinError::Message(format!("Qwen ASR 发送失败：{e}")))?;
+                .map_err(|e| ReinError::Message(format!("百炼 ASR 发送失败：{e}")))?;
         }
         Ok(())
     }
 }
 
-impl AsrAdapter for QwenAdapter {
+impl AsrAdapter for DashScopeAdapter {
     async fn connect(&mut self) -> Result<()> {
         let mut req = self
             .params
@@ -466,7 +489,7 @@ impl AsrAdapter for QwenAdapter {
         );
         let (ws, _resp) = tokio_tungstenite::connect_async(req)
             .await
-            .map_err(|e| ReinError::Message(format!("Qwen ASR 连接失败：{e}")))?;
+            .map_err(|e| ReinError::Message(format!("百炼 ASR 连接失败：{e}")))?;
         self.ws = Some(ws);
         self.send_run_task().await
     }
@@ -485,7 +508,7 @@ impl AsrAdapter for QwenAdapter {
                 Some(Ok(Message::Close(_))) | None => return None,
                 Some(Ok(_)) => {}
                 Some(Err(e)) => {
-                    return Some(Err(ReinError::Message(format!("Qwen ASR 连接中断：{e}"))))
+                    return Some(Err(ReinError::Message(format!("百炼 ASR 连接中断：{e}"))))
                 }
             }
         }
@@ -502,7 +525,7 @@ impl AsrAdapter for QwenAdapter {
             .ok_or_else(|| ReinError::Message("ASR 连接未建立".into()))?
             .send(Message::Binary(pcm.to_vec()))
             .await
-            .map_err(|e| ReinError::Message(format!("Qwen ASR 发送失败：{e}")))
+            .map_err(|e| ReinError::Message(format!("百炼 ASR 发送失败：{e}")))
     }
 
     async fn finish_input(&mut self) -> Result<()> {
@@ -519,7 +542,7 @@ impl AsrAdapter for QwenAdapter {
             WsFrame::Binary(_) => return Ok(vec![]), // 识别无二进制下行
         };
         let v: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| ReinError::Message(format!("Qwen ASR 消息解析失败：{e}")))?;
+            .map_err(|e| ReinError::Message(format!("百炼 ASR 消息解析失败：{e}")))?;
         let event = v
             .get("header")
             .and_then(|h| h.get("event"))
@@ -581,7 +604,7 @@ impl AsrAdapter for QwenAdapter {
                     .and_then(|m| m.as_str())
                     .unwrap_or("unknown");
                 Err(ReinError::Message(format!(
-                    "Qwen ASR 错误：{code} {message}"
+                    "百炼 ASR 错误：{code} {message}"
                 )))
             }
             _ => Ok(vec![]),
@@ -597,49 +620,187 @@ impl AsrAdapter for QwenAdapter {
 
 pub enum AnyAsrAdapter {
     Doubao(DoubaoAdapter),
-    Qwen(QwenAdapter),
+    DashScope(DashScopeAdapter),
 }
 
 impl AsrAdapter for AnyAsrAdapter {
     async fn connect(&mut self) -> Result<()> {
         match self {
             Self::Doubao(a) => a.connect().await,
-            Self::Qwen(a) => a.connect().await,
+            Self::DashScope(a) => a.connect().await,
         }
     }
 
     async fn next_frame(&mut self) -> Option<Result<WsFrame>> {
         match self {
             Self::Doubao(a) => a.next_frame().await,
-            Self::Qwen(a) => a.next_frame().await,
+            Self::DashScope(a) => a.next_frame().await,
         }
     }
 
     async fn send_audio(&mut self, pcm: &[u8]) -> Result<()> {
         match self {
             Self::Doubao(a) => a.send_audio(pcm).await,
-            Self::Qwen(a) => a.send_audio(pcm).await,
+            Self::DashScope(a) => a.send_audio(pcm).await,
         }
     }
 
     async fn finish_input(&mut self) -> Result<()> {
         match self {
             Self::Doubao(a) => a.finish_input().await,
-            Self::Qwen(a) => a.finish_input().await,
+            Self::DashScope(a) => a.finish_input().await,
         }
     }
 
     async fn on_frame(&mut self, frame: WsFrame) -> Result<Vec<NormEvent>> {
         match self {
             Self::Doubao(a) => a.on_frame(frame).await,
-            Self::Qwen(a) => a.on_frame(frame).await,
+            Self::DashScope(a) => a.on_frame(frame).await,
         }
     }
 
     fn is_done(&self) -> bool {
         match self {
             Self::Doubao(a) => a.is_done(),
-            Self::Qwen(a) => a.is_done(),
+            Self::DashScope(a) => a.is_done(),
         }
+    }
+}
+
+/* ---------------- 真实链路回归（默认 #[ignore]，联网 + 真实凭据才跑） ---------------- */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// 关键词识别：百炼/DashScope 家族（含 paraformer / fun-asr）都要落到 DashScope
+    #[test]
+    fn detect_maps_bailian_family() {
+        for (url, model) in [
+            ("", "paraformer-realtime-v2"),
+            ("wss://dashscope.aliyuncs.com/api-ws/v1/inference", ""),
+            ("", "qwen-audio-3.1-asr-flash-streaming"),
+            ("", "fun-asr-realtime"),
+            ("wss://bailian.example.com/ws", ""),
+        ] {
+            assert_eq!(
+                AsrAdapterKind::detect(url, model),
+                Some(AsrAdapterKind::DashScope),
+                "url={url} model={model}"
+            );
+        }
+        assert_eq!(
+            AsrAdapterKind::detect("", "volc.seedasr.sauc.duration"),
+            Some(AsrAdapterKind::Doubao)
+        );
+    }
+
+    /// 读 16k/16bit/mono WAV 的 data 段
+    fn read_wav_pcm(path: &str) -> Vec<u8> {
+        let buf = std::fs::read(path).expect("读音频文件");
+        assert_eq!(&buf[0..4], b"RIFF", "不是 WAV");
+        let mut off = 12usize;
+        let mut data: Option<Vec<u8>> = None;
+        while off + 8 <= buf.len() {
+            let id = &buf[off..off + 4];
+            let size = u32::from_le_bytes([buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]]) as usize;
+            if id == b"data" {
+                data = Some(buf[off + 8..(off + 8 + size).min(buf.len())].to_vec());
+            }
+            off += 8 + size + (size % 2);
+        }
+        data.expect("WAV 缺 data 段")
+    }
+
+    /// 百炼实时识别真实链路：真录音 → 真 API → 句子级定稿。
+    /// 跑法（默认跳过，避免 CI/离线构建联网）：
+    ///   REIN_BAILIAN_KEY=sk-xxx REIN_BAILIAN_WAV=<16k wav> \
+    ///     cargo test --lib voice::asr::tests::bailian -- --ignored --nocapture
+    /// 未给 WAV 时默认用 %APPDATA%/com.gozaoo.rein/voice_sessions 下最新一段真实录音。
+    #[tokio::test]
+    #[ignore = "真实网络 + 真实凭据：需要 REIN_BAILIAN_KEY（与可选 REIN_BAILIAN_WAV）"]
+    async fn bailian_realtime_asr_transcribes_real_audio() {
+        let key = std::env::var("REIN_BAILIAN_KEY").expect("需要 REIN_BAILIAN_KEY");
+        let wav = std::env::var("REIN_BAILIAN_WAV").unwrap_or_else(|_| {
+            let dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap_or_default())
+                .join("com.gozaoo.rein")
+                .join("voice_sessions");
+            let mut newest: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+            for entry in std::fs::read_dir(&dir).expect("找录音目录").flatten() {
+                let p = entry.path();
+                if p.extension().map(|e| e == "wav").unwrap_or(false) {
+                    let t = entry.metadata().and_then(|m| m.modified()).unwrap();
+                    if newest.as_ref().map(|(bt, _)| t > *bt).unwrap_or(true) {
+                        newest = Some((t, p));
+                    }
+                }
+            }
+            newest.expect("录音目录里没有 wav").1.to_string_lossy().to_string()
+        });
+        let pcm = read_wav_pcm(&wav);
+        eprintln!("音频：{wav}（{} KB）", pcm.len() / 1024);
+
+        let params = AsrSessionParams {
+            url: AsrAdapterKind::DashScope.default_url().to_string(),
+            app_key: key,
+            access_key: String::new(),
+            credential_mode: "new".into(),
+            model: std::env::var("REIN_BAILIAN_MODEL").unwrap_or_else(|_| "paraformer-realtime-v2".into()),
+        };
+        let mut adapter = DashScopeAdapter::new(params);
+        adapter.connect().await.expect("建连 + run-task");
+
+        // 先等 task-started（音频只能在它之后发）；本模块的 tests 子模块可直接读私有字段
+        let started = tokio::time::timeout(Duration::from_secs(15), async {
+            while !adapter.started {
+                match adapter.next_frame().await {
+                    Some(Ok(frame)) => {
+                        adapter.on_frame(frame).await.expect("解析帧");
+                    }
+                    Some(Err(e)) => panic!("等 task-started 时出错：{e}"),
+                    None => break,
+                }
+            }
+        })
+        .await;
+        assert!(started.is_ok() && adapter.started, "等 task-started 超时");
+
+        // 100ms/包推流（3.2KB），节奏比实时略快
+        for chunk in pcm.chunks(3200) {
+            adapter.send_audio(chunk).await.expect("推音频");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        adapter.finish_input().await.expect("finish-task");
+
+        let mut finals: Vec<String> = Vec::new();
+        let mut partial = String::new();
+        let drain = tokio::time::timeout(Duration::from_secs(30), async {
+            while !adapter.is_done() {
+                match adapter.next_frame().await {
+                    Some(Ok(frame)) => {
+                        for ev in adapter.on_frame(frame).await.expect("解析帧") {
+                            match ev {
+                                NormEvent::Final { text, .. } => finals.push(text),
+                                NormEvent::Partial { text, .. } => partial = text,
+                            }
+                        }
+                    }
+                    Some(Err(e)) => panic!("识别出错：{e}"),
+                    None => break,
+                }
+            }
+        })
+        .await;
+        assert!(drain.is_ok(), "等识别收尾超时");
+
+        eprintln!("定稿 {} 句：{}", finals.len(), finals.join(" | "));
+        eprintln!("未完句：{partial}");
+        assert!(!finals.is_empty(), "没有任何句子定稿（转写为空）");
+        let all = finals.join("");
+        assert!(
+            all.contains("进") || all.contains("准备") || all.contains("今天"),
+            "转写内容看起来不对：{all}"
+        );
     }
 }

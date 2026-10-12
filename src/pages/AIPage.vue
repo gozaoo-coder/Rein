@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Archive,
@@ -30,9 +30,21 @@ import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
 import ProcessSection from '@/components/ai/ProcessSection.vue'
 import ChatFileCard from '@/components/ai/ChatFileCard.vue'
+import VoiceInputMask from '@/components/ai/VoiceInputMask.vue'
 import MdText from '@/components/common/MdText.vue'
 import MemoPickerSheet from '@/components/voice/MemoPickerSheet.vue'
 import { openMemoById } from '@/system/voiceRuntime'
+import {
+  aiVoiceInput,
+  aiVoiceStart,
+  aiVoiceSetContinuous,
+  aiVoiceStop,
+  aiVoiceCancel,
+  appendVoiceText,
+  onAiVoiceResult,
+  VOICE_TAP_MS,
+} from '@/system/aiVoiceInput'
+import type { AiVoiceResult } from '@/system/aiVoiceInput'
 import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -631,6 +643,68 @@ function onPressEnd(): void {
   }
 }
 
+/* ---------- 语音输入（麦克风按钮：按住说话 / 轻点连听，链路见 system/aiVoiceInput） ---------- */
+
+/** 按下中的本地状态：松开结算挂窗口级 pointerup —— 手指滑出按钮也能收住 */
+let voicePressing = false
+let voiceDownAt = 0
+
+function onVoiceWindowUp(): void {
+  if (!voicePressing) return
+  voicePressing = false
+  window.removeEventListener('pointerup', onVoiceWindowUp)
+  window.removeEventListener('pointercancel', onVoiceWindowUp)
+  if (!aiVoiceInput.active) return
+  if (Date.now() - voiceDownAt < VOICE_TAP_MS) {
+    // 轻点 → 转入连听：等「停止信号」（音量占优的发言人停顿）自动结束，或再点一次手动结束
+    aiVoiceSetContinuous()
+  } else {
+    // 按住松开 → 结束并把识别文字送进输入框
+    void aiVoiceStop()
+  }
+}
+
+function onVoiceDown(e: PointerEvent): void {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  e.preventDefault() // 不抢焦点：文本域光标与软键盘保持原状
+  voiceDownAt = Date.now()
+  voicePressing = true
+  window.addEventListener('pointerup', onVoiceWindowUp)
+  window.addEventListener('pointercancel', onVoiceWindowUp)
+  void aiVoiceStart('hold').then((ok) => {
+    if (!ok) {
+      onVoiceWindowUp() // 起播失败：先复位本地按压状态再提示
+      if (aiVoiceInput.lastError) toast.toast(aiVoiceInput.lastError)
+    }
+  })
+}
+
+/** 识别结果上屏：非空追加进输入框（中英文邻接自动补空格），空结果按原因提示 */
+function onVoiceDone({ text, reason }: AiVoiceResult): void {
+  if (text) {
+    draft.value = appendVoiceText(draft.value, text)
+    void nextTick(() => {
+      autoGrow()
+      inputEl.value?.focus()
+    })
+  } else if (reason === 'error') {
+    toast.toast(aiVoiceInput.lastError || '识别失败')
+  } else if (reason !== 'cancel') {
+    toast.toast('没有识别到内容')
+  }
+}
+
+onAiVoiceResult(onVoiceDone)
+
+// 语音输入是页面手势：离开本页即取消（不把半截话留在运行时里）；
+// 按压中的窗口监听一并拆掉，别留跨页的悬空回调
+onBeforeUnmount(() => {
+  voicePressing = false
+  window.removeEventListener('pointerup', onVoiceWindowUp)
+  window.removeEventListener('pointercancel', onVoiceWindowUp)
+  if (aiVoiceInput.active) void aiVoiceCancel()
+})
+
 function onCtxMenu(e: MouseEvent, m: AiMessage): void {
   e.preventDefault()
   menuAnchor.value = (e.currentTarget as HTMLElement) ?? null
@@ -978,6 +1052,17 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
             @keydown.enter.exact.prevent="send"
             @input="autoGrow"
           />
+          <!-- 语音输入：按住说话（松开上屏）/ 轻点连听（停顿自动结束，再点即停）。
+               持续手势：touch-action 关掉浏览器把按压当滚动起点的默认处理 -->
+          <button
+            class="vbtn"
+            aria-label="语音输入：按住说话，轻点连听"
+            data-testid="ai-voice-btn"
+            @pointerdown="onVoiceDown"
+            @contextmenu.prevent
+          >
+            <Mic :size="19" :stroke-width="2.2" />
+          </button>
           <button
             class="send"
             :class="{ ready: !!draft.trim() || attachments.length > 0 || !!docAtt || memoRefs.length > 0 }"
@@ -1021,6 +1106,9 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 
     <!-- 拍照直识别弹层（识别 → 编辑 → 写入 / 存草稿） -->
     <FoodParseSheet ref="foodSheet" @committed="refreshDrafts" @saved-draft="refreshDrafts" />
+
+    <!-- 语音输入全屏遮罩（按住/轻点说话时渐入，结束时渐出回收） -->
+    <VoiceInputMask />
 
     <!-- 食物草稿箱 -->
     <SheetModal :open="draftsOpen" title="食物草稿箱" initial-snap="medium" @close="draftsOpen = false">
@@ -1829,6 +1917,31 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 }
 
 .cam:active {
+  background: color-mix(in srgb, var(--text-1) 16%, transparent);
+}
+
+/* 语音输入钮（与 .cam 同配方）。按住说话是持续手势：
+   touch-action 关掉滚动/长按的浏览器默认处理，长按不弹系统菜单也不起滚动 */
+.vbtn {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-1) 9%, transparent);
+  color: var(--text-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+
+.vbtn:active {
   background: color-mix(in srgb, var(--text-1) 16%, transparent);
 }
 

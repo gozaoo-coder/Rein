@@ -295,7 +295,16 @@ pub fn strength_history(
     exercise_id: String,
 ) -> Result<Vec<StrengthSetRecord>> {
     let conn = state.db.lock();
-    let id = resolve_exercise_id(&conn, &exercise_id)?;
+    strength_history_on(&conn, &exercise_id)
+}
+
+/// `strength_history` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
+/// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
+pub(crate) fn strength_history_on(
+    conn: &rusqlite::Connection,
+    exercise_id: &str,
+) -> Result<Vec<StrengthSetRecord>> {
+    let id = resolve_exercise_id(conn, exercise_id)?;
     let raw = exercise_id.trim().to_string();
     let mut stmt = conn.prepare(
         "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
@@ -334,6 +343,13 @@ fn strength_set_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StrengthSetR
 #[tauri::command]
 pub fn strength_exercises(state: State<AppState>) -> Result<Vec<StrengthExerciseRef>> {
     let conn = state.db.lock();
+    strength_exercises_on(&conn)
+}
+
+/// `strength_exercises` 的本体（见 [`strength_history_on`]）。
+pub(crate) fn strength_exercises_on(
+    conn: &rusqlite::Connection,
+) -> Result<Vec<StrengthExerciseRef>> {
     let mut stmt = conn.prepare(
         "SELECT COALESCE(NULLIF(s.exercise_id, ''), ''), \
                 COALESCE(e.name, MAX(s.exercise_name)) AS display_name, \
@@ -366,6 +382,14 @@ pub fn strength_last_weights(
     exercise_ids: Vec<String>,
 ) -> Result<Vec<StrengthLastWeight>> {
     let conn = state.db.lock();
+    strength_last_weights_on(&conn, &exercise_ids)
+}
+
+/// `strength_last_weights` 的本体（见 [`strength_history_on`]）。
+pub(crate) fn strength_last_weights_on(
+    conn: &rusqlite::Connection,
+    exercise_ids: &[String],
+) -> Result<Vec<StrengthLastWeight>> {
     let mut out = Vec::new();
     let mut stmt = conn.prepare(
         "SELECT s.weight_kg, s.reps, w.date, COALESCE(e.name, s.exercise_name) \
@@ -375,8 +399,8 @@ pub fn strength_last_weights(
            AND (s.exercise_id = ?1 OR (s.exercise_id IS NULL AND s.exercise_name = ?2)) \
          ORDER BY w.date DESC, s.workout_id DESC, s.id DESC LIMIT 1",
     )?;
-    for key in &exercise_ids {
-        let id = resolve_exercise_id(&conn, key)?;
+    for key in exercise_ids {
+        let id = resolve_exercise_id(conn, key)?;
         let raw = key.trim().to_string();
         let res = stmt.query_row(rusqlite::params![id, raw], |r| {
             Ok(StrengthLastWeight {
@@ -402,6 +426,14 @@ pub fn strength_recent_sets(
     days: Option<i64>,
 ) -> Result<Vec<StrengthSetRecord>> {
     let conn = state.db.lock();
+    strength_recent_sets_on(&conn, days)
+}
+
+/// `strength_recent_sets` 的本体（见 [`strength_history_on`]）。
+pub(crate) fn strength_recent_sets_on(
+    conn: &rusqlite::Connection,
+    days: Option<i64>,
+) -> Result<Vec<StrengthSetRecord>> {
     let days = days.unwrap_or(42).clamp(1, 365);
     let mut stmt = conn.prepare(
         "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \

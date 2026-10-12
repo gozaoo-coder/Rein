@@ -1,6 +1,7 @@
-/** 麦克风占用仲裁：录音系统（recorderRuntime）与语音会话（voiceRuntime）互斥，谁先谁占。 */
+/** 麦克风占用仲裁：录音系统（recorderRuntime）、语音会话（voiceRuntime）与
+ *  AI 页语音输入（aiVoiceInput）互斥，谁先谁占。 */
 
-export type MicOwner = 'recorder' | 'voice' | null
+export type MicOwner = 'recorder' | 'voice' | 'ai-input' | null
 
 let owner: MicOwner = null
 

@@ -137,7 +137,7 @@ pub static ADAPTERS: &[AdapterInfo] = &[
         id: "dashscope",
         label: "阿里云百炼",
         nickname: "百炼",
-        hint: "通义千问系列：对话、视觉、向量与语音识别",
+        hint: "通义千问系列：对话、视觉、向量与实时语音识别（paraformer / qwen-audio / fun-asr）",
         docs: "https://help.aliyun.com/zh/model-studio/",
         key_hint: "DASHSCOPE_API_KEY",
         models_path: "/models",
@@ -154,7 +154,10 @@ pub static ADAPTERS: &[AdapterInfo] = &[
             PresetModel { id: "qwen-plus", kind: "llm", dim: None, note: "均衡档对话模型" },
             PresetModel { id: "qwen-vl-max", kind: "vision", dim: None, note: "视觉理解" },
             PresetModel { id: "text-embedding-v4", kind: "embedding", dim: Some(1024), note: "文本向量（可降维）" },
-            PresetModel { id: "qwen-audio-3.0-asr-flash-streaming", kind: "asr", dim: None, note: "流式语音识别" },
+            // 实时语音识别（run-task 协议，2026-10-12 真实凭据实测三家都可用）
+            PresetModel { id: "paraformer-realtime-v2", kind: "asr", dim: None, note: "实时语音识别（中文，句子级定稿；推荐）" },
+            PresetModel { id: "qwen-audio-3.1-asr-flash-streaming", kind: "asr", dim: None, note: "流式语音识别（通义千问音频）" },
+            PresetModel { id: "fun-asr-realtime", kind: "asr", dim: None, note: "Fun-ASR 实时识别" },
         ],
     },
     AdapterInfo {

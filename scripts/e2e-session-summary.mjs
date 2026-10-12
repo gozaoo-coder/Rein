@@ -427,6 +427,24 @@ async function main() {
     await shoot('session-summary-dark-bottom')
     await cdp('Emulation.setEmulatedMedia', { features: [] })
 
+    /* ---------- S7. 保存落库：写库成功即收起沉浸层并回执（R1） ----------
+       R1 给 saveNow 补了 try/catch（写库失败可原样重试）；失败分支在 mock 下
+       无法注入（mock/server.ts 不在本轮允许清单），故这里只钉住成功路径不被
+       这次改动碰坏：「保存训练」→ 回执含「已保存」→ 沉浸层收起（会话已关）。 */
+    await clickButton('保存训练')
+    const savedToast = await (async () => {
+      const t0 = Date.now()
+      while (Date.now() - t0 < 6000) {
+        const t = await evalJS(`[...document.querySelectorAll('.toast-host .toast')].map(e => e.textContent).join(' | ')`)
+        if (/已保存/.test(t)) return t
+        await sleep(120)
+      }
+      return ''
+    })()
+    ok('S7a 保存回执含「已保存」', /已保存/.test(savedToast), savedToast)
+    await waitFor(`!document.querySelector('.session-layer')?.classList.contains('is-open')`, 8000, '保存后沉浸层收起')
+    ok('S7b 保存后沉浸层收起（会话已关）', true)
+
     const failed = results.filter((r) => !r.pass)
     console.log(`\n${results.length - failed.length}/${results.length} 通过`)
     if (failed.length) process.exit(1)

@@ -181,6 +181,39 @@ pub struct SyncStatus {
     pub imported_count: i64,
     /// 已导出到 HC 的本地记录数
     pub exported_count: i64,
+    /// 自动模式此刻会采用的读取下界日期（`YYYY-MM-DD`）。
+    /// 取「本机最早的导入记录日期」，没有导入记录时是 `None` —— 前端据此显示
+    /// 「还没有导入记录，将读取全部历史」。**绝不取自 health_metrics**：
+    /// 那张表每轮整表替换、只含近 90 天，MIN(day) 会把默认下界悄悄收到约 90 天。
+    pub auto_window_start: Option<String>,
+}
+
+/* ---------------- 列出本机第三方运动记录（health_sync_workouts） ---------------- */
+
+/// 健康数据页要看的「本机第三方运动记录」行。
+///
+/// 刻意不复用 `exercise::Workout`：那个形状不含 `source`，而导出/网关对外 API
+/// 都建立在它上面，加字段会牵动那两处。这里只服务本页的两块展示
+/// （导入记录 / 缺开始时间的本机记录），故独立成型。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthWorkoutRow {
+    pub id: i64,
+    pub name: String,
+    /// `type` 是 Rust 保留字，字段写 `r#type`；serde camelCase 后 JSON 键仍是 `type`
+    pub r#type: String,
+    pub date: String,
+    /// 当日零点起的分钟数；缺开始时间的本机记录为 `None`
+    pub start_min: Option<i64>,
+    pub duration_min: f64,
+    pub kcal: f64,
+    /// 适配层算出的客观档位：low / moderate / high
+    pub intensity: String,
+    pub note: Option<String>,
+    /// `health_connect`（HC 同步进来的镜像）/ `local`（本机记录）
+    pub source: String,
+    /// 导入记录的 HC 侧 UUID；本机记录为 `None`
+    pub external_id: Option<String>,
 }
 
 /* ---------------- 预览查询（health_metrics_recent） ---------------- */

@@ -4,7 +4,7 @@
  * 支持的对话场景：
  * - 「帮我看看语音为什么用不了」→ get_voice_status 诊断 + test_voice_asr/test_voice_tts 验证 + 给修复建议；
  * - 「我拿了个豆包 API Key，帮我配上」→ update_voice_config 填入 + test 验证 + 引导设置音色；
- * - 「识别用 Qwen 但朗读用豆包」→ update_voice_config 分别填两份凭据；
+ * - 「识别用百炼但朗读用豆包」→ update_voice_config 分别填两份凭据；
  * - 「推荐个音色」→ list_voice_presets 查询 + update_voice_config 更新。
  *
  * 隐私约定：工具结果一律不回传密钥明文（与模型配置工具同一隐私约定），只给末 4 位 keyTail。
@@ -62,11 +62,11 @@ export const voiceTools: AppTool[] = [
       if (!status) {
         hints.push('无法读取语音服务状态')
       } else {
-        if (!status.asrReady) hints.push('识别凭据未配置：语音转写不可用，需要在设置里填入豆包或 Qwen 凭据')
+        if (!status.asrReady) hints.push('识别凭据未配置：语音转写不可用，需要在设置里填入豆包或百炼凭据')
         if (!status.ttsReady) {
           hints.push(
-            status.asrAdapter === 'qwen' && !status.ttsStandalone
-              ? '朗读凭据不可用：识别配了 Qwen，豆包 TTS 无法继承其凭据，需要单独配置豆包凭据（ttsStandalone）'
+            (status.asrAdapter === 'bailian' || status.asrAdapter === 'qwen') && !status.ttsStandalone
+              ? '朗读凭据不可用：识别配了百炼，豆包 TTS 无法继承其凭据，需要单独配置豆包凭据（ttsStandalone）'
               : '朗读未就绪：缺少豆包凭据或未设置朗读音色',
           )
         }
@@ -80,24 +80,24 @@ export const voiceTools: AppTool[] = [
     group: 'voice',
     label: '修改语音服务配置',
     description:
-      '更新语音对话配置（合并式：只传要改的字段，未传保持原值）。识别凭据：doubao 用 asrMode=legacy（appKey=App ID + accessKey=Token）或 new（appKey=API Key）、qwen 用 appKey=百炼 Key；ttsStandalone=true 时用 ttsAppKey/ttsAccessKey 单独填豆包朗读凭据。凭据只存本地不回显。改完建议 test_voice_asr / test_voice_tts 验证连通。',
+      '更新语音对话配置（合并式：只传要改的字段，未传保持原值）。识别凭据：doubao 用 asrMode=legacy（appKey=App ID + accessKey=Token）或 new（appKey=API Key）、bailian（阿里云百炼，亦可写历史值 qwen）用 appKey=百炼 API Key；ttsStandalone=true 时用 ttsAppKey/ttsAccessKey 单独填豆包朗读凭据。凭据只存本地不回显。改完建议 test_voice_asr / test_voice_tts 验证连通。',
     parameters: Type.Object({
       adapter: Type.Optional(
         Type.Union(
-          [Type.Literal('auto'), Type.Literal('doubao'), Type.Literal('qwen')],
-          { description: '识别适配器：auto 按关键词自动识别' },
+          [Type.Literal('auto'), Type.Literal('doubao'), Type.Literal('bailian'), Type.Literal('qwen')],
+          { description: '识别适配器：auto 按关键词自动识别；bailian=阿里云百炼（qwen 为同一协议的历史值）' },
         ),
       ),
       asrMode: Type.Optional(Type.Union([Type.Literal('legacy'), Type.Literal('new')], { description: '豆包凭据模式' })),
-      appKey: Type.Optional(Type.String({ description: '识别凭据：豆包 App ID / API Key，或 Qwen 百炼 API Key（明文，仅存本地）' })),
+      appKey: Type.Optional(Type.String({ description: '识别凭据：豆包 App ID / API Key，或百炼 API Key（明文，仅存本地）' })),
       accessKey: Type.Optional(Type.String({ description: '豆包旧版 Access Token（legacy 模式需要）' })),
       asrBaseUrl: Type.Optional(Type.String({ description: 'ASR WebSocket 端点，留空用默认' })),
-      asrResourceId: Type.Optional(Type.String({ description: '豆包 Resource-Id 或 Qwen 模型名' })),
+      asrResourceId: Type.Optional(Type.String({ description: '豆包 Resource-Id 或百炼模型名（如 paraformer-realtime-v2）' })),
       ttsResourceId: Type.Optional(Type.String({ description: 'TTS Resource-Id，默认 seed-tts-2.0' })),
       voiceName: Type.Optional(Type.String({ description: '朗读音色（豆包 2.0 音色 ID，如 zh_female_cancan_uranus_bigtts）' })),
       speed: Type.Optional(Type.Number({ description: '语速 0.2~3.0，默认 1' })),
       ttsStandalone: Type.Optional(
-        Type.Boolean({ description: '朗读是否用独立豆包凭据；true 时需再传 ttsAppKey（识别配 Qwen 时朗读必须独立凭据）' }),
+        Type.Boolean({ description: '朗读是否用独立豆包凭据；true 时需再传 ttsAppKey（识别配百炼时朗读必须独立凭据）' }),
       ),
       ttsMode: Type.Optional(Type.Union([Type.Literal('legacy'), Type.Literal('new')], { description: '朗读独立凭据的模式' })),
       ttsAppKey: Type.Optional(Type.String({ description: '朗读独立凭据：豆包 App ID / API Key' })),
@@ -109,10 +109,15 @@ export const voiceTools: AppTool[] = [
       const mode = args.asrMode ?? cur.mode
       const appKey = args.appKey !== undefined ? args.appKey.trim() : cur.appKey
       const accessKey = args.accessKey !== undefined ? args.accessKey.trim() : cur.accessKey
-      if (!appKey) throw new Error('识别凭据（appKey）不能为空；豆包 App ID / API Key 或 Qwen 百炼 API Key 至少要有一个')
+      if (!appKey) throw new Error('识别凭据（appKey）不能为空；豆包 App ID / API Key 或百炼 API Key 至少要有一个')
       if (adapter === 'doubao' && mode === 'legacy' && !accessKey) {
         throw new Error('豆包旧版凭据模式（legacy）需要 App ID + Access Token 两个凭据，accessKey 缺失')
       }
+      // 适配器换成百炼而模型名还是豆包 Resource-Id 时给个能用的默认（否则服务端报模型不存在）
+      const rawModel = args.asrResourceId?.trim() || cur.asrResourceId || 'volc.seedasr.sauc.duration'
+      const modelLooksVolc = /^volc\.|seedasr|sauc/i.test(rawModel)
+      const asrResourceId =
+        adapter !== 'doubao' && adapter !== 'auto' && modelLooksVolc ? 'paraformer-realtime-v2' : rawModel
       // 朗读独立凭据合并：本次传了新 Key 用新值，否则保留旧独立凭据
       const prevTts = cur.ttsCredential
       const ttsStandaloneOn = args.ttsStandalone ?? !!prevTts?.appKey
@@ -137,7 +142,7 @@ export const voiceTools: AppTool[] = [
         asrAdapterUserPicked: adapter !== 'auto',
         asrBaseUrl: args.asrBaseUrl !== undefined ? args.asrBaseUrl.trim() : cur.asrBaseUrl,
         ttsCredential,
-        asrResourceId: args.asrResourceId?.trim() || cur.asrResourceId || 'volc.seedasr.sauc.duration',
+        asrResourceId,
         ttsResourceId: args.ttsResourceId?.trim() || cur.ttsResourceId || 'seed-tts-2.0',
         voiceName: args.voiceName !== undefined ? args.voiceName.trim() : cur.voiceName,
         speed: Math.min(3, Math.max(0.2, args.speed ?? cur.speed ?? 1)),

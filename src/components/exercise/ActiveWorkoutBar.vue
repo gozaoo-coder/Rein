@@ -151,13 +151,23 @@ async function onEndPick(value: string): Promise<void> {
       rt.enterRunSummary()
       goImmersive()
     } else {
-      const r = await rt.finishCourse()
-      if (r) toast(`已保存 ${r.done} 组 · 约 ${r.durationMin} 分钟 · ${r.kcal} 大卡`)
+      try {
+        const r = await rt.finishCourse()
+        if (r) toast(`已保存 ${r.done} 组 · 约 ${r.durationMin} 分钟 · ${r.kcal} 大卡`)
+      } catch (e) {
+        // 写库失败：会话仍 active、浮条照常，可原样再点（重试用同一 sessionId）
+        toast(e instanceof Error ? e.message : '保存失败，请重试')
+      }
     }
   } else if (value === 'discard') {
     const wasRun = rt.kind.value === 'run'
-    await rt.discardActive()
-    toast(wasRun ? '已放弃本次跑步' : '已放弃本次训练')
+    try {
+      await rt.discardActive()
+      toast(wasRun ? '已放弃本次跑步' : '已放弃本次训练')
+    } catch (e) {
+      // 放弃失败：保留会话与浮条，供原样重试
+      toast(e instanceof Error ? e.message : '放弃失败，请重试')
+    }
   }
 }
 </script>
