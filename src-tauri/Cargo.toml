@@ -1,6 +1,6 @@
 [package]
 name = "rein"
-version = "0.5.17"
+version = "0.5.18"
 description = "Rein · 全能生活助理"
 edition = "2021"
 rust-version = "1.77"
@@ -46,7 +46,9 @@ base64 = "0.22"
 rsa = "0.9"
 rand = "0.8"
 # 语音对话（modules/voice）：豆包 ASR/TTS WS 客户端 + gzip 二进制协议 + 音频落盘
-tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
+# gateway（对外服务网关）用 tokio 的 net + tokio-tungstenite 起本机/局域网 WS 服务端，
+# 故 features 追加 "net"（mio/socket2 已在依赖图，显式声明零成本）。
+tokio = { version = "1", features = ["sync", "macros", "rt", "time", "net"] }
 tokio-tungstenite = { version = "0.23", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 flate2 = "1"
