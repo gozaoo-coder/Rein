@@ -4,7 +4,7 @@ import { ChevronRight, Sparkles } from 'lucide-vue-next'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
 import MuscleCatchupSheet from '@/components/exercise/MuscleCatchupSheet.vue'
 import TrainingScoreSheet from '@/components/exercise/TrainingScoreSheet.vue'
-import { sessionService } from '@/services/sessionService'
+import { loadScoreInput } from '@/services/scoreInput'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useExerciseStore } from '@/stores/exercise'
 import { useNutritionStore } from '@/stores/nutrition'
@@ -27,7 +27,9 @@ import { weakGroups } from '@/utils/weakMuscles'
  * 练够分是**多维执行充分度**（频率 + 组数/次数/重量 + 体感，按目标加权），
  * 与《练够分 Lite》规范逐条对应（见 utils/trainingScore）。
  *
- * 力量记录一条都没有（近 42 天）时整卡隐藏，不占位置。
+ * 输入除了逐组记录，还有近 42 天的运动记录（跑步/快走等按 utils/aerobicLoad 折成等效组）——
+ * 纯跑步 / 纯手动补录的用户也能看到热力图，而不是整卡消失。
+ * 两条记录一条都没有时整卡隐藏，不占位置。
  */
 const exStore = useExerciseStore()
 const lib = useExerciseLibStore()
@@ -35,7 +37,7 @@ const nutrition = useNutritionStore()
 
 const result = ref<TrainingScoreResult | null>(null)
 const loaded = ref(false)
-/** 近 42 天是否有力量记录：决定整卡是否出现（完全没有 = 这个评估指标对他没意义） */
+/** 近 42 天是否有训练记录（逐组或运动记录）：都没有 = 这个评估指标对他没意义，整卡隐藏 */
 const hasHistory = ref(false)
 const sheetOpen = ref(false)
 const catchupOpen = ref(false)
@@ -51,15 +53,17 @@ const weak = computed(() => (result.value ? weakGroups(result.value.groups) : []
 
 async function load(): Promise<void> {
   try {
+    const today = todayStr()
     await lib.ensureLoaded()
-    const sets = await sessionService.strengthRecentSets(42)
-    hasHistory.value = sets.length > 0
+    const { sets, workouts } = await loadScoreInput(today)
+    hasHistory.value = sets.length > 0 || workouts.length > 0
     // 目标决定权重（增肌 30/50/20，减脂 35/35/30）—— 没有方案时按增肌
     await nutrition.loadProfile()
     result.value = computeTrainingScore({
       sets,
+      workouts,
       library: lib.list,
-      today: todayStr(),
+      today,
       goal: nutrition.profile?.goal ?? null,
     })
   } catch (e) {
@@ -73,9 +77,12 @@ async function load(): Promise<void> {
 
 onMounted(() => void load())
 
-/** 逐组记录落库（结束保存 / 删除训练）后刷新 */
+/**
+ * 刷新：逐组记录落库（结束保存 / 删除训练）→ strengthRev；
+ * 手动记 / 删一次运动 → weekWorkouts 变更（运动页本就常驻，不刷新的话新记的快走不进热力图）。
+ */
 watch(
-  () => exStore.strengthRev,
+  [() => exStore.strengthRev, () => exStore.weekWorkouts],
   () => void load(),
 )
 
@@ -96,11 +103,13 @@ function openSheet(): void {
       </button>
     </header>
 
-    <!-- 结论行：左边一句话说清"要不要管"，右边平均分回答"整体多少分" -->
+    <!-- 结论行：左边一句话说清"要不要管"，右边平均分回答"整体多少分"。
+         平均分带来源标签（N 群平均）—— 不说清取自几个肌群，会被误读成整块热力图的总分 -->
     <div v-if="result" class="concl row between">
       <p class="headline">{{ result.summary }}</p>
       <span v-if="result.trainedCount" class="avg num">
         <b>{{ result.average }}</b> 分
+        <i class="avgsrc">{{ result.trainedCount }} 群平均</i>
       </span>
     </div>
 
@@ -111,7 +120,7 @@ function openSheet(): void {
     <button v-if="weak.length" class="catchup row center" type="button" @click="catchupOpen = true">
       <Sparkles :size="15" />
       弱项加练
-      <small>· {{ weak.length }} 个肌群练得不够</small>
+      <small>{{ weak.length }} 个肌群练得不够</small>
     </button>
 
     <TrainingScoreSheet :open="sheetOpen" :result="result" @close="sheetOpen = false" />
@@ -163,7 +172,8 @@ function openSheet(): void {
   min-width: 0;
 }
 
-/* 平均分：数字用标题档（它是这张卡的第二个焦点），单位小一号压在基线上 */
+/* 平均分：数字用标题档（它是这张卡的第二个焦点），单位小一号压在基线上。
+   来源标签（N 群平均）与数字同色系但更浅，回答「这分取自几个肌群」。 */
 .avg {
   flex: none;
   font-size: var(--fs-caption);
@@ -175,6 +185,13 @@ function openSheet(): void {
   font-weight: 700;
   color: var(--text-1);
   letter-spacing: -0.3px;
+}
+
+.avgsrc {
+  font-style: normal;
+  margin-left: 5px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
 /* 热力图：三视图并排，给足宽度（84px 是 MuscleMap 里定死的单视图宽，
@@ -195,8 +212,10 @@ function openSheet(): void {
   font-weight: 700;
 }
 
+/* 按钮内两段字：主标签 700、计数 500 —— 层级靠字重与间距（gap）分，不靠 opacity。
+   不用 --text-2 / --text-3：它们压在 --accent 实底上对比不足（见 doc「统一改法」）。 */
 .catchup small {
   font-weight: 500;
-  opacity: 0.85;
+  margin-left: 2px;
 }
 </style>

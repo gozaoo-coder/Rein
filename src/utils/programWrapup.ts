@@ -139,10 +139,10 @@ export async function buildWrapup(record: ProgramRecord): Promise<WrapupData> {
     completion == null
       ? '这份方案没有计划训练日，下一期建议从保守档起步，先把「完成」建立起来。'
       : rate < 0.6
-        ? `训练兑现率 ${trainRateText} 是唯一短板。下一期降为 ${tierLabel}档但保证完成，比高配只做一半更有效。`
+        ? `训练完成率 ${trainRateText} 是唯一短板。下一期降为 ${tierLabel}档但保证完成，比高配只做一半更有效。`
         : rate < 0.85
-          ? `训练兑现率 ${trainRateText}，节奏可以稳住。下一期维持 ${tierLabel}档，在执行质量上做提升。`
-          : `训练兑现率 ${trainRateText}，执行力有富余。下一期可以上 ${tierLabel}档试试更高的目标。`
+          ? `训练完成率 ${trainRateText}，节奏可以稳住。下一期维持 ${tierLabel}档，在执行质量上做提升。`
+          : `训练完成率 ${trainRateText}，执行力有富余。下一期可以上 ${tierLabel}档试试更高的目标。`
 
   return {
     report,

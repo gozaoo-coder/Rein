@@ -12,6 +12,7 @@
  */
 import { Boxes, Eye, MessageSquareText, Mic } from 'lucide-vue-next'
 
+import StatusChip from '@/components/common/StatusChip.vue'
 import { useModelRolesStore } from '@/stores/modelRoles'
 import type { ModelRole } from '@/types'
 
@@ -51,8 +52,12 @@ const ICONS = {
           <span class="flex-1 min0 txt">
             <span class="row center t1">
               <i class="label">{{ s.label }}</i>
-              <i v-if="s.ok" class="dot ok" aria-label="已就绪" />
-              <i v-else class="dot warn" aria-label="未就绪" />
+              <!-- 就绪状态写成可见文字（原先只有色点，含义藏在 aria-label 里）；
+                   圆点降为胶囊内的前导点 -->
+              <StatusChip :tone="s.ok ? 'ok' : 'neutral'" size="sm" :aria-label="s.ok ? '已就绪' : '未就绪'">
+                <i class="dot" :class="s.ok ? 'ok' : 'warn'" />
+                {{ s.ok ? '已就绪' : '未就绪' }}
+              </StatusChip>
             </span>
             <b>{{ s.value }}</b>
             <small>{{ s.sub }}</small>
@@ -101,7 +106,7 @@ li + li .slot {
 }
 
 .slot:disabled {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 
 .slot.locked .go {

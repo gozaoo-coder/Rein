@@ -6,6 +6,7 @@ import { ChevronDown, Play, Pencil, SearchX, Trash2 } from 'lucide-vue-next'
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import ExerciseDetailDrawer from '@/components/exercise/ExerciseDetailDrawer.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { usePlanStore } from '@/stores/plan'
@@ -82,17 +83,24 @@ async function doDelete(): Promise<void> {
     <template v-if="plan">
       <!-- 桌面画布：动作明细是这页唯一的主体，整块通栏；移动端这里只是一个普通块容器 -->
       <div class="pd-body">
-        <p class="sum num t-2">
-          {{ plan.subtitle || '自定义课程' }} · {{ planTypeLabel(plan.workoutType) }} ·
-          {{ plan.exercises.length }} 个动作 · 约 {{ estimatePlanMinutes(plan) }} 分钟
-        </p>
+        <!-- 课程结论：时长是这门课的主角（title3 + 等宽），类别 / 动作数降成胶囊 -->
+        <div class="sum">
+          <p class="sum-main num">约 {{ estimatePlanMinutes(plan) }} 分钟</p>
+          <p class="sum-meta">
+            <span class="sum-sub">{{ plan.subtitle || '自定义课程' }}</span>
+            <PillChip size="sm" tone="muted">{{ planTypeLabel(plan.workoutType) }}</PillChip>
+            <PillChip size="sm" tone="muted"><span class="num">{{ plan.exercises.length }}</span> 个动作</PillChip>
+          </p>
+        </div>
 
         <section class="card">
           <!-- 动作条目单独一层：桌面上按两栏流铺开（见样式里的 .exlist） -->
           <div class="exlist">
             <div v-for="(e, i) in plan.exercises" :key="e.id" class="exitem">
               <button type="button" class="row item-row" @click="detailEx = e">
-                <span class="idx num">{{ e.group ?? i + 1 }}</span>
+                <!-- 超级组码与序号不是一回事：码走宽胶囊（带 aria-label），序号保持圆点 -->
+                <span v-if="e.group" class="grp" role="img" :aria-label="`超级组 ${e.group}`">{{ e.group }}</span>
+                <span v-else class="idx num">{{ i + 1 }}</span>
                 <span class="mid flex-1">
                   <b class="nm">{{ lib.resolveName(e) }}</b>
                   <small class="sub">{{ exerciseSub(e) }}</small>
@@ -103,6 +111,8 @@ async function doDelete(): Promise<void> {
             </div>
           </div>
 
+          <!-- 按钮暂留课程名：scripts/e2e-session-timed.mjs:194/199 断言按钮文案含「开始「<课程名>」」，
+               收成「开始训练」要等那条断言先改（审计方案 PlanDetailPage.vue L107） -->
           <button type="button" class="start row center" @click="onStart">
             <Play :size="18" /> 开始「{{ plan.name }}」
           </button>
@@ -141,9 +151,29 @@ async function doDelete(): Promise<void> {
   padding: 10px var(--page-pad-x) var(--page-pad-bottom);
 }
 
+/* 课程结论：时长单独一行作主角（一屏只有一个主数值），类别 / 动作数走胶囊 */
 .sum {
   margin: 2px 2px 14px;
-  font-size: var(--fs-footnote);
+}
+
+.sum-main {
+  font-size: var(--fs-title3);
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  color: var(--text-1);
+}
+
+.sum-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.sum-sub {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
 .exitem {
@@ -162,11 +192,27 @@ async function doDelete(): Promise<void> {
   padding: 12px 4px;
 }
 
+/* 纯序号：圆点只装得下 1-2 位数字，宽内容（超级组 A1）走下面的 .grp 胶囊 */
 .idx {
   min-width: 34px;
   height: 34px;
   padding: 0 8px;
-  /* 50% 在装下「超级组 A1」这类宽内容时会把圆撑成椭圆；999px 方形收敛为圆、变宽是标准胶囊 */
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  flex: none;
+}
+
+/* 超级组码：同一格位换成标准胶囊（宽内容不把圆撑成椭圆） */
+.grp {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
   color: var(--text-2);
@@ -198,14 +244,8 @@ async function doDelete(): Promise<void> {
   font-weight: 700;
   padding: 3px 9px;
   border-radius: var(--radius-xs);
-  background: rgba(30, 234, 239, 0.14);
-  color: #00858a;
-}
-
-@media (prefers-color-scheme: dark) {
-  .badge {
-    color: #1eeaef;
-  }
+  background: color-mix(in srgb, var(--c-balance) 14%, transparent);
+  color: var(--c-balance);
 }
 
 .chev {

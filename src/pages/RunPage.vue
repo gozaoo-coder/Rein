@@ -1,13 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronDown, LocateFixed, Play } from 'lucide-vue-next'
+import { ChevronDown, Play, X } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
 import GlassThumb from '@/components/common/GlassThumb.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import SlideToEnd from '@/components/run/SlideToEnd.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { useRunStore, fmtClock, fmtPace } from '@/stores/run'
+import { DISP_MIN_M, HERO_METER_MAX_M } from '@/stores/runGate'
+import { trackingService, type TrackingStatus } from '@/services/trackingService'
 import { buildRunSummary, fmtDuration, type SplitRow } from '@/utils/runSummary'
 import { fmtDateCn, todayStr } from '@/utils/date'
 import { motionRich } from '@/system/motion'
@@ -18,10 +23,18 @@ import { useToast } from '@/composables/useToast'
 
 /**
  * 运动模式 · 跑步（R5 深色轨迹头部）：覆盖整个窗口的沉浸二级页。
- * 暗区承载空间数据（轨迹 / 距离 / 目标进度 / GPS），亮区承载时间数据
- * （时长 hero ＋ 千卡 ＋ 瞬时/平均配速对照卡），互不重复。
- * 与训练课同一条结束语义（结束键 → 二级确认）；GPS 不可用时
- * 退化为纯计时，距离在总结页手动补填（跑步机场景）。
+ *
+ * 分区（2026 版）：暗区承载**空间与真伪**——轨迹、定位新鲜度、后台对账、中断横幅；
+ * 亮区承载**读数与动作**——时长 hero 行（+ 距离）、目标进度条、瞬时/平均/消耗
+ * 三列指标卡、底部控制行。两区互不重复：同一个量只出现一次。
+ *
+ * 与训练课同一条结束语义（结束键 → 二级确认）。结束跑步必须**滑到底**（SlideToEnd）：
+ * 它落在拇指最顺手的位置，红字按钮擦到就是丢一次记录。GPS 不可用时退化为纯计时，
+ * 距离在总结页手动补填（跑步机场景）。
+ *
+ * 这一页只说真话：没落到点的时刻不叫「已连接」（按 fix 新鲜度分四态）、
+ * 定位被系统掐断时不假装还在记（后台对账胶囊）、恢复出来的会话先把时长的来路
+ * 摊开再让用户决定（恢复核对卡）。
  */
 const r = useRunStore()
 const router = useRouter()
@@ -30,6 +43,10 @@ const { toast } = useToast()
 const endOpen = ref(false)
 const conflictOpen = ref(false)
 const countdownOpen = ref(false)
+/** 开跑前预检进行中（按钮切成「正在准备定位…」） */
+const preflightBusy = ref(false)
+/** 预检判定为「没有后台保活」：照跑，但在准备页说明这次按无 GPS 兜底 */
+const preflightDegraded = ref(false)
 /**
  * 总结页距离输入。
  *
@@ -47,6 +64,7 @@ const manualKmText = ref<string | number>('')
 onMounted(async () => {
   // 先等运动系统运行时的启动接管（冷开直达本页时防竞态）；
   // 状态机已激活（收起后再进入 / 运行时已恢复）则原样展示，不重复恢复
+  void refreshTrackStatus() // 与 whenReady 并行：冷开直达准备页也要能读到保活状态
   await workoutRuntime.whenReady()
   if (r.isActive) {
     syncManualKm() // 恢复到总结页时预填 GPS 距离
@@ -62,6 +80,133 @@ onMounted(async () => {
   r.enterReady()
 })
 
+/* ---------- 保活/权限状态：读缓存 + 重试收敛 ---------- */
+
+/**
+ * `tracking_status` 是「缓存 + 异步刷新」语义（原生侧静态初值 GRANTED=false/BUSY=true）：
+ * 冷启动首读几乎必然拿到 busy=true 的旧缓存 —— 只读一次会把「已授权」误读成
+ * 「未授权」（准备页的就绪行、通知提示都据它说话）。所以按 400ms 重试到收敛或 5 次为止，
+ * 与 run.ts 的 armKeepalive 同一形状（那边等的是同一个字段）。
+ */
+const trackStatus = ref<TrackingStatus | null>(null)
+/** 通知权限提示被用户关掉：本次跑步不再提（下次进入重新评估） */
+const notifyNudgeClosed = ref(false)
+
+async function refreshTrackStatus(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    const st = await trackingService.status()
+    if (!st.busy) {
+      trackStatus.value = st
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400))
+  }
+  // 五次仍未收敛：按最后一次读到的值落状态（busy 与 granted 同读，不会误报「已授权」）
+  trackStatus.value = await trackingService.status()
+}
+
+// 运行态与准备页都要这份状态（就绪行 / 通知提示），阶段一变就重读一次；
+// 回到准备页 = 新的一次跑步，通知提示的「已关闭」也随之复位
+watch(
+  () => r.phase,
+  (p) => {
+    if (p === 'ready') notifyNudgeClosed.value = false
+    if (p === 'ready' || p === 'running') void refreshTrackStatus()
+  },
+)
+
+/**
+ * 后台对账胶囊：只说「现在是谁在记」—— 落点新鲜度归更靠上的 GPS chip，
+ * 同一件事不在两颗相邻胶囊里各报一遍（眼睛要对照两个数字才知道是同一件）。
+ * 只在有原生前台服务的机型上才敢说「后台记录中」——桌面/浏览器里进程本就在前台，
+ * 那是另一句实话；降级后前台服务已放手（nativeDegraded），更不能沿用原话。
+ */
+const bgChip = computed(() => {
+  if (r.phase !== 'running' && r.phase !== 'paused') return ''
+  if (r.source !== 'native') return '前台记录中'
+  if (r.nativeDegraded) return '应用内记录 · 锁屏可能中断'
+  return '后台记录中'
+})
+
+/**
+ * 短时长（秒）→「45 秒」/「1 分 05 秒」：chip 里的年龄读数要能一眼比大小。
+ * 不用 `45s` / `1m05s` —— 同屏的 `m` 另有「米」的语义（GPS 良好 ±5 m、比例尺 500 m），
+ * 字母记法要先猜单位。
+ */
+function fmtShortAge(sec: number): string {
+  const s = Math.max(0, Math.floor(sec))
+  if (s < 60) return `${s} 秒`
+  return `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, '0')} 秒`
+}
+
+/**
+ * 后台中断横幅：`gapNotice` 由 run-core 在「回前台且离线 >15s」时置位。
+ * 它要回答的是「刚才那段时间去哪了」——补记到数就报数，没记到就说没记到；
+ * 3.5s 后自行退场（它只是回前台那一刻的一次性对账，不是常驻状态）。
+ */
+const gapNoticeText = computed(() => {
+  const n = r.gapNotice
+  if (!n) return ''
+  const off = fmtDuration(n.ms / 1000)
+  if (n.creditedM > 0 || n.creditedMs > 0) {
+    return `后台 ${off} · 已补记 ${Math.round(n.creditedM)} m / ${Math.round(n.creditedMs / 1000)} 秒`
+  }
+  return `后台 ${off}未记录到轨迹（定位被系统中断）`
+})
+
+let gapBannerTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => r.gapNotice,
+  (n) => {
+    if (gapBannerTimer) clearTimeout(gapBannerTimer)
+    gapBannerTimer = null
+    if (!n) return
+    gapBannerTimer = setTimeout(() => r.clearGapNotice(), 3500)
+  },
+)
+onBeforeUnmount(() => {
+  if (gapBannerTimer) clearTimeout(gapBannerTimer)
+})
+
+/* ---------- 恢复核对卡（进程被杀后重开） ---------- */
+
+const resumeSavedSec = computed(() => Math.floor((r.resumeNotice?.savedMs ?? 0) / 1000))
+
+/** 「继续记录」：把恢复出来的会话接着跑（resume() 内部会重建原生相位的播种） */
+function onResumeKeep(): void {
+  r.clearResumeNotice()
+  r.resume()
+}
+
+/**
+ * 「结束并保存这 12:30」：进总结页冻结时长，保存仍走那一页的按钮 ——
+ * 轨迹要经过距离核对（GPS 可能不完整）才落库，这里替用户跳过那一步是越权。
+ */
+function onResumeEnd(): void {
+  r.clearResumeNotice()
+  r.enterSummary()
+  syncManualKm()
+}
+
+/** 通知权限提示：可关闭、不弹窗（首次进入运行态才评估；关掉后本次不再提） */
+const notifyNudge = computed(() => {
+  const st = trackStatus.value
+  if (!st || notifyNudgeClosed.value) return false
+  if (!st.native || st.notify) return false
+  return r.phase === 'running' || r.phase === 'paused'
+})
+
+/**
+ * 准备页的就绪行（文案纪律）。
+ * 「锁屏也继续记录」这句话只有「原生前台服务 + 定位已授权」两件都成立时才允许出现 ——
+ * 它是这次记录可不可信的承诺，不是通用安抚语；没有原生保活的桌面/浏览器不显示这一行。
+ */
+const readyLine = computed(() => {
+  const st = trackStatus.value
+  if (!st || !st.native) return ''
+  return st.granted ? '后台记录：已就绪 · 锁屏也继续记录' : '未授权 · 锁屏后可能中断'
+})
+
 const clockText = computed(() => fmtClock(r.elapsedSec))
 const paceText = computed(() => (r.paceSecPerKm != null ? fmtPace(r.paceSecPerKm) : '—'))
 const instPaceText = computed(() =>
@@ -69,10 +214,22 @@ const instPaceText = computed(() =>
 )
 const kmText = computed(() => (r.km > 0.005 ? r.km.toFixed(2) : '—'))
 
-/* ---------- 总结派生（口径见 utils/runSummary） ---------- */
+/**
+ * hero 主视觉距离：走**显示专用**快通道 `distDisplayM`（低滞后、单调不减），不走结算
+ * 真源 `r.km`（`kmText` 仍供 splitsHint/结束确认用，快通道不得进结算文案）。
+ * 单位规则（冻结规格 §3.2/§6）：<100m 显整数米（≥1m 才出现非零数位），≥100m 显 km 2 位。
+ * value/unit 同源，避免出现 '0.29 km km' 这类双单位。
+ */
+const heroDist = computed<{ value: string; unit: string }>(() => {
+  const m = r.distDisplayM
+  if (m >= HERO_METER_MAX_M) return { value: (m / 1000).toFixed(2), unit: 'km' }
+  return { value: m >= DISP_MIN_M ? String(Math.round(m)) : '—', unit: m >= DISP_MIN_M ? 'm' : '' }
+})
+
+/* ---------- 总结派生（口径见 utils/runSummary，与写入记录同一把尺） ---------- */
 
 /**
- * 距离是否被用户改过：改过分段配速整体失效（轨迹距离与填入值对不上）。
+ * 距离是否被用户改过。
  *
  * ⚠ `manualKmText` **不能当字符串用**：`<input type="number" v-model>` 在
  * Vue 里会把它写成**数字**（"4.50" → 4.5），所以 `.trim()` / `.toFixed()`
@@ -89,19 +246,83 @@ const kmOverridden = computed(() => {
   return Math.abs(v - r.km) > 0.005
 })
 
-const runSummary = computed(() => {
+/** 归一后的改填公里数；没改填（或填了等于没填）时为 null */
+const manualKm = computed<number | null>(() => {
   const t = String(manualKmText.value ?? '').trim()
+  if (!t) return null
   const v = Number(t)
-  const manual = kmOverridden.value && Number.isFinite(v) ? v : null
-  return buildRunSummary(r.trackPoints, { manualKm: manual })
+  if (!Number.isFinite(v) || v <= 0) return null
+  return kmOverridden.value ? v : null
 })
+
+/**
+ * 生效距离：改填值优先，否则 GPS 入账距离（<0.01km 视为没测到）。
+ * 距离 / 平均配速 / 消耗三格都从它派生 —— 与 store 的 save() 同一口径，
+ * 屏幕上看到的数字与最终写进记录的数字必须是同一个。
+ */
+const effKm = computed<number | null>(() => manualKm.value ?? (r.km > 0.01 ? r.km : null))
+const effKmText = computed(() => (effKm.value != null ? effKm.value.toFixed(2) : '—'))
+const avgPaceText = computed(() => {
+  const k = effKm.value
+  if (k == null || k <= 0.05) return '—' // 与 save() 的 paceSec 门槛同一条
+  return fmtPace(Math.round(r.elapsedSec / k))
+})
+const kcalText = computed(() => r.kcalAt(effKm.value))
+
+const runSummary = computed(() =>
+  buildRunSummary(r.trackPoints, { distanceM: r.distanceM, manualKm: manualKm.value }),
+)
 const runSplits = computed(() => runSummary.value.splits)
-const runSplitsAvailable = computed(() => runSummary.value.splitsAvailable)
 const runAscent = computed(() => runSummary.value.ascentM)
+const runAscentAvailable = computed(() => runSummary.value.ascentAvailable)
 const runPaceSpread = computed(() => runSummary.value.paceSpread)
 
-const isFastest = (sp: SplitRow): boolean => runSummary.value.fastestKm?.index === sp.index
-const isSlowest = (sp: SplitRow): boolean => runSummary.value.slowestKm?.index === sp.index
+/** 分段的距离基准：入账距离优先（与 buildRunSummary 内部同一条判据） */
+const basisM = computed(() => (r.distanceM > 0 ? r.distanceM : r.trackM))
+const fullKmCount = computed(() => Math.floor(basisM.value / 1000))
+const isPartial = (sp: SplitRow): boolean => sp.index > fullKmCount.value
+
+/**
+ * 尾段（非整公里）的标签。
+ * SplitRow 只有序号（契约 J4 对它的追加只有 suspect/startPt/endPt），序号当标签会把
+ * 5.4km 的尾段读成「第 6 公里」—— 那是编造。尾段长度由距离基准反推（与
+ * buildRunSummary 的 D 同一条规则，精确值而不是从 sec/pace 回算，免受取整误差），
+ * floor 到 0.1km：0.95km 的尾段不该四舍五入成「1.0」。
+ */
+function segLabel(sp: SplitRow): string {
+  if (!isPartial(sp)) return String(sp.index)
+  const tailM = basisM.value - fullKmCount.value * 1000
+  return tailM > 0 ? (Math.floor(tailM / 100) / 10).toFixed(1) : '尾段'
+}
+
+/** 改填值与 GPS 入账距离的偏差（%）；没改填或没有基准时为 null */
+const mismatchPct = computed<number | null>(() => {
+  const man = manualKm.value
+  const d = basisM.value
+  if (man == null || d <= 0) return null
+  return (Math.abs(man * 1000 - d) / d) * 100
+})
+
+/**
+ * 偏差过大（>20%）时分段整块撤下：轨迹的累计距离与用户填的值对不上，
+ * 强行按填的值切段会给出与实际路线无关的配速 —— 那种数字比没有更糟
+ * （用户会照它调整训练）。3%~20% 之间仍展示，但脚注把差值摆出来。
+ */
+const splitsHidden = computed(
+  () => runSummary.value.distanceMismatch && (mismatchPct.value ?? 0) > 20,
+)
+/** 不足 1 公里时只有一段折算段 —— 那不是「逐公里分段」，不画表 */
+const splitsSinglePartial = computed(
+  () => runSplits.value.length === 1 && isPartial(runSplits.value[0]!),
+)
+const showSplits = computed(
+  () => runSplits.value.length > 0 && !splitsHidden.value && !splitsSinglePartial.value,
+)
+
+const isFastest = (sp: SplitRow): boolean =>
+  !isPartial(sp) && runSummary.value.fastestKm?.index === sp.index
+const isSlowest = (sp: SplitRow): boolean =>
+  !isPartial(sp) && runSummary.value.slowestKm?.index === sp.index
 const fastestPace = computed(() =>
   runSummary.value.fastestKm ? fmtPace(runSummary.value.fastestKm.paceSecPerKm) : '—',
 )
@@ -111,38 +332,154 @@ const slowestPace = computed(() =>
 
 /** 分段不可用时的那句说明：必须说清是「哪一档不可用」，不能只说「无数据」 */
 const splitsHint = computed(() => {
-  if (kmOverridden.value) return '距离已手动改填 · 分段配速按 GPS 原始轨迹计算，与改填值不一致，故不显示'
+  if (splitsHidden.value)
+    return `距离已改填 ${effKmText.value} km · 与 GPS 入账距离差 ${Math.round(mismatchPct.value ?? 0)}%，分段配速不再显示`
   if (r.trackPoints.length < 2) return '本次没有定位轨迹（GPS 不可用）· 分段配速需要轨迹'
-  return `本次不足 1 公里（${kmText.value === '—' ? '无距离' : kmText.value + ' km'}）· 满 1 公里后才有分段`
+  if (splitsSinglePartial.value)
+    return `本次不足 1 公里（${kmText.value === '—' ? '无距离' : kmText.value + ' km'}）· 满 1 公里后才有分段`
+  return '本次距离太短（不足 200 米）· 分段配速需要更长的轨迹'
 })
 
-const runSub = computed(() => {
-  const parts = [fmtDateCn(todayStr())]
-  parts.push(r.goalKind === 'time' ? `目标 ${r.goalTimeMin} 分钟` : r.goalKind === 'distance' ? `目标 ${r.goalDistanceKm.toFixed(2)} km` : '自由跑')
-  parts.push(r.gpsStatus === 'unavailable' ? '无 GPS' : '全程完成')
-  return parts.join(' · ')
+/** 分段脚注：说清「按哪个距离切的」以及「与填报值差多少」 */
+const splitsFootnote = computed(() => {
+  const base = `分段按入账距离 ${(basisM.value / 1000).toFixed(2)} km（GPS）计算`
+  const pct = mismatchPct.value
+  return pct == null ? base : `${base}，与填报值差 ${Math.round(pct)}%`
 })
 
-const gpsChip = computed(() => {
-  if (r.phase !== 'running' && r.phase !== 'paused') return ''
-  if (r.gpsStatus === 'active') return 'GPS 已连接'
-  if (r.gpsStatus === 'acquiring') return '定位中…'
-  if (r.gpsStatus === 'unavailable') return '无法定位 · 结束后可补填距离'
-  return ''
+/** 爬升率副行（米/公里）：距离太短它没有意义，宁可不给 */
+const runAscentRate = computed(() => {
+  if (!runAscentAvailable.value || runAscent.value == null || basisM.value < 300) return null
+  return Math.round((runAscent.value / basisM.value) * 1000)
+})
+
+const hasGaps = computed(() => r.gapSlowCount + r.gapFastCount + r.gapDropCount > 0)
+/** 消耗是估算：有断档或没有距离时如实标「≈」，并给一句为什么 */
+const kcalApprox = computed(() => hasGaps.value || effKm.value == null)
+const kcalHint = computed(() => {
+  if (!kcalApprox.value) return ''
+  return effKm.value == null
+    ? '≈ 未测得距离：消耗按跑步中等强度估算'
+    : '≈ 消耗按平均速度估算'
+})
+
+/**
+ * 记录说明卡的逐行取值。
+ * **互斥是硬约束**：每一段墙钟只能落进一个桶（契约 H 的四类桶），所以
+ * slow/drop 归「未计入」、fast 归「已按直线补记」、自动暂停归 autoPauseMs ——
+ * 同一段时间出现在两行里，等于把一次断档说成两次。
+ * **段数口径也只在卡里出现一次**：首行按 total（含 fast）报，fast 的明细以「另有」起头 ——
+ * 从「其中」改来，「其中」暗示 fast 是上一行 missN 的子集（实际是互斥的两个桶），
+ * missN 为 0 时更会成无前文的「其中」。
+ */
+const runNotes = computed<string[]>(() => {
+  const out: string[] = []
+  const gapN = r.gapSlowCount + r.gapFastCount + r.gapDropCount
+  const missN = r.gapSlowCount + r.gapDropCount
+  if (gapN > 0)
+    out.push(
+      missN > 0
+        ? `定位中断 ${gapN} 段 · 未计入 ${missN} 段（共 ${fmtDuration((r.gapSlowMs + r.gapDropMs) / 1000)}）`
+        : `定位中断 ${gapN} 段`,
+    )
+  if (r.gapFastCount > 0)
+    out.push(`另有 ${r.gapFastCount} 段长间隔已按直线补记距离（共 ${fmtDuration(r.gapFastMs / 1000)}）`)
+  if (r.autoPauseCount > 0)
+    out.push(`自动暂停 ${r.autoPauseCount} 次 · 共 ${fmtDuration(r.autoPauseMs / 1000)}（不计入时长与配速）`)
+  if (kmOverridden.value)
+    out.push(
+      r.distanceM > 0
+        ? `距离为手动改填 · GPS 记录 ${(r.distanceM / 1000).toFixed(2)} km`
+        : '距离为手动改填 · GPS 未记录距离',
+    )
+  if (r.jumpCount > 0) out.push(`含定位跳变 ${r.jumpCount} 处（未计入距离）`)
+  return out
+})
+
+/** 有断档/自动暂停才引导「按轨迹距离修正」——它们正是入账距离偏少的两类原因 */
+const canFixByTrack = computed(
+  () => r.trackM > 0 && (hasGaps.value || r.autoPauseCount > 0) && !kmOverridden.value,
+)
+
+/** 按轨迹里程回填改填框（轨迹是没被闸门丢点的原始记录，断档后它更接近实际） */
+function fixByTrack(): void {
+  manualKmText.value = (r.trackM / 1000).toFixed(2)
+}
+
+const distHint = computed(() => {
+  if (effKm.value == null) return '未获取到定位：跑步机跑完可手动填距离'
+  if (hasGaps.value || r.autoPauseCount > 0) return 'GPS 距离可能偏少，可按实际修正'
+  return 'GPS 距离已预填，可按实际修正'
+})
+
+/**
+ * 总结屏结论：完成状态单独一行。中断的段数与时长只在记录说明卡里说一次，
+ * 两条 hint 也只留各自的结论（消耗为什么是估算 / 距离可修正）——
+ * 「含定位中断」这个前提从前在四处各说一遍，真正的结论反被稀释。
+ */
+const runState = computed(() =>
+  r.gpsStatus === 'unavailable' && r.trackPoints.length < 2 ? '无 GPS' : '全程完成',
+)
+
+/**
+ * GPS chip 四态：按「最近一次落点有多新」分档，而不是「连接上了没有」。
+ * 连接是持续状态、落点是离散事实 —— 只有后者能回答「现在这行距离还可信吗」；
+ * 旧文案的「已连接」在系统掐断定位后仍挂着，等于替系统打包票。
+ */
+const gpsChip = computed<{ text: string; tone: string } | null>(() => {
+  if (r.phase !== 'running' && r.phase !== 'paused') return null
+  if (r.lastFixAt === 0) {
+    if (r.fixWaitSec < 20)
+      return {
+        text: r.fixWaitSec > 10 ? `定位中… · 已等 ${fmtShortAge(r.fixWaitSec)}` : '定位中…',
+        tone: 'wait',
+      }
+    return { text: `无定位 ${fmtShortAge(r.fixWaitSec)} · 距离已停止累加`, tone: 'lost' }
+  }
+  const age = r.fixAgeSec
+  if (age < 3) return { text: `GPS 良好 ±${Math.round(r.lastFixAccM)} m`, tone: 'ok' }
+  if (age <= 30) return { text: `定位中断 ${fmtShortAge(age)}`, tone: 'warn' }
+  return { text: `无定位 ${fmtShortAge(age)} · 距离已停止累加`, tone: 'lost' }
 })
 
 const goalLabel = computed(() => {
   if (r.goalKind === 'time') return `目标 ${r.goalTimeMin} 分钟`
-  if (r.goalKind === 'distance') return `目标 ${r.goalDistanceKm} km`
+  if (r.goalKind === 'distance') return `目标 ${r.goalDistanceKm.toFixed(2)} km`
   return '自由跑'
 })
 
-const distChipText = computed(() => {
-  const km = r.km > 0.005 ? r.km.toFixed(2) : '0.00'
-  return r.goalKind === 'distance' ? `${km} / ${r.goalDistanceKm.toFixed(2)} km` : `${km} km`
+/** 目标进度（0..100）；'open' 目标下为 null，那一行整块不渲染 */
+const goalPct = computed(() => {
+  const p = r.goalProgress
+  return p == null ? null : Math.round(Math.min(1, p) * 100)
 })
 
-const goalBarWidth = computed(() => `${(Math.min(r.goalProgress, 1) * 100).toFixed(1)}%`)
+const goalBarWidth = computed(() => `${(Math.min(1, r.goalProgress ?? 0) * 100).toFixed(1)}%`)
+
+const pausedBadgeText = computed(() =>
+  r.pauseCause === 'auto' ? '自动暂停 · 继续移动即自动恢复' : '已暂停 · 计时停止',
+)
+
+/** 结束/放弃的二级确认标题：总结页那一次必须把「要丢的是什么」写进标题（时长 + 距离） */
+const endTitle = computed(() => {
+  if (r.phase === 'summary') return `放弃本次跑步？已记录 ${clockText.value} · ${effKmText.value} km`
+  if (r.phase === 'paused')
+    return `结束本次跑步？已记录 ${clockText.value}${kmText.value === '—' ? '' : ` · ${kmText.value} km`}`
+  return '结束本次跑步？'
+})
+
+/** 总结页是唯一「已经跑完、还没落库」的位置：选项里多一条继续核对（不丢记录的那条路） */
+const endActions = computed(() =>
+  r.phase === 'summary'
+    ? [
+        { label: '放弃不保存', value: 'discard', danger: true },
+        { label: '继续核对', value: 'keep' },
+      ]
+    : [
+        { label: '结束并保存', value: 'finish' },
+        { label: '放弃本次跑步（不保存）', value: 'discard', danger: true },
+      ],
+)
 
 const heroWaitText = computed(() => {
   if (r.phase === 'ready') return '开跑后轨迹将在此描绘'
@@ -150,15 +487,31 @@ const heroWaitText = computed(() => {
   return '等待轨迹…'
 })
 
+
 /* ---------- 轨迹相机：世界坐标 = 相对首点的局部米坐标，屏幕 = R(rot)·p·scale + t ---------- */
 
-const VIEW_W = 480
-const VIEW_H = 320
-const VIEW_PAD = 30
-/** 固定缩放档基准：1 视口 px = 1 m（宽约 480 m 视野），捏合可在此上下调整 */
+/**
+ * 可见画布窗口（CSS px，与 SVG 用户单位 1:1）= 顶栏下沿 → 抽屉上沿之间的整片区域。
+ *
+ * 从前投影把 viewBox(480×320 + `slice`) 的中心当画面中心，而可见区的中心并不在那里：
+ * 抽屉从 46% 处压上来、顶栏又占掉顶部，于是「固定」把「我」钉在被抽屉盖住的地方，
+ * 「全览」把整条轨迹推到偏下。slice 的放大系数（本机 ≈8.5）还把 stroke-width:5
+ * 放大成约 42 设备像素——尺寸必须按 CSS px 算，所见即所得。
+ *
+ * 现在的约定：1 用户单位 = 1 CSS px；画布窗口 = 顶栏下沿…抽屉上沿；窗口中心 = (cx, cy)。
+ */
+const canvas = ref({ w: 0, h: 0, winTop: 0, winH: 0, cx: 0, cy: 0, pad: 18 })
+/** 安全边距（全览内缩、比例尺内缩）：真实值测量时从 --page-pad-x 令牌读，不另立魔数 */
+const CANVAS_PAD_FALLBACK = 18
+/** 固定缩放档基准：1 画布 px = 1 m，捏合可在此上下调整 */
 const BASE_SCALE = 1
 const SCALE_MIN = 0.15
 const SCALE_MAX = 12
+/** 全览专用缩放下限：长距离（>40km）也得整条塞进窗口，不受捏合下限约束 */
+const FIT_SCALE_MIN = 0.002
+/** 比例尺允许的渲染长度（CSS px）：太短读不出、太长喧宾夺主 */
+const SCALE_BAR_MIN_PX = 40
+const SCALE_BAR_MAX_PX = 120
 /** 每纬度米数（等距圆柱近似） */
 const M_LAT = 111_320
 
@@ -216,6 +569,13 @@ const view = computed(() => {
   const m = trackMeters.value
   if (!m || m.length === 0) return { cam: null, d: null, start: null, last: null }
 
+  const win = canvas.value
+  // 全览可用框：窗口内缩一个 page-padding，再把末点标记的半径算进去 ——
+  // 要求是「所有点都在 page-padding 之内」，圆点也不该压到那条安全线上
+  const fitPad = win.pad + 7
+  const fitW = Math.max(80, win.w - fitPad * 2)
+  const fitH = Math.max(80, win.winH - fitPad * 2)
+
   let cam: Cam
   if (camMode.value === 'fit') {
     let minX = Infinity
@@ -230,16 +590,13 @@ const view = computed(() => {
     }
     const spanX = Math.max(1, maxX - minX)
     const spanY = Math.max(1, maxY - minY)
-    const scale = clamp(
-      Math.min((VIEW_W - VIEW_PAD * 2) / spanX, (VIEW_H - VIEW_PAD * 2) / spanY),
-      SCALE_MIN,
-      SCALE_MAX,
-    )
+    const scale = clamp(Math.min(fitW / spanX, fitH / spanY), FIT_SCALE_MIN, SCALE_MAX)
     cam = {
       scale,
       rot: 0,
-      tx: VIEW_W / 2 - ((minX + maxX) / 2) * scale,
-      ty: VIEW_H / 2 - ((minY + maxY) / 2) * scale,
+      // 居中到可见窗口中心（不是 viewBox 中心）：整条轨迹落在 top…bottom 之间
+      tx: win.cx - ((minX + maxX) / 2) * scale,
+      ty: win.cy - ((minY + maxY) / 2) * scale,
     }
   } else if (camMode.value === 'manual' && manualCam.value) {
     cam = manualCam.value
@@ -253,8 +610,9 @@ const view = computed(() => {
     cam = {
       scale,
       rot,
-      tx: VIEW_W / 2 - (c * last.x - s * last.y) * scale,
-      ty: VIEW_H / 2 - (s * last.x + c * last.y) * scale,
+      // 「我」钉在可见窗口中心：从前钉在 viewBox 中心，落点被抽屉盖住
+      tx: win.cx - (c * last.x - s * last.y) * scale,
+      ty: win.cy - (s * last.x + c * last.y) * scale,
     }
   }
 
@@ -286,28 +644,110 @@ const view = computed(() => {
 /* ---------- 地图手势：单指平移 / 双指捏合缩放平移 ---------- */
 
 const heroEl = ref<HTMLElement | null>(null)
+/** 顶栏：画布窗口的上沿 —— 测量时只读它的下边界 */
+const sheadEl = ref<HTMLElement | null>(null)
 const pointers = new Map<number, { x: number; y: number }>()
 type Gesture =
   | { kind: 'pan'; startCam: Cam; startPt: { x: number; y: number } }
   | { kind: 'pinch'; startCam: Cam; startDist: number; startMid: { x: number; y: number } }
 let gesture: Gesture | null = null
 
-/** client 坐标 → SVG 视口坐标（slice 裁剪补偿） */
+/** page-padding 令牌（--page-pad-x）；读不到就用兜底值，避免与设计令牌脱钩 */
+function readPadToken(): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--page-pad-x')
+  const px = Number.parseFloat(raw)
+  return Number.isFinite(px) && px > 0 ? px : CANVAS_PAD_FALLBACK
+}
+
+/**
+ * 量出可见画布窗口：顶栏下沿 → 抽屉上沿，宽度取整幅 hero。
+ * 抽屉的 top（ready 26% / running 46% / summary 32%）、收起档、拖拽落定、窗口尺寸
+ * 任何一项变了，窗口就变了 —— 「固定」的中心与「全览」的缩放都得跟着重量。
+ */
+function syncCanvas(): void {
+  const hero = heroEl.value
+  if (!hero) return
+  const hr = hero.getBoundingClientRect()
+  const top = clamp((sheadEl.value?.getBoundingClientRect().bottom ?? hr.top) - hr.top, 0, hr.height)
+  const rawBottom = drawerEl.value?.getBoundingClientRect().top ?? hr.bottom
+  const bottom = clamp(rawBottom - hr.top, top + 120, hr.height)
+  const winH = bottom - top
+  canvas.value = {
+    w: hr.width,
+    h: hr.height,
+    winTop: top,
+    winH,
+    cx: hr.width / 2,
+    cy: top + winH / 2,
+    pad: readPadToken(),
+  }
+}
+
+/** 窗口几何的变动都带过渡动画（抽屉 top / transform）：下一帧量一次、落定后再量一次 */
+let canvasSyncTimer: number | null = null
+function scheduleSyncCanvas(): void {
+  void nextTick(syncCanvas)
+  if (canvasSyncTimer != null) clearTimeout(canvasSyncTimer)
+  canvasSyncTimer = window.setTimeout(() => {
+    canvasSyncTimer = null
+    syncCanvas()
+  }, 420)
+}
+
+/** client 坐标 → 画布坐标（1 用户单位 = 1 CSS px，无需 slice 补偿） */
 function toView(clientX: number, clientY: number): { x: number; y: number } {
   const el = heroEl.value
   if (!el) return { x: clientX, y: clientY }
   const rect = el.getBoundingClientRect()
-  const k = Math.max(rect.width / VIEW_W, rect.height / VIEW_H)
-  return {
-    x: (clientX - rect.left - (rect.width - VIEW_W * k) / 2) / k,
-    y: (clientY - rect.top - (rect.height - VIEW_H * k) / 2) / k,
-  }
+  return { x: clientX - rect.left, y: clientY - rect.top }
 }
 
 function camNow(): Cam {
   // 手动态用冻结相机；跟随/全览态用 view computed 解析出的当前相机（含用户缩放与朝向）
-  return manualCam.value ?? view.value.cam ?? { scale: BASE_SCALE, rot: 0, tx: VIEW_W / 2, ty: VIEW_H / 2 }
+  const c = canvas.value
+  return manualCam.value ?? view.value.cam ?? { scale: BASE_SCALE, rot: 0, tx: c.cx, ty: c.cy }
 }
+
+/**
+ * 比例尺：挑一个 1/2/5×10^k 的整距（≥10 m，即用户说的「10 的倍数」），
+ * 让它渲染成 [40, 120] CSS px 长的一段——读数=屏幕上真实尺子，随缩放实时变。
+ */
+const scaleBar = computed(() => {
+  const cam = view.value.cam
+  const c = canvas.value
+  if (!cam || c.w === 0 || c.winH <= 0) return null
+  let meters = 0
+  for (let exp = 1; exp <= 6; exp += 1) {
+    for (const mult of [1, 2, 5]) {
+      const v = mult * 10 ** exp
+      if (v * cam.scale <= SCALE_BAR_MAX_PX) meters = v
+    }
+  }
+  if (meters === 0) return null
+  const px = meters * cam.scale
+  if (px < SCALE_BAR_MIN_PX) return null // 缩放异常时宁可不画，也不画一条读不出的短杠
+  const label = meters >= 1000 ? `${meters / 1000} km` : `${meters} m`
+  return { px, label }
+})
+
+/** 比例尺落位：画布右下角（抽屉上沿之上、内缩一个 page-padding） */
+const scaleBarStyle = computed(() => {
+  const c = canvas.value
+  return {
+    right: `${c.pad}px`,
+    bottom: `${Math.max(c.pad, c.h - (c.winTop + c.winH) + c.pad)}px`,
+  }
+})
+
+/* 画布窗口的生命周期：挂载即量；尺寸变化重量；抽屉档位/阶段变动由各调用点触发 */
+onMounted(() => {
+  syncCanvas()
+  window.addEventListener('resize', syncCanvas)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncCanvas)
+  if (canvasSyncTimer != null) clearTimeout(canvasSyncTimer)
+})
 
 function onMapDown(e: PointerEvent): void {
   if ((e.target as HTMLElement).closest('button, .chip, input, a')) return
@@ -392,6 +832,7 @@ function fitAll(): void {
 watch(
   () => r.phase,
   (p) => {
+    scheduleSyncCanvas() // 抽屉的 top 按阶段不同（26%/32%/46%），窗口先重量
     if (p === 'summary') {
       fitAll()
       drawerCollapsed.value = false
@@ -427,6 +868,8 @@ watch(() => r.phase, () => (paneScrolled.value = false))
 const drawerCollapsed = ref(false)
 const drawerDragging = ref(false)
 const dragY = ref<number | null>(null)
+// 收起/展开改的是画布窗口的下沿：落定后重量一次（几何带过渡，schedule 里会再等一拍）
+watch(drawerCollapsed, scheduleSyncCanvas)
 /** 收起态露出的 peek 高度：把手 + 时长/千卡行 */
 const PEEK_PX = 176
 let dragBase = 0
@@ -474,6 +917,7 @@ function onHandleUp(): void {
     drawerCollapsed.value = !drawerCollapsed.value // 轻点把手 = 切换档位
   }
   dragY.value = null
+  scheduleSyncCanvas() // 抽屉落定 = 画布窗口的下沿确定，重量一次
 }
 
 function syncManualKm(): void {
@@ -485,7 +929,21 @@ function minimize(): void {
   else void router.replace('/sports')
 }
 
-function onGo(): void {
+/**
+ * 开跑前的定位就绪门：授权框在 3·2·1 之前答完（先跑 preflight 再进倒数）。
+ * 两级都放行 —— degraded 只意味着「这一次没有后台保活」，跑步照跑、距离结束时补填；
+ * 把它做成硬门等于用权限绑架用户：没给定位就不能跑步是说不通的。
+ */
+async function onGo(): Promise<void> {
+  if (preflightBusy.value) return
+  preflightBusy.value = true
+  preflightDegraded.value = false
+  try {
+    const res = await r.preflight()
+    preflightDegraded.value = res === 'degraded'
+  } finally {
+    preflightBusy.value = false
+  }
   countdownOpen.value = true
 }
 
@@ -502,6 +960,7 @@ function onEndPick(value: string): void {
   } else if (value === 'discard') {
     void doDiscard()
   }
+  // 'keep'（总结页的「继续核对」）什么都不做：弹层关掉就是继续核对
 }
 
 async function doDiscard(): Promise<void> {
@@ -520,9 +979,9 @@ async function doSave(): Promise<void> {
   // （理由见 kmOverridden 的注释）。parseFloat 对数字虽能工作，
   // 但那依赖隐式转字符串，属于「碰巧对」，与上面两处保持同一写法。
   const parsed = Number.parseFloat(String(manualKmText.value ?? ''))
-  const manualKm = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null
+  const fillKm = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null
   try {
-    const result = await r.save(manualKm)
+    const result = await r.save(fillKm)
     const parts = [`已保存跑步 ${result.durationMin} 分钟 · ${result.kcal} 大卡`]
     if (result.km != null) parts.push(`${result.km.toFixed(2)} km`)
     toast(parts.join(' · '))
@@ -552,7 +1011,16 @@ function bumpKm(delta: number): void {
       @pointerup="onMapUp"
       @pointercancel="onMapUp"
     >
-      <svg class="map" viewBox="0 0 480 320" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <!-- 画布坐标 = 整屏的 CSS px（viewBox 与实际尺寸 1:1，preserveAspectRatio=none）：
+           线宽、半径、比例尺因此都是「屏幕上多少 px」的直接写法，不再被 slice 系数放大。
+           轨迹照旧画满整屏（抽屉盖住下沿无妨），中心由 camera 钉在可见窗口中心。 -->
+      <svg
+        v-if="canvas.w > 0"
+        class="map"
+        :viewBox="`0 0 ${canvas.w} ${canvas.h}`"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
         <path v-if="view.d" class="route" :d="view.d" />
         <circle v-if="view.start" class="mk-start" :cx="view.start.x" :cy="view.start.y" r="5.5" />
         <g v-if="view.last">
@@ -562,27 +1030,46 @@ function bumpKm(delta: number): void {
       </svg>
       <p v-if="!view.d && heroWaitText" class="hero-wait">{{ heroWaitText }}</p>
 
-      <header class="shead row between">
+      <!-- 比例尺：画布右下角（抽屉上沿之上），标出这段整距在屏幕上有多长 -->
+      <div v-if="scaleBar" class="scalebar" :style="scaleBarStyle" aria-hidden="true">
+        <i class="sb-bar" :style="{ width: `${scaleBar.px.toFixed(1)}px` }" />
+        <span class="sb-label">{{ scaleBar.label }}</span>
+      </div>
+
+      <header ref="sheadEl" class="shead row between">
         <button class="min" aria-label="收起运动模式" @click="minimize">
           <ChevronDown :size="20" /> 收起
         </button>
-        <span class="ptitle">跑步 · {{ goalLabel }}</span>
-        <button v-if="r.phase !== 'ready' && r.phase !== 'summary'" class="end" @click="endOpen = true">
-          结束
-        </button>
-        <span v-else class="ph" />
+        <span class="ptitle">跑步</span>
+        <!-- 结束不再放这里：它落在拇指最顺手的位置、又只是「红字一碰即中」。
+             进行中走底部滑动闸门（SlideToEnd），暂停态在控制行里保留一个明确的入口。 -->
+        <span class="ph" />
       </header>
 
-      <span v-if="gpsChip" class="chip gps glass-surface" :class="{ ok: r.gpsStatus === 'active' }">
-        <i class="gdot" />{{ gpsChip }}
-      </span>
+      <!-- 左上 HUD 一列：定位新鲜度 → 后台对账 → 通知权限提示。
+           竖向叠放（而不是像从前左右各挂一颗）是因为两者读的是同一件事的两面：
+           「点有多新」与「谁在记」，眼睛不该在屏幕上跳两处。 -->
+      <div class="hud">
+        <span v-if="gpsChip" class="chip glass-surface gps" :class="gpsChip.tone">
+          <i class="gdot" />{{ gpsChip.text }}
+        </span>
+        <span v-if="bgChip" class="chip glass-surface stat"><i class="sdot" />{{ bgChip }}</span>
+        <button
+          v-if="notifyNudge"
+          type="button"
+          class="chip glass-surface nudge"
+          aria-label="关闭通知权限提示"
+          @click="notifyNudgeClosed = true"
+        >
+          <span>通知权限未开 · 锁屏时看不到跑步进度</span>
+          <X :size="13" />
+        </button>
+      </div>
 
-      <span v-if="r.phase === 'running' || r.phase === 'paused'" class="chip dist glass-surface">
-        <span class="lab num">{{ distChipText }}</span>
-        <span v-if="r.goalKind !== 'open'" class="bar"><i :style="{ '--p': goalBarWidth }" /></span>
-      </span>
+      <!-- 回前台的一次性对账横幅：只在 gapNotice 非空时出现，3.5s 后自行退场 -->
+      <p v-if="r.gapNotice" class="gapban glass-surface" role="status">{{ gapNoticeText }}</p>
 
-      <span v-if="r.phase === 'paused'" class="paused-badge glass-surface">已暂停 · 计时停止</span>
+      <span v-if="r.phase === 'paused'" class="paused-badge glass-surface">{{ pausedBadgeText }}</span>
     </section>
 
     <p v-if="r.finishError" class="warn">⚠ 结束失败：{{ r.finishError }}</p>
@@ -596,7 +1083,9 @@ function bumpKm(delta: number): void {
       :style="dragStyle"
       @scroll.capture="onDrawerScroll"
     >
-      <!-- 把手行：回中 / 拖拽档位 / 缩放模式（仅进行中与暂停） -->
+      <!-- 把手行：拖拽档位 / 缩放模式（仅进行中与暂停）。
+           回中钮与占位块已删：「固定」段就是回中（同一个 recenter），两个入口
+           只会让人犹豫按哪个；腾出的空间留给右侧分段控件，把手仍居中。 -->
       <div
         v-if="r.phase === 'running' || r.phase === 'paused'"
         class="handle"
@@ -605,10 +1094,6 @@ function bumpKm(delta: number): void {
         @pointerup="onHandleUp"
         @pointercancel="onHandleUp"
       >
-        <button v-if="camMode === 'manual'" class="hbtn glass-surface" aria-label="回到跟随锁定" @click="recenter">
-          <LocateFixed :size="16" />
-        </button>
-        <span v-else class="hph" />
         <i class="grab" />
         <div ref="msegEl" class="mseg glass-surface" :class="{ goo: goo }">
           <GlassThumb v-if="goo" :index="msegIndex" :count="2" />
@@ -616,6 +1101,26 @@ function bumpKm(delta: number): void {
           <button class="seg-item glow-layer" :class="{ on: camMode === 'fit' }" @click="fitAll">全览</button>
         </div>
       </div>
+
+      <!-- 恢复核对卡：进程被杀再重开时，先把「找回多少、时长算到哪」摊开，
+           再由用户决定接着跑还是就此结算 —— 两个选择都会改写这次记录，
+           替他选就是替他改数据。两个按钮的后果收进卡头 InfoHint，卡面只留读数。 -->
+      <section v-if="r.resumeNotice" class="rcard">
+        <div class="rc-title">
+          <span>已恢复中断的跑步</span>
+          <InfoHint
+            title="恢复核对"
+            content="继续记录会接着这次累计；结束则按已记录的部分进总结页保存。"
+          />
+        </div>
+        <p class="rc-body">
+          已找回 {{ r.resumeNotice.points }} 个轨迹点 · 已记录时长 {{ fmtClock(resumeSavedSec) }}
+        </p>
+        <button class="primary rc-primary" @click="onResumeKeep">继续记录</button>
+        <button class="ghost glass-surface glow-layer" @click="onResumeEnd">
+          结束并保存这 {{ fmtClock(resumeSavedSec) }}
+        </button>
+      </section>
 
       <!-- 准备页：目标选择 -->
       <div v-if="r.phase === 'ready'" class="pane col center">
@@ -647,45 +1152,98 @@ function bumpKm(delta: number): void {
           </div>
           <p v-else class="meta">不限时长与距离，随时结束并保存</p>
 
-          <button class="gobtn glass-surface glow-layer" @click="onGo">
+          <!-- 自动暂停：慢下来就停表。它是「这次记录可不可信」的一部分，
+               所以放在开跑前、与目标同级，而不是埋进设置页。 -->
+          <div class="pfrow row between">
+            <span class="pf-l">
+              <span class="pf-lab">自动暂停</span>
+              <small class="pf-desc">慢于 {{ fmtPace(r.autoPausePaceSec) }}/km 自动停表 · 快起来自动继续</small>
+            </span>
+            <ToggleSwitch
+              :model-value="r.autoPauseOn"
+              label="自动暂停"
+              @update:model-value="r.autoPauseOn = $event"
+            />
+          </div>
+
+          <!-- 定位就绪行：只有「原生前台保活 + 已授权」才敢承诺锁屏也继续记录。
+               状态是缓存 + 异步刷新的语义，首读必须重试（见 refreshTrackStatus）——
+               否则冷启动第一眼会把「已就绪」读成「未授权」。 -->
+          <p v-if="readyLine" class="pf-line">{{ readyLine }}</p>
+
+          <button class="gobtn glass-surface glow-layer" :disabled="preflightBusy" @click="onGo">
             <Play :size="30" :stroke-width="2.6" />
-            <span>开始跑步</span>
+            <span>{{ preflightBusy ? '正在准备定位…' : '开始跑步' }}</span>
           </button>
-          <p class="hint">点击后倒数 3 秒开跑 · 中途暂停不计时</p>
+          <!-- 预检降级：照跑，但先说清这次拿不到后台保活（结束后可补填距离） -->
+          <p v-if="preflightDegraded" class="hint warnhint">
+            未授权定位 · 本次按无 GPS 记录，结束后可补填距离
+          </p>
+          <p v-else class="hint">暂停期间不计入时长与配速</p>
         </div>
       </div>
 
-      <!-- 进行中 / 暂停：时长 hero ＋ 千卡 ＋ 双配速对照卡 -->
+      <!-- 进行中 / 暂停：hero 行（时长 + 距离）→ 目标进度 → 三列指标卡 → 控制行 -->
       <div v-else-if="r.phase === 'running' || r.phase === 'paused'" class="pane col center live">
-        <!-- 超范围平移层：同上（item 超伸） -->
+        <!-- 超范围平移层：同上（item 超伸）。这一屏额外要 align-self: stretch（见样式）：
+             hero 行与指标卡必须同宽同位，否则「时长墨水左边界 = 卡片左边缘」
+             这条对不齐 —— 居中列会让每一块按自己的内容宽各自居中。 -->
         <div class="rubber-layer" data-rubber-content>
-          <div class="time-row row between">
-            <div>
-              <b class="num tnum">{{ clockText }}</b>
-              <p class="tcap">{{ r.phase === 'paused' ? '已暂停' : '运动时长' }}</p>
+          <!-- hero 行：距离（主）+ 瞬时配速（次）。
+               跑步时用户真正盯着的就是这两个「现在到哪了 / 现在多快」，
+               其余（时长/平均配速/消耗）退到下面那张三列卡里。 -->
+          <div class="livehero row between">
+            <div class="lh-l">
+              <span class="lh-line">
+                <b class="num lh-dist">{{ heroDist.value }}</b>
+                <i v-if="heroDist.unit" class="lh-unit">{{ heroDist.unit }}</i>
+              </span>
+              <p class="tcap">本次距离</p>
             </div>
-            <div class="kcal">
-              <b class="num">{{ r.kcal }}</b>
-              <span>千卡</span>
+            <div class="lh-r">
+              <span class="lab"><i class="live-dot" />瞬时配速</span>
+              <span class="lh-line">
+                <b class="num lh-pace" :class="{ dim: r.pauseCause === 'auto' }">{{ instPaceText }}</b>
+                <i v-if="instPaceText !== '—'" class="lh-unit">/km</i>
+              </span>
             </div>
           </div>
 
+          <!-- 目标进度：满宽一条。'open' 目标下 goalProgress 为 null，整行不渲染 -->
+          <div v-if="r.goalProgress != null" class="goalrow">
+            <span class="goalhead row between">
+              <span class="glab">{{ goalLabel }}</span>
+              <span class="gpct num">{{ goalPct }}%</span>
+            </span>
+            <span class="gbar"><i :style="{ '--p': goalBarWidth }" /></span>
+          </div>
+
+          <!-- 三列指标卡：时长 / 平均配速 / 消耗（主读数已上提到 hero 行）。
+               瞬时那列从前在这里，现在它是 hero 的右读数，不再重复出现。 -->
           <div class="pace row glass-surface">
             <div class="col center">
-              <span class="lab"><i class="live-dot" />瞬时配速</span>
-              <b class="num pv">{{ instPaceText }}</b>
-              <span class="pu">/km</span>
+              <span class="lab">时长</span>
+              <b class="num pv">{{ clockText }}</b>
+              <!-- 暂停只说徽标一处；这一格不再跟一个「已停表」与它逐字重复 -->
+              <span v-if="r.phase === 'running'" class="pu">计时中</span>
             </div>
             <div class="col center">
               <span class="lab">平均配速</span>
-              <b class="num pv avg">{{ paceText }}</b>
+              <b class="num pv">{{ paceText }}</b>
               <span class="pu">/km</span>
+            </div>
+            <div class="col center kcal">
+              <span class="lab">消耗</span>
+              <b class="num">{{ r.kcal }}</b>
+              <span class="pu">kcal</span>
             </div>
           </div>
 
           <div class="ctl row">
             <template v-if="r.phase === 'running'">
-              <button class="primary" @click="r.pause()">暂停</button>
+              <button class="primary pausebtn" @click="r.pause()">暂停</button>
+              <!-- 结束走滑动闸门：滑到底才提交，提交后仍进现有的二级确认弹层 -->
+              <SlideToEnd :hold="endOpen" @done="endOpen = true" />
             </template>
             <template v-else>
               <button class="ghost glass-surface glow-layer danger" @click="endOpen = true">结束</button>
@@ -703,54 +1261,85 @@ function bumpKm(delta: number): void {
         <div class="rubber-layer sumlayer" data-rubber-content>
           <span class="doneemoji">🏃</span>
           <p class="donetitle">跑步完成</p>
-          <p class="donemeta">{{ runSub }}</p>
+          <!-- 结论单独一行（这一屏最该被读到的一句），日期与目标降为次要行 -->
+          <div class="donemeta">
+            <b class="donestate">{{ runState }}</b>
+            <span class="donesub num">{{ fmtDateCn(todayStr()) }} · {{ goalLabel }}</span>
+          </div>
 
           <!-- 四项指标：总时长 / 距离 / 平均配速 / 消耗。
-               配速与距离在 GPS 丢失时是「—」而不是 0 —— 那一格要如实说"没测到"，
-               画成 0 会被读成"跑了个零"。 -->
+               后三格由**生效距离**（改填值优先）驱动 —— 与写入记录同一把尺：
+               改了距离屏幕必须跟着改，否则用户核对的是一份不存在的成绩单。
+               配速与距离没测到时报「—」而不是 0：画成 0 会被读成「跑了个零」。 -->
           <div class="sumgrid">
             <div class="sumstat">
               <span class="sslabel">总时长</span>
               <b class="ssval num">{{ clockText }}</b>
             </div>
             <div class="sumstat">
-              <span class="sslabel">距离</span>
-              <b class="ssval num">{{ kmText }}<i v-if="kmText !== '—'" class="ssunit">km</i></b>
+              <span class="sslabel">距离<i v-if="kmOverridden" class="ssflag">手动</i></span>
+              <b class="ssval num">{{ effKmText }}<i v-if="effKmText !== '—'" class="ssunit">km</i></b>
             </div>
             <div class="sumstat">
               <span class="sslabel">平均配速</span>
-              <b class="ssval num">{{ paceText }}<i v-if="paceText !== '—'" class="ssunit">/km</i></b>
+              <b class="ssval num">{{ avgPaceText }}<i v-if="avgPaceText !== '—'" class="ssunit">/km</i></b>
             </div>
             <div class="sumstat">
               <span class="sslabel">消耗</span>
-              <b class="ssval num">{{ r.kcal }}<i class="ssunit">kcal</i></b>
+              <b class="ssval num">{{ kcalApprox ? '≈' : '' }}{{ kcalText }}<i class="ssunit">kcal</i></b>
             </div>
           </div>
+          <p v-if="kcalHint" class="hint left">{{ kcalHint }}</p>
+
+          <!-- 记录说明：逐行说清这次「哪些段没算、哪些段补了」。取值互斥
+               （每一段墙钟只落一个桶），同一段时间不会在两行里各说一遍。 -->
+          <section v-if="runNotes.length > 0" class="sumcard">
+            <h3>记录说明</h3>
+            <p v-for="(n, i) in runNotes" :key="i" class="sumnote">{{ n }}</p>
+          </section>
 
           <!-- 逐公里分段：跑步这一边唯一能回答「为什么这次这么快/这么慢」的地方。
-               不可用时（手动补填距离 / 不足 1km）说清为什么，而不是画一张空表。 -->
-          <section v-if="runSplitsAvailable" class="sumcard">
+               不可用时说清是「哪一档不可用」，而不是画一张空表。 -->
+          <section v-if="showSplits" class="sumcard">
             <h3>逐公里分段</h3>
+            <p class="hint left">每格依次是：公里序号、配速、爬升 ↑</p>
             <div class="splitrow">
-              <span v-for="sp in runSplits" :key="sp.index" class="splitcell" :class="{ fast: isFastest(sp), slow: isSlowest(sp) }">
-                <span class="spidx num">{{ sp.index }}</span>
+              <span
+                v-for="sp in runSplits"
+                :key="sp.index"
+                class="splitcell"
+                :class="{ fast: isFastest(sp), slow: isSlowest(sp), sus: sp.suspect }"
+              >
+                <span class="spidx num">
+                  {{ segLabel(sp) }}
+                  <i v-if="sp.suspect" class="spwarn" role="img" aria-label="该段含长时间停顿，配速不可信">⚠</i>
+                </span>
                 <span class="sppace num">{{ fmtPace(sp.paceSecPerKm) }}</span>
-                <span v-if="sp.ascentM > 0" class="spup num">↑{{ sp.ascentM }}</span>
+                <!-- 爬升带单位：↑45 m。单位放独立元素，.spup 读数本身只承载数字 -->
+                <span v-if="sp.ascentM > 0" class="spup-row num">
+                  <span class="spup">↑{{ sp.ascentM }}</span><i class="spunit">m</i>
+                </span>
               </span>
             </div>
             <p v-if="runPaceSpread" class="hint left">
               最快 {{ fastestPace }} · 最慢 {{ slowestPace }} · 相差 {{ fmtDuration(runPaceSpread) }}
             </p>
+            <p class="hint left">{{ splitsFootnote }}</p>
           </section>
           <section v-else class="sumcard">
             <h3>逐公里分段</h3>
             <p class="hint left">{{ splitsHint }}</p>
           </section>
 
-          <!-- 爬升：只计正增量（GPS 高程噪声向下也算会把平路跑出几十米假爬升） -->
-          <section v-if="runAscent != null" class="sumcard">
-            <h3>累计爬升</h3>
-            <p class="sumbig num">{{ runAscent }}<span class="ssunit"> m</span></p>
+          <!-- 爬升：GPS 高程噪声很大，数字只在「有效点够、没有长弦」时才给 ——
+               宁可说「定位不完整」，也不报一个自己都不信的数。 -->
+          <section v-if="r.trackPoints.length > 1" class="sumcard">
+            <h3>累计爬升（GPS 估算）</h3>
+            <template v-if="runAscentAvailable">
+              <p class="sumbig num">{{ runAscent ?? 0 }}<span class="ssunit"> m</span></p>
+              <p v-if="runAscentRate != null" class="hint left">爬升率 · 每公里 {{ runAscentRate }} m</p>
+            </template>
+            <p v-else class="hint left">—（定位不完整）</p>
           </section>
 
           <label class="distfield row between">
@@ -766,7 +1355,12 @@ function bumpKm(delta: number): void {
               placeholder="未测得，可补填"
             />
           </label>
-          <p class="hint left">{{ kmText === '—' ? '未获取到定位：跑步机跑完可手动填距离' : 'GPS 距离已预填，可按实际修正' }}</p>
+          <p class="hint left">{{ distHint }}</p>
+          <!-- 有断档/自动暂停时给一条捷径：轨迹是没被闸门丢点的原始记录，
+               断档之后它比入账距离更接近实际跑量 -->
+          <button v-if="canFixByTrack" class="ghost glass-surface glow-layer fixbtn" @click="fixByTrack">
+            按轨迹距离 {{ (r.trackM / 1000).toFixed(2) }} km 修正
+          </button>
 
           <button class="primary" @click="doSave">保存训练</button>
           <button class="ghost glass-surface glow-layer danger" @click="endOpen = true">放弃不保存</button>
@@ -777,14 +1371,13 @@ function bumpKm(delta: number): void {
     <!-- 覆盖层：3·2·1 倒数 -->
     <CountdownOverlay :show="countdownOpen" label="" sub="准备开跑" :count-from="3" @done="countdownOpen = false; void onCountdownDone()" />
 
-    <!-- 结束（二级确认）：只有这里才算正常结束 -->
+    <!-- 结束（二级确认）：只有这里才算正常结束。
+         总结页那一次的标题要把「损失」写全（时长 + 距离），并给一条退路
+         （继续核对）—— 在总结页误点放弃，丢的是一次已经跑完的记录。 -->
     <ActionSheet
       :open="endOpen"
-      title="结束本次跑步？"
-      :actions="[
-        { label: '结束并保存', value: 'finish' },
-        { label: '放弃本次跑步（不保存）', value: 'discard', danger: true },
-      ]"
+      :title="endTitle"
+      :actions="endActions"
       @select="onEndPick"
       @close="endOpen = false"
     />
@@ -820,13 +1413,26 @@ function bumpKm(delta: number): void {
   background: var(--hero-bg);
   overflow: hidden;
   touch-action: none; /* 手势：单指平移 / 双指捏合，不触发页面滚动 */
-  /* 保留 filter 语义（只把时长降到 base）：暂停要的是整个舞台＋HUD 一起冻住，
-     遮罩层只能压暗轨迹、动不了浮在上面的 chip 与徽标 */
-  transition: filter var(--dur-base) var(--ease-standard);
 }
 
-.run-page.paused .hero {
-  filter: brightness(0.55) saturate(0.75);
+/* 暂停压暗：用**遮罩层**而不是 filter。
+   从前这一条是 `.run-page.paused .hero { filter: ... }` —— filter 会把整棵子树
+   一起压暗，包括浮在上面的 chip 与徽标（它们表达的正是「暂停了，但定位/记录还在」，
+   跟着变暗就把这条信息一起吃掉）。遮罩层落在 z-index:3：轨迹与网格（z 自动）沉下去，
+   chip(4) / 顶栏(5) / 徽标(6) 原亮度留在上面。 */
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: var(--scrim);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+
+.run-page.paused .hero::after {
+  opacity: 1;
 }
 
 /* 底图网格：向右上渐隐 */
@@ -849,6 +1455,8 @@ function bumpKm(delta: number): void {
   height: 100%;
 }
 
+/* 线宽/半径一律按 CSS px 写（viewBox 已与屏幕 1:1）：**上限 8px** ——
+   任何缩放、任何 slice/系数都不许再把它放大（从前 stroke-width:5 被 slice 乘成 ~42 设备像素） */
 .route {
   fill: none;
   stroke: var(--hero-route-line);
@@ -905,7 +1513,35 @@ function bumpKm(delta: number): void {
   color: var(--hero-text-dim);
 }
 
-/* 顶栏（暗区上） */
+/* 比例尺：静默的「尺子」——只读信息，不参与交互（pointer-events:none 别挡地图手势）。
+   z-index 4 与 chip 同级：暂停压暗遮罩(3) 之上，读数不被吃掉。 */
+.scalebar {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  pointer-events: none;
+}
+
+/* 括注式：一条下横线 + 两端竖脚，长度 = 该整距在屏幕上的真实长度 */
+.sb-bar {
+  height: 5px;
+  min-width: 24px;
+  border: 1.5px solid var(--hero-text-dim);
+  border-top: none;
+}
+
+.sb-label {
+  font-size: var(--fs-micro);
+  line-height: 1;
+  letter-spacing: 0.5px;
+  color: var(--hero-text-dim);
+  text-shadow: 0 1px 2px var(--scrim);
+}
+
+/* 顶栏（暗区上）—— 不再承载「结束」：见模板注释（改走底部滑动闸门） */
 .shead {
   position: absolute;
   top: var(--safe-top);
@@ -917,20 +1553,22 @@ function bumpKm(delta: number): void {
   background: linear-gradient(rgba(6, 6, 8, 0.55), rgba(6, 6, 8, 0));
 }
 
+/* 收起钮：命中区靠**自身盒高**做到 44px（不是靠伪元素外扩）。
+   `position: relative` 仍然要写：只要哪天有人给它加 ::after 外扩，
+   定位祖先必须是它自己而不是 .shead（那会把命中区摊到整条 54px 顶栏上，
+   连标题和右端一起吞掉）。负外边距让文字左边界与顶栏内边距对齐 ——
+   命中区变大了，视觉一动不动。 */
 .min {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
+  min-height: 44px;
+  padding: 0 8px;
+  margin-left: -8px;
   font-size: var(--fs-subhead);
   font-weight: 600;
   color: var(--hero-text);
-}
-
-.end {
-  font-size: var(--fs-subhead);
-  font-weight: 700;
-  color: var(--hero-end);
-  padding: 8px 4px;
 }
 
 .ptitle {
@@ -943,32 +1581,45 @@ function bumpKm(delta: number): void {
   width: 48px;
 }
 
+/* 左上 HUD 一列：定位新鲜度 → 后台对账 → 通知提示。
+   竖排而不是左右分挂：三行读的是同一件事的不同面（点多新 / 谁在记 / 通知通不通），
+   眼睛不该在屏幕上跳两处。z-index 4 = 遮罩层（3）之上 —— 暂停时它们保持原亮度。 */
+.hud {
+  position: absolute;
+  top: calc(var(--safe-top) + 62px);
+  left: 14px;
+  z-index: 4;
+  max-width: 64%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 /* 悬浮信息 chip —— 走 .glass-surface + .stage-dark 的暗场令牌
    （超高档的 halo/caustic/rim 在暗场里才有意义：亮色下的落影压在深色地图上
    才是"这块玻璃浮在画面之上"的重量感。手写 blur(14px) 拿不到那三层光学层，
    弱档也顶不掉 blur —— 都交给令牌。） */
 .chip {
-  position: absolute;
-  z-index: 4;
   padding: 9px 13px;
   border-radius: var(--radius-m);
   color: var(--hero-text);
 }
 
-.gps {
-  top: calc(var(--safe-top) + 62px);
-  left: 14px;
+.gps,
+.stat,
+.nudge {
   display: flex;
   align-items: center;
   gap: 7px;
   font-size: var(--fs-caption);
   font-weight: 600;
+  text-align: left;
 }
 
-.gdot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+/* 四态：wait（还没落点）/ ok（新鲜）/ warn（中断）/ lost（已停累计）。
+   颜色只用于"要不要看一眼"，文案本身不缩写 —— 变色但不说人话等于没说。 */
+.gps.wait .gdot {
   background: var(--hero-text-dim);
 }
 
@@ -982,43 +1633,72 @@ function bumpKm(delta: number): void {
   animation-play-state: paused;
 }
 
-.dist {
-  top: calc(var(--safe-top) + 62px);
-  right: 14px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+.gps.warn {
+  color: var(--warn);
 }
 
-.dist .lab {
-  font-size: var(--fs-title3);
-  font-weight: 700;
+.gps.warn .gdot,
+.gps.lost .gdot {
+  background: var(--warn);
 }
 
-.dist .bar {
-  width: 112px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--hero-chip-line);
-  overflow: hidden;
+/* 第四态用 --hero-end 而不是 --warn-strong：后者在亮色档是 #8a5300
+   （为 warn-soft 底设计的「橙字」），压在这块**固定近黑**的舞台上实测只有 ~3:1 ——
+   而本页舞台的深色与系统配色无关（--hero-bg 亮暗同值），所以这里要的是暗场红。
+   语义也没丢：--hero-end 就是这一块暗区自己的强调红。 */
+.gps.lost {
+  color: var(--hero-end);
 }
 
-.dist .bar i {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border-radius: 2px;
+.gps.lost .gdot {
+  background: var(--danger);
+}
+
+.gdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hero-text-dim);
+  flex: none;
+}
+
+/* 后台对账胶囊：中性色（它报的是状态，不是警报） */
+.sdot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   background: var(--hero-route-line);
-  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
-  /* 1s linear 保留：距离入账是 1s 一次的阶跃，linear 把台阶抹成匀速 ramp；
-     换 ease 会让每次 retarget 都多一处速度断点 */
-  transition: clip-path 1s linear;
+  flex: none;
+}
+
+/* 通知提示：可点可关的一行，压暗一档不抢 GPS chip 的注意力 */
+.nudge {
+  gap: 8px;
+  color: var(--hero-text-dim);
+  font-weight: 500;
+}
+
+/* 回前台对账横幅：托在暗区下沿（抽屉上缘之上 14px），
+   z-index 与暂停徽标同级 —— 它要能被一眼看见，但不遮住 chip。 */
+.gapban {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(54% + 14px);
+  max-width: min(340px, calc(100% - 28px));
+  padding: 10px 16px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  text-align: center;
+  color: var(--hero-text);
 }
 
 /* 暂停徽标 —— 材质同 chip（.glass-surface + .stage-dark 令牌）。
    暂停是"运动被冻结"的状态，徽标要压得住画面：底色仍偏黑（stage-dark 令牌
-   里 --glass-fill 就是 --hero-chip-bg），只是光学层与饱和度交给令牌统一管。 */
+   里 --glass-fill 就是 --hero-chip-bg），只是光学层与饱和度交给令牌统一管。
+   文案由 pausedBadgeText 分叉：自动暂停说的是「动起来就恢复」，手动暂停说的是「已停表」。 */
 .paused-badge {
   position: absolute;
   z-index: 6;
@@ -1054,8 +1734,8 @@ function bumpKm(delta: number): void {
   text-align: center;
   padding: 4px;
   font-size: var(--fs-micro);
-  color: var(--warn);
-  background: rgba(255, 149, 0, 0.14);
+  color: var(--warn-strong);
+  background: var(--warn-soft);
 }
 
 /* ---------- 亮区 · 可拖拽抽屉 ----------
@@ -1099,7 +1779,7 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   opacity: 1;
 }
 
-/* 收起档：只露出 peek（把手 + 时长/千卡行）。
+/* 收起档：只露出 peek（把手 + 时长/距离 hero 行）。
    收起比展开短一档（.drawer 基础规则是 dur-sheet）——展开是"生长"，收起只是让位；
    :not(.dragging) 让拖拽中不挂过渡，位移只跟手指 */
 .drawer.collapsed:not(.dragging) {
@@ -1119,7 +1799,48 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   top: 32%;
 }
 
-/* 把手行：回中按钮 ｜ 拖拽条 ｜ 缩放模式切换 */
+/* 恢复核对卡（抽屉最上层，任何阶段都在）：它问的是「接着跑还是就此结算」，
+   必须压在所有面板之上 —— 用户不该在核对之前先看到一堆读数。 */
+.rcard {
+  flex: none;
+  margin: 0 28px 10px;
+  padding: 14px 16px;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  border: 0.5px solid var(--line);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rc-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-headline);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.rc-body {
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* 卡片里的两个动作上下排：主行动整宽（「继续记录」是默认该走的那条路），
+   「结束并保存这 12:30」标签长，与主按钮并排会被挤成两行数字 */
+.rc-primary {
+  width: 100%;
+  min-width: 0;
+}
+
+.rcard .ghost {
+  width: 100%;
+}
+
+/* 把手行：拖拽条 ｜ 缩放模式切换（回中钮已删，见模板注释） */
 .handle {
   flex: none;
   display: flex;
@@ -1132,25 +1853,10 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   -webkit-user-select: none;
 }
 
-/* 回中按钮：抽屉上的离散小控件 —— 走 .glass-surface。
-   它压在抽屉的不透明底上，玻璃采样的正是抽屉本身，得到的是真的磨砂层次。 */
-.hbtn {
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-m);
-  color: var(--c-exercise);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.hph {
-  width: 30px;
-}
-
 .grab {
   flex: 1;
   max-width: 44px;
+  margin: 0 auto;
   height: 5px;
   border-radius: 3px;
   background: var(--line);
@@ -1176,6 +1882,24 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   font-size: var(--fs-micro);
   font-weight: 600;
   color: var(--text-3);
+}
+
+/* 触控目标：这两段只有 ~21px 高，靠伪元素上下各外扩 8px（±8 是允许的上限，
+   见验收：命中区不越出按钮矩形 ±(11/8)px）。
+   用 **::before** 而不是 ::after —— `.glow-layer` 已经占着 ::after 画按压光晕
+   （base.css），两条规则会在同一个伪元素上抢位置；padding 也不能动，
+   GlassThumb 的 blob 几何按容器高度推（文件头第 3 条）。
+   ⚠ 裁切的代价：`.mseg` 的 overflow:hidden 是为裁 goo 模糊外溢而设的
+   （同 SegmentedControl），它按 padding box 裁，所以这 8px 实际只留下 ~2px ——
+   真正的 44px 命中区要把整条胶囊长高，而那会改掉 blob 的高度，
+   与「不改 padding」的约束正面冲突。取舍与实测见交付说明的 knownGaps。 */
+.mseg button::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  bottom: -8px;
 }
 
 .mseg button.on {
@@ -1241,11 +1965,11 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 }
 
 .gbtn:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 
 .gval {
-  font-size: 56px;
+  font-size: var(--fs-display-2xl);
   font-weight: 200;
   letter-spacing: -2px;
   line-height: 1;
@@ -1256,6 +1980,17 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 .gunit {
   font-size: var(--fs-callout);
   color: var(--text-2);
+}
+
+/* hero 行的说明行：只说这行大字是什么（距离）。
+   13px/--text-2：它是「这行大字在说什么」的唯一线索，必须读得清 ——
+   从前的 12px/--text-3 在深色抽屉底上只有 3.6:1，暂停时更要紧。
+   暂停的原因只说暂停徽标一处，这一行在暂停态也说「本次距离」，不逐字重复。 */
+.tcap {
+  font-size: var(--fs-footnote);
+  letter-spacing: 0.5px;
+  color: var(--text-2);
+  margin-top: 9px;
 }
 
 .meta {
@@ -1317,51 +2052,119 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   }
 }
 
-/* 进行中：内容贴顶（收起档 peek 正好露出时长/千卡行），控制按钮沉底 */
+/* 进行中：内容贴顶（收起档 peek 正好露出 hero 行），控制行沉底。
+   底距提到 46px：控制行必须落进单手可达区（真机 1220×2712/DPR3 下控件下沿 ≤864 CSS px），
+   而 .pane 的 30px 在没有底部安全区的机型上会让它落到 874。 */
 .live {
   justify-content: flex-start;
+  padding-bottom: calc(46px + var(--safe-bottom));
 }
 
-.time-row {
-  align-items: flex-end;
+/* hero 行与指标卡必须同宽同位：默认的「居中列」让每一块按自己的内容宽各自居中，
+   时长的墨水左边界会飘在卡片左边缘右边。stretch 把这一层撑到面板满宽，
+   内部所有 100% 宽的块（hero 行 / 目标条 / 指标卡）就共享同一条左边线 ——
+   这条在暂停帧尤其要紧：切换不许重排。 */
+.live .rubber-layer {
+  align-self: stretch;
+}
+
+/* hero 行：左距离（84/600，主读数）右瞬时配速（44/700，次读数）。
+   两者一行落定；其余指标退到三列卡。 */
+.livehero {
   width: 100%;
+  align-items: flex-end;
 }
 
-.tnum {
-  font-size: 84px;
-  font-weight: 200;
-  letter-spacing: -3.5px;
+.lh-l {
+  min-width: 0;
+}
+
+.lh-line {
+  display: flex;
+  align-items: baseline; /* 数字与单位共基线：单位不上浮成上标 */
+}
+
+.lh-dist {
+  font-size: var(--fs-display-xl);
+  font-weight: 600;
+  letter-spacing: -2px;
   line-height: 0.95;
+  /* 数字首字的左轴承按 -0.02em 补掉：截图要比「距离墨水的左边界」与「指标卡左边缘」
+     严丝合缝，侧轴承那 ~1.7px 正是差出来的那一点 */
+  margin-left: -0.02em;
+  color: var(--text-1);
 }
 
-.tcap {
-  font-size: var(--fs-caption);
-  letter-spacing: 0.5px;
-  color: var(--text-3);
-  margin-top: 9px;
+.lh-r {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  padding-bottom: 8px; /* 贴齐 hero 行的数字底部（不要各按行盒居中） */
+  white-space: nowrap;
 }
 
-.kcal {
-  text-align: right;
-  padding-bottom: 10px;
-}
-
-.kcal b {
-  font-size: 30px;
+/* 瞬时配速：自动暂停时不再产生新值，留住停表前的读数并压暗表示「这是上一刻的」 */
+.lh-pace {
+  font-size: var(--fs-display-l);
   font-weight: 700;
   letter-spacing: -0.5px;
+  line-height: 1;
+  color: var(--text-1);
 }
 
-.kcal span {
+.lh-pace.dim {
+  opacity: 0.5;
+}
+
+.lh-unit {
+  font-size: var(--fs-footnote);
+  font-style: normal;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: 3px;
+}
+
+/* 目标进度：满宽一条 + 13px 标签。'open' 目标下整行不渲染（见模板） */
+.goalrow {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.goalhead {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.gpct {
+  color: var(--text-1);
+}
+
+.gbar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.gbar i {
   display: block;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  margin-top: 2px;
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--c-exercise-deep);
+  clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
+  /* 1s linear 保留：入账是 1s 一次的阶跃，linear 把台阶抹成匀速 ramp；
+     换 ease 会让每次 retarget 都多一处速度断点 */
+  transition: clip-path 1s linear;
 }
 
-/* 双配速对照卡：瞬时（呼吸点 · 活的）｜平均（更重 · 稳的）
-   材质走 .glass-surface —— 它是抽屉里最大的一张数据卡，超高档下该半透出下面的
-   距离/千卡行，形成一块悬浮的玻璃板；弱档令牌自动顶回实底。 */
+/* 三列指标卡：瞬时配速｜平均配速｜消耗。材质走 .glass-surface（抽屉里最大的一张数据卡）。
+   字色纪律（验收项）：卡内不出现 10/11/12px，也不出现 --text-3 ——
+   标签与单位一律 13px/--text-2，值 34px/700 的 --text-1。 */
 .pace {
   width: 100%;
   border-radius: var(--radius-l);
@@ -1370,6 +2173,7 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 
 .pace > div {
   flex: 1;
+  min-width: 0;
   padding: 16px 8px 15px;
   gap: 5px;
 }
@@ -1382,16 +2186,18 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   display: flex;
   flex-direction: row;
   align-items: center;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-footnote);
   font-weight: 600;
-  letter-spacing: 0.5px;
-  color: var(--text-3);
+  letter-spacing: 0.4px;
+  color: var(--text-2);
   gap: 6px;
+  white-space: nowrap;
 }
 
 .live-dot {
   width: 7px;
   height: 7px;
+  flex: none;
   border-radius: 50%;
   background: var(--c-exercise);
   animation: breathe 1.6s infinite;
@@ -1402,22 +2208,37 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 }
 
 .pace .pv {
-  font-size: 30px;
-  font-weight: 600;
+  font-size: var(--fs-display-s);
+  font-weight: 700;
   letter-spacing: -0.5px;
+  color: var(--text-1);
 }
 
-.pace .pv.avg {
-  font-weight: 800;
+/* 自动暂停时不再产生新值：留住停表前的读数，压暗表示「这是上一刻的」——
+   清零会把「暂停前跑多快」一起抹掉，那是另一条信息。 */
+.pace .pv.dim {
+  opacity: 0.5;
 }
 
 .pace .pu {
-  font-size: 10px;
-  color: var(--text-3);
+  font-size: var(--fs-footnote);
+  color: var(--text-2);
+}
+
+/* 消耗列（沿用 .kcal 这个名字：它本来就是这张卡的第三格） */
+.kcal {
+  text-align: center;
+}
+
+.kcal b {
+  font-size: var(--fs-display-s);
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--text-1);
 }
 
 .ctl {
-  gap: 14px;
+  gap: 10px;
   justify-content: center;
   margin-top: auto;
 }
@@ -1435,6 +2256,16 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   box-shadow: var(--shadow-float);
 }
 
+/* 进行中的暂停键：几何是验收项（200×56），要盖掉 .primary 的 240/54。
+   选择器带上 .primary 是为了不靠源码顺序取胜 —— 两条规则同特指度时
+   谁在后谁赢，那种依赖迟早会被一次重排弄坏。 */
+.primary.pausebtn {
+  width: 200px;
+  min-width: 200px;
+  height: 56px;
+  flex: none;
+}
+
 /* 次按钮：控制层玻璃 —— 材质走 .glass-surface（全仓一份定义），这里只补几何 */
 .ghost {
   height: 50px;
@@ -1449,9 +2280,52 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   color: var(--danger);
 }
 
+/* ---------- 准备页：自动暂停开关 + 定位就绪行 ---------- */
+
+/* 与目标同级的设置行：左文右开关（开关自己是 51×31 的受控组件，
+   行高由它的文案撑开）。 */
+.pfrow {
+  width: min(320px, 100%);
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.pf-l {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.pf-lab {
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.pf-desc {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+/* 定位就绪行：13px 二级色。它是这一屏唯一敢说「锁屏也继续记录」的地方，
+   所以给足字号 —— 承诺的话要能读清（能不能说由 readyLine 判定）。 */
+.pf-line {
+  font-size: var(--fs-footnote);
+  color: var(--text-2);
+  text-align: center;
+}
+
+/* 预检降级：照跑，但这一句必须比普通 hint 更显眼（它说的是这次会缺什么） */
+.warnhint {
+  color: var(--warn-strong);
+  max-width: 300px;
+}
+
 /* 总结 */
 .doneemoji {
-  font-size: 52px;
+  font-size: var(--fs-display-l);
 }
 
 .donetitle {
@@ -1460,10 +2334,25 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   letter-spacing: -0.5px;
 }
 
+/* 总结屏副行：完成状态是结论，单独一行加粗；日期与目标降为次要行 ——
+   从前同字号同字重「·」串一行，最该读到的结论混在日期与目标里 */
 .donemeta {
-  font-size: var(--fs-subhead);
-  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
   margin-bottom: 4px;
+}
+
+.donestate {
+  font-size: var(--fs-headline);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.donesub {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
 /* ---------- 总结屏 ----------
@@ -1494,6 +2383,14 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   width: 100%;
 }
 
+/* 窄机型（<360 CSS px）回退 2×2：四格并排时「5'30"」+「/km」在 62px 里会挤出去，
+   nowrap 会把数字顶出格子。360 以上（含真机 407）保持四格一排。 */
+@media (max-width: 359px) {
+  .sumgrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .sumstat {
   background: var(--surface);
   border: 0.5px solid var(--line);
@@ -1505,26 +2402,46 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 
 .sslabel {
   display: block;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-footnote);
+  color: var(--text-2);
   white-space: nowrap;
+}
+
+/* 改填距离的小标：它解释的是「这一格为什么与轨迹对不上」，
+   所以挨着「距离」的标签而不是值（值那一格要给数字留宽度）。 */
+.ssflag {
+  font-style: normal;
+  font-weight: 600;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  margin-left: 3px;
 }
 
 .ssval {
   display: block;
-  font-size: 17px;
+  font-size: var(--fs-headline);
   font-weight: 600;
   margin-top: 2px;
   color: var(--text-1);
   letter-spacing: -0.3px;
+  /* 配速「5'30"」+「/km」在四格并排时是最长的一格：折行会把卡片撑高一档，
+     nowrap + 上面那条窄屏 2×2 回退一起保证它不被折断 */
+  white-space: nowrap;
 }
 
 .ssunit {
-  font-size: var(--fs-micro);
+  font-size: var(--fs-footnote);
   font-style: normal;
   font-weight: 400;
-  color: var(--text-3);
+  color: var(--text-2);
   margin-left: 2px;
+}
+
+/* 记录说明卡逐行：12px，说的是「哪段没算、哪段补了」—— 比卡片标题低一档但必须读得清 */
+.sumnote {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  line-height: 1.5;
 }
 
 /* 分段 / 爬升卡 */
@@ -1583,8 +2500,18 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 }
 
 .spidx {
-  font-size: 10px;
-  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--fs-footnote);
+  color: var(--text-2);
+}
+
+/* 段内停过（任一步 Δt≥30s 或隐含速度<0.4 m/s）：配速不可信，标出来并且不参与配色。
+   ⚠ 用的是文字色而不是背景 —— 它要和「最快/最慢」的底色标记共存，抢底色会读串。 */
+.spwarn {
+  font-style: normal;
+  color: var(--warn-strong);
 }
 
 .sppace {
@@ -1595,13 +2522,26 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 }
 
 .spup {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   /* 用 --ok-strong 而不是 --c-exercise-deep：
      后者的注释写着「亮底上的文字绿」，但**暗色档把它覆写成亮绿 #a4f04b**，
      于是它在亮色档压 --surface-2 只有 2.67:1、暗色档压 --surface-2 只有 1.24:1
      —— 两边都不够（实测）。--ok-strong 是真正为「底上的绿字」留的一档
      （亮 #248a3d / 暗 #30d158），三级门槛 3:1 两边都过。
      上箭头「↑」本身已经说明了「爬升」，颜色不承担语义。 */
+  color: var(--ok-strong);
+}
+
+/* 爬升的单位（m）与读数同行：.spup 只承载数字，单位放独立元素 */
+.spup-row {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+}
+
+.spunit {
+  font-style: normal;
+  font-size: var(--fs-micro);
   color: var(--ok-strong);
 }
 
@@ -1618,9 +2558,19 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
   box-shadow: inset 2px 0 0 var(--text-3);
 }
 
+/* 可疑段：压一层中性底把「有瑕疵」说出来，但**不进** fast/slow 的配色体系 */
+.splitcell.sus {
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface-2));
+}
+
 .sumcard .hint {
   text-align: left;
   color: var(--text-2);
+}
+
+/* 按轨迹距离修正：次按钮，但落在总结页的窄卡里要能整行放得下 */
+.fixbtn {
+  align-self: stretch;
 }
 
 .distfield {

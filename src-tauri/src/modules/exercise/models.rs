@@ -20,5 +20,16 @@ pub struct Workout {
     pub note: Option<String>,
     /// 来源会话（session_finish 落关联）；手动添加为 NULL
     pub session_id: Option<i64>,
+    /// 这条记录是谁的：`local` = Rein 自己记的（补录 / 课程 / 跑步），
+    /// `health_connect` = 从系统 Health Connect 同步进来的第三方数据。
+    ///
+    /// 为什么要露给前端与对外网关：两者的**归属不同** —— `local` 以本机为准
+    /// （会回写 HC、删除时连带收掉 HC 那份副本），`health_connect` 以 HC 为准
+    /// （在 Rein 里改了会被下次同步覆盖、删了只写墓碑不动 HC 那份）。
+    /// 界面不标出来，用户就解释不了「为什么这条改不回去」。
+    ///
+    /// 列有默认值 `local`（db.rs MIGRATION_0036），同步白名单也没有跳过它，
+    /// 所以它在跨设备同步后仍然保持原值。
+    pub source: String,
     pub created_at: String,
 }

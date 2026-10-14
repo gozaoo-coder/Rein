@@ -14,7 +14,9 @@ import {
 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import ProgramCompare from '@/components/program/ProgramCompare.vue'
 import ProgramConstraints from '@/components/program/ProgramConstraints.vue'
@@ -320,13 +322,14 @@ const shoppingTemplateDays = ref(0)
 const shoppingCopied = ref(false)
 const shoppingCopyErr = ref('')
 
-const shoppingSourceLabel = computed(() => {
-  const parts = [
-    shoppingAiDays.value ? `${shoppingAiDays.value} 天 AI 菜单` : '',
-    shoppingTemplateDays.value ? `${shoppingTemplateDays.value} 天模板菜单` : '',
-  ].filter(Boolean)
-  return parts.join(' · ')
-})
+/**
+ * 区间段：`rangeLabel` 形如「1月6日 – 1月12日 · 7 天」（真源在 stores/program.ts）。
+ * 总天数与来源在卡面上拆成独立读数（主数值胶囊 + 两颗来源胶囊），所以这里只取日期段 ——
+ * 尾部的「 · N 天」由 shop-total 承担，同一屏不再把总数说两遍。
+ */
+const shoppingRangeOnly = computed(() => shoppingRangeLabel.value.split(' · ')[0])
+/** 覆盖天数 = AI 菜单天数 + 模板菜单天数（与 store 里 rangeLabel 的加法同一把尺） */
+const shoppingTotalDays = computed(() => shoppingAiDays.value + shoppingTemplateDays.value)
 const shoppingGroups = computed(() => groupShoppingRows(shoppingRows.value))
 const shoppingHasTemplate = computed(() => shoppingTemplateDays.value > 0)
 const shoppingCheckedCount = computed(() => shoppingRows.value.filter((r) => r.checked).length)
@@ -443,9 +446,6 @@ function adjustmentsOf(r: ProgramRecord): number {
   }
 }
 
-function changesText(a: ProgramAdjustment): string {
-  return a.changes.map((c) => `${c.label} ${c.before} → ${c.after}`).join(' · ')
-}
 </script>
 
 <template>
@@ -522,7 +522,10 @@ function changesText(a: ProgramAdjustment): string {
       <!-- 状态条：一行概要（目标·档位·周次·截止），点开展开静态参数 -->
       <section class="head-strip">
         <button class="strip" :aria-expanded="stripOpen" @click="stripOpen = !stripOpen">
-          <span class="grow">{{ GOAL_LABELS[store.active.goal] }} · {{ activeTierLabel }} v{{ store.active.version }} · 第 {{ status.week }} 周 / {{ status.weeks }}</span>
+          <span class="grow">
+            <b class="strip-week num">第 {{ status.week }} 周 / {{ status.weeks }}</b>
+            <span class="strip-tags">{{ GOAL_LABELS[store.active.goal] }}<PillChip size="sm">{{ activeTierLabel }} v{{ store.active.version }}</PillChip></span>
+          </span>
           <span class="end num">{{ status.endDate.slice(5) }} 结束</span>
           <ChevronRight :size="12" class="chev" :class="{ open: stripOpen }" />
         </button>
@@ -532,17 +535,31 @@ function changesText(a: ProgramAdjustment): string {
             <ul class="stats num">
               <li><em>每日热量</em><b>{{ Math.round(blob.params.targets.kcal) }}<i>大卡</i></b></li>
               <li><em>蛋白</em><b>{{ Math.round(blob.params.targets.protein) }}<i>g</i></b></li>
-              <li><em>热量偏移</em><b>{{ blob.params.kcalDelta > 0 ? '+' : '' }}{{ blob.params.kcalDelta }}</b></li>
-              <li><em>BMR/TDEE</em><b>{{ blob.params.bmr }}/{{ blob.params.tdee }}</b></li>
+              <li>
+                <em>每日热量偏移</em>
+                <b>{{ blob.params.kcalDelta > 0 ? '+' : '' }}{{ blob.params.kcalDelta }}<i>大卡</i><span v-if="blob.params.kcalDelta !== 0" class="s-dir">{{ blob.params.kcalDelta > 0 ? '多吃' : '少吃' }}</span></b>
+              </li>
+              <li class="stat-pair">
+                <em>基础代谢</em><b>{{ blob.params.bmr }}<i>大卡</i></b>
+                <em>每日消耗</em><b>{{ blob.params.tdee }}<i>大卡</i></b>
+              </li>
             </ul>
-            <p class="strip-meta num">{{ status.startDate }} ~ {{ status.endDate }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</p>
+            <p class="strip-meta num">
+              <span>{{ status.startDate }} ~ {{ status.endDate }} · {{ blob.params.mealsCount }}餐{{ blob.params.trainingDays }}练</span>
+              <InfoHint
+                title="基础代谢 / 每日消耗"
+                content="基础代谢（BMR）：安静状态下维持生命所需的热量，按身高、体重、年龄与性别估算。
+
+每日消耗（TDEE）：基础代谢加上日常活动与训练消耗后的总热量。每日热量目标以它为基准，再按「热量偏移」做增减。"
+              />
+            </p>
           </div>
         </div>
       </section>
 
       <section class="card acts">
         <button v-if="isEnded" class="primary" @click="openWrapup(store.active!)">
-          生成本期成绩单<span class="t-3">方案期已结束 · 对照与下一期建议</span>
+          生成本期成绩单<span class="primary-sub">方案期已结束 · 对照与下一期建议</span>
         </button>
         <div class="acts-grid">
           <button class="act" @click="startReview">
@@ -582,7 +599,13 @@ function changesText(a: ProgramAdjustment): string {
               <span class="t-3">{{ a.source === 'ai' ? 'AI 复盘' : '手动' }} · {{ a.at.slice(0, 10) }}</span>
             </p>
             <p class="log-sum t-2">{{ a.summary }}</p>
-            <p v-if="a.changes.length" class="log-changes t-3 num">{{ changesText(a) }}</p>
+            <ul v-if="a.changes.length" class="log-changes num">
+              <li v-for="(c, ci) in a.changes" :key="ci">
+                <span class="ch-lab">{{ c.label }}</span>
+                <span class="ch-from">{{ c.before }} →</span>
+                <b class="ch-to">{{ c.after }}</b>
+              </li>
+            </ul>
           </li>
         </ul>
       </section>
@@ -636,12 +659,26 @@ function changesText(a: ProgramAdjustment): string {
 
       <!-- 本周采购清单：未来 7 天菜单食材按类聚合（AI 菜单按 id、模板菜单解析展示串） -->
       <SheetModal :open="shoppingOpen" title="本周采购清单" @close="shoppingOpen = false">
+        <template #action>
+          <InfoHint
+            title="估算份量"
+            content="模板菜单的份量按常见份量估算，不是按你的目标算出来的。
+
+在营养页生成当天菜单后，可以按目标校准。"
+          />
+        </template>
         <div v-if="shoppingLoading" class="shop-state center"><span class="t-3">正在汇总菜单食材…</span></div>
         <div v-else-if="shoppingError" class="shop-state center"><span class="ai-err">{{ shoppingError }}</span></div>
         <template v-else>
           <div class="shop-head">
-            <p class="shop-note num">{{ shoppingRangeLabel }}<span class="t-3">{{ shoppingSourceLabel ? ` · ${shoppingSourceLabel}` : '' }}</span></p>
-            <button v-if="shoppingCheckedCount" class="linkbtn" @click="clearChecks">清空勾选</button>
+            <p class="shop-note num">
+              <b class="shop-total">{{ shoppingTotalDays }}<span>天</span></b>{{ shoppingRangeOnly }}
+            </p>
+            <span class="shop-src">
+              <PillChip v-if="shoppingAiDays" size="sm">{{ shoppingAiDays }} 天 AI 菜单</PillChip>
+              <PillChip v-if="shoppingTemplateDays" size="sm">{{ shoppingTemplateDays }} 天模板菜单</PillChip>
+              <button v-if="shoppingCheckedCount" class="linkbtn" @click="clearChecks">清空勾选</button>
+            </span>
           </div>
           <p v-if="!shoppingRows.length" class="shop-state center"><span class="t-3">范围内没有可汇总的菜单</span></p>
           <div v-for="g in shoppingGroups" :key="g.name" class="shop-group">
@@ -658,9 +695,7 @@ function changesText(a: ProgramAdjustment): string {
               </li>
             </ul>
           </div>
-          <p v-if="shoppingRows.length && shoppingHasTemplate" class="shop-hint t-3">
-            含模板菜单的估算份量 · 在营养页生成当天菜单后可按目标校准
-          </p>
+          <p v-if="shoppingRows.length && shoppingHasTemplate" class="shop-hint t-3">模板菜单为估算份量</p>
           <button v-if="shoppingRows.length" class="primary shop-copy" @click="copyShopping">
             {{ shoppingCopyErr || (shoppingCopied ? '已复制到剪贴板' : '复制全文') }}
           </button>
@@ -738,7 +773,7 @@ function changesText(a: ProgramAdjustment): string {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .linkbtn {
@@ -797,6 +832,25 @@ function changesText(a: ProgramAdjustment): string {
   margin-left: 1px;
 }
 
+/* 偏移量的方向词（多吃 / 少吃）：把 +/− 号翻成人话，与数值同行不抢层级 */
+.s-dir {
+  margin-left: 4px;
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+/* BMR/TDEE 拆成两组「标签 + 值」竖排：缩写不解释没人读得懂，中文名各带单位 */
+.stat-pair {
+  display: grid;
+  gap: 2px;
+  align-content: center;
+}
+
+.stat-pair em + b {
+  margin-bottom: 6px;
+}
+
 /* 状态条：一行概要 + 周期进度 + 可展开参数详情 */
 .head-strip {
   flex: none;
@@ -817,10 +871,31 @@ function changesText(a: ProgramAdjustment): string {
 }
 
 .strip .grow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex: 1;
   min-width: 0;
+}
+
+/* 周次是这一屏的主数值：19px + 等宽，与同行的目标/档位拉开层次 */
+.strip-week {
+  flex: none;
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text-1);
+}
+
+.strip-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: var(--fs-caption);
+  font-weight: 400;
+  color: var(--accent-strong);
   white-space: nowrap;
 }
 
@@ -886,6 +961,10 @@ function changesText(a: ProgramAdjustment): string {
 }
 
 .strip-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   margin: 7px 2px 0;
   font-size: var(--fs-caption);
   color: var(--text-3);
@@ -982,10 +1061,12 @@ function changesText(a: ProgramAdjustment): string {
   gap: 6px;
 }
 
-.acts .primary .t-3 {
-  font-size: var(--fs-micro);
+/* 主按钮里的副行走 --on-accent：这颗是 .primary（底 --accent），
+   灰字压蓝底实测只有 1.56:1，降字号与字重来分层次，不靠 opacity 手调 */
+.acts .primary .primary-sub {
+  font-size: var(--fs-caption);
   font-weight: 400;
-  opacity: 0.8;
+  color: var(--on-accent);
 }
 
 /* 调整历史 */
@@ -1010,10 +1091,35 @@ function changesText(a: ProgramAdjustment): string {
   font-size: var(--fs-caption);
 }
 
+/* 调整历史：每条变更独立成行 —— 账本要逐行读，
+   标签与旧值次要、新值（after）加粗提亮，不再用「·」串成一行 */
 .log-changes {
-  margin-top: 3px;
-  font-size: var(--fs-micro);
-  line-height: 1.5;
+  margin-top: 4px;
+  display: grid;
+  gap: 3px;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-caption);
+}
+
+.log-changes li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.ch-lab {
+  color: var(--text-2);
+}
+
+.ch-from {
+  color: var(--text-3);
+}
+
+.ch-to {
+  color: var(--text-1);
+  font-weight: 600;
 }
 
 /* 采购清单弹层 */
@@ -1025,13 +1131,44 @@ function changesText(a: ProgramAdjustment): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 10px;
 }
 
 .shop-note {
+  flex: 1;
+  min-width: 0;
   margin: 0 0 12px;
   font-size: var(--fs-subhead);
   font-weight: 600;
+}
+
+/* 覆盖天数做成主数值胶囊（accent-soft 底 + accent-strong 字）置前，
+   来源拆成两颗中性胶囊靠右 —— 四个数字并列要读者自己做加法的排法不再有 */
+.shop-total {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-right: 8px;
+  padding: 3px 12px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-title3);
+  font-weight: 700;
+}
+
+.shop-total span {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+}
+
+.shop-src {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .shop-group {
@@ -1096,6 +1233,8 @@ function changesText(a: ProgramAdjustment): string {
 
 .s-days {
   white-space: nowrap;
+  /* 显式字号：不写就从 body 继承 17px，比同行的食材名与分量（14px）还大 */
+  font-size: var(--fs-caption);
 }
 
 .s-amt {

@@ -22,7 +22,8 @@ const timeLine = computed(() => {
   const t = props.todo
   if (!t || t.startMin == null) return null
   const end = t.startMin + (t.durationMin ?? 30)
-  return `${minToHHmm(t.startMin)} – ${minToHHmm(end)}${t.durationMin ? ` · ${t.durationMin} 分钟` : ''}`
+  // 起止区间本身就给出时长（09:00 – 10:00 = 60 分钟），不再尾随「· 60 分钟」重复一遍
+  return `${minToHHmm(t.startMin)} – ${minToHHmm(end)}`
 })
 
 const subProg = computed(() => {
@@ -49,7 +50,7 @@ function flipSub(i: number): void {
         </span>
       </div>
       <h3 class="tt" :class="{ done: todo.status === 'done' }">{{ todo.title }}</h3>
-      <p v-if="timeLine" class="num meta">{{ timeLine }}</p>
+      <p v-if="timeLine" class="num meta time">{{ timeLine }}</p>
       <p v-else class="meta">未安排时间</p>
 
       <p v-if="todo.recRule" class="chip-row">
@@ -164,6 +165,14 @@ html[data-perf]:not([data-perf='low']) .panel {
 .meta {
   font-size: var(--fs-caption);
   color: var(--text-2);
+}
+
+/* 起止区间是详情面板的时间主读数（原先同行还挂一句「· 60 分钟」把同一事实说两遍） */
+.meta.time {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.3;
 }
 
 .chip-row {

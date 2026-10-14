@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Plus, Star, Tag, X } from 'lucide-vue-next'
+import { Check, Star, Tag, X } from 'lucide-vue-next'
 
 import { kbService } from '@/services/kbService'
 import { useToast } from '@/composables/useToast'
@@ -147,16 +147,16 @@ function saveNote(): void {
       <textarea
         v-model="note"
         rows="2"
-        placeholder="给这个文件写点备注（不进检索，只给人看）"
+        placeholder="给这个文件写点备注（失焦自动保存；不进检索，只给人看）"
         aria-label="文件注释"
         :disabled="busy"
         @blur="saveNote"
       />
-      <span v-if="noteDirty" class="t-3 hint">
-        <button class="savelink" :disabled="busy" @click="saveNote">
-          <Plus :size="10" /> 失焦自动保存 · 也可点这里
-        </button>
-      </span>
+      <!-- 可点控件只写动作：文案「保存注释」+ Check 图标。
+           「失焦自动保存」是保存机制的说明，已收进 placeholder，不占着一个按钮解释原理 -->
+      <button v-if="noteDirty" class="savelink" :disabled="busy" @click="saveNote">
+        <Check :size="10" /> 保存注释
+      </button>
     </div>
   </div>
 </template>
@@ -258,11 +258,8 @@ function saveNote(): void {
   resize: vertical;
 }
 
-.hint {
-  flex: none;
-  font-size: var(--fs-caption);
-}
-
+/* 保存入口：一枚文字链（动作式文案见模板）。--accent 当链接色是 tokens 认可的用法
+   （实底档当图标 / 链接 / 强调描边，压在画布上 5.19:1） */
 .savelink {
   display: inline-flex;
   align-items: center;

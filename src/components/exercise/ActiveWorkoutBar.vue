@@ -497,9 +497,10 @@ async function onEndPick(value: string): Promise<void> {
   color: var(--bg);
 }
 
+/* soft 底 + strong 字（tokens.css:163-168）：结束是危险动作，底与字都走令牌 */
 .abtn.end {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-strong);
+  background: var(--danger-soft);
 }
 
 .abtn.ico {

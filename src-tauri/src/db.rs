@@ -1473,6 +1473,15 @@ CREATE TABLE ext_audit (
 CREATE INDEX idx_ext_audit_at ON ext_audit(at DESC);
 "#;
 
+/// 0043 · 审计表按客户端查询的索引（contract `docs/EXTERNAL-API.md` §6.5 / §17.4）。
+///
+/// `gateway_audit_recent(clientId)` 的 `list_audit_for_client` 按 `client_id` 取该客户端的
+/// 历史，没有这条复合索引时退化为全表扫描 + 排序，而这查询跑在唯一那把 DB 锁内 ——
+/// 审计增长后会顶到 §6.4 的 2000ms 查询预算。历史条目 0042 不改（永不改历史迁移）。
+const MIGRATION_0043: &str = r#"
+CREATE INDEX idx_ext_audit_client ON ext_audit(client_id, at DESC);
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1516,6 +1525,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0040,
     MIGRATION_0041,
     MIGRATION_0042,
+    MIGRATION_0043,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

@@ -68,12 +68,13 @@ export function projectTrack(
     y: Math.round((offY + (p.y - minY) * scale) * 10) / 10,
   })
   const start = to(proj[0]!)
-  let d = `M ${start.x} ${start.y}`
-  for (let i = 1; i < proj.length; i++) {
+  // brk 点起新子路径：空窗/自动暂停处没有几何连续性，连弦等于画了一条没走过的直线
+  let d = ''
+  for (let i = 0; i < proj.length; i++) {
     const q = to(proj[i]!)
-    d += ` L ${q.x} ${q.y}`
+    d += i === 0 || sampled[i]!.brk ? ` M ${q.x} ${q.y}` : ` L ${q.x} ${q.y}`
   }
-  return { d, start, last: to(proj[proj.length - 1]!) }
+  return { d: d.trim(), start, last: to(proj[proj.length - 1]!) }
 }
 
 /* ---------- 分段配速 ---------- */
@@ -83,6 +84,10 @@ export interface TrackSplit {
   label: string
   /** 该段每公里用时（秒）；末段按实际距离折算 */
   paceSec: number
+  /** 该段起点在 pts 里的索引（本段从该点之后开始计量） */
+  startPt: number
+  /** 该段终点在 pts 里的索引 */
+  endPt: number
 }
 
 /** 轨迹沿线的累计距离与时刻插值需要的时间戳；缺失时无法分段 */
@@ -103,11 +108,14 @@ function timedPoints(pts: RunTrackPoint[]): { cum: number[]; ts: number[] } | nu
   return { cum, ts }
 }
 
+/** 末段长度下限（米）：不足它并入上一段，不单列一个没有意义的短段 */
+const LAST_SPLIT_MIN_M = 200
+
 /**
  * 按公里切分轨迹推算分段配速。
  * @param totalDistanceM 记录的总距离（入账值，比轨迹沿线距离更可信）；
  *   轨迹里程按比例缩放到该总距离，使各段之和与记录一致。传 0 时直接用轨迹里程。
- *   末段不足一公里且 ≥250m 时按实际距离折算为一段。
+ *   末段不足一公里且 ≥200m 时按实际距离折算为一段。
  */
 export function trackSplits(pts: RunTrackPoint[], totalDistanceM: number): TrackSplit[] | null {
   const base = timedPoints(pts)
@@ -118,8 +126,8 @@ export function trackSplits(pts: RunTrackPoint[], totalDistanceM: number): Track
   const scale = goal / trackTotal // 轨迹米 → 入账米的换算系数
   const totalTime = ts[ts.length - 1]!
 
-  /** 距离入账口径下 d 米处对应的运动时刻（毫秒），线性插值 */
-  function timeAt(m: number): number {
+  /** 距离入账口径下 d 米处对应的轨迹索引与运动时刻（毫秒），线性插值 */
+  function at(m: number): { idx: number; t: number } {
     const target = m / scale
     // 二分找第一个 cum[i] >= target 的段
     let lo = 0
@@ -133,47 +141,129 @@ export function trackSplits(pts: RunTrackPoint[], totalDistanceM: number): Track
     const segD = cum[i]! - cum[i - 1]!
     const segT = ts[i]! - ts[i - 1]!
     const f = segD > 0 ? Math.min(1, Math.max(0, (target - cum[i - 1]!) / segD)) : 0
-    return ts[i - 1]! + segT * f
+    return { idx: i, t: ts[i - 1]! + segT * f }
   }
 
   const out: TrackSplit[] = []
   const fullKm = Math.floor(goal / 1000)
   let prevT = 0
+  let prevIdx = 0
   for (let k = 1; k <= fullKm; k++) {
-    const t = k === fullKm && fullKm * 1000 >= goal * 0.999 ? totalTime : timeAt(k * 1000)
-    out.push({ label: String(k), paceSec: (t - prevT) / 1000 })
+    const last = k === fullKm && fullKm * 1000 >= goal * 0.999
+    const { idx, t } = last ? { idx: pts.length - 1, t: totalTime } : at(k * 1000)
+    out.push({ label: String(k), paceSec: (t - prevT) / 1000, startPt: prevIdx, endPt: idx })
     prevT = t
+    prevIdx = idx
   }
   const restM = goal - fullKm * 1000
-  if (restM >= 250) {
-    out.push({ label: (restM / 1000).toFixed(1), paceSec: (totalTime - prevT) / 1000 / (restM / 1000) })
+  if (restM >= LAST_SPLIT_MIN_M) {
+    out.push({
+      label: (restM / 1000).toFixed(1),
+      paceSec: (totalTime - prevT) / 1000 / (restM / 1000),
+      startPt: prevIdx,
+      endPt: pts.length - 1,
+    })
   }
   return out.length > 0 ? out : null
 }
 
 /* ---------- 累计爬升 ---------- */
 
-/** GPS 海拔噪声大：只有从当前低点回升超过该阈值才计为爬升（迟滞滤波） */
-const ASCENT_HYSTERESIS_M = 2
+/** 高程精度门（米）：比它还差的 alt 比噪声更离谱，直接丢点 */
+const ALT_ACC_MAX_M = 20
+/** 采样间隔（米）：按水平距离每 50m 取一个采样点，先压掉密点噪声 */
+const ASCENT_SAMPLE_M = 50
+/** 中值窗半径（采样点）：前后各 2，共 5 点 */
+const ASCENT_MEDIAN_RADIUS = 2
+/** 迟滞阈值（米）：从当前低点回升不足它的一律算噪声（平路必须读 0） */
+const ASCENT_HYSTERESIS_M = 5/** 单段弦长上限（米）：相邻有效点跳这么远，说明这段根本没有高程数据 */
+const ASCENT_MAX_CHORD_M = 200
+/** 有效高程点下限：点太少时任何「爬升」都只是噪声的排列组合 */
+const ASCENT_MIN_VALID_PTS = 20
 
-/** 迟滞法估累计爬升（米）；轨迹点缺海拔时返回 null */
-export function trackAscentM(pts: RunTrackPoint[]): number | null {
-  let ref: number | null = null
-  let ascent = 0
+export interface AscentEstimate {
+  /** 累计爬升（米）；一个有效海拔点都没有时为 null（「没测到」≠「平路」） */
+  m: number | null
+  /** 估计是否可用：有效点 ≥20 且没有 >200m 的数据断档 */
+  ok: boolean
+}
+
+/**
+ * 滤波后的累计爬升：丢 altAcc>20m / 缺 alt 的点 → 每 50m 重采样（首尾必留）→
+ * 中值窗 5 平滑 → 迟滞 5m。
+ *
+ * 为什么是这四层：GPS 高程噪声可达 ±10m 量级，直接差分累加正增量会把平路
+ * 跑成几十米「爬升」（历史 bug）；单靠迟滞挡不住连续同向漂移（采样+中值压幅值），
+ * 单靠平滑又挡不住缓慢的噪声台阶（迟滞兜底）。断档（>200m 无点）时
+ * 两端高程没有任何中间数据，ok=false 让视图说「数据不足」而不是编一个数。
+ */
+export function trackAscentFiltered(pts: RunTrackPoint[]): AscentEstimate {
+  const valid: { alt: number; lat: number; lon: number }[] = []
   for (const p of pts) {
     if (typeof p.alt !== 'number') continue
-    if (ref == null) {
-      ref = p.alt
-      continue
-    }
-    if (p.alt - ref >= ASCENT_HYSTERESIS_M) {
-      ascent += p.alt - ref
-      ref = p.alt
-    } else if (p.alt < ref) {
-      ref = p.alt
+    if (typeof p.altAcc === 'number' && p.altAcc > ALT_ACC_MAX_M) continue
+    valid.push({ alt: p.alt, lat: p.lat, lon: p.lon })
+  }
+  if (valid.length === 0) return { m: null, ok: false }
+  let maxChord = 0
+  for (let i = 1; i < valid.length; i++) {
+    const d = haversineM(valid[i - 1]!.lat, valid[i - 1]!.lon, valid[i]!.lat, valid[i]!.lon)
+    if (d > maxChord) maxChord = d
+  }
+  const ok = valid.length >= ASCENT_MIN_VALID_PTS && maxChord <= ASCENT_MAX_CHORD_M
+
+  // 按水平距离每 50m 重采样（首尾必留）：尾点丢了，缓坡的收尾会被中值窗吃掉
+  // 约两个采样点的爬升 —— 一条 20m 缓坡会因此长期读成 12m 而不是 15m。
+  const samples: number[] = [valid[0]!.alt]
+  const lastValid = valid[valid.length - 1]!
+  let acc = 0
+  for (let i = 1; i < valid.length; i++) {
+    acc += haversineM(valid[i - 1]!.lat, valid[i - 1]!.lon, valid[i]!.lat, valid[i]!.lon)
+    if (acc >= ASCENT_SAMPLE_M && i < valid.length - 1) {
+      samples.push(valid[i]!.alt)
+      acc = 0
     }
   }
-  return ref == null ? null : Math.round(ascent)
+  if (valid.length > 1) samples.push(lastValid.alt)
+
+  const smooth = medianWindow(samples)
+  let ref = smooth[0]!
+  let ascent = 0
+  for (let i = 1; i < smooth.length; i++) {
+    const v = smooth[i]!
+    const rise = v - ref
+    if (rise >= ASCENT_HYSTERESIS_M) {
+      // 只记满档的 5m 整数倍：噪声尖峰过冲的那几米不记账，
+      // 余量留给下一次回升（否则一次 +9m 的尖峰会把 9m 全记成爬升）。
+      const steps = ASCENT_HYSTERESIS_M * Math.floor(rise / ASCENT_HYSTERESIS_M)
+      ascent += steps
+      ref += steps
+    } else if (v < ref) {
+      ref = v
+    }
+  }
+  return { m: Math.round(ascent), ok }
+}
+
+/** 中值窗 5（半径 2，边界用可用窗口）：比均值更能压住单点跳变 */
+function medianWindow(values: number[]): number[] {
+  return values.map((_, i) => {
+    const lo = Math.max(0, i - ASCENT_MEDIAN_RADIUS)
+    const hi = Math.min(values.length - 1, i + ASCENT_MEDIAN_RADIUS)
+    const win = values.slice(lo, hi + 1).sort((a, b) => a - b)
+    const mid = win.length >> 1
+    return win.length % 2 === 1 ? win[mid]! : (win[mid - 1]! + win[mid]!) / 2
+  })
+}
+
+/**
+ * 迟滞法估累计爬升（米）；轨迹点缺海拔或断档过大时返回 null。
+ * 内部委托 trackAscentFiltered —— 详情抽屉与总结页必须同口径（旧实现各算各的，
+ * 同一份轨迹会出现两个爬升值）。
+ */
+export function trackAscentM(pts: RunTrackPoint[]): number | null {
+  const r = trackAscentFiltered(pts)
+  return r.ok ? r.m : null
 }
 
 /** 沿轨迹的累计里程（米）：仅作展示参考，入账以窗口化 GPS 距离为准 */

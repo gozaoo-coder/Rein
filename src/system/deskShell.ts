@@ -1,5 +1,7 @@
 import { ref, watch } from 'vue'
 
+import { INSPECTOR_DEFAULT_MIN } from '@/config/domain'
+
 /**
  * 桌面壳层里**跨组件共享的两个开关**（导航轨、信息栏、命令面板都要读写）。
  *
@@ -20,12 +22,28 @@ export const MOD =
 
 const KEY_INSPECTOR = 'rein.inspector.v1'
 
+/**
+ * 信息栏的缺省开合 —— **三态读偏好**：
+ *   · 落盘过 '1' / '0' → 照用户上次的（⌘I 拨过之后就以他为准）；
+ *   · 没有记录 → 看窗口宽度：≥ INSPECTOR_DEFAULT_MIN 缺省展开，否则缺省收起。
+ *
+ * 为什么「无记录」不能一律展开：阈值从 1100 降到 900 之后，900–1279 这一档的主人区
+ * 只有 836–1215px（信息栏收起时，= 视口 − 导航轨 64），再并上 298px 的第三格，
+ * 900 宽留给内容的就是 538px —— 比手机窄栏还窄。
+ * 窄桌面下信息栏是**可以要**的（⌘I / 导航轨底部那颗钮），只是不该替用户默认要。
+ *
+ * 只在无记录时读一次 innerWidth：用户拨过之后就是显式偏好，窗口再变也不该被改写
+ * （展开状态下把窗口拉窄，本来也不该由壳层偷偷关掉他的第三格）。
+ */
 function readInspector(): boolean {
   try {
-    // 缺省开：信息栏是这个工作台的第三格，默认关掉等于把一半能力藏起来
-    return localStorage.getItem(KEY_INSPECTOR) !== '0'
+    const saved = localStorage.getItem(KEY_INSPECTOR)
+    if (saved === '1') return true
+    if (saved === '0') return false
+    return window.innerWidth >= INSPECTOR_DEFAULT_MIN
   } catch {
-    return true
+    // localStorage 不可用（隐私模式等）：退回按宽度定的缺省
+    return typeof window !== 'undefined' && window.innerWidth >= INSPECTOR_DEFAULT_MIN
   }
 }
 

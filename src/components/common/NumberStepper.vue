@@ -89,7 +89,7 @@ function commit(): void {
         @keyup.esc="editing = false"
       />
       <button v-else class="val val-btn" :aria-label="`修改${label || '数值'}`" @click="startEdit">
-        <b>{{ modelValue }}</b><small v-if="unit">{{ unit }}</small>
+        <b class="num">{{ modelValue }}</b><small v-if="unit">{{ unit }}</small>
       </button>
       <button
         :aria-label="label ? `增加 ${label}` : '增加'"
@@ -155,7 +155,7 @@ function commit(): void {
 }
 
 .ctrl button:disabled {
-  opacity: 0.3;
+  opacity: var(--disabled-opacity);
 }
 
 .val {

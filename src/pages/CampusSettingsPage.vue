@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { BookOpen, CalendarClock, ChevronRight, CircleCheck, CircleAlert, FileDown, LogOut, RefreshCw, School, Sparkles, Trash2 } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
@@ -213,6 +215,12 @@ async function onLogout(): Promise<void> {
 
 /* ---------------- AI 操作记录 ---------------- */
 
+/** AI 操作记录的完整说明：卡面只留一行结论，其余（含「重放」的人话解释）收进标题行 InfoHint */
+const auditHint =
+  '点抢课页的「交给 AI 排查」后，AI 对教务系统与抢课任务做过的每一步都会记在这里，可以逐条回看。' +
+  '\n\n记录包括 AI 发出的请求、重排抢课任务、重新登录、导出脚本这些操作。' +
+  '\n\n导出的脚本会把这一路的请求原样整理成命令：不打开本软件，也能在别处把这些请求重新执行一遍，用来核对或排查。'
+
 const audit = ref<AiAction[]>([])
 const auditBusy = ref(false)
 const exportBusy = ref(false)
@@ -251,6 +259,11 @@ async function onExportScript(): Promise<void> {
 }
 
 /* ---------------- 官方调休映射 ---------------- */
+
+/** 调休卡面的完整解释：卡面只留一行结论，其余收进标题行右侧的 InfoHint */
+const holidayHint =
+  '法定放假日会在课表与时间线上标「假」；补班日会把被补那天的课一并显示，并标「调」。' +
+  '\n\n数据来自公开的 holiday-cn 校历库；补哪一天由规律推断，逐日纠正收在下面的二级页里。'
 
 /**
  * 开关 + 按日期的手动覆盖。这里**不做前端推断** —— 后端才是映射的唯一真源
@@ -364,7 +377,7 @@ onMounted(async () => {
       <input v-model="baseUrl" type="url" class="mono" autocomplete="off" spellcheck="false" />
       <p class="tip">
         {{ activeSystem?.baseUrlHint }}
-        <template v-if="activeSystem?.bizTypeId">业务类型：本科生（{{ activeSystem.bizTypeId }}）。</template>
+        <template v-if="activeSystem?.bizTypeId">业务类型：本科生。</template>
       </p>
     </section>
 
@@ -384,10 +397,10 @@ onMounted(async () => {
         <p v-if="store.account.department" class="who-line">
           {{ store.account.department }}<template v-if="store.account.major"> · {{ store.account.major }}</template>
         </p>
+        <!-- 拆主次：行政班号是这一行的关键值（等宽数字、加重），年级降级为次要项。
+             学分不在这一行重复 —— 它只留在下面「培养方案与选课」入口行 -->
         <p v-if="store.account.adminclass" class="who-line">
-          行政班 {{ store.account.adminclass }}
-          <template v-if="store.account.grade"> · {{ store.account.grade }} 级</template>
-          <template v-if="store.account.totalCredits"> · {{ store.account.totalCredits }} 学分</template>
+          行政班 <b class="num">{{ store.account.adminclass }}</b><template v-if="store.account.grade"><span class="wsep" aria-hidden="true">|</span><span class="wsub">{{ store.account.grade }} 级</span></template>
         </p>
         <p class="who-line dim">
           <template v-if="sessionLost">会话已过期，需要重新登录</template>
@@ -485,7 +498,8 @@ onMounted(async () => {
         <ChevronRight :size="18" />
       </button>
 
-      <p class="tip">{{ syncHint }}</p>
+      <!-- 同步时间戳要能看清（用户点进来就是确认课表新不新）：caption + text-2，数字等宽 -->
+      <p class="tip sync-hint">{{ syncHint }}</p>
 
       <button class="primary" :disabled="store.syncing" @click="onSync">
         {{ store.syncing ? '同步中…' : '立即同步' }}
@@ -530,6 +544,7 @@ onMounted(async () => {
       <div class="sec-head">
         <CalendarClock :size="17" />
         <h2>官方调休映射</h2>
+        <InfoHint title="调休映射怎么来的" :content="holidayHint" />
         <div class="head-switch">
           <ToggleSwitch
             :model-value="holidayEnabled"
@@ -539,10 +554,8 @@ onMounted(async () => {
           />
         </div>
       </div>
-      <p class="tip">
-        开启后，法定放假日会在课表与时间线上标「假」，补班日会把被补那天的课一并显示并标「调」。
-        数据来自公开的 holiday-cn 校历库；补哪一天由规律推断，逐日纠正收在下面的二级页里。
-      </p>
+      <!-- 卡面只留一行结论；「数据从哪来、补哪一天怎么推断」收进标题行的 InfoHint -->
+      <StatusChip tone="accent">放假标「假」、补班标「调」</StatusChip>
 
       <template v-if="holidayEnabled">
         <button class="link-row" type="button" @click="holidayOpen = true">
@@ -561,14 +574,13 @@ onMounted(async () => {
       <div class="sec-head">
         <Sparkles :size="17" />
         <h2>AI 操作记录</h2>
+        <InfoHint title="AI 操作记录是什么" :content="auditHint" />
         <button class="mini" :disabled="auditBusy" @click="loadAudit">
           {{ auditBusy ? '读取中…' : '刷新' }}
         </button>
       </div>
-      <p class="tip">
-        让 AI 排查抢课问题时（抢课页的「交给 AI 排查」），它对教务与抢课引擎做过的每一步都会记在这里。
-        导出的脚本把这一路的请求原样搬下来，**脱离 App 也能重放**。
-      </p>
+      <!-- 卡面只留一行结论；记录范围与「重放」的人话解释都在标题行的 InfoHint 里 -->
+      <p class="audit-lead">AI 排查抢课问题时，对教务做过的每一步都记在这里。</p>
       <button class="mini wide" :disabled="exportBusy" @click="onExportScript">
         <FileDown :size="14" />
         {{ exportBusy ? '导出中…' : '导出救援脚本' }}
@@ -582,9 +594,6 @@ onMounted(async () => {
         </span>
         <ChevronRight :size="18" />
       </button>
-      <p v-if="!audit.length" class="tip">
-        AI 一旦对教务动手（探请求、重排任务、重登、导出脚本），这里会一条条出现。
-      </p>
     </section>
 
     <!-- ⑦ 账号管理 -->
@@ -624,8 +633,9 @@ onMounted(async () => {
 
     <!-- ═══ 二级抽屉：逐日纠正调休 ═══ -->
     <SheetModal :open="holidayOpen" title="逐日纠正调休" initial-snap="large" @close="holidayOpen = false">
+      <!-- 「补哪一天由规律推断」只在卡面 InfoHint 里讲一次，这里只留抽屉自己的操作说明 -->
       <p class="tip">
-        补哪一天由规律推断，这里逐日纠正；选「不补课」可把某天的映射压掉。
+        选「不补课」可把某天的映射压掉。
       </p>
       <ul v-if="holidayRows.length" class="holiday-list">
         <li v-for="row in holidayRows" :key="row.date">
@@ -694,6 +704,13 @@ onMounted(async () => {
   color: var(--text-1);
 }
 
+/* AI 操作记录卡面的一行结论：完整解释（含「重放」的人话版）在标题行 InfoHint 里 */
+.audit-lead {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
 /* 记录区的「刷新」「导出脚本」：次级按钮，不跟页面的主操作抢注意力 */
 .mini {
   margin-left: auto;
@@ -710,7 +727,7 @@ onMounted(async () => {
 }
 
 .mini:disabled {
-  opacity: 0.55;
+  opacity: var(--disabled-opacity);
 }
 
 .mini.wide {
@@ -726,17 +743,18 @@ onMounted(async () => {
   margin-top: 4px;
 }
 
+/* 记录要逐条读、并与摘要对上：正文从 11px 抬到 caption，时刻不再压 --text-3 */
 .audit li {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.5;
 }
 
 .audit .at {
   flex: none;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .audit .kind {
@@ -857,6 +875,13 @@ input:focus {
   font-size: var(--fs-micro);
   color: var(--text-3);
   line-height: 1.45;
+}
+
+/* 同步时间戳：用户点进这张卡就是确认「课表新不新」，三级灰读不出新鲜度 */
+.tip.sync-hint {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 官方调休映射 ---------- */
@@ -992,10 +1017,11 @@ input:focus {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 /* ---------- 失败反馈 ---------- */
+/* 「教务会话已过期」是整页最要紧的提示：soft 底 + strong 字（--warn 实底档当文字只有 2:1） */
 .banner {
   display: flex;
   align-items: flex-start;
@@ -1003,8 +1029,8 @@ input:focus {
   margin-bottom: 10px;
   padding: 9px 11px;
   border-radius: var(--radius-m);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-  color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn-strong);
   font-size: var(--fs-caption);
   line-height: 1.4;
 }
@@ -1063,7 +1089,7 @@ input:focus {
 }
 
 .ghost:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .danger {
@@ -1148,6 +1174,25 @@ input:focus {
   line-height: 1.4;
 }
 
+/* 账号身分行的主次：行政班号是关键值（加重 + 等宽），年级降一档、竖线分隔 ——
+   不再三项同字号用「·」并排。学分已不在这一行（见「培养方案与选课」入口行） */
+.who-line b.num {
+  font-size: var(--fs-callout);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.wsep {
+  margin: 0 7px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.wsub {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
 .who-line.dim {
   font-size: var(--fs-micro);
   color: var(--text-3);
@@ -1174,7 +1219,7 @@ input:focus {
 }
 
 .link-row:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .link-row em {
@@ -1215,7 +1260,7 @@ input:focus {
 }
 
 .pick-row:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .pick-row.on {

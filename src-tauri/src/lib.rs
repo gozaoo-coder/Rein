@@ -25,6 +25,12 @@ pub fn run() {
             // （表名/rowid/操作），真正的读行与拼对象由下面的 rein-sync 线程成批做。
             let dirty = std::sync::Arc::new(modules::sync::engine::Dirty::new());
             modules::sync::engine::install_hook(&conn, std::sync::Arc::clone(&dirty));
+            // 番茄钟重启恢复语义（contract §14.1，用户定稿）：应用关闭期间倒计时走完时，
+            // 补写一行专注记录并清掉陈旧键；未到零 / 休息相位只清键。必须在把连接交给
+            // AppState 之前（这里还独占 `conn`），与网关同批 —— 网关不启动时也要恢复。
+            if let Err(e) = modules::gateway::runtime::recover_focus(&conn, chrono::Utc::now()) {
+                eprintln!("番茄钟运行态恢复失败：{e}");
+            }
             app.manage(AppState::new(conn));
             app.manage(crate::state::VoiceHub::new());
             app.manage(crate::state::CampusHub::new());
@@ -126,6 +132,7 @@ pub fn run() {
             modules::todo::commands::list_todos,
             modules::todo::commands::list_all_todos,
             modules::todo::commands::query_todos,
+            modules::todo::commands::query_todo_feed,
             modules::todo::commands::todo_distribution,
             modules::todo::commands::create_todo,
             modules::todo::commands::update_todo,
@@ -202,6 +209,14 @@ pub fn run() {
             // tracking（跑步前台保活：Android 锁屏后维持 GPS 与计时）
             modules::tracking::commands::tracking_keepalive,
             modules::tracking::commands::tracking_status,
+            // tracking（原生采集：前台服务=运动真源，前端只消费快照）
+            modules::tracking::commands::tracking_run_begin,
+            modules::tracking::commands::tracking_run_phase,
+            modules::tracking::commands::tracking_run_end,
+            modules::tracking::commands::tracking_live,
+            modules::tracking::commands::tracking_track_take,
+            modules::tracking::commands::tracking_notify,
+            modules::tracking::commands::tracking_open_pending,
             // ai
             modules::ai::commands::ai_parse_food_text,
             modules::ai::commands::ai_parse_target_adjust,
@@ -403,13 +418,19 @@ pub fn run() {
             modules::maintenance::commands::data_app_restart,
             // online（Rein 在线服务：更新分发之外的在线能力探测；模型网关为预留接口）
             modules::update::online::online_service_status,
-            // gateway（对外服务网关的管理面：开关 / 绑定 / 状态 / 授权裁决 / 撤销）
+            // gateway（对外服务网关的管理面：开关 / 绑定 / 状态 / 授权裁决 / 撤销 /
+            // 网页来源白名单 / 最近审计）
             modules::gateway::commands::gateway_status,
             modules::gateway::commands::gateway_set_enabled,
             modules::gateway::commands::gateway_set_bind,
             modules::gateway::commands::gateway_authorization_pending,
             modules::gateway::commands::gateway_authorization_respond,
             modules::gateway::commands::gateway_revoke_client,
+            modules::gateway::commands::gateway_set_allowed_origins,
+            modules::gateway::commands::gateway_audit_recent,
+            // 运行态上报（前端 → 后端：番茄钟快照写 app_meta；contract §14.1）
+            modules::gateway::commands::focus_publish,
+            modules::gateway::commands::focus_unpublish,
         ])
         .run(tauri::generate_context!())
         .expect("Rein 启动失败");

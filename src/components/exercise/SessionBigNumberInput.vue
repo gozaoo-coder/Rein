@@ -212,13 +212,15 @@ function bump(d: number): void {
   white-space: nowrap;
 }
 
-/* 输入框：宽度按最长常见值（3 位 + 1 位小数）留够，避免键入时抖动 */
+/* 输入框：宽度按最长常见值（3 位 + 1 位小数）留够，避免键入时抖动。
+   字号走 --fs-large-title（32px 这一档）：桌面壳整体降一档字号阶梯时这处要跟随 ——
+   从前是写死的 32px 魔法值，观感不变 */
 .winp {
   width: 116px;
   padding: 4px 10px;
   border-radius: var(--radius-s);
   background: var(--surface-2);
-  font-size: 32px;
+  font-size: var(--fs-large-title);
   font-weight: 300;
   letter-spacing: -0.5px;
   text-align: center;

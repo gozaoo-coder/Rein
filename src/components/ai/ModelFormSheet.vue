@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
@@ -178,6 +179,12 @@ async function save(): Promise<void> {
 
 <template>
   <SheetModal :open="open" :title="title" @close="emit('close')">
+    <template #action>
+      <InfoHint title="保存时会做什么">
+        <p>{{ providerLabel }} 兼容 OpenAI 接口；保存后发送 max_tokens=1 的测试包探测「看图 / 深度思考 / 思考强度」能力。</p>
+        <p>测试包只花极少量额度；结果写回模型的能力胶囊，之后也可以随时重新测试。</p>
+      </InfoHint>
+    </template>
     <div class="form">
       <label class="row center label" for="ai-name">
         <span class="l">名称</span>
@@ -230,7 +237,7 @@ async function save(): Promise<void> {
         <span class="l">模型</span>
         <select id="ai-model-online" v-model="modelId" class="select">
           <option v-for="m in online.models" :key="m.id" :value="m.id">
-            {{ m.id }} · {{ m.providerName }}{{ m.priced ? ` · ¥${m.priceIn}/¥${m.priceOut}` : ' · 未定价' }}
+            {{ m.id }} · {{ m.providerName }}{{ m.priced ? ` · 输入 ¥${m.priceIn} / 输出 ¥${m.priceOut}（每百万 tokens）` : ' · 未定价（按流量计费）' }}
           </option>
         </select>
       </label>
@@ -276,9 +283,7 @@ async function save(): Promise<void> {
       <button type="button" class="save" :disabled="!canSave" @click="save">
         {{ saving ? '保存中…' : '保存' }}
       </button>
-      <small class="hint t-3">
-        {{ providerLabel }} 兼容 OpenAI 接口；保存后发送 max_tokens=1 的测试包探测「视觉 / 思考 / 努力」能力。
-      </small>
+      <small class="hint t-3">保存后自动探测该模型是否支持看图、深度思考与思考强度</small>
     </div>
   </SheetModal>
 </template>
@@ -337,7 +342,7 @@ async function save(): Promise<void> {
   padding: 11px 0;
   font-size: var(--fs-subhead);
   background: transparent;
-  color: var(--text);
+  color: var(--text-1);
   text-align: right;
 }
 
@@ -389,7 +394,7 @@ async function save(): Promise<void> {
 }
 
 .save:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 
 .hint {

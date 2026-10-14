@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ChevronRight, Settings2, Target } from 'lucide-vue-next'
 
 import ConstraintsSheet from '@/components/profile/ConstraintsSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import MonthView from '@/components/todo/MonthView.vue'
 import PillChip from '@/components/common/PillChip.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -160,10 +161,14 @@ function openEdit(): void {
       </div>
     </section>
 
-    <!-- 个人约束：方案生成依据，去处收在卡头右侧胶囊（与「今日画布 · 详情」同位） -->
+    <!-- 个人约束：方案生成依据，去处收在卡头右侧胶囊（与「今日画布 · 详情」同位）；
+         口径说明（约束怎么进方案）收进标题行右侧的帮助入口，卡面只留 plan-link 一行结论 -->
     <section class="card">
       <header class="row between chead">
-        <h2>个人约束</h2>
+        <div class="row chead-title">
+          <h2>个人约束</h2>
+          <InfoHint title="约束与健康方案" content="健康方案按这些约束计算日程与食谱；也可在「健康方案」向导中临时调整。" />
+        </div>
         <PillChip as="button" tone="action" @click="openEdit">
           编辑 <ChevronRight :size="13" :stroke-width="2.6" />
         </PillChip>
@@ -180,7 +185,6 @@ function openEdit(): void {
         <span class="grow">{{ program.active ? '方案执行中 · 查看与复盘' : '按这些约束制定健康方案' }}</span>
         <ChevronRight :size="14" />
       </button>
-      <p class="hint t-3">健康方案按这些约束计算日程与食谱；也可在「健康方案」向导中临时调整</p>
     </section>
 
     <!-- 设置入口：二级页（功能开关 / 番茄钟完整配置 / 关于） -->
@@ -216,14 +220,15 @@ function openEdit(): void {
   background: var(--surface-2);
 }
 
-/* 头像章底色是 c-intake→#ff6482 的实色（不是半透明浅底），白字压得住，
-   取 --on-accent 而不是裸 #fff —— 语义与 --accent 实底钮同源 */
+/* 头像章底色是 c-intake 实色起、向白提亮一档的实色渐变（不是半透明浅底），白字压得住，
+   取 --on-accent 而不是裸 #fff —— 语义与 --accent 实底钮同源；第二停由 c-intake 派生，
+   换肤 / 暗色时整条渐变跟着走，不再各留一支手写粉 */
 .avatar {
   width: 38px;
   height: 38px;
   flex: none;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--c-intake), #ff6482);
+  background: linear-gradient(135deg, var(--c-intake), color-mix(in srgb, var(--c-intake) 68%, var(--on-accent)));
   color: var(--on-accent);
   font-size: 16px;
   font-weight: 700;
@@ -270,6 +275,12 @@ function openEdit(): void {
 
 .bmi.t-danger {
   color: var(--danger);
+}
+
+/* 卡头标题行：标题与帮助入口同一行（落点：卡头图标按钮放标题行右端） */
+.chead-title {
+  gap: 6px;
+  min-width: 0;
 }
 
 /* 卡头：与「摄入总览 / 今日画布」同一规格 —— title3 / 700 / -0.3px / 主色文字 */
@@ -379,14 +390,6 @@ function openEdit(): void {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.hint {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 0.5px solid color-mix(in srgb, var(--text-1) 10%, transparent);
-  /* 这句说明方案怎么用这些约束，是要照着做的话，不吃 11px */
-  font-size: var(--fs-caption);
 }
 
 /* 约束 → 方案 的直达链路：一行，强调色文字（约束是方案的输入，去向要显眼但别抢编辑胶囊） */

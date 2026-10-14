@@ -96,12 +96,12 @@ ok(phase === 'warmup', 'ppl-push 首动作带热身，进入激活热身相位',
 
 // 进课会弹「今日状态」自评 —— 它是建议引擎的乘项，会改推荐重量。
 // 先跳过拿一个纯自动推断的基线，顺带覆盖「自评变化 → 建议重算 → 热身预填对齐」这条链路。
-const skipReadiness = page.getByText('跳过（不影响计算）', { exact: false })
+const skipReadiness = page.getByText('跳过（按默认值算）', { exact: false })
 if ((await skipReadiness.count()) > 0) {
   await skipReadiness.first().click()
   await page.waitForTimeout(900)
 }
-const dialogGone = await page.evaluate(() => !document.body.textContent.includes('不影响计算'))
+const dialogGone = await page.evaluate(() => !document.body.textContent.includes('按默认值算'))
 ok(dialogGone, '跳过今日自评后弹窗关闭（自评变化会触发建议重算）')
 
 console.log('\n[W] 热身处方跟随推荐重量')

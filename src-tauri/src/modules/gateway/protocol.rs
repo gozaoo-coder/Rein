@@ -1,7 +1,7 @@
 //! 网关的线上协议：消息信封（含协议版本）、请求/响应/事件三种消息、错误码、方法注册表。
 //!
 //! 这里只描述**帧的形状**，不做 IO、不碰 DB、不做鉴权 —— 那些由服务与授权层负责
-//! （`server.rs` / `auth.rs` / `scope.rs`）。字段名一律 camelCase（与 IPC 一致，见
+//! （`server.rs` / `auth.rs` / `models.rs::Scope`）。字段名一律 camelCase（与 IPC 一致，见
 //! `docs/STANDARDS.md` §2 / contract §4.3）。
 //!
 //! 三种消息（contract §4.3）：
@@ -136,6 +136,16 @@ pub mod events {
     pub const AUTH_DENIED: &str = "gateway.auth.denied";
 }
 
+/// 两条 Tauri→前端的**下行控制**事件名（contract §14.3）。外部方法只回受理回执，
+/// 真正执行由前端 store 完成：服务层在锁外用 AppHandle `emit` 这两个事件
+/// （前端 `externalAccessRuntime` 照抄这两个字符串监听）。
+pub mod downlink {
+    /// `pomodoro.start/pause/stop` → 前端 `pomodoroStore`。
+    pub const POMODORO_COMMAND: &str = "gateway://pomodoro-command";
+    /// `workout.sessionStart/sessionSnapshot/sessionFinish/sessionAbort` → 前端 `sessionStore`。
+    pub const SESSION_COMMAND: &str = "gateway://session-command";
+}
+
 // ---------------------------------------------------------------- 错误码
 
 /// 响应 `error.code` 的取值集合（contract §4.6）。`close_code()` 给出需要随之关闭连接时的
@@ -211,9 +221,9 @@ impl ErrorCode {
 
 // ---------------------------------------------------------------- 方法注册表
 
-/// v1 的全部对外方法（contract §4.4，15 条）。`name()` 是线上字符串，`scope()` 是调用它
-/// 所需的权限 —— 二者合起来就是**方法注册表**：入站请求先按 `from_name` 命中，
-/// 再用 `scope()` 走逐次授权校验。
+/// 全部对外方法（contract §4.4：v1 15 条 + 第二轮 13 条 = 28 条）。`name()` 是线上字符串，
+/// `scope()` 是调用它所需的权限 —— 二者合起来就是**方法注册表**：入站请求先按 `from_name`
+/// 命中，再用 `scope()` 走逐次授权校验。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     ScheduleList,
@@ -221,6 +231,9 @@ pub enum Method {
     ScheduleCreate,
     ScheduleUpdate,
     ScheduleDelete,
+    ScheduleCampus,
+    SchedulePrograms,
+    ScheduleProgramActive,
     WorkoutPlans,
     WorkoutPlan,
     WorkoutList,
@@ -229,18 +242,31 @@ pub enum Method {
     WorkoutStrengthExercises,
     WorkoutLastWeights,
     WorkoutRecentSets,
+    WorkoutSessionActive,
+    WorkoutSessionStart,
+    WorkoutSessionSnapshot,
+    WorkoutSessionFinish,
+    WorkoutSessionAbort,
+    WorkoutDelete,
     PomodoroList,
     PomodoroSave,
+    PomodoroStatus,
+    PomodoroStart,
+    PomodoroPause,
+    PomodoroStop,
 }
 
 impl Method {
     /// 全部方法（注册表的唯一真源，顺序即 contract §4.4 的表格顺序）。
-    pub const ALL: [Method; 15] = [
+    pub const ALL: [Method; 28] = [
         Method::ScheduleList,
         Method::ScheduleListAll,
         Method::ScheduleCreate,
         Method::ScheduleUpdate,
         Method::ScheduleDelete,
+        Method::ScheduleCampus,
+        Method::SchedulePrograms,
+        Method::ScheduleProgramActive,
         Method::WorkoutPlans,
         Method::WorkoutPlan,
         Method::WorkoutList,
@@ -249,8 +275,18 @@ impl Method {
         Method::WorkoutStrengthExercises,
         Method::WorkoutLastWeights,
         Method::WorkoutRecentSets,
+        Method::WorkoutSessionActive,
+        Method::WorkoutSessionStart,
+        Method::WorkoutSessionSnapshot,
+        Method::WorkoutSessionFinish,
+        Method::WorkoutSessionAbort,
+        Method::WorkoutDelete,
         Method::PomodoroList,
         Method::PomodoroSave,
+        Method::PomodoroStatus,
+        Method::PomodoroStart,
+        Method::PomodoroPause,
+        Method::PomodoroStop,
     ];
 
     /// 线上方法名字符串。
@@ -261,6 +297,9 @@ impl Method {
             Method::ScheduleCreate => "schedule.create",
             Method::ScheduleUpdate => "schedule.update",
             Method::ScheduleDelete => "schedule.delete",
+            Method::ScheduleCampus => "schedule.campus",
+            Method::SchedulePrograms => "schedule.programs",
+            Method::ScheduleProgramActive => "schedule.programActive",
             Method::WorkoutPlans => "workout.plans",
             Method::WorkoutPlan => "workout.plan",
             Method::WorkoutList => "workout.list",
@@ -269,31 +308,59 @@ impl Method {
             Method::WorkoutStrengthExercises => "workout.strengthExercises",
             Method::WorkoutLastWeights => "workout.lastWeights",
             Method::WorkoutRecentSets => "workout.recentSets",
+            Method::WorkoutSessionActive => "workout.sessionActive",
+            Method::WorkoutSessionStart => "workout.sessionStart",
+            Method::WorkoutSessionSnapshot => "workout.sessionSnapshot",
+            Method::WorkoutSessionFinish => "workout.sessionFinish",
+            Method::WorkoutSessionAbort => "workout.sessionAbort",
+            Method::WorkoutDelete => "workout.delete",
             Method::PomodoroList => "pomodoro.list",
             Method::PomodoroSave => "pomodoro.save",
+            Method::PomodoroStatus => "pomodoro.status",
+            Method::PomodoroStart => "pomodoro.start",
+            Method::PomodoroPause => "pomodoro.pause",
+            Method::PomodoroStop => "pomodoro.stop",
         }
     }
 
     /// 调用该方法所需的 scope（`scope::require` 的唯一入参来源）。
+    /// **删除不从写权限派生**：`schedule.delete` / `workout.delete` 是独立权限（contract §13.1）。
     pub fn scope(self) -> Scope {
         match self {
             Method::ScheduleList | Method::ScheduleListAll => Scope::ScheduleRead,
+            Method::ScheduleCampus
+            | Method::SchedulePrograms
+            | Method::ScheduleProgramActive => Scope::ScheduleRead,
             Method::ScheduleCreate => Scope::ScheduleCreate,
-            Method::ScheduleUpdate | Method::ScheduleDelete => Scope::ScheduleWrite,
+            Method::ScheduleUpdate => Scope::ScheduleWrite,
+            Method::ScheduleDelete => Scope::ScheduleDelete,
             Method::WorkoutPlans
             | Method::WorkoutPlan
             | Method::WorkoutList
             | Method::WorkoutStrengthHistory
             | Method::WorkoutStrengthExercises
             | Method::WorkoutLastWeights
-            | Method::WorkoutRecentSets => Scope::WorkoutRead,
-            Method::WorkoutCreate => Scope::WorkoutWrite,
-            Method::PomodoroList => Scope::PomodoroRead,
+            | Method::WorkoutRecentSets
+            | Method::WorkoutSessionActive => Scope::WorkoutRead,
+            Method::WorkoutCreate
+            | Method::WorkoutSessionStart
+            | Method::WorkoutSessionSnapshot
+            | Method::WorkoutSessionFinish
+            | Method::WorkoutSessionAbort => Scope::WorkoutWrite,
+            Method::WorkoutDelete => Scope::WorkoutDelete,
+            Method::PomodoroList | Method::PomodoroStatus => Scope::PomodoroRead,
             Method::PomodoroSave => Scope::PomodoroWrite,
+            Method::PomodoroStart | Method::PomodoroPause | Method::PomodoroStop => {
+                Scope::PomodoroControl
+            }
         }
     }
 
-    /// 该方法是写操作（会写库、会被同步钩子捕获）吗？审计与「写操作必须短锁」的分派用。
+    /// 该方法是写操作吗（会改数据：直接写库、或经下行事件落到前端再写库）？
+    /// 审计据此记**参数摘要**（contract §17.4），`check_len` 据此覆盖所有写入方法（§17.5）。
+    ///
+    /// 说明：`schedule.campus` 虽然会顺带物化课表派生行（contract §13.2 认账的幂等本地写），
+    /// 但对外语义是「读课表」，故不在此列；`pomodoro.status` / 各读方法同理。
     pub fn is_write(self) -> bool {
         matches!(
             self,
@@ -301,7 +368,30 @@ impl Method {
                 | Method::ScheduleUpdate
                 | Method::ScheduleDelete
                 | Method::WorkoutCreate
+                | Method::WorkoutDelete
+                | Method::WorkoutSessionStart
+                | Method::WorkoutSessionSnapshot
+                | Method::WorkoutSessionFinish
+                | Method::WorkoutSessionAbort
                 | Method::PomodoroSave
+                | Method::PomodoroStart
+                | Method::PomodoroPause
+                | Method::PomodoroStop
+        )
+    }
+
+    /// 该方法是不是「下行控制」——只回受理回执，实际动作由前端 store 完成
+    /// （contract §14.3：`control_command` 的入参）。非控制方法返回 `false`。
+    pub fn is_control(self) -> bool {
+        matches!(
+            self,
+            Method::WorkoutSessionStart
+                | Method::WorkoutSessionSnapshot
+                | Method::WorkoutSessionFinish
+                | Method::WorkoutSessionAbort
+                | Method::PomodoroStart
+                | Method::PomodoroPause
+                | Method::PomodoroStop
         )
     }
 
@@ -316,19 +406,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_covers_fifteen_unique_methods() {
-        assert_eq!(Method::ALL.len(), 15);
+    fn registry_covers_twenty_eight_unique_methods() {
+        assert_eq!(Method::ALL.len(), 28);
         // 名字唯一
         let mut names: Vec<&str> = Method::ALL.iter().map(|m| m.name()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 15, "方法名必须两两不同");
+        assert_eq!(names.len(), 28, "方法名必须两两不同");
         // 逐个能反查
         for m in Method::ALL {
             assert_eq!(Method::from_name(m.name()), Some(m));
         }
         assert_eq!(Method::from_name("schedule.listSecret"), None, "精确匹配，不认前缀别名");
         assert_eq!(Method::from_name(""), None);
+        // 第二轮 13 条的线上名逐一登记（外部与前端照抄这些字符串）
+        for (name, m) in [
+            ("schedule.campus", Method::ScheduleCampus),
+            ("schedule.programs", Method::SchedulePrograms),
+            ("schedule.programActive", Method::ScheduleProgramActive),
+            ("workout.sessionActive", Method::WorkoutSessionActive),
+            ("workout.sessionStart", Method::WorkoutSessionStart),
+            ("workout.sessionSnapshot", Method::WorkoutSessionSnapshot),
+            ("workout.sessionFinish", Method::WorkoutSessionFinish),
+            ("workout.sessionAbort", Method::WorkoutSessionAbort),
+            ("workout.delete", Method::WorkoutDelete),
+            ("pomodoro.status", Method::PomodoroStatus),
+            ("pomodoro.start", Method::PomodoroStart),
+            ("pomodoro.pause", Method::PomodoroPause),
+            ("pomodoro.stop", Method::PomodoroStop),
+        ] {
+            assert_eq!(Method::from_name(name), Some(m), "{name} 必须已注册");
+            assert_eq!(m.name(), name);
+        }
     }
 
     #[test]
@@ -336,13 +445,45 @@ mod tests {
         assert_eq!(Method::ScheduleList.scope(), Scope::ScheduleRead);
         assert_eq!(Method::ScheduleCreate.scope(), Scope::ScheduleCreate);
         assert_eq!(Method::ScheduleUpdate.scope(), Scope::ScheduleWrite);
-        assert_eq!(Method::ScheduleDelete.scope(), Scope::ScheduleWrite);
+        // 删除由 schedule.write 拆出（contract §13.1）
+        assert_eq!(Method::ScheduleDelete.scope(), Scope::ScheduleDelete);
+        assert_eq!(Method::WorkoutDelete.scope(), Scope::WorkoutDelete);
+        // 日程域扩到校园课表与训练方案：都只读
+        assert_eq!(Method::ScheduleCampus.scope(), Scope::ScheduleRead);
+        assert_eq!(Method::SchedulePrograms.scope(), Scope::ScheduleRead);
+        assert_eq!(Method::ScheduleProgramActive.scope(), Scope::ScheduleRead);
+        // 会话事件级写入 → workout.write；活跃投影 → workout.read
+        assert_eq!(Method::WorkoutSessionActive.scope(), Scope::WorkoutRead);
+        assert_eq!(Method::WorkoutSessionStart.scope(), Scope::WorkoutWrite);
+        assert_eq!(Method::WorkoutSessionFinish.scope(), Scope::WorkoutWrite);
+        // 番茄钟控制独立于写会话记录
+        assert_eq!(Method::PomodoroStatus.scope(), Scope::PomodoroRead);
+        assert_eq!(Method::PomodoroStart.scope(), Scope::PomodoroControl);
+        assert_eq!(Method::PomodoroStop.scope(), Scope::PomodoroControl);
         assert_eq!(Method::WorkoutCreate.scope(), Scope::WorkoutWrite);
         assert_eq!(Method::WorkoutList.scope(), Scope::WorkoutRead);
         assert_eq!(Method::PomodoroSave.scope(), Scope::PomodoroWrite);
         assert_eq!(Method::PomodoroList.scope(), Scope::PomodoroRead);
         assert!(Method::WorkoutCreate.is_write());
+        assert!(Method::ScheduleDelete.is_write());
+        assert!(Method::WorkoutDelete.is_write());
         assert!(!Method::WorkoutList.is_write());
+        assert!(!Method::ScheduleCampus.is_write(), "读课表不算写（物化行是认账的副作用）");
+        assert!(!Method::PomodoroStatus.is_write());
+        // 控制方法：只回受理回执，实际动作在前端
+        for m in [
+            Method::PomodoroStart,
+            Method::PomodoroPause,
+            Method::PomodoroStop,
+            Method::WorkoutSessionStart,
+            Method::WorkoutSessionSnapshot,
+            Method::WorkoutSessionFinish,
+            Method::WorkoutSessionAbort,
+        ] {
+            assert!(m.is_control(), "{} 应是下行控制方法", m.name());
+        }
+        assert!(!Method::PomodoroStatus.is_control());
+        assert!(!Method::WorkoutSessionActive.is_control());
     }
 
     #[test]

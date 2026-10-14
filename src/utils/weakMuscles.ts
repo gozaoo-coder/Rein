@@ -13,7 +13,8 @@
  *     刻意排除本周完全没练的组（idle）：那更可能是「这个肌群我根本不专门练」，
  *     排进加练没有意义；练过但没练够的才是真弱项（与 trainingScore.summarize 同口径）。
  *     排序按练够分升序，最弱的排最前。
- *  2. **缺口来自组数满分区间下沿**：`setsTarget[0] - sets`，向上取整并夹在 [2, 6]。
+ *  2. **缺口来自组数满分区间下沿**：`setsTarget[0] - setsForScore`（含已补入的有氧等效组），
+ *     向上取整并夹在 [2, 6]。
  *     练够分的组数分以 `setsTarget` 为满分区，下沿就是「离满分还差几组」；
  *     夹持是因为过小的缺口不值得单独加练、过大的缺口一次也补不完。
  *  3. **只用主攻动作补弱**：候选动作必须 `kind === 'strength'`，且该评估组的任一细肌群
@@ -59,9 +60,13 @@ export function weakGroups(groups: GroupScore[], limit = 6): GroupScore[] {
     .slice(0, limit)
 }
 
-/** 一组「还差多少组」——加练课按它分配工作量（离满分区下沿的距离，夹在 [2, 6]） */
+/**
+ * 一组「还差多少组」——加练课按它分配工作量（离满分区下沿的距离，夹在 [2, 6]）。
+ * 缺口要按 `setsForScore` 算而不是举的组数：有氧等效组已经补进去的那部分不是缺口
+ * （否则纯跑步用户会被要求把小腿再举 15 组）。
+ */
 export function gapOf(g: GroupScore): number {
-  const gap = Math.ceil(g.setsTarget[0] - g.sets)
+  const gap = Math.ceil(g.setsTarget[0] - g.setsForScore)
   return Math.min(GAP_MAX, Math.max(GAP_MIN, gap))
 }
 

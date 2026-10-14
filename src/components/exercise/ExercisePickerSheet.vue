@@ -4,6 +4,7 @@ import { Plus, Search, SlidersHorizontal } from 'lucide-vue-next'
 
 import ExerciseFilterSheet from '@/components/exercise/ExerciseFilterSheet.vue'
 import ExerciseFormSheet from '@/components/exercise/ExerciseFormSheet.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { EXERCISE_CATEGORY_LABELS, EXERCISE_CATEGORY_META } from '@/config/domain'
 import { MUSCLE_LABELS, type MuscleKey } from '@/config/muscles'
@@ -90,8 +91,9 @@ function onCreated(e: ExerciseRecord): void {
     <div class="searchrow row">
       <Search :size="15" />
       <input v-model="kw" class="search" type="search" placeholder="搜索动作名或别名" aria-label="搜索动作" />
-      <button class="filterbtn row" type="button" @click="filterOpen = true">
+      <button class="filterbtn row" type="button" aria-label="筛选" @click="filterOpen = true">
         <SlidersHorizontal :size="14" />
+        筛选
         <b v-if="badge" class="fcount">{{ badge }}</b>
       </button>
     </div>
@@ -117,7 +119,11 @@ function onCreated(e: ExerciseRecord): void {
           :class="{ on: e.id === currentId }"
           @click="emit('pick', e)"
         >
-          <span class="ename">{{ e.name }}<b v-if="e.isCustom" class="tag">自建</b></span>
+          <span class="ename">
+            {{ e.name }}
+            <!-- 库内 / 自定义动作的区分：muted 胶囊（--text-2），措辞与下方「新建自定义动作」一致 -->
+            <PillChip v-if="e.isCustom" size="sm" tone="muted">自定义</PillChip>
+          </span>
           <span class="emeta t-3">{{ muscleLine(e) }}<template v-if="e.sessions > 0"> · 练过 {{ e.sessions }} 次</template></span>
         </button>
       </li>
@@ -238,16 +244,6 @@ function onCreated(e: ExerciseRecord): void {
   gap: 6px;
   font-size: var(--fs-subhead);
   font-weight: 700;
-}
-
-/* 自建标签：胶囊几何（程序 .pill），域内幽灵配色 */
-.tag {
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  color: var(--text-3);
 }
 
 .emeta {

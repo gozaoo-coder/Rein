@@ -13,7 +13,7 @@
  *   点击工具行可弹出完整参数与返回结果
  * - 点击标题行可随时手动展开/折叠
  */
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted, useId } from 'vue'
 import { Brain, ChevronDown } from 'lucide-vue-next'
 import ToolCallGroup from './ToolCallGroup.vue'
 import type { ProcessSegment } from '@/types'
@@ -43,6 +43,13 @@ const props = withDefaults(
 const toolCalls = computed(() =>
   props.segments.filter((s) => s.kind === 'tool').map((s) => s.call),
 )
+
+/** 展开区的 id：**每条消息各一个**。
+ *  原先写死 "process-body"，而同一会话里用过工具的回复往往不止一条 ——
+ *  页面上同时存在两个以上同名 id 时，aria-controls 指到的是文档里的第一个，
+ *  后面那些的展开开关与内容就对不上（读屏读错、页内跳转也跳错）。
+ *  useId() 由实例自己生成，无需父组件传参，也不用把消息 id 一路透下来。 */
+const bodyId = `process-body-${useId()}`
 
 // 是否忙碌：思考中或仍有工具在执行
 const busy = computed(
@@ -209,8 +216,9 @@ const titleText = computed(() => {
   if (toolCalls.value.length) {
     const pending = toolCalls.value.filter((c) => c.pending).length
     parts.push(
+      // 分母说总数、分子说剩余：原来「2/3」会被读成「正在执行第 2 个」或「进度 2/3」
       pending > 0
-        ? `执行工具中 ${toolCalls.value.length - pending}/${toolCalls.value.length}`
+        ? `工具执行中 · 还剩 ${pending} 个`
         : toolCalls.value.length === 1
           ? '使用了工具'
           : `使用了 ${toolCalls.value.length} 个工具`,
@@ -227,7 +235,7 @@ const titleText = computed(() => {
       type="button"
       class="process-header"
       :aria-expanded="!collapsed"
-      aria-controls="process-body"
+      :aria-controls="bodyId"
       @click="toggle"
     >
       <span class="process-icon"><Brain :size="14" /></span>
@@ -240,8 +248,8 @@ const titleText = computed(() => {
       </span>
     </button>
 
-    <!-- 展开内容：grid 壳只收轨道，视觉与滚动全在中层 -->
-    <div id="process-body" class="process-body">
+    <!-- 展开内容：grid 壳只收轨道，视觉与滚动全在中层。id 与标题行的 aria-controls 同源 -->
+    <div :id="bodyId" class="process-body">
       <div ref="bodyRef" class="process-scroll">
         <!-- 超范围平移层：到边拖动时内容位移；包裹层镜像弹性列布局，只承载 transform -->
         <div class="rubber-layer" data-rubber-content>

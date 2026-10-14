@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Clock, Calculator, PencilLine, Sparkles } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
@@ -255,7 +256,15 @@ function reset(): void {
          用户来这一趟就是为了这个数。 -->
     <div class="sec result">
       <header class="rhead between">
-        <span class="seclabel">消耗</span>
+        <span class="seclabel">
+          消耗
+          <!-- 「为什么是估算、实测从哪来」收进标题右侧 InfoHint：表单时没人读脚注段 -->
+          <InfoHint
+            class="kcalhint"
+            title="消耗怎么估算的"
+            content="消耗按「体重 × 时长 × 强度档」估算，只是参考值。手表 / 运动 App 给了实测数字，就直接填进来 —— 那比任何公式都准。"
+          />
+        </span>
         <button v-if="usingManual" class="reset" @click="resetToEstimate">
           <Calculator :size="12" /> 用回估算 {{ autoKcal }}
         </button>
@@ -292,7 +301,8 @@ function reset(): void {
       </span>
     </label>
 
-    <p class="hint t-3">消耗是估算值。手表 / 运动 App 给了实测数字就填进来 —— 那比任何公式都准。</p>
+    <!-- 结论只留一行：估算口径与「为什么填实测」在标题行 InfoHint 里 -->
+    <p class="hint t-3">估算值，可改成实测</p>
 
     <!-- 保存：固定在抽屉底部，不随内容滚走 -->
     <template #footer>
@@ -325,6 +335,11 @@ function reset(): void {
   font-weight: 400;
   font-style: normal;
   color: var(--text-3);
+}
+
+/* 「消耗」标题右侧的帮助入口：与文字基线对齐会歪，单独居中 */
+.kcalhint {
+  align-self: center;
 }
 
 /* ---------- 类型选择 ---------- */
@@ -441,9 +456,9 @@ function reset(): void {
 
 /* 5 段的中文标签（毫不累/有点累/适中/挺累/累坏了）在 320px 上一段只有 58px，
    必须比默认再小一号才不溢出 —— SegmentedControl 自带的 >4 段规则给的是 12px，
-   这里 3 字标签仍偏宽，压到 11px。 */
+   这里 3 字标签仍偏宽，压到 11px（--fs-micro，字号阶梯下限）。 */
 .effseg {
-  --seg-fs: 11px;
+  --seg-fs: var(--fs-micro);
 }
 
 /* 分段控件的段高 31px，撑不到 44 —— 用伪元素把热区向上下各扩 7px。
@@ -592,7 +607,7 @@ function reset(): void {
 }
 
 .save:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 /**

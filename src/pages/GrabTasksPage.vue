@@ -17,7 +17,9 @@ import {
 
 import GrabTaskEditSheet from '@/components/campus/GrabTaskEditSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import { useToast } from '@/composables/useToast'
 import { grabStatusMeta, idOf, useCourseSelectStore } from '@/stores/courseSelect'
 import type { CourseSelectLesson, GrabTask } from '@/types'
@@ -66,13 +68,10 @@ const lost = computed(() => {
     .sort((a, b) => rank(a) - rank(b))
 })
 
+/** 页头副标题只留汇总量 —— 各组分数组数在分组头上已经有了，同屏再读一遍只会互相削弱 */
 const summary = computed(() => {
   if (!tasks.value.length) return '还没有任务'
-  const bits = [`共 ${tasks.value.length} 条`]
-  if (running.value.length) bits.push(`进行中 ${running.value.length}`)
-  if (won.value.length) bits.push(`已抢到 ${won.value.length}`)
-  if (lost.value.length) bits.push(`没抢到 ${lost.value.length}`)
-  return bits.join(' · ')
+  return `共 ${tasks.value.length} 条`
 })
 
 /**
@@ -91,7 +90,8 @@ function title(t: GrabTask): string {
 
 /** 这一秒为什么没在动 / 到底怎么了 —— 引擎的 `lastMessage` 是教务的原话，优先说它 */
 function why(t: GrabTask): string {
-  if (t.status === 'paused') return '已暂停 —— 引擎不会动它'
+  // 胶囊已经写着「已暂停」，这里只说增量：暂停之后会发生什么
+  if (t.status === 'paused') return '不会自动重试，恢复后从当前节奏继续'
   const wait = (t.nextAt ?? 0) - now.value
   if ((t.status === 'waiting' || t.status === 'running') && wait > 0) {
     return wait < 1000 ? '马上重试' : wait < 60_000 ? `${Math.ceil(wait / 1000)} 秒后重试` : `${Math.ceil(wait / 60_000)} 分钟后重试`
@@ -101,14 +101,17 @@ function why(t: GrabTask): string {
   return msg && msg !== grabStatusMeta(t).label ? msg : ''
 }
 
-/** 行副信息：课程号 · 教师 · 已尝试 N 次 */
+/** 行副信息：课程号 / 教师 / 已尝试次数（志愿序是行首胶囊，不在这行里） */
 function facts(t: GrabTask): string {
   const bits: string[] = []
   if (t.courseCode) bits.push(t.courseCode)
   if (t.teacher) bits.push(t.teacher)
-  if (t.attempts > 0) bits.push(`已尝试 ${t.attempts} 次`)
-  if (t.groupKey && t.priority) bits.push(`第 ${t.priority} 志愿`)
-  return bits.join(' · ')
+  // 状态胶囊已经给出「第 N 次尝试」时这里不再复述；等窗口 / 限速 / 教务异常 / 暂停这些
+  // 分支胶囊落空，尝试次数只出现在这一行，必须保留（docs〈复核未决条目的处置〉B 表）
+  if (t.attempts > 0 && !grabStatusMeta(t).label.includes('尝试')) {
+    bits.push(`已尝试 ${t.attempts} 次`)
+  }
+  return bits.join('｜')
 }
 
 const now = ref(Date.now())
@@ -257,8 +260,9 @@ async function onSaveEdit(payload: {
               <span class="line1">
                 <b class="name">{{ title(t) }}</b>
                 <span class="chip" :class="grabStatusMeta(t).tone">{{ grabStatusMeta(t).label }}</span>
+                <PillChip v-if="t.groupKey && t.priority" tone="label" size="sm">第 {{ t.priority }} 志愿</PillChip>
               </span>
-              <span v-if="facts(t)" class="meta">{{ facts(t) }}</span>
+              <span v-if="facts(t)" class="meta facts">{{ facts(t) }}</span>
               <span v-if="why(t)" class="meta">{{ why(t) }}</span>
             </span>
             <span class="ops">
@@ -294,9 +298,9 @@ async function onSaveEdit(payload: {
             <span class="col flex-1 body">
               <span class="line1">
                 <b class="name">{{ title(t) }}</b>
-                <span class="chip ok">已抢到</span>
+                <PillChip v-if="t.groupKey && t.priority" tone="label" size="sm">第 {{ t.priority }} 志愿</PillChip>
               </span>
-              <span v-if="facts(t)" class="meta">{{ facts(t) }}</span>
+              <span v-if="facts(t)" class="meta facts">{{ facts(t) }}</span>
             </span>
             <span class="ops">
               <button
@@ -321,6 +325,12 @@ async function onSaveEdit(payload: {
           <RotateCcw :size="14" />
           没抢到
           <span class="cnt num">{{ lost.length }}</span>
+          <!-- 「参数错误」是教务拒了请求的写法，与「名额满了」完全不是一回事：
+               重试不会改变结果，收进帮助入口说清差别，卡面只留结论 -->
+          <InfoHint
+            title="没抢到的两种原因"
+            content="名额满了 = 没赶上，等下一轮可能还有机会，可以重新排队。参数错误 = 教务拒了这条请求的写法（比如课程参数变了），重试一万次也是同一个结果 —— 那一行要交给 AI 去教务那边核对，或按行内提示去办免听。"
+          />
         </h2>
         <ul class="list">
           <li v-for="t in lost" :key="t.id" class="row task" :class="grabStatusMeta(t).tone">
@@ -328,8 +338,9 @@ async function onSaveEdit(payload: {
               <span class="line1">
                 <b class="name">{{ title(t) }}</b>
                 <span class="chip" :class="grabStatusMeta(t).tone">{{ grabStatusMeta(t).label }}</span>
+                <PillChip v-if="t.groupKey && t.priority" tone="label" size="sm">第 {{ t.priority }} 志愿</PillChip>
               </span>
-              <span v-if="facts(t)" class="meta">{{ facts(t) }}</span>
+              <span v-if="facts(t)" class="meta facts">{{ facts(t) }}</span>
               <span v-if="why(t)" class="meta">{{ why(t) }}</span>
             </span>
             <span class="ops">
@@ -484,6 +495,12 @@ async function onSaveEdit(payload: {
   line-height: 1.45;
   color: var(--text-2);
   overflow-wrap: anywhere;
+}
+
+/* 行副信息里的课程号 / 教师 / 尝试次数：比 why() 低一档的元数据，竖线分隔 */
+.meta.facts {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
 .chip {

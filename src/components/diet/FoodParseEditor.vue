@@ -2,6 +2,7 @@
 import { nextTick, ref, watch } from 'vue'
 import { Pencil, Repeat2, Search, Trash2 } from 'lucide-vue-next'
 
+import PillChip from '@/components/common/PillChip.vue'
 import FoodPickerSheet from '@/components/diet/FoodPickerSheet.vue'
 import { dietService } from '@/services/dietService'
 import type { Food, ParsedFoodItem } from '@/types'
@@ -87,12 +88,22 @@ watch(
   { immediate: true },
 )
 
-function macroLine(it: ParsedFoodItem): string {
+/** 已匹配项的三大宏量（按当前克重折算）：行内次要读数，未匹配项没有库数据返回空 */
+function macroChips(it: ParsedFoodItem): { label: string; text: string }[] {
   const f = it.foodId != null ? foodCache.value.get(it.foodId) : undefined
-  const kcal = kcalOf(it)
-  const renamed = f && f.name !== it.foodName ? `匹配「${f.name}」· ` : ''
-  if (!f) return `≈${kcal} 大卡 · 未匹配食物库，确认时不会写入`
-  return `${renamed}≈${kcal} 大卡 · 蛋白${Math.round(f.protein * (it.grams / 100))}g · 碳水${Math.round(f.carb * (it.grams / 100))}g · 脂肪${Math.round(f.fat * (it.grams / 100))}g`
+  if (!f) return []
+  const k = it.grams / 100
+  return [
+    { label: '蛋白', text: `${Math.round(f.protein * k)}g` },
+    { label: '碳水', text: `${Math.round(f.carb * k)}g` },
+    { label: '脂肪', text: `${Math.round(f.fat * k)}g` },
+  ]
+}
+
+/** AI 认错名字、用户改过名时：说明这一行实际匹配到库里的哪个食物（名字行右侧胶囊） */
+function matchNote(it: ParsedFoodItem): string | null {
+  const f = it.foodId != null ? foodCache.value.get(it.foodId) : undefined
+  return f && f.name !== it.foodName ? `匹配「${f.name}」` : null
 }
 
 /** 常用份单位快捷按钮：点一下按「一份」的克重设置 */
@@ -228,6 +239,7 @@ function onPicked(f: Food): void {
               @keydown.esc.prevent="editNameIndex = null"
               @blur="commitRename"
             >
+            <PillChip v-if="matchNote(it)" size="sm" class="mnote">{{ matchNote(it) }}</PillChip>
             <span v-if="it.foodId == null" class="tag">未匹配</span>
             <button
               v-else
@@ -238,7 +250,14 @@ function onPicked(f: Food): void {
               <Repeat2 :size="11" /> 换
             </button>
           </p>
-          <p class="macro">{{ macroLine(it) }}</p>
+          <!-- 热量是这一行的主数值；蛋白/碳水/脂肪降为次要读数（未匹配项只留「确认时不会写入」） -->
+          <p class="macro">
+            <b class="mk num">≈{{ kcalOf(it) }} 大卡</b>
+            <span v-if="it.foodId == null" class="mm">确认时不会写入</span>
+            <template v-else>
+              <span v-for="m in macroChips(it)" :key="m.label" class="mm">{{ m.label }} {{ m.text }}</span>
+            </template>
+          </p>
           <button v-if="it.foodId == null" class="golink" @click.stop="openPicker(i)">
             <Search :size="11" /> 从食物库匹配
           </button>
@@ -453,8 +472,26 @@ function onPicked(f: Food): void {
   line-height: 1.35;
 }
 
-.fpr.miss .macro {
+/* 热量是主数值：等宽 + 加粗 + 最深一档，扫列表时先落眼 */
+.mk {
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+/* 蛋白/碳水/脂肪与「确认时不会写入」是次要读数，竖线分隔、降一档灰 */
+.mm {
   color: var(--text-3);
+}
+
+.mm::before {
+  content: '|';
+  margin: 0 5px;
+  color: var(--text-3);
+}
+
+/* 「匹配「X」」备注：名字行右侧中性胶囊，长食物名让名字按钮先截断 */
+.mnote {
+  flex: none;
 }
 
 /* 份单位快捷区：展开时高度过渡，避免编辑中下方内容被无动画顶开 */

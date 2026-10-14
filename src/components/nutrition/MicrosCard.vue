@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { MICROS } from '@/config/dri'
 import { useNutritionStore } from '@/stores/nutrition'
 import type { DailySummary } from '@/types'
 
-/** 微量元素全览：逐项对照 DRI，附作用与来源说明；上限类（≤）语义为「不要超过」。
+/** 微量元素全览：逐项对照 DRI 的数值与进度条；作用与来源说明收进标题行 InfoHint。
  *  默认读 nutrition store 的「今天」；传了 `summary` 就按那一份渲染（饮食历史回看某一天）。 */
 const props = defineProps<{
   /** 指定日期的汇总；不传则用 store 的「今天」 */
@@ -35,13 +37,22 @@ const cells = computed(() => {
   <section class="card">
     <header class="head">
       <h2>微量元素</h2>
-      <p class="t-3">对照膳食参考摄入量 · 上限项标 ≤</p>
+      <!-- 口径（DRI 出处 / 「上限」语义）与 14 项科普全文收进标题行右侧一枚 InfoHint -->
+      <InfoHint class="hint" title="微量元素">
+        <p>数值对照《中国居民膳食营养素参考摄入量》（DRI）的成人每日推荐量；标「上限」的项目（如添加糖、钠）是每天不要超过的量。</p>
+        <ul class="hint-list">
+          <li v-for="c in cells" :key="c.key"><b>{{ c.label }}</b>：{{ c.desc }}</li>
+        </ul>
+      </InfoHint>
     </header>
 
     <ul class="list">
       <li v-for="c in cells" :key="c.key" class="item" :class="{ over: c.over }">
         <div class="row between top">
-          <span class="name">{{ c.label }}<em v-if="c.isLimit"> ≤</em></span>
+          <span class="name">
+            {{ c.label }}
+            <StatusChip v-if="c.isLimit" tone="warn" size="sm">上限</StatusChip>
+          </span>
           <span class="num val">
             {{ c.value }}<em> / {{ c.dri }}{{ c.unit }}</em>
           </span>
@@ -49,22 +60,44 @@ const cells = computed(() => {
         <div class="bar">
           <i :style="{ '--p': `${c.pct}%`, background: `var(${c.over ? '--danger' : '--accent'})` }" />
         </div>
-        <p class="desc">{{ c.desc }}</p>
       </li>
     </ul>
   </section>
 </template>
 
 <style scoped>
+/* 卡头是 flex 行：标题 + 帮助入口同行（入口在标题右端） */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.head .hint {
+  margin-left: auto;
+}
+
 .head h2 {
   font-size: var(--fs-title3);
   font-weight: 700;
   letter-spacing: -0.3px;
 }
 
-.head p {
-  font-size: var(--fs-caption);
-  margin-top: 1px;
+/* InfoHint 插槽：14 条科普全文（config/dri 的 desc）走列表 */
+.hint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.hint-list li {
+  line-height: 1.5;
+}
+
+.hint-list b {
+  font-weight: 600;
 }
 
 .list {
@@ -90,11 +123,10 @@ const cells = computed(() => {
 .name {
   font-size: var(--fs-subhead);
   font-weight: 700;
-}
-
-.name em {
-  font-style: normal;
-  color: var(--text-3);
+  /* 行名 + 「上限」胶囊同一行居中 */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .val {
@@ -124,12 +156,5 @@ const cells = computed(() => {
   border-radius: inherit;
   clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
   transition: clip-path var(--dur-base) var(--ease-standard);
-}
-
-.desc {
-  margin-top: 5px;
-  font-size: var(--fs-footnote);
-  line-height: 1.6;
-  color: var(--text-2);
 }
 </style>

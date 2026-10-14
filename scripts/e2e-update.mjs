@@ -244,7 +244,7 @@ async function main() {
     await clickButton('跳过此版本')
     await waitFor(`document.querySelector('.page').innerText.includes('已跳过')`, 8000, '跳过生效')
     const skipped = await pageText()
-    ok('跳过此版本后卡片收起并显示「已跳过」', skipped.includes('已跳过 0.2.2'), '')
+    ok('跳过此版本后卡片收起并显示「已跳过」', skipped.includes('已跳过 v0.2.2'), '')
     ok('跳过后不再显示可更新卡片', !(await evalJS(`Boolean(document.querySelector('.card.hl'))`)))
     await clickButton('恢复提示')
     await waitFor(`Boolean(document.querySelector('.card.hl'))`, 8000, '恢复提示')
@@ -294,6 +294,9 @@ async function main() {
 
     /* ---- 7. 在线服务卡片 ---- */
     await waitFor(`document.querySelector('.page').innerText.includes('Rein 在线服务')`, 8000, '在线服务卡')
+    // 端点属于「口径」：卡面只留可达性与当前版本，完整端点收在卡头帮助入口里 —— 点开再看
+    await page.getByLabel('在线大模型端点').click()
+    await page.waitForTimeout(600)
     const onlineText = await pageText()
     ok('在线服务卡显示模型网关端点', onlineText.includes('/v1/chat/completions'), '')
     ok('未配置 provider 时如实标注「未配置」', onlineText.includes('未配置'), '')
@@ -305,8 +308,9 @@ async function main() {
     ok('设置区含自动检查 / 检查间隔 / 通道 / http / 清理缓存', (await evalJS(
       `['自动检查更新','检查间隔','更新通道','允许明文 http 源','清理下载缓存'].every((t) => document.querySelector('.page').innerText.includes(t))`,
     )))
-    ok('通道默认 stable 且可切换', await evalJS(
-      `[...document.querySelectorAll('.chip')].some((c) => c.textContent.trim() === 'stable' && c.classList.contains('on'))`,
+    // 通道名界面上不出现 stable/beta 原值，标签是中文；选中态由 PillChip 的 action 语气表达
+    ok('通道默认稳定版且可切换', await evalJS(
+      `[...document.querySelectorAll('.chip')].some((c) => c.textContent.trim() === '稳定版' && c.classList.contains('action'))`,
     ))
   } finally {
     try {

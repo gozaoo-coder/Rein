@@ -5,7 +5,7 @@
  * 所以这里只有「同步状态」「一次同步的回执」与「给用户看的记录行」三组类型。
  */
 
-import type { Intensity } from './exercise'
+import type { Intensity, WorkoutSource } from './exercise'
 
 /**
  * Health Connect 在本机的可用性。
@@ -45,9 +45,9 @@ export interface HealthSyncStatus {
 /**
  * 一条第三方运动记录（只读展示用）。
  *
- * 与 `exercise` 域的 `Workout` 不同：这里多一个 `source`（导入 / 本机）——
- * 正是它让「手机同步进来的」和「本机记的」在同一个列表里分得开；少的是
- * effort/sessionId/createdAt 这些 Rein 内部字段，后端也不投影它们。
+ * 与 `exercise` 域的 `Workout` 不同：这里少的是 effort/sessionId/createdAt
+ * 这些 Rein 内部字段，后端不投影它们；`source` 两边都有，所以来源标签
+ * （[`WorkoutSource`]）在两个域里是同一套取值 —— 别在这里另起一个联合类型。
  */
 export interface HealthSyncWorkout {
   id: number
@@ -61,7 +61,8 @@ export interface HealthSyncWorkout {
   /** 与 `exercise` 同口径的客观强度档 */
   intensity: Intensity
   note: string | null
-  source: 'health_connect' | 'local'
+  /** 来源：复用 `exercise` 域的 [`WorkoutSource`]，不是这里另立的联合类型 */
+  source: WorkoutSource
   /** Health Connect 侧的记录 id：导入记录才有，本机记录为 null */
   externalId: string | null
 }

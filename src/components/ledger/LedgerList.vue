@@ -49,7 +49,7 @@ const groups = computed<DayGroup[]>(() => {
         <li v-for="e in g.entries" :key="e.id">
           <button
             class="row item"
-            :aria-label="`编辑：${categoryOf(e.category)?.label ?? e.category} ${fmtCents(e.amountCents)}`"
+            :aria-label="`编辑：${e.kind === 'expense' ? '支出' : '收入'} ${categoryOf(e.category)?.label ?? e.category} ¥${fmtCents(e.amountCents)}`"
             @click="emit('edit', e)"
           >
             <!-- 彩章+白图标：纯色圆点只靠色相区分分类（色弱不可辨），字形补上第二通道 -->

@@ -4,6 +4,7 @@ import { Eye, EyeOff, Pencil, Star, Trash2 } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import ExerciseHistoryPanel from '@/components/exercise/ExerciseHistoryPanel.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import WeightCurve from '@/components/exercise/WeightCurve.vue'
@@ -134,11 +135,34 @@ const lastSetLine = computed(() => {
   return `${chips}（${fmtDateCn(d.date)}）`
 })
 
+/** 计时 / 有氧动作没有重量建议（trainingAdvice 对非 strength 恒不产建议），
+ *  结论行按 kind 分支说清「为什么没有」，不要对计时动作输出「暂无历史记录」——
+ *  那会让用户以为再练几次就有建议了。 */
+const ADVICE_FALLBACK: Record<string, string> = {
+  strength: '暂无历史记录',
+  timed: '计时动作不做重量建议',
+  cardio: '有氧动作不做重量建议',
+}
+
 const adviceLine = computed(() => {
   const a = advice.value
   if (!a) return ''
-  if (a.suggestedWeight == null) return a.hasHistory ? '自重动作：按目标次数推进' : '暂无历史记录'
-  return `建议 ${fmtKg(a.suggestedWeight)}kg × ${a.suggestedReps ?? '—'} × ${a.suggestedSets} 组 · 今日状态 ×${a.readiness.toFixed(2)}`
+  if (a.suggestedWeight == null) {
+    return a.hasHistory ? '自重动作：按目标次数推进' : ADVICE_FALLBACK[props.exercise?.kind ?? 'strength']
+  }
+  return `建议 ${fmtKg(a.suggestedWeight)} kg × ${a.suggestedReps ?? '—'} 次 × ${a.suggestedSets} 组`
+})
+
+/**
+ * 「今日状态」系数降为次要行：它只微调建议重量（约 ±15%），不该和重量建议
+ * 同字号并列。恰为 1.00（无历史 / 各项都取基准）时不显示；四个因子的口径
+ * 收进标题行右侧 InfoHint。
+ */
+const readinessText = computed(() => {
+  const a = advice.value
+  if (!a || a.suggestedWeight == null) return ''
+  const r = a.readiness.toFixed(2)
+  return r === '1.00' ? '' : `今日状态 ×${r}`
 })
 
 async function hideFromLibrary(): Promise<void> {
@@ -210,9 +234,21 @@ async function removeCustom(): Promise<void> {
         </div>
       </template>
 
-      <p class="sec">今日建议<span class="secsub">按库内默认处方与你的历史推算</span></p>
+      <p class="sec">
+        今日建议<span class="secsub">按库内默认处方与你的历史推算</span>
+        <InfoHint
+          class="sec-hint"
+          title="今日状态系数"
+          content="今日状态系数 = 恢复 × 容量 × 趋势 × 自评，四项相乘后夹在 0.85~1.06。
+
+恢复：同一主攻肌群距上次训练的小时数；容量：本周该肌群的组数相对恢复区间的位置；趋势：上次估算极限重量相对基线的偏离；自评：训练页的今日状态自评（没自评按 1.00 计）。
+
+它只微调建议重量（约 ±15%），系数为 1.00 时不显示。"
+        />
+      </p>
       <div class="advicecard">
         <p class="adviceline num">{{ loading ? '计算中…' : adviceLine }}</p>
+        <p v-if="readinessText" class="advicestate">{{ readinessText }}</p>
         <p v-if="advice?.rationale.length" class="advicewhy">{{ advice.rationale[0] }}</p>
       </div>
 
@@ -224,7 +260,17 @@ async function removeCustom(): Promise<void> {
         </div>
       </template>
 
-      <p class="sec">历史与 PR<span class="secsub">正式组口径，热身不计容量</span></p>
+      <!-- 口径与术语收进标题行右侧 InfoHint：「正式组」「容量」都是要背景才读得懂的行内术语 -->
+      <p class="sec">
+        历史与 PR
+        <InfoHint
+          class="sec-hint"
+          title="口径与术语"
+          content="训练量 = 组数 × 次数 × 重量，热身组不计入；「最佳单次训练量」是单次训练里的最大值。
+
+1RM（一次最大重量）：某个动作只能标准完成 1 次的重量。本软件不直接测极限，按你练过的组次估算，所以叫 e1RM。"
+        />
+      </p>
       <ExerciseHistoryPanel :exercise-id="exercise.id" />
 
       <p class="sec">训练参数</p>
@@ -241,7 +287,7 @@ async function removeCustom(): Promise<void> {
       </template>
 
       <template v-if="exercise.steps.length">
-        <p class="sec">动作要领<span class="secsub">按顺序一步步做</span></p>
+        <p class="sec">动作要领</p>
         <ol class="steps">
           <li v-for="(s, i) in exercise.steps" :key="i">{{ s }}</li>
         </ol>
@@ -307,12 +353,19 @@ async function removeCustom(): Promise<void> {
   color: var(--text-2);
 }
 
+/* 小节标题行：右侧留帮助入口位（sec-hint 用 margin-left:auto 顶到行尾） */
 .sec {
   margin: 18px 0 10px;
+  display: flex;
+  align-items: center;
   font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.4px;
   color: var(--text-3);
+}
+
+.sec-hint {
+  margin-left: auto;
 }
 
 /* 动作要领：分步说明（有序列表 + 序号圆点） */
@@ -371,6 +424,13 @@ async function removeCustom(): Promise<void> {
 .adviceline {
   font-size: var(--fs-callout);
   font-weight: 700;
+}
+
+/* 「今日状态 ×…」是次要行：系数只微调重量，不能和重量建议同字号并列 */
+.advicestate {
+  margin-top: 4px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .advicewhy {

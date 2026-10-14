@@ -24,6 +24,8 @@ import {
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { kbService, onKbIndexProgress, onKbModelProgress } from '@/services/kbService'
@@ -106,11 +108,6 @@ const testLines = computed(() =>
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, 16),
-)
-
-/** 当前生效的模型条目（用于标题与「正在使用」标记） */
-const currentModel = computed(() =>
-  embedCatalog.value?.models.find((m) => m.id === localModel.value) ?? null,
 )
 
 const query = ref('')
@@ -669,6 +666,13 @@ const memorySummary = computed(() => {
   return parts.join('；')
 })
 
+/** 长期记忆的解释：置信度 / 显著性是内部术语，衰减与归档规则只在标题行 InfoHint 里讲一次 */
+const memoryHint = [
+  '置信度与显著性是模型内部指标：置信度是 AI 对这条记忆的确信程度；显著性是衰减后仍被使用的强度。',
+  '显著性低于 0.15 的条目标为「低信号」。长期没用到、显著性变低的条目会被自动归档，在「显示归档」里可以恢复。',
+  '记忆按条数与字符上限注入对话，「注入」一栏即当前会注入对话的条数。',
+].join('\n\n')
+
 /* ---------- 新建笔记（已有笔记的浏览与编辑在文件库） ---------- */
 
 const editor = ref<{ path: string; content: string } | null>(null)
@@ -764,7 +768,7 @@ function requestCloseEditor(): void {
           v-else-if="hits"
           :icon="Search"
           title="没有命中"
-          hint="换个更短的关键词，或去掉日期限制再试"
+          hint="换个更短的关键词再试"
         />
       </section>
 
@@ -773,7 +777,9 @@ function requestCloseEditor(): void {
         <div class="card-head">
           <Brain :size="16" />
           <h2>长期记忆</h2>
-          <span class="chip">{{ visibleMemories.length }}</span>
+          <span class="chip num">{{ visibleMemories.length }}</span>
+          <!-- 显著性 / 置信度是内部术语，衰减与归档规则也只讲一次：收进标题行 InfoHint -->
+          <InfoHint title="长期记忆怎么运转" :content="memoryHint" />
         </div>
 
         <!-- 健康度：一句结论 + 可展开的详情（数字墙默认收起） -->
@@ -784,19 +790,14 @@ function requestCloseEditor(): void {
           </button>
           <div v-show="snrDetail" class="snr-detail">
             <div class="snr-grid">
-              <div><b>{{ memoryStats.active }}</b><span>活跃</span></div>
-              <div><b>{{ memoryStats.injected }}</b><span>注入（上限 {{ memoryStats.limit }}）</span></div>
-              <div><b>{{ Math.round(memoryStats.signalRatio * 100) }}%</b><span>注入覆盖率</span></div>
+              <div><b class="num">{{ memoryStats.active }}</b><span>活跃</span></div>
+              <div><b class="num">{{ memoryStats.injected }}</b><span>注入（上限 {{ memoryStats.limit }}）</span></div>
+              <div><b class="num">{{ Math.round(memoryStats.signalRatio * 100) }}%</b><span>注入覆盖率</span></div>
               <div>
-                <b :class="{ bad: memoryStats.noiseRatio > 0.3 }">{{ Math.round(memoryStats.noiseRatio * 100) }}%</b>
+                <b class="num" :class="{ bad: memoryStats.noiseRatio > 0.3 }">{{ Math.round(memoryStats.noiseRatio * 100) }}%</b>
                 <span>低信号占比</span>
               </div>
             </div>
-            <p class="snr-line">
-              注入 {{ memoryStats.injectedChars }} / {{ memoryStats.maxChars }} 字符 · 平均置信度
-              {{ memoryStats.avgConfidence.toFixed(2) }} · 平均显著性 {{ memoryStats.avgSalience.toFixed(2) }}
-              <template v-if="memoryStats.archived"> · 已归档 {{ memoryStats.archived }}</template>
-            </p>
             <p class="snr-line">
               最近维护：{{ memoryStats.lastMaintainAt ?? '从未' }} · 最近 AI 整理：{{ memoryStats.lastConsolidateAt ?? '从未' }}
             </p>
@@ -871,7 +872,7 @@ function requestCloseEditor(): void {
             </button>
             <ul v-show="dupOpen" class="dup-list">
               <li v-for="d in duplicates" :key="`${d.aId}-${d.bId}`">
-                <span class="dup-score">{{ d.score.toFixed(2) }}</span>
+                <span class="dup-score">相似度 <span class="num">{{ d.score.toFixed(2) }}</span></span>
                 <span class="dup-text">{{ d.aContent }}<br /><i>{{ d.bContent }}</i></span>
               </li>
             </ul>
@@ -886,8 +887,9 @@ function requestCloseEditor(): void {
             </p>
           </div>
         </div>
+        <!-- 衰减与归档的完整解释在标题行 InfoHint 里，卡面只留一行结论 -->
         <p v-if="visibleMemories.length" class="foot">
-          记忆会随时间自然衰减：长期没被用到且显著性变低的条目会被自动归档（可在上方恢复）。
+          <StatusChip tone="neutral" size="sm">长期没用上的会自动归档</StatusChip>
         </p>
       </section>
 
@@ -901,8 +903,9 @@ function requestCloseEditor(): void {
           </button>
           <button class="mini" @click="openNewNote"><FilePlus2 :size="13" /> 新建笔记</button>
         </div>
+        <!-- 这句话有按钮标签没有的增量（存储位置在 AI 工作区）：保留，收敛成一行结论 -->
         <p v-if="!editor" class="hint">
-          笔记、上传的文档与各类记录都存在 AI 工作区里，进文件库可以翻阅和编辑。
+          <StatusChip tone="neutral" size="sm">笔记、文档与记录都存在 AI 工作区</StatusChip>
         </p>
 
         <!-- 新建笔记编辑器 -->
@@ -940,10 +943,10 @@ function requestCloseEditor(): void {
           </span>
         </div>
         <div v-if="status" class="stats">
-          <div><b>{{ status.docs }}</b><span>条目</span></div>
-          <div><b>{{ status.chunks }}</b><span>分块</span></div>
-          <div><b>{{ status.vectors }}</b><span>向量</span></div>
-          <div><b>{{ status.pending }}</b><span>待更新</span></div>
+          <div><b class="num">{{ status.docs }}</b><span>条目</span></div>
+          <div><b class="num">{{ status.chunks }}</b><span>分段</span></div>
+          <div><b class="num">{{ status.vectors }}</b><span>向量</span></div>
+          <div><b class="num">{{ status.pending }}</b><span>待更新</span></div>
         </div>
         <div v-if="status?.indexing" class="bar"><i :style="{ transform: `scaleX(${progressPct / 100})` }" /></div>
         <p v-if="status?.lastError" class="err">
@@ -1010,10 +1013,10 @@ function requestCloseEditor(): void {
 
       <!-- 本地模型：多档可选、按需下载（换模型即重建向量） -->
       <section v-if="mode === 'local'" class="set-block">
+        <!-- 维度不在这行重复：模型行那处带着「使用中」标记，信息更全 -->
         <div class="set-head">
           <Cpu :size="15" />
           <h3>本地模型</h3>
-          <span v-if="currentModel" class="chip">{{ currentModel.dim }} 维</span>
         </div>
         <p class="hint">
           只有最小那颗模型编进安装包；更大的中文模型按需下载，可随时换、可删除。
@@ -1120,7 +1123,12 @@ function requestCloseEditor(): void {
                 <b>{{ idx === 0 ? '模型 A' : '模型 B' }}</b>
                 <span class="mono">{{ res.modelId }}</span>
               </p>
-              <p class="test-meta">{{ res.dim }} 维 · 构建 {{ res.buildMs }}ms · 总 {{ res.totalMs }}ms</p>
+              <p class="test-meta">
+                <b class="test-dim num">{{ res.dim }}</b><span class="test-dim-unit"> 维</span>
+                <span class="test-cost">
+                  模型加载 <span class="num">{{ res.buildMs }} ms</span> · 本次测试 <span class="num">{{ res.totalMs }} ms</span>
+                </span>
+              </p>
               <ol class="ranks">
                 <li v-for="(r, i) in res.ranking" :key="`${i}-${r.text}`">
                   <span class="rank-score">{{ r.score.toFixed(3) }}</span>
@@ -1183,6 +1191,13 @@ function requestCloseEditor(): void {
       initial-snap="large"
       @close="reader = null"
     >
+      <!-- 「段」是索引单位：文档被切成小段来索引，一次加载一段；说明收进抽屉帮助入口 -->
+      <template #action>
+        <InfoHint
+          title="文档为什么分段"
+          content="长文档会被切成小段来建立索引，阅读时一段一段加载；「继续加载」会再取一批，「一次读完」则直接把剩下的全部取来。"
+        />
+      </template>
       <template v-if="reader">
         <p v-if="reader.path" class="hpath big">{{ reader.path }}</p>
         <div class="reader-bar">
@@ -1198,12 +1213,13 @@ function requestCloseEditor(): void {
         <p v-else class="doc-body sum">{{ reader.chunks[0]?.text }}</p>
         <div v-if="reader.level === 'l2' && reader.hasMore" class="row more-row">
           <button class="btn ghost" :disabled="reading || reader.busy" @click="loadMore">
-            {{ reader.loadingMore ? '加载中…' : `继续加载（${reader.chunks.length}/${reader.totalChunks} 块）` }}
+            <span v-if="reader.loadingMore">加载中…</span>
+            <span v-else>继续加载（<span class="num">{{ reader.chunks.length }}</span>/<span class="num">{{ reader.totalChunks }}</span> 段）</span>
           </button>
           <button class="btn ghost" :disabled="reader.busy" @click="readAll">一次读完</button>
         </div>
         <p v-else-if="reader.level === 'l2' && reader.totalChunks > 1" class="fin">
-          已到末尾 · 共 {{ reader.totalChunks }} 块
+          已到末尾 · 共 <span class="num">{{ reader.totalChunks }}</span> 段
         </p>
       </template>
     </SheetModal>
@@ -1255,7 +1271,7 @@ function requestCloseEditor(): void {
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  /* 圆角沿用全局 .card 的 var(--radius-xl)（桌面档自动收窄），不另写 16px */
   padding: 14px;
 }
 .card-head {
@@ -1469,8 +1485,8 @@ input {
   color: var(--text-2);
 }
 .badge.stale {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger-strong);
 }
 .mem-text {
   margin-top: 3px;
@@ -1675,7 +1691,7 @@ textarea {
   color: var(--danger);
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 .toggles {
   display: flex;
@@ -1769,7 +1785,7 @@ textarea {
   min-width: 0;
 }
 .model-main:disabled {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 .model-label {
   display: flex;
@@ -1878,8 +1894,22 @@ textarea {
   font-size: var(--fs-footnote);
 }
 .test-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
   font-size: var(--fs-caption);
   color: var(--text-3);
+}
+/* 维度是这组数里的主角：19px 等宽主数值；两项耗时降成说明档 */
+.test-dim {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+}
+.test-dim-unit {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 .ranks {
   display: flex;
@@ -1952,14 +1982,15 @@ textarea {
 }
 .dup-list li {
   display: grid;
-  grid-template-columns: 38px 1fr;
+  grid-template-columns: 72px 1fr;
   gap: 8px;
   font-size: var(--fs-caption);
   color: var(--text-2);
 }
 .dup-score {
-  color: var(--accent);
+  color: var(--accent-strong);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .dup-text i {
   color: var(--text-3);

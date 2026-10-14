@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { BookOpen, RefreshCw, Search } from 'lucide-vue-next'
 
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { campusService } from '@/services/campusService'
@@ -158,19 +159,26 @@ onMounted(async () => {
 
         <div v-if="progress" class="prog">
           <div class="prog-top">
-            <span class="prog-label">学分进度</span>
-            <span class="prog-num num">{{ progress.got }} / {{ progress.need }}</span>
+            <span class="prog-label">学分进度<em>已修 / 要求</em></span>
+            <span class="prog-fig">
+              <span class="prog-num num">{{ progress.got }} / {{ progress.need }}</span>
+              <span class="prog-unit">学分</span>
+              <InfoHint
+                class="prog-help"
+                title="学分进度怎么算"
+                content="已修学分取自习成绩单；要求学分为培养方案总学分。仅统计已出成绩的课程。"
+              />
+            </span>
           </div>
           <div class="bar"><div class="fill" :style="{ transform: `scaleX(${progress.pct})` }" /></div>
-          <p class="prog-hint">
-            已修学分取自习成绩单；要求学分为培养方案总学分。仅统计已出成绩的课程。
-          </p>
         </div>
       </section>
 
       <!-- 学分分布 -->
       <section v-if="creditRows.length" class="card">
-        <h2 class="sec">学分分布</h2>
+        <h2 class="sec">
+          学分分布<InfoHint title="学分分布怎么读" content="按教务的模块层级逐级列出，不做跨层求和，避免重复计入学分。" />
+        </h2>
         <ul class="credit">
           <li
             v-for="r in creditRows"
@@ -183,7 +191,6 @@ onMounted(async () => {
             <span v-if="statText(r.stats)" class="cstat">{{ statText(r.stats) }}</span>
           </li>
         </ul>
-        <p class="tip">按教务的模块层级逐级列出，不做跨层求和，避免重复计入学分。</p>
       </section>
 
       <!-- 课程清单：这一页唯一的长列表，桌面上通栏 -->
@@ -214,6 +221,9 @@ onMounted(async () => {
 }
 
 .sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: var(--fs-subhead);
   font-weight: 700;
   color: var(--text-1);
@@ -276,6 +286,33 @@ onMounted(async () => {
   color: var(--text-2);
 }
 
+/* 分子分母不靠下方说明去猜：「已修 / 要求」跟在标题旁，数字与单位各自一档 */
+.prog-label em {
+  font-style: normal;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-2);
+  margin-left: 6px;
+}
+
+.prog-fig {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-left: auto;
+}
+
+/* InfoHint 落在图表行右侧；其按钮是按自身基线对齐的，单独居中 */
+.prog-help {
+  align-self: center;
+}
+
+.prog-unit {
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
 .prog-num {
   font-size: var(--fs-callout);
   font-weight: 700;
@@ -296,13 +333,6 @@ onMounted(async () => {
   background: var(--accent);
   transform-origin: left center;
   transition: transform var(--dur-base) var(--ease-standard);
-}
-
-.prog-hint {
-  margin-top: 6px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  line-height: 1.4;
 }
 
 /* ---------- 学分分布 ---------- */
@@ -417,7 +447,6 @@ onMounted(async () => {
   color: var(--text-3);
 }
 
-.tip,
 .foot {
   margin-top: 8px;
   font-size: var(--fs-micro);

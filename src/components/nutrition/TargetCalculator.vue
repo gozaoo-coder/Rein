@@ -2,8 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { ACTIVITY_LEVEL_LABELS, GOAL_LABELS, TARGET_FIELD_META } from '@/config/domain'
 import { useNutritionStore } from '@/stores/nutrition'
 import { useToast } from '@/composables/useToast'
@@ -125,14 +127,30 @@ const cells = computed(() =>
 
 const diffs = computed(() => cells.value.filter((c) => c.changed))
 
-const diffsText = computed(() =>
-  diffs.value.map((c) => `${c.label} ${c.from}→${c.to}`).join(' · '),
+/** 差异项自带单位（大卡 / g / mg / ml）：量纲跟着每一项走，不靠读者自己补 */
+function diffText(c: { label: string; from: number; to: number; unit: string }): string {
+  return `${c.label} ${c.from}→${c.to}${c.unit}`
+}
+
+/** 主变化 = 能量项（本卡的主读数）；没有能量差异时退回第一项 */
+const mainDiff = computed(() => diffs.value.find((c) => c.key === 'kcal') ?? diffs.value[0] ?? null)
+
+const diffsMainText = computed(() => (mainDiff.value ? diffText(mainDiff.value) : ''))
+const diffsRestText = computed(() =>
+  diffs.value
+    .filter((c) => c !== mainDiff.value)
+    .map(diffText)
+    .join(' | '),
 )
 
-const DELTA_TEXT: Record<Goal, string> = {
-  cut: '，已扣减约 400 大卡缺口',
-  keep: '',
-  bulk: '，已加回约 300 大卡盈余',
+/**
+ * 目标带来的缺口 / 盈余结论：只有这句上卡面（胶囊），400 / 300 的来路
+ * （Mifflin-St Jeor、活动系数）收进标题行右侧 InfoHint，不摊在公式行尾当补语。
+ */
+const DELTA_LABEL: Record<Goal, string | null> = {
+  cut: '减脂缺口约 400 大卡',
+  keep: null,
+  bulk: '增肌盈余约 300 大卡',
 }
 
 function setSex(v: string): void {
@@ -170,8 +188,18 @@ function onConfirm(value: string): void {
 <template>
   <section class="card">
     <header class="head">
-      <h2>方案计算器</h2>
-      <p class="t-3">由身体参数推算营养与热量目标</p>
+      <h2 class="row center">
+        方案计算器
+        <!-- 公式口径（Mifflin-St Jeor / 活动系数 / 缺口大小）与「采用后可随时手动微调」
+             收进这里；卡面不留没人读的解释段 -->
+        <InfoHint
+          class="headhint"
+          title="推算口径"
+          content="基础代谢（BMR）按 Mifflin-St Jeor 公式，由性别、年龄、身高、体重推算；总消耗（TDEE）= 基础代谢 × 活动系数。缺口大小只随目标而变：减脂约扣减 400 大卡，增肌约加回 300 大卡。
+
+采用后仍可随时手动微调每日目标。"
+        />
+      </h2>
     </header>
 
     <!-- 参数 -->
@@ -215,6 +243,9 @@ function onConfirm(value: string): void {
         <b class="num">{{ result.targets.kcal }}</b>
         <span class="unit">大卡/天</span>
       </div>
+      <StatusChip v-if="DELTA_LABEL[goal]" class="goalsign" tone="accent" size="md">
+        {{ DELTA_LABEL[goal] }}
+      </StatusChip>
       <ul class="cells">
         <li v-for="c in cells.slice(1)" :key="c.key">
           <em>{{ c.label }}</em>
@@ -222,14 +253,19 @@ function onConfirm(value: string): void {
         </li>
       </ul>
       <p class="formula num">
-        基础代谢 {{ result.bmr }} · 总消耗 {{ result.tdee }} 大卡{{ DELTA_TEXT[goal] }}
+        基础代谢 {{ result.bmr }} 大卡 · 总消耗 {{ result.tdee }} 大卡
       </p>
-      <p v-if="diffs.length" class="diffs num">较当前：{{ diffsText }}</p>
+      <p v-if="diffs.length" class="diffs">
+        <span class="dlead">较当前</span>
+        <b class="num dmain">{{ diffsMainText }}</b>
+        <span v-if="diffsRestText" class="num drest">{{ diffsRestText }}</span>
+      </p>
       <p v-else class="diffs same">与当前目标一致</p>
     </div>
 
     <button class="adopt" @click="confirmOpen = true">采用该方案</button>
-    <p class="note t-3">采用后同步更新身体资料与每日目标，可随时手动微调。</p>
+    <!-- 「可随时手动微调」已移入标题行 InfoHint；这行只留按钮下方唯一的后果说明 -->
+    <p class="note t-3">采用后同步更新身体资料与每日目标</p>
 
     <ActionSheet
       :open="confirmOpen"
@@ -242,15 +278,18 @@ function onConfirm(value: string): void {
 </template>
 
 <style scoped>
+/* 卡头只剩标题行：标题 + 右侧帮助入口（公式口径），原解释副段删去 */
 .head h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-title3);
   font-weight: 700;
   letter-spacing: -0.3px;
 }
 
-.head p {
-  font-size: var(--fs-caption);
-  margin-top: 1px;
+.headhint {
+  margin-left: auto;
 }
 
 .form {
@@ -312,6 +351,11 @@ function onConfirm(value: string): void {
   line-height: 1.1;
 }
 
+/* 缺口/盈余结论：soft 底 + strong 字的语义胶囊，落在主读数正下方 */
+.goalsign {
+  margin-top: 8px;
+}
+
 .unit {
   font-size: var(--fs-caption);
   color: var(--text-2);
@@ -358,17 +402,37 @@ function onConfirm(value: string): void {
   margin-top: 10px;
   font-size: var(--fs-caption);
   line-height: 1.5;
+  color: var(--text-2);
 }
 
+/* 差异行拆两档：主变化（能量）是要读的数，其余项降为三级灰、竖线分隔 */
 .diffs {
-  margin-top: 4px;
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--accent);
+  margin-top: 6px;
   line-height: 1.5;
 }
 
+.dlead {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+  margin-right: 6px;
+}
+
+.dmain {
+  font-size: var(--fs-body);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.drest {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
 .diffs.same {
+  margin-top: 4px;
+  font-size: var(--fs-caption);
   font-weight: 500;
   color: var(--text-3);
 }

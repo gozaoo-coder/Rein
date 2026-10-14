@@ -3,6 +3,8 @@ import { ref, watch } from 'vue'
 import { Volume2 } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { voiceService } from '@/services/voiceService'
 import { useToast } from '@/composables/useToast'
 import type { AsrAdapter, TtsCredential, VoiceConfig } from '@/types'
@@ -49,6 +51,16 @@ const BAILIAN_MODELS = [
   'paraformer-realtime-v2',
   'qwen-audio-3.1-asr-flash-streaming',
   'fun-asr-realtime',
+] as const
+
+/** 可选音色：与 `src/ai/tools/voice.ts` 的 VOICE_PRESETS 同源（那份未导出、无法 import）。
+ *  要增删音色时两处一起改，否则 AI 侧列得出的音色在这里选不到。 */
+const VOICE_OPTIONS = [
+  { id: 'zh_female_cancan_uranus_bigtts', label: '灿灿 · 女声 · 活泼清亮' },
+  { id: 'zh_female_wanqudashu_emo_v2_mars_bigtts', label: '湾曲大叔 · 女声 · 沉稳磁性' },
+  { id: 'zh_male_rouyi_jupiter_bigtts', label: '柔一 · 男声 · 温润自然' },
+  { id: 'zh_male_beijingxiaoye_emo_v2_mars_bigtts', label: '北京小爷 · 男声 · 京味儿' },
+  { id: 'zh_female_sichuan_niuniu_mars_bigtts', label: '川妹子 · 女声 · 四川口音' },
 ] as const
 
 /** 关键词 → 适配器（与 Rust AsrAdapterKind::detect 同一套词表） */
@@ -277,11 +289,22 @@ async function onTry(): Promise<void> {
         <button class="sgx" @click="suggestionDismissed = suggestion; suggestion = null">忽略</button>
       </div>
 
-      <label class="f-label">ASR WebSocket baseURL（留空 = 默认端点）</label>
+      <!-- 识别服务地址：术语（WebSocket / baseURL）与「留空 = 默认」都收进行尾的胶囊与 InfoHint -->
+      <div class="label-row">
+        <label class="f-label">识别服务地址</label>
+        <StatusChip tone="neutral" size="sm">留空用默认</StatusChip>
+        <span class="hint-slot">
+          <InfoHint
+            title="识别服务地址"
+            content="识别服务的连接地址，通常不用改：留空就用所选适配器的默认端点。只有服务商给了你专用地址、或要连自建服务时才填。完整地址形如 wss://openspeech.bytedance.com/api/v3/...，以 WebSocket（wss://）开头。"
+          />
+        </span>
+      </div>
       <input
         v-model="asrBaseUrl"
         type="text"
         class="mono"
+        aria-label="识别服务地址"
         :placeholder="ADAPTER_META[effectiveAdapter].defaultUrl"
       >
 
@@ -292,29 +315,36 @@ async function onTry(): Promise<void> {
           <button :class="{ on: mode === 'new' }" @click="mode = 'new'">新版 · API Key</button>
         </div>
 
-        <label class="f-label">{{ mode === 'new' ? 'API Key（X-Api-Key）' : 'App ID（X-Api-App-Key）' }}</label>
-        <input v-model="appKey" type="text" autocomplete="off" placeholder="控制台获取">
+        <label class="f-label">{{ mode === 'new' ? 'API Key' : 'App ID' }}</label>
+        <input v-model="appKey" type="text" autocomplete="off" :aria-label="mode === 'new' ? 'API Key' : 'App ID'" placeholder="控制台获取">
+        <!-- 头名是服务端协议细节，降成字段下的次要说明，不再冒充字段名 -->
+        <p class="f-hint">{{ mode === 'new' ? '请求头 X-Api-Key' : '请求头 X-Api-App-Key' }}</p>
 
         <template v-if="mode === 'legacy'">
-          <label class="f-label">Access Token（X-Api-Access-Key）</label>
-          <input v-model="accessKey" type="password" autocomplete="new-password" placeholder="控制台获取">
+          <label class="f-label">Access Token</label>
+          <input v-model="accessKey" type="password" autocomplete="new-password" aria-label="Access Token" placeholder="控制台获取">
+          <p class="f-hint">请求头 X-Api-Access-Key</p>
         </template>
 
-        <label class="f-label">识别 ASR · Resource-Id</label>
-        <input v-model="asrResourceId" type="text" class="mono" placeholder="volc.seedasr.sauc.duration">
+        <label class="f-label">识别模型标识</label>
+        <input v-model="asrResourceId" type="text" class="mono" aria-label="识别模型标识" placeholder="volc.seedasr.sauc.duration">
+        <p class="f-hint">留空用默认模型</p>
       </template>
 
       <template v-else>
-        <label class="f-label">API Key（DASHSCOPE_API_KEY · Bearer）</label>
-        <input v-model="appKey" type="password" autocomplete="new-password" placeholder="阿里云百炼 API Key">
-        <label class="f-label">识别 ASR · 模型名</label>
+        <label class="f-label">API Key</label>
+        <input v-model="appKey" type="password" autocomplete="new-password" aria-label="API Key" placeholder="阿里云百炼 API Key">
+        <p class="f-hint">请求头 Authorization: Bearer（环境变量写作 DASHSCOPE_API_KEY）</p>
+        <label class="f-label">识别模型标识</label>
         <input
           v-model="asrResourceId"
           type="text"
           class="mono"
+          aria-label="识别模型标识"
           list="bailian-asr-models"
           placeholder="paraformer-realtime-v2"
         >
+        <p class="f-hint">可手填，也可从下拉里选一个已验证可用的模型</p>
         <datalist id="bailian-asr-models">
           <option v-for="m in BAILIAN_MODELS" :key="m" :value="m" />
         </datalist>
@@ -344,21 +374,51 @@ async function onTry(): Promise<void> {
           <button :class="{ on: ttsMode === 'new' }" @click="ttsMode = 'new'">新版 · API Key</button>
         </div>
 
-        <label class="f-label">{{ ttsMode === 'new' ? 'API Key（X-Api-Key）' : 'App ID（X-Api-App-Key）' }}</label>
-        <input v-model="ttsAppKey" type="text" autocomplete="off" placeholder="控制台获取">
+        <label class="f-label">{{ ttsMode === 'new' ? 'API Key' : 'App ID' }}</label>
+        <input v-model="ttsAppKey" type="text" autocomplete="off" :aria-label="ttsMode === 'new' ? 'API Key' : 'App ID'" placeholder="控制台获取">
+        <p class="f-hint">{{ ttsMode === 'new' ? '请求头 X-Api-Key' : '请求头 X-Api-App-Key' }}</p>
 
         <template v-if="ttsMode === 'legacy'">
-          <label class="f-label">Access Token（X-Api-Access-Key）</label>
-          <input v-model="ttsAccessKey" type="password" autocomplete="new-password" placeholder="控制台获取">
+          <label class="f-label">Access Token</label>
+          <input v-model="ttsAccessKey" type="password" autocomplete="new-password" aria-label="Access Token" placeholder="控制台获取">
+          <p class="f-hint">请求头 X-Api-Access-Key</p>
         </template>
       </template>
 
-      <label class="f-label">合成 TTS · Resource-Id（纪要朗读）</label>
-      <input v-model="ttsResourceId" type="text" class="mono" placeholder="seed-tts-2.0">
-      <label class="f-label">朗读音色（voice_type · 2.0 音色 ID）</label>
-      <input v-model="voiceName" type="text" class="mono" placeholder="如 zh_female_cancan_uranus_bigtts">
+      <div class="label-row">
+        <label class="f-label">朗读模型标识（纪要朗读）</label>
+        <span class="hint-slot">
+          <InfoHint
+            title="朗读模型标识"
+            content="朗读用的合成模型。留空用默认值 seed-tts-2.0（豆包 2.0 音色协议）；要换版本或服务商指定的型号时才改。"
+          />
+        </span>
+      </div>
+      <input v-model="ttsResourceId" type="text" class="mono" aria-label="朗读模型标识" placeholder="seed-tts-2.0">
+
+      <div class="label-row">
+        <label class="f-label">朗读音色</label>
+        <StatusChip tone="neutral" size="sm">留空用默认音色</StatusChip>
+        <span class="hint-slot">
+          <InfoHint
+            title="朗读音色"
+            content="音色用服务商的音色 ID 指定（协议里写作 voice_type，2.0 音色协议）。可以手填 ID，也可以从下拉里选一个；选完点下面的「试听音色」先听再保存。"
+          />
+        </span>
+      </div>
+      <input
+        v-model="voiceName"
+        type="text"
+        class="mono"
+        aria-label="朗读音色"
+        list="voice-presets"
+        placeholder="如 zh_female_cancan_uranus_bigtts"
+      >
+      <datalist id="voice-presets">
+        <option v-for="v in VOICE_OPTIONS" :key="v.id" :value="v.id">{{ v.label }}</option>
+      </datalist>
       <label class="f-label">语速（0.2 ~ 3.0）</label>
-      <input v-model.number="speed" type="number" step="0.1" min="0.2" max="3">
+      <input v-model.number="speed" type="number" step="0.1" min="0.2" max="3" aria-label="语速">
 
       <div class="acts">
         <button class="try" :disabled="trying || saving" @click="onTry">
@@ -450,6 +510,32 @@ async function onTry(): Promise<void> {
   margin-top: 8px;
 }
 
+/* 标签行：字段名 + 行尾胶囊 / InfoHint（同一行不放第二枚图标按钮，落点见 InfoHint 注释） */
+.label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.label-row .f-label {
+  margin-top: 8px;
+}
+
+/* InfoHint 是多根片段，类不会透传到按钮上 —— 用一层 span 占位再推到行尾 */
+.label-row .hint-slot {
+  margin-left: auto;
+  display: inline-flex;
+}
+
+/* 协议头名 / 机制说明降到这里：次要说明档，不再是字段名 */
+.f-hint {
+  margin-top: 3px;
+  font-size: var(--fs-caption);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
 .form input {
   width: 100%;
   padding: 10px 12px;
@@ -514,7 +600,8 @@ async function onTry(): Promise<void> {
   color: var(--on-accent);
 }
 
+/* 禁用浓度全站同一档（tokens.css），不再各写各的裸值 */
 .acts button:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 </style>

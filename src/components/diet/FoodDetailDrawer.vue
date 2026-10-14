@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Plus } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import { MICROS } from '@/config/dri'
 import type { Food } from '@/types'
 
@@ -94,11 +95,13 @@ watch(
           :style="{ flex: m.pct, background: `var(${m.colorVar})`, '--i': i }"
         />
       </div>
-      <p v-if="share.length" class="share-label num t-3">
-        <template v-for="(m, i) in share" :key="m.label">
-          {{ i > 0 ? ' · ' : '' }}{{ m.label }} {{ Math.round(m.pct) }}%
-        </template>
-        <span class="src">供能占比</span>
+      <!-- 「供能占比」是行话：做行首标签，三项占比各一枚带色点胶囊（色条靠同一色点认色） -->
+      <p v-if="share.length" class="share-label">
+        <span class="sl-label">供能占比</span>
+        <span v-for="m in share" :key="m.label" class="spill">
+          <i class="dot" :style="{ background: `var(${m.colorVar})` }" />
+          {{ m.label }}<b class="num">{{ Math.round(m.pct) }}%</b>
+        </span>
       </p>
     </section>
 
@@ -116,22 +119,31 @@ watch(
 
     <!-- 微量营养素 · 对照每日推荐摄入 -->
     <section v-if="microRows.length" class="card">
-      <header class="head"><h2>微量营养素</h2></header>
+      <!-- 口径上提分组头：完整说明（DRI 出处 / 上限语义）收进标题行右侧 InfoHint -->
+      <header class="head">
+        <h2>微量营养素</h2>
+        <InfoHint
+          class="hint"
+          title="微量营养素：口径"
+          content="每 100g 含量占《中国居民膳食营养素参考摄入量》成人每日推荐摄入的比例；标记「上限」的项目（如添加糖、钠）对照的是每日建议上限。"
+        />
+      </header>
       <ul class="micros">
         <li v-for="m in microRows" :key="m.key">
           <div class="row between mrow">
             <span class="mlabel">
               {{ m.label }}<em v-if="m.isLimit" class="lim">上限</em>
             </span>
-            <span class="num mval">{{ fmt(m.value) }} {{ m.unit }}</span>
+            <span class="mright">
+              <span class="num mval">{{ fmt(m.value) }}<em class="munit"> {{ m.unit }}</em></span>
+              <b class="num mpct">{{ m.pct }}%</b>
+            </span>
           </div>
           <div class="bar">
             <div class="fill" :class="{ limit: m.isLimit }" :style="{ '--p': `${Math.min(m.pct, 100)}%` }" />
           </div>
-          <p class="num mpct t-3">每 100g 约占每日{{ m.isLimit ? '建议上限' : '推荐摄入' }}的 {{ m.pct }}%</p>
         </li>
       </ul>
-      <p class="note t-3">百分比以《中国居民膳食营养素参考摄入量》成人数值为基准。</p>
     </section>
 
     <!-- 记录：交给父层打开 FoodPickerSheet（同页单一弹层）；悬浮吸附在抽屉底部，内容从下方滚过 -->
@@ -169,6 +181,17 @@ watch(
   font-size: var(--fs-title3);
   font-weight: 700;
   letter-spacing: -0.3px;
+}
+
+/* 卡头是 flex 行：帮助入口放标题行右端（与标题同一行居中） */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.head .hint {
+  margin-left: auto;
 }
 
 .hero .top {
@@ -251,11 +274,33 @@ watch(
 
 .share-label {
   margin-top: 7px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
-.share-label .src {
-  float: right;
+/* 「供能占比」是行话：做行首标签（比占比读数重一档） */
+.sl-label {
+  color: var(--text-2);
+}
+
+/* 三项占比各一枚胶囊：前导色点与堆叠条同色，认色不靠文字 */
+.spill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.spill b {
+  font-weight: 700;
+  color: var(--text-1);
 }
 
 .units {
@@ -280,6 +325,25 @@ watch(
 
 .mrow {
   margin-bottom: 6px;
+}
+
+/* 实际含量 + 结论占比同一行右端：含量是详情，占比是结论 */
+.mright {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.mval em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.mpct {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-2);
 }
 
 .mlabel {
@@ -325,18 +389,6 @@ watch(
 
 .fill.limit {
   background: var(--c-sodium);
-}
-
-.mpct {
-  margin-top: 4px;
-  /* 供能占比，是要读的数 */
-  font-size: var(--fs-caption);
-}
-
-.note {
-  margin-top: 14px;
-  /* 兜底说明（「没有可用的过程快照」这类），是要照着做的提示 */
-  font-size: var(--fs-caption);
 }
 
 /* 悬浮记录按钮：sticky 吸附在抽屉底部；负 margin 抵消 .body 的内边距贴到边缘，

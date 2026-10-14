@@ -2,9 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import { AlertTriangle, Info, Zap } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { idOf, teacherText, useCourseSelectStore } from '@/stores/courseSelect'
 import type { CourseSelectLesson, GrabTask } from '@/types'
 
@@ -179,9 +182,19 @@ const squadName = computed(() => {
       当前已满。自动抢课会一直守着 —— 有人退课的空档就是机会。
     </p>
 
-    <!-- 抢课方式 -->
+    <!-- 抢课方式。完整取舍收进标题行右侧的说明入口 ——
+         抢课前最紧张的那几分钟，没人有耐心先读完两段散文才知道两个分段有什么区别 -->
     <section class="block">
-      <h3>抢课方式</h3>
+      <h3 class="row">
+        抢课方式
+        <InfoHint title="抢课方式">
+          <p>
+            占位优先：开窗瞬间先占住队列位次（不花意愿值），受理后再正式确认。
+            抢的是位次，所以这是默认选择。
+          </p>
+          <p>直接提交：跳过占位，直接发正式选课请求。少一次往返，但开窗那一刻更容易被排在后面。</p>
+        </InfoHint>
+      </h3>
       <SegmentedControl
         v-model="mode"
         :options="[
@@ -189,16 +202,14 @@ const squadName = computed(() => {
           { value: 'direct', label: '直接提交' },
         ]"
       />
-      <p class="hint">
-        <Info :size="13" />
-        <template v-if="mode === 'predicate'">
-          开窗瞬间先占住队列位次（不花意愿值），受理后再正式确认。抢的是位次，
-          所以这是默认选择。
-        </template>
-        <template v-else>
-          跳过占位，直接发正式选课请求。少一次往返，但开窗那一刻更容易被排在后面。
-        </template>
-      </p>
+      <!-- 分段控件下只留一行结论：选中哪档，它就把这档的取舍压成一句 -->
+      <PillChip tone="label" size="md" class="concl">
+        {{
+          mode === 'predicate'
+            ? '占位优先：先占位次，不花意愿值'
+            : '直接提交：少一次往返，开窗更容易排在后面'
+        }}
+      </PillChip>
     </section>
 
     <!-- 上课小组。用 button + role=radio 而不是 label + 装饰点：
@@ -254,7 +265,15 @@ const squadName = computed(() => {
 
     <!-- 志愿组 -->
     <section class="block">
-      <h3>志愿组</h3>
+      <h3 class="row">
+        志愿组
+        <!-- 互斥的完整解释原先在抽屉里平铺四行，比结论还长。面上只留结论，
+             完整说法收进这里（与批量预定抽屉里同一句话同一份口径） -->
+        <InfoHint title="志愿组">
+          <p>同组课程是互斥备选：只会中一个，任一中选后同组其余自动取消 —— 所以不会出现「同时抢到两门时间冲突的课」。</p>
+          <p>同一门课的多个教学班填同一组、按 1/2/3 排序就是最典型的用法。</p>
+        </InfoHint>
+      </h3>
       <SegmentedControl
         :model-value="squadMode ? 'squad' : 'solo'"
         :options="[
@@ -312,14 +331,8 @@ const squadName = computed(() => {
           </li>
         </ul>
 
-        <p class="hint">
-          <Info :size="13" />
-          <span>
-            同组课程是<b>互斥备选</b>：只会中一个，任一中选后同组其余自动取消 ——
-            所以不会出现「同时抢到两门时间冲突的课」。
-            同一门课的多个教学班填同一组、按 1/2/3 排序就是最典型的用法。
-          </span>
-        </p>
+        <!-- 面上只留一行结论：组内次序的完整含义见标题行右侧的说明 -->
+        <StatusChip tone="warn" size="md" class="concl">同组只会中一个</StatusChip>
       </template>
       <p v-else class="hint">
         <Info :size="13" />
@@ -403,8 +416,26 @@ const squadName = computed(() => {
   margin-bottom: 7px;
 }
 
-/* 这些说明是「占位优先 / 直接提交」「意愿值填多少」「同组互斥」唯一的解释 ——
-   写在界面上却读不出来，等于没写。11px 的 --text-3 在亮色下只有约 2.5:1 */
+/* 标题行带帮助入口的：让 ? 按钮贴到行右端，与标题同行居中 */
+.block h3.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.block h3.row .info-hint {
+  margin-left: auto;
+}
+
+/* 分段控件下的一行结论：把选中档的取舍压成一句，完整解释在标题行右侧的说明里 */
+.concl {
+  margin-top: 8px;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+/* 剩下的 .hint 都只剩一行结论或一句提醒；「占位/直接提交」「同组互斥」这类
+   完整取舍已经收进标题行右侧的 InfoHint，不再靠 11px 灰字硬扛 */
 .hint {
   display: flex;
   align-items: flex-start;
@@ -557,6 +588,6 @@ const squadName = computed(() => {
 .once:disabled,
 .primary:disabled,
 .ghost:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 </style>

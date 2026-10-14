@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Gauge, X } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { READINESS_FACTOR } from '@/utils/trainingAdvice'
 import { FEELING_LABEL, FEELING_SCORE, feelingOfReadiness } from '@/utils/trainingScore'
 
@@ -130,17 +132,28 @@ watch(
         <header class="rd-head">
           <Gauge :size="18" />
           <h2 id="rd-title">今日状态</h2>
+          <!-- 完整口径收进标题行右侧 InfoHint：面上只留一行结论胶囊 ——
+               弹出即劝学的那段散文删掉，读数字前不必先读完背景 -->
+          <InfoHint title="今日状态怎么参与计算">
+            <p>今日状态会写进这次训练的快照，从两个地方参与计算：</p>
+            <p>一是本次建议重量：作为今日状态系数修正建议重量（0.90–1.04，双向条中线就是「不加不减」）。</p>
+            <p>二是本周练够分的「体感」项：良好 100 / 一般 60 / 差 20 分，占 20%（增肌）–30%（减脂）。</p>
+            <p>如实选，建议才准。</p>
+          </InfoHint>
           <button class="rd-x" type="button" aria-label="关闭" @click="emit('close')">
             <X :size="15" :stroke-width="2.5" />
           </button>
         </header>
 
         <div class="rd-body">
-          <p class="rd-lede">
-            这一步会参与训练计算：它是<strong>本次建议重量</strong>的一个系数，也计入本周<strong>练够分</strong>的「体感」项。如实选，建议才准。
+          <p class="rd-tags">
+            <StatusChip tone="neutral" size="md">参与本次建议重量与本周练够分</StatusChip>
           </p>
 
-          <!-- 五档：选中的用「描边 + 抬底」标记（放大在列表里会顶开布局） -->
+          <!-- 五档：选中的用「描边 + 抬底」标记（放大在列表里会顶开布局）。
+               行尾的 ×1.04 删掉：同一个系数在屏上出现三次、两种记法
+               （行尾 ×1.04 / 预览 +4% / 脚注 ×1.04），只留预览主值那一处百分比，
+               参照点交给双向条的中线，不再补一行数字。 -->
           <ul class="rd-opts">
             <li v-for="o in OPTIONS" :key="o.value">
               <button
@@ -153,7 +166,6 @@ watch(
                 <i class="rd-dot" />
                 <span class="rd-label">{{ o.label }}</span>
                 <span class="rd-hint">{{ o.hint }}</span>
-                <span class="rd-fac num">×{{ READINESS_FACTOR[o.value].toFixed(2) }}</span>
               </button>
             </li>
           </ul>
@@ -182,7 +194,9 @@ watch(
                     :style="{ '--p': `${effectW}%` }"
                   />
                 </span>
-                <p class="rd-psub">今日状态系数 ×{{ factor?.toFixed(2) }}（相对「一般」的 ×1.00）</p>
+                <!-- 「今日状态系数 ×1.04（相对「一般」的 ×1.00）」这一行删掉：
+                     系数全屏只留预览主值那一处百分比，×1.00 这个参照点由双向条
+                     的中线承担（见 .rd-dcenter），不再补一行数字让人心算对齐 -->
               </div>
 
               <div class="rd-prow">
@@ -209,7 +223,10 @@ watch(
 
         <div class="rd-acts">
           <button class="rd-btn primary" type="button" :disabled="sel == null" @click="confirm">就绪</button>
-          <button class="rd-btn" type="button" @click="skip">跳过（不影响计算）</button>
+          <!-- 「不影响计算」是错的：跳过时练够分的体感仍按默认 60 分计并降低置信度
+               （FEELING_SCORE.fair = 60），真正零副作用的只有建议重量那一项。
+               按钮文案与预览区同一口径 -->
+          <button class="rd-btn" type="button" @click="skip">跳过（按默认值算）</button>
         </div>
       </section>
     </Transition>
@@ -279,15 +296,10 @@ watch(
   overscroll-behavior: contain;
 }
 
-.rd-lede {
+/* 面上结论：一行胶囊（参与本次建议重量与本周练够分），口径全文收进标题栏 InfoHint */
+.rd-tags {
   margin-top: 10px;
-  font-size: var(--fs-footnote);
-  line-height: 1.7;
-  color: var(--text-2);
-}
-
-.rd-lede strong {
-  color: var(--text-1);
+  display: flex;
 }
 
 .rd-opts {
@@ -352,13 +364,6 @@ watch(
   min-width: 0;
   font-size: var(--fs-caption);
   color: var(--text-3);
-}
-
-.rd-fac {
-  flex: none;
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-2);
 }
 
 /* ---------- 影响预览 ---------- */
@@ -529,8 +534,9 @@ watch(
   color: var(--on-accent);
 }
 
+/* 禁用态浓度走令牌（tokens.css:37-40 收编的那一档），不再各写各的裸值 */
 .rd-btn:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 /* ---------- 进出场：与更新提示同一条曲线（进入用 --ease-out 上浮，退出更快、只淡） ---------- */

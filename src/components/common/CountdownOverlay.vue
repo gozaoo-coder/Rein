@@ -82,7 +82,7 @@ watch(
       <div v-if="show" class="overlay col center">
         <p class="sub">{{ sub }}</p>
         <!-- :key 触发重新挂载，让 pop 动画每个数字都播放 -->
-        <b :key="text" class="big" :class="{ go: isGo }">{{ text }}</b>
+        <b :key="text" class="big num" :class="{ go: isGo }">{{ text }}</b>
       </div>
     </Transition>
   </Teleport>
@@ -98,7 +98,8 @@ watch(
 }
 
 .big {
-  font-size: 88px;
+  /* 全 App 最大的读数走展示级令牌（--fs-display-xl 84px），num 等宽防 8→1 抖位 */
+  font-size: var(--fs-display-xl);
   font-weight: 200;
   letter-spacing: -3px;
   line-height: 1;

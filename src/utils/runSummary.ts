@@ -8,49 +8,61 @@
  * 而这两个恰好是「为什么这次这么快/这么慢」的唯一答案。
  *
  * 两块数据：
- *  1. **分段配速**（`buildSplits`）：逐公里。每段给配速、耗时、爬升。
- *     为什么每公里而不是每 400m：每公里是跑者唯一在表盘上能对上的刻度，
- *     400m 分段读起来像实验室数据，没人会拿它决定今天要不要加练。
- *  2. **爬升**（累计 `ascentM`）：由轨迹点的 `alt` 差分累加，**只计正增量**。
- *     为什么只计正：GPS 高程噪声 ±3m，向下也算会把平路跑出 50m 假爬升；
- *     越野跑的上坡下坡相抵是事实，累计爬升的定义就是「上坡总量」。
+ *  1. **分段配速**：**唯一口径在 `utils/geo.ts::trackSplits`**（本文件只做
+ *     展示整形与可疑标记），明细抽屉与总结页因此永远同数据。
+ *     为什么每公里而不是每 400m：每公里是跑者唯一在表盘上能对上的刻度。
+ *  2. **爬升**：唯一口径在 `utils/geo.ts::trackAscentFiltered`（丢差精度点 →
+ *     每 50m 重采样 → 中值窗 5 → 迟滞 5m），本文件不再自带一份滤波。
  *
- * 关键取舍：**手动补填距离时，分段配速整体失效**（`buildSplits` 返回空数组）。
- * 那时轨迹的累计距离与用户填的距离不一致，强行按用户值切段会给出
- * 与实际路线不符的配速 —— 那种数字比没有更糟（用户会照它调整训练）。
- * UI 上对应「配速分段不可用 · 已手动填距离」的一句说明，而不是画一张假表。
+ * 手动补填距离（`manualKm`）不再作废分段：轨迹与填值的偏差是**信息**
+ * （`distanceMismatch` + 视图算出的百分比），按哪种口径展示由视图决定；
+ * 直接把整张表删掉，用户连「差多少」都看不到。
  */
 
-import { haversineM } from './geo'
+import { haversineM, trackAscentFiltered, trackLengthM, trackSplits } from './geo'
 import type { RunTrackPoint } from '@/types'
 
 export interface SplitRow {
   /** 第几公里（1-based） */
   index: number
-  /** 该公里耗时（秒） */
+  /** 该段耗时（秒） */
   sec: number
-  /** 该公里配速（秒/公里） */
+  /** 该段配速（秒/公里） */
   paceSecPerKm: number
-  /** 该段爬升（米，只计正） */
+  /** 该段爬升（米，只计正；段内高程数据不足时为 0） */
   ascentM: number
+  /** 该段起点/终点在轨迹点里的索引（与 geo.TrackSplit 同源，用于高亮/定位） */
+  startPt: number
+  endPt: number
+  /**
+   * 可疑段：段内任一步 Δt≥30s（后台断档）或隐含速度<0.4 m/s（几乎没动）。
+   * 这类段的配速是「数据缺口+弦线」算出来的，不该参与最快/最慢评比。
+   */
+  suspect?: boolean
 }
 
 export interface RunSummary {
-  /** 逐公里分段；距离不足 1km 或无轨迹时为空数组 */
+  /** 逐公里分段；距离不足 1km 或轨迹不足时为空数组 */
   splits: SplitRow[]
-  /** 累计爬升（米）；无高程数据时 null（不是 0 —— 「没测到」与「平路」要分得开） */
+  /** 累计爬升（米）；一个有效高程点都没有时 null（不是 0 —— 「没测到」与「平路」要分得开） */
   ascentM: number | null
+  /** 爬升估计是否可信（有效点 ≥20 且无 >200m 断档）；false 时视图说「高程数据不足」 */
+  ascentAvailable: boolean
   /**
-   * 分段是否可用：false = 距离是手动补填的或轨迹不足，
-   * 此时 splits 必为空。UI 据此决定「画表」还是「说一句为什么没有」。
+   * 分段是否可用：false = 轨迹不足（splits 必为空）。
+   * 与手动补填无关 —— 补填造成的口径差由 distanceMismatch 表达。
    */
   splitsAvailable: boolean
-  /** 最快的一公里（1-based）；不足 1km 时 null */
+  /** 最快的一公里；不足 1km / 只有一段可比时 null。可疑段不参与评比 */
   fastestKm: SplitRow | null
-  /** 最慢的一公里（1-based）；不足 1km 时 null */
+  /** 最慢的一公里；同上 */
   slowestKm: SplitRow | null
-  /** 快慢差（秒/公里）；不足 2km 时 null —— 只跑了一公里谈不上「稳定性」 */
+  /** 快慢差（秒/公里）；不足两段时 null —— 只跑了一公里谈不上「稳定性」 */
   paceSpread: number | null
+  /** 轨迹里程（米）：与入账距离对照，说明「画的线」与「记的距离」差在哪 */
+  trackM: number
+  /** 填报距离与分段口径不一致：|manualKm*1000 − D| > max(50m, 3%×D) */
+  distanceMismatch: boolean
 }
 
 /** 配速显示：秒/公里 → 「5'30"」 */
@@ -67,75 +79,63 @@ export function fmtDuration(sec: number): string {
   return s ? `${m} 分 ${s} 秒` : `${m} 分`
 }
 
-/** 高程噪声阈值（米）：小于它的高程变化一律当作 GPS 抖动，不计爬升 */
-const ALT_NOISE_M = 3
+/** 段内是否有异常步（Δt≥30s 或隐含速度<0.4 m/s）：见 SplitRow.suspect */
+function segmentSuspect(seg: RunTrackPoint[]): boolean {
+  for (let i = 1; i < seg.length; i++) {
+    const a = seg[i - 1]!
+    const b = seg[i]!
+    const dt = typeof a.t === 'number' && typeof b.t === 'number' ? (b.t - a.t) / 1000 : 0
+    if (dt >= 30) return true
+    if (dt > 0 && haversineM(a.lat, a.lon, b.lat, b.lon) / dt < 0.4) return true
+  }
+  return false
+}
+
+/** 逐段几何里程（米） */
+function segLengthM(seg: RunTrackPoint[]): number {
+  let sum = 0
+  for (let i = 1; i < seg.length; i++) {
+    sum += haversineM(seg[i - 1]!.lat, seg[i - 1]!.lon, seg[i]!.lat, seg[i]!.lon)
+  }
+  return sum
+}
 
 /**
- * 轨迹点 → 逐公里分段 + 爬升。
+ * 轨迹点 → 逐公里分段（口径委托 geo.trackSplits）+ 滤波爬升。
  *
- * `manualKm != null` 表示用户手动补填了距离（跑步机 / GPS 丢失）。
- * 这时**不算分段**：轨迹累计距离与填入值对不上，切出来的配速与实际路线无关。
+ * @param opts.distanceM 记录的总距离（入账值）：分段按它缩放，与表盘数字一致。
+ * @param opts.manualKm 总结页填报的距离：只用于 distanceMismatch 判定，不作废分段。
  */
 export function buildRunSummary(
   points: RunTrackPoint[],
-  opts: { manualKm?: number | null } = {},
+  opts: { distanceM?: number; manualKm?: number | null } = {},
 ): RunSummary {
   const { manualKm = null } = opts
-  // 手动补填的场合：**高程仍可给**（爬升与距离无关），
-  // 但分段配速整体作废（见文件头说明）。
-  const ascent = sumAscent(points)
+  const trackM = trackLengthM(points)
+  const D = opts.distanceM != null && opts.distanceM > 0 ? opts.distanceM : trackM
+  const ascent = trackAscentFiltered(points)
+  const distanceMismatch =
+    manualKm != null && Math.abs(manualKm * 1000 - D) > Math.max(50, 0.03 * D)
 
-  if (points.length < 2 || manualKm != null) {
-    return { splits: [], ascentM: ascent, splitsAvailable: false, fastestKm: null, slowestKm: null, paceSpread: null }
-  }
-
-  // 逐段累计：每经过一个整公里就切一段。
-  // **t（累计运动毫秒）是可选的**（RunTrackPoint 的定义如此）——
-  // 轨迹是抽稀后落盘的，个别点可能缺 t。缺 t 的点仍参与距离与爬升，
-  // 但不能当切段点（那会让这一段的耗时算错）。首个有 t 的点作为起点。
-  const splits: SplitRow[] = []
-  let segDistM = 0
-  let segAscent = 0
-  let lastAlt: number | null = null
-  let segStartSec: number | null = null
-
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1]!
-    const cur = points[i]!
-    if (typeof prev.t === 'number' && segStartSec == null) segStartSec = prev.t
-    const d = haversineM(prev.lat, prev.lon, cur.lat, cur.lon)
-    if (d < 0) continue
-    segDistM += d
-
-    // 爬升只计正增量，且低于噪声阈值的跳过（否则平路会跑出几十米假爬升）
-    if (typeof cur.alt === 'number') {
-      if (lastAlt != null) {
-        const rise = cur.alt - lastAlt
-        if (rise > ALT_NOISE_M) segAscent += rise
-      }
-      lastAlt = cur.alt
-    }
-
-    // 凑满一公里才切；缺 t 或还没确立起点时继续攒（等下一个有 t 的切点）
-    if (segDistM < 1000) continue
-    if (typeof cur.t !== 'number' || segStartSec == null) continue
-
-    const sec = (cur.t - segStartSec) / 1000
-    if (sec <= 0) continue // 时序异常（补录/乱序）：不产出无意义的段
-    const row: SplitRow = {
-      index: splits.length + 1,
+  const raw = trackSplits(points, D)
+  const scale = trackM > 0 ? D / trackM : 1 // 轨迹米 → 入账米
+  const splits: SplitRow[] = (raw ?? []).map((s, i) => {
+    const seg = points.slice(s.startPt, s.endPt + 1)
+    const segDistM = segLengthM(seg) * scale
+    // 末段是按实际距离折算的「配速」，其余是「耗时」——按 label 是否是纯数字区分
+    const partial = !/^\d+$/.test(s.label)
+    const sec = partial ? s.paceSec * (segDistM / 1000) : s.paceSec
+    return {
+      index: i + 1,
       sec: Math.round(sec),
-      paceSecPerKm: sec > 0 ? Math.round((sec / segDistM) * 1000) : 0,
-      ascentM: Math.round(segAscent),
+      paceSecPerKm: segDistM > 0 ? Math.round((sec / segDistM) * 1000) : Math.round(s.paceSec),
+      ascentM: Math.round(trackAscentFiltered(seg).m ?? 0),
+      startPt: s.startPt,
+      endPt: s.endPt,
+      ...(segmentSuspect(seg) ? { suspect: true } : {}),
     }
-    splits.push(row)
-    // 切段后从当前点重新起算；**累计爬升不重置**（它属于整条路线）
-    segStartSec = cur.t
-    segDistM = 0
-    segAscent = 0
-  }
+  })
 
-  const hasFullKm = splits.length > 0
   /**
    * 最快 / 最慢：**全等速时返回 null**，不制造差异。
    *
@@ -144,43 +144,29 @@ export function buildRunSummary(
    * fast=1 且 slow=1，叠在同一个格子上）。那样的标记是在编造信息：
    * 用户会以为第 1 公里有某种特殊性，而真相是四段一模一样。
    * 只有存在**真实差异**（最快 ≠ 最慢）才标；「相差」同理。
+   * 可疑段（后台断档/几乎没动）一律不参与评比。
    */
+  const candidates = splits.filter((r) => !r.suspect)
   let fastest: SplitRow | null = null
   let slowest: SplitRow | null = null
-  if (hasFullKm) {
-    for (const row of splits) {
-      if (fastest == null || row.paceSecPerKm < fastest.paceSecPerKm) fastest = row
-      if (slowest == null || row.paceSecPerKm > slowest.paceSecPerKm) slowest = row
-    }
-    if (fastest && slowest && fastest.index === slowest.index) {
-      fastest = null
-      slowest = null
-    }
+  for (const row of candidates) {
+    if (fastest == null || row.paceSecPerKm < fastest.paceSecPerKm) fastest = row
+    if (slowest == null || row.paceSecPerKm > slowest.paceSecPerKm) slowest = row
+  }
+  if (fastest && slowest && fastest.index === slowest.index) {
+    fastest = null
+    slowest = null
   }
   return {
     splits,
-    ascentM: ascent,
+    ascentM: ascent.m,
+    ascentAvailable: ascent.ok,
     // 不足一公里：没有可比的分段，同样按「不可用」处理
-    splitsAvailable: hasFullKm,
+    splitsAvailable: splits.length > 0,
     fastestKm: fastest,
     slowestKm: slowest,
     paceSpread: fastest && slowest ? slowest.paceSecPerKm - fastest.paceSecPerKm : null,
+    trackM,
+    distanceMismatch,
   }
-}
-
-/** 累计爬升（米）。轨迹里一个 alt 都没有时返回 null（区别于「平路 = 0」）。 */
-export function sumAscent(points: RunTrackPoint[]): number | null {
-  let any = false
-  let sum = 0
-  let last: number | null = null
-  for (const p of points) {
-    if (typeof p.alt !== 'number') continue
-    any = true
-    if (last != null) {
-      const rise = p.alt - last
-      if (rise > ALT_NOISE_M) sum += rise
-    }
-    last = p.alt
-  }
-  return any ? Math.round(sum) : null
 }

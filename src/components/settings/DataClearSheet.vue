@@ -162,8 +162,9 @@ async function execute(): Promise<void> {
   try {
     report.value = await maintenanceService.clear(scope.value)
     step.value = 'done'
-    toast(`已清除，释放 ${humanBytes(report.value.freedBytes)}`)
-    // 报告先给用户读完（toast + 完成页），再退进程重启
+    // 结论由完成页持久承载（toast 与完成页不再同屏说同一句话）
+    toast('已清除')
+    // 报告先给用户读完（完成页），再退进程重启
     if (preview.value?.restartsApp) {
       setTimeout(() => {
         void maintenanceService.restart().catch(() => {
@@ -219,7 +220,8 @@ async function execute(): Promise<void> {
           <span class="t-3 pnum">{{ itemText(it) }}</span>
         </div>
       </div>
-      <p v-if="preview.totalBytes > 0" class="total t-3">约可释放 {{ humanBytes(preview.totalBytes) }}</p>
+      <!-- 长按确认前最要紧的结论：继承正文字号（比明细行更大），数字等宽加粗右对齐 -->
+      <p v-if="preview.totalBytes > 0" class="total">约可释放 <b class="num">{{ humanBytes(preview.totalBytes) }}</b></p>
       <div class="warn" role="alert">
         <AlertTriangle :size="15" class="warn-ic" />
         <div class="warn-body">
@@ -231,7 +233,7 @@ async function execute(): Promise<void> {
     <!-- ③ 完成 -->
     <div v-else-if="step === 'done' && report" class="steps done">
       <div class="done-ic"><Check :size="22" :stroke-width="2.5" /></div>
-      <b>已清除{{ report.freedBytes > 0 ? `，释放 ${humanBytes(report.freedBytes)}` : '' }}</b>
+      <b>已清除<span v-if="report.freedBytes > 0">，释放 <span class="num">{{ humanBytes(report.freedBytes) }}</span></span></b>
       <p v-if="report.failures.length" class="t-3 fail-note">
         有 {{ report.failures.length }} 个文件正被占用没能删除（不影响数据，下次清除会再试）：{{ report.failures.join('；') }}
       </p>
@@ -373,6 +375,12 @@ async function execute(): Promise<void> {
 .total {
   margin-top: 8px;
   text-align: right;
+  /* 结论行：字号继承 body（17px，比明细行更大），只提字重与等宽数字 */
+  font-weight: 600;
+}
+
+.total b {
+  font-weight: 800;
 }
 
 /* 警示块：danger-soft 底，正文仍读得清的文字红（--danger-strong） */
@@ -435,7 +443,7 @@ async function execute(): Promise<void> {
 }
 
 .hold:disabled {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 
 .fill {
@@ -471,7 +479,7 @@ async function execute(): Promise<void> {
 }
 
 .primary:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .spin {

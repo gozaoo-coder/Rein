@@ -82,11 +82,12 @@ function goConflict(): void {
       </li>
     </ul>
 
-    <button v-else class="new row center" type="button" @click="void router.push('/sports/plans/new/edit')">
+    <!-- 互斥关系扩到两颗按钮：空状态只出现「创建第一个训练课程」，
+         有记录才出现「新建课程」—— 同一动作、同一目的地，不能并排两颗 -->
+    <button v-if="!planStore.recent.length" class="new row center" type="button" @click="void router.push('/sports/plans/new/edit')">
       <Plus :size="17" /> 创建第一个训练课程
     </button>
-
-    <button class="more row center" type="button" @click="void router.push('/sports/plans/new/edit')">
+    <button v-else class="more row center" type="button" @click="void router.push('/sports/plans/new/edit')">
       <Plus :size="16" /> 新建课程
     </button>
 
@@ -112,6 +113,14 @@ function goConflict(): void {
   font-size: var(--fs-footnote);
   font-weight: 600;
   color: var(--text-2);
+}
+
+/* 桌面壳：「全部课程 ›」实测 63×17，低于指针精度的 22 下限。
+   padding-block 把盒撑到 24；`.head` 是 .row 居中，且卡头高度由 h2(27.5) 决定，
+   所以这一行不会被它顶高（实测 .head 仍是 27.5）。
+   手机端维持原档（22 是指针精度的规则）。 */
+.desk-main .all {
+  padding-block: 4px;
 }
 
 .list {
@@ -163,7 +172,7 @@ function goConflict(): void {
 }
 
 .play:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .new,

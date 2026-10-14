@@ -221,11 +221,21 @@ export interface RunTrackPoint {
   lon: number
   t?: number
   alt?: number
+  /** 水平精度（米）；native 采集与注入源会带上，缺省按未知处理 */
+  acc?: number
+  /** 高程精度（米）；>20m 的点在爬升滤波里直接丢弃 */
+  altAcc?: number
+  /** true = 该点之前有一段空窗/自动暂停（投影时此处断开重画，不连弦） */
+  brk?: boolean
 }
 
 /**
  * 跑步会话的落盘快照（state_json 里以 kind:'run' 区分于课程快照）。
  * points 为轨迹面包屑（写入前抽稀）；早期快照可能缺失，恢复时按空处理。
+ *
+ * 暂停桶逐一对应页面上的四类时间归属（互斥，见 stores/run.ts）：
+ * pausedMs = 总暂停墙钟 = manual + autoPause + gap；每个字段只有一个生产者。
+ * **不写 gaps 明细数组**：明细只活在内存（≤40 条），落盘只存 per-class 计数。
  */
 export interface RunSnapshot {
   kind: 'run'
@@ -240,6 +250,28 @@ export interface RunSnapshot {
   distanceM: number
   /** 轨迹点（崩溃恢复后整条轨迹重画） */
   points?: RunTrackPoint[]
+  /** 总暂停墙钟（毫秒）：手动 + 自动暂停 + >10s 空窗 */
+  pausedMs?: number
+  /** 手动暂停次数 */
+  pauseCount?: number
+  /** 自动暂停状态机段（毫秒）；与 gapMs 互斥（>10s 空窗优先归 gap 桶） */
+  autoPauseMs?: number
+  /** 自动暂停次数 */
+  autoPauseCount?: number
+  /** >10s 空窗段（毫秒） */
+  gapMs?: number
+  /** 空窗 per-class 计数（slow = 几乎没动 / fast = 位移可信但断档 / drop = 机动车级速度） */
+  gapSlowCount?: number
+  gapFastCount?: number
+  gapDropCount?: number
+  /** points 是否已经抽稀过（恢复后直接使用，不再二次抽稀） */
+  decimated?: boolean
+  /** 保存时确认的最终距离（公里）；null = 没距离 */
+  finalKm?: number | null
+  /** 自动暂停开关（随快照保留，恢复后不丢用户的设置） */
+  autoPauseOn?: boolean
+  /** 自动暂停阈值（秒/公里）：缺省 600 = 10'00"/km */
+  autoPausePaceSec?: number
 }
 
 /** 服务端的进行中会话记录 */

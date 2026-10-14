@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { fmtCents } from '@/config/ledger'
 import { useToast } from '@/composables/useToast'
 import { useLedgerStore } from '@/stores/ledger'
@@ -63,10 +64,11 @@ async function clear(): Promise<void> {
           class="num"
           type="text"
           inputmode="decimal"
-          placeholder="每月花费预算"
+          placeholder="如 3000"
           aria-label="输入月度预算"
         />
-        <span class="unit">元 / 月</span>
+        <!-- 货币只在一处说清：左边「¥」+ 右边「/ 月」，placeholder 让位给示例 -->
+        <span class="unit">/ 月</span>
       </label>
 
       <div class="presets">
@@ -83,14 +85,16 @@ async function clear(): Promise<void> {
       </div>
 
       <div class="row between actions">
-        <button
+        <StatusChip
           v-if="store.settings && store.settings.monthlyBudgetCents > 0"
-          type="button"
-          class="clear t-3"
+          as="button"
+          tone="danger"
+          size="md"
+          class="clear"
           @click="clear"
         >
           清除预算
-        </button>
+        </StatusChip>
         <span v-else />
         <button type="button" class="save" :disabled="cents() <= 0" @click="save">保存</button>
       </div>
@@ -163,10 +167,11 @@ async function clear(): Promise<void> {
   margin-top: 4px;
 }
 
+/* 清除预算是破坏性操作：语义色走 StatusChip（danger-soft 底 + danger-strong 字），
+   不再拿 --text-3 让要清预算的人在最低对比档里找按钮 */
 .clear {
-  padding: 10px 16px;
-  font-size: var(--fs-subhead);
-  font-weight: 600;
+  border: 0;
+  cursor: pointer;
 }
 
 .save {
@@ -180,6 +185,6 @@ async function clear(): Promise<void> {
 }
 
 .save:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 </style>

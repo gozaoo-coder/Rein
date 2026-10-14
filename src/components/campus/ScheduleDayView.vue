@@ -3,7 +3,7 @@ import { computed } from 'vue'
 
 import EmptyState from '@/components/common/EmptyState.vue'
 import type { ScheduleEntry } from '@/types'
-import { fmtDateCn, nowMin, todayStr } from '@/utils/date'
+import { nowMin, todayStr } from '@/utils/date'
 import { CalendarOff } from 'lucide-vue-next'
 
 /**
@@ -65,7 +65,11 @@ function place(e: ScheduleEntry): string {
 
 <template>
   <div class="day">
-    <p class="date-line">{{ fmtDateCn(date) }}<span v-if="isToday" class="today-tag">今天</span></p>
+    <!-- 日期只由页头那颗可点的日期按钮承载（同一句日期在上下相邻两处各出现一遍，
+           而它还能点回今天）—— 这里只在「今天」时留一枚胶囊当锚点，非今天整行不渲染 -->
+    <p v-if="isToday" class="date-line">
+      <span class="today-tag">今天</span>
+    </p>
 
     <EmptyState
       v-if="list.length === 0"

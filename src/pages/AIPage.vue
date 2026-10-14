@@ -25,7 +25,10 @@ import {
 } from 'lucide-vue-next'
 
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import GlassSurface from '@/components/common/GlassSurface.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import HistoryDrawer from '@/components/ai/HistoryDrawer.vue'
 import FoodParseSheet from '@/components/ai/FoodParseSheet.vue'
 import ProcessSection from '@/components/ai/ProcessSection.vue'
@@ -157,7 +160,7 @@ function stashParse(m: AiMessage): void {
   if (!m.items?.length) return
   saveFoodDraft({ thumbBase64: m.imageBase64 ?? undefined, items: m.items })
   refreshDrafts()
-  toast.toast('已存入草稿箱，可在「历史 · 饮食草稿箱」里继续处理')
+  toast.toast('已存入草稿箱，可在「历史 · 食物草稿箱」里继续处理')
 }
 
 function fmtDraftTime(iso: string): string {
@@ -307,10 +310,12 @@ const embedModeLabel = computed(() => {
 
 const histActions = computed<MenuItem[]>(() => [
   { label: '文件', value: 'files', icon: Folder },
-  { label: `搜索历史 · ${embedModeLabel.value}`, value: 'search', icon: Search },
+  // 检索模式是对「搜索历史」的注解，用括号跟在后面，不再与动作用「·」并成同权一项
+  { label: `搜索历史（${embedModeLabel.value}）`, value: 'search', icon: Search },
   { label: '知识库', value: 'knowledge', icon: BookOpen },
   {
-    label: drafts.value.length ? `饮食草稿箱 · ${drafts.value.length}` : '饮食草稿箱',
+    // 与草稿箱抽屉标题、存草稿 toast 统一叫「食物草稿箱」；计数带单位「项」
+    label: drafts.value.length ? `食物草稿箱 · ${drafts.value.length} 项` : '食物草稿箱',
     value: 'drafts',
     icon: Archive,
   },
@@ -456,7 +461,7 @@ function looksLikeMarkdown(text: string): boolean {
 
 function fmtVoiceDur(ms: number): string {
   const s = Math.floor(ms / 1000)
-  return `${Math.floor(s / 60)}'${String(s % 60).padStart(2, '0')}"`
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
 function send(): void {
@@ -858,10 +863,12 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
                   <FileText :size="16" />
                   <div class="dc-info">
                     <p class="dc-name">{{ m.doc.name }}</p>
-                    <p class="dc-meta">
-                      {{ m.doc.chars }} 字{{ m.doc.truncated ? '（已截断）' : '' }} · 图片 {{ m.doc.imagesTotal }} 张{{
-                        m.doc.skippedImages > 0 ? `（跳过 ${m.doc.skippedImages} 张不支持/装饰图）` : ''
-                      }}
+                    <p class="dc-meta dc-meta-row">
+                      <span class="dc-facts"><span class="num">{{ m.doc.chars }}</span> 字{{ m.doc.truncated ? '（已截断）' : '' }} · 图片 <span class="num">{{ m.doc.imagesTotal }}</span> 张</span>
+                      <template v-if="m.doc.skippedImages > 0">
+                        <StatusChip tone="warn">跳过 <span class="num">{{ m.doc.skippedImages }}</span> 张图</StatusChip>
+                        <InfoHint title="被跳过的图片" content="文档里的内嵌图只有一部分会发给 AI：不支持的格式、体积过小的图标或装饰图、重复出现的图，以及超出数量上限的图会被跳过。跳过的图不参与推理，正文不受影响。" />
+                      </template>
                     </p>
                   </div>
                 </div>
@@ -886,14 +893,14 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 
               <!-- 语音轮（转写 + 关联纪要，点开语音会话回看/重放） -->
               <button v-else-if="m.kind === 'voice'" class="voice-bub" @click="m.voiceMeta && openMemoById(m.voiceMeta.memoId)">
-                <span class="vb-head"><Mic :size="13" /> 语音{{ m.voiceMeta ? ` ${fmtVoiceDur(m.voiceMeta.durationMs)}` : '' }} · 会议纪要</span>
+                <span class="vb-head"><Mic :size="13" /> 语音<span v-if="m.voiceMeta" class="num">&nbsp;{{ fmtVoiceDur(m.voiceMeta.durationMs) }}</span> · 会议纪要</span>
                 <span class="vb-txt">{{ (m.text ?? '').slice(0, 72) }}{{ (m.text ?? '').length > 72 ? '…' : '' }}</span>
                 <span class="vb-go">查看纪要 ›</span>
               </button>
 
               <!-- 食物解析卡（行内改重量 / 删行，未匹配项不会写入） -->
               <div v-else-if="m.kind === 'food-parse' && m.items" class="parse">
-                <p class="parse-title">识别到 {{ m.items.length }} 项食物</p>
+                <p class="parse-title">识别到 <span class="num">{{ m.items.length }}</span> 项食物</p>
                 <FoodParseEditor v-model="m.items" />
 
                 <template v-if="!m.committed">
@@ -923,7 +930,9 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
                       加入记录
                     </button>
                   </div>
-                  <p v-if="m.items.every((it) => it.foodId == null)" class="t-3 parse-hint">
+                  <!-- 写入按钮点不动时，用户最容易漏读的正是这一行：抬到 --text-2（4.9:1），
+                       不再吃 .t-3 那档三级灰（白底 3.6:1）。错误原因一律留在卡面上 -->
+                  <p v-if="m.items.every((it) => it.foodId == null)" class="parse-hint">
                     全部未匹配到食物库，无法直接写入 —— 可先存草稿，稍后调整。
                   </p>
                 </template>
@@ -1009,10 +1018,7 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
           <FileText :size="18" />
           <div class="dc-info">
             <p class="dc-name">{{ docAtt.file.name }}</p>
-            <p class="dc-meta">
-              {{ docAtt.doc.chars }} 字{{ docAtt.doc.truncated ? '（已截断）' : '' }} · 图片
-              {{ docAtt.doc.images.length }} 张{{ docAtt.doc.skippedImages > 0 ? `（跳过 ${docAtt.doc.skippedImages}）` : '' }}
-            </p>
+            <p class="dc-meta"><span class="num">{{ docAtt.doc.chars }}</span> 字{{ docAtt.doc.truncated ? '（已截断）' : '' }} · 图片 <span class="num">{{ docAtt.doc.images.length }}</span> 张<span v-if="docAtt.doc.skippedImages > 0">（跳过 <span class="num">{{ docAtt.doc.skippedImages }}</span> 张图）</span></p>
           </div>
           <button class="attach-x" aria-label="移除文档" @click="docAtt = null">
             <X :size="11" :stroke-width="3" />
@@ -1032,7 +1038,11 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
             <span v-if="docAtt.selected.has(im.id)" class="doc-check"><Check :size="11" :stroke-width="3" /></span>
           </button>
         </div>
-        <p class="doc-hint">点选要发给 AI 的图片（已默认选前 3 张）；发出后可让 AI 放大查看细节。</p>
+        <!-- 面上只留要做的动作；「默认勾选哪几张、发出去能干什么」收进行尾 InfoHint -->
+        <p class="doc-hint">
+          点选要发给 AI 的图片
+          <InfoHint title="随文档发送的图片" content="发送文档时会默认勾选前 3 张内嵌图，点按可以增删，随下一条消息一起发出。发出后可以让 AI 放大查看细节。" />
+        </p>
       </div>
 
       <!-- 输入栏（dock 栏本体，这一组里**唯一**折射的一块）：底比 Dock 的页签厚一档
@@ -1112,9 +1122,12 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 
     <!-- 食物草稿箱 -->
     <SheetModal :open="draftsOpen" title="食物草稿箱" initial-snap="medium" @close="draftsOpen = false">
-      <div v-if="drafts.length === 0" class="dempty">
-        暂无草稿。拍照识别后点「存草稿箱」，稍后可以回来继续改重量再写入。
-      </div>
+      <EmptyState
+        v-if="drafts.length === 0"
+        :icon="Archive"
+        title="暂无草稿"
+        hint="拍照识别后点「存草稿箱」，稍后可以回来继续改重量再写入。"
+      />
       <ul v-else class="dlist">
         <li v-for="d in drafts" :key="d.id" class="drow">
           <button class="drow-main" @click="editDraft(d)">
@@ -1127,7 +1140,7 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
             <div v-else class="dthumb ph"><Camera :size="16" /></div>
             <div class="dinfo flex-1">
               <p class="dtitle">{{ d.items.map((it) => it.foodName).join('、') }}</p>
-              <p class="dmeta">{{ fmtDraftTime(d.createdAt) }} · {{ d.items.length }} 项</p>
+              <p class="dmeta">{{ fmtDraftTime(d.createdAt) }} · <span class="num">{{ d.items.length }}</span> 项</p>
             </div>
           </button>
           <button class="ddel" aria-label="删除草稿" @click="deleteDraft(d.id)">
@@ -1198,10 +1211,17 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 /* 消息长按菜单：长按窗口内禁用原生文本选择，避免与「长按弹菜单」抢手势。
    只压 :active 这一拍 —— 原先整行 user-select:none 把常规拖选复制也一起禁了，
    而复制本来就是浏览器原生就能做的事（菜单里的「复制」只是同一条路更短一截）。
+   **再限定到 coarse**：鼠标这一路「按下」同时就是拖选的起点，:active 期间禁掉选择
+   会让跨消息拖选整段失效（对照：1512 上按下横拖 300px，选中为空字符串；
+   去掉后同样一拖选中整句）。触屏上「长按 = 开菜单」才是主手势，抑制照旧。
+   桌面鼠标的复制路径是右键（onCtxMenu → AppMenu 的「复制」），不经过这里；
+   已知取舍：Windows 触屏笔记本（主指针 fine）会走右键那条路。
    键盘焦点沿用全局那条 :focus-visible 焦点环：整行可聚焦，焦点一眼能看见。 */
-.msg:active {
-  user-select: none;
-  -webkit-user-select: none;
+@media (pointer: coarse) {
+  .msg:active {
+    user-select: none;
+    -webkit-user-select: none;
+  }
 }
 
 /* 引用块（气泡内）：强调改走整面 accent soft tint，不再靠左边框（side-tab 收编） */
@@ -1320,6 +1340,15 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
   color: var(--text-3);
 }
 
+/* 消息里的文档卡 meta 行：字数/图片数的事实、结论胶囊、说明入口排成一行
+   （窄气泡里放不下就整行换行，不像纯文字那样从中间截断） */
+.dc-meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
 /* AI 挂出的文件卡片列：跟着消息列左对齐（.msg-col 的 align-items 已经管了），
    多张之间比消息间距再紧一档 —— 它们是一组「产物」，不是几条独立消息。
    宽度撑到消息列满宽：卡片自己按内容收缩，长路径由卡片内的省略号收住。 */
@@ -1397,6 +1426,19 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
   /* 长按期间的按压反馈。只换底色不缩放：消息行是通栏容器，
      transform 会把正文宽度一起改掉 */
   transition: background-color var(--dur-fast) var(--ease-standard);
+}
+
+/* 悬停反馈：整行铺一层浅底（行宽 = 阅读栏，鼠标落在哪条消息上一眼可见）。
+   底取 --surface-inset（文字色 4% 的半透明井）而不是 --surface-2：这一层压在
+   画布的环境光渐变上，实色灰在渐变偏亮的那半幅会**比底还亮**，反而读成高光；
+   半透明黑在渐变任何一档都稳定深一档，暗色档同一支公式自动翻成提亮。
+   放在 .msg:active 之前：两者同特异性，后写的按下态在点住时接管 ——
+   悬停更浅、按下更深，两档分得开。 */
+@media (hover: hover) {
+  .msg:hover {
+    background-color: var(--surface-inset);
+    border-radius: var(--radius-m);
+  }
 }
 
 .msg:active {
@@ -1517,14 +1559,6 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 }
 
 /* 食物草稿箱 */
-.dempty {
-  padding: 24px 8px;
-  text-align: center;
-  color: var(--text-3);
-  font-size: var(--fs-footnote);
-  line-height: 1.6;
-}
-
 .dlist {
   display: flex;
   flex-direction: column;
@@ -1636,13 +1670,15 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 }
 
 .stash:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
+/* 匹配情况说明：卡面上要读出来的原因，不用 --text-3（见模板注释） */
 .parse-hint {
   margin-top: 8px;
   font-size: var(--fs-caption);
   line-height: 1.5;
+  color: var(--text-2);
 }
 
 .commit {
@@ -1801,6 +1837,9 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 }
 
 .doc-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-caption);
   color: var(--text-3);
 }
@@ -1835,8 +1874,7 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 
 .voice-bub .vb-go {
   font-size: var(--fs-caption);
-  font-weight: 700;
-  opacity: 0.8;
+  font-weight: 800;
 }
 
 /* @纪要引用 chips */
@@ -1997,7 +2035,7 @@ function onMsgKey(e: KeyboardEvent, m: AiMessage): void {
 }
 
 .send:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 /* 引用条 / 纪要 chips / 附图 chips 的入场：可打断的 CSS transition，不用 @keyframes ——

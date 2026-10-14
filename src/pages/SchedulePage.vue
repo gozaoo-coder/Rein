@@ -349,7 +349,7 @@ watch([view, anchor], reload)
 
 .links .pic.grab {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--accent-soft);
 }
 
 .links .pic.prog {

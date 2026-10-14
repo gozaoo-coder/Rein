@@ -63,8 +63,9 @@ function onKey(e: KeyboardEvent, date: string): void {
 <template>
   <div class="week" data-rubber-self>
     <p class="wsum num">
-      本周 <b>{{ weekDone }}</b><span class="dim">/{{ weekTotal }}</span>
-      <span class="pct" :class="{ full: weekTotal > 0 && weekDone >= weekTotal }">· 完成 {{ weekPct }}%</span>
+      完成 <b :class="{ full: weekTotal > 0 && weekDone >= weekTotal }">{{ weekPct }}%</b><span
+        class="dim"
+      >（本周 {{ weekDone }}/{{ weekTotal }}）</span>
     </p>
     <div class="strip">
       <div
@@ -94,7 +95,7 @@ function onKey(e: KeyboardEvent, date: string): void {
 </template>
 
 <style scoped>
-/* 本周合计：完成度卡的小结行，数字加重、百分位随时可读 */
+/* 本周合计：完成度卡的小结行 —— 完成率作主读数，分数「3/7」降为括号里的次要项 */
 .wsum {
   margin: 0;
   font-size: var(--fs-caption);
@@ -110,14 +111,10 @@ function onKey(e: KeyboardEvent, date: string): void {
   color: var(--text-3);
 }
 
-.wsum .pct {
-  margin-left: 2px;
-  color: var(--text-3);
-}
-
-.wsum .pct.full {
+/* 完成率是这张卡要说的结论：百分号为主读数，3/7 只作括号里的次要项
+   （同一完成度不写两遍同权重，层级之间不用同一个分隔符） */
+.wsum b.full {
   color: var(--ok-strong);
-  font-weight: 700;
 }
 
 /* 七列一排：flex 均分（窄屏一列也有 ~40px，放得下「周一」「0/2」） */

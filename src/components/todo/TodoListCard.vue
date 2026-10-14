@@ -42,6 +42,14 @@ const todos = computed(() =>
 
 const overLimit = computed(() => props.inlineLimit != null && todos.value.length > props.inlineLimit)
 
+/* 空态指路随视图模式分叉：专注页（listOnly）隐藏了时间线入口，时间线改由
+   下一张「今日日程」卡承载 —— 文字指的名字必须与屏上卡片标题逐字一致 */
+const emptyHint = computed(() =>
+  props.listOnly
+    ? '点上方「添加待办」开始，带时间的会出现在下方「今日日程」里'
+    : '点上方「添加待办」开始，带时间的会出现在时间线里',
+)
+
 const visibleTodos = computed(() =>
   props.inlineLimit != null ? todos.value.slice(0, props.inlineLimit) : todos.value,
 )
@@ -84,7 +92,7 @@ onMounted(() => {
       v-else
       :icon="ListTodo"
       title="还没有待办"
-      hint="点上方「添加待办」开始，带时间的会出现在时间线里"
+      :hint="emptyHint"
     />
 
     <!-- 超出内联额度的部分收进抽屉 -->

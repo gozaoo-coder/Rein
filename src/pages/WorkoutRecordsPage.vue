@@ -169,6 +169,8 @@ const bars = computed(() => {
 interface Group {
   key: string
   label: string
+  /** 组内次数：年视图按月分组时随组头给出（与月份拆成两层，不用「·」串成一行） */
+  count?: number
   items: Workout[]
 }
 
@@ -197,7 +199,8 @@ const groups = computed<Group[]>(() => {
   }
   return [...byMonth.entries()].map(([mk, items]) => ({
     key: mk,
-    label: `${Number(mk.slice(5, 7))}月 · ${items.length} 次`,
+    label: `${Number(mk.slice(5, 7))}月`,
+    count: items.length,
     items,
   }))
 })
@@ -237,7 +240,8 @@ async function confirmDelete(value: string): Promise<void> {
 
 <template>
   <div class="page">
-    <PageHeader title="全部运动记录" subtitle="按日 / 周 / 年回顾你的每一次训练" back />
+    <!-- 页头副标题不写「按日 / 周 / 年」—— 那正是紧随其下的分段控件的三个选项 -->
+    <PageHeader title="全部运动记录" back />
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
@@ -268,9 +272,9 @@ async function confirmDelete(value: string): Promise<void> {
       </section>
 
       <!-- 记录列表：日视图单列；周视图按日分组；年视图按月分组
-           （桌面按组摊成两栏，见样式里的桌面段） -->
+           （桌面按组摊成两栏，见样式里的桌面段）。
+           卡头不另起标题 —— 它紧跟概览卡，与页标题说的是一回事 -->
       <section class="card records-card">
-        <header class="head"><h2>运动记录</h2></header>
         <EmptyState
           v-if="periodWorkouts.length === 0 && !ex.loading"
           :icon="Dumbbell"
@@ -279,7 +283,10 @@ async function confirmDelete(value: string): Promise<void> {
         />
         <template v-else>
           <div v-for="g in groups" :key="g.key" class="group">
-            <h3 v-if="g.label" class="grouplabel">{{ g.label }}</h3>
+            <h3 v-if="g.label" class="grouplabel">
+              {{ g.label }}
+              <span v-if="g.count" class="num gcount">{{ g.count }} 次</span>
+            </h3>
             <ul>
               <WorkoutRow
                 v-for="w in g.items"
@@ -354,7 +361,7 @@ async function confirmDelete(value: string): Promise<void> {
 }
 
 .navbtn:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 
 .nav-label {
@@ -390,21 +397,26 @@ async function confirmDelete(value: string): Promise<void> {
   color: var(--text-1);
 }
 
-.head h2 {
-  font-size: var(--fs-title3);
-  font-weight: 700;
-  letter-spacing: -0.3px;
-}
-
 .group + .group {
   margin-top: 18px;
 }
 
+/* 组头：月份/日期是标识（--text-2），次数拆出来降成尾注，不再「·」串成一行 */
 .grouplabel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   margin-bottom: 2px;
   font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.4px;
+  color: var(--text-2);
+}
+
+/* 组内次数：尾注档，不与组头标识抢层级 */
+.gcount {
+  font-weight: 500;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 

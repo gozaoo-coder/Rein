@@ -4,6 +4,7 @@ import { Activity, TrendingDown, TrendingUp } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import {
   formatMetricDay,
   formatMetricValue,
@@ -106,6 +107,10 @@ const rawRows = computed<RawRow[]>(() => {
     initial-snap="large"
     @close="emit('close')"
   >
+    <!-- 同步口径：抽屉内走 #action 槽，完整解释收进 InfoHint，脚注只留一句结论 -->
+    <template #action>
+      <InfoHint title="体征数据来源" content="这里的每日体征只来自 Health Connect：每次同步都会整体重来，历史读数按当次同步结果重建。手填的档案数据不走这条链路，因此不会被同步覆盖。" />
+    </template>
     <EmptyState
       v-if="!stats"
       :icon="Activity"
@@ -127,9 +132,9 @@ const rawRows = computed<RawRow[]>(() => {
 
       <!-- 趋势 -->
       <figure v-if="trendGeom" class="trend">
+        <!-- 计数留在 figcaption，起止日期由图下轴标承载（同一段时间不写两遍） -->
         <figcaption class="num">
           <span>近 {{ stats.count }} 天有数据</span>
-          <span>{{ trendGeom.from }} — {{ trendGeom.to }}</span>
         </figcaption>
         <svg :viewBox="`0 0 ${CHART_W} ${CHART_H}`" preserveAspectRatio="none" aria-hidden="true">
           <defs>
@@ -174,7 +179,8 @@ const rawRows = computed<RawRow[]>(() => {
           </span>
         </li>
       </ul>
-      <p class="fnote">以 Health Connect 为准，每次同步整表刷新</p>
+      <!-- 「整表刷新」是开发者术语：说结果的普通话收进标题行 InfoHint，脚注只留结论 -->
+      <p class="fnote">每日体征来自 Health Connect；你手填的资料不受影响</p>
     </div>
   </SheetModal>
 </template>

@@ -422,9 +422,9 @@ onBeforeUnmount(() => {
               <span class="num vl-time">{{ fmtMs(voice.elapsedMs) }}</span>
             </span>
             <span v-else class="vs-title">
-              录音纪要
-              <small v-if="voice.view === 'memo' && voice.currentMemo">{{ voice.currentMemo.title }}</small>
-              <small v-else-if="voice.status === 'processing'">与 AI 对话同会话{{ voice.segmentCount > 0 ? ` · 已结算 ${voice.segmentCount} 段` : '' }}</small>
+              <span class="vs-tname">录音纪要</span>
+              <!-- 纪要标题只在下面那张纪要头卡上出现一次：顶栏再印一遍会让人以为是两条纪要 -->
+              <small v-if="voice.status === 'processing'">与 AI 对话同会话{{ voice.segmentCount > 0 ? ` · 已结算 ${voice.segmentCount} 段` : '' }}</small>
               <small v-else>逐句实时留档 · 中断可恢复</small>
             </span>
 
@@ -561,10 +561,11 @@ onBeforeUnmount(() => {
                   <span class="vm-ic"><FileText :size="17" /></span>
                   <span class="vm-t">
                     <b>{{ memo.title }}</b>
+                    <!-- 时长是主角（title3 + .num），时刻/字数/句数降为元数据行，与主数值分开 -->
+                    <em class="vm-dur num">{{ fmtMs(memo.durationMs) }}</em>
                     <em>
                       {{ new Date(memo.createdAt).toTimeString().slice(0, 5) }} ·
-                      {{ fmtMs(memo.durationMs) }} · {{ memo.words }} 字 ·
-                      {{ memo.sentences.length }} 句
+                      {{ memo.words }} 字 · {{ memo.sentences.length }} 句
                     </em>
                   </span>
                 </div>
@@ -590,12 +591,10 @@ onBeforeUnmount(() => {
                   <button :class="{ on: tab === 'tr' }" @click="switchTab('tr')">转文字</button>
                 </div>
 
-                <!-- 会话结构：整场压成一屏，块宽 = 说话时长，纪要是钉在轴上的锚点 -->
+                <!-- 会话结构：整场压成一屏，块宽 = 说话时长，纪要是钉在轴上的锚点。
+                     句数与时长已由上方纪要头卡给出，这里只留标题，不再重印一遍。 -->
                 <section class="ov-sec spine-sec">
-                  <h5>
-                    会话结构
-                    <em class="num">{{ memo.sentences.length }} 句 · {{ fmtMs(memo.durationMs) }}</em>
-                  </h5>
+                  <h5>会话结构</h5>
                   <TimeSpine
                     size="full"
                     mode="structure"
@@ -1146,6 +1145,15 @@ onBeforeUnmount(() => {
   margin-top: 2px;
 }
 
+/* 时长是这一屏的主数值：title3 + 等宽，与其余三个元数据分形 */
+.vm-t em.vm-dur {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-2);
+  letter-spacing: -0.3px;
+  margin-top: 3px;
+}
+
 /* 重放条：可交互控件 → 卡片 */
 .player {
   display: flex;
@@ -1295,7 +1303,8 @@ onBeforeUnmount(() => {
 .ov-sec > h5 {
   font-size: var(--fs-caption);
   font-weight: 800;
-  color: var(--text-3);
+  /* 小节标题是必须读出来的结构信息：走 --text-2（4.9:1），不吃 --text-3 的微字档 */
+  color: var(--text-2);
   letter-spacing: 0.5px;
   margin-bottom: 2px;
   display: flex;
@@ -1303,13 +1312,8 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.ov-sec > h5 em {
-  font-style: normal;
-  font-weight: 600;
-  letter-spacing: 0;
-  margin-left: auto;
-}
-
+/* 小结标题只留标题本身：句数与时长已由上方纪要头卡给出，h5 里不再挂 em
+   （原 `.ov-sec > h5 em` 规则随之删除 —— 三个小节标题现在都是纯文本） */
 .sum-li {
   display: flex;
   gap: 8px;
@@ -1371,15 +1375,16 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   margin-left: 4px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-full);
   vertical-align: 2px;
   background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 9.5px;
+  color: var(--accent-strong);
+  /* 11px 是字号阶梯的下限；原先 9.5px 是阶梯外的裸值，点击目标也跟着偏小 */
+  font-size: var(--fs-micro);
   font-weight: 800;
 }
 
@@ -1466,8 +1471,9 @@ onBeforeUnmount(() => {
   color: var(--on-accent);
 }
 
+/* 禁用浓度全站同一档（tokens.css），不再各写各的裸值 */
 .acts-flat .commit:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .acts-flat .ghost {
@@ -1568,8 +1574,9 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
+/* 禁用浓度全站同一档（tokens.css），不再各写各的裸值 */
 .vb:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 /* 按压反馈加在玻璃里的按钮上（玻璃自身不缩放，折射才不失效） */
@@ -1670,8 +1677,9 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+/* 禁用浓度全站同一档（tokens.css），不再各写各的裸值 */
 .kb-send:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .kbd-reply {

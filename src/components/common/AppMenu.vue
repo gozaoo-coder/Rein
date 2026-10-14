@@ -578,7 +578,7 @@ const flatHasIcon = computed(() => flatActions.value.some((f) => !f.header && !!
 }
 
 .item.disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 /* dialog 模式底板（沿用 ActionSheet 的观感） */

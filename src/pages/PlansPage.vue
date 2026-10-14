@@ -55,8 +55,11 @@ function fmtUsed(lastUsedAt: string | null): string {
           <button class="row item" type="button" @click="void router.push(`/sports/plans/${p.id}`)">
             <div class="flex-1">
               <p class="name">{{ p.name }}</p>
-              <p class="meta num">
-                {{ p.subtitle || '自定义课程' }} · {{ p.exercises.length }} 个动作 · 约 {{ estimatePlanMinutes(p) }} 分钟
+              <!-- 时长是这一行的主角；类别兜底与动作数是次要信息，用竖线分开层级 -->
+              <p class="meta">
+                <b class="mins num">约 {{ estimatePlanMinutes(p) }} 分钟</b>
+                <span class="vsep" aria-hidden="true">｜</span>
+                <span class="msub">{{ p.subtitle || '自定义课程' }} · <span class="num">{{ p.exercises.length }}</span> 个动作</span>
               </p>
             </div>
             <div class="col right">
@@ -107,9 +110,35 @@ function fmtUsed(lastUsedAt: string | null): string {
 }
 
 .meta {
-  margin-top: 2px;
-  font-size: var(--fs-caption);
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 3px;
   color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+
+/* 时长作主角：一屏一个主数值（title3 + 等宽 + 主文字档） */
+.mins {
+  flex: none;
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text-2);
+}
+
+/* 层级分隔符：主值与次要信息之间用竖线，不用「·」 */
+.vsep {
+  flex: none;
+  color: var(--text-3);
+}
+
+.msub {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .right {
@@ -123,19 +152,13 @@ function fmtUsed(lastUsedAt: string | null): string {
   font-weight: 700;
   padding: 3px 9px;
   border-radius: var(--radius-xs);
-  background: rgba(146, 232, 42, 0.16);
-  color: #5ba800;
-}
-
-@media (prefers-color-scheme: dark) {
-  .type {
-    color: var(--c-exercise);
-  }
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
 }
 
 .used {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .chev {

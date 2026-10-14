@@ -1,25 +1,32 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Camera, Dumbbell, Sparkles, Timer, Utensils, Wallet } from 'lucide-vue-next'
+import { Camera, Dumbbell, GripVertical, LayoutGrid, Plus, Sparkles, Timer, Utensils, Wallet } from 'lucide-vue-next'
 
 import AddWorkoutSheet from '@/components/exercise/AddWorkoutSheet.vue'
+import BentoLayoutSheet from '@/components/workbench/BentoLayoutSheet.vue'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import QuickTile from '@/components/common/QuickTile.vue'
 import DietHistorySheet from '@/components/diet/DietHistorySheet.vue'
 import EnergySummary from '@/components/nutrition/EnergySummary.vue'
 import HomeTodoCard from '@/components/todo/HomeTodoCard.vue'
 import PomodoroCard from '@/components/pomodoro/PomodoroCard.vue'
+import { useBentoDrag, useBentoLayout, type BentoItemId } from '@/composables/useBentoLayout'
 import { MEAL_LABELS, MEAL_META, MEAL_ORDER, mealKcal } from '@/config/domain'
 import { categoryOf, fmtCents } from '@/config/ledger'
 import { useDietStore } from '@/stores/diet'
 import { useExerciseStore } from '@/stores/exercise'
-import { useFeaturesStore } from '@/stores/features'
 import { useLedgerStore } from '@/stores/ledger'
 import { useNutritionStore } from '@/stores/nutrition'
 import { todayStr } from '@/utils/date'
 
-/** 桌面主页 · 便当总览：能量三环磁贴 + 待办 + 番茄/AI + 快捷入口 + 饮食/记账/运动概览。 */
+/**
+ * 桌面主页 · 便当总览：能量三环磁贴 + 待办 + 番茄/AI + 快捷入口 + 饮食/记账/运动概览。
+ *
+ * 布局不再是写死的 12 栏命名区域，而是「稳定 id 的独立项 + 一份可持久化的顺序/尺寸」
+ * （顺序、尺寸、拖动、落盘、键盘替代路径都在 composables/useBentoLayout）。
+ * 这里只负责：把每张卡的内容画进自己的项里、把抓手柄挂上、把容器断点写对。
+ */
 const today = todayStr()
 const router = useRouter()
 
@@ -27,14 +34,45 @@ const exercise = useExerciseStore()
 const ledger = useLedgerStore()
 const diet = useDietStore()
 const nutrition = useNutritionStore()
-const features = useFeaturesStore()
 
-/** 记运动入口与「本周运动」概览都属运动插件：模块关掉时两块一起消失，布局改由 CSS 收口 */
-const sportsOn = computed(() => features.isEnabled('sports'))
+/* 记运动入口与「本周运动」概览都属运动插件：模块关掉时两块一起从排布里消失
+   （由 useBentoLayout 决定哪些项可用，模板只渲染 cells）。 */
 
 const quickOpen = ref(false)
 const workoutOpen = ref(false)
 const historyOpen = ref(false)
+const layoutOpen = ref(false)
+
+/* ---------- 布局：顺序 / 尺寸 / 拖动 ---------- */
+const { cells, move, snapshot, restore } = useBentoLayout()
+const bentoEl = ref<HTMLElement | null>(null)
+const { dragId, settleId, onHandleDown } = useBentoDrag({
+  listEl: bentoEl,
+  orderIds: () => cells.value.map((c) => c.id),
+  move,
+  snapshot,
+  restore,
+})
+
+/**
+ * 项上的旧类名（t-hero / t-todo / t-qa / t-wk …）：形状、颜色、以及
+ * 「运动关掉后 .t-wk 整块消失」这类既有契约都挂在它们身上，改名等于把外围全改一遍。
+ * 注意 t-qa 现在贴在**每一项**快捷磁贴上（从前是一个 4 列的容器），
+ * 选择器 `.t-qa button` 的语义不变。
+ */
+const ITEM_CLASS: Record<BentoItemId, string> = {
+  hero: 't-hero',
+  todo: 't-todo',
+  pomodoro: 't-pomodoro',
+  ai: 't-ai',
+  'qa-food': 't-qa',
+  'qa-workout': 't-qa',
+  'qa-focus': 't-qa',
+  'qa-ai': 't-qa',
+  led: 't-led',
+  wk: 't-wk',
+  diet: 't-diet',
+}
 
 onMounted(() => {
   void exercise.loadWeek(today)
@@ -44,7 +82,8 @@ onMounted(() => {
 })
 
 const topCats = computed(() => ledger.expenseByCategory.slice(0, 2))
-const todayWorkoutCount = computed(() => exercise.weekWorkouts.filter((w) => w.date === today).length)
+/** 本周已练次数：与同卡「分钟」同为本周口径（从前次数取当日、分钟取本周，读成「本周一次练了 320 分钟」） */
+const weekWorkoutCount = computed(() => exercise.weekWorkouts.length)
 const budgetPct = computed(() => {
   const budget = ledger.settings?.monthlyBudgetCents ?? 0
   return budget <= 0 ? 0 : Math.min(100, Math.round((ledger.monthExpenseCents / budget) * 100))
@@ -67,204 +106,409 @@ const mealChips = computed(() =>
 </script>
 
 <template>
-  <div class="bento" :class="{ 'no-sports': !sportsOn }">
-    <!-- 能量与营养 -->
-    <section class="t-hero"><EnergySummary link-to="/nutrition" /></section>
+  <div class="bento-wrap">
+    <!-- 键盘 / 读屏用户的入口：抓手柄够不着时（触屏、纯键盘）从这里改顺序与尺寸 -->
+    <div class="b-head">
+      <button class="b-layout pressable" type="button" aria-label="调整便当布局" @click="layoutOpen = true">
+        <LayoutGrid :size="15" :stroke-width="2.2" />
+        布局
+      </button>
+    </div>
 
-    <!-- 待办 -->
-    <section class="t-todo"><HomeTodoCard :date="today" /></section>
-
-    <!-- 右侧堆叠：番茄钟 + AI 入口 -->
-    <section class="t-side">
-      <PomodoroCard />
-      <section class="card t-ai">
-        <div class="row" style="gap: 10px; color: var(--cat-study)">
-          <i class="qic" style="background: color-mix(in srgb, var(--cat-study) 14%, transparent); color: var(--cat-study)"><Sparkles :size="19" /></i>
-          <div class="col">
-            <b style="font-size: var(--fs-headline)">AI 助手</b>
-            <span class="t-3" style="font-size: var(--fs-caption); font-weight: 600">提问 · 拍照记饮食 · 生成周计划</span>
-          </div>
-        </div>
-        <button class="ask pressable" @click="router.push({ name: 'ai' })">
-          问点什么…<span class="kbd" style="margin-left: auto; flex: none">A</span>
+    <div ref="bentoEl" class="bento" :class="{ 'is-dragging': dragId !== null }">
+      <div
+        v-for="c in cells"
+        :key="c.id"
+        class="b-item"
+        :class="[ITEM_CLASS[c.id], { 'is-drag': dragId === c.id, 'is-settle': settleId === c.id }]"
+        :data-bento-id="c.id"
+        :data-span="c.span"
+        :data-rows="c.rows"
+      >
+        <!-- 抓手柄：右下角……右上角那枚圆钮，hover / 键盘聚焦时显形。
+             点按（没拖动）= 打开布局面板，键盘 Enter 同一条路 —— 拖不动的用户不必无路可走。 -->
+        <button
+          class="b-grab"
+          type="button"
+          :aria-label="`调整「${c.label}」的位置与尺寸`"
+          title="拖动换位（点按打开布局面板）"
+          @pointerdown="onHandleDown($event, c.id)"
+          @click="layoutOpen = true"
+        >
+          <GripVertical :size="13" :stroke-width="2.2" />
         </button>
-      </section>
-    </section>
 
-    <!-- 快捷入口 -->
-    <section class="t-qa">
-      <QuickTile label="记饮食" icon-bg="color-mix(in srgb, var(--c-intake) 12%, transparent)" icon-color="var(--c-intake)" @click="quickOpen = true">
-        <Camera :size="20" />
-      </QuickTile>
-      <QuickTile v-if="sportsOn" label="记运动" icon-bg="var(--c-exercise-soft)" icon-color="var(--c-exercise-deep)" @click="workoutOpen = true">
-        <Dumbbell :size="20" />
-      </QuickTile>
-      <QuickTile label="专注" icon-bg="color-mix(in srgb, var(--cat-work) 12%, transparent)" icon-color="var(--cat-work)" @click="router.push({ name: 'focus' })">
-        <Timer :size="20" />
-      </QuickTile>
-      <QuickTile label="AI 助手" icon-bg="color-mix(in srgb, var(--cat-study) 14%, transparent)" icon-color="var(--cat-study)" @click="router.push({ name: 'ai' })">
-        <Sparkles :size="20" />
-      </QuickTile>
-    </section>
+        <!-- 能量与营养 -->
+        <EnergySummary v-if="c.id === 'hero'" class="b-surf" link-to="/nutrition" />
 
-    <!-- 记账概览 -->
-    <section class="t-led">
-      <div
-        class="pressable inner"
-        role="button"
-        tabindex="0"
-        aria-label="打开记账"
-        @click="router.push({ name: 'ledger' })"
-        @keydown.enter.prevent="router.push({ name: 'ledger' })"
-        @keydown.space.prevent="router.push({ name: 'ledger' })"
-      >
-        <i class="qic"><Wallet :size="21" /></i>
-        <div class="col" style="gap: 2px; min-width: 0">
-          <b>记账</b>
-          <!-- 支出与预算各占一行（各自 nowrap）：挤在一行时「预算」会被右栏类目拦腰折断 -->
-          <span class="num t-2" style="white-space: nowrap">本月支出 ¥{{ fmtCents(ledger.monthExpenseCents) }}</span>
-          <span class="num t-2" style="white-space: nowrap">预算已用 {{ budgetPct }}%</span>
-          <div class="mtrack" style="margin-top: 8px; max-width: 300px">
-            <i :style="{ width: budgetPct + '%', background: 'var(--accent)' }" />
+        <!-- 待办 -->
+        <HomeTodoCard v-else-if="c.id === 'todo'" class="b-surf" :date="today" :limit="6" />
+
+        <!-- 番茄钟 -->
+        <PomodoroCard v-else-if="c.id === 'pomodoro'" class="b-surf" />
+
+        <!-- AI 入口 -->
+        <section v-else-if="c.id === 'ai'" class="card b-surf b-ai">
+          <div class="row" style="gap: 10px; color: var(--cat-study)">
+            <i class="qic" style="background: color-mix(in srgb, var(--cat-study) 14%, transparent); color: var(--cat-study)"><Sparkles :size="19" /></i>
+            <div class="col">
+              <b style="font-size: var(--fs-headline)">AI 助手</b>
+              <span class="t-3" style="font-size: var(--fs-caption); font-weight: 600">提问 · 拍照记饮食 · 生成周计划</span>
+            </div>
           </div>
-        </div>
-        <div class="col" style="margin-left: auto; align-items: flex-end; gap: 4px; flex: none">
-          <span
-            v-for="c in topCats"
-            :key="c[0]"
-            class="num"
-            style="font-size: var(--fs-caption); color: var(--text-3)"
+          <button class="ask pressable" @click="router.push({ name: 'ai' })">
+            问点什么…
+          </button>
+        </section>
+
+        <!-- 快捷入口：每块自己是一项，尺寸/顺序各自可调 -->
+        <QuickTile
+          v-else-if="c.id === 'qa-food'"
+          class="b-surf"
+          label="记饮食"
+          icon-bg="color-mix(in srgb, var(--c-intake) 12%, transparent)"
+          icon-color="var(--c-intake)"
+          @click="quickOpen = true"
+        >
+          <Camera :size="20" />
+        </QuickTile>
+        <QuickTile
+          v-else-if="c.id === 'qa-workout'"
+          class="b-surf"
+          label="记运动"
+          icon-bg="var(--c-exercise-soft)"
+          icon-color="var(--c-exercise-deep)"
+          @click="workoutOpen = true"
+        >
+          <Dumbbell :size="20" />
+        </QuickTile>
+        <QuickTile
+          v-else-if="c.id === 'qa-focus'"
+          class="b-surf"
+          label="专注"
+          icon-bg="color-mix(in srgb, var(--cat-work) 12%, transparent)"
+          icon-color="var(--cat-work)"
+          @click="router.push({ name: 'focus' })"
+        >
+          <Timer :size="20" />
+        </QuickTile>
+        <QuickTile
+          v-else-if="c.id === 'qa-ai'"
+          class="b-surf"
+          label="问 AI"
+          icon-bg="color-mix(in srgb, var(--cat-study) 14%, transparent)"
+          icon-color="var(--cat-study)"
+          @click="router.push({ name: 'ai' })"
+        >
+          <Sparkles :size="20" />
+        </QuickTile>
+
+        <!-- 记账概览 -->
+        <section v-else-if="c.id === 'led'" class="b-surf b-bar">
+          <div
+            class="pressable inner"
+            role="button"
+            tabindex="0"
+            aria-label="打开记账"
+            @click="router.push({ name: 'ledger' })"
+            @keydown.enter.prevent="router.push({ name: 'ledger' })"
+            @keydown.space.prevent="router.push({ name: 'ledger' })"
           >
-            <i class="cat-dot" :style="{ background: 'var(' + (categoryOf(c[0])?.colorVar ?? '--cat-general') + ')' }" />
-            {{ categoryOf(c[0])?.label ?? c[0] }} ¥{{ fmtCents(c[1]) }}
-          </span>
-        </div>
-      </div>
-    </section>
-
-    <!-- 运动概览 -->
-    <section v-if="sportsOn" class="t-wk">
-      <div
-        class="pressable inner"
-        role="button"
-        tabindex="0"
-        aria-label="打开运动"
-        @click="router.push({ name: 'sports' })"
-        @keydown.enter.prevent="router.push({ name: 'sports' })"
-        @keydown.space.prevent="router.push({ name: 'sports' })"
-      >
-        <i class="qic" style="background: var(--c-exercise-soft); color: var(--c-exercise-deep)"><Dumbbell :size="21" /></i>
-        <div class="col" style="gap: 2px; min-width: 0">
-          <b class="nowrap">本周运动</b>
-          <span class="t-2 nowrap">已练 {{ todayWorkoutCount }} 次 · {{ exercise.weekMinutes }} 分钟</span>
-        </div>
-        <button class="go pressable" style="margin-left: auto; flex: none" @click.stop="workoutOpen = true">记运动</button>
-      </div>
-    </section>
-
-    <!-- 今日饮食：点条开历史，右侧快捷记一笔 -->
-    <section class="t-diet">
-      <div
-        class="pressable inner"
-        role="button"
-        tabindex="0"
-        aria-label="查看饮食历史"
-        @click="historyOpen = true"
-        @keydown.enter.prevent="historyOpen = true"
-        @keydown.space.prevent="historyOpen = true"
-      >
-        <i class="qic"><Utensils :size="21" /></i>
-        <div class="col" style="gap: 6px; min-width: 0">
-          <b>今日饮食</b>
-          <span class="num t-2">
-            已记 {{ diet.meals.length }} 笔 · {{ todayIntake }}{{ kcalTarget ? ` / ${kcalTarget}` : '' }} kcal
-          </span>
-          <div class="chips">
-            <span v-for="c in mealChips" :key="c.type" class="chip" :class="{ on: c.on }">
-              <i class="cdot" :style="{ background: c.on ? MEAL_META[c.type].colorVar : 'var(--line-strong)' }" />
-              {{ c.label }}<template v-if="c.on"> {{ c.kcal }}</template>
-            </span>
+            <i class="qic"><Wallet :size="21" /></i>
+            <div class="col" style="gap: 2px; min-width: 0">
+              <b>记账</b>
+              <!-- 支出与预算各占一行（各自 nowrap）：挤在一行时「预算」会被右栏类目拦腰折断 -->
+              <span class="num t-2" style="white-space: nowrap">本月支出 ¥{{ fmtCents(ledger.monthExpenseCents) }}</span>
+              <span class="num t-2" style="white-space: nowrap">预算已用 {{ budgetPct }}%</span>
+              <div class="mtrack" style="margin-top: 8px; max-width: 300px">
+                <i :style="{ width: budgetPct + '%', background: 'var(--accent)' }" />
+              </div>
+            </div>
+            <div class="col" style="margin-left: auto; align-items: flex-end; gap: 4px; flex: none">
+              <span
+                v-for="cc in topCats"
+                :key="cc[0]"
+                class="num"
+                style="font-size: var(--fs-caption); color: var(--text-3)"
+              >
+                <i class="cat-dot" :style="{ background: 'var(' + (categoryOf(cc[0])?.colorVar ?? '--cat-general') + ')' }" />
+                {{ categoryOf(cc[0])?.label ?? cc[0] }} ¥{{ fmtCents(cc[1]) }}
+              </span>
+            </div>
           </div>
-        </div>
-        <div class="acts">
-          <button class="ghost pressable" @click.stop="historyOpen = true">历史</button>
-          <button class="go pressable" @click.stop="quickOpen = true">记一笔</button>
-        </div>
+        </section>
+
+        <!-- 运动概览 -->
+        <section v-else-if="c.id === 'wk'" class="b-surf b-bar">
+          <div
+            class="pressable inner"
+            role="button"
+            tabindex="0"
+            aria-label="打开运动"
+            @click="router.push({ name: 'sports' })"
+            @keydown.enter.prevent="router.push({ name: 'sports' })"
+            @keydown.space.prevent="router.push({ name: 'sports' })"
+          >
+            <i class="qic" style="background: var(--c-exercise-soft); color: var(--c-exercise-deep)"><Dumbbell :size="21" /></i>
+            <div class="col" style="gap: 2px; min-width: 0">
+              <b class="nowrap">本周运动</b>
+              <span class="t-2 nowrap">已练 <span class="num">{{ weekWorkoutCount }}</span> 次 · <span class="num">{{ exercise.weekMinutes }}</span> 分钟</span>
+            </div>
+            <!-- 「记运动」的可见文字只在快捷磁贴上出现一次：卡内这颗降为图标钮，
+                 aria-label 补回语义（与磁贴同一个 AddWorkoutSheet） -->
+            <button
+              class="go pressable icon"
+              style="margin-left: auto; flex: none"
+              aria-label="记运动"
+              title="记运动"
+              @click.stop="workoutOpen = true"
+            >
+              <Plus :size="16" />
+            </button>
+          </div>
+        </section>
+
+        <!-- 今日饮食：点条开历史，右侧快捷记一笔 -->
+        <section v-else-if="c.id === 'diet'" class="b-surf b-bar">
+          <div
+            class="pressable inner"
+            role="button"
+            tabindex="0"
+            aria-label="查看饮食历史"
+            @click="historyOpen = true"
+            @keydown.enter.prevent="historyOpen = true"
+            @keydown.space.prevent="historyOpen = true"
+          >
+            <i class="qic"><Utensils :size="21" /></i>
+            <div class="col" style="gap: 6px; min-width: 0">
+              <b>今日饮食</b>
+              <span class="num t-2">
+                已记 {{ diet.meals.length }} 笔 · {{ todayIntake }}{{ kcalTarget ? ` / ${kcalTarget}` : '' }} kcal
+              </span>
+              <div class="chips">
+                <span v-for="ch in mealChips" :key="ch.type" class="chip" :class="{ on: ch.on }">
+                  <i class="cdot" :style="{ background: ch.on ? MEAL_META[ch.type].colorVar : 'var(--line-strong)' }" />
+                  {{ ch.label }}<template v-if="ch.on"> {{ ch.kcal }}</template>
+                </span>
+              </div>
+            </div>
+            <div class="acts">
+              <button class="ghost pressable" @click.stop="historyOpen = true">历史</button>
+              <button class="go pressable" @click.stop="quickOpen = true">记一笔</button>
+            </div>
+          </div>
+        </section>
       </div>
-    </section>
+    </div>
 
     <!-- 弹层 -->
     <SmartAddSheet :open="quickOpen" mode="food" :date="today" @close="quickOpen = false" />
     <AddWorkoutSheet :open="workoutOpen" @close="workoutOpen = false" />
     <DietHistorySheet :open="historyOpen" @close="historyOpen = false" />
+    <BentoLayoutSheet :open="layoutOpen" @close="layoutOpen = false" />
   </div>
 </template>
 
 <style scoped>
-.bento {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  grid-template-areas:
-    'hero hero hero hero todo todo todo todo side side side side'
-    'hero hero hero hero todo todo todo todo side side side side'
-    'qa qa qa qa led led led led wk wk wk wk'
-    'diet diet diet diet diet diet diet diet diet diet diet diet';
-  gap: 14px;
-  align-items: stretch;
+.bento-wrap {
+  min-width: 0;
 }
 
-.t-hero { grid-area: hero; }
-/* 行高由最高的那一列（side：番茄钟+AI）决定：卡面必须填满格子，否则能量/待办卡
-   下面漏出一块灰底画布，整行读成「没画完」。 */
-.t-hero > .card {
-  height: 100%;
+/* 布局入口：便当的右上角。桌面专属组件，所以不占手机版的版面 */
+.b-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
 }
-.t-todo { grid-area: todo; min-width: 0; }
-.t-todo > .card {
-  height: 100%;
+
+.b-layout {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--text-2);
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+}
+
+.b-layout:active {
+  opacity: 0.7;
+}
+
+/* 12 栏 + 150px 行高基准：尺寸档（3/4/6/12 列、1/2 行）都落在这一套单位上。
+   dense 回填是**缺省排布的一部分**——右上角 4 列里番茄钟在上、AI 在下，
+   就是靠它把「大砖」旁边空出来的那半格还给下一项（否则 ai 会被甩到第三行，行中留洞）。
+
+   container-type: inline-size 是这一轮的关键：主人区宽度**不等于**视口宽度
+   （导航轨 64 + 信息栏 298 + 页面留白 68，900 宽时只剩 768）。按视口写断点，
+   这一档永远踩不到；按容器写，900–1512 之间每一档都在自己该在的形态上。 */
+.bento {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: minmax(150px, auto);
+  grid-auto-flow: row dense;
+  gap: 14px;
+  align-items: stretch;
+  container-type: inline-size;
+  min-width: 0;
+}
+
+/* ---------- 项（网格格子的占位盒）+ 卡面（真正被拖走的那个） ---------- */
+.b-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--radius-xl);
+}
+
+/* 卡面填满格子：否则矮一截的卡下面会漏出一块灰底画布，整行读成「没画完」 */
+.b-item > .b-surf {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 尺寸档：列宽由 data-span 决定（而不是行内样式）——容器查询要能覆盖它 */
+.b-item[data-span='3'] { grid-column: span 3; }
+.b-item[data-span='4'] { grid-column: span 4; }
+.b-item[data-span='6'] { grid-column: span 6; }
+.b-item[data-span='12'] { grid-column: 1 / -1; }
+.b-item[data-rows='2'] { grid-row: span 2; }
+
+/* 容器窄于 980（约 = 主人区 768 那一档起）：三栏会把卡片挤成 214px，
+   改成「半栏 / 通栏」两栏——3、4 列宽的卡各占一半，6、12 列的通栏。
+   这一档的上下界都由**容器**自己说了算，页级列的上限（P3）改多宽都不用跟着动。 */
+@container (max-width: 980px) {
+  .b-item[data-span='3'],
+  .b-item[data-span='4'] {
+    grid-column: span 6;
+  }
+}
+
+/* ---------- 抓手柄 ---------- */
+/* 位置贴在格子右上角、**横向完全收在格子里、纵向半个钮探到格外**：
+   · 探出的那半个钮落在栅格间距里，不压卡内容 —— 卡内右上角常有「详情」「记一笔」
+     这类按钮，钮完全压进卡里会挡住它们（横向 8..32px 的位置正压在这些按钮上）；
+   · 横向不许越界：`.bento` 是普通盒子，子元素往右探 1px 就会进它的 scrollWidth
+     （e2e-feature-toggles 有一条「便当没有横向溢出」的断言），往**上**探则不计入。
+   静止时 opacity:0 且 pointer-events:none（不挡点、不进 T2 的小靶统计），
+   hover / 键盘聚焦才显形可点。 */
+.b-grab {
+  position: absolute;
+  top: -9px;
+  right: 8px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 0.5px solid var(--line-strong);
+  box-shadow: var(--shadow-thumb);
+  color: var(--text-2);
+  /* 触屏抓柄自管手势：rubberScroll 判定滚动链时遇到 touch-action:none 会整场让手 */
+  touch-action: none;
+  cursor: grab;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+
+/* 刻意不套 @media (hover: hover)：触屏没有悬停，而这里「按一下先亮出抓手柄、
+   再按住拖动」是可用路径（触屏上 :hover 会在点按后就粘住）。 */
+.b-item:hover > .b-grab,
+.b-item:focus-within > .b-grab {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.b-grab:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 主指针没有悬停的设备（平板/触屏本在触屏模式下）：抓手柄常显。
+   没有 hover 这个动作，藏起来的抓手柄等于不存在 —— 第一次点按还会被卡片自己的
+   按钮吃掉（卡的右上角常是「详情」）。指针设备上它照旧 hover 才显形。 */
+@media (hover: none) {
+  .b-grab {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.b-grab:active {
+  cursor: grabbing;
+}
+
+/* 静态顶一下：抓手柄是 24px 的视觉规格，命中区撑到 44 的惯用法这里**不适用** ——
+   它要贴角、要能拖动，44px 的热区会把卡片右上角整块吃掉。 */
+.b-grab::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
+/* ---------- 拖动进行中 ---------- */
+/* 被拖的是卡面，项自己的盒子留在网格里当占位（虚线框 + 一层薄底）——空洞会跟着
+   手指在网格里走，松手时卡面正好落回它。 */
+.b-item.is-drag {
+  pointer-events: none;
+  outline: 1.5px dashed var(--line-strong);
+  outline-offset: -1.5px;
+  background: color-mix(in srgb, var(--text-1) 4%, transparent);
+  z-index: 4;
+}
+
+.b-item.is-drag > .b-grab {
+  opacity: 0;
+}
+
+.b-item.is-drag > .b-surf {
+  box-shadow: var(--shadow-float-lift);
+}
+
+/* 松手回位：只有这一段走位移补间（拖动中挂着 transition 会拖手） */
+.b-item.is-settle > .b-surf {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+/* ---------- 各卡自己的填满规则 ---------- */
+.t-todo > .b-surf {
   display: flex;
   flex-direction: column;
 }
+
 /* 填满之后把汇总脚注锚到卡底：列表贴上、汇总贴下，中间留白是结构而不是洞 */
-.t-todo > .card :deep(.foot) {
+.t-todo > .b-surf :deep(.foot) {
   margin-top: auto;
   padding-top: 12px;
 }
-.t-side { grid-area: side; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.t-qa { grid-area: qa; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 
-/* 运动模块关闭：抽掉 wk 区、空出的列并入记账卡，快捷入口 4 列收成 3 列（不留空洞）。
-   行数必须与原布局一致（四行，含末行 diet）——少写一行会让未声明区域变成隐式轨道。 */
-.bento.no-sports {
-  grid-template-areas:
-    'hero hero hero hero todo todo todo todo side side side side'
-    'hero hero hero hero todo todo todo todo side side side side'
-    'qa qa qa qa led led led led led led led led'
-    'diet diet diet diet diet diet diet diet diet diet diet diet';
+/* 快捷磁贴：格子是 150px 一档的行高，磁贴自己撑不满就会读成「上下多出两条缝」；
+   撑满 + 内容居中，图标与文字才落在格子正中 */
+.t-qa > .b-surf {
+  height: 100%;
+  justify-content: center;
 }
 
-.bento.no-sports .t-qa {
-  grid-template-columns: repeat(3, 1fr);
-}
-.t-led {
-  grid-area: led;
+.b-ai {
   display: flex;
-  align-items: center;
-  background: var(--surface);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-card);
+  flex-direction: column;
+  gap: 12px;
+  background: linear-gradient(135deg, var(--accent-soft), transparent 60%), var(--surface);
 }
-.t-wk {
-  grid-area: wk;
-  display: flex;
-  align-items: center;
-  background: var(--surface);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-card);
-  padding: 0;
-}
-.t-diet {
-  grid-area: diet;
+
+/* 记账 / 本周运动 / 今日饮食：整条就是一张卡，`.inner` 负责内部那一圈 20px */
+.b-bar {
   display: flex;
   align-items: center;
   background: var(--surface);
@@ -339,14 +583,6 @@ const mealChips = computed(() =>
   justify-content: center;
 }
 
-.t-ai {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  background: linear-gradient(135deg, var(--accent-soft), transparent 60%), var(--surface);
-}
-
 .ask {
   margin-top: auto;
   display: flex;
@@ -397,5 +633,15 @@ const mealChips = computed(() =>
   color: var(--bg);
   font-size: var(--fs-subhead);
   font-weight: 600;
+}
+
+/* 图标档（「记运动」）：与文字档同高，去掉左右内边距、图标居中 */
+.go.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
 }
 </style>

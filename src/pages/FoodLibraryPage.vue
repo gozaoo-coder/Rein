@@ -5,11 +5,13 @@ import { ArrowDownUp, ChevronRight, Pencil, Search, SlidersHorizontal } from 'lu
 import PageHeader from '@/components/layout/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import FoodDetailDrawer from '@/components/diet/FoodDetailDrawer.vue'
 import FoodPickerSheet from '@/components/diet/FoodPickerSheet.vue'
 import FoodFilterSheet, { EMPTY_FOOD_FILTER, countFoodFilter } from '@/components/diet/FoodFilterSheet.vue'
 import { dietService } from '@/services/dietService'
-import type { Food, FoodFilter } from '@/types'
+import type { Food, FoodFilter, FoodUnit } from '@/types'
 
 /**
  * 饮食库：全部食物浏览（搜索 + 分类 + 营养素筛选 + 排序），点行进详情抽屉；右下角「记录」悬浮按钮直接记一笔。
@@ -194,11 +196,28 @@ function fmtG(n: number): string {
   if (!n) return '0'
   return n >= 100 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
 }
+
+/** 份量参考：份名与克数必须取自同一档（默认单位按名称匹配，匹配不到退回第一档）——
+ *  分别取会渲染出「1 碗 ≈ 150 g」这种碗名对不上克数的组合 */
+function unitOf(f: Food): FoodUnit | null {
+  if (!f.units.length) return null
+  return f.units.find((u) => u.name === f.defaultUnit) ?? f.units[0]!
+}
 </script>
 
 <template>
   <div class="page">
-    <PageHeader back title="饮食库" :subtitle="`共 ${all.length} 种食物 · 数值为每 100 克`" />
+    <PageHeader back title="饮食库" :subtitle="`共 ${all.length} 种食物`">
+      <!-- 「数值为每 100 克」是口径不是计数：收进页头帮助入口，副标题只留库量 -->
+      <template #action>
+        <span class="hdr-btn">
+          <InfoHint
+            title="数值口径"
+            content="本页与食物详情里的热量、蛋白、碳水、脂肪都按每 100 克计（/100 g）。列表中的「1 个 ≈ 150 g」是常见份量参考，不是推荐摄入量。"
+          />
+        </span>
+      </template>
+    </PageHeader>
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
@@ -225,7 +244,7 @@ function fmtG(n: number): string {
       </button>
       <button class="chip tool" :class="{ on: filterCount > 0 }" @click="filterOpen = true">
         <SlidersHorizontal :size="13" :stroke-width="2.2" />
-        筛选<template v-if="filterCount"> · {{ filterCount }}</template>
+        筛选<template v-if="filterCount"> · {{ filterCount }} 项条件</template>
       </button>
       <span v-if="filterCount > 0" class="meta num t-3">符合 {{ list.length }} 项</span>
     </div>
@@ -238,7 +257,10 @@ function fmtG(n: number): string {
           <button class="row item" @click="openFood(f)">
             <span class="flex-1">
               <b>{{ f.name }}</b>
-              <small>{{ f.category ?? '其他' }}<template v-if="f.units.length"> · 1{{ f.defaultUnit ?? f.units[0]!.name }}≈{{ f.units[0]!.grams }}g</template></small>
+              <small>
+                <PillChip tone="muted" size="sm">{{ f.category ?? '其他' }}</PillChip>
+                <template v-if="unitOf(f)">份量 1 {{ unitOf(f)!.name }} ≈ {{ unitOf(f)!.grams }} g</template>
+              </small>
             </span>
             <span class="nutr">
               <span class="num kcal">{{ Math.round(f.kcal) }}<em>大卡</em></span>
@@ -255,8 +277,11 @@ function fmtG(n: number): string {
           </button>
         </li>
       </ul>
+      <p v-if="list.length > shown.length" class="count-line t-3">
+        已显示 <span class="num">{{ shown.length }}</span> / <span class="num">{{ list.length }}</span>
+      </p>
       <button v-if="list.length > shown.length" class="more t-2" @click="expanded = true">
-        显示全部 {{ list.length }} 条（当前前 {{ shown.length }} 条，可先搜索/筛选）
+        显示全部 {{ list.length }} 项
       </button>
       <EmptyState v-else-if="ready" :icon="Search" title="没有匹配的食物" hint="换个关键词或筛选条件试试" />
     </section>
@@ -376,6 +401,10 @@ function fmtG(n: number): string {
 }
 
 .item small {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 6px;
   color: var(--text-3);
   font-size: var(--fs-caption);
 }
@@ -397,10 +426,10 @@ function fmtG(n: number): string {
 
 .kcal em {
   font-style: normal;
-  /* 「大卡」单位后缀贴在 15px 的热量数旁，是装饰性微字 */
-  font-size: var(--fs-micro);
+  /* 「大卡」是单位、决定这个数的量级，必须读出来：与热量数同档、浅一色 */
+  font-size: var(--fs-caption);
   font-weight: 400;
-  color: var(--text-3);
+  color: var(--text-2);
   margin-left: 3px;
 }
 
@@ -448,6 +477,13 @@ function fmtG(n: number): string {
   padding: 13px 0 7px;
   font-size: var(--fs-footnote);
   font-weight: 600;
+}
+
+/* 进度单独一行：按钮只留动作，计数不掺进按钮文案（已显示 N / 总数） */
+.count-line {
+  padding-top: 12px;
+  text-align: center;
+  font-size: var(--fs-caption);
 }
 
 /* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------

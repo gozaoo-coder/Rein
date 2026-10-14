@@ -122,11 +122,10 @@ impl SyncStep {
 #[tauri::command]
 pub fn health_sync_status(
     app: tauri::AppHandle,
-    webview: tauri::Webview<tauri::Wry>,
     state: State<AppState>,
 ) -> Result<SyncStatus> {
     if supported() {
-        super::dispatch(&webview, "refresh", None);
+        super::dispatch(&app, "refresh", None);
     }
     let bridge: Option<BridgeState> = read_json(&app, STATE_FILE);
     let conn = state.db.lock();
@@ -164,20 +163,20 @@ pub fn health_sync_status(
 /// 只能在 HC 的界面上授予（这也是「引导用户去授权」这件事在本域必须存在的原因）。
 #[tauri::command]
 pub fn health_sync_authorize(
-    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
     mode: String,
 ) -> Result<()> {
     if !supported() {
         return Err(ReinError::coded("health_unsupported", "桌面端没有 Health Connect"));
     }
-    super::dispatch(&webview, "requestPermissions", Some(mode));
+    super::dispatch(&app, "requestPermissions", Some(mode));
     Ok(())
 }
 
 /// 开关「把本地记录回写进 Health Connect」
 #[tauri::command]
 pub fn health_sync_set_push(
-    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
     state: State<AppState>,
     enabled: bool,
 ) -> Result<()> {
@@ -186,7 +185,7 @@ pub fn health_sync_set_push(
     drop(conn);
     // 打开开关时立刻刷一次状态：前端要马上知道还要不要去申请写权限
     if supported() {
-        super::dispatch(&webview, "refresh", None);
+        super::dispatch(&app, "refresh", None);
     }
     Ok(())
 }
@@ -200,7 +199,6 @@ pub fn health_sync_set_push(
 #[tauri::command]
 pub fn health_sync_start(
     app: tauri::AppHandle,
-    webview: tauri::Webview<tauri::Wry>,
     state: State<AppState>,
     push: bool,
     max_hr: Option<f64>,
@@ -251,7 +249,7 @@ pub fn health_sync_start(
         window_start: window.clone(),
         started: Instant::now(),
     });
-    super::dispatch(&webview, "startRead", Some(window));
+    super::dispatch(&app, "startRead", Some(window));
     Ok(SyncStep::phase("pending"))
 }
 
@@ -259,7 +257,6 @@ pub fn health_sync_start(
 #[tauri::command]
 pub fn health_sync_step(
     app: tauri::AppHandle,
-    webview: tauri::Webview<tauri::Wry>,
     state: State<AppState>,
 ) -> Result<SyncStep> {
     let mut dispatches: Vec<(&'static str, Option<String>)> = Vec::new();
@@ -380,7 +377,7 @@ pub fn health_sync_step(
     // JNI 一律在锁外发：dispatch 会切到 WebView 主线程，持有 PENDING 锁时切线程
     // 万一撞上重入就是死锁（同 modules/tracking 的取舍）
     for (method, arg) in dispatches {
-        super::dispatch(&webview, method, arg);
+        super::dispatch(&app, method, arg);
     }
     Ok(outcome)
 }
@@ -432,12 +429,26 @@ pub fn health_metrics_all(state: State<AppState>) -> Result<Vec<HealthMetricSeri
 ///
 /// 给健康数据页分两块展示：一块是 HC 同步进来的镜像（`source='health_connect'`），
 /// 一块是回写 HC 时因缺开始时间被跳过的本机记录（`source='local' AND start_min IS NULL`
-/// —— 用户那句「没填开始时间」的字面集，与 build_push 里的 skipped 计数同源）。
+/// —— 用户那句「没填开始时间」的字面集）。
+///
+/// 与 [`build_push`] 的 `skipped` **不是恒等**，两处已知边界（[`missing_start_is_close_to_push_skipped`]
+/// 把「现实数据里相等、边界处不等」钉成了测试）：
+/// - `start_min` 非空但日期不可解析的本机记录也会被 `to_write_draft` 判 None 进 skipped，
+///   却不落在这个 `start_min IS NULL` 集合里；
+/// - 导入记录若是越界 epoch（`adapter` 的 `local_parts` 回退 None），会带 NULL `start_min`
+///   落进本集合，但 `build_push` 只遍历 `source='local'`，它不进 skipped。
+///
 /// 复用 [`LOCAL_COLS`] + [`row_to_local`]，不另抄一份列清单 —— 抄了就得跟着
 /// `workouts` 表结构一起改。
 #[tauri::command]
 pub fn health_sync_workouts(state: State<AppState>) -> Result<Vec<HealthWorkoutRow>> {
     let conn = state.db.lock();
+    health_sync_workouts_on(&conn)
+}
+
+/// 收 `&Connection` 的本体：与 [`crate::modules::exercise::commands::list_workouts_on`] 同形，
+/// 让命令层与测试共用同一条 SQL（命令签名带 `State`，测试里拿不到）。
+pub(crate) fn health_sync_workouts_on(conn: &rusqlite::Connection) -> Result<Vec<HealthWorkoutRow>> {
     let sql = format!(
         "SELECT {LOCAL_COLS} FROM workouts \
          WHERE source = 'health_connect' OR start_min IS NULL \
@@ -465,9 +476,12 @@ pub fn health_sync_workouts(state: State<AppState>) -> Result<Vec<HealthWorkoutR
         .collect())
 }
 
-/// 移除传播：删掉某条导出记录的 HC 副本（由 `delete_workout` 调用）
-pub(crate) fn propagate_delete(webview: &tauri::Webview<tauri::Wry>, record_id: &str) {
-    super::dispatch(webview, "deleteRecord", Some(record_id.to_string()));
+/// 移除传播：删掉某条导出记录的 HC 副本（由 `delete_workout` **与对外网关**调用）。
+///
+/// 入参是 `&AppHandle`（contract §13.3）：网关服务层拿不到 `Webview`，只能给 `AppHandle`，
+/// 由 `super::dispatch` 内部取 webview。`tauri` 命令路径经 `webview.app_handle()` 传同一份。
+pub(crate) fn propagate_delete(app: &tauri::AppHandle, record_id: &str) {
+    super::dispatch(app, "deleteRecord", Some(record_id.to_string()));
 }
 
 /// 打开回写开关了吗
@@ -640,6 +654,13 @@ fn apply_pull(
         if lw.draft.date.as_str() < window_start {
             continue;
         }
+        // 残余边界（有意不处理）：本机记录的日期在窗口内、而它在 HC 侧那份的日期
+        // 被用户在别家 App 里改到了窗口外时，这里仍会判成断链、把外键清掉。
+        // 不修的理由是**它自愈且无副作用**：清掉后下一轮重新导出，而导出的幂等键是
+        // `rein-workout-<本机 id>`（客户端 id 不随 HC 侧改动变化），Kotlin 的 startWrite
+        // 每次都先按它把自己写过的那条删掉再插 —— 所以不会在 HC 里留下两条，
+        // 代价只是一次多余的重写。要「修」它就得去猜一份读不到的记录还在不在，
+        // 那比这个残余边界更危险。
         let dangling = lw
             .external_id
             .as_deref()
@@ -683,8 +704,13 @@ fn seen_superset(
 /// 本地要往 HC 写哪些记录：没导出过的（新建）+ 指纹变了的（重写）。
 ///
 /// 返回 `(载荷, 新建数, 重写数, 跳过数)`。跳过的是没有开始时间的记录 ——
-/// HC 必须有起止时刻，而 Rein 的手动补录允许不填时间；与其编一个假时刻，
-/// 不如不写并如实告诉用户跳了几条。
+/// HC 必须有起止时刻，与其编一个假时刻，不如不写并如实告诉用户跳了几条。
+///
+/// ⚠ 跳过的**不只**手动补录（这句注释原来只写了补录，是错的）：`session_finish`
+/// 给课程与跑步落库时也硬写 `start_min = NULL`（见 `modules/session/commands.rs`），
+/// 所以课程与跑步记录同样永远导不出去 —— 回写 HC 目前实际只能导出「填了时间的本机补录」。
+/// 这是数据口径问题（那两条路要不要带上真实开始时刻），不是这里能改的取舍；
+/// 改口径时记得同步改前端那句「跳过 N（没填开始时间）」的措辞。
 fn build_push(
     conn: &rusqlite::Connection,
     utc_offset_seconds: i64,
@@ -1076,5 +1102,59 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n, 0, "窗口下界之前不落库");
+    }
+
+    /// 一条本机记录（source 走默认 'local'，与 create_workout 同形）
+    fn insert_local(conn: &rusqlite::Connection, name: &str, date: &str, start_min: Option<i64>) {
+        conn.execute(
+            "INSERT INTO workouts (name, type, date, start_min, duration_min, kcal, \
+             intensity, effort, note, created_at) \
+             VALUES (?1, 'run', ?2, ?3, 30, 300, 'moderate', NULL, NULL, ?4)",
+            rusqlite::params![name, date, start_min, chrono::Utc::now().to_rfc3339()],
+        )
+        .unwrap();
+    }
+
+    /// 「缺开始时间」展示块与 `build_push` 的 `skipped` 的关系：**现实数据里大多数相等，边界处不等**。
+    ///
+    /// 这条把两处边界钉成断言（只写在注释里的话，改动时没人会想起它）：
+    /// - 手动补录没填时间 → 既进 skipped 也进展示块（相等的那部分）；
+    /// - `start_min` 非空但日期不可解析 → 进 skipped、**不进**展示块；
+    /// - 导入记录带 NULL `start_min`（越界 epoch 才会）→ 进展示块、**不进** skipped。
+    #[test]
+    fn missing_start_is_close_to_push_skipped() {
+        let conn = db();
+        // ① 补录没填开始时间：两边都算
+        insert_local(&conn, "补录没填时间", "2024-05-01", None);
+        // ② 补录填了时间：两边都不算
+        insert_local(&conn, "补录有填时间", "2024-05-02", Some(600));
+        // ③ start_min 有值但日期不可解析：to_write_draft 解不出 epoch → 进 skipped，
+        //    可 start_min 非空、source 又是 local，所以**不在**展示块里（边界一）
+        insert_local(&conn, "日期坏了", "not-a-date", Some(600));
+        // ④ 导入记录带 NULL start_min（越界 epoch 才会）：在展示块里，但 build_push
+        //    只遍历 source='local'，所以不进 skipped（边界二）
+        let mut broken = draft();
+        broken.name = "导入但无开始时间".into();
+        broken.date = "2024-05-03".into();
+        broken.start_min = None;
+        insert_imported(&conn, "hc-broken", None, &broken).unwrap();
+
+        let (_payload, exported, re_exported, skipped) = build_push(&conn, 8 * 3600).unwrap();
+        assert_eq!((exported, re_exported), (1, 0), "只有那条填了时间的补录导得出去");
+        assert_eq!(skipped, 2, "①与③进 skipped");
+
+        let rows = health_sync_workouts_on(&conn).unwrap();
+        let mut names: Vec<&str> = rows.iter().map(|w| w.name.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["导入但无开始时间", "补录没填时间"],
+            "展示块 = ① + ④；②填了时间、③日期坏了但 start_min 非空，两者都不该出现"
+        );
+        assert!(
+            rows.iter()
+                .any(|w| w.source == "health_connect" && w.external_id.is_some()),
+            "导入块必须带 source 与 external_id（前端靠它分块）"
+        );
     }
 }

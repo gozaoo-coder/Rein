@@ -68,7 +68,9 @@ const dockSegs = computed(() =>
             <button class="info" type="button" @click="restore">
               <span class="dot" />
               <b>{{ voice.status === 'recording' ? '转写中' : '整理中' }}</b>
-              <span class="s num">{{ fmtMs(voice.elapsedMs) }} · {{ voice.sentences.length }} 句</span>
+              <!-- 时长是主角（caption + .num），句数降成微字档 —— 两者不再共用同一字号字重 -->
+              <span class="s num">{{ fmtMs(voice.elapsedMs) }}</span>
+              <span class="s-sc num">{{ voice.sentences.length }} 句</span>
             </button>
             <!-- 浮条就是那根正在生长的时间脊：收起后也能看出「说到哪、密不密」 -->
             <TimeSpine
@@ -310,6 +312,14 @@ const dockSegs = computed(() =>
   white-space: nowrap;
 }
 
+/* 句数是次要项：微字 + 三级灰，与时长用形态分开 */
+.info .s-sc {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
 .acts {
   flex: none;
   display: flex;
@@ -341,9 +351,11 @@ const dockSegs = computed(() =>
   inset: -5px -3px;
 }
 
+/* 结束钮的 soft 底 + 图标色走令牌对（--danger-soft 底 / --danger-strong 字），
+   不再手搓 14% color-mix —— 实底档 --danger 直接当图标/文字色对比度不够 */
 .abtn.end {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-strong);
+  background: var(--danger-soft);
 }
 
 .abtn.ico {

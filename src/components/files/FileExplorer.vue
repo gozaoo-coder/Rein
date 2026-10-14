@@ -42,6 +42,8 @@ import {
 } from 'lucide-vue-next'
 
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { useToast } from '@/composables/useToast'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { kbService } from '@/services/kbService'
@@ -2230,7 +2232,8 @@ defineExpose({ refresh, navigate, path })
       </button>
     </div>
 
-    <!-- 图标尺寸档（只在网格里出现；手机端这一档收在「更多」里） -->
+    <!-- 图标尺寸档（只在网格里出现；手机端这一档收在「更多」里）。
+         拖放规则是背景知识（试一次就会），收进行尾一枚 InfoHint，工具条上只留控件。 -->
     <div v-if="prefs.viewMode === 'grid' && !trashMode && !narrow" class="bar row sizing">
       <span class="t-3 label">图标</span>
       <span class="seg">
@@ -2238,7 +2241,12 @@ defineExpose({ refresh, navigate, path })
         <button class="segb" :class="{ on: prefs.iconSize === 'md' }" @click="setIconSize('md')">中</button>
         <button class="segb" :class="{ on: prefs.iconSize === 'lg' }" @click="setIconSize('lg')">大</button>
       </span>
-      <span class="t-3 label">拖动条目到文件夹可以移动；按 Ctrl 拖动是复制</span>
+      <span class="sizing-hint">
+        <InfoHint
+          title="拖动与复制"
+          content="把条目拖到左侧边栏的目录、面包屑的某一级或另一个文件夹上，即可移动它；拖动时按住 Ctrl 是复制。拖到「回收站」则是删除。"
+        />
+      </span>
     </div>
 
     <!-- 新建文件 / 新建目录（就地，不做弹窗） -->
@@ -2261,11 +2269,14 @@ defineExpose({ refresh, navigate, path })
       <span class="flex-1">
         <b>{{ archive.name }}</b>
         <small class="t-3">
-          包内 {{ archive.listing.total }} 项 · {{ archive.listing.format }} ·
-          解压后 {{ humanBytes(archive.listing.totalBytes) }}
+          <b class="arc-num num">{{ archive.listing.total }}</b><span class="arc-n"> 项</span>
+          <span class="arc-sep">·</span>
+          <span class="arc-dim">解压后 {{ humanBytes(archive.listing.totalBytes) }}</span>
         </small>
+        <StatusChip class="arc-fmt" tone="neutral" size="sm">{{ archive.listing.format }} 格式</StatusChip>
       </span>
-      <input v-model="extractTo" class="arcto" placeholder="解压到（留空=默认）" aria-label="解压目标目录">
+      <!-- 解压目标目录：默认去处写进 placeholder，怕文件丢的人不必先猜该填什么 -->
+      <input v-model="extractTo" class="arcto" placeholder="解压到（留空 → 未分类数据/解压）" aria-label="解压目标目录">
       <button class="btn ghost tiny" :disabled="archiveBusy" @click="extractArchive(selectionPaths)">
         解压选中（{{ sel.count.value }}）
       </button>
@@ -2289,7 +2300,16 @@ defineExpose({ refresh, navigate, path })
     </div>
     <div v-else-if="navMode === 'recent' && !trashMode" class="crumbs row">
       <button class="crumb cur" @click="setNavMode('dir')">最近文件</button>
-      <span class="t-3 crumb-note">跨目录 · 按最近修改</span>
+      <!-- 排序口径做成中性胶囊；「跨目录」这类背景说明收进 InfoHint。
+           .crumb-note 仍是这一组的挂点（e2e 读它的文本确认提示在），胶囊与
+           帮助入口都放进这一组，文字不重复、类名不失效。 -->
+      <span class="crumb-note">
+        <StatusChip class="crumb-sort" tone="neutral" size="sm">按最近修改</StatusChip>
+        <InfoHint
+          title="最近文件"
+          content="这一屏跨出当前目录，把整个工作区里最近动过的文件列在一起，所以上方不显示目录层级；要一级一级看，点左侧「文件」面包屑切回目录文件。"
+        />
+      </span>
     </div>
     <div v-else-if="!trashMode && !globalHits" class="crumbs row">
       <button class="crumb" :class="{ cur: !crumbs.length }" @click="navigate('')">文件</button>
@@ -2316,9 +2336,14 @@ defineExpose({ refresh, navigate, path })
       </span>
       <button class="btn ghost tiny" @click="exitGlobalSearch">回到目录</button>
     </div>
+    <!-- 搜索 / 回收站态横幅：回收站只留「占磁盘」这一行结论，恢复与删除的取舍收进 InfoHint -->
     <div v-if="trashMode" class="card banner row">
       <Trash2 :size="14" class="t-3" />
-      <span class="flex-1">回收站里的条目仍占着磁盘，恢复或彻底删除都由你决定。</span>
+      <span class="flex-1">回收站条目仍占磁盘空间</span>
+      <InfoHint
+        title="回收站"
+        content="回收站只是把条目移出了目录，磁盘空间还占着：恢复会把条目放回原来的位置，彻底删除才会释放空间。清空会一次性删掉回收站里的全部条目。"
+      />
       <button class="btn ghost tiny" :disabled="!trashItems.length" @click="doEmptyTrash">清空</button>
       <button class="btn ghost tiny" @click="toggleTrash">退出</button>
     </div>
@@ -2335,7 +2360,7 @@ defineExpose({ refresh, navigate, path })
               <b>{{ l.name }}</b>
               <small>{{ l.hint }}</small>
             </span>
-            <span class="t-3 count">{{ l.count }} 项</span>
+            <span class="t-3 count"><span class="num">{{ l.count }}</span> 项</span>
             <ChevronRight :size="15" class="t-3" />
           </button>
         </li>
@@ -2513,18 +2538,19 @@ defineExpose({ refresh, navigate, path })
                   ? '此目录还没有文件'
                   : '工作区还是空的'
         }}
+        <!-- 过滤无果时的出路就放在空态里：一句话说清「没有」，紧跟着一个动作 -->
+        <button
+          v-if="keyword && !globalHits && !trashMode"
+          class="btn ghost tiny empty-esc"
+          :disabled="searching"
+          @click="runGlobalSearch"
+        >
+          {{ searching ? '搜索中…' : '在整个工作区找' }}
+        </button>
       </p>
       <p v-if="loading" class="empty t-3">加载中…</p>
       <p v-if="errText" class="empty err">{{ errText }}</p>
     </section>
-    </div>
-
-    <!-- 过滤无果时的出路：把过滤提升成全局搜索 -->
-    <div v-if="keyword && !globalHits && !trashMode && !ordered.length" class="card hint row">
-      <span class="flex-1 t-3">当前目录没有匹配的名字。</span>
-      <button class="btn ghost tiny" :disabled="searching" @click="runGlobalSearch">
-        {{ searching ? '搜索中…' : '在整个工作区找' }}
-      </button>
     </div>
 
     <!-- 操作进度 / 结果 -->
@@ -2579,20 +2605,27 @@ defineExpose({ refresh, navigate, path })
           <dd>{{ details.occurredOn }}</dd>
         </template>
         <dt>属性</dt>
-        <dd>
+        <!-- 三个状态互不相关，各给一枚胶囊：中性档承载读写权限，其余走语义色 -->
+        <dd class="attrs">
           <template v-if="details.attributes.system">系统文件（只读）</template>
           <template v-else-if="details.attributes.readOnly">{{ details.readOnlyReason }}</template>
-          <template v-else>可读写</template>
-          <template v-if="details.pinned"> · 已钉住</template>
+          <template v-else><StatusChip tone="neutral" size="sm">可读写</StatusChip></template>
+          <template v-if="details.pinned">
+            <StatusChip tone="accent" size="sm">已钉住</StatusChip>
+          </template>
           <template v-if="details.classifyState">
-            ·
-            {{
-              details.classifyState === 'inbox'
-                ? '待归类'
-                : details.classifyState === 'filed'
-                  ? '已归类'
-                  : '手动放置'
-            }}
+            <StatusChip
+              :tone="details.classifyState === 'manual' ? 'neutral' : 'warn'"
+              size="sm"
+            >
+              {{
+                details.classifyState === 'inbox'
+                  ? '待归类'
+                  : details.classifyState === 'filed'
+                    ? '已归类'
+                    : '手动放置'
+              }}
+            </StatusChip>
           </template>
         </dd>
       </dl>
@@ -2612,16 +2645,18 @@ defineExpose({ refresh, navigate, path })
       />
     </section>
 
-    <!-- 状态栏：条目数 / 选中 / 体积 / 路径（手机端不占版面，dock 上已有计数） -->
+    <!-- 状态栏：条目数 / 选中 / 体积。路径的唯一出处是面包屑，这里不再重印（recent 模式
+         本就没有面包屑层级， Dock 上另有当前位置，删后不丢信息）。 -->
     <p v-if="!narrow" class="status t-3">
       <template v-if="trashMode">
         <span>回收站 · {{ trashItems.length }} 项</span>
       </template>
       <template v-else>
-        <span>{{ ordered.length }} 项</span>
-        <span v-if="sel.count.value">· 选中 {{ sel.count.value }}（{{ humanBytes(selectedBytes) }}）</span>
+        <span><b class="num">{{ ordered.length }}</b> 项</span>
+        <span v-if="sel.count.value" class="selnote">
+          · 选中 <b class="num">{{ sel.count.value }}</b>（<span class="num">{{ humanBytes(selectedBytes) }}</span>）
+        </span>
         <span v-if="listing?.truncated">· 目录过大，仅列出一部分</span>
-        <span class="mono">· /{{ path }}</span>
       </template>
     </p>
 
@@ -2837,8 +2872,9 @@ defineExpose({ refresh, navigate, path })
   background: var(--surface-2);
 }
 
+/* 禁用浓度全站同一档（tokens.css），不再各写各的裸值 */
 .fact:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 
 .fact.danger {
@@ -2873,6 +2909,12 @@ defineExpose({ refresh, navigate, path })
   padding: 5px 9px;
 }
 
+/* 拖放规则收进行尾 InfoHint，工具条本身只留「图标」+ 小/中/大 */
+.sizing-hint {
+  margin-left: auto;
+  display: inline-flex;
+}
+
 .label {
   font-size: var(--fs-caption);
 }
@@ -2894,8 +2936,9 @@ defineExpose({ refresh, navigate, path })
   inset: -8px -3px;
 }
 
+/* 禁用浓度全站同一档（tokens.css），不再各写各的裸值 */
 .icon:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .icon.on {
@@ -3025,6 +3068,19 @@ defineExpose({ refresh, navigate, path })
   color: var(--text-2);
 }
 
+/* 排序口径（按最近修改）与「最近文件」并列：一枚中性胶囊，不跟面包屑抢同一个字档 */
+.crumb-sort {
+  flex: none;
+}
+
+/* 「最近文件」行的提示组：排序胶囊 + InfoHint 同一组挂点，胶囊与帮助入口之间留缝 */
+.crumb-note {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .crumb.cur {
   background: var(--accent-soft);
   color: var(--accent);
@@ -3047,6 +3103,25 @@ defineExpose({ refresh, navigate, path })
   display: block;
   margin-top: 2px;
   font-size: var(--fs-caption);
+}
+
+/* 包内条目数是这一屏的读数：主档字 + 等宽，其余两项退成元数据 */
+.arcbar .arc-num {
+  font-size: var(--fs-callout);
+  color: var(--text-1);
+}
+
+.arcbar .arc-sep {
+  padding: 0 5px;
+}
+
+.arcbar .arc-dim {
+  font-size: var(--fs-caption);
+}
+
+.arc-fmt {
+  flex: none;
+  text-transform: uppercase;
 }
 
 .arcto {
@@ -3094,8 +3169,8 @@ defineExpose({ refresh, navigate, path })
   box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
-.banner,
-.hint {
+/* 横幅（回收站态）：条目仍占磁盘的结论 + 两个动作，同一行 flex */
+.banner {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3370,8 +3445,59 @@ li + li .item {
   overflow-wrap: anywhere;
 }
 
+/* 「属性」行的三枚状态胶囊：互不相干，各占一个胶囊，不再用「·」串成一行平文 */
+.dgrid dd.attrs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* 过滤无果时的出路：跟着空态那句「没有」走，不再另起一张卡片说第二遍 */
+.empty-esc {
+  display: block;
+  margin: 10px auto 0;
+}
+
+/* 状态栏：条目数是主角，选中数是会变的次要项 */
+.status .selnote {
+  font-size: var(--fs-caption);
+}
+
 .btn.tiny {
   padding: 4px 10px;
   font-size: var(--fs-caption);
+}
+
+/* ---------- 桌面（.desk-main 只在壳层 ≥ --desk-min 时渲染，所以这里不写断点）----------
+   三处「手机尺寸直接搬过来」的硬伤在这里收，移动端一行也不碰。 */
+
+/* 1 地标卡（根目录的工作区命名空间）：19 条单列排到 1240 高，把根目录文件整个挤出第一屏。
+     桌面改三栏（每格约 350），名字与提示靠 .flex-1 的 min-width:0 + 自带 ellipsis 收尾。
+     columns 会把 `li + li` 的分隔线一并搬到每栏第一条的头顶（第二、三栏各多一条悬空横线），
+     所以桌面形态撤掉横线：栏间留白由 column-gap 给，行内靠行距 + hover 分层。 */
+.desk-main .landmarks > ul {
+  columns: 3;
+  column-gap: var(--desk-gap);
+}
+
+.desk-main .landmarks > ul > li {
+  break-inside: avoid;
+}
+
+.desk-main .landmarks .item {
+  border-top: 0;
+}
+
+/* 2 列头钮：caption + 11px 箭头只有约 19 高，指针视口下够不着（MIN_TAP 24）。撑到 24 ——
+     视觉只多出上下各 2.5 的空档，标签本身仍是居中一行。 */
+.desk-main .th {
+  min-height: 24px;
+}
+
+/* 3 目录搜索框：input 自身 19 高（--fs-subhead 的行高），撑到 24；
+     .find 的内距不变，跟着长 5px —— 工具条是 flex 行，旁边没有定高的兄弟。 */
+.desk-main .find input {
+  min-height: 24px;
 }
 </style>

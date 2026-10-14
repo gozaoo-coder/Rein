@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { Search } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { EXERCISE_CATEGORY_LABELS, EXERCISE_EQUIPMENT_LABELS } from '@/config/domain'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import type { PlanExerciseKind, SwapCandidate } from '@/types'
@@ -66,12 +68,22 @@ function metaOf(e: (typeof candidates.value)[number]): string {
 
 <template>
   <SheetModal :open="open" :title="`换成哪个${KIND_LABEL[kind]}？`" initial-snap="large" @close="emit('close')">
+    <!-- 规则说明收进标题栏 InfoHint：用户打开抽屉是来挑动作的，两句式灰字既挡在候选
+         列表之上又读不清。面上只留标题、搜索框与一枚结论胶囊 -->
+    <template #action>
+      <InfoHint title="换动作的规则">
+        <p>候选来自动作库。</p>
+        <p>只替换动作本体，组数 / 次数 / 组间休息沿用本课程当前动作。</p>
+      </InfoHint>
+    </template>
     <div class="searchrow row">
       <Search :size="15" />
       <input v-model="kw" class="search" type="search" placeholder="搜索动作（动作库）" aria-label="搜索动作" />
     </div>
 
-    <p class="hint">候选来自动作库；只替换动作本体，组数 / 次数 / 组间休息沿用本课程当前动作。</p>
+    <p class="tags">
+      <StatusChip tone="neutral" size="sm">组数 / 次数 / 组间休息沿用当前动作</StatusChip>
+    </p>
 
     <ul class="list">
       <li v-for="c in filtered" :key="c.id">
@@ -109,11 +121,10 @@ function metaOf(e: (typeof candidates.value)[number]): string {
   color: var(--text-1);
 }
 
-.hint {
-  margin-top: 8px;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  line-height: 1.5;
+/* 结论胶囊贴在搜索框下：规则全文已收进标题栏 InfoHint，这行只留结论 */
+.tags {
+  margin-top: 10px;
+  display: flex;
 }
 
 .list {

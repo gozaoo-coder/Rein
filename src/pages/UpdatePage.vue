@@ -5,6 +5,9 @@ import { AlertTriangle, Cloud, Download, RefreshCw, ShieldCheck, ShieldX, Sparkl
 
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
+import PillChip from '@/components/common/PillChip.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import MdText from '@/components/common/MdText.vue'
 import { useToast } from '@/composables/useToast'
@@ -30,6 +33,9 @@ const customName = ref('')
 const showSourceEditor = ref(false)
 const CHANNELS = ['stable', 'beta'] as const
 
+/** 发布通道的中文标签（界面上不出现 stable / beta 原值）；两条通道的差异收进行内 InfoHint */
+const CHANNEL_LABELS: Record<string, string> = { stable: '稳定版', beta: '测试版' }
+
 const PHASE_TEXT: Record<UpdatePhase, string> = {
   idle: '待检查',
   preparing: '准备中…',
@@ -52,7 +58,7 @@ function fmtSpeed(n: number): string {
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB/s` : `${Math.round(n / 1024)} KB/s`
 }
 
-function fmtTime(iso: string | null): string {
+function fmtTime(iso: string | null | undefined): string {
   if (!iso) return '从未'
   const t = Date.parse(iso)
   if (Number.isNaN(t)) return iso
@@ -61,6 +67,11 @@ function fmtTime(iso: string | null): string {
   if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`
   if (diff < 86_400_000) return `${Math.floor(diff / 3600_000)} 小时前`
   return new Date(t).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/** 发布时间：空值单独成句，不与「发布于」拼句（拼出来是「发布于 从未」） */
+function publishedText(iso: string | null | undefined): string {
+  return iso ? `发布于 ${fmtTime(iso)}` : '未提供发布时间'
 }
 
 /** 平台键 → 人话（键名与 tauri updater 的 target 一致，不能改） */
@@ -94,13 +105,15 @@ function sourceDetail(s: SourceReport): string {
   return `${s.version ?? '—'}${s.manifestSigned ? ' · 清单已签名' : ''}`
 }
 
+/** 版本卡状态行：只说下方卡片承载不了的那一句。
+ *  有更新 / 已跳过 / 下载进度都归各自的卡（版本号在前者里带 v 前缀，这里再报一遍只会
+ *  出现两种写法，让人怀疑是两个版本） */
 const statusLine = computed(() => {
   if (!update.snapshot) return '正在读取…'
   const d = download.value
-  if (d && d.phase !== 'idle') return PHASE_TEXT[d.phase]
-  if (check.value?.ignored) return `已跳过 ${check.value.latestVersion}`
-  if (update.hasUpdate) return `发现新版本 ${check.value?.latestVersion}`
-  if (check.value) return `已是最新版本（${fmtTime(check.value.checkedAt)}检查）`
+  if (d && d.phase !== 'idle') return ''
+  if (check.value?.ignored || update.hasUpdate) return ''
+  if (check.value) return `已是最新版本（${fmtTime(check.value.checkedAt)} 检查）`
   return '尚未检查过'
 })
 
@@ -152,7 +165,7 @@ async function onToggleSource(source: UpdateSource, on: boolean): Promise<void> 
 async function onAddSource(): Promise<void> {
   const url = customUrl.value.trim()
   if (!/^https?:\/\//.test(url)) {
-    toast('请填写 http(s) 开头的清单地址')
+    toast('请填写 http(s) 开头的更新清单地址')
     return
   }
   const list = update.settings?.sources ?? []
@@ -217,7 +230,7 @@ onMounted(async () => {
           {{ update.checking ? '检查中…' : '检查更新' }}
         </button>
       </div>
-      <p class="t-3 status">{{ statusLine }}</p>
+      <p v-if="statusLine" class="t-3 status">{{ statusLine }}</p>
       <p v-if="update.snapshot && !update.snapshot.installSupported" class="warn">
         <AlertTriangle :size="14" /> {{ update.snapshot.installHint }}
       </p>
@@ -227,12 +240,14 @@ onMounted(async () => {
     <section v-if="update.hasUpdate || update.readyToInstall" class="card hl d-full">
       <header class="row between ghead">
         <h2 class="gtitle">可更新到 v{{ check?.latestVersion }}</h2>
-        <span v-if="check?.sourceName" class="t-3 tiny">{{ check.sourceName }}</span>
+        <span class="row head-side">
+          <span v-if="check?.sourceName" class="t-3 tiny">{{ check.sourceName }}</span>
+          <StatusChip v-if="check?.mandatory" tone="warn" size="md">必须更新</StatusChip>
+        </span>
       </header>
 
       <p class="meta t-3">
-        {{ fmtBytes(check?.sizeBytes) }} · 发布于 {{ fmtTime(check?.publishedAt ?? null) }}
-        <template v-if="check?.mandatory"> · 此版本为必须更新</template>
+        <span class="num">{{ fmtBytes(check?.sizeBytes) }}</span> · {{ publishedText(check?.publishedAt) }}
       </p>
 
       <!-- 说明是 Markdown：从前用 {{ }} 插值，用户看到的是原样的 `**` 与 `##` -->
@@ -282,14 +297,22 @@ onMounted(async () => {
     <section class="card d-full">
       <header class="row between ghead">
         <h2 class="gtitle">更新源</h2>
-        <button class="link" @click="showSourceEditor = !showSourceEditor">
-          {{ showSourceEditor ? '收起' : '添加自定义源' }}
-        </button>
+        <span class="row head-side">
+          <button class="link" @click="showSourceEditor = !showSourceEditor">
+            {{ showSourceEditor ? '收起' : '添加自定义源' }}
+          </button>
+          <span class="hint-slot">
+            <InfoHint title="更新源与验签">
+              <p>更新清单（manifest）是描述新版本的文件：版本号、下载地址、发布时间都在里面，自定义源填的就是它的地址。</p>
+              <p>服务端只能分发签过名的更新：安装包下载完成后用内置公钥做 Ed25519 验签，签名或摘要不符的包一律不装；清单本身也带签名。</p>
+            </InfoHint>
+          </span>
+        </span>
       </header>
 
       <div v-if="showSourceEditor" class="editor">
         <input v-model="customName" class="inp" placeholder="名称（可选）" />
-        <input v-model="customUrl" class="inp" placeholder="清单地址，如 https://…/latest.json" />
+        <input v-model="customUrl" class="inp" placeholder="更新清单（manifest）地址，如 https://…/latest.json" />
         <button class="btn primary" @click="onAddSource">添加</button>
       </div>
 
@@ -334,15 +357,22 @@ onMounted(async () => {
         <div class="row between frow">
           <span class="col ftxt"><b>更新通道</b><em class="t-3">选择跟随哪个发布通道</em></span>
           <span class="row chips">
-            <button
+            <PillChip
               v-for="c in CHANNELS"
               :key="c"
-              class="chip"
-              :class="{ on: update.settings?.channel === c }"
+              as="button"
+              size="sm"
+              :tone="update.settings?.channel === c ? 'action' : 'muted'"
               @click="update.save({ channel: c })"
             >
-              {{ c }}
-            </button>
+              {{ CHANNEL_LABELS[c] }}
+            </PillChip>
+            <span class="hint-slot">
+              <InfoHint title="稳定版与测试版的区别">
+                <p>稳定版：经过完整验证的正式版本，推荐大多数人使用。</p>
+                <p>测试版：抢先体验新功能，可能有不稳定或未完成的部分。</p>
+              </InfoHint>
+            </span>
           </span>
         </div>
         <div class="row between frow">
@@ -375,14 +405,29 @@ onMounted(async () => {
     <section class="card d-full onlinecard">
       <header class="row between ghead">
         <h2 class="gtitle">Rein 在线服务</h2>
-        <button class="link" :disabled="update.onlineLoading" @click="update.probeOnline()">
-          {{ update.onlineLoading ? '探测中…' : '重新探测' }}
-        </button>
+        <span class="row head-side">
+          <button class="link" :disabled="update.onlineLoading" @click="update.probeOnline()">
+            {{ update.onlineLoading ? '探测中…' : '重新探测' }}
+          </button>
+          <span class="hint-slot">
+            <InfoHint title="在线大模型端点">
+              <p>
+                在线大模型走 OpenAI 兼容端点：<code>{{ update.online?.ai?.chatEndpoint || '正在探测…' }}</code>
+                （可直接作为 ai_models 的 baseUrl）。
+              </p>
+              <p>配置服务商与密钥在「AI 模型」页，填好后这里会显示可用模型。</p>
+            </InfoHint>
+          </span>
+        </span>
       </header>
 
       <template v-if="update.online">
-        <p class="t-3 tiny">
-          {{ update.online.baseUrl }} · {{ update.online.reachable ? `在线（${update.online.elapsedMs}ms）` : '不可达' }}
+        <p class="row t-3 tiny onlinestat">
+          <span class="url-txt">{{ update.online.baseUrl }}</span>
+          <StatusChip v-if="update.online.reachable" tone="ok" size="sm">
+            在线 · <span class="num">{{ update.online.elapsedMs }} ms</span>
+          </StatusChip>
+          <StatusChip v-else tone="danger" size="sm">不可达</StatusChip>
         </p>
         <p v-if="update.online.error" class="warn"><AlertTriangle :size="14" /> {{ update.online.error }}</p>
         <p v-else class="t-3 tiny">
@@ -393,12 +438,8 @@ onMounted(async () => {
           <p class="row tiny">
             <Cloud :size="14" />
             <b>在线大模型 API</b>
-            <span class="tag" :class="{ ready: update.online.ai.status === 'ready' }">
-              {{ update.online.ai.status === 'ready' ? '可用' : '未配置' }}
-            </span>
-          </p>
-          <p class="t-3 tiny">
-            OpenAI 兼容端点：{{ update.online.ai.chatEndpoint }}
+            <StatusChip v-if="update.online.ai.status === 'ready'" tone="ok" size="sm">可用</StatusChip>
+            <span v-else class="tag">未配置</span>
           </p>
           <p v-if="update.online.ai.providers.length" class="t-3 tiny">
             已接入：
@@ -406,7 +447,7 @@ onMounted(async () => {
               {{ i ? '、' : '' }}{{ p.name }}{{ p.enabled ? '' : '（未启用）' }}
             </template>
           </p>
-          <p v-else class="t-3 tiny">服务端还没有配置 provider，填入密钥后这里会显示可用模型。</p>
+          <p v-else class="t-3 tiny">在线模型服务商还没配置，填入密钥后这里会显示可用模型。</p>
           <button class="btn" @click="router.push({ name: 'ai-models' })">
             <Sparkles :size="14" /> 去配置模型
           </button>
@@ -416,10 +457,7 @@ onMounted(async () => {
     </section>
     </div>
 
-    <p class="note t-3">
-      安装包在下载完成后会用内置公钥做 Ed25519 验签，签名不符或摘要不符的包一律不安装。
-      清单本身也带签名 —— 服务端只能分发你签过名的更新。
-    </p>
+    <p class="note t-2">安装包与更新清单均验签。</p>
     </div>
   </div>
 </template>
@@ -451,6 +489,17 @@ onMounted(async () => {
 
 .ghead + * {
   margin-top: 8px;
+}
+
+/* 卡头行右侧一组（副标 / 文字按钮 / 帮助入口）：行内再分一组，不让 space-between 摊平 */
+.head-side {
+  gap: 8px;
+}
+
+/* 标题行右侧的帮助入口：InfoHint 是多根组件，类要落在包裹元素上 */
+.hint-slot {
+  display: inline-flex;
+  flex: none;
 }
 
 .tiny {
@@ -521,7 +570,7 @@ onMounted(async () => {
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .btn.primary {
@@ -625,20 +674,6 @@ onMounted(async () => {
   gap: 6px;
 }
 
-.chip {
-  padding: 5px 12px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  font-size: var(--fs-caption);
-  font-weight: 600;
-  color: var(--text-2);
-}
-
-.chip.on {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
 .warn {
   display: flex;
   align-items: center;
@@ -667,17 +702,27 @@ onMounted(async () => {
   background: var(--surface-2);
 }
 
+/* 「可用 / 未配置」：ready 态走 StatusChip 的 ok 档（soft 底 + strong 字）；
+   中立态与 .ai-box 同底会看不出形状，垫回 --surface-3，几何与 StatusChip sm 对齐 */
 .tag {
-  padding: 2px 8px;
+  padding: 5px 10px;
   border-radius: var(--radius-full);
-  background: var(--surface-2);
-  font-size: 11px;
-  color: var(--text-3);
+  background: var(--surface-3);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-2);
 }
 
-.tag.ready {
-  background: color-mix(in srgb, var(--ok) 18%, transparent);
-  color: var(--ok);
+/* 在线状态行：地址降一档小字，可达性独立成胶囊（在线 ok / 不可达 danger） */
+.onlinestat {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.url-txt {
+  min-width: 0;
+  font-size: var(--fs-micro);
+  overflow-wrap: anywhere;
 }
 
 .note {

@@ -7,11 +7,13 @@
  * 而抽屉是独立一层：展开多少都不动底下的页面。
  */
 import { computed, ref } from 'vue'
-import { AlertCircle, CloudDownload, Pencil, RefreshCw } from 'lucide-vue-next'
+import { AlertCircle, Pencil, RefreshCw } from 'lucide-vue-next'
 
 import ModelCandidateList from '@/components/ai/ModelCandidateList.vue'
 import ProviderModelsSheet from '@/components/ai/ProviderModelsSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { KIND_LABEL } from '@/ai/providerCatalog'
 import { useToast } from '@/composables/useToast'
 import { useModelRolesStore } from '@/stores/modelRoles'
@@ -53,9 +55,8 @@ const preview = computed(() => {
     .map((m) => ({
       ref: `${p.id}:${m.modelId}`,
       label: m.modelId,
-      sub: `${KIND_LABEL[m.kind]}${m.origin === 'preset' ? ' · 内置参考' : m.origin === 'manual' ? ' · 手填' : ''}${
-        roles.isActive(p, m) ? ' · 已启用' : ''
-      }`,
+      // 状态只由行尾徽章（使用中）独家承担，副标题里不再重复「已启用」
+      sub: `${KIND_LABEL[m.kind]}${m.origin === 'preset' ? ' · 内置参考' : m.origin === 'manual' ? ' · 手填' : ''}`,
       provider: p.name,
       kind: m.kind,
       badge: roles.isActive(p, m) ? '使用中' : undefined,
@@ -130,9 +131,20 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
       <!-- 目录预览：只放前几条，全部另开抽屉 -->
       <section class="card list-card">
         <div class="row between center">
-          <span class="l">模型目录（{{ live.models.length }}）</span>
+          <span class="l l-hint">
+            模型目录（{{ live.models.length }}）
+            <InfoHint
+              title="类别与写入位置"
+              content="点一条即启用，按类别落到对应位置：
+
+对话 / 视觉模型进入「全部模型」；识别模型写进语音服务；向量模型写进知识库设置。
+
+启用状态以本机实际配置为准（这里只做「启用」）；换用哪个模型，去模型页的「服务模型」卡。"
+            />
+          </span>
           <button type="button" class="more" @click="allOpen = true">查看全部 ›</button>
         </div>
+        <StatusChip tone="accent" size="md">点一条即启用</StatusChip>
         <ModelCandidateList
           :items="preview"
           :folder="false"
@@ -141,15 +153,7 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
           empty-text="还没有目录：点上面「获取模型列表」，或在全部模型里手填一个"
           @select="activateByRef"
         />
-        <p class="hint t-3">
-          点一条即启用：对话/视觉模型进「全部模型」，识别模型写进语音服务，向量模型写进知识库设置。
-        </p>
       </section>
-
-      <p class="hint t-3 foot">
-        <CloudDownload :size="12" />
-        启用状态以本机实际配置为准（这里只做「启用」；换用哪个模型去模型页的「服务模型」卡）。
-      </p>
     </div>
 
     <ProviderModelsSheet
@@ -227,7 +231,7 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
   padding: 11px 0;
   border-radius: var(--radius-m);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-1);
   font-size: var(--fs-footnote);
   font-weight: 700;
 }
@@ -238,7 +242,7 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .list-card {
@@ -253,6 +257,13 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
   color: var(--text-2);
 }
 
+/* 标题行带帮助入口：标签与 ? 同一行居中 */
+.l-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .more {
   font-size: var(--fs-caption);
   font-weight: 700;
@@ -265,10 +276,6 @@ const keyTail = computed(() => (live.value?.apiKey ? live.value.apiKey.slice(-4)
   gap: 5px;
   font-size: var(--fs-caption);
   line-height: 1.5;
-}
-
-.foot {
-  padding: 0 2px;
 }
 
 .spin {

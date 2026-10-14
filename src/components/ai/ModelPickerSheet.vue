@@ -130,10 +130,11 @@ async function pick(ref_: string): Promise<void> {
         />
       </div>
 
-      <!-- 列表下方还有动作 → 说明放这里，动作本身另开抽屉（不挤在本层里重排） -->
+      <!-- 列表下方还有动作 → 说明放这里，动作本身另开抽屉（不挤在本层里重排）。
+           按钮只打开提供商表单，文案不许第二件事（手动模型的出口在提供商目录里） -->
       <button type="button" class="add" @click="emit('add')">
         <Plus :size="15" />
-        添加提供商 / 手动添加模型
+        添加提供商
       </button>
       <p class="hint t-3">
         选中即生效：主模型与多模态立即用于新消息，识别与向量会写入语音服务 / 知识库设置。
@@ -169,7 +170,7 @@ async function pick(ref_: string): Promise<void> {
   padding: 12px 0;
   border-radius: var(--radius-m);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-1);
   font-size: var(--fs-footnote);
   font-weight: 700;
 }

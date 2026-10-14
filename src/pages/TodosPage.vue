@@ -81,7 +81,7 @@ const headTitle = computed(() =>
 const headSub = computed(() => {
   if (segment.value === 'list') return '按日期分组'
   if (segment.value === 'week') return '本周时间线 · 长按块可跨天改时'
-  return `${doneCount.value}/${dayTodos.value.length} 已完成 · 未安排 ${pool.value.length}`
+  return `${doneCount.value}/${dayTodos.value.length} 已完成`
 })
 
 function shiftDay(n: number): void {
@@ -380,14 +380,15 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
     <template v-if="segment === 'canvas'">
       <div class="dateline row between">
         <button class="daynav" aria-label="前一天" @click="shiftDay(-1)">‹</button>
-        <span class="num dlabel">{{ canvasDate === today ? '今天' : fmtDateCn(canvasDate) }}</span>
+        <!-- 日期已由页头大标题承担，这里降为「正在看哪天」的次要说明，不与标题同款 -->
+        <span class="dlabel num">正在看 {{ canvasDate === today ? '今天' : fmtDateCn(canvasDate) }}</span>
         <button class="daynav" aria-label="后一天" @click="shiftDay(1)">›</button>
       </div>
 
       <!-- 未安排池 -->
       <section class="pool" data-testid="pool">
         <header class="row between poolh">
-          <b>未安排</b>
+          <b>未安排 <span class="num">{{ pool.length }}</span></b>
           <span class="hint">拖进时间轴，或点卡片快排</span>
         </header>
         <div class="chips">
@@ -522,7 +523,7 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
 }
 
 .ai-btn:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
   box-shadow: none;
 }
 
@@ -541,10 +542,11 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
   line-height: 1;
 }
 
+/* 日期行：页头大标题已是这一天（fmtDateCn），这里只是「正在看哪天」的次要说明 */
 .dlabel {
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+  color: var(--text-3);
 }
 
 .pool {
@@ -680,7 +682,10 @@ async function onRitualConfirm(ids: number[], mode: 'ai' | 'manual'): Promise<vo
   height: min(62vh, 620px);
 }
 
-@media (max-width: 1099px) {
+/* 手机档（< DESKTOP_MIN，见 :38 的 isDesktop）：底部 Dock 与悬浮条占掉一截，
+   画布比桌面矮一档（62vh → 56vh）。断点必须跟着 DESKTOP_MIN 走 ——
+   900–1099 现在是桌面壳，不该再吃手机那档高度。 */
+@media (max-width: 899px) {
   .tlwrap :deep(.ctl .scroll) {
     height: 56vh;
   }

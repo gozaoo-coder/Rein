@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { CalendarDays, Check, MapPin, Undo2 } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { CATEGORY_META } from '@/config/domain'
 import { minToHHmm } from '@/utils/date'
@@ -60,6 +62,14 @@ function openSchedule(): void {
 
 <template>
   <SheetModal :open="open" title="课程" initial-snap="medium" @close="emit('close')">
+    <!-- 「为什么这里是只读的」是背景口径：收进标题行右侧的说明入口，
+         面上只留一行结论（连去处一起，那是要做的动作） -->
+    <template #action>
+      <InfoHint title="这门课为什么改不了">
+        <p>这门课来自课表同步：标题、时间与地点都由教务课表生成。</p>
+        <p>在这里改会被下次同步覆盖 —— 要改请到<strong>课表配置页</strong>重新同步。</p>
+      </InfoHint>
+    </template>
     <div v-if="todo" class="course">
       <div class="head">
         <i class="dot" :style="{ background: `var(${cat.colorVar})` }" />
@@ -82,10 +92,8 @@ function openSchedule(): void {
         </div>
       </dl>
 
-      <p class="src">
-        这门课来自课表同步：标题、时间与地点都由教务课表生成。要改请到
-        <strong>课表配置页</strong>重新同步 —— 在这里改会被下次同步覆盖。
-      </p>
+      <!-- 只留一行结论：只读 + 去哪儿改。完整口径在标题行右侧的说明里 -->
+      <PillChip tone="label" size="md">只读 · 改课到课表配置页</PillChip>
 
       <div class="acts">
         <button class="primary" @click="todo && emit('toggle', todo)">
@@ -137,8 +145,10 @@ function openSchedule(): void {
   border-radius: var(--radius-full);
 }
 
+/* soft 底上的文字必须走 --*-strong：--ok 压在 --ok-soft 上只有 1.95:1，
+   11px 的「已打卡」是这行最该读出来的状态 */
 .chip.done {
-  color: var(--ok);
+  color: var(--ok-strong);
   background: var(--ok-soft);
 }
 
@@ -178,12 +188,6 @@ function openSchedule(): void {
 
 .facts .num {
   font-variant-numeric: tabular-nums;
-}
-
-.src {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  line-height: 1.55;
 }
 
 .acts {

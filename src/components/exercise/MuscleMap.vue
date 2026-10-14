@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { HEAT_LABELS, MUSCLE_DESCS, MUSCLE_LABELS, isMuscleKey } from '@/config/muscles'
 import type { ActivationMap, HeatLevel, MuscleKey } from '@/config/muscles'
@@ -296,6 +297,13 @@ function toggleDeep(): void {
   showDeep.value = !showDeep.value
 }
 
+/** 分层示意（InfoHint 插槽用）：三个 band 的透明度与图上完全一致 */
+const LAYER_BANDS = [
+  { label: '外层', alpha: 1, desc: '最靠近观察者' },
+  { label: '中层', alpha: 0.78, desc: '中间层' },
+  { label: '后层', alpha: 0.56, desc: '离观察者最远' },
+]
+
 /* ---------- 景深模糊的换算：1 CSS 像素 = 多少 SVG 用户单位 ---------- */
 
 /**
@@ -422,12 +430,24 @@ onUnmounted(() => {
       >
         {{ showDeep ? '含深层' : '仅浅层' }}
       </button>
+      <!-- 分层说明收进帮助入口：「外层/中层/后层」是组件内部术语，配上示意图才读得懂 -->
+      <InfoHint class="legendhint" title="分层示意">
+        <div class="lh-rows">
+          <div v-for="b in LAYER_BANDS" :key="b.label" class="lh-row">
+            <i class="lh-dot" :style="{ opacity: b.alpha }" />
+            <b class="lh-name">{{ b.label }}</b>
+            <span class="lh-desc">{{ b.desc }}</span>
+          </div>
+        </div>
+        <p>透明度表示这块肌肉离观察者的远近 —— 越靠前越实，和颜色的深浅是两回事。</p>
+        <p>正面视图里的背阔肌属于后层。</p>
+      </InfoHint>
     </div>
     <!-- 深度图例与点击提示：**只在激活模式给**。
          它们是解释「同一个绿色是胸还是背」与「图还能点」的说明文字；热力视图下
-         卡上已经有明确的「说明」按钮，再留两行说明只是噪音（2026-10-02 按用户意见移除）。 -->
+         卡上已经有明确的「说明」按钮，再留两行说明只是噪音（2026-10-02 按用户意见移除）。
+         分层那句话同理收进图例行右端的 InfoHint（带示意图），不再平铺在卡面上。 -->
     <template v-if="!heatMode">
-      <p class="layernote t-3">越靠观察者越实：外层 &gt; 中层 &gt; 后层（正面视图里的背阔肌属后层）</p>
       <p v-if="interactive" class="taphint">点击查看全部激活肌群</p>
     </template>
 
@@ -700,15 +720,51 @@ figcaption {
   background: transparent;
 }
 
+/* 桌面壳：「仅浅层 / 含深层」实测 53×21 —— 差 1px，但它坐在一行图例色块的末尾，
+   指针精度下 22 是下限。只把内边距上调一档（实测 21 → 25），胶囊样子不变。
+   手机端维持原档（22 是指针精度的规则）。 */
+.desk-main .depthbtn {
+  padding: 4px 10px;
+}
+
 .depthbtn[aria-pressed='true'] {
   color: var(--text-1);
   background: var(--surface-2);
 }
 
-.layernote {
-  margin-top: -4px;
-  font-size: var(--fs-micro);
-  text-align: center;
+/* 分层示意（InfoHint 插槽内容）：三个圆点的透明度就是图上三个 band */
+.legendhint {
+  margin-left: auto;
+}
+
+.lh-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lh-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c-exercise);
+  flex: none;
+}
+
+.lh-name {
+  font-size: var(--fs-caption);
+  color: var(--text-1);
+}
+
+.lh-desc {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .taphint {

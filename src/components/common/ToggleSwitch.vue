@@ -41,7 +41,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 }
 
 .sw:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
   cursor: default;
 }
 

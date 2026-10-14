@@ -29,6 +29,9 @@ class MainActivity : TauriActivity() {
   private var rightInset = 0
 
   companion object {
+    /** 当前 Activity（跑步采集服务推送 live/轨迹点、派发通知事件时要找 WebView） */
+    @Volatile var current: MainActivity? = null
+
     /** 递归查找 WebView（ShareReceiver 派发 rein-share 事件也要用） */
     fun findWebView(view: View?): WebView? {
       if (view == null) return null
@@ -59,6 +62,7 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    current = this
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     // 注册跑步保活桥的权限弹窗回调（ActivityResultLauncher 必须在 Activity 创建后注册）
@@ -69,6 +73,8 @@ class MainActivity : TauriActivity() {
     if (android.os.Build.VERSION.SDK_INT >= 26) HealthConnectBridge.register(this)
     // 系统分享/打开的文件（冷启动 intent 可能自带）：落收件箱 + 通知前端
     ShareReceiver.handle(this, intent)
+    // 点通知进应用（冷启动）：落待办 + 尽量当场派发 DOM 事件
+    handleOpenIntent(intent)
     ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { _, insets ->
       // WindowInsets 是物理像素；CSS 像素 = 物理像素 / density，直接塞会放大 2~3 倍
       val density = resources.displayMetrics.density
@@ -115,6 +121,37 @@ class MainActivity : TauriActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     ShareReceiver.handle(this, intent)
+    // 点通知回前台（Activity 已在）：同样落待办 + 当场派发
+    handleOpenIntent(intent)
+  }
+
+  override fun onDestroy() {
+    if (current === this) current = null
+    super.onDestroy()
+  }
+
+  /**
+   * 点通知进应用：写 SharedPreferences（进程被杀后仍能落回跑步页）**与**
+   * TrackingBridge 的静态 pendingOpen（页面还没载入时唯一能读到的地方），
+   * 再尽量当场派发 rein-open-workout（WebView 未就绪则静默，由 tracking_open_pending 兜底）。
+   */
+  private fun handleOpenIntent(intent: Intent?) {
+    val kind = intent?.getStringExtra(TrackingBridge.EXTRA_OPEN) ?: return
+    if (kind != "run" && kind != "course") return
+    getSharedPreferences("rein", MODE_PRIVATE).edit().putString("rein_open", kind).apply()
+    TrackingBridge.pendingOpen = kind
+    handler.post {
+      try {
+        val wv = findWebView(window.decorView) ?: return@post
+        wv.evaluateJavascript(
+          "window.dispatchEvent(new CustomEvent('rein-open-workout',{detail:{kind:'$kind'}}))",
+          null,
+        )
+      } catch (e: Exception) {
+        // 页面未就绪/已销毁：待办已经落下，前端轮询 tracking_open_pending 会拿到
+        android.util.Log.w("MainActivity", "派发 rein-open-workout 失败", e)
+      }
+    }
   }
 
   private fun findWebView(view: View?): WebView? {

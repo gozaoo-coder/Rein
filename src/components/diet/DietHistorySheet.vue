@@ -128,12 +128,12 @@ watch(
 /* ---------- 当日列表 ---------- */
 const dayLogs = computed(() => logs.value.filter((l) => l.date === selected.value))
 
-/** 行内四格指标：本笔占当日目标的百分比；目标未设（≤0）回落显示克数 */
+/** 行内四格指标：本笔占当日目标的百分比；目标未设（≤0）回落显示实际量（热量用大卡，其余用克） */
 const ROW_METRICS = [
-  { key: 'kcal', label: '热量', colorVar: '--c-intake' },
-  { key: 'protein', label: '蛋白', colorVar: '--c-protein' },
-  { key: 'carb', label: '碳水', colorVar: '--c-carb' },
-  { key: 'fat', label: '脂肪', colorVar: '--c-fat' },
+  { key: 'kcal', label: '热量', unit: '大卡', colorVar: '--c-intake' },
+  { key: 'protein', label: '蛋白', unit: 'g', colorVar: '--c-protein' },
+  { key: 'carb', label: '碳水', unit: 'g', colorVar: '--c-carb' },
+  { key: 'fat', label: '脂肪', unit: 'g', colorVar: '--c-fat' },
 ] as const
 
 function rowMetrics(l: MealLog) {
@@ -277,7 +277,7 @@ async function onDelete(): Promise<void> {
               <span v-for="m in it.metrics" :key="m.key" class="ncell">
                 <span class="nlab">
                   {{ m.label }}
-                  <b class="num nval">{{ m.pct != null ? `${m.pct}%` : `${m.gramsText}g` }}</b>
+                  <b class="num nval">{{ m.pct != null ? `${m.pct}%` : `${m.gramsText}${m.unit}` }}</b>
                 </span>
                 <i class="nbar" :class="{ 'notgt': m.pct == null }">
                   <i class="nfill" :style="{ width: m.fill + '%', background: `var(${m.colorVar})` }" />
@@ -412,7 +412,7 @@ html[data-perf]:not([data-perf='low']) .dock-pill {
 }
 
 .dock-side:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 
 /* 药丸：七格等分的一整条容器。内边距 3px 就是选中药丸与容器之间那道缝 */
@@ -445,7 +445,7 @@ html[data-perf]:not([data-perf='low']) .dock-pill {
 }
 
 .dock-day:disabled {
-  opacity: 0.32;
+  opacity: var(--disabled-opacity);
 }
 
 .dd {

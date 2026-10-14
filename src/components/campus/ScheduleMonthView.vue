@@ -41,12 +41,7 @@ function colorOf(e: ScheduleEntry): string {
   return e.session.color ?? 'var(--cat-class)'
 }
 
-const monthLabel = computed(() => {
-  const d = parseDate(props.anchor)
-  return `${d.getFullYear()}年${d.getMonth() + 1}月`
-})
-
-/** 本月上课天数与总课时，给出一句概览 */
+/** 本月上课天数与总课次，给出一句概览 */
 const stats = computed(() => {
   const days = new Set<string>()
   let count = 0
@@ -61,8 +56,11 @@ const stats = computed(() => {
 
 <template>
   <div class="month">
+    <!-- 概览行只留本页的新信息：年月归页头那颗日期按钮（同一屏曾经两个「2026年10月」）。
+         量词不能再用「节」—— 日/周视图里「节」指小节，这里数的是课次，
+         两种口径撞一个词，读者只能猜量级 -->
     <p class="sum">
-      {{ monthLabel }} · 上课 {{ stats.days }} 天 / {{ stats.count }} 节
+      上课 <span class="num">{{ stats.days }}</span> 天 · <span class="num">{{ stats.count }}</span> 次课
     </p>
 
     <!-- 单一卡面承载整月：42 个格子各自背 --shadow-card（亮色三层、每帧参与合成）

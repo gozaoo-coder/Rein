@@ -137,6 +137,9 @@ async function submit(): Promise<void> {
 const entryOpen = ref(false)
 const entry = ref<BodyMetric | null>(null)
 
+/** 历史列表展开（默认最近 5 条；「共 N 条」要点开看得见，否则与屏上的 5 行对不上） */
+const showAll = ref(false)
+
 function tapEntry(m: BodyMetric): void {
   entry.value = m
   entryOpen.value = true
@@ -181,7 +184,7 @@ async function onEntrySelect(value: string): Promise<void> {
           >
             <TrendingDown v-if="(deltaFrom(0, 'weightKg') ?? 0) < 0" :size="12" />
             <TrendingUp v-else :size="12" />
-            {{ Math.abs(deltaFrom(0, 'weightKg')!).toFixed(1) }}
+            {{ Math.abs(deltaFrom(0, 'weightKg')!).toFixed(1) }}<i class="dunit">kg</i>
           </span>
         </li>
         <li>
@@ -223,10 +226,10 @@ async function onEntrySelect(value: string): Promise<void> {
         <span class="axis num t-3"><i>{{ fmtShort(trendGeom.from) }}</i><i>{{ fmtShort(trendGeom.to) }}</i></span>
       </figure>
 
-      <!-- 历史 -->
+      <!-- 历史：默认最近 5 条；「共 N 条」配「查看全部」，数得出才看得见 -->
       <ul class="hist">
         <li
-          v-for="(m, i) in n.metrics.slice(0, 5)"
+          v-for="(m, i) in n.metrics.slice(0, showAll ? n.metrics.length : 5)"
           :key="m.id"
           role="button"
           tabindex="0"
@@ -246,12 +249,17 @@ async function onEntrySelect(value: string): Promise<void> {
             class="delta num"
             :class="(deltaFrom(i, 'weightKg') ?? 0) < 0 ? 'down' : 'up'"
           >
-            {{ (deltaFrom(i, 'weightKg') ?? 0) > 0 ? '+' : '' }}{{ deltaFrom(i, 'weightKg')!.toFixed(1) }}
+            {{ (deltaFrom(i, 'weightKg') ?? 0) > 0 ? '+' : '' }}{{ deltaFrom(i, 'weightKg')!.toFixed(1) }}<i class="dunit">kg</i>
           </span>
           <span v-else class="delta none"></span>
         </li>
       </ul>
-      <p v-if="n.metrics.length > 5" class="more t-3">共 {{ n.metrics.length }} 条记录</p>
+      <p v-if="n.metrics.length > 5" class="more t-3">
+        <button v-if="!showAll" class="morebtn" type="button" @click="showAll = true">
+          查看全部 {{ n.metrics.length }} 条记录
+        </button>
+        <button v-else class="morebtn" type="button" @click="showAll = false">仅显示最近 5 条</button>
+      </p>
     </template>
 
     <!-- 记录弹层 -->
@@ -309,11 +317,13 @@ header > div > p {
   margin-top: 1px;
 }
 
+/* soft 底上的文字一律走对应 --*-strong：实底档（--accent / --ok / --warn / --danger）
+   直接当字用只有 1.95~3.74:1（tokens.css:163-168），分档结论词会糊 */
 .rec {
   padding: 6px 14px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
   font-size: var(--fs-subhead);
   font-weight: 600;
   flex: none;
@@ -369,12 +379,22 @@ header > div > p {
   font-weight: 600;
 }
 
+/* 涨跌不再借宏量营养素域色（--c-protein / --c-carb 是给蛋白质/碳水准备的）：
+   降 = ok-strong、升 = warn-strong —— 与 BMI 分档同一套语义档，深浅也配 soft 底 */
 .delta.down {
-  color: var(--c-protein);
+  color: var(--ok-strong);
 }
 
 .delta.up {
-  color: var(--c-carb);
+  color: var(--warn-strong);
+}
+
+.dunit {
+  font-style: normal;
+  font-weight: 400;
+  /* 变化量的小帽单位（kg），装饰性微字 */
+  font-size: var(--fs-micro);
+  margin-left: 1px;
 }
 
 .bmi-tag {
@@ -383,7 +403,7 @@ header > div > p {
   padding: 1px 7px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
   /* BMI 分档是健康结论词，不吃 11px */
   font-size: var(--fs-caption);
   font-weight: 700;
@@ -391,17 +411,17 @@ header > div > p {
 
 .bmi-tag.ok {
   background: var(--ok-soft);
-  color: var(--c-protein);
+  color: var(--ok-strong);
 }
 
 .bmi-tag.warn {
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-  color: var(--c-carb);
+  background: var(--warn-soft);
+  color: var(--warn-strong);
 }
 
 .bmi-tag.bad {
   background: var(--danger-soft);
-  color: var(--danger);
+  color: var(--danger-strong);
 }
 
 /* 趋势图 */
@@ -464,7 +484,7 @@ header > div > p {
   padding: 1px 6px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-strong);
   /* 段首的状态词（「已记录」），必须读得出 */
   font-size: var(--fs-caption);
   font-weight: 700;
@@ -487,6 +507,14 @@ header > div > p {
   border-top: 0.5px solid var(--line);
   text-align: center;
   font-size: var(--fs-footnote);
+}
+
+/* 「查看全部 / 仅显示最近 5 条」：计数要点开看得见，配一枚文字按钮 */
+.morebtn {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--accent-strong);
+  padding: 4px 8px;
 }
 
 /* 记录弹层表单 */
@@ -526,7 +554,7 @@ header > div > p {
 }
 
 .save:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .fnote {

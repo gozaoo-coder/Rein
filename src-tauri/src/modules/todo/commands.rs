@@ -266,6 +266,70 @@ pub fn query_todos(
 }
 
 #[tauri::command]
+/// 主页「全部待办」信息流：未完成整体在前、已完成沉底，分页取数避免全量倾倒。
+/// 排序与分页口径见 [`query_todo_feed_on`]。
+pub fn query_todo_feed(
+    state: State<AppState>,
+    today: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<TodoPage> {
+    let conn = state.db.lock();
+    query_todo_feed_on(&conn, &today, limit, offset)
+}
+
+/// 信息流的 ORDER BY 全序（逐键语义见 [`query_todo_feed_on`] 的文档）。
+///
+/// 单拎成常量只为让单测能直接钉住第 6 键 `id`：`id` 是 rowid 别名（建表
+/// `INTEGER PRIMARY KEY AUTOINCREMENT`），全表扫描的输入序天然就是 id 升序，
+/// 稳定排序器下「删掉 `, id`」在行为上不可观察（实测 SQLite 3.46.0：删掉后返回序与现状
+/// 逐位相同），只能由 `feed_order_by_ends_with_id_tiebreaker` 直接查文本。
+const FEED_ORDER_BY: &str = "ORDER BY (status = 'done'), \
+     CASE WHEN date IS NULL THEN 0 WHEN date < ?1 THEN 1 WHEN date = ?1 THEN 2 ELSE 3 END, \
+     date, (start_min IS NULL), start_min, priority DESC, id";
+
+/// `query_todo_feed` 的本体：收 `&Connection` 而不是 `State`（见 [`list_todos_on`]），
+/// 单测才能在内存库上直接跑。
+///
+/// 排序全序（前端信息流与 mock 侧逐字对齐同一套，改这里就得同步改 `src/mock/server.ts`）：
+/// 1) `(status = 'done')` —— 未完成（todo/doing）整体在前，**只有** 'done' 沉底；
+/// 2) 日期桶 `date IS NULL(未安排) → 逾期 → 今天 → 未来`——这一键不看 status，
+///    已完成组内自动沿用同一桶序，无需第二个表达式；
+/// 3) `date` 升序：逾期桶里最早欠的排最前，未来桶按日期升序（桶 0 全 NULL，不参与）；
+/// 4) `(start_min IS NULL), start_min`：有时间的在前、时间早的在前（沿用既有排序串的取舍）；
+/// 5) `priority DESC`；6) `id` 兜底 —— 前五键都是列值、第六键唯一 ⇒ 任何一页的边界都落在确定的行上。
+///
+/// `total` 是**全表条数**（不过滤：含已完成、收件箱与课表派生行），与 `list_all_todos` 同口径；
+/// `today` 只参与 ORDER BY 的分桶，不参与过滤。
+/// `limit` 默认 30、`clamp(1, 100)`；`offset` 默认 0、`max(0)`，越界返回空 items 且 total 照给。
+pub(crate) fn query_todo_feed_on(
+    conn: &rusqlite::Connection,
+    today: &str,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<TodoPage> {
+    if parse_date(today).is_none() {
+        return Err(crate::error::ReinError::Message(
+            "日期格式应为 YYYY-MM-DD".into(),
+        ));
+    }
+    let limit = limit.unwrap_or(30).clamp(1, 100);
+    let offset = offset.unwrap_or(0).max(0);
+    let sql = format!("SELECT {COLS} FROM todos {FEED_ORDER_BY} LIMIT ?2 OFFSET ?3");
+    let mut stmt = conn.prepare(&sql)?;
+    let items = stmt
+        .query_map(rusqlite::params![today, limit, offset], from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM todos", [], |r| r.get(0))?;
+    Ok(TodoPage {
+        items,
+        total,
+        limit,
+        offset,
+    })
+}
+
+#[tauri::command]
 /// 全部日程按日分布总览（对应工具 todo_distribution）：按日计数 + 收件箱/逾期摘要。
 /// AI 先看分布再分页下钻，避免拉全量明细。
 pub fn todo_distribution(state: State<AppState>, today: String) -> Result<TodoDistribution> {
@@ -730,6 +794,340 @@ mod tests {
                 ("2026-09-25".to_string(), true),  // 已完成：留着
                 ("2026-09-30".to_string(), false), // 周三
             ]
+        );
+    }
+
+    // ---- query_todo_feed（主页「全部待办」信息流）----
+
+    /// 插一条待办（只带排序用得上的列），返回 id。
+    fn insert_todo(
+        conn: &Connection,
+        title: &str,
+        date: Option<&str>,
+        start_min: Option<i64>,
+        priority: i64,
+        status: &str,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO todos (title, date, start_min, category, priority, status, created_at) \
+             VALUES (?1, ?2, ?3, 'general', ?4, ?5, '2026-09-23T00:00:00Z')",
+            rusqlite::params![title, date, start_min, priority, status],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// 信息流的标题序列（断言顺序用；全序兜底键是 id，见 [`feed_ids`]）。
+    fn feed_titles(conn: &Connection, today: &str, limit: Option<i64>) -> Vec<String> {
+        query_todo_feed_on(conn, today, limit, None)
+            .unwrap()
+            .items
+            .iter()
+            .map(|t| t.title.clone())
+            .collect()
+    }
+
+    /// 一页的 id 序列（翻页拼接用）。
+    fn feed_ids(conn: &Connection, today: &str, limit: Option<i64>, offset: Option<i64>) -> Vec<i64> {
+        query_todo_feed_on(conn, today, limit, offset)
+            .unwrap()
+            .items
+            .iter()
+            .map(|t| t.id)
+            .collect()
+    }
+
+    /// 造一条校园课表时段链（account → semester → course → session），返回 session id。
+    /// `todos.course_session_id` 是真外键且 `migrate` 开着 `foreign_keys`，
+    /// 所以「课表派生行」必须挂一条真 session，不能编个 id。
+    fn insert_campus_session(conn: &Connection) -> i64 {
+        conn.execute(
+            "INSERT INTO campus_accounts (system_kind, base_url, login_name, created_at, updated_at) \
+             VALUES ('jwgl', 'https://example.edu', 'student', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        let account = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO campus_semesters (account_id, remote_id, name, start_date, end_date) \
+             VALUES (?1, 1, '2026 秋', '2026-09-01', '2027-01-15')",
+            [account],
+        )
+        .unwrap();
+        let semester = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO campus_courses (account_id, semester_id, remote_lesson_id, course_name) \
+             VALUES (?1, ?2, 1, '高等数学')",
+            rusqlite::params![account, semester],
+        )
+        .unwrap();
+        let course = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO campus_sessions (account_id, semester_id, course_id, weekday, start_unit, \
+             end_unit, start_time, end_time, weeks) \
+             VALUES (?1, ?2, ?3, 2, 1, 2, '08:00', '09:40', '1-16')",
+            rusqlite::params![account, semester, course],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    /// 排序键 1-3：未完成五桶 = 未安排 → 逾期（日期升序，最早欠的在前）→ 今天 → 未来（日期升序）。
+    #[test]
+    fn feed_buckets_undone_inbox_overdue_today_future() {
+        let conn = fresh();
+        let today = "2026-09-23";
+        // 故意乱序插入：结果只由 ORDER BY 决定，与插入顺序无关
+        insert_todo(&conn, "未来2", Some("2026-09-25"), None, 0, "todo");
+        insert_todo(&conn, "逾期2", Some("2026-09-21"), None, 0, "todo");
+        insert_todo(&conn, "今天1", Some(today), None, 0, "todo");
+        insert_todo(&conn, "未安排", None, None, 0, "todo");
+        insert_todo(&conn, "逾期1", Some("2026-09-20"), None, 0, "todo");
+        insert_todo(&conn, "未来1", Some("2026-09-24"), None, 0, "todo");
+        assert_eq!(
+            feed_titles(&conn, today, None),
+            vec!["未安排", "逾期1", "逾期2", "今天1", "未来1", "未来2"]
+        );
+    }
+
+    /// 排序键 1 的另一面：已完成整体沉底，且组内沿用同一日期桶序（'doing' 与 'todo' 同档）。
+    #[test]
+    fn feed_sinks_done_rows_after_all_undone() {
+        let conn = fresh();
+        let today = "2026-09-23";
+        // 未完成 / 已完成各桶交替插入：只有「done 沉底 + 桶序」能给出下面的顺序
+        insert_todo(&conn, "done未安排", None, None, 0, "done");
+        insert_todo(&conn, "未安排", None, None, 0, "todo");
+        insert_todo(&conn, "done逾期", Some("2026-09-20"), None, 0, "done");
+        insert_todo(&conn, "逾期", Some("2026-09-20"), None, 0, "todo");
+        insert_todo(&conn, "done今天", Some(today), None, 0, "done");
+        insert_todo(&conn, "今天", Some(today), None, 0, "doing");
+        insert_todo(&conn, "done未来", Some("2026-09-25"), None, 0, "done");
+        insert_todo(&conn, "未来", Some("2026-09-25"), None, 0, "todo");
+        assert_eq!(
+            feed_titles(&conn, today, None),
+            vec![
+                "未安排",
+                "逾期",
+                "今天",
+                "未来",
+                "done未安排",
+                "done逾期",
+                "done今天",
+                "done未来",
+            ]
+        );
+    }
+
+    /// 排序键 4-6：同桶内 (start_min IS NULL) → start_min → priority DESC → id。
+    #[test]
+    fn feed_group_order_within_bucket_follows_time_priority_id() {
+        let conn = fresh();
+        let today = "2026-09-23";
+        // 插入顺序故意与目标顺序不同：max(id) 的 A 反而排最后（无时间靠后），
+        // 小 id 的 B 被 C/E 挤到后面（priority DESC 压过 id ASC）
+        insert_todo(&conn, "A 无时间·高优先", Some(today), None, 9, "todo");
+        insert_todo(&conn, "B 10:00·低优先", Some(today), Some(600), 0, "todo");
+        insert_todo(&conn, "C 10:00·高优先", Some(today), Some(600), 5, "todo");
+        insert_todo(&conn, "D 09:00·低优先", Some(today), Some(540), 0, "todo");
+        insert_todo(&conn, "E 10:00·高优先·大id", Some(today), Some(600), 5, "todo");
+        assert_eq!(
+            feed_titles(&conn, today, None),
+            vec![
+                "D 09:00·低优先",
+                "C 10:00·高优先",
+                "E 10:00·高优先·大id",
+                "B 10:00·低优先",
+                "A 无时间·高优先",
+            ]
+        );
+    }
+
+    /// 翻页不重不漏：每页与**硬编码期望序**的切片逐位相同。
+    /// 只比「4 页拼起来 == 一次取回」钉不住排序键 —— 两边是同一条 SQL 的两次运行，
+    /// 实测删掉 `, id` 甚至把它写成 `id DESC`，那个比较都照样通过（自洽 ≠ 正确）。
+    #[test]
+    fn feed_paging_is_stable_across_pages() {
+        let conn = fresh();
+        let today = "2026-09-23";
+        for i in 0..20i64 {
+            let date = match i % 4 {
+                0 => None,
+                1 => Some("2026-09-20"),
+                2 => Some(today),
+                _ => Some("2026-09-25"),
+            };
+            let status = if i % 3 == 0 { "done" } else { "todo" };
+            let start_min = if i % 2 == 0 { None } else { Some(600 + i) };
+            insert_todo(&conn, &format!("t{i:02}"), date, start_min, i % 3, status);
+        }
+        // 期望序（id = 插入序 + 1）：未完成 8,4,16 | 1,5,13,17 | 2,14,10 | 7,11,19 → 已完成 0,12 | 9 | 6,18 | 3,15。
+        // 前五键并列的四组（下标 0/12、2/14、4/16、6/18）在这里都按 id 升序解开 ⇒ 第 6 键写反会红。
+        let expected: Vec<i64> = vec![
+            9, 5, 17, 2, 6, 14, 18, 3, 15, 11, 8, 12, 20, 1, 13, 10, 7, 19, 4, 16,
+        ];
+        let all = feed_ids(&conn, today, Some(100), None);
+        assert_eq!(all, expected, "一次取回应与期望序逐位相同");
+        let mut paged = Vec::new();
+        for page in 0..4usize {
+            let slice = feed_ids(&conn, today, Some(5), Some((page * 5) as i64));
+            assert_eq!(
+                slice,
+                expected[page * 5..page * 5 + 5],
+                "第 {page} 页应与期望切片相同"
+            );
+            paged.extend(slice);
+        }
+        assert_eq!(paged, expected, "4 页 × 5 条应与一次取回逐位相同");
+    }
+
+    /// 第 6 键（`id` 兜底）的**存在性**只能查 SQL 文本：`id` 是 rowid 别名，全表扫描的
+    /// 输入序天然就是 id 升序，稳定排序器下删掉它行为不可观察（实测 SQLite 3.46.0 逐位相同）。
+    /// 行为侧由 [`feed_paging_is_stable_across_pages`] 钉方向/位置，这里钉「它在」。
+    #[test]
+    fn feed_order_by_ends_with_id_tiebreaker() {
+        assert!(
+            FEED_ORDER_BY.ends_with(", id"),
+            "ORDER BY 必须落在 `, id` 上，否则分页边界没有唯一的第 6 键兜底：{FEED_ORDER_BY}"
+        );
+    }
+
+    /// total 是全表条数（不过滤）；offset 越界不报错、返回空页并把入参原样回传。
+    #[test]
+    fn feed_total_counts_all_rows_and_offset_beyond_returns_empty() {
+        let conn = fresh();
+        let today = "2026-09-23";
+        insert_todo(&conn, "已完成", Some(today), None, 0, "done");
+        insert_todo(&conn, "收件箱", None, None, 0, "todo");
+        insert_todo(&conn, "普通", Some(today), None, 0, "todo");
+
+        let page = query_todo_feed_on(&conn, today, None, None).unwrap();
+        assert_eq!(page.total, 3, "total 含已完成与收件箱");
+        assert_eq!(page.limit, 30, "默认页大小 30");
+        assert_eq!(page.offset, 0, "默认 offset 0");
+        assert_eq!(page.items.len(), 3);
+
+        let beyond = query_todo_feed_on(&conn, today, Some(10), Some(99)).unwrap();
+        assert!(beyond.items.is_empty(), "offset 越界返回空页而不是报错");
+        assert_eq!(beyond.total, 3, "越界也照给 total：前端据此判到底");
+        assert_eq!(beyond.limit, 10, "limit 原样回传");
+        assert_eq!(beyond.offset, 99, "offset 原样回传");
+    }
+
+    /// 两端口径：total == 逐页取回并集的长度（含课表派生行与重复实例行，都不过滤）。
+    #[test]
+    fn feed_total_matches_full_scan() {
+        let conn = fresh();
+        let today = "2026-09-23";
+
+        // 课表派生行（course_session_id 非空）
+        let sid = insert_campus_session(&conn);
+        let derived = insert_todo(&conn, "课程·高数", Some(today), Some(480), 0, "todo");
+        conn.execute(
+            "UPDATE todos SET course_session_id = ?1 WHERE id = ?2",
+            rusqlite::params![sid, derived],
+        )
+        .unwrap();
+
+        // 重复模板 + 实例（rec_key = "模板id:日期"）
+        let template = insert_todo(&conn, "晨跑·模板", Some(today), Some(420), 0, "todo");
+        conn.execute(
+            "UPDATE todos SET rec_rule = ?1, rec_key = ?2 WHERE id = ?3",
+            rusqlite::params![
+                r#"{"freq":"daily","weekdays":[],"intervalDays":1}"#,
+                format!("{template}:{today}"),
+                template
+            ],
+        )
+        .unwrap();
+        let instance = insert_todo(&conn, "晨跑·实例", Some("2026-09-24"), Some(420), 0, "todo");
+        conn.execute(
+            "UPDATE todos SET rec_key = ?1 WHERE id = ?2",
+            rusqlite::params![format!("{template}:2026-09-24"), instance],
+        )
+        .unwrap();
+
+        insert_todo(&conn, "已完成", Some("2026-09-20"), None, 0, "done");
+        insert_todo(&conn, "收件箱", None, None, 0, "todo");
+
+        let first = query_todo_feed_on(&conn, today, Some(2), None).unwrap();
+        assert_eq!(
+            first.total,
+            list_all_todos_on(&conn).unwrap().len() as i64,
+            "total 与无 WHERE 的全表扫描同口径"
+        );
+
+        let mut union = Vec::new();
+        for page in 0..8 {
+            let p = query_todo_feed_on(&conn, today, Some(2), Some(page * 2)).unwrap();
+            if p.items.is_empty() {
+                break;
+            }
+            union.extend(p.items);
+        }
+        assert_eq!(union.len() as i64, first.total, "逐页取回的并集长度 == total");
+        assert!(
+            union.iter().any(|t| t.course_session_id == Some(sid)),
+            "课表派生行在结果里（feed 不筛它）"
+        );
+        assert!(
+            union.iter().any(|t| t.rec_key.is_some()),
+            "重复实例行在结果里"
+        );
+    }
+
+    /// limit 默认 30、clamp(1,100)；offset 默认 0、负数归 0。
+    #[test]
+    fn feed_clamps_limit_and_offset() {
+        let conn = fresh();
+        let today = "2026-09-23";
+        for i in 0..3 {
+            insert_todo(&conn, &format!("t{i}"), Some(today), None, 0, "todo");
+        }
+
+        let default = query_todo_feed_on(&conn, today, None, None).unwrap();
+        assert_eq!((default.limit, default.offset), (30, 0), "缺省 = 30/0");
+        assert_eq!(default.items.len(), 3, "未超限则全给");
+
+        let clamped_low = query_todo_feed_on(&conn, today, Some(0), Some(-5)).unwrap();
+        assert_eq!(
+            (clamped_low.limit, clamped_low.offset),
+            (1, 0),
+            "limit 0 → 1、offset 负数 → 0"
+        );
+        assert_eq!(clamped_low.items.len(), 1, "clamp 后确实只给一行");
+
+        let clamped_high = query_todo_feed_on(&conn, today, Some(999), None).unwrap();
+        assert_eq!(clamped_high.limit, 100, "limit 上限 100");
+        assert_eq!(clamped_high.items.len(), 3);
+    }
+
+    /// today 只参与分桶；格式非法必须报错，不许静默分错桶。
+    #[test]
+    fn feed_rejects_malformed_today() {
+        let conn = fresh();
+        insert_todo(&conn, "任意", Some("2026-09-23"), None, 0, "todo");
+        for bad in ["2026/09/23", ""] {
+            let err = query_todo_feed_on(&conn, bad, None, None).unwrap_err();
+            assert!(
+                err.to_string().contains("YYYY-MM-DD"),
+                "{bad:?} 的错误文案应提示日期格式：{err}"
+            );
+        }
+    }
+
+    /// 同一日期上未完成 / 已完成并存时两条不跨桶交错：
+    /// 今天的未完成 → 未来未完成 → 今天已完成（已完成那条 id 最小也照样沉底）。
+    #[test]
+    fn feed_keeps_bucket_boundaries_on_duplicate_dates() {
+        let conn = fresh();
+        let today = "2026-09-23";
+        insert_todo(&conn, "今天·已完成", Some(today), None, 0, "done");
+        insert_todo(&conn, "今天·未完成", Some(today), None, 0, "todo");
+        insert_todo(&conn, "明天·未完成", Some("2026-09-24"), None, 0, "todo");
+        assert_eq!(
+            feed_titles(&conn, today, None),
+            vec!["今天·未完成", "明天·未完成", "今天·已完成"]
         );
     }
 }

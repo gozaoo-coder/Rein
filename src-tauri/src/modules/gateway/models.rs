@@ -14,22 +14,29 @@ pub enum Scope {
     ScheduleRead,
     ScheduleCreate,
     ScheduleWrite,
+    ScheduleDelete,
     WorkoutRead,
     WorkoutWrite,
+    WorkoutDelete,
     PomodoroRead,
     PomodoroWrite,
+    PomodoroControl,
 }
 
 impl Scope {
-    /// 全部权限，供管理面「逐项勾选」与「列出全部」用。顺序即界面展示顺序。
-    pub const ALL: [Scope; 7] = [
+    /// 全部权限，供管理面「逐项勾选」与「列出全部」用。顺序即界面展示顺序
+    /// （与 contract §5.3 的 10 条字符串同序）。
+    pub const ALL: [Scope; 10] = [
         Scope::ScheduleRead,
         Scope::ScheduleCreate,
         Scope::ScheduleWrite,
+        Scope::ScheduleDelete,
         Scope::WorkoutRead,
         Scope::WorkoutWrite,
+        Scope::WorkoutDelete,
         Scope::PomodoroRead,
         Scope::PomodoroWrite,
+        Scope::PomodoroControl,
     ];
 
     /// 线上字符串（也是库里 `ext_clients.scopes` 的元素）。
@@ -38,10 +45,13 @@ impl Scope {
             Scope::ScheduleRead => "schedule.read",
             Scope::ScheduleCreate => "schedule.create",
             Scope::ScheduleWrite => "schedule.write",
+            Scope::ScheduleDelete => "schedule.delete",
             Scope::WorkoutRead => "workout.read",
             Scope::WorkoutWrite => "workout.write",
+            Scope::WorkoutDelete => "workout.delete",
             Scope::PomodoroRead => "pomodoro.read",
             Scope::PomodoroWrite => "pomodoro.write",
+            Scope::PomodoroControl => "pomodoro.control",
         }
     }
 
@@ -51,10 +61,13 @@ impl Scope {
             "schedule.read" => Some(Scope::ScheduleRead),
             "schedule.create" => Some(Scope::ScheduleCreate),
             "schedule.write" => Some(Scope::ScheduleWrite),
+            "schedule.delete" => Some(Scope::ScheduleDelete),
             "workout.read" => Some(Scope::WorkoutRead),
             "workout.write" => Some(Scope::WorkoutWrite),
+            "workout.delete" => Some(Scope::WorkoutDelete),
             "pomodoro.read" => Some(Scope::PomodoroRead),
             "pomodoro.write" => Some(Scope::PomodoroWrite),
+            "pomodoro.control" => Some(Scope::PomodoroControl),
             _ => None,
         }
     }
@@ -83,7 +96,7 @@ impl<'de> Deserialize<'de> for Scope {
 ///
 /// 「是否包含某权限」是授权校验的核心原语：入站每一次调用都要过一遍
 /// `set.contains(need)`，**不缓存**（缓存即撤销延迟生效），所以这里只是一个朴素的线性查找 ——
-/// 最多 7 个元素，任何索引结构都是过度设计。
+/// 最多 10 个元素，任何索引结构都是过度设计。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScopeSet(Vec<Scope>);
 
@@ -412,6 +425,23 @@ mod tests {
         assert_eq!(Scope::parse("schedule"), None);
         assert_eq!(Scope::parse("Schedule.Read"), None);
         assert_eq!(Scope::parse("schedule.read "), None);
+    }
+
+    /// 第二轮新增的三条 scope（删除 / 控制）：字符串、精确匹配、`ALL` 覆盖全 10 条。
+    #[test]
+    fn scope_table_covers_ten_including_delete_and_control() {
+        assert_eq!(Scope::ALL.len(), 10);
+        for sc in Scope::ALL {
+            assert_eq!(Scope::parse(sc.as_str()), Some(sc), "{} 必须能反查", sc.as_str());
+        }
+        assert_eq!(Scope::parse("schedule.delete"), Some(Scope::ScheduleDelete));
+        assert_eq!(Scope::parse("workout.delete"), Some(Scope::WorkoutDelete));
+        assert_eq!(Scope::parse("pomodoro.control"), Some(Scope::PomodoroControl));
+        // 删除 / 控制**不从写权限派生**：精确匹配下 write 不蕴含 delete
+        let set: ScopeSet = [Scope::ScheduleWrite, Scope::WorkoutWrite].into_iter().collect();
+        assert!(!set.contains(Scope::ScheduleDelete));
+        assert!(!set.contains(Scope::WorkoutDelete));
+        assert!(!set.contains(Scope::PomodoroControl));
     }
 
     #[test]

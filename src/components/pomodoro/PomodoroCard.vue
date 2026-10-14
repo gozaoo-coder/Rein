@@ -3,6 +3,8 @@ import { computed, onMounted } from 'vue'
 import { Pause, Play, RotateCcw } from 'lucide-vue-next'
 
 import RingProgress from '@/components/common/RingProgress.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import { usePomodoroStore } from '@/stores/pomodoro'
 import { useTodoStore } from '@/stores/todo'
 import { todayStr } from '@/utils/date'
@@ -16,11 +18,17 @@ onMounted(() => {
   if (todo.dayTodos.length === 0) void todo.loadDay(todayStr())
 })
 
+/** 当前长休周期内已完成的轮数（「本轮 X/N」的 X，同时决定圆点点亮几颗） */
+const roundDone = computed(() => {
+  const n = pomo.settings.roundsBeforeLongBreak
+  const done = pomo.todaySessions.length % n
+  return done === 0 && pomo.todaySessions.length > 0 ? n : done
+})
+
 /** 当前长休周期内的轮次（用于点亮圆点） */
 const roundDots = computed(() => {
   const n = pomo.settings.roundsBeforeLongBreak
-  const done = pomo.todaySessions.length % n
-  return Array.from({ length: n }, (_, i) => i < (done === 0 && pomo.todaySessions.length > 0 ? n : done))
+  return Array.from({ length: n }, (_, i) => i < roundDone.value)
 })
 
 function onPickTodo(event: Event): void {
@@ -33,7 +41,23 @@ function onPickTodo(event: Event): void {
   <section class="card">
     <header class="row between head">
       <h2>番茄钟</h2>
-      <span class="rounds num">{{ pomo.todaySessions.length }} 个番茄</span>
+      <span class="head-right">
+        <!-- 「N 个番茄」胶囊：条数与轮次进度合成一处（原先卡头条数、卡底分钟、
+             卡底圆点三处各念一遍同一批 todaySessions）。「本轮 X/N」写在 .trail 里，
+             圆点只作辅助；几轮进长休是可改的设置，收进右侧说明入口。 -->
+        <PillChip tone="muted" size="sm">
+          <span class="num">{{ pomo.todaySessions.length }}</span> 个番茄
+          <span class="trail">
+            本轮 <span class="num">{{ roundDone }}</span>/<span class="num">{{ pomo.settings.roundsBeforeLongBreak }}</span>
+          </span>
+          <span v-for="(on, i) in roundDots" :key="i" class="rdot" :class="{ on }" />
+        </PillChip>
+        <InfoHint title="轮次圆点">
+          <p>每 {{ pomo.settings.roundsBeforeLongBreak }} 次专注后进入一次长休息。</p>
+          <p>圆点记录本轮进度：点亮的是本轮已完成的次数，点满即进入长休息，之后重新开始点亮。</p>
+          <p>轮数可以在设置里调整。</p>
+        </InfoHint>
+      </span>
     </header>
 
     <div class="col center body">
@@ -68,8 +92,7 @@ function onPickTodo(event: Event): void {
       </div>
 
       <p class="stat">
-        今日专注 <b class="num">{{ pomo.todayFocusMin }}</b> 分钟 · 轮次
-        <span v-for="(on, i) in roundDots" :key="i" class="rdot" :class="{ on }" />
+        今日专注 <b class="num">{{ pomo.todayFocusMin }}</b> 分钟
       </p>
     </div>
   </section>
@@ -82,9 +105,10 @@ function onPickTodo(event: Event): void {
   letter-spacing: -0.3px;
 }
 
-.rounds {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
+.head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .body {
@@ -147,12 +171,19 @@ function onPickTodo(event: Event): void {
   text-overflow: ellipsis;
 }
 
+/* 卡底唯一主数值：今日专注分钟数提到主档，其余事实都进了卡头胶囊 */
 .stat {
   font-size: var(--fs-caption);
   color: var(--text-2);
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 5px;
+}
+
+.stat .num {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
 }
 
 .rdot {

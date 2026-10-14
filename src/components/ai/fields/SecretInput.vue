@@ -10,7 +10,7 @@
  *   所以「保留原值」只能表达成留空）。
  */
 import { ref } from 'vue'
-import { ClipboardPaste, Eye, EyeOff, KeyRound, X } from 'lucide-vue-next'
+import { AlertCircle, ClipboardPaste, Eye, EyeOff, KeyRound, X } from 'lucide-vue-next'
 
 const props = withDefaults(
   defineProps<{
@@ -39,7 +39,8 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
 
 const reveal = ref(false)
-const pasteNote = ref('')
+/** 粘贴结果提示：成功（已粘贴）与失败（读不到 / 空的）分两态，不能用同一个成功绿 */
+const pasteNote = ref<{ ok: boolean; text: string } | null>(null)
 
 /** Key 里不允许出现空白与包裹引号：粘贴时一次清掉，省掉「鉴权失败但看不出为什么」 */
 function clean(raw: string): string {
@@ -58,15 +59,15 @@ async function paste(): Promise<void> {
     const text = await navigator.clipboard.readText()
     const v = clean(text)
     if (!v) {
-      pasteNote.value = '剪贴板是空的'
+      pasteNote.value = { ok: false, text: '剪贴板是空的' }
     } else {
       emit('update:modelValue', v)
-      pasteNote.value = '已粘贴'
+      pasteNote.value = { ok: true, text: '已粘贴' }
     }
   } catch {
-    pasteNote.value = '读不到剪贴板，请手动粘贴'
+    pasteNote.value = { ok: false, text: '读不到剪贴板，请手动粘贴' }
   }
-  setTimeout(() => (pasteNote.value = ''), 2200)
+  setTimeout(() => (pasteNote.value = null), 2200)
 }
 
 /** 前缀不对时给一句提醒（不拦保存：服务商的 Key 形态各家不同） */
@@ -118,7 +119,10 @@ function checkPrefix(): void {
         <X :size="15" />
       </button>
     </div>
-    <p v-if="pasteNote" class="note">{{ pasteNote }}</p>
+    <p v-if="pasteNote" class="note" :class="{ bad: !pasteNote.ok }">
+      <AlertCircle v-if="!pasteNote.ok" :size="13" />
+      {{ pasteNote.text }}
+    </p>
     <p v-else-if="prefixWarn" class="note warn">
       该服务商的 Key 通常以 <code>{{ prefix }}</code> 开头，确认没有粘错
     </p>
@@ -177,7 +181,7 @@ function checkPrefix(): void {
 }
 
 .mini:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .hint,
@@ -188,7 +192,15 @@ function checkPrefix(): void {
 }
 
 .note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   color: var(--ok-strong);
+}
+
+/* 失败态：读不到剪贴板 / 剪贴板是空的 —— 不能涂成成功绿 */
+.note.bad {
+  color: var(--warn-strong);
 }
 
 .note.warn {

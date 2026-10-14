@@ -4,8 +4,9 @@ import { useRouter } from 'vue-router'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import RingProgress from '@/components/common/RingProgress.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import { useProgramStore } from '@/stores/program'
-import { GOAL_LABELS } from '@/config/domain'
 import type { ProgramRecord } from '@/types'
 import { fmtRate, fmtWeightDelta, reportSpanDays } from '@/utils/programReport'
 import { buildWrapup, wrapupSubtitle, type WrapupData } from '@/utils/programWrapup'
@@ -45,27 +46,22 @@ onMounted(async () => {
 
 const subtitle = computed(() => (record.value ? wrapupSubtitle(record.value) : ''))
 
-const tierLabel = computed(() => {
-  const t = record.value?.tier
-  return t === 'conservative' ? '保守' : t === 'aggressive' ? '进取' : '均衡'
-})
-
 const completionText = computed(() =>
   data.value?.completion != null ? `${Math.round(data.value.completion * 100)}%` : '—',
 )
 
+/** 完成度标题随实际完成度分档：固定一句「你坚持下来了」在 20% 的环上方与数据互相拆台 */
+const heroTitle = computed(() => {
+  const c = data.value?.completion
+  if (c == null) return '你坚持下来了'
+  if (c >= 0.9) return '几乎全部兑现'
+  if (c >= 0.6) return '走完了大半'
+  return '先把它跑完'
+})
+
 const nextTierLabel = computed(() => {
   const t = data.value?.nextTier
   return t === 'conservative' ? '保守' : t === 'aggressive' ? '进取' : '均衡'
-})
-
-/** 方案期内体重变化（首条 → 末条），无数据时 null */
-const weightDelta = computed<number | null>(() => {
-  const d = data.value
-  if (!d) return null
-  const { before, after } = d.compare.weight
-  if (before == null || after == null) return null
-  return Math.round((after - before) * 10) / 10
 })
 
 /** 体重变化的方向色：与目标同向 = good，反向 = bad，持平无色 */
@@ -132,7 +128,7 @@ async function nextPhase(): Promise<void> {
       <!-- 完成度 -->
       <section class="pod hero">
         <p class="eyebrow">{{ subtitle }}</p>
-        <p class="hero-title">你坚持下来了</p>
+        <p class="hero-title">{{ heroTitle }}</p>
         <RingProgress
           :value="data.completion ?? 0"
           color-var="--c-exercise"
@@ -140,7 +136,7 @@ async function nextPhase(): Promise<void> {
           :stroke="11"
         >
           <b class="num ring-num">{{ completionText }}</b>
-          <span class="ring-cap">完成度</span>
+          <span class="ring-cap">训练完成率</span>
         </RingProgress>
         <ul class="statgrid num">
           <li v-for="s in heroStats" :key="s.em">
@@ -156,18 +152,35 @@ async function nextPhase(): Promise<void> {
         <ul class="rows">
           <li>
             <span class="lbl">体重</span>
+            <!-- 真正的起止值（不显示差量；差量与方向色只在报告格「体重变化」里出现一次） -->
             <span class="val num">
-              {{ data.compare.weight.before ?? '—' }} →
-              <b :class="deltaCls(data.compare.weight)">{{ fmtWeightDelta(weightDelta) }}</b>
+              <template v-if="data.compare.weight.before != null">{{ data.compare.weight.before }}<i>kg</i></template>
+              <template v-else>—</template>
+              →
+              <b>
+                <template v-if="data.compare.weight.after != null">{{ data.compare.weight.after }}<i>kg</i></template>
+                <template v-else>—</template>
+              </b>
             </span>
           </li>
           <li>
-            <span class="lbl">日均摄入</span>
-            <span class="val num">{{ data.compare.intake.before ?? '—' }} → <b>{{ data.compare.intake.after ?? '—' }} 大卡</b></span>
+            <span class="lbl">日均摄入（有记录的日子）</span>
+            <span class="val num">
+              <template v-if="data.compare.intake.before != null">{{ data.compare.intake.before }}<i>大卡</i></template>
+              <template v-else>—</template>
+              →
+              <b>
+                <template v-if="data.compare.intake.after != null">{{ data.compare.intake.after }}<i>大卡</i></template>
+                <template v-else>—</template>
+              </b>
+            </span>
           </li>
           <li>
             <span class="lbl">训练频率</span>
-            <span class="val num">{{ data.compare.trainingFreq.before }} → <b>{{ data.compare.trainingFreq.after }} 次/周</b></span>
+            <span class="val num">
+              {{ data.compare.trainingFreq.before }}<i>次/周</i> →
+              <b>{{ data.compare.trainingFreq.after }}<i>次/周</i></b>
+            </span>
           </li>
           <li>
             <span class="lbl">日程完成</span>
@@ -177,9 +190,14 @@ async function nextPhase(): Promise<void> {
             </span>
           </li>
         </ul>
-        <p class="t-3 span-note num">
-          {{ data.report.startDate }} ~ {{ data.report.endDate }} · 共 {{ reportSpanDays(data.report.startDate, data.report.endDate) }} 天 · 运动 {{ data.report.actual.count }} 次（{{ data.report.actual.minutes }} 分钟）· 消耗 {{ data.report.actual.kcal }} 大卡
-        </p>
+        <!-- 区间五件事实分层：天数做主读数，日期区间单独一行，次数/时长/消耗各走一枚胶囊 -->
+        <p class="span-main num">共 {{ reportSpanDays(data.report.startDate, data.report.endDate) }} 天</p>
+        <p class="span-range num">{{ data.report.startDate }} ~ {{ data.report.endDate }}</p>
+        <div class="span-facts">
+          <PillChip size="md" tone="muted">运动 <span class="num">{{ data.report.actual.count }}</span> 次</PillChip>
+          <PillChip size="md" tone="muted"><span class="num">{{ data.report.actual.minutes }}</span> 分钟</PillChip>
+          <PillChip size="md" tone="muted">运动消耗 <span class="num">{{ data.report.actual.kcal }}</span> 大卡</PillChip>
+        </div>
       </section>
 
       <!-- 徽章 -->
@@ -209,17 +227,29 @@ async function nextPhase(): Promise<void> {
 
       <!-- 完整报告 -->
       <section class="pod report">
-        <header class="pod-head"><b>完整报告</b><span class="t-3 num">{{ GOAL_LABELS[record.goal] }} · {{ tierLabel }} · v{{ record.version }}</span></header>
+        <header class="pod-head">
+          <b>完整报告</b>
+          <span class="row head-side">
+            <!-- 目标与档位页首 eyebrow 已说过（「28 天 · 减脂 · 均衡档」），这里只留版本 -->
+            <span class="t-3 num ver-note">第 {{ record.version }} 版</span>
+            <span class="hint-slot">
+              <InfoHint title="统计口径">
+                <p>计划训练日 = 当天有运动记录，或勾了方案日程；训练完成率按这个口径统计。</p>
+                <p>未记录的饮食日不参与平均摄入统计 —— 分母只算记了饮食的日子，所以叫「日均摄入（有记录的日子）」。</p>
+              </InfoHint>
+            </span>
+          </span>
+        </header>
         <ul class="rstats num">
-          <li><em>平均摄入</em><b>{{ data.report.avgIntake ?? '—' }}</b><i>目标 {{ data.report.targetKcal }} 大卡</i></li>
-          <li><em>训练兑现</em><b>{{ fmtRate(data.report.training.done, data.report.training.planned) }}</b><i>{{ data.report.training.done }}/{{ data.report.training.planned }} 次（含运动记录与日程勾选）</i></li>
+          <li><em>日均摄入（有记录的日子）</em><b>{{ data.report.avgIntake ?? '—' }}</b><i>目标 {{ data.report.targetKcal }} 大卡</i></li>
+          <li><em>训练完成率</em><b>{{ fmtRate(data.report.training.done, data.report.training.planned) }}</b><i>{{ data.report.training.done }}/{{ data.report.training.planned }} 次（含运动记录与日程勾选）</i></li>
           <li><em>真实运动</em><b>{{ data.report.actual.count }} 次</b><i>含跟课 {{ data.report.actual.sessions }} 次 · 有记录 {{ data.report.recordedDays }} 天饮食</i></li>
-          <li><em>体重变化</em><b>{{ fmtWeightDelta(data.report.weightDeltaKg) }}</b><i>消耗 {{ data.report.actual.kcal }} 大卡</i></li>
+          <li>
+            <em>体重变化</em>
+            <b :class="deltaCls(data.compare.weight)">{{ fmtWeightDelta(data.report.weightDeltaKg) }}</b>
+            <i>期内首末两条体重记录之差</i>
+          </li>
         </ul>
-        <p class="t-3 rnote">
-          方案日程勾选 {{ data.report.schedule.done }}/{{ data.report.schedule.planned }} 项 ·
-          期间调整 {{ data.report.adjustmentsCount }} 次；未记录的饮食日不参与平均摄入统计。
-        </p>
       </section>
     </template>
     </div>
@@ -252,6 +282,20 @@ async function nextPhase(): Promise<void> {
   margin-bottom: 10px;
 }
 
+/* 卡头右侧一组：版本注 + 帮助入口 */
+.head-side {
+  gap: 8px;
+}
+
+.hint-slot {
+  display: inline-flex;
+  flex: none;
+}
+
+.ver-note {
+  font-size: var(--fs-caption);
+}
+
 .pod-head b {
   font-size: var(--fs-headline);
   font-weight: 700;
@@ -280,7 +324,7 @@ async function nextPhase(): Promise<void> {
 
 .ring-num {
   display: block;
-  font-size: 26px;
+  font-size: var(--fs-title1);
   font-weight: 700;
 }
 
@@ -351,9 +395,33 @@ async function nextPhase(): Promise<void> {
   color: var(--danger);
 }
 
-.span-note {
+/* 对照行的单位：两侧对称（原先单位只写在右侧），单位降一档、数值保持原字号 */
+.val i {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+/* 区间五件事实：天数做主读数，日期区间单独一行，次数/时长/消耗各走胶囊 */
+.span-main {
+  margin-top: 10px;
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.span-range {
+  margin-top: 2px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.span-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 8px;
-  font-size: var(--fs-micro);
 }
 
 /* 徽章 */
@@ -377,7 +445,7 @@ async function nextPhase(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: var(--fs-callout);
   font-style: normal;
 }
 
@@ -417,7 +485,7 @@ async function nextPhase(): Promise<void> {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 /* 完整报告 */
@@ -453,12 +521,6 @@ async function nextPhase(): Promise<void> {
   font-style: normal;
   font-size: var(--fs-micro);
   color: var(--text-3);
-}
-
-.rnote {
-  margin-top: 10px;
-  font-size: var(--fs-footnote);
-  line-height: 1.5;
 }
 
 /* ============================================================

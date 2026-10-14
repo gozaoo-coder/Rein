@@ -26,6 +26,13 @@ export interface TodoDistribution {
   overdue: number
 }
 
+/** 主页「全部待办」信息流分页参数：today 只参与排序分桶，不参与过滤 */
+export interface TodoFeedQuery {
+  today: string
+  limit?: number
+  offset?: number
+}
+
 export const todoService = {
   listTodos: (startDate: string, endDate: string) =>
     invoke<Todo[]>('list_todos', { startDate, endDate }),
@@ -41,6 +48,14 @@ export const todoService = {
       start: query.start ?? null,
       end: query.end ?? null,
       limit: query.limit ?? 20,
+      offset: query.offset ?? 0,
+    }),
+
+  /** 主页全部待办信息流（一页一取，避免全量倾倒）：未完成在前、已完成沉底 */
+  queryTodoFeed: (query: TodoFeedQuery) =>
+    invoke<TodoPage>('query_todo_feed', {
+      today: query.today,
+      limit: query.limit ?? 30,
       offset: query.offset ?? 0,
     }),
 

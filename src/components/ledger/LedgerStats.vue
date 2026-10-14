@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import StatusChip from '@/components/common/StatusChip.vue'
 import { categoryOf, fmtCents } from '@/config/ledger'
 import { useLedgerStore } from '@/stores/ledger'
 import { monthKey, todayStr } from '@/utils/date'
@@ -53,6 +54,15 @@ const segments = computed(() =>
   }),
 )
 
+/** 环心读数：本月占比最高的分类。总额只在顶部「本月支出」出现一次，环心再说一遍是重印。 */
+const topCategory = computed(() => {
+  const best = segments.value.reduce<{ key: string; pct: number } | null>(
+    (acc, s) => (!acc || s.pct > acc.pct ? { key: s.key, pct: s.pct } : acc),
+    null,
+  )
+  return best ? { label: categoryOf(best.key)?.label ?? best.key, pct: Math.round(best.pct * 100) } : null
+})
+
 /* ---- 近 6 月趋势 ---- */
 
 const maxTrend = computed(() =>
@@ -88,12 +98,13 @@ const trendEmpty = computed(() =>
       </div>
     </div>
 
-    <!-- 月度总预算 -->
+    <!-- 月度总预算：超支是状态、按钮是动作，两者分开承载（按钮不再兼「状态 + 动作」两职） -->
     <div class="budget">
       <header class="row between">
         <h3>月度预算</h3>
+        <StatusChip v-if="budgetSet && budgetState === 'over'" tone="danger" size="sm">已超支</StatusChip>
         <button class="link" @click="emit('edit-budget')">
-          {{ budgetSet ? (budgetState === 'over' ? `超支 ¥${fmtCents(spend - budget)}` : '调整') : '设置预算' }}
+          {{ budgetSet ? '调整' : '设置预算' }}
         </button>
       </header>
       <template v-if="budgetSet">
@@ -106,12 +117,9 @@ const trendEmpty = computed(() =>
           <span v-if="isCurrentMonth && spend <= budget" class="daily num">
             · 剩余每天还可 ¥{{ fmtCents(dailyRemaining) }}
           </span>
-          <span v-else-if="isCurrentMonth && spend > budget" class="daily num">
-            · 本月已超支
-          </span>
         </p>
       </template>
-      <p v-else class="bempty t-3">设一个月度总预算，进度条会帮你盯着每一分钱。</p>
+      <p v-else class="bempty t-2">还没设月度预算。</p>
     </div>
 
     <!-- 分类占比 -->
@@ -137,9 +145,12 @@ const trendEmpty = computed(() =>
               class="seg-ring"
             />
           </svg>
+          <!-- 环心只报占比最高的分类：总额的出处是顶部「本月支出」一格 -->
           <div class="donut-center">
-            <em>支出</em>
-            <b class="num">¥{{ fmtCents(spend) }}</b>
+            <template v-if="topCategory">
+              <em>{{ topCategory.label }}</em>
+              <b class="num">{{ topCategory.pct }}%</b>
+            </template>
           </div>
         </div>
         <ul class="legend">
@@ -151,7 +162,7 @@ const trendEmpty = computed(() =>
           </li>
         </ul>
       </div>
-      <p v-else class="bempty t-3">本月还没有支出，记一笔就有了。</p>
+      <p v-else class="bempty t-2">本月还没有支出。</p>
     </div>
 
     <!-- 近 6 月趋势 -->
@@ -172,7 +183,7 @@ const trendEmpty = computed(() =>
         </div>
       </div>
       <p v-if="!trendEmpty" class="bmeta t-3"><i class="dot" style="background: var(--led-expense)" />支出 <i class="dot dot-in" style="background: var(--led-income)" />收入</p>
-      <p v-else class="bempty t-3">近半年还没有记录，这个月记一笔就会有趋势。</p>
+      <p v-else class="bempty t-2">近半年还没有记录。</p>
     </div>
   </section>
 </template>
@@ -299,7 +310,7 @@ h3 {
 
 .donut-center em {
   font-style: normal;
-  /* 环心小帽（「本月支出」）是字段名，不吃 11px */
+  /* 环心小帽（占比最高的分类名）是字段名，不吃 11px */
   font-size: var(--fs-caption);
   color: var(--text-3);
 }
@@ -375,6 +386,16 @@ h3 {
   align-items: flex-end;
   gap: 2.5px;
   height: 72px;
+}
+
+/* 桌面壳：按钮盒原本贴着柱体走（两根 7px 柱 + 2.5 间隙 = 实测 16.5px 宽），
+   而一列有 52px —— 六根柱子一屏，只有中间一条 16.5px 的点按缝，指针精度下点不准。
+   整列交给它：宽度吃满、柱体用 justify-content 居中，**视觉一格不动**
+   （实测盒中心 = 列中心），可点面从 16.5×72 变成 52×72。
+   只限桌面壳：22 是指针精度的下限，手机上是触屏那套（命中区、排布都另算），不动。 */
+.desk-main .bars {
+  width: 100%;
+  justify-content: center;
 }
 
 /* 趋势柱：切月频率极低，柱高直接落位不参与过渡（height 动画触发 layout） */

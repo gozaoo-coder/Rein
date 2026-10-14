@@ -17,7 +17,10 @@ import { AlertCircle, Check, CloudDownload, RefreshCw, Server } from 'lucide-vue
 import ModelListToolbar from '@/components/ai/ModelListToolbar.vue'
 import SecretInput from '@/components/ai/fields/SecretInput.vue'
 import UrlInput from '@/components/ai/fields/UrlInput.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { formatCnyNano } from '@/ai/cost'
 import { groupByProvider, modelDisplayName } from '@/ai/providerCatalog'
 import { useToast } from '@/composables/useToast'
@@ -72,9 +75,24 @@ function labelOf(m: OnlineModel): string {
 }
 
 function priceText(m: OnlineModel): string {
-  if (!m.priced) return '未定价 · 只计流量'
-  return `入 ¥${m.priceIn} / 出 ¥${m.priceOut} 每百万 tokens`
+  if (!m.priced) return '未定价（按流量计费）'
+  return `输入 ¥${m.priceIn} / 输出 ¥${m.priceOut} 每百万 tokens`
 }
+
+/** 流量计费方向（对账公式与说明卡共用） */
+const trafficScopeText = computed(() => {
+  const s = online.catalog?.trafficScope
+  return s === 'both' ? '双向' : s === 'ingress' ? '入方向' : '出方向'
+})
+
+/** 两账差额结论：服务端账 - 本机账。服务端账还没拉到就不给结论 */
+const diffLabel = computed<{ tone: 'ok' | 'warn'; text: string } | null>(() => {
+  if (!online.usage?.ok) return null
+  const d = online.usage.costTotal - models.totalCostNano / 1e9
+  if (Math.abs(d) < 0.005) return { tone: 'ok', text: '两账一致' }
+  const who = d > 0 ? '服务端' : '本机'
+  return { tone: 'warn', text: `${who}多 ¥${Math.abs(d).toFixed(4)}` }
+})
 
 const serverCostNano = computed(() => Math.round((online.usage?.costTotal ?? 0) * 1e9))
 
@@ -176,7 +194,7 @@ async function importPicked(): Promise<void> {
           v-model="apiKey"
           :saved-tail="online.settings.apiKey ? online.settings.apiKey.slice(-4) : null"
           placeholder="rein_sk_…"
-          hint="密钥由服务端签发（POST /admin/api/ai/clients），决定这个客户端能用哪些模型；只存在本机"
+          hint="密钥由服务端签发，决定这个客户端能用哪些模型；只存在本机"
           aria-label="Rein 在线服务密钥"
         />
         <div class="row gap acts">
@@ -200,7 +218,13 @@ async function importPicked(): Promise<void> {
         >
           {{ pickedCount === online.models.length ? '全不选' : '全选' }}
         </button>
-        <p class="l">可用模型（{{ online.models.length }}）</p>
+        <p class="l l-hint">
+          可用模型（{{ online.models.length }}）
+          <InfoHint
+            title="导入与同步"
+            content="导入后这些模型出现在「全部模型」里（标记「在线」）。服务端撤下的模型会在下次同步时清掉，自己填 key 的模型不受影响。"
+          />
+        </p>
         <ModelListToolbar
           :query="query"
           :count="filtered.length"
@@ -235,13 +259,13 @@ async function importPicked(): Promise<void> {
             </ul>
           </section>
         </div>
+        <p class="concl">
+          <PillChip tone="muted" size="sm">导入后可随时重新同步</PillChip>
+        </p>
         <button type="button" class="btn primary" :disabled="syncing || pickedCount === 0" @click="importPicked">
           <CloudDownload :size="14" />
           {{ syncing ? '同步中…' : `导入所选（${pickedCount}）` }}
         </button>
-        <p class="hint t-3">
-          导入后这些模型出现在「全部模型」里（标记「在线」）。服务端撤下的模型会在下次同步时清掉，自己填 key 的模型不受影响。
-        </p>
       </section>
 
       <!-- 成本：两端各算一份 -->
@@ -259,34 +283,47 @@ async function importPicked(): Promise<void> {
         <p class="l">成本对账</p>
         <div class="crow">
           <span>本机累计（估算）</span>
-          <b>{{ formatCnyNano(models.totalCostNano) }}</b>
+          <b class="num">{{ formatCnyNano(models.totalCostNano) }}</b>
         </div>
         <div class="csub">
-          <span>模型费 {{ formatCnyNano(models.totalModelNano) }} · 流量费 {{ formatCnyNano(models.totalTrafficNano) }}</span>
-          <span>{{ models.usage?.total.calls ?? 0 }} 次调用 · 近 {{ models.usage?.days ?? 30 }} 天</span>
+          <span class="num">模型费 {{ formatCnyNano(models.totalModelNano) }} · 流量费 {{ formatCnyNano(models.totalTrafficNano) }}</span>
+          <span class="num">{{ models.usage?.total.calls ?? 0 }} 次调用 · 近 {{ models.usage?.days ?? 30 }} 天</span>
         </div>
         <div class="crow">
           <span>服务端累计（权威）</span>
-          <b>{{ online.usage?.ok ? formatCnyNano(serverCostNano) : '—' }}</b>
+          <b class="num">{{ online.usage?.ok ? formatCnyNano(serverCostNano) : '—' }}</b>
         </div>
         <div class="csub">
-          <span v-if="online.usage?.ok">
+          <span v-if="online.usage?.ok" class="num">
             模型费 ¥{{ online.usage.costTokens.toFixed(4) }} · 流量费 ¥{{ online.usage.costTraffic.toFixed(4) }}
             · 出方向 {{ ((online.usage.bytesOut ?? 0) / 1024 / 1024).toFixed(2) }} MB
           </span>
           <span v-else>{{ online.hasKey ? '点「刷新服务端」拉取' : '未配置密钥' }}</span>
         </div>
+        <!-- 两账差额做成结论：对得上 / 差多少一眼可见，不用逐位比两行数字 -->
+        <div v-if="diffLabel" class="diff">
+          <StatusChip :tone="diffLabel.tone" size="sm">{{ diffLabel.text }}</StatusChip>
+        </div>
       </section>
 
-      <!-- 使用说明 -->
+      <!-- 使用说明：面上只留计价结论，四条明细收进标题行 InfoHint
+           （第 1 条与输入框下的密钥 hint 同内容，不重复） -->
       <section class="card use">
-        <p class="l">使用说明</p>
-        <ol class="steps">
-          <li>服务端签发的密钥（<code>rein_sk_…</code>）决定你能用哪些模型；密钥只存在本机，请求带它才拿得到清单。</li>
-          <li>模型清单、单价与流量价全部由服务端下发，本机不猜也不让手填模型 ID。</li>
-          <li>导入后直接用：把其中一条设为主模型（模型页「服务模型」卡）即可开始对话/识别。</li>
-          <li>计价 = 官方页价（服务端不溢价）+ 服务器流量 {{ online.catalog?.trafficPerGb ?? 0.8 }} 元/GB（{{ online.catalog?.trafficScope === 'both' ? '双向' : online.catalog?.trafficScope === 'ingress' ? '入方向' : '出方向' }}）；本机按同一公式估算，服务端的账为准。</li>
-        </ol>
+        <p class="l l-hint">
+          使用说明
+          <InfoHint title="使用说明">
+            <p>模型清单、单价与流量价全部由服务端下发，本机不猜也不让手填模型 ID。</p>
+            <p>导入后直接用：把其中一条设为主模型（模型页「服务模型」卡）即可开始对话/识别。</p>
+            <p>
+              计价 = 官方页价（服务端不溢价）+ 服务器流量 {{ online.catalog?.trafficPerGb ?? 0.8 }} 元/GB（{{ trafficScopeText }}）；本机按同一公式估算，服务端的账为准。
+            </p>
+          </InfoHint>
+        </p>
+        <p class="concl">
+          <PillChip tone="muted" size="md">
+            计价 = 官方页价 + 流量 {{ online.catalog?.trafficPerGb ?? 0.8 }} 元/GB
+          </PillChip>
+        </p>
       </section>
     </div>
   </SheetModal>
@@ -365,6 +402,22 @@ async function importPicked(): Promise<void> {
   color: var(--text-2);
 }
 
+/* 标题行带帮助入口：标签与 ? 同一行居中（胶囊按钮仍钉在右上角，互不冲突） */
+.l-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 卡面结论：一行胶囊，明细收进 InfoHint */
+.concl {
+  display: flex;
+}
+
+.diff {
+  margin-top: 2px;
+}
+
 .err {
   display: flex;
   align-items: flex-start;
@@ -389,7 +442,7 @@ async function importPicked(): Promise<void> {
   padding: 12px 0;
   border-radius: var(--radius-m);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-1);
   font-size: var(--fs-footnote);
   font-weight: 700;
 }
@@ -407,7 +460,7 @@ async function importPicked(): Promise<void> {
 }
 
 .btn:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 /* 胶囊按钮（不再是文字链接）：有底、有圆角、有内边距，才读得出「这是一个可点的按钮」。
@@ -434,7 +487,7 @@ async function importPicked(): Promise<void> {
 }
 
 .pill:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 /* 右上角有操作：标签给右侧留出胶囊的宽度，长标题才不会被压到按钮底下 */
@@ -523,7 +576,7 @@ async function importPicked(): Promise<void> {
 
 .crow b {
   font-size: var(--fs-subhead);
-  color: var(--text);
+  color: var(--text-1);
 }
 
 .csub {
@@ -533,30 +586,6 @@ async function importPicked(): Promise<void> {
   font-size: var(--fs-caption);
   color: var(--text-3);
   margin-bottom: 4px;
-}
-
-.steps {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding-left: 18px;
-  list-style: decimal;
-  font-size: var(--fs-caption);
-  line-height: 1.55;
-  color: var(--text-2);
-}
-
-.steps code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--fs-caption);
-  background: var(--surface-2);
-  border-radius: var(--radius-xs);
-  padding: 1px 4px;
-}
-
-.hint {
-  font-size: var(--fs-caption);
-  line-height: 1.5;
 }
 
 .spin {

@@ -3,14 +3,16 @@ import { computed, ref } from 'vue'
 import { Merge, RefreshCw, ShieldCheck, Sparkles } from 'lucide-vue-next'
 
 import AppMenu from '@/components/common/AppMenu.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import { usePlanStore } from '@/stores/plan'
 import { useToast } from '@/composables/useToast'
 
 /**
  * 内置课程新版本横幅：版本升级时不再自动覆盖用户数据，改为三选一。
- *  - 兼容合并（推荐）：新种子按动作字段级合并进本地内置课，用户设置过的值全部保留；
- *  - 使用新版本：内置课内容整体替换为新种子；
- *  - 保留我的：本版本不再刷新内置课内容，下个种子版本再问。
+ *  - 合并新版（推荐）：新种子按动作字段级合并进本地内置课，用户设置过的值全部保留；
+ *  - 整体换成新版：内置课内容整体替换为新种子（不可回退，按 AppMenu 的 danger 语义标出）；
+ *  - 暂不更新：本版本不再刷新内置课内容，下个种子版本再问。
+ * 三种做法各自会发生什么收进标题行右侧 InfoHint，横幅上只留一行结论。
  */
 const planStore = usePlanStore()
 const { toast } = useToast()
@@ -19,6 +21,13 @@ const sheetOpen = ref(false)
 const busy = ref(false)
 /** 菜单锚点：横幅里那颗「更新」——bind 菜单要贴着它弹 */
 const optBtn = ref<HTMLElement | null>(null)
+
+/** 三种做法的后果：摊在横幅上没人读，收进 InfoHint 抽屉 */
+const OPTION_HINT = `合并新版（推荐）：保留你在内置课上的全部修改，只并入新种子新增的内容。
+
+整体换成新版：内置课内容整体替换为新种子，你改过的内容会被覆盖，且无法撤销。
+
+暂不更新：本版本不刷新内置课内容，下个种子版本再问。`
 
 const SUMMARY = computed(() => {
   const s = planStore.seed
@@ -43,11 +52,12 @@ function onPick(value: string): void {
   else if (value === 'keep') void run(planStore.applySeedKeep, '已保留你的课程')
 }
 
-/** 三选一是平级命令（怎么应用更新），不是破坏性确认 —— 走 bind 菜单，图标 + 文字 */
+/** 三选一是平级命令（怎么应用更新），不是破坏性确认 —— 走 bind 菜单，图标 + 文字。
+ *  「整体换成新版」不可回退（seed.rs 对内置课无条件 UPDATE），单独标 danger。 */
 const ACTIONS = [
-  { label: '兼容合并', value: 'migrate', icon: Merge },
-  { label: '使用新版本', value: 'override', icon: RefreshCw },
-  { label: '保留我的', value: 'keep', icon: ShieldCheck },
+  { label: '合并新版（推荐）', value: 'migrate', icon: Merge },
+  { label: '整体换成新版', value: 'override', icon: RefreshCw, danger: true },
+  { label: '暂不更新', value: 'keep', icon: ShieldCheck },
 ]
 </script>
 
@@ -57,8 +67,12 @@ const ACTIONS = [
       <Sparkles :size="20" />
     </div>
     <div class="flex-1 col text">
-      <p class="title">{{ SUMMARY }}</p>
-      <p class="desc">不会覆盖你的修改，可先看看你的版本</p>
+      <!-- 三种做法的后果在标题行 InfoHint 里；横幅只留一行结论与「更新」入口 -->
+      <p class="title row center">
+        {{ SUMMARY }}
+        <InfoHint class="seedhint" title="三种更新方式" :content="OPTION_HINT" />
+      </p>
+      <p class="desc">不会自动覆盖，由你选一种方式</p>
     </div>
     <button ref="optBtn" class="opt" :disabled="busy" @click="sheetOpen = true">更新</button>
 
@@ -82,7 +96,8 @@ const ACTIONS = [
   margin-bottom: 14px;
   padding: 14px;
   border-radius: var(--radius-l);
-  background: linear-gradient(135deg, rgba(146, 232, 42, 0.14), rgba(10, 132, 255, 0.08));
+  /* 底色走令牌（运动域 soft + 主色 soft）：写死 rgba 的那版会跟换档分叉 */
+  background: linear-gradient(135deg, var(--c-exercise-soft), var(--accent-soft));
   border: 1px solid var(--line);
 }
 
@@ -97,11 +112,17 @@ const ACTIONS = [
 
 .text {
   gap: 2px;
+  min-width: 0;
 }
 
 .title {
   font-size: var(--fs-callout);
   font-weight: 700;
+  gap: 4px;
+}
+
+.seedhint {
+  margin-left: auto;
 }
 
 .desc {

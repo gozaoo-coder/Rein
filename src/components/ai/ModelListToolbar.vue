@@ -72,7 +72,13 @@ const emit = defineEmits<{
           按提供商折叠
         </button>
       </div>
-      <span class="cnt t-3">{{ count }}<template v-if="total > count"> / {{ total }}</template> 条</span>
+      <!-- 计数带词：哪个是筛出数、哪个是总数，不再把两个数字光秃摆成比例 -->
+      <span class="cnt t-3">
+        <template v-if="total > count">
+          已筛出 <span class="num">{{ count }}</span> / 共 <span class="num">{{ total }}</span> 条
+        </template>
+        <template v-else>共 <span class="num">{{ count }}</span> 条</template>
+      </span>
     </div>
   </div>
 </template>

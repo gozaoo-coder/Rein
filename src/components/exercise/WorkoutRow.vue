@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Trash2 } from 'lucide-vue-next'
 
 import { WORKOUT_META } from '@/config/domain'
+import WorkoutSourceTag from '@/components/exercise/WorkoutSourceTag.vue'
 import { fmtDateCn, minToHHmm } from '@/utils/date'
 import type { Workout, WorkoutType } from '@/types'
 
@@ -42,11 +43,17 @@ const metaLine = computed(() => {
   >
     <i class="ic col center">{{ typeLabel.slice(0, 1) }}</i>
     <div class="flex-1">
-      <p class="name">{{ workout.name }}</p>
+      <p class="name">
+        <span class="nm">{{ workout.name }}</span>
+        <WorkoutSourceTag :source="workout.source" />
+      </p>
       <p class="meta num">{{ metaLine }}</p>
     </div>
     <div class="col right">
-      <b class="num kcal">-{{ workout.kcal }}</b>
+      <!-- 热量去掉来源不明的「-」前缀并补单位：读者原来既不知道这是千卡还是别的量级，
+           也不知道「-」是消耗、支出还是省略符。单位后缀与 HealthWorkoutList 同一套
+           排法（同域两种运动记录行，单位写法必须一致）。 -->
+      <b class="num kcal">{{ workout.kcal }}<i class="ku">千卡</i></b>
       <span class="unit num">{{ workout.durationMin }} 分钟</span>
     </div>
     <button class="del" aria-label="删除记录" @click.stop="$emit('remove')">
@@ -85,9 +92,20 @@ const metaLine = computed(() => {
   font-size: var(--fs-callout);
 }
 
+/* 名字与来源标签同一行：标签要贴着名字，才读得出「这条是手机同步的」；
+   名字自己可截断（nm），标签不吃压缩（tag 里 flex:none） */
 .name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-body);
   font-weight: 600;
+}
+
+.nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .meta {
@@ -107,9 +125,20 @@ const metaLine = computed(() => {
   font-size: var(--fs-callout);
 }
 
-.unit {
+/* 热量单位后缀：数字已是主值，单位退成微字（与「N 分钟」成对出现） */
+.ku {
+  font-style: normal;
   font-size: var(--fs-micro);
   color: var(--text-3);
+  font-weight: 600;
+  margin-left: 3px;
+}
+
+/* 时长是本行要读的数值：必须读出来的时长不吃 11px 水印档
+   （从前整行最小最浅的就是它，与右侧 kcal 的 callout 强调绿差了三档） */
+.unit {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 /* 删除钮：桌面 hover 才显形，触态完全不显（见末尾 @media）。

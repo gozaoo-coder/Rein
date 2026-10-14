@@ -43,14 +43,15 @@ export const sessionService = {
   /** 存在进行中（含异常中断）的训练时返回记录，否则 null */
   getActive: () => invoke<SessionRecord | null>('session_active'),
 
-  /** 正常结束（保存）：事务内写入训练记录 + 逐组做组明细（重量曲线数据源）并关闭会话 */
+  /** 正常结束（保存）：事务内写入训练记录 + 逐组做组明细（重量曲线数据源）并关闭会话。
+   *  `intensity` 可空（Rust 侧是 `Option<String>`）：外部下行的结束载荷允许省略它。 */
   finish: (p: {
     id: number
     name: string
     workoutType: string
     date: string
     durationMin: number
-    intensity: string
+    intensity: string | null
     kcal: number
     note: string | null
     sets: StrengthSetRow[]

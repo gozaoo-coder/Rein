@@ -5,6 +5,7 @@ import { HardDrive, RefreshCw } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import UsageFileList from '@/components/kb/UsageFileList.vue'
 import { usageCached } from '@/services/kbService'
 import { useToast } from '@/composables/useToast'
@@ -31,7 +32,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const files = computed<KbUsageFile[]>(() => usage.value?.largest ?? [])
 /** 榜单合计：这些「大头」一共占了多少（与工作区总量的对比在总览页） */
 const listedBytes = computed(() => files.value.reduce((n, f) => n + f.bytes, 0))
-/** 撞到服务端上限（TOP_MAX=100）就说明后面还有更大的没列出来 */
+/** 撞到服务端上限（TOP_MAX=100）就说明只列了最大的 100 个，更小的未列出 */
 const capped = computed(() => files.value.length >= TOP)
 
 /** `force` 跳过备忘（页头那颗刷新钮）；正常进入吃缓存，切页回来不再重扫库 */
@@ -60,7 +61,7 @@ function openFile(f: KbUsageFile): void {
 
 <template>
   <div class="page">
-    <PageHeader back title="大文件" subtitle="文本 + 本体 · 按体积倒序">
+    <PageHeader back title="大文件" subtitle="文本 + 图片 / 音视频等文件 · 按体积倒序">
       <template #action>
         <button class="hdr-btn" aria-label="重新统计" :disabled="loading" @click="load(true)">
           <RefreshCw :size="18" :class="{ spin: loading }" />
@@ -89,8 +90,13 @@ function openFile(f: KbUsageFile): void {
 
     <section v-else class="card d-full" :class="{ 'card-empty': !files.length }">
       <div class="card-head">
-        <h2>按体积排序</h2>
-        <span class="sub">{{ files.length }} 个 · 合计 {{ humanBytes(listedBytes) }}</span>
+        <div class="head-main">
+          <h2>占用最多的文件</h2>
+          <InfoHint title="榜单怎么读" content="条长 = 相对最大文件的体积占比：第一名总是满格，其余按与它的比例缩短，读的是「比第一名小多少」。
+
+蓝 = 文本，即笔记正文抽取出的文字；紫 = 图片 / 音视频等文件，即导入的原始文件。两段相加就是这一行的体积。" />
+        </div>
+        <span class="sub num">{{ files.length }} 个 · 合计 {{ humanBytes(listedBytes) }}</span>
       </div>
 
       <UsageFileList v-if="files.length" :files="files" @open="openFile" />
@@ -98,13 +104,13 @@ function openFile(f: KbUsageFile): void {
         v-else
         :icon="HardDrive"
         title="还没有文件"
-        hint="写进工作区的笔记与导入的本体会按体积排在这里"
+        hint="写进工作区的笔记与导入的图片 / 音视频等文件会按体积排在这里"
       />
 
       <p v-if="files.length" class="foot">
-        条长 = 相对最大文件；蓝 = 文本，紫 = 本体。点一行进文件管理器打开它。
+        蓝 = 文本，紫 = 图片 / 音视频等文件。点一行进文件管理器打开它。
       </p>
-      <p v-if="capped" class="foot">只列前 {{ TOP }} 个 —— 榜单按体积倒序，更大的都在里面了。</p>
+      <p v-if="capped" class="foot">只列最大的 {{ TOP }} 个，更小的未列出。</p>
     </section>
     </div>
   </div>
@@ -140,6 +146,13 @@ function openFile(f: KbUsageFile): void {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
+}
+/* 标题行：标题与帮助入口同一行居中（落点：卡头图标按钮放标题行右端） */
+.head-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 .card-head h2 {
   font-size: var(--fs-subhead);
@@ -183,7 +196,7 @@ function openFile(f: KbUsageFile): void {
   font-weight: 600;
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .spin {

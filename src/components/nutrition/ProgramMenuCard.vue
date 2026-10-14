@@ -2,6 +2,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { Sparkles } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { mealTypeOfSlot } from '@/config/domain'
 import { useModelsStore } from '@/stores/models'
 import { useProgramStore } from '@/stores/program'
@@ -106,10 +109,10 @@ const verdict = computed(() => {
   const training = !(day.value?.rest ?? true)
   const pText =
     s.p >= 25 && s.p <= 40
-      ? `蛋白供能 ${s.p}%，处于${training ? '训练日' : '休息日'}的推荐区间`
+      ? `蛋白供能 ${s.p}%，落在 25–40% 的推荐区间`
       : s.p < 25
-        ? `蛋白供能只占 ${s.p}%，偏低——优先补足蛋白质再谈其他`
-        : `蛋白供能 ${s.p}% 偏高，碳水不足会影响训练表现`
+        ? `蛋白供能只占 ${s.p}%，低于 25–40% 的推荐区间——优先补足蛋白质再谈其他`
+        : `蛋白供能 ${s.p}% 偏高，超出 25–40% 的推荐区间，碳水不足会影响训练表现`
   const cText = training
     ? '碳水集中在练前练后两餐，与训练时间匹配。'
     : '休息日碳水自然回落，属正常安排。'
@@ -161,13 +164,31 @@ watch(
   <section v-if="program.active && day" class="card menu-card" data-testid="program-menu">
     <header class="head">
       <b class="title">今日菜单</b>
-      <span class="pill" :class="{ ghost: day.rest }">{{ day.rest ? '休息日' : '训练日' }}</span>
+      <StatusChip :tone="day.rest ? 'neutral' : 'accent'" size="md">
+        {{ day.rest ? '休息日' : '训练日' }}
+      </StatusChip>
+      <!-- 两个「区间」的口径、AI 菜单的实算说明都收进这里：卡面只留结论 -->
+      <InfoHint
+        title="今日菜单"
+        content="「今日菜单合计」是这份菜单的总热量，不等于今天已摄入的量（已吃的看上方「摄入总览」）。
+
+蛋白结论里的「25–40% 推荐区间」指供能占比：蛋白质、碳水每克 4 大卡，脂肪每克 9 大卡，蛋白产热占三者之和的比例。
+
+「蛋白目标区间」是另一个口径：蛋白目标 ±10%，单位是克。两个区间一个看比例、一个看克数，别混读。
+
+AI 菜单的份量与营养数值按食物库实算，不是模型估算。"
+      />
     </header>
 
-    <!-- 供能结构：横向堆叠条 + 三行宏量 -->
+    <!-- 菜单合计热量：本卡唯一主数值，单独成行 -->
+    <div class="menu-total">
+      <span class="mt-label">今日菜单合计</span>
+      <span class="num mt-val">{{ Math.round(totals.kcal) }} 大卡</span>
+    </div>
+
+    <!-- 供能结构：横向堆叠条 + 三行宏量，标签只贴色条本身 -->
     <div class="stack-head">
       <span>供能结构</span>
-      <span class="num">{{ Math.round(totals.kcal) }} 大卡</span>
     </div>
     <div class="stack" role="img" aria-label="三大营养素供能占比">
       <i
@@ -203,9 +224,15 @@ watch(
 
     <div class="split" />
 
-    <!-- 餐次列表：AI 菜单与模板回落共用一行式渲染 -->
-    <p v-if="!aiMeals" class="menu-fallback">模板菜单 · 配置模型后可按你的偏好生成</p>
-    <p v-else class="ai-tag"><Sparkles :size="12" style="vertical-align:-1px;margin-right:3px" />AI 菜单 · 数值来自食物库实算</p>
+    <!-- 来源标注：模板 / AI 各一枚胶囊；解释性口径收进标题行 InfoHint -->
+    <p v-if="!aiMeals" class="menu-fallback menu-src">
+      <PillChip size="sm" tone="muted">模板菜单</PillChip>
+    </p>
+    <p v-else class="ai-tag menu-src">
+      <PillChip size="sm" tone="action">
+        <Sparkles :size="12" />AI 菜单
+      </PillChip>
+    </p>
     <ul class="menu">
       <li v-for="m in meals" :key="m.slot">
         <em>{{ m.slot }}</em>
@@ -235,8 +262,12 @@ watch(
 .head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+}
+
+/* 标题行右端的帮助入口（落点约定见 InfoHint 注释） */
+.head .info-hint {
+  margin-left: auto;
 }
 
 .title {
@@ -245,25 +276,30 @@ watch(
   letter-spacing: -0.3px;
 }
 
-.pill {
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent);
-  /* 状态胶囊（「已记录」这类）是状态词 */
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  white-space: nowrap;
+/* 菜单合计：本卡唯一主数值（19px + .num + --text-1），
+   与「摄入总览」报的今日已摄入热量分两句说 */
+.menu-total {
+  margin-top: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.pill.ghost {
-  background: var(--surface-2);
+.mt-label {
+  font-size: var(--fs-caption);
   color: var(--text-3);
+}
+
+.mt-val {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
 }
 
 /* 供能堆叠条 */
 .stack-head {
-  margin-top: 14px;
+  margin-top: 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -378,18 +414,9 @@ watch(
   background: var(--line);
 }
 
-/* 来源标注 */
-.menu-fallback {
+/* 来源标注：胶囊承载「模板菜单 / AI 菜单」，说明口径收进标题行 InfoHint */
+.menu-src {
   margin-top: 10px;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-}
-
-.ai-tag {
-  margin-top: 10px;
-  /* 助手结论的一句话，是要读的建议 */
-  font-size: var(--fs-caption);
-  color: var(--text-3);
 }
 
 /* 餐次列表 */
@@ -450,7 +477,7 @@ watch(
 }
 
 .linkbtn:disabled {
-  opacity: 0.55;
+  opacity: var(--disabled-opacity);
 }
 
 .ai-err {

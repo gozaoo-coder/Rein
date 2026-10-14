@@ -4,12 +4,14 @@ import { CalendarDays, ChevronRight, Dumbbell, House, Plus, SlidersHorizontal, S
 
 import GlassSurface from '@/components/common/GlassSurface.vue'
 import GlassDockAssembly from '@/components/common/GlassDockAssembly.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import GlassTunerSheet from '@/components/perf/GlassTunerSheet.vue'
 import { usePressGlow } from '@/composables/usePressGlow'
 import { motionEffective, motionLevel, motionRich, setMotionLevel, MOTION_LEVELS, type MotionLevel } from '@/system/motion'
 import { PERF_MODES, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode } from '@/system/perf'
+import { GLASS_PARAM_SPECS } from '@/system/glassParams'
 
 /**
  * 画质预览（三级页，入口在「设置 › 性能」）：**超高档的液态玻璃长什么样**。
@@ -18,7 +20,7 @@ import { PERF_MODES, perfMode, setPerfMode, supportsSvgBackdrop, type PerfMode }
  *   1. 这一档在我这台设备上到底生效了吗（能力探测 + 当前档位，如实说）
  *   2. 两块基本件好不好看：仅图标按钮（正圆）与图标 + 文字按钮（胶囊）
  *   3. 一整套底部栏装起来是什么样（左圆钮 + 中间药丸 + 右圆钮，三块玻璃各留缝并列）
- *   4. 不满意就**就地调**：台下的入口拉开参数面板 —— 管线上的 12 个数字摊开成
+ *   4. 不满意就**就地调**：台下的入口拉开参数面板 —— 管线上的 9 个数字摊开成
  *      滑杆 + 可点输入的数值（system/glassParams，改的是全局那份，定稿写回 GLASS_DEFAULTS）
  *
  * 为什么不摆在一张白卡上：液态玻璃折射的是**它背后的东西**，背后越热闹它才越有得看。
@@ -46,24 +48,28 @@ const mode = computed({
 
 const PERF_OPTIONS = PERF_MODES.map(({ value, label }) => ({ value, label }))
 
-/** 当前档位下这块玻璃的真实状态：能力不足就明说，别让人对着退化结果猜 */
+/** 当前档位下这块玻璃的真实状态：能力不足就明说，别让人对着退化结果猜。
+ *  读数胶囊只放一条主结论（档位 + 折射开没开）；「怎么才能开折射」降成胶囊
+ *  下方的一行次要说明（glassAdvice），术语与链路细节收进「档位」卡的 InfoHint */
 const glassState = computed(() => {
   const m = perfMode.value
-  if (m === 'low') return { tone: 'warn', text: '流畅档：玻璃顶成实底，不做折射' }
+  if (m === 'low') return { tone: 'warn', text: '流畅档：玻璃退化为不透明底色，不做折射' }
   // 高画质起玻璃已铺满（卡片 / 抽屉 / 菜单 / 操作面板 / 页头圆钮），差的只有折射
   if (m === 'high') {
-    return { tone: 'idle', text: '高画质 · 全局玻璃（毛玻璃，无折射）· 切到「超高」或「极致」即开折射' }
+    return { tone: 'idle', text: '高画质 · 全局玻璃（毛玻璃，无折射）' }
   }
   // 超高 / 极致：折射要求内核认得 url() 当背景滤镜用
   if (!supportsSvgBackdrop()) {
     return { tone: 'warn', text: '本机内核不支持折射：折射退化为普通毛玻璃，全局玻璃照旧' }
   }
-  // 折射开着时，把**实际走的链**报出来：这一页要能验证两档到底换了什么，
-  // 而不是只看档位标签。超高与极致共用同一条塌缩链，差别只在材质深浅。
+  // 折射开着时报「这一档与上一档的观感差别」，而不是管线术语
   return m === 'extreme'
-    ? { tone: 'on', text: '极致 · 折射已开启 · 塌缩管线（3 个原语）+ 全局玻璃' }
-    : { tone: 'on', text: '超高 · 折射已开启 · 塌缩管线（3 个原语）' }
+    ? { tone: 'on', text: '极致 · 折射已开启 · 材质更厚' }
+    : { tone: 'on', text: '超高 · 折射已开启' }
 })
+
+/** 读数的下一行：怎么才能开到折射（只有高画质这一档问得出这个问题） */
+const glassAdvice = computed(() => (perfMode.value === 'high' ? '切到「超高」或「极致」即开折射' : ''))
 
 /** 底部栏的三项（与应用里的 Dock 同名同图标，方便对照观感） */
 const TABS = [
@@ -77,7 +83,7 @@ const previewDock = {
 }
 const active = ref('sports')
 
-/** 参数调节面板（液态玻璃管线上的 12 个数字）：入口在标本台正下方 */
+/** 参数调节面板（液态玻璃管线上的 9 个数字）：入口在标本台正下方 */
 const tunerOpen = ref(false)
 
 /** 标本台的按压定向光晕：与真实 Dock 同一套（丰富档下按页签会跟着手指亮） */
@@ -94,13 +100,13 @@ const motionMode = computed({
   },
 })
 
-/** 如实报**实际生效**的那一档：被系统减弱动效、或被掉帧压回默认时，
+/** 如实报**实际生效**的那一档：被系统减弱动效、或被画质档位压回默认时，
  *  用户选的那一档并没有生效 —— 与 glassState 同一条原则 */
 const motionNote = computed(() => {
   if (motionEffective.value !== motionLevel.value) {
     return motionEffective.value === 'off'
       ? '系统已要求「减弱动效」，当前按「关闭」执行'
-      : '掉帧降级中，已退回「默认」'
+      : '画质选「流畅」时已退回「默认」'
   }
   return MOTION_LEVELS.find((m) => m.value === motionLevel.value)?.hint ?? ''
 })
@@ -141,6 +147,7 @@ const ICON_BTN = 54
           <span class="dot" />
           {{ glassState.text }}
         </p>
+        <p v-if="glassAdvice" class="plaque-note">{{ glassAdvice }}</p>
 
         <!-- ② 基本件：仅图标按钮（高 == 宽、正圆）与图标 + 文字按钮（同高的胶囊）。
                 圆角从高度推出来（正圆取 50%，胶囊取半高），不再各写一遍魔数 -->
@@ -203,7 +210,7 @@ const ICON_BTN = 54
       <SlidersHorizontal :size="18" />
       <span class="tuner-txt">
         <b>液态玻璃参数调节</b>
-        <small class="t-3">折射位移 · 边缘厚度 · 底色浓度…共 12 项，拖动即时生效</small>
+        <small class="t-3">折射位移 · 边缘厚度 · 底色浓度…共 {{ GLASS_PARAM_SPECS.length }} 项，拖动即时生效</small>
       </span>
       <ChevronRight :size="18" class="chev" />
     </button>
@@ -212,16 +219,26 @@ const ICON_BTN = 54
          「档位」并排 —— 手机端它只是个普通 div，块流与卡片间距都不变 -->
     <div class="d-grid perf-panels">
     <section class="card">
-      <h2 class="ctitle">档位</h2>
+      <header class="row chead">
+        <h2 class="ctitle">档位</h2>
+        <span class="hint-slot">
+          <InfoHint title="画质档位是怎么回事">
+            <p>壁纸可以横向拖：玻璃折射的是它背后的东西，拖起来才看得见边缘那道位移。</p>
+            <p>内核不支持 backdrop-filter: url()（Safari / Firefox）时自动退化成普通毛玻璃，不会留下空白。</p>
+            <p>四档都是手动钉死的固定档，不会在后台自己切。「超高」与「极致」的折射走同一条链路（把上游那套三通道位移换成等价的一次位移，逐像素一致），差别只在材质：「极致」的光学层更深一档，并把玻璃铺到卡片、抽屉、菜单、操作面板与快捷磁贴。</p>
+          </InfoHint>
+        </span>
+      </header>
 
       <SegmentedControl v-model="mode" class="perfseg" :options="PERF_OPTIONS" />
 
-      <!-- 三组「量名 × 数值」各自 nowrap：在窄卡里折行不能把量名和数值拆开 -->
-      <p class="spec t-3">
-        台上三件的尺寸：<span class="nw">正圆按钮 54 × 54</span> ·
-        <span class="nw">胶囊按钮 156 × 54</span> ·
-        <span class="nw">底栏高 58</span>（与主按钮同高）
-      </p>
+      <!-- 三组「量名 × 数值」：数值做主读数（.num 等宽），量名降一档，组间竖线分开 -->
+      <p class="spec-label t-3">台上三件的尺寸</p>
+      <div class="dims">
+        <span class="dim"><b class="num">54 × 54</b><i>正圆按钮</i></span>
+        <span class="dim"><b class="num">156 × 54</b><i>胶囊按钮</i></span>
+        <span class="dim"><b class="num">58</b><i>底栏高（与主按钮同高）</i></span>
+      </div>
 
       <ul class="modes">
         <li v-for="m in PERF_MODES" :key="m.value" :class="{ on: m.value === perfMode }">
@@ -230,41 +247,27 @@ const ICON_BTN = 54
         </li>
       </ul>
 
-      <p class="pnote t-3">
-        壁纸可以横向拖：玻璃折射的是它背后的东西，拖起来才看得见边缘那道位移。
-        内核不支持 <code>backdrop-filter: url()</code>（Safari / Firefox）时自动退化成普通毛玻璃，
-        不会留下空白。
-      </p>
-      <p class="pnote t-3">
-        四档都是手动钉死的固定档，不会在后台自己切。「超高」与「极致」的折射走同一条
-        <b>塌缩管线</b>：把上游那套三通道位移 + screen 复合换成等价的单次位移
-        （出厂参数下那套复合是恒等变换，逐像素一致），10 个原语降到 3 个，全程序只有这一条链。
-        两档的差别只在<b>材质</b>：「极致」的光学层更深一档，并把玻璃铺到卡片、抽屉、菜单、
-        操作面板与快捷磁贴，材质分层对齐苹果的 Liquid Glass 规范。台上读数会报出实际走的是哪条链。
-        手机上若觉得发烫，切回「高画质」或「流畅」即可。
-      </p>
+      <!-- 实现细节收进标题行 InfoHint后，卡面只留这一行结论 -->
+      <p class="pnote t-2">手机上若觉得发烫，切回「高画质」或「流畅」即可。</p>
     </section>
 
     <!-- 动效：与画质正交的另一档。上面的标本跟着它变 —— 差别在台上直接看得见 -->
     <section class="card">
-      <h2 class="ctitle">动效</h2>
+      <header class="row chead">
+        <h2 class="ctitle">动效</h2>
+        <span class="hint-slot">
+          <InfoHint title="动效档位是怎么回事">
+            <p>「默认」就是现在这一套，不加任何装饰。「丰富」在它之上再加液态玻璃的动作：活动底会从按下的那一点长出一颗小球与它融合（抬手分裂），位移途中拉宽压扁、收窄拉高 —— 苹果那条「由力而非速度决定的形变」；抽屉与菜单改成透镜式进出；页头随滚动收缩与还原。台上直接点页签就能看见，不必来回切档。</p>
+            <p>动效与画质互不影响：这一页管的是「玻璃画不画得出来」，动效管的是「界面要不要动」。画质选「流畅」时丰富档会退回默认，不会一边卡一边加合成。</p>
+          </InfoHint>
+        </span>
+      </header>
 
       <SegmentedControl v-model="motionMode" class="perfseg" :options="MOTION_OPTIONS" />
 
       <p class="spec t-3">{{ motionNote }}</p>
 
       <button type="button" class="replay" @click="replaySpecimen">试一下 · 让上面的底栏走一格</button>
-
-      <p class="pnote t-3">
-        「默认」就是现在这一套，不加任何装饰。「丰富」在它之上再加液态玻璃的动作：活动底会从
-        按下的那一点长出一颗小球与它融合（抬手分裂），位移途中拉宽压扁、收窄拉高 ——
-        苹果那条「由力而非速度决定的形变」；抽屉与菜单改成透镜式进出；页头随滚动收缩与还原。
-        台上直接点页签就能看见，不必来回切档。
-      </p>
-      <p class="pnote t-3">
-        动效与画质互不影响：这一页管的是「玻璃画不画得出来」，动效管的是「界面要不要动」。
-        掉帧降级时丰富档会自动退回默认，不会一边掉帧一边加合成。
-      </p>
     </section>
 
     </div>
@@ -438,6 +441,14 @@ const ICON_BTN = 54
   background: var(--hero-text-dim);
 }
 
+/* 读数胶囊只留主结论；「怎么才能开折射」降成下方一行次要说明（rails 的 22px gap
+   在这里收成 8px，它属于读数的一部分） */
+.plaque-note {
+  margin-top: -14px;
+  font-size: var(--fs-caption);
+  color: var(--hero-text-dim);
+}
+
 .plaque.on .dot {
   background: var(--c-exercise);
 }
@@ -529,6 +540,17 @@ const ICON_BTN = 54
 }
 
 /* ---------- 档位 ---------- */
+/* 卡头行：标题 + 右侧帮助入口（原先两段实现细节平铺在卡面，扫读时被整段跳过） */
+.chead {
+  gap: 8px;
+}
+
+.hint-slot {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
+
 .ctitle {
   font-size: var(--fs-headline);
   font-weight: 700;
@@ -563,8 +585,51 @@ const ICON_BTN = 54
   line-height: 1.6;
 }
 
-.spec .nw {
-  white-space: nowrap;
+/* 台上三件尺寸：数值做主读数、量名降一档，组间竖线分开 ——
+   原来是「·」串成一行的同字号规格句，三个平权数字谁也不是重点 */
+.spec-label {
+  margin-top: 14px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.dims {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 0;
+  margin-top: 4px;
+}
+
+.dim {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.dim + .dim {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 0.5px solid var(--line);
+}
+
+.dim b {
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.dim i {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* 卡面结论行：实现细节都收进标题行 InfoHint，这里只留一句要做的动作 */
+.pnote {
+  margin-top: 10px;
+  font-size: var(--fs-caption);
+  line-height: 1.6;
 }
 
 .modes {
@@ -593,19 +658,6 @@ const ICON_BTN = 54
 
 .modes li.on b {
   color: var(--accent);
-}
-
-.pnote {
-  margin-top: 10px;
-  font-size: var(--fs-caption);
-  line-height: 1.6;
-}
-
-.pnote code {
-  padding: 0 3px;
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  font-size: var(--fs-micro);
 }
 
 /* ============================================================

@@ -475,6 +475,6 @@ async function onConfirmDelete(value: string): Promise<void> {
 }
 
 .save:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 </style>

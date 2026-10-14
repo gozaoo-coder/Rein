@@ -6,6 +6,8 @@ import { ArrowDown, ArrowUp, Plus, X } from 'lucide-vue-next'
 import ExercisePickerSheet from '@/components/exercise/ExercisePickerSheet.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { EXERCISE_CATEGORY_LABELS } from '@/config/domain'
 import { MUSCLE_LABELS, type MuscleKey } from '@/config/muscles'
@@ -81,14 +83,26 @@ function exName(e: PlanExercise): string {
   return lib.resolveName(e)
 }
 
-/** 条目副标题：库内主攻肌群 / 分类（让用户确认选对了动作） */
-function exMeta(e: PlanExercise): string {
+/** 条目副标题：分类做成小胶囊，主攻肌群只留第一个作次要说明，其余折叠成「等 N 处」
+ *  （原来两个词用「·」串成一条等权文字，肌群一多行尾被截断，读不出选对没选对）。
+ *  没选过动作时两项都空（主行「点击从动作库选择」已经把话说完了）；库内记录没了换成一句重选提示。 */
+function exSummary(e: PlanExercise): { kind: string; muscle: string } {
   const rec = lib.get(e.exerciseId)
-  if (!rec) return e.exerciseId ? '动作库条目已删除' : '尚未选择动作'
+  if (!rec) {
+    return { kind: '', muscle: e.exerciseId ? '这个动作已从动作库移除，请重新选择' : '' }
+  }
   const mains = (Object.entries(rec.muscles ?? {}) as [MuscleKey, number][])
     .filter(([, lv]) => lv === 3)
     .map(([m]) => MUSCLE_LABELS[m])
-  return `${EXERCISE_CATEGORY_LABELS[rec.category]}${mains.length ? ` · ${mains.join(' · ')}` : ''}`
+  return {
+    kind: EXERCISE_CATEGORY_LABELS[rec.category],
+    muscle: mains.length > 1 ? `${mains[0]} 等 ${mains.length - 1} 处` : (mains[0] ?? ''),
+  }
+}
+
+/** 条目在库里取不到（没选 / 已删除）：主行跟着置灰 */
+function exBroken(e: PlanExercise): boolean {
+  return !e.exerciseId || !lib.get(e.exerciseId)
 }
 
 function openPicker(i: number): void {
@@ -201,7 +215,17 @@ async function save(): Promise<void> {
 
 <template>
   <div class="page">
-    <PageHeader back :title="isNew ? '新建课程' : '编辑课程'" :subtitle="`约 ${estMin} 分钟 · ${exercises.length} 个动作`" />
+    <PageHeader back :title="isNew ? '新建课程' : '编辑课程'" :subtitle="`约 ${estMin} 分钟`">
+      <!-- 页头只留时长这一条结论；「每组按多少秒估」是口径，收进标题行右侧帮助入口 -->
+      <template #action>
+        <span class="hdr-btn">
+          <InfoHint
+            title="时长怎么估"
+            content="时长按课程内容估，不是实测：力量正式组与激活热身组各按 45 秒一组计，计时组按每组目标秒（缺省 30 秒），有氧按分钟数，再算上组间休息。"
+          />
+        </span>
+      </template>
+    </PageHeader>
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
@@ -251,12 +275,15 @@ async function save(): Promise<void> {
               <span class="flabel">动作</span>
               <button class="expick row" type="button" @click="openPicker(i)">
                 <span class="col expickmain">
-                  <span class="exname" :class="{ empty: !e.exerciseId }">
+                  <span class="exname" :class="{ empty: exBroken(e) }">
                     {{ e.exerciseId ? exName(e) : '点击从动作库选择' }}
                   </span>
-                  <span class="exmeta t-3">{{ exMeta(e) }}</span>
+                  <span v-if="e.exerciseId" class="exmeta t-3">
+                    <PillChip v-if="exSummary(e).kind" size="sm" tone="muted">{{ exSummary(e).kind }}</PillChip>
+                    <span v-if="exSummary(e).muscle" class="exmuscle">{{ exSummary(e).muscle }}</span>
+                  </span>
                 </span>
-                <span class="expickop">选择</span>
+                <PillChip size="sm" tone="action">选择</PillChip>
               </button>
             </div>
 
@@ -391,17 +418,19 @@ async function save(): Promise<void> {
 }
 
 .exmeta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   font-size: var(--fs-caption);
+}
+
+/* 肌群只留第一个、其余折叠成「等 N 处」：长名在行尾截断，不再把分类挤出可见区 */
+.exmeta .exmuscle {
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.expickop {
-  flex: none;
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  color: var(--c-exercise-deep);
 }
 
 /* 动作行壳：0fr↔1fr 收高度，卡的间距职责从 .excard 移到这一层 */
@@ -490,7 +519,7 @@ async function save(): Promise<void> {
 }
 
 .ops button:disabled {
-  opacity: 0.3;
+  opacity: var(--disabled-opacity);
 }
 
 .add {
@@ -519,7 +548,7 @@ async function save(): Promise<void> {
 }
 
 .save:disabled {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 
 /* ============================================================

@@ -16,7 +16,8 @@ import { bmiBand, bmiOf } from '@/utils/health'
  * 版式走 iOS Health 的分组行卡：灰底分组卡 + 发丝线分行 + 行内右置控件，
  * 替掉旧版「标签漂在半空 + 控件挤在一列」的平面表单。分两组：
  *   身体数据 —— 性别 / 生日 / 身高 / 体重 / 目标体重，右上是实时 BMI 读数；
- *   训练约束 —— 频率 / 时段 / 器械 / 经验 / 忌口，右上是「按当前条件的摘要」。
+ *   训练约束 —— 频率 / 时段 / 器械 / 经验 / 忌口（小帽只留组名，读数以卡内各行为准，
+ *   不在小帽上把「3 天 / 健身房」复述一遍）。
  * 控件选型只认两条：能一眼看到全部选项的用 chips（多选/三选一），二选一用分段；
  * 原生 date 输入（yyyy/mm/日 占位 + 键盘难用）换成 年/月/日 三个下拉。
  *
@@ -121,7 +122,7 @@ function pickDay(e: Event): void {
   draftDay.value = v === '' ? null : Number(v)
 }
 
-/* ---------- 实时读数：身体卡的 BMI / 训练卡的摘要 ---------- */
+/* ---------- 实时读数：身体卡的 BMI ---------- */
 
 const bmi = computed(() => bmiOf(draftWeight.value, draftHeight.value))
 const bmiBandInfo = computed(() => (bmi.value == null ? null : bmiBand(bmi.value)))
@@ -129,10 +130,6 @@ const bmiBandInfo = computed(() => (bmi.value == null ? null : bmiBand(bmi.value
 /** 预设之外的自定义忌口：渲染成带 ✕ 的可删 chip（预设是点选态，自定义是确认态） */
 const customRestrictionList = computed(() =>
   draftRestrictions.value.filter((r) => !DIET_RESTRICTION_PRESETS.includes(r)),
-)
-
-const trainSummary = computed(
-  () => `${draftDays.value} 天 · ${EQUIPMENT_LABELS[draftEquipment.value] ?? draftEquipment.value}`,
 )
 
 /* ---------- 忌口 ---------- */
@@ -249,7 +246,6 @@ async function save(): Promise<void> {
       <section class="sec">
         <header class="seccap">
           <span>训练约束</span>
-          <em class="capinfo num">{{ trainSummary }}</em>
         </header>
         <div class="card">
           <NumberStepper v-model="draftDays" label="每周训练" unit="天" :min="0" :max="7" />
@@ -397,17 +393,17 @@ async function save(): Promise<void> {
   color: var(--text-3);
 }
 
-/* BMI 读数分档色 */
+/* BMI 读数分档色：soft 档令牌的配套字色，实底档（--warn/--danger）不当文字用 */
 .capinfo.t-ok {
   color: var(--ok-strong);
 }
 
 .capinfo.t-warn {
-  color: var(--warn);
+  color: var(--warn-strong);
 }
 
 .capinfo.t-danger {
-  color: var(--danger);
+  color: var(--danger-strong);
 }
 
 .card {
@@ -565,6 +561,6 @@ async function save(): Promise<void> {
 }
 
 .save:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 </style>

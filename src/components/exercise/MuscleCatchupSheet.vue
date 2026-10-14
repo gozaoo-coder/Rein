@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { Check, Dumbbell, Play, Sparkles } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { sessionService } from '@/services/sessionService'
 import { useAiStore } from '@/stores/ai'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
@@ -119,12 +121,21 @@ const lede = computed(() =>
     : '本周练得不够的肌群，已按缺口排好一节临时课程。它不会存进课程库 —— 开练即用，练完即弃。',
 )
 
+/** 面上结论：有现成课优先它，没有就明说临时课不入库 */
+const routeChip = computed(() => (course.value ? '优先练它（课程库现成课）' : '临时课 · 不入库'))
+
 /** 「交给 AI 调整」的说明：有现成课时送去的是「核对这节课」，不是「从零重排」 */
 const hint = computed(() =>
   course.value
     ? '「交给 AI 调整」会把弱项、这节课与备选草稿一起送进对话，由模型判断现成的课要不要动 —— 那句话在 AI 页是直接发出的（与「交给 AI 排查」同一条路径），不需要再点一次发送。'
     : '「交给 AI 调整」会把弱项与上面的草稿一起送进对话，由模型重新排一遍并说明理由 —— 那句话在 AI 页是直接发出的（与「交给 AI 排查」同一条路径），不需要再点一次发送。',
 )
+
+/**
+ * 开场白与「交给 AI 调整」的说明都收进标题行右侧那枚 InfoHint（同一屏只有一枚 ?）。
+ * 面上只留两行胶囊结论：走哪条路、AI 按钮点什么效果。
+ */
+const hintContent = computed(() => `${lede.value}\n\n${hint.value}`)
 
 /**
  * 弱项 + 跳过的，**合成一个列表**。
@@ -217,7 +228,14 @@ function goConflict(): void {
 
 <template>
   <SheetModal :open="open" title="弱项加练" initial-snap="large" @close="emit('close')">
-    <p class="lede">{{ lede }}</p>
+    <!-- 两条路的分工与「交给 AI 调整」的行为：收进标题行右侧 InfoHint，面上只留结论 -->
+    <template #action>
+      <InfoHint title="弱项加练怎么走" :content="hintContent" />
+    </template>
+
+    <p class="lede">
+      <StatusChip :tone="course ? 'accent' : 'neutral'" size="md">{{ routeChip }}</StatusChip>
+    </p>
 
     <!-- 弱项清单：先说清「缺什么」，再说「练什么」 -->
     <ul class="weaklist">
@@ -242,7 +260,7 @@ function goConflict(): void {
           <Check v-if="isHit(g)" :size="11" :stroke-width="3.2" aria-hidden="true" />{{ SCORE_GROUP_LABELS[g] }}
         </span>
       </div>
-      <p class="rc-why">主攻 {{ course.groups.length }} 组，其中 <b>{{ hitLabels }}</b> 正是你的弱项</p>
+      <p class="rc-why">主攻 {{ course.groups.length }} 个部位，其中 <b>{{ hitLabels }}</b> 正是你的弱项</p>
     </section>
 
     <!-- 临时课程草稿 -->
@@ -298,7 +316,8 @@ function goConflict(): void {
         交给 AI 调整
       </button>
     </div>
-    <p class="hint">{{ hint }}</p>
+    <!-- AI 按钮的行为一句话结论；「送什么进对话、直接发送」的细节在标题 InfoHint 里 -->
+    <p class="hint"><StatusChip tone="neutral" size="sm">点一下就去 AI，无需再发送</StatusChip></p>
 
     <ActionSheet
       :open="conflictOpen"
@@ -521,7 +540,7 @@ function goConflict(): void {
 
 .primary:disabled,
 .ghost:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .hint {

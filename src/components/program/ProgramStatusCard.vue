@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronRight, Target, Wand2 } from 'lucide-vue-next'
 
+import PillChip from '@/components/common/PillChip.vue'
 import { GOAL_LABELS } from '@/config/domain'
 import { useProgramStore } from '@/stores/program'
 import { courseOnDate, programStatus, reviewDue } from '@/utils/programCycle'
@@ -36,10 +37,14 @@ const tierLabel = computed(() =>
   program.active?.tier === 'conservative' ? '保守' : program.active?.tier === 'aggressive' ? '进取' : '均衡',
 )
 
-const heading = computed(() => {
-  if (!program.active || !status.value) return ''
-  return `${GOAL_LABELS[program.active.goal]} · ${tierLabel.value} · 第 ${status.value.week} 周 / ${status.value.weeks}`
-})
+/**
+ * 周进度（卡上主读数）与总周数（分母）——模板分两级渲染：
+ * 「第 N 周」是这张卡真正要说的结论（--fs-title3 + .num），「共 N 周」退脚注档。
+ * 从前目标、档位、周进度用「·」串成同一字档一行，抓不到重点。
+ */
+const weekOf = computed(() =>
+  status.value ? { week: status.value.week, weeks: status.value.weeks } : null,
+)
 
 /** 第二行：今天做什么（或未开跑 / 已结束的状态说明） */
 const todayText = computed(() => {
@@ -77,7 +82,12 @@ function openReview(): void {
     <button class="main pressable" @click="open">
       <i class="ic"><Target :size="18" :stroke-width="2.2" /></i>
       <span class="col txt">
-        <b>{{ heading }}</b>
+        <!-- 目标与档位是元信息：两枚小胶囊另起一行，与主读数分层 -->
+        <span class="ptags">
+          <PillChip tone="muted" size="sm">{{ GOAL_LABELS[program.active.goal] }}</PillChip>
+          <PillChip tone="muted" size="sm">档位 · {{ tierLabel }}</PillChip>
+        </span>
+        <b class="pwk num">第 {{ weekOf?.week }} 周<span class="pwk-all num">共 {{ weekOf?.weeks }} 周</span></b>
         <em>{{ todayText }}</em>
       </span>
       <ChevronRight :size="15" class="chev" />
@@ -130,12 +140,29 @@ function openReview(): void {
 .txt {
   flex: 1;
   min-width: 0;
-  gap: 1px;
+  gap: 4px;
 }
 
-.txt b {
-  font-size: var(--fs-subhead);
+/* 目标 / 档位：中性小胶囊（尺寸语气在 PillChip.vue），这里只管排布 */
+.ptags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* 主读数「第 N 周」：卡上唯一主档（--fs-title3 + .num）；
+   「共 N 周」是分母，退到脚注档、浅一档灰 */
+.pwk {
+  font-size: var(--fs-title3);
   font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.pwk .pwk-all {
+  margin-left: 6px;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-3);
 }
 
 .txt em {

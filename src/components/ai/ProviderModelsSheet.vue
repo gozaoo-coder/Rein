@@ -82,9 +82,10 @@ const rows = computed<Row[]>(() => {
       return {
         ref: m.modelId,
         label: m.modelId,
+        // 状态只由行尾胶囊（使用中）独家承担，副标题里不再重复「已启用」
         sub: `${KIND_LABEL[m.kind]}${
           m.origin === 'preset' ? ' · 内置参考（接口清单里没有）' : m.origin === 'manual' ? ' · 手填' : ''
-        }${active ? ' · 已启用' : ''}`,
+        }`,
         provider: p.name,
         kind: m.kind,
         badge: active ? '使用中' : undefined,
@@ -178,7 +179,7 @@ const isManual = (row: Row): boolean => {
 
       <div class="list" data-rubber-self>
         <p v-if="rows.length === 0" class="none t-3">
-          没有匹配的模型：先「获取模型列表」，或在下面手填一个模型 ID
+          没有匹配的模型：清空搜索，或先在提供商详情里点「获取模型列表」；本层底部也可以手填一个模型 ID
         </p>
         <ul v-else>
           <li v-for="r in rows" :key="r.ref" class="row center item">
@@ -225,7 +226,7 @@ const isManual = (row: Row): boolean => {
             <Plus :size="14" />
           </button>
         </div>
-        <p class="hint t-3">手填的条目不会被同步清掉；类别决定「启用」写到哪个执行位。</p>
+        <p class="hint t-3">手填的条目不会被同步清掉；类别决定它启用后归到哪个用途（对话 / 视觉 / 语音识别 / 向量）。</p>
       </section>
     </div>
   </SheetModal>
@@ -309,7 +310,7 @@ const isManual = (row: Row): boolean => {
 }
 
 .use:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .on-chip {
@@ -374,7 +375,7 @@ const isManual = (row: Row): boolean => {
   border-radius: var(--radius-s);
   background: var(--surface);
   font-size: var(--fs-caption);
-  color: var(--text);
+  color: var(--text-1);
 }
 
 .add {
@@ -389,7 +390,7 @@ const isManual = (row: Row): boolean => {
 }
 
 .add:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .hint {

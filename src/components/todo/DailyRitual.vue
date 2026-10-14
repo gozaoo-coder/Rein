@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Check, Sparkles } from 'lucide-vue-next'
 
 import { useTodoStore } from '@/stores/todo'
-import { addDays, todayStr } from '@/utils/date'
+import { addDays, nowMin, todayStr } from '@/utils/date'
 import type { Todo } from '@/types'
 
 /**
@@ -26,12 +26,27 @@ const store = useTodoStore()
 const step = ref(0)
 const picked = ref<Set<number>>(new Set())
 
+/**
+ * 欢迎语按打开时刻取词。弹层由父级在「当日首次进入画布」时触发（只按日计，不看时间），
+ * 写死「早上好」会让下午/深夜打开的应用问候一句错的话。
+ */
+function greetingAt(min: number): string {
+  const h = Math.floor(min / 60)
+  if (h < 6) return '夜深了'
+  if (h < 12) return '早上好'
+  if (h < 18) return '下午好'
+  return '晚上好'
+}
+
+const greet = ref('')
+
 watch(
   () => props.open,
   (o) => {
     if (o) {
       step.value = 0
       picked.value = new Set()
+      greet.value = greetingAt(nowMin())
     }
   },
 )
@@ -73,7 +88,7 @@ function confirm(mode: 'ai' | 'manual'): void {
 
       <!-- 1 回顾昨天 -->
       <div v-if="step === 0" class="step">
-        <p class="hi">早上好</p>
+        <p class="hi">{{ greet }}</p>
         <p class="desc">{{ yLine }}</p>
         <p class="hint">花 30 秒想想今天最重要的一件事是什么。</p>
       </div>
@@ -271,7 +286,7 @@ h2 {
 }
 
 .primary:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .primary.ai {

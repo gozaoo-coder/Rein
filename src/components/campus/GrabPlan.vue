@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AlertTriangle, Clock, Info, ListPlus, RefreshCw, Search, Sparkles, Trash2, Wand2 } from 'lucide-vue-next'
 
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { useToast } from '@/composables/useToast'
 import { grabStatusMeta, idOf, useCourseSelectStore } from '@/stores/courseSelect'
 import type { GrabIntent, GrabMatch, GrabPreview } from '@/types'
@@ -398,17 +399,22 @@ async function onReparse(i: GrabIntent): Promise<void> {
             <Trash2 :size="14" />
           </button>
         </div>
+        <!-- 「下次唤醒」是这行上唯一能当凭据的信息：抢课是人不在场的动作，
+             「几点还会再动一次」必须一眼看见，所以提成一枚强调胶囊；
+             目标批次与抢法只是背景，降到 caption/text-3 并用竖线分隔 -->
         <p class="meta">
           <Wand2 :size="12" />
           <span>{{ targetOf(i) }}</span>
-          <span>·</span>
+          <i class="sep" aria-hidden="true" />
           <span>{{ i.spread ? '每门课都要' : '只中一个' }}</span>
-          <span v-if="nextText(i)" class="next">
+          <StatusChip v-if="nextText(i)" tone="accent" size="md" class="next">
             <Clock :size="12" />
-            {{ nextText(i) }}
-          </span>
-          <span v-if="i.lastMessage && i.status !== 'ambiguous'">· {{ i.lastMessage }}</span>
+            <span class="num">{{ nextText(i) }}</span>
+          </StatusChip>
         </p>
+
+        <!-- 引擎最近那句话另起一行：它和「凭据」不是一层东西，混在一行里互相稀释 -->
+        <p v-if="i.lastMessage && i.status !== 'ambiguous'" class="said">{{ i.lastMessage }}</p>
 
         <!-- 跨课程：状态由引擎给（`ambiguous`），这里只把课程代码拼出来。
              最危险的一种是年级双开 —— 只写「羽毛球」会同时命中大一与大二那两门 -->
@@ -513,7 +519,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
 }
 
 .entry-go:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 /* 计划怎么用：它是「模糊匹配」这套规则唯一的说明，必须读得出来 ——
@@ -689,7 +695,7 @@ async function onReparse(i: GrabIntent): Promise<void> {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .plans {
@@ -744,28 +750,43 @@ async function onReparse(i: GrabIntent): Promise<void> {
   transform: scale(0.9);
 }
 
+/* 目标批次 + 抢法：只是背景信息，降到 caption/text-3。
+   主值（下次唤醒）走 .next 胶囊，引擎最近的话走 .said —— 三者不再同权 */
 .meta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
-  font-size: var(--fs-micro);
+  font-size: var(--fs-caption);
   line-height: 1.45;
   margin-top: 3px;
-  /* 目标批次 / 只中一个 / 下次唤醒 / 教务最近说了什么 —— 这一行是计划的进度说明 */
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
 .meta svg {
   flex: none;
 }
 
-/* 「下次唤醒」这一格：把「它还会自己再动一次」写在计划行上（时间压力下它比状态标签重要） */
+/* 批次与抢法之间的竖线（原来是一枚「·」，与行内其它「·」撞车） */
+.meta .sep {
+  flex: none;
+  width: 1px;
+  height: 10px;
+  background: var(--line-strong);
+}
+
+/* 「下次唤醒」这一格：把「它还会自己再动一次」提成计划行的主值
+   （时间压力下它比状态标签重要，所以是胶囊而不是和背景同一档的字） */
 .next {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--text-2);
+  margin-left: 6px;
   font-variant-numeric: tabular-nums;
+}
+
+/* 引擎最近说的话：另起一行，比背景事实高一档，但不去抢主值的位子 */
+.said {
+  font-size: var(--fs-caption);
+  line-height: 1.45;
+  margin-top: 2px;
+  color: var(--text-2);
 }
 </style>

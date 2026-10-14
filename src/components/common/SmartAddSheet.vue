@@ -3,8 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { Check, ImagePlus, LoaderCircle, Pencil, Plus, Search, Sparkles, X } from 'lucide-vue-next'
 
 import ManageModelsButton from '@/components/ai/ManageModelsButton.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
 import FoodPickerSheet from '@/components/diet/FoodPickerSheet.vue'
 import TodoEditorSheet from '@/components/todo/TodoEditorSheet.vue'
@@ -45,7 +47,11 @@ const models = useModelsStore()
 const ai = useAiStore()
 const toast = useToast()
 
-const NO_MODEL_TEXT = '还没有可用的 AI 模型：先到「管理模型」添加并测试模型后，智能添加即可用。'
+/** 无模型时的面上结论（只一句）；完整操作指引收进旁边的 InfoHint */
+const NO_MODEL_TEXT = '还没有可用的 AI 模型'
+/** 完整指引（含视觉模型的限制）：content 纯文本，空行分段 */
+const NO_MODEL_HINT = '先到「管理模型」添加并测试模型后，智能添加即可用。\n\n图片识别需要支持视觉的模型。'
+const noModel = computed(() => error.value === NO_MODEL_TEXT)
 const isFood = computed(() => props.mode === 'food')
 
 const text = ref('')
@@ -87,7 +93,8 @@ async function runGenerate(): Promise<void> {
   await ensureModels()
   const cfg = attachment.value ? models.bestVisionModel() : models.defaultModel()
   if (!cfg) {
-    error.value = attachment.value ? `${NO_MODEL_TEXT}（图片识别需要支持视觉的模型）` : NO_MODEL_TEXT
+    // 视觉限制收进 InfoHint，面上只留一句结论（句末不再拖括号）
+    error.value = NO_MODEL_TEXT
     return
   }
   busy.value = true
@@ -320,14 +327,17 @@ function clearAll(): void {
           {{ foodPreview.map((f) => `${f.foodName}${f.grams ? ` ${f.grams}g` : ''}`).join('、') }}
         </p>
       </div>
-      <p v-else-if="error" class="state t-3 num">
+      <p v-else-if="error" class="state err-row">
         <span class="err">{{ error }}</span>
+        <!-- 无模型时补一枚帮助入口：完整操作指引（含视觉模型限制）收进抽屉 -->
+        <InfoHint v-if="noModel" title="可用的 AI 模型" :content="NO_MODEL_HINT" />
       </p>
 
       <!-- 食物卡（识别结果 → 确认餐次 → 写入今日） -->
       <template v-if="foods.length">
-        <p class="count t-3 num">
-          识别到 {{ foods.length }} 项食物 · ≈{{ foodStats.totalKcal }} 大卡
+        <p class="count">
+          <b class="num ck">识别到 {{ foods.length }} 项食物</b>
+          <span class="ck-sub">≈{{ foodStats.totalKcal }} 大卡</span>
         </p>
         <div class="food-card">
           <FoodParseEditor v-model="foods" @change="foodStats = $event" />
@@ -348,8 +358,11 @@ function clearAll(): void {
 
       <!-- 待办草稿：标题可换行、异日显性、分类色点、备注预览、可移除 -->
       <template v-if="todos.length">
-        <p class="count t-3 num">
-          识别到 {{ todos.length }} 条待办<template v-if="pendingCount"> · 待添加 {{ pendingCount }}</template><template v-else-if="!todos.some((d) => !d.added)"> · 全部已处理</template><span class="t-3"> · 点卡片改细节</span>
+        <!-- 识别数是主数值；「待添加」是结论走胶囊；改细节的入口每行都有铅笔钮 -->
+        <p class="count">
+          <b class="num ck">识别到 {{ todos.length }} 条待办</b>
+          <StatusChip v-if="pendingCount" tone="accent" size="sm">待添加 {{ pendingCount }}</StatusChip>
+          <span v-else-if="!todos.some((d) => !d.added)" class="ck-sub">全部已处理</span>
         </p>
         <TransitionGroup tag="ul" name="tdl" class="list">
           <li
@@ -386,7 +399,7 @@ function clearAll(): void {
                 </em>
                 <em v-if="d.added" class="mchip ok"><Check :size="10" :stroke-width="3" /> 已添加</em>
               </span>
-              <span v-if="d.notes" class="notes t-3">{{ d.notes }}</span>
+              <span v-if="d.notes" class="notes t-2">{{ d.notes }}</span>
             </button>
             <span class="acts">
               <button class="act" aria-label="编辑细节" :disabled="busy" @click="openEditor(d)">
@@ -456,7 +469,7 @@ function clearAll(): void {
 }
 
 .clear:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .paste {
@@ -494,7 +507,7 @@ function clearAll(): void {
 }
 
 .run:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .spin {
@@ -559,6 +572,14 @@ function clearAll(): void {
   min-height: 16px;
 }
 
+/* 错误行：一句结论 +（无模型时）行内帮助入口 */
+.err-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .state .err {
   color: var(--danger);
 }
@@ -569,8 +590,21 @@ function clearAll(): void {
   line-height: 1.5;
 }
 
+/* 识别数：主数值升一档，副行（待添加 / 全部已处理 / 总热量）降为 caption 灰 */
 .count {
   font-weight: 600;
+}
+
+.ck {
+  font-size: var(--fs-callout);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.ck-sub {
+  margin-left: 8px;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
 /* 食物卡 */
@@ -667,7 +701,7 @@ function clearAll(): void {
 }
 
 .pick:disabled {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 
 /* 对勾弹入 */
@@ -722,10 +756,11 @@ function clearAll(): void {
   gap: 5px;
 }
 
+/* 错排日期是必须被看见的信息（脚本注释明说）：不吃 11px 水印档 */
 .meta .mt {
   font-style: normal;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .mchip {
@@ -813,7 +848,7 @@ function clearAll(): void {
 }
 
 .commit:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .done {

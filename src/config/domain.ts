@@ -67,8 +67,26 @@ export function fmtGrams(n: number): string {
   return n >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
 }
 
-/** 桌面工作台断点：视口 ≥ 此宽度启用三窗格壳（导航轨）与主页双视图（便当总览/一日脊柱） */
-export const DESKTOP_MIN = 1100
+/**
+ * 壳层形态的三档（唯一的宽度判据，别再在别处写 1100 / 1280 这类裸值）：
+ *
+ *   · <  DESKTOP_MIN(900)     手机壳 —— .app-frame 居中窄栏 + 底部 Dock；
+ *   · ≥  DESKTOP_MIN(900)     桌面壳 —— 导航轨（64px）+ 主人区；信息栏**缺省收起**，
+ *                             900–1279 的主人区只有 836–1215px，再挂 298px 的第三格
+ *                             会把 900 宽的内容挤到 538px（比手机栏还窄）。⌘I 仍可展开；
+ *   · ≥  INSPECTOR_DEFAULT_MIN(1280)
+ *                             桌面壳 + 信息栏**缺省展开** —— 三窗格并排后主人区 = 918px。
+ *
+ * 为什么是 900 而不是 1100：900×1200 / 1024×768 这一档（平板竖屏、半屏窗口）此前
+ * 拿到的是 480px 的手机窄栏居中，两侧各空 200px —— 桌面级导航与主人区在 900 就装得下。
+ *
+ * `--desk-min`（src/styles/tokens.css）必须与本值同值：媒体查询读不到 var()，
+ * 那份令牌是给 CSS 侧的备忘，改这里就要同步改那里。
+ */
+export const DESKTOP_MIN = 900
+
+/** 桌面壳下信息栏「缺省」展开的宽度下限（用户显式开关过就照用户的，见 system/deskShell） */
+export const INSPECTOR_DEFAULT_MIN = 1280
 
 /** 按当前时间推荐餐次（聊天解析卡与拍照识别弹层共用） */
 export function suggestMeal(): MealType {

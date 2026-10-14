@@ -23,7 +23,7 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="专注" subtitle="番茄钟 · 待办 · 日程" back />
+    <PageHeader title="专注" back />
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 

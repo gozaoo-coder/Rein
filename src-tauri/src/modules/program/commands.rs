@@ -42,6 +42,12 @@ fn program_by_id(conn: &rusqlite::Connection, id: i64) -> Result<ProgramRecord> 
 #[tauri::command]
 pub fn program_list(state: State<AppState>) -> Result<Vec<ProgramRecord>> {
     let conn = state.db.lock();
+    program_list_on(&conn)
+}
+
+/// `program_list` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
+/// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
+pub(crate) fn program_list_on(conn: &rusqlite::Connection) -> Result<Vec<ProgramRecord>> {
     let sql = format!("SELECT {COLS} FROM programs ORDER BY id DESC LIMIT 20");
     let mut stmt = conn.prepare(&sql)?;
     let list = stmt
@@ -54,6 +60,13 @@ pub fn program_list(state: State<AppState>) -> Result<Vec<ProgramRecord>> {
 #[tauri::command]
 pub fn program_get_active(state: State<AppState>) -> Result<Option<ProgramRecord>> {
     let conn = state.db.lock();
+    program_get_active_on(&conn)
+}
+
+/// `program_get_active` 的本体（见 [`program_list_on`]）。
+pub(crate) fn program_get_active_on(
+    conn: &rusqlite::Connection,
+) -> Result<Option<ProgramRecord>> {
     let sql =
         format!("SELECT {COLS} FROM programs WHERE status = 'active' ORDER BY id DESC LIMIT 1");
     let res = conn.query_row(&sql, [], from_row);

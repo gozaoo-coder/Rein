@@ -4,6 +4,7 @@ import { Sparkles } from 'lucide-vue-next'
 
 import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
+import { TARGET_FIELD_META } from '@/config/domain'
 
 /** AI 智能调整：一句话生成目标修改建议，确认后才生效。 */
 const ai = useAiStore()
@@ -11,7 +12,15 @@ const { toast } = useToast()
 
 const draft = ref('')
 
-const EXAMPLES = ['热量降到 1800 大卡', '蛋白质提高到 130 克', '钠减到 1200，饮水加到 2400']
+/** 热量的字段名从 TARGET_FIELD_META 取：计算器与微调卡里都叫「能量」，示例不能另叫「热量」 */
+const KCAL_LABEL = TARGET_FIELD_META.find((m) => m.key === 'kcal')!.label
+
+/** 示例一律带单位与空格：照抄时「钠减到 1200」是 mg 还是 g，量级差一千倍 */
+const EXAMPLES = [
+  `${KCAL_LABEL}降到 1800 大卡`,
+  '蛋白质提高到 130 克',
+  '钠减到 1200 mg，饮水加到 2400 ml',
+]
 
 async function submit(): Promise<void> {
   if (!draft.value.trim() || ai.busy) return
@@ -49,7 +58,7 @@ function dismiss(): void {
       <input
         v-model="draft"
         type="text"
-        placeholder="如：热量降到1800，蛋白质提到130"
+        :placeholder="`如：${KCAL_LABEL}降到 1800 大卡，蛋白质提到 130 克`"
         aria-label="描述目标调整"
         @keydown.enter="submit"
       >
@@ -132,7 +141,7 @@ function dismiss(): void {
 }
 
 .send:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 
 /* 示例 */
@@ -152,7 +161,7 @@ function dismiss(): void {
 }
 
 .ex-chip:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 /* 建议卡 */

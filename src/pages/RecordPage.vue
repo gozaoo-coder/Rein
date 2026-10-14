@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Mic, Search, Square, Trash2 } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { useToast } from '@/composables/useToast'
 import { useTodoStore } from '@/stores/todo'
@@ -86,6 +87,7 @@ async function attachTo(todo: Todo): Promise<void> {
     }
     const att: TodoAttachment = {
       kind: 'audio',
+      // 附件名保留「录音」前缀：待办附件列表里没有上下文，光有时长读不出是什么
       name: `录音 ${fmtDur(t.durationSec)}`,
       content: t.dataUrl,
       size: t.size,
@@ -116,7 +118,7 @@ async function attachTo(todo: Todo): Promise<void> {
       <button
         class="rec-btn"
         :class="{ on: recording }"
-        :aria-label="recording ? '停止录音' : '开始录音'"
+        :aria-label="recording ? '停止并保存' : '开始录音'"
         data-testid="rec-toggle"
         @click="toggle"
       >
@@ -124,13 +126,10 @@ async function attachTo(todo: Todo): Promise<void> {
         <Mic v-else :size="32" :stroke-width="1.9" />
       </button>
       <p class="num timer" :class="{ live: recording }">{{ fmtDur(recorder.elapsedSec) }}</p>
-      <p class="hint t-3">
-        {{ recording ? '正在录音 — 可切到别的页面，悬浮条会跟着你' : '点按开始录音' }}
-      </p>
+      <!-- 卡面只留一行结论（保存语义同时写进圆钮的 aria-label）——
+           「可切到别的页面，悬浮条会跟着你」这类背景说明收进未归档录音卡头的 InfoHint -->
+      <p v-if="recording" class="hint t-2">正在录音 — 点按圆钮停止并保存</p>
       <div v-if="recording" class="row rec-acts">
-        <button class="stop" data-testid="rec-stop" @click="stopRecording">
-          <Square :size="14" :stroke-width="2.5" /> 停止并保存
-        </button>
         <button class="cancel" @click="cancelRecording">取消</button>
       </div>
       <p v-if="recorder.lastError && !recording" class="err">{{ recorder.lastError }}</p>
@@ -140,17 +139,29 @@ async function attachTo(todo: Todo): Promise<void> {
     <section class="takes d-full" data-testid="takes">
       <header class="row between thead">
         <b>未归档录音</b>
-        <span class="num t-3">{{ recorder.takes.length }}</span>
+        <span class="row thead-side">
+          <span class="tcount num t-3">{{ recorder.takes.length }} 条</span>
+          <InfoHint
+            title="未归档录音"
+            content="录音过程中可以切到别的页面，悬浮条会跟着你，随时能在任意页面停止。
+
+录完的录音先留在这里，可以回放、删除，或附加到待办；附加到待办后才会随应用保存，不附加的关掉应用就没了。"
+          />
+        </span>
       </header>
-      <p v-if="!recorder.takes.length" class="empty t-3">
-        还没有录音。录完的会先留在这里，回放确认后再附加到待办；不附加的关掉应用就没了。
+      <p v-if="!recorder.takes.length" class="empty t-2">
+        录完的会先留在这里，回放确认后再附加到待办保存。
       </p>
       <ul class="tlist">
         <li v-for="t in recorder.takes" :key="t.id" class="card take">
           <div class="row between trow">
             <div class="col tmeta">
-              <b class="num">录音 {{ fmtDur(t.durationSec) }}</b>
-              <span class="num t-3 sub">{{ hhmm(t.createdAt) }} · {{ fmtSize(t.size) }}</span>
+              <b class="num">{{ fmtDur(t.durationSec) }}</b>
+              <span class="num sub">
+                <span class="t-2">{{ hhmm(t.createdAt) }}</span>
+                <i class="vsep" aria-hidden="true" />
+                <span class="ssize t-3">{{ fmtSize(t.size) }}</span>
+              </span>
             </div>
             <div class="row tacts">
               <button class="mini primary" :disabled="attaching" @click="openPick(t)">附加到待办</button>
@@ -250,7 +261,7 @@ async function attachTo(todo: Todo): Promise<void> {
 }
 
 .timer {
-  font-size: 40px;
+  font-size: var(--fs-display-m);
   font-weight: 700;
   letter-spacing: 1px;
   color: var(--text-1);
@@ -270,18 +281,6 @@ async function attachTo(todo: Todo): Promise<void> {
   margin-top: 2px;
 }
 
-.stop {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 18px;
-  border-radius: var(--radius-full);
-  background: var(--danger);
-  color: var(--on-accent);
-  font-size: var(--fs-footnote);
-  font-weight: 700;
-}
-
 .cancel {
   padding: 9px 16px;
   border-radius: var(--radius-full);
@@ -293,8 +292,8 @@ async function attachTo(todo: Todo): Promise<void> {
 
 .err {
   font-size: var(--fs-caption);
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger-strong);
+  background: var(--danger-soft);
   border-radius: var(--radius-s);
   padding: 7px 12px;
 }
@@ -340,6 +339,15 @@ async function attachTo(todo: Todo): Promise<void> {
   font-size: var(--fs-footnote);
 }
 
+/* 计数降到与标题同档并补单位（「N 条」）：原来无字号继承 body 17px，比标题还大 */
+.tcount {
+  font-size: var(--fs-footnote);
+}
+
+.thead-side {
+  gap: 10px;
+}
+
 .empty {
   font-size: var(--fs-caption);
   line-height: 1.6;
@@ -372,12 +380,26 @@ async function attachTo(todo: Todo): Promise<void> {
 }
 
 .tmeta b {
-  font-size: var(--fs-subhead);
+  /* 行首只留时长（「录音」这个类别词由区块标题承担）：它是这一行的主数值 */
+  font-size: var(--fs-headline);
 }
 
 .sub {
-  /* 「14:03 · 1.2 MB」是这条录音的身份信息，不吃 11px */
+  /* 「14:03」是这条录音的身份信息，做这一行的主；体积降一档做体积注 */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-caption);
+}
+
+.sub .vsep {
+  width: 1px;
+  height: 10px;
+  background: var(--line-strong);
+}
+
+.ssize {
+  font-size: var(--fs-micro);
 }
 
 .tacts {
@@ -395,7 +417,7 @@ async function attachTo(todo: Todo): Promise<void> {
 }
 
 .mini:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .tdel {

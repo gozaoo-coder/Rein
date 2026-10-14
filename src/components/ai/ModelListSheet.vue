@@ -10,7 +10,9 @@ import { Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-vue-next'
 
 import ModelListToolbar from '@/components/ai/ModelListToolbar.vue'
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { groupByProvider, modelDisplayName } from '@/ai/providerCatalog'
 import { formatUnitPrice } from '@/ai/cost'
 import { useToast } from '@/composables/useToast'
@@ -75,19 +77,35 @@ function onDelete(value: string): void {
     .catch(() => toast.toast('删除失败'))
 }
 
+/** 探测结果的三项能力：用词与说明一致（「努力」这种无图例的内部说法不上屏） */
 const capMeta = {
-  vision: '视觉',
-  thinking: '思考',
-  effort: '努力',
+  vision: '看图',
+  thinking: '深度思考',
+  effort: '思考强度',
 } as const
 
-function capTone(v: boolean | null): string {
-  return v === true ? 'ok' : v === false ? 'no' : 'unk'
+/** 探测档位 → 胶囊语义：支持 ok / 不支持 danger / 未测 neutral（未探测不是故障） */
+function capTone(v: boolean | null): 'ok' | 'danger' | 'neutral' {
+  return v === true ? 'ok' : v === false ? 'danger' : 'neutral'
 }
 </script>
 
 <template>
   <SheetModal :open="open" title="全部模型" initial-snap="large" @close="emit('close')">
+    <template #action>
+      <InfoHint
+        title="模型能力"
+        content="这三项是保存模型时自动探测出来的能力（后台用最小测试包试一次）。
+
+看图：模型能接收图片 —— 拍照识食、发图提问都靠它。
+
+深度思考：模型有推理能力，回答前会先想一步。
+
+思考强度：推理力度的档位，档位越高想得越久、费用也越高。
+
+胶囊分三档：绿色 = 支持，红色 = 不支持；灰色带「未测」表示还没探测过（不是故障），重新测试即可。"
+      />
+    </template>
     <div class="all">
       <ModelListToolbar
         :query="query"
@@ -115,7 +133,7 @@ function capTone(v: boolean | null): string {
                     <span v-if="m.source === 'online'" class="chip-onl">在线</span>
                     <span v-if="m.isDefault" class="chip-def">默认</span>
                   </p>
-                  <p class="m-id t-2">{{ providers.nickname(m.provider) }} · {{ m.modelId }}</p>
+                  <p class="m-id t-2">{{ m.modelId }}</p>
                   <p v-if="formatUnitPrice(m)" class="m-cost t-3">{{ formatUnitPrice(m) }}</p>
                 </div>
                 <div class="acts">
@@ -134,14 +152,14 @@ function capTone(v: boolean | null): string {
                 </div>
               </div>
               <div class="row caps">
-                <span
+                <StatusChip
                   v-for="(label, key) in capMeta"
                   :key="key"
-                  class="cap"
-                  :class="`cap-${capTone(m[key])}`"
+                  :tone="capTone(m[key])"
+                  size="sm"
                 >
-                  {{ label }}
-                </span>
+                  {{ label }}<template v-if="m[key] === null"> 未测</template>
+                </StatusChip>
                 <span v-if="m.lastError" class="err t-3">{{ m.lastError }}</span>
               </div>
             </li>
@@ -265,7 +283,7 @@ function capTone(v: boolean | null): string {
 }
 
 .act:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 /* 30 的圆钮命中区纵向撑到 44；横向不外扩 —— 同排四颗只隔 2px，
@@ -286,25 +304,6 @@ function capTone(v: boolean | null): string {
   flex-wrap: wrap;
 }
 
-.cap {
-  padding: 3px 8px;
-  border-radius: var(--radius-full);
-  font-size: var(--fs-caption);
-  font-weight: 700;
-  background: var(--surface-2);
-  color: var(--text-3);
-}
-
-.cap-ok {
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-  color: var(--ok);
-}
-
-.cap-no {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
-}
-
 .err {
   font-size: var(--fs-caption);
   word-break: break-all;
@@ -318,7 +317,7 @@ function capTone(v: boolean | null): string {
   padding: 12px 0;
   border-radius: var(--radius-m);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-1);
   font-size: var(--fs-footnote);
   font-weight: 700;
 }

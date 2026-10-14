@@ -243,25 +243,46 @@ const tone = computed(() => {
   return 'run'
 })
 
-const text = computed(() => {
-  if (store.grabError) return '抢课引擎已暂停'
+/**
+ * 浮条正文。两种形态：
+ *
+ * - **带倒计时的**：状态词 / 课程名 / 倒计时各成元素 —— 倒计时是掐着秒盯抢课的人
+ *   唯一要读的数，单独提为主值（--fs-title3 + .num + accent 胶囊托底），
+ *   状态词降到 11px/--text-3，课程名挤不下就截断，三者竖线分隔。
+ *   原先三样东西用「·」串成一行、同一个字档，要先读完整行才找到数字。
+ * - **其余**（结果播报 / 窗口播报 / 已暂停）：一整句，保持原来的截断处理。
+ */
+type HudBody =
+  | { kind: 'plain'; text: string }
+  | { kind: 'parts'; status: string; name: string; cd: string }
+
+const body = computed<HudBody>(() => {
+  // 「引擎」是内部术语：用户不知道那是什么，也不知道还要不要自己动手 ——
+  // 说人话，并把出路（点开这条浮条）直接写在句子里
+  if (store.grabError) return { kind: 'plain', text: '抢课已暂停 · 点开看看' }
   // **结果优先于窗口播报**：窗口开着这件事是**持续为真**的（结果说完它还会再显示），
   // 而结果是一次性的事件 —— 被它压住就等于没播。（真踩过：任务页上重排之后
   // 那条「需办免听」被「窗口已开放」顶掉，用户什么都看不到。）
-  if (finishedFresh.value) return finishedFresh.value.label
+  if (finishedFresh.value) return { kind: 'plain', text: finishedFresh.value.label }
   // 窗口开放：那一刻用户最该做的是进去排课
-  if (windowFresh.value) return windowFresh.value.label
-  const n = actives.value.length
+  if (windowFresh.value) return { kind: 'plain', text: windowFresh.value.label }
   const t = lead.value
-  if (!t) return ''
+  if (!t) return { kind: 'plain', text: '' }
   const name = t.courseName || t.lessonName || '课程'
   if (countdown.value) {
-    return imminent.value
-      ? `马上开抢 · 《${name}》 · ${countdown.value}`
-      : `待开抢 · 《${name}》 · ${countdown.value}`
+    return {
+      kind: 'parts',
+      status: imminent.value ? '马上开抢' : '待开抢',
+      name,
+      cd: countdown.value,
+    }
   }
   const meta = grabStatusMeta(t)
-  return n > 1 ? `${name} 等 ${n} 门 · ${meta.label}` : `${name} · ${meta.label}`
+  const n = actives.value.length
+  return {
+    kind: 'plain',
+    text: n > 1 ? `${name} 等 ${n} 门 · ${meta.label}` : `${name} · ${meta.label}`,
+  }
 })
 
 function open(): void {
@@ -282,7 +303,7 @@ function open(): void {
  * 现在拆开：可见内容 `aria-hidden`，播报另走一条只在跨档时才改写的隐藏文本。
  */
 const spoken = computed(() => {
-  if (store.grabError) return '抢课引擎已暂停'
+  if (store.grabError) return '抢课已暂停 · 点开看看'
   if (windowFresh.value) return windowFresh.value.label
   if (finishedFresh.value) return finishedFresh.value.label
   if (!actives.value.length) return ''
@@ -312,7 +333,15 @@ const spoken = computed(() => {
       <Zap v-if="tone === 'run'" :size="14" class="ico" />
       <CheckCircle2 v-else-if="tone === 'ok'" :size="14" class="ico" />
       <TriangleAlert v-else :size="14" class="ico" />
-      <span class="txt" aria-hidden="true">{{ text }}</span>
+      <span v-if="body.kind === 'plain'" class="txt" aria-hidden="true">{{ body.text }}</span>
+      <!-- 状态词｜课名｜倒计时各成元素：倒计时是主值，一眼先读到它 -->
+      <span v-else class="txt-row" aria-hidden="true">
+        <b class="st">{{ body.status }}</b>
+        <i class="sep" aria-hidden="true" />
+        <span class="nm">《{{ body.name }}》</span>
+        <i class="sep" aria-hidden="true" />
+        <b class="cd num">{{ body.cd }}</b>
+      </span>
       <Loader2 v-if="tone === 'run' && !countdown" :size="13" class="spin" aria-hidden="true" />
       <button class="go" type="button" aria-label="查看抢课任务" @click="open">
         <ChevronRight :size="15" />
@@ -353,6 +382,55 @@ const spoken = computed(() => {
   font-size: var(--fs-caption);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+}
+
+/* 带主值的那一行：状态词｜课名｜倒计时各成元素，撑满浮条让课名去截断 */
+.txt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* 状态词：让位给倒计时的最浅一档 */
+.st {
+  flex: none;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-3);
+}
+
+/* 课程名：挤不下就截断（这是这一行里唯一该让位的） */
+.nm {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+/* 竖线分隔：状态 / 课名 / 倒计时是三层，不用同一枚「·」串成一锅 */
+.sep {
+  flex: none;
+  width: 1px;
+  height: 12px;
+  background: var(--line-strong);
+}
+
+/* 倒计时：这条浮条的主值。掐着秒盯抢课的人要先读到它 ——
+   大字 + 等宽 + accent 胶囊托底，和状态词、课名分出三个字档 */
+.cd {
+  flex: none;
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-radius: var(--radius-full);
+  padding: 1px 10px;
 }
 
 .ico {

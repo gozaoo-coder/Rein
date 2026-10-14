@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { Info, Zap } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
@@ -65,15 +66,21 @@ const name = computed(() => {
 
 <template>
   <SheetModal :open="open && !!task" title="改设置并重排" initial-snap="medium" @close="emit('close')">
+    <!-- 「先删后建」是内部实现语义：打开抽屉第一眼该看到的是要调什么，
+         所以它收进标题行右侧的说明入口，面上只留一行结论 -->
+    <template #action>
+      <InfoHint title="「改设置并重排」在做什么">
+        <p>保存后会<strong>先撤掉这条任务</strong>，再按新设置重新排一条 —— 任务单里不会留下旧的那条。</p>
+      </InfoHint>
+    </template>
+
     <p class="meta">
       <b>{{ name }}</b>
       <span v-if="task?.courseCode" class="num">{{ task.courseCode }}</span>
       <span v-if="task?.teacher">{{ task.teacher }}</span>
     </p>
 
-    <p class="lead">
-      保存后会<b>先撤掉这条任务</b>，再按新设置重新排一条 —— 任务单里不会留下旧的那条。
-    </p>
+    <p class="lead">保存 = 重新排一条</p>
 
     <section class="block">
       <h3>抢课方式</h3>
@@ -95,7 +102,9 @@ const name = computed(() => {
 
     <section class="block">
       <h3>意愿值</h3>
-      <NumberStepper v-model="virtualCost" :min="0" :max="999" :step="5" label="投入意愿值" />
+      <!-- 分组标题已经写着「意愿值」，步进器的可见标签只表动作 ——
+           整段删掉会把 aria-label 降级成「减少/增加/修改数值」，所以改成「投入」 -->
+      <NumberStepper v-model="virtualCost" :min="0" :max="999" :step="5" label="投入" />
       <p class="hint">
         <Info :size="13" />
         只有启用了「虚拟学分/意愿值」的轮次才需要填；普通轮次留 0 即可。
@@ -202,6 +211,6 @@ const name = computed(() => {
 }
 
 .primary:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 </style>

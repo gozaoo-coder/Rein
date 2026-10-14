@@ -85,13 +85,13 @@ const emptyCopy = computed(() => {
       hint: usedCats.value.length > 0 ? '换个关键词，或点上面的分类重新筛' : '换个关键词试试',
     }
   }
-  return { icon: NotebookPen, title: '本月还没有流水', hint: '点下面的「记一笔」，第一笔就落在这个月' }
+  return { icon: NotebookPen, title: '本月还没有流水' }
 })
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="记账" subtitle="每一笔都有数" back>
+    <PageHeader title="记账" back>
       <template #action>
         <div class="month row center">
           <button class="nav" aria-label="上一个月" @click="shiftMonth(-1)">
@@ -199,7 +199,7 @@ const emptyCopy = computed(() => {
 }
 
 .nav:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 
 .m-title {
@@ -293,6 +293,14 @@ const emptyCopy = computed(() => {
   background: transparent;
 }
 
+/* 桌面壳：这条输入框实测只有 17px 高（探针 p5base：1024×768 下 372×17），
+   低于指针精度的 22 下限。给它 24px 内高（实测 24），胶囊跟着从 35 涨到 40 ——
+   高度差和旁边那颗 .add-inline 相比更明显了，但 19px 的输入框是真的点不住。
+   手机上是胶囊里的一格，不改（22 是指针精度的规则）。 */
+.desk-main .search input {
+  min-height: 24px;
+}
+
 .search input::placeholder {
   color: var(--text-3);
 }
@@ -334,16 +342,6 @@ const emptyCopy = computed(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-}
-
-/* 页头副标题：窄窗下宁可截断也不折成两行 —— 月份切换器固定占 156px，
-   390 宽时标题块只剩 132px，12 个字的副标题一折行就把页头顶到 98px，
-   切换器随之被推到第二行旁边，整条页头读起来是散的。
-   文案已按 360 宽（Android 最窄机型）收在一行内，这条只是兜底。 */
-.page-header :deep(p) {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* EmptyState 自带 26px 上下内边距，而 .card 外面又给了一圈 16 —— 两层叠起来，

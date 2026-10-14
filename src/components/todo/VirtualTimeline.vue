@@ -501,8 +501,9 @@ button.block {
   text-overflow: ellipsis;
 }
 
+/* 完成态压暗走禁用档令牌（tokens.css:37-40），禁用浓度全库只有一份 */
 .block.done {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .block.done span {
@@ -533,9 +534,10 @@ button.block {
 .now-tag {
   padding: 1px 7px;
   border-radius: var(--radius-full);
-  background: var(--danger);
-  color: var(--on-accent);
-  /* 「现在」是定位词；白字压 --danger 只有 3.55:1，12px 正好压过 AA 门槛 */
+  /* 「现在」是定位词：白字压 --danger 实测只有 3.55:1，够不着小字 4.5:1 的 AA 门槛；
+     换成 soft 底 + strong 字这一对（约 5.0:1），与 tokens.css:163-168 的规定一致 */
+  background: var(--danger-soft);
+  color: var(--danger-strong);
   font-size: var(--fs-caption);
 }
 

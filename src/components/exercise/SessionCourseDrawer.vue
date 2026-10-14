@@ -3,6 +3,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { Ellipsis, FastForward } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import SessionExerciseSwapSheet from './SessionExerciseSwapSheet.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
@@ -150,15 +152,16 @@ function fmtKg(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1)
 }
 
-/** 每组的右侧状态文本：完成态展示真实登记值，其余展示状态词；热身组加前缀 */
+/** 每组的右侧状态文本：完成态展示真实登记值，其余展示状态词。
+ *  热身标识只由左侧 .wtag 胶囊承担 —— 右侧再写一遍「热身」前缀，
+ *  同一行的两处文字说同一件事，还挤占了真正的信息（重量 × 次数）。 */
 function setMeta(slot: SessionSetSlot): string {
-  if (slot.state === 'skipped') return slot.warmup ? '热身已跳过' : '已跳过'
+  if (slot.state === 'skipped') return '已跳过'
   if (slot.state === 'current') return '进行中'
   if (slot.state === 'pending') return '未开始'
-  const prefix = slot.warmup ? '热身 ' : ''
   if (slot.done?.sec != null) return `${slot.done.sec} 秒`
   if (slot.done?.weight != null) {
-    return `${prefix}${fmtKg(slot.done.weight)}kg${slot.done.reps != null ? ` × ${slot.done.reps}` : ''}`
+    return `${fmtKg(slot.done.weight)}kg${slot.done.reps != null ? ` × ${slot.done.reps}` : ''}`
   }
   return '已完成'
 }
@@ -173,10 +176,16 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
 
 <template>
   <SheetModal ref="sheetRef" :open="open" title="全课程进度" initial-snap="large" @close="emit('close')">
+    <!-- 「跳过的组怎么统计」收进标题栏 InfoHint：面上只留顶部那枚「跳过 N 组」胶囊 -->
+    <template #action>
+      <InfoHint title="跳过的组如何统计">
+        <p>跳过的组视为未做，不计入完成组数与总容量统计。</p>
+      </InfoHint>
+    </template>
     <p class="pname">{{ s.plan?.name ?? '训练课' }}</p>
     <p class="pmeta num">
-      已完成 {{ s.doneCount }}/{{ s.totalCount }} 组<template v-if="skippedTotal > 0">
-        · 跳过 {{ skippedTotal }} 组</template>
+      <span>已完成 {{ s.doneCount }}/{{ s.totalCount }} 组</span>
+      <StatusChip v-if="skippedTotal > 0" tone="warn" size="sm">跳过 {{ skippedTotal }} 组</StatusChip>
     </p>
 
     <section v-for="g in groups" :key="g.exIdx" class="exblock">
@@ -233,8 +242,6 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
       </ul>
     </section>
 
-    <p class="foot">跳过的组视为未做，不计入完成组数与总容量统计。</p>
-
     <!-- 单组操作菜单（只向前跳到未做的组） -->
     <AppMenu
       :open="menuOpen"
@@ -264,6 +271,10 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
 
 .pmeta {
   margin-top: 3px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: var(--fs-caption);
   color: var(--text-3);
 }
@@ -306,7 +317,8 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
   padding: 5px 11px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  /* soft 底上的字走 strong 档（tokens.css:163-168）：实底档 --accent 压在上面读不清 */
+  color: var(--accent-strong);
   font-size: var(--fs-caption);
   font-weight: 600;
 }
@@ -381,8 +393,10 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
   font-weight: 600;
 }
 
+/* 跳过：整行压暗表示不计入统计。浓度走令牌（tokens.css:37-40 收编的禁用档）——
+   从前这里各写一个 0.5，令牌统一调档时它不跟随，会和其它禁用态悄悄分叉 */
 .setrow.is-skipped {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .setrow.is-skipped .setno {
@@ -405,12 +419,5 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
 .setrow.is-pending .setno {
   color: var(--text-2);
   font-weight: 500;
-}
-
-.foot {
-  margin-top: 16px;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  line-height: 1.5;
 }
 </style>

@@ -2,7 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Plus } from 'lucide-vue-next'
 
-import { CATEGORY_META } from '@/config/domain'
+import { CATEGORY_META, DESKTOP_MIN } from '@/config/domain'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import { minToHHmm, nowMin, todayStr, weekDates } from '@/utils/date'
 import { durationOf, layoutDayBlocks, titleLinesFor } from '@/utils/timelineLayout'
 import type { StackGroup } from '@/utils/timelineLayout'
@@ -178,6 +179,13 @@ const pool = computed(() =>
 )
 
 /* ---------- 缩放 ---------- */
+
+/**
+ * 「Ctrl+滚轮缩放」只在桌面壳提示：与 App.vue 写 html[data-shell] 同一阈值（DESKTOP_MIN）。
+ * 移动端没有实体键盘与精确指针，印在提示里也执行不了 —— 长按改时的操作句同理，
+ * 只留在 /todos 页头副标题一处，本组件不再重复。
+ */
+const isDesk = useMediaQuery(`(min-width: ${DESKTOP_MIN}px)`)
 
 function zoom(factor: number): void {
   px.value = Math.min(Math.max(px.value * factor, MIN_PX), MAX_PX)
@@ -395,12 +403,13 @@ const HHMM = minToHHmm
         type="button"
         class="dh"
         :class="{ today: c.isToday, past: c.isPast }"
-        :aria-label="`查看 ${c.date} 的画布`"
+        :aria-label="`查看 ${c.date} 的画布，完成 ${c.done}/${c.total}`"
         @click="emit('daySelect', c.date)"
       >
         <span class="num n" :class="{ today: c.isToday }">{{ c.dayNum }}</span>
         <span class="lab" :class="{ today: c.isToday }">{{ c.weekday }}</span>
-        <span class="num cnt" :class="{ full: c.total > 0 && c.done >= c.total }">{{ c.done }}/{{ c.total }}</span>
+        <!-- 空日不渲染「0/0」；分子分母写进 aria-label（表头放不下「已完成」字样） -->
+        <span v-if="c.total > 0" class="num cnt" :class="{ full: c.total > 0 && c.done >= c.total }">{{ c.done }}/{{ c.total }}</span>
       </button>
     </header>
 
@@ -544,7 +553,7 @@ const HHMM = minToHHmm
       </div>
     </div>
 
-    <p class="hint t-3">长按块可跨天/改时 · 点击池中卡片排到当天早上 · Ctrl+滚轮缩放</p>
+    <p class="hint t-3">点击池中卡片排到当天早上<span v-if="isDesk"> · Ctrl+滚轮缩放</span></p>
   </div>
 </template>
 

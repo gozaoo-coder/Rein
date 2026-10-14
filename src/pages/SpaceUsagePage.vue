@@ -15,6 +15,7 @@ import {
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import UsageFileList from '@/components/kb/UsageFileList.vue'
 import { invalidateUsage, kbService, usageCached } from '@/services/kbService'
 import { useToast } from '@/composables/useToast'
@@ -263,8 +264,16 @@ function openLargeFiles(): void {
       <!-- 总量与构成 -->
       <section class="card hero d-full">
         <div class="hero-main">
-          <p class="cap">工作区总占用</p>
-          <p class="bignum">
+          <div class="cap-row">
+            <p class="cap">真源内容占用</p>
+            <span class="hint-slot">
+              <InfoHint title="占用怎么算的">
+                <p>这个数只算你自己写进工作区的内容：文本 + 本体文件。</p>
+                <p>索引与数据库是派生的缓存，不计入 —— 它们的字节本来就装在同一个数据库文件里，再加一遍就是重复计数。删掉源数据，它们会自然缩回。</p>
+              </InfoHint>
+            </span>
+          </div>
+          <p class="bignum num">
             {{ hero.num }}<i>{{ hero.unit }}</i>
           </p>
           <p class="hero-meta">
@@ -276,7 +285,7 @@ function openLargeFiles(): void {
         <div class="hero-side">
           <!-- 真源：文本 + 本体。这一条的分母就是上面的大数字 -->
           <div class="lgroup">
-            <p class="lcap"><b>真源内容</b><em>删掉才真的释放</em></p>
+            <p class="lcap"><b>可删除的内容</b><em>删掉才真的释放</em></p>
             <div
               class="stackbar"
               role="img"
@@ -294,8 +303,8 @@ function openLargeFiles(): void {
               <li v-for="s in sourceSegs" :key="s.key">
                 <i class="dot" :class="`seg-${s.key}`" />
                 <span class="lg-name">{{ s.label }}</span>
-                <span class="lg-bytes">{{ humanBytes(s.bytes) }}</span>
-                <span class="lg-pct">{{ pctText(s.pct) }}</span>
+                <span class="lg-bytes num">{{ humanBytes(s.bytes) }}</span>
+                <span class="lg-pct num">{{ pctText(s.pct) }}</span>
               </li>
             </ul>
           </div>
@@ -303,7 +312,7 @@ function openLargeFiles(): void {
           <!-- 派生缓存：索引 + 数据库。**不计入上面的大数字**（它们的字节本来就在
                数据库文件内部，加进去就是重复计数），所以单列一组、换细条、换淡标题 -->
           <div class="lgroup derived">
-            <p class="lcap"><b>派生缓存</b><em>删源数据会自然缩回</em></p>
+            <p class="lcap"><b>缓存与索引</b><em>删源数据会自然缩回</em></p>
             <div
               class="stackbar thin"
               role="img"
@@ -321,8 +330,8 @@ function openLargeFiles(): void {
               <li v-for="s in derivedSegs" :key="s.key">
                 <i class="dot" :class="`seg-${s.key}`" />
                 <span class="lg-name">{{ s.label }}</span>
-                <span class="lg-bytes">{{ humanBytes(s.bytes) }}</span>
-                <span class="lg-pct">{{ pctText(s.pct) }}</span>
+                <span class="lg-bytes num">{{ humanBytes(s.bytes) }}</span>
+                <span class="lg-pct num">{{ pctText(s.pct) }}</span>
               </li>
             </ul>
           </div>
@@ -341,12 +350,12 @@ function openLargeFiles(): void {
               <span class="br-1">
                 <b>{{ a.name }}</b>
                 <span class="br-count">{{ a.count }} 项</span>
-                <span class="br-bytes">{{ humanBytes(a.bytes) }}</span>
+                <span class="br-bytes num">{{ humanBytes(a.bytes) }}</span>
                 <ChevronRight :size="14" class="t-3" />
               </span>
               <span class="br-2">
                 <span class="track"><i class="fill" :style="{ width: barWidth(a.bytes) }" /></span>
-                <span class="br-pct">{{ areaPct(a.bytes) }}</span>
+                <span class="br-pct num">{{ areaPct(a.bytes) }}</span>
               </span>
             </button>
           </li>
@@ -392,7 +401,7 @@ function openLargeFiles(): void {
             <span class="br-1">
               <b>{{ srcLabel(s.name) }}</b>
               <span class="br-count">{{ s.count }} 条</span>
-              <span class="br-bytes">{{ humanBytes(s.bytes) }}</span>
+              <span class="br-bytes num">{{ humanBytes(s.bytes) }}</span>
             </span>
             <span class="br-2">
               <span class="track"
@@ -423,7 +432,7 @@ function openLargeFiles(): void {
             <span class="br-1">
               <b>{{ modalLabel(m.name) }}</b>
               <span class="br-count">{{ m.count }} 个</span>
-              <span class="br-bytes">{{ humanBytes(m.bytes) }}</span>
+              <span class="br-bytes num">{{ humanBytes(m.bytes) }}</span>
             </span>
             <span class="br-2">
               <span class="track"
@@ -444,7 +453,16 @@ function openLargeFiles(): void {
       <section class="card d-full">
         <div class="card-head">
           <h2>维护</h2>
-          <span class="sub">磁盘上的碎片与丢失</span>
+          <span class="head-side">
+            <span class="sub">磁盘上的碎片与丢失</span>
+            <span class="hint-slot">
+              <InfoHint title="什么是碎片与丢失">
+                <p>没有碎片，就是说磁盘上每个本体都有文件引用它。</p>
+                <p>可回收的碎片：解压失败、更换本体后没人再引用的历史文件，清理掉不影响现有内容。</p>
+                <p>登记在册却不在盘上的本体：打开这些文件时会提示本体不可用，记录本身与索引不受影响。</p>
+              </InfoHint>
+            </span>
+          </span>
         </div>
         <div class="mrows">
           <div class="mrow" :class="{ good: usage.orphanCount === 0 }">
@@ -453,8 +471,6 @@ function openLargeFiles(): void {
             <span class="col flex-1">
               <b v-if="usage.orphanCount === 0">没有发现可回收的碎片</b>
               <b v-else>{{ usage.orphanCount }} 个可回收碎片 · {{ humanBytes(usage.orphanBytes) }}</b>
-              <small v-if="usage.orphanCount === 0">磁盘上每个本体都有文件引用它。</small>
-              <small v-else>没人引用的历史本体（解压失败、换本体留下的残留），清理不影响现有内容。</small>
             </span>
             <button
               v-if="usage.orphanCount > 0"
@@ -472,7 +488,6 @@ function openLargeFiles(): void {
             <TriangleAlert :size="17" class="mi" />
             <span class="col flex-1">
               <b>{{ usage.missingCount }} 个本体登记在册，文件却不在盘上</b>
-              <small>打开这些文件时会提示本体不可用；记录本身与索引不受影响。</small>
             </span>
           </div>
         </div>
@@ -518,6 +533,20 @@ function openLargeFiles(): void {
   align-items: start;
 }
 
+/* 大数字标题行：口径说明收进标题右侧一枚入口（原先只写在文件注释里，用户看不到） */
+.cap-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 标题行 / 卡头右侧的帮助入口：InfoHint 是多根组件，类要落在包裹元素上 */
+.hint-slot {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
+
 .cap {
   font-size: var(--fs-caption);
   color: var(--text-3);
@@ -529,7 +558,6 @@ function openLargeFiles(): void {
   letter-spacing: -1.2px;
   line-height: 1.1;
   color: var(--text-1);
-  font-variant-numeric: tabular-nums;
 }
 /* 单位小一号、非斜体，跟数字同一基线 —— 大数字读起来是「132.4 MB」一个整体 */
 .bignum i {
@@ -624,12 +652,10 @@ function openLargeFiles(): void {
 }
 .lg-bytes {
   color: var(--text-2);
-  font-variant-numeric: tabular-nums;
 }
 .lg-pct {
   text-align: right;
   color: var(--text-3);
-  font-variant-numeric: tabular-nums;
 }
 .lgroup.derived .lg-name {
   color: var(--text-2);
@@ -652,6 +678,14 @@ function openLargeFiles(): void {
   text-align: right;
   font-size: var(--fs-caption);
   color: var(--text-3);
+}
+
+/* 卡头右侧一组：副标 + 帮助入口（副标够窄，两者同行；入口单独占一枚 ?） */
+.head-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .foot {
@@ -719,7 +753,6 @@ function openLargeFiles(): void {
 .br-bytes {
   font-size: var(--fs-caption);
   color: var(--text-2);
-  font-variant-numeric: tabular-nums;
 }
 .br-2 {
   display: grid;
@@ -742,7 +775,6 @@ function openLargeFiles(): void {
   text-align: right;
   font-size: var(--fs-caption);
   color: var(--text-3);
-  font-variant-numeric: tabular-nums;
 }
 
 .track {
@@ -781,13 +813,6 @@ function openLargeFiles(): void {
   font-size: var(--fs-footnote);
   font-weight: 600;
   color: var(--text-1);
-}
-.mrow small {
-  display: block;
-  margin-top: 2px;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  line-height: 1.45;
 }
 .mi {
   flex: none;
@@ -828,7 +853,7 @@ function openLargeFiles(): void {
   color: var(--danger);
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 /* 刷新钮转起来：与课表页的同步钮同一条做法（时长与主页面动效档一致） */

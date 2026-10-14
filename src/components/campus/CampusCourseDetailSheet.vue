@@ -13,6 +13,7 @@ import {
 } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import { campusService } from '@/services/campusService'
 import type { CourseDetail, CoursePeriod } from '@/types'
 
@@ -50,7 +51,12 @@ const props = defineProps<{
   lessonId: number | null
   weekday?: number | null
   startUnit?: number | null
-  /** 首帧、慢网时先顶上课程名，别让标题空着 */
+  /**
+   * 首帧、慢网时先顶上课程名。
+   *
+   * 抽屉标题已回落成通用词「课程详情」（课名只在正文 hero 出现一次），
+   * 所以这里兜的是 hero 里课名为空的那个角落，不再是标题。
+   */
   fallbackCourseName?: string
 }>()
 
@@ -110,8 +116,6 @@ function s(v: string | number | null | undefined): string {
 function credits(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1)
 }
-
-const name = computed(() => detail.value?.courseName ?? props.fallbackCourseName ?? '课程详情')
 
 /**
  * 首屏标签：课程属性排第一（「必修 / 选修」是选课时最先要读的），
@@ -204,11 +208,6 @@ const unitAxis = computed(() => {
   }
 })
 
-const bigSectionText = computed(() => {
-  const b = detail.value?.bigSection ?? 0
-  return b > 0 ? `第 ${b} 大节` : ''
-})
-
 /* ---------- 周次尺 ---------- */
 
 const weekAxis = computed(() => {
@@ -253,8 +252,10 @@ const stats = computed(() => {
   if (!d) return []
   const p = d.period
   const out: Array<{ k: string; v: string; unit: string }> = []
-  if (d.credits != null) out.push({ k: '学分', v: credits(d.credits), unit: '分' })
-  if (p?.total) out.push({ k: '总学时', v: String(p.total), unit: '学时' })
+  // 单位行只放标签给不出的信息：「分」「学时」与标签同词，是撑卡面的废话；
+  // 「学时/周」给了标签没有的频次，才留下
+  if (d.credits != null) out.push({ k: '学分', v: credits(d.credits), unit: '' })
+  if (p?.total) out.push({ k: '总学时', v: String(p.total), unit: '' })
   if (p?.weeks) out.push({ k: '周学时', v: String(p.weeks), unit: '学时/周' })
   return out
 })
@@ -341,7 +342,15 @@ const notes = computed(() => {
 </script>
 
 <template>
-  <SheetModal :open="open" :title="name" initial-snap="large" @close="emit('close')">
+  <SheetModal :open="open" title="课程详情" initial-snap="large" @close="emit('close')">
+    <!-- 数据来源与实时口径是背景说明：收进标题行右侧的说明入口，
+         卡面末尾那行 11px 免责声明撤掉（结论与数值已经都在卡面上） -->
+    <template #action>
+      <InfoHint title="数据来源">
+        <p>数据取自教务系统课表，容量与已选人数为实时值。</p>
+      </InfoHint>
+    </template>
+
     <!-- 加载态：首帧没有可展示的旧数据时给骨架，避免抽屉里一片空 -->
     <div v-if="loading" class="skeleton" aria-busy="true">
       <div class="sk sk-hero" />
@@ -362,7 +371,9 @@ const notes = computed(() => {
     <div v-else-if="detail" class="detail">
       <!-- ═══ 概况：身份 + 时间 + 地点 + 容量，一条轴都不少 ═══ -->
       <section class="hero">
-        <h3 class="hero-name">{{ detail.courseName }}</h3>
+        <!-- 课名只在 hero 出现一次：抽屉标题是通用词「课程详情」，
+             同一句话在上下两行各来一遍正是要消除的 -->
+        <h3 class="hero-name">{{ detail.courseName || fallbackCourseName }}</h3>
 
         <div v-if="chips.length" class="chips">
           <span v-for="c in chips" :key="c" class="chip">{{ c }}</span>
@@ -406,13 +417,24 @@ const notes = computed(() => {
 
       <!-- ═══ 两把尺子：这门课什么时候占我的时间 ═══ -->
       <section v-if="unitAxis || weekAxis" class="sec">
-        <h4>时间轴</h4>
+        <!-- 「1 大节 = 2 小节」与「尺子只是参照栅格」是读这张图的前提，
+             但它们是背景口径 —— 收进标题行右侧的说明入口，
+             节次那一格面上只留「3–4 小节」这一个读数 -->
+        <h4 class="row">
+          时间轴
+          <InfoHint title="节次尺怎么读">
+            <p>一天按 8 小节铺：上午 4 大节、下午 4 大节，1 大节 = 2 小节，第 5 小节起是下午。</p>
+            <p>
+              这把尺子只是<strong>读数的参照栅格</strong>，不是教务的权威数据 ——
+              看懂第几小节落在一天的第几格就够了。
+            </p>
+          </InfoHint>
+        </h4>
 
         <div v-if="unitAxis" class="axis">
           <div class="axis-head">
             <span class="axis-k">节次</span>
             <b class="axis-v num">{{ unitAxis.lo }}–{{ unitAxis.hi }} 小节</b>
-            <span v-if="bigSectionText" class="axis-x">{{ bigSectionText }}</span>
           </div>
           <ol class="cells">
             <li
@@ -434,7 +456,6 @@ const notes = computed(() => {
           <div class="axis-head">
             <span class="axis-k">周次</span>
             <b class="axis-v num">第 {{ weekAxis.lo }} – {{ weekAxis.to }} 周</b>
-            <span class="axis-x num">共 {{ weekAxis.to - weekAxis.lo + 1 }} 周</span>
           </div>
           <ol class="cells thin">
             <li v-for="c in weekAxis.cells" :key="c.n" class="cell" :class="{ on: c.on }">
@@ -451,7 +472,8 @@ const notes = computed(() => {
           <div v-for="t in stats" :key="t.k" class="tile">
             <span class="tile-k">{{ t.k }}</span>
             <b class="tile-v num">{{ t.v }}</b>
-            <span class="tile-u">{{ t.unit }}</span>
+            <!-- 单位行只在真带新信息时出现（「学时/周」）；与标签同词的不占这一行 -->
+            <span v-if="t.unit" class="tile-u">{{ t.unit }}</span>
           </div>
         </div>
       </section>
@@ -513,8 +535,6 @@ const notes = computed(() => {
           </li>
         </ul>
       </section>
-
-      <p class="src">数据取自教务系统课表，容量与已选人数为实时值。</p>
     </div>
   </SheetModal>
 </template>
@@ -702,12 +722,14 @@ const notes = computed(() => {
   background: var(--danger);
 }
 
+/* 余位是「要不要选这门课」的关键读数：11px 可以留，颜色必须读得出来 ——
+   --text-3 只有 3.6:1，常态提到 --text-2，与「已满」的 --danger-strong 组成同一条语气 */
 .cap-note {
   grid-column: 1 / -1;
   justify-self: end;
   font-size: var(--fs-micro);
   font-weight: 600;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .cap-note.full {
@@ -727,6 +749,17 @@ const notes = computed(() => {
   color: var(--text-3);
   letter-spacing: 0.04em;
   padding: 0 2px;
+}
+
+/* 标题行带说明入口的：? 贴到行右端，与标题同行居中 */
+.sec h4.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sec h4.row .info-hint {
+  margin-left: auto;
 }
 
 /* ══════════════ 尺子 ══════════════ */
@@ -757,12 +790,6 @@ const notes = computed(() => {
   color: var(--text-1);
 }
 
-.axis-x {
-  margin-left: auto;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
 .cells {
   display: flex;
   gap: 3px;
@@ -791,7 +818,7 @@ const notes = computed(() => {
 
 .cells.thin .cell {
   height: 18px;
-  font-size: 10px;
+  font-size: var(--fs-micro);
 }
 
 .cell.on {
@@ -803,7 +830,7 @@ const notes = computed(() => {
 .axis-legend {
   display: flex;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 
@@ -837,7 +864,7 @@ const notes = computed(() => {
 }
 
 .tile-u {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   color: var(--text-3);
 }
 

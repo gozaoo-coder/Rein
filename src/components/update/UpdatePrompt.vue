@@ -5,6 +5,7 @@ import { AlertTriangle, Download, Sparkles, X } from 'lucide-vue-next'
 
 import { useToast } from '@/composables/useToast'
 import MdText from '@/components/common/MdText.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { useUpdateStore } from '@/stores/update'
 import { notesAboveCurrent } from '@/utils/updateNotes'
 
@@ -91,10 +92,14 @@ async function skip(): Promise<void> {
           </button>
         </header>
 
+        <!-- 决定性结论单独成一颗胶囊：体积与来源退回纯元数据行，两者不再共用一行同一档灰字 -->
+        <StatusChip v-if="mandatory" class="up-must" tone="danger" size="sm">此版本必须更新</StatusChip>
+
         <p class="up-meta">
-          <template v-if="sizeText">{{ sizeText }}</template>
-          <template v-if="update.check?.sourceName"> · 来自 {{ update.check.sourceName }}</template>
-          <template v-if="mandatory"> · <b class="up-must">此版本为必须更新</b></template>
+          <span v-if="sizeText" class="num">{{ sizeText }}</span>
+          <template v-if="update.check?.sourceName">
+            <span class="up-dot" aria-hidden="true">·</span> 来自 {{ update.check.sourceName }}
+          </template>
         </p>
 
         <!-- 说明是 Markdown（`- ` 条目 / `**强调**` / 行内 `code`）：从前用 {{ }} 插值，
@@ -176,8 +181,11 @@ async function skip(): Promise<void> {
   color: var(--text-3);
 }
 
+/* 底色与字色由 StatusChip 的 danger 档成对提供（--danger-soft 底 + --danger-strong 字），
+   这里只管落点：不拉满整行、与页头留一档间距 */
 .up-must {
-  color: var(--danger);
+  align-self: flex-start;
+  margin-top: 8px;
 }
 
 .up-notes {
@@ -199,13 +207,14 @@ async function skip(): Promise<void> {
   padding-left: 15px;
 }
 
+/* soft 底上的文字走 --danger-strong（tokens.css 规定实底档不当文字用） */
 .up-warn {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: 10px;
   font-size: var(--fs-caption);
-  color: var(--danger);
+  color: var(--danger-strong);
 }
 
 .up-actions {
@@ -233,14 +242,25 @@ async function skip(): Promise<void> {
   color: var(--on-accent);
 }
 
+/* 禁用浓度全站同一档（tokens.css），不再各写各的裸值 */
 .up-btn:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
+/* 「跳过此版本」是这一排里最轻的一颗，但也得先读得清才点得中（--text-3 只有 3.6:1） */
 .up-skip {
   margin-left: auto;
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--text-2);
+}
+
+/* 这张卡是 Teleport 到 body 的（不在 .desk-main 里），所以桌面限定只能走
+   html[data-shell="desk"] —— 与悬浮条那一族游离子孙同一条做法。
+   实测「跳过此版本」只有 60×16：它是这一排里最轻的一颗，但也得点得住，
+   padding-block 给到 24px。整排高度由 .up-btn(34px) 决定，所以这一行不会被它顶高
+   （实测 .up-actions 34、.up-skip 24 且仍然居中）。 */
+html[data-shell='desk'] .up-skip {
+  padding-block: 4px;
 }
 
 .upfade-enter-active,

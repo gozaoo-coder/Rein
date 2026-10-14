@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Trophy } from 'lucide-vue-next'
 
 import RingProgress from '@/components/common/RingProgress.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import { sessionService } from '@/services/sessionService'
@@ -176,8 +177,10 @@ interface DetailRow {
   r: ExerciseRow
   /** 主指标：力量 = 容量；计时/有氧 = 累计时长 */
   main: string
-  /** 副指标：最高组 / 跳过 */
-  top: string
+  /** 最高组数值（只有真有重量组的力量动作才有）；null = 这一行没有最高组 */
+  top: string | null
+  /** 没有最高组时的说明性占位 —— 孤零零一个「—」读不出是「本来就没有」还是「没读到」 */
+  topNote: string
   /** 该动作本次刷新了 PR（任一项） */
   hasPr: boolean
   prLabel: string
@@ -194,13 +197,13 @@ const detailRows = computed<DetailRow[]>(() =>
       : r.kind === 'strength'
         ? `${r.doneCount} 组 · ${fmtKg(r.volumeKg)} kg`
         : `${r.doneCount} 组 · ${fmtSecs(r.totalSec)}`
-    const top =
-      notDone || r.kind !== 'strength' || r.topWeightKg == null ? '—' : `${fmtKg(r.topWeightKg)} kg × ${r.topReps ?? 0}`
+    const hasTop = !notDone && r.kind === 'strength' && r.topWeightKg != null
     const prs = prRows.value.filter((p) => p.exId === r.exId)
     return {
       r,
       main,
-      top,
+      top: hasTop ? `${fmtKg(r.topWeightKg!)} kg × ${r.topReps ?? 0}` : null,
+      topNote: notDone ? '未做' : r.kind !== 'strength' ? '非力量动作' : '无重量记录',
       hasPr: prs.length > 0,
       prLabel: prs.map((p) => (p.kind === 'weight' ? '重量' : '1RM')).join(' · '),
     }
@@ -221,13 +224,6 @@ function fmtSecs(sec: number): string {
 const muscles = computed(() => tallyMuscles(rows.value))
 
 /* ---------- 副标题与下次建议 ---------- */
-
-const subLine = computed(() => {
-  const parts = [fmtDateCn(todayStr())]
-  if (s.plan?.workoutType) parts.push(s.plan.workoutType)
-  parts.push(completion.value.earlyEnd ? '提前结束' : '全程完成')
-  return parts.join(' · ')
-})
 
 /**
  * 下次建议：只说**下一个动作的下一个数**，不给整段说教。
@@ -278,8 +274,20 @@ function prDeltaText(p: PrRow): string {
         <span class="herosub num">{{ completion.done }}/{{ completion.total }} 组</span>
       </RingProgress>
       <div v-else class="herofallback num">—</div>
+      <!-- 完成状态挨着完成环：它与环里的 N/N 组说的是同一件事，从前还写在副标题行里，
+           同一事实一屏出现两遍（这里是它唯一的落脚处） -->
+      <p class="herostat">
+        <StatusChip :tone="completion.earlyEnd ? 'warn' : 'ok'" size="sm">
+          {{ completion.earlyEnd ? '提前结束' : '全程完成' }}
+        </StatusChip>
+      </p>
       <h1 class="sumtitle">{{ s.plan?.name }}完成</h1>
-      <p class="sumsub">{{ subLine }}</p>
+      <!-- 副标题行只留日期与训练类型：日期降为次要说明，类型交给中性胶囊 ——
+           完成状态已并入环旁，不再在这行第三次重复 -->
+      <p class="sumsub">
+        <span class="sumdate">{{ fmtDateCn(todayStr()) }}</span>
+        <StatusChip v-if="s.plan?.workoutType" tone="neutral" size="sm">{{ s.plan.workoutType }}</StatusChip>
+      </p>
       <!-- 跳过 / 加练 / 热身：把「分母去哪了」讲清楚，否则 2/19 只会让人困惑 -->
       <p v-if="completion.skipped > 0 || completion.extra > 0 || completion.warmups > 0" class="sumtags">
         <span v-if="completion.skipped > 0" class="sumtag">跳过 {{ completion.skipped }} 组</span>
@@ -305,7 +313,7 @@ function prDeltaText(p: PrRow): string {
       <div v-for="p in prRows" :key="`${p.exId}-${p.kind}`" class="prrow">
         <span class="prname">{{ p.name }}</span>
         <span class="prval num">
-          {{ p.kind === 'weight' ? `${fmtKg(p.value)} kg` : `估算 1RM ${fmtKg(p.value)} kg` }}
+          {{ p.kind === 'weight' ? `${fmtKg(p.value)} kg` : `估算极限（1RM）${fmtKg(p.value)} kg` }}
         </span>
         <span class="prdelta num" :class="{ verified: isVerified(p) }">{{ prDeltaText(p) }}</span>
       </div>
@@ -317,7 +325,10 @@ function prDeltaText(p: PrRow): string {
       <div v-for="d in detailRows" :key="d.r.exId" class="exrow">
         <span class="exname">{{ d.r.name }}</span>
         <span class="exmain num">{{ d.main }}</span>
-        <span class="extop num">{{ d.top }}</span>
+        <!-- 最高组是这一行的结论：升为主数值（title3 + --text-1），
+             总容量降为 caption 次要说明 —— 从前两个数同字档，读起来像同一件事的两种写法 -->
+        <b v-if="d.top" class="extop num">{{ d.top }}</b>
+        <span v-else class="extop-none">{{ d.topNote }}</span>
         <span v-if="d.hasPr" class="expr">{{ d.prLabel }}</span>
       </div>
     </section>
@@ -408,8 +419,24 @@ function prDeltaText(p: PrRow): string {
 }
 
 .sumsub {
-  font-size: var(--fs-subhead);
-  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* 日期只是上下文：降为 caption / --text-3 的次要说明，训练类型交给胶囊 */
+.sumdate {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* 完成状态：挨着完成环，与环里 N/N 组同源 —— 形态用 ok/warn 胶囊 */
+.herostat {
+  display: flex;
+  justify-content: center;
+  margin-top: 2px;
 }
 
 .sumtags {
@@ -575,16 +602,27 @@ function prDeltaText(p: PrRow): string {
 .exmain {
   flex: 1;
   min-width: 0;
-  font-size: var(--fs-footnote);
+  font-size: var(--fs-caption);
   color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 最高组：这一行的结论，主数值档（title3 + --text-1）。
+   占位说明（非力量 / 未做 / 无重量记录）刻意留在小字档 ——
+   它不是成绩，写成大字会与真正的最重组抢层级 */
 .extop {
   flex: none;
-  font-size: var(--fs-footnote);
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+  letter-spacing: -0.3px;
+}
+
+.extop-none {
+  flex: none;
+  font-size: var(--fs-caption);
   color: var(--text-3);
 }
 

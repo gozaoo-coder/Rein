@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { ChevronDown, Info, Lightbulb } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { SCORE_BANDS } from '@/config/muscles'
 import { CONFIDENCE_LABEL, WEAK_LABEL, type GroupScore, type TrainingScoreResult } from '@/utils/trainingScore'
@@ -17,7 +18,9 @@ import { CONFIDENCE_LABEL, WEAK_LABEL, type GroupScore, type TrainingScoreResult
  *     末尾「合计」节点把构成条挂上去：彩段 = 拿到的分，灰底 = 还没拿到的分。
  *  3. **建议**：规范第 10 节按最低分项给的话术，直说下一步做什么；
  *  4. **各肌群**：10 个评估组的分数与档位，点一行就切到那行的分解图。
- *     末尾「计算体系」可展开，逐条列出公式、权重表、数据来源与两处按本软件实况的适配。
+ *     末尾「计算体系」可展开，逐条列出公式、权重表与数据来源（含「有氧换算」：
+ *     记运动 / GPS 跑步折成等效组，每肌群每周封顶 6）；折算规则的由来收进
+ *     一枚 InfoHint，面上只留一行结论。
  *
  * 全部数字来自 `computeTrainingScore`（纯函数）—— 本组件不重算任何口径，
  * 只做呈现；两处（卡片图例、本抽屉列表）的颜色也共用同一套令牌，不会漂。
@@ -115,6 +118,16 @@ const showMethod = ref(false)
 const lowConfidenceHint = computed(
   () => current.value?.confidence === 'low',
 )
+
+/**
+ * 只有有氧来源、又没有力量明细与体感时的置信度说明：
+ * 这种组的分数完全由「时长 × 强度档」推出来（次数/重量/体感都是中性缺省），
+ * 拿规范那句话（"再记录 2–3 次训练和体感"）搪塞会让人以为是力量练少了。
+ */
+const aerobicOnlyHint = computed(() => {
+  const g = current.value
+  return !!g && g.aeroSets > 0 && g.feelingSamples === 0
+})
 </script>
 
 <template>
@@ -134,7 +147,10 @@ const lowConfidenceHint = computed(
           <span class="band" :class="`lv${current.level}`">{{ current.band }}</span>
         </div>
         <p class="hero-hint">{{ current.bandHint }}</p>
-        <p v-if="lowConfidenceHint" class="conf-hint">
+        <p v-if="aerobicOnlyHint" class="conf-hint">
+          按有氧时长计入，没有力量明细与体感，参考性较低。
+        </p>
+        <p v-else-if="lowConfidenceHint" class="conf-hint">
           当前分数参考性较低，建议再记录 2–3 次训练和体感。
         </p>
       </header>
@@ -157,7 +173,12 @@ const lowConfidenceHint = computed(
               <span class="ntit"><i class="chip" :class="d.cls" />{{ d.label }}</span>
               <span class="nval num">{{ pts(d.contribution) }} 分</span>
             </div>
-            <p class="ncap">{{ d.score }} × {{ pctW(d.weight) }} · {{ d.note }}</p>
+            <!-- 「原始分 × 权重」与证据说明分开：算式读得清，证据是次要行 -->
+            <p class="ncap">
+              {{ d.score }} × {{ pctW(d.weight) }}
+              <i class="nsep">|</i>
+              <span class="nnote">{{ d.note }}</span>
+            </p>
 
             <!-- 强度分再展开三项（规范第 5 节：组数 40% / 次数 30% / 重量 30%）：
                  条长 = 该项原始分的完成度，右侧给「拿到 / 满额」的贡献分 -->
@@ -170,9 +191,6 @@ const lowConfidenceHint = computed(
                 <span class="subtrack"><i class="subfill" :style="{ '--p': `${s.score}%` }" /></span>
               </li>
             </ul>
-            <p v-if="d.key === 'intensity'" class="ncap sub-note">
-              强度分 = 组数 × 40% + 次数 × 30% + 重量 × 30%
-            </p>
           </div>
 
           <!-- 合计节点：构成条挂在这 —— 彩段 = 三个维度实际贡献的分，灰底 = 还没拿到的分 -->
@@ -286,21 +304,33 @@ const lowConfidenceHint = computed(
             <li><b>频率 / 强度</b>：力量训练的逐组记录（组数、重量、每组次数），最近 7 天滚动。</li>
             <li><b>体感</b>：训练页的「今日状态自评」（很好/不错 → 良好，一般 → 一般，疲惫/很差 → 差）；没自评时按规范默认 60 分并降低置信度。</li>
             <li><b>目标</b>：健康方案里的目标（增肌 / 减脂），决定上面那张权重表用哪一行。</li>
+            <li>
+              <b>有氧换算</b>：跑步 / 快走 / 骑行等「记运动」记录（含 GPS 跑步）按
+              <b>每 10 分钟 1 等效组</b>折算，强度低/中/高 ×0.8 / ×1.0 / ×1.2，
+              再按该运动的肌群激活档位折算；<b>每肌群每周最多补 6 组</b>，
+              只把组数补到满分区下沿 —— 有氧单独最高只到「基本够」。
+            </li>
           </ul>
 
-          <h4 class="msub">两处按本软件实况的适配</h4>
-          <ul class="msrc">
-            <li>
-              <b>组数/次数按肌群激活档位折算</b>：主攻记 1 组、辅助 0.5 组、稳定 0.25 组。
-              规范假设「一次训练只针对一个肌群」，而一堂课会同时刺激多块肌肉 ——
-              不折算的话，一组卧推会把胸、三头、前束各记满 1 组。
-            </li>
-            <li>
-              <b>频率只在辅助及以上才计一次</b>：稳定肌群（复合动作里打酱油的腹直肌）
-              不该算作「今天专门练过核心」。
-            </li>
-            <li><b>评估单位是 10 个肌群</b>（胸/背/肩/二头/三头/臀/腿前/腿后/小腿/核心），热力图上同组同色。</li>
-          </ul>
+          <!-- 折算规则的由来：面上只留一行结论，逐条理由与「规范」引用收进 InfoHint
+               （纯实现向的写法用户读不懂，不摊在「计算体系」里） -->
+          <div class="adaptline row">
+            <p class="mtext">组数按肌群参与度折算，避免一块肌肉被重复计数。</p>
+            <InfoHint class="msrc-hint" title="折算规则的由来">
+              <ul class="msrc">
+                <li>
+                  <b>组数按激活档位折算</b>：主攻记 1 组、辅助 0.5 组、稳定 0.25 组 ——
+                  规范假设「一次训练只针对一个肌群」，而一堂课会同时刺激多块肌肉；
+                  不折算的话，一组卧推会把胸、三头、前束各记满 1 组。
+                </li>
+                <li>
+                  <b>频率只在辅助及以上才计一次</b>：稳定肌群（复合动作里打酱油的腹直肌）
+                  不该算作「今天专门练过核心」。
+                </li>
+                <li><b>评估单位是 10 个肌群</b>（胸/背/肩/二头/三头/臀/腿前/腿后/小腿/核心），热力图上同组同色。</li>
+              </ul>
+            </InfoHint>
+          </div>
 
           <p class="mdisclaim">
             练够分衡量的是「训练执行充分度」，不是生理恢复或医疗诊断。有明确关节、肌腱疼痛或麻木刺痛，
@@ -368,7 +398,7 @@ const lowConfidenceHint = computed(
 }
 
 .big {
-  font-size: 44px;
+  font-size: var(--fs-display-l);
   font-weight: 800;
   letter-spacing: -1.5px;
   color: var(--text-1);
@@ -506,7 +536,7 @@ const lowConfidenceHint = computed(
   place-items: center;
   border-radius: 50%;
   background: var(--surface-2);
-  font-size: 12px;
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-2);
 }
@@ -554,6 +584,17 @@ const lowConfidenceHint = computed(
   margin-top: 2px;
   font-size: var(--fs-caption);
   line-height: 1.6;
+  /* 算式（原始分 × 权重）读得清，证据说明再退一档 */
+  color: var(--text-2);
+}
+
+.nsep {
+  margin: 0 6px;
+  font-style: normal;
+  color: var(--line-strong);
+}
+
+.nnote {
   color: var(--text-3);
 }
 
@@ -598,10 +639,6 @@ const lowConfidenceHint = computed(
   border-radius: var(--radius-full);
   background: var(--c-exercise-deep);
   clip-path: inset(0 calc(100% - var(--p, 0%)) 0 0 round var(--radius-full));
-}
-
-.sub-note {
-  margin-top: 6px;
 }
 
 /* ---------- 3. 建议 ---------- */
@@ -859,6 +896,16 @@ const lowConfidenceHint = computed(
   font-size: var(--fs-caption);
   line-height: 1.7;
   color: var(--text-2);
+}
+
+/* 折算规则：一行结论 + 右端帮助入口（逐条理由在 InfoHint 抽屉里） */
+.adaptline {
+  gap: 8px;
+}
+
+.msrc-hint {
+  flex: none;
+  margin-top: 1px;
 }
 
 .msrc b {

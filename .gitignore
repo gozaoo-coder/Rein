@@ -74,6 +74,10 @@ resources/_review/
 .tmp-critique/
 .tmp-dbg/
 .playwright-cli/
+# 整改前后的对照截图（本地随手拍的 before/after，不入库）
+/post/
+# Windows 保留名的落盘产物在子目录里也会出现（`/nul` 只管根目录）
+nul
 
 # 更新签名私钥与发布配置（绝不入库；丢了就再也发不出可用的更新）
 src-tauri/keys/
@@ -88,6 +92,8 @@ server/data/
 server/config.json
 server/node_modules/
 .tmp-ui-shots/
+# 桌面体检探针的产物（before/after 的 JSON 与截图）
+.tmp-desktop-audit/
 
 # 一次性性能探针/截屏脚本与产物（.tmp-perf-* / .tmp-shot-* / .tmp-vid-* / .tmp-glass-*），
 # 与上面的 probe-* 同一性质：定位单个问题时临时写，不入库

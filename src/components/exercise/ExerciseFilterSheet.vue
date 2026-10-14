@@ -252,7 +252,7 @@ const chipsOf = (keys: string[], labels: Record<string, string>) =>
 }
 
 .reset:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .done {

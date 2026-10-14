@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import type { ExerciseAdvice } from '@/utils/trainingAdvice'
 
 /**
@@ -94,8 +95,11 @@ const lastDateShort = computed(() => {
             :class="{ left: i > repDots!.effective }"
           />
         </div>
+        <!-- 这一行只说点阵自身怎么读。RIR 的定义只在底部「三个名词」出现一次 ——
+             同一个词在两条相距很远的位置各解释一遍、措辞还不同，
+             用户要读第二遍才发现说的是同一件事 -->
         <p v-if="advice.targetRir" class="rircap">
-          目标余力 RIR {{ advice.targetRir }}：每组做完还应能再做 {{ advice.targetRir }} 次，不是力竭。
+          实心 = 实际做的次数，空心 = 留的余力。<StatusChip tone="accent" size="sm">不是力竭</StatusChip>
         </p>
       </header>
 
@@ -224,13 +228,28 @@ const lastDateShort = computed(() => {
 }
 
 .htag {
-  padding: 3px 9px;
+  padding: 3px 9px 3px 18px;
   border-radius: var(--radius-full);
+  position: relative;
   /* 「今日建议」是这块的结论标签，不吃 11px */
   font-size: var(--fs-caption);
   font-weight: 600;
-  color: var(--c-exercise-deep);
+  /* 绿字压浅灰底实测只有约 2.7:1，读不清 —— 文字回 --text-1，
+     语义交给左侧那枚绿点（与逐动作明细行 .expr 徽标同一处理） */
+  color: var(--text-1);
   background: var(--surface-2);
+}
+
+.htag::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--c-exercise-deep);
 }
 
 .hero-score {
@@ -240,7 +259,9 @@ const lastDateShort = computed(() => {
 }
 
 .big {
-  font-size: 44px;
+  /* 展示级读数走令牌：44px 就是 --fs-display-l 这一档，
+     桌面壳整体降一档字号阶梯时这处要跟随 */
+  font-size: var(--fs-display-l);
   font-weight: 800;
   letter-spacing: -1.5px;
   color: var(--text-1);
@@ -341,7 +362,8 @@ const lastDateShort = computed(() => {
   place-items: center;
   border-radius: 50%;
   background: var(--surface-2);
-  font-size: 12px;
+  /* 节点序号圆点：12px 就是 --fs-caption 这一档，走令牌不写死 */
+  font-size: var(--fs-caption);
   font-weight: 700;
   color: var(--text-2);
 }

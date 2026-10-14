@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { AlertCircle } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
+import WorkoutSourceTag from '@/components/exercise/WorkoutSourceTag.vue'
 import { sessionService } from '@/services/sessionService'
 import { EFFORT_LABELS, WORKOUT_META } from '@/config/domain'
 import { SCORE_GROUP_LABELS, SCORE_GROUP_OF, type Level, type MuscleKey, type ScoreGroupKey } from '@/config/muscles'
@@ -241,20 +245,29 @@ function startTimeText(startedAt: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const metaLine = computed(() => {
+/**
+ * meta 行三段：日期 / 开始时刻 / 类型。
+ *
+ * 时长与热量**不在这行**——它们被提为统计格里的主数值（--fs-title1 + .num），
+ * 不再和日期时刻摊平在同一行灰字里（「这次练了多久/消耗多少」是首屏真正要看的数）。
+ * 类型也只在统计格没有「类型」那一格时才出现：概要视图的格子已写了一遍，
+ * 同行再写就是同一事实在抽屉首屏说两次。
+ */
+const metaParts = computed(() => {
   const w = props.workout
-  if (!w) return ''
-  const parts = [fmtDateCn(w.date)]
-  if (w.startMin != null) parts.push(minToHHmm(w.startMin))
+  if (!w) return { date: '', time: '', type: '' }
+  let time = ''
+  if (w.startMin != null) time = minToHHmm(w.startMin)
   else if (detail.value && detail.value.source !== 'summary') {
-    const t = startTimeText(detail.value.startedAt)
-    if (t) parts.push(t)
+    time = startTimeText(detail.value.startedAt)
   } else if (detail.value?.fromSession) {
-    const t = startTimeText(detail.value.fromSession.startedAt)
-    if (t) parts.push(t)
+    time = startTimeText(detail.value.fromSession.startedAt)
   }
-  parts.push(typeLabel.value)
-  return parts.join(' · ')
+  return {
+    date: fmtDateCn(w.date),
+    time,
+    type: detail.value?.source === 'summary' ? '' : typeLabel.value,
+  }
 })
 
 /* ---------- 跑步视图 ---------- */
@@ -465,11 +478,42 @@ const courseTotals = computed(() => {
 
 <template>
   <SheetModal :open="open" title="运动详情" initial-snap="large" @close="$emit('close')">
+    <!-- 抽屉内的帮助入口统一走 #action 槽（与关闭钮同一行右端） -->
+    <template #action>
+      <InfoHint v-if="workout?.source === 'health_connect'" title="同步规则">
+        <p>这条是从手机同步进来的，以 Health Connect 为准。</p>
+        <p>在这里改了会被下次同步覆盖回去；删除也只从 Rein 移除、不动 Health Connect 里那份。</p>
+      </InfoHint>
+    </template>
     <template v-if="workout">
-      <p class="name">{{ workout.name }}</p>
-      <p class="meta num">{{ metaLine }} · {{ workout.durationMin }} 分钟 · {{ workout.kcal }} 大卡</p>
+      <p class="name">
+        <span class="nm">{{ workout.name }}</span>
+        <WorkoutSourceTag :source="workout.source" />
+      </p>
+      <!-- meta 行只留日期·时刻·类型：时长/热量已提进统计格当主数值 ——
+           五项同字重平铺在一行时，「练了多久/消耗多少」读不出来是本屏主角 -->
+      <p class="meta">
+        <span>{{ metaParts.date }}</span>
+        <span v-if="metaParts.time" class="num">{{ metaParts.time }}</span>
+        <StatusChip v-if="metaParts.type" tone="neutral" size="sm">{{ metaParts.type }}</StatusChip>
+      </p>
+      <!-- 手机同步进来的记录，归属是 Health Connect：这句话非有不得不留 ——
+           抽屉是用户改/删这次训练的落点，而这条记录改不回去、删也不动那份。
+           面上只留一行结论（胶囊），完整规则收进标题栏右侧的 InfoHint ——
+           首屏最靠上的位置要留给数据，这段几乎没人逐字读。
+           注意别和下面的 detail.source 混：那个是「详情种类」（run/strength/…），
+           这个 workout.source 是「这条记录是谁的」。 -->
+      <p v-if="workout.source === 'health_connect'" class="srcline">
+        <StatusChip tone="neutral" size="md">手机同步 · 以 Health Connect 为准</StatusChip>
+      </p>
 
-      <p v-if="loadFailed" class="hint">详情数据加载失败，请稍后重试。</p>
+      <!-- 失败态单独一档：错误提示必须可见、且与说明文字形态有别 ——
+           从前它和上面的来源说明共用同一枚 .hint，整屏对比度最低的一行灰字，
+           容易被当成普通说明划过去 -->
+      <p v-if="loadFailed" class="failrow">
+        <AlertCircle :size="14" class="failic" />
+        <span>详情数据加载失败，请稍后重试。</span>
+      </p>
 
       <!-- 跑步：轨迹 + 真实指标 -->
       <template v-else-if="detail?.source === 'run'">
@@ -486,15 +530,19 @@ const courseTotals = computed(() => {
         <div class="dgrid">
           <div v-if="runKm != null" class="cell"><div class="v num">{{ runKm.toFixed(2) }}</div><div class="k">距离 km</div></div>
           <div class="cell"><div class="v num">{{ fmtClock(runDurationSec) }}</div><div class="k">运动时长</div></div>
+          <!-- 消耗跟着时长走：这行原本摊在 meta 灰字串里，是首屏真正要看的数之一 -->
+          <div class="cell"><div class="v num">{{ workout.kcal }}</div><div class="k">消耗 大卡</div></div>
           <div v-if="isCycle" class="cell"><div class="v num">{{ runAvgSpeedKmh ?? '--' }}</div><div class="k">平均时速 km/h</div></div>
           <div v-else-if="runAvgPace != null" class="cell"><div class="v num">{{ fmtPace(runAvgPace) }}</div><div class="k">平均配速</div></div>
           <div v-if="ascentM != null" class="cell"><div class="v num">{{ ascentM }}</div><div class="k">累计爬升 m</div></div>
         </div>
 
         <template v-if="splitRows.length > 0">
-          <p class="sec">每公里{{ isCycle ? '用时' : '配速' }}</p>
+          <!-- 骑行列头跟着值走：行内值是 km/h 时速，写「用时」会把量纲读反 -->
+          <p class="sec">每公里{{ isCycle ? '时速' : '配速' }}</p>
           <div v-for="(row, i) in splitRows" :key="i" class="splitrow row">
-            <span class="k num">{{ row.label }}</span>
+            <!-- 左侧是第几公里：裸数字「1」「2」没有单位，补成「1 km」 -->
+            <span class="k num">{{ row.label }} km</span>
             <div class="bar">
               <i :style="{ '--p': `${row.widthPct}%`, background: row.color }" />
             </div>
@@ -505,7 +553,11 @@ const courseTotals = computed(() => {
 
       <!-- 训练课：逐动作做组明细 -->
       <template v-else-if="detail?.source === 'course'">
+        <!-- 时长/消耗排在最前：这行原本摊在 meta 灰字串里 —— 对一个课程记录来说，
+             「这次练了多久/消耗多少」与组数容量同级重要，不能只做灰字 -->
         <div class="dgrid">
+          <div class="cell"><div class="v num">{{ workout.durationMin }}</div><div class="k">时长 分钟</div></div>
+          <div class="cell"><div class="v num">{{ workout.kcal }}</div><div class="k">消耗 大卡</div></div>
           <div class="cell"><div class="v num">{{ courseTotals.doneCount }}<span class="sub">/{{ courseTotals.totalCount }}</span></div><div class="k">完成组数</div></div>
           <div v-if="courseTotals.volume > 0" class="cell"><div class="v num">{{ courseTotals.volume }}</div><div class="k">总容量 kg</div></div>
           <div v-if="courseTotals.timedSec > 0" class="cell"><div class="v num">{{ fmtClock(courseTotals.timedSec) }}</div><div class="k">计时合计</div></div>
@@ -532,7 +584,12 @@ const courseTotals = computed(() => {
           </p>
         </div>
 
-        <p class="sec">做组明细<span v-if="courseTotals.earlyEnd" class="early"> · 提前结束</span></p>
+        <!-- 「提前结束」移出节标题做 warn 胶囊：它与节标题同字重时只靠颜色区分，
+             而硬编码 #fa114f 正是令牌纪律要收编的那类魔法色 -->
+        <div class="sec-wrap row between">
+          <p class="sec">做组明细</p>
+          <StatusChip v-if="courseTotals.earlyEnd" tone="warn" size="sm">提前结束</StatusChip>
+        </div>
         <div v-for="row in courseRows" :key="row.key" class="excard">
           <div class="row exhead">
             <span class="exname">{{ row.name }}</span>
@@ -578,15 +635,57 @@ const courseTotals = computed(() => {
 </template>
 
 <style scoped>
+/* 标题行：名字 + 来源标签（只有手机同步的才有标签）。
+   名字可截断，标签不吃压缩 —— 与 WorkoutRow 同一套排法 */
 .name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: var(--fs-title3);
   font-weight: 700;
 }
 
+.nm {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* meta 行：日期 / 时刻 / 类型三段一列排开，类型交给中性胶囊承载 ——
+   同一行不许再用同一个「·」串起同权信息（那正是全清单最高频的写法问题） */
 .meta {
   margin-top: 3px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--text-2);
+}
+
+/* 来源结论行：胶囊承载一行结论，口径说明已收进标题栏 InfoHint */
+.srcline {
+  margin-top: 8px;
+}
+
+/* 失败态：独立告警块，不用中性胶囊 —— 错误必须可见、且与说明文字形态有别。
+   底走 --danger-soft、字走 --danger-strong（实底档 --danger 不当文字用） */
+.failrow {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border-radius: var(--radius-m);
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+  font-size: var(--fs-caption);
+  line-height: 1.5;
+}
+
+.failic {
+  flex: none;
 }
 
 .sec {
@@ -597,9 +696,14 @@ const courseTotals = computed(() => {
   color: var(--text-3);
 }
 
-.early {
-  color: #fa114f;
-  letter-spacing: 0;
+/* 节标题行：结论胶囊与标题同行右端。胶囊不塞进 <p class="sec"> ——
+   .sec 的 letter-spacing 会漏进胶囊，且标题是块级元素、胶囊要跟着它同行 */
+.sec-wrap {
+  margin: 18px 0 10px;
+}
+
+.sec-wrap .sec {
+  margin: 0;
 }
 
 .hint {
@@ -665,7 +769,7 @@ const courseTotals = computed(() => {
 }
 
 .splitrow .k {
-  width: 34px;
+  width: 52px;
   flex: none;
   font-size: var(--fs-caption);
   color: var(--text-2);
@@ -900,7 +1004,9 @@ const courseTotals = computed(() => {
 
 /* 删除入口：一条独立的危险动作行。放在内容流末尾而不是钉底 —— 抽屉内容可滚动，
    钉底会一直占着一块；这里是「看完再决定」的位置，也远离上面的数据区，不易误触。
-   文案用「删除」两字 + danger 色，不说「确定」「移除」这类含糊词。 */
+   文案用「删除」两字 + danger 色，不说「确定」「移除」这类含糊词。
+   字色走 --danger-strong：实底档 --danger 当小字文字只有约 3.55:1，过不了 AA
+   （tokens.css:163-168 的两档分工：文字一律用 --*-strong）。 */
 .del-row {
   display: block;
   width: 100%;
@@ -910,7 +1016,7 @@ const courseTotals = computed(() => {
   text-align: center;
   font-size: var(--fs-subhead);
   font-weight: 600;
-  color: var(--danger);
+  color: var(--danger-strong);
 }
 
 .del-row:active {

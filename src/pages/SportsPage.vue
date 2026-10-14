@@ -35,7 +35,9 @@ const manualOpen = ref(false)
 
 <template>
   <div class="page">
-    <PageHeader title="运动" :subtitle="`本周 ${ex.weekMinutes} 分钟 · ${ex.weekKcal} 大卡`" />
+    <!-- 页首不留副标题：本周分钟与大卡紧跟在下方的「本周运动」卡里（同一份数据的同一处读数，
+         两处各写一遍只会稀释首屏信息密度） -->
+    <PageHeader title="运动" />
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
@@ -49,17 +51,17 @@ const manualOpen = ref(false)
          通栏铺开时每个磁贴会宽到 230px，读起来像把手机上的四列网格拉变了形。 -->
     <ul class="quick d-half">
       <li>
-        <QuickTile label="跑步" icon-bg="rgba(146, 232, 42, 0.18)" icon-color="#5ba800" @click="router.push('/session/run')">
+        <QuickTile label="跑步" icon-bg="var(--c-exercise-soft)" icon-color="var(--c-exercise-deep)" @click="router.push('/session/run')">
           <Footprints :size="20" />
         </QuickTile>
       </li>
       <li>
-        <QuickTile label="手动记" icon-bg="rgba(10, 132, 255, 0.12)" icon-color="#0a84ff" @click="manualOpen = true">
+        <QuickTile label="手动记" icon-bg="var(--accent-soft)" icon-color="var(--accent-strong)" @click="manualOpen = true">
           <PenLine :size="20" />
         </QuickTile>
       </li>
       <li>
-        <QuickTile label="动作库" icon-bg="rgba(255, 149, 0, 0.14)" icon-color="#c96a00" @click="router.push('/sports/exercises')">
+        <QuickTile label="动作库" icon-bg="var(--warn-soft)" icon-color="var(--warn-strong)" @click="router.push('/sports/exercises')">
           <ListChecks :size="20" />
         </QuickTile>
       </li>

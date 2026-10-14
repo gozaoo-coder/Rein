@@ -175,9 +175,11 @@ onMounted(init)
           <Search :size="14" />
           <input v-model="keyword" placeholder="按课名 / 代码 / 教师 / 时间地点筛选本页" @input="applyFilter" />
         </label>
+        <!-- 只交代范围，不印「共 N」：「共 N」取的是教务回执里的整库条数，
+             而这张卡只请求了第一页、也没有翻页入口 —— 读者会把「共 851」
+             读成「可以翻到 851 条」，实际手上只有第一页 -->
         <span class="count">
-          {{ filtered.length }} 条
-          <template v-if="outcome.page.total != null"> / 共 {{ outcome.page.total }}</template>
+          本页 <span class="num">{{ filtered.length }}</span> 条 · 仅第一页结果
         </span>
       </div>
 

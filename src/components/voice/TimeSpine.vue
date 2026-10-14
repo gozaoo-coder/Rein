@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { ChevronRight, MessageCircle, ListTodo, Play } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
+
 /**
  * 时间脊 —— 语音记录的唯一时间原语。
  *
@@ -268,7 +270,19 @@ function onAxisClick(e: MouseEvent): void {
       <span><i class="sw lane-0" />{{ lanes[0] ?? '—' }}</span>
       <span v-if="lanes[1]"><i class="sw lane-1" />{{ lanes[1] }}</span>
       <span v-if="hasTodoPins"><i class="sw pin-sw" />待办</span>
-      <span class="dim">块宽 = 说话时长 · 点块跳转</span>
+      <!-- 编码规则是图例的一部分（且必须写明「估算」）；「点块跳转」这类交互提示
+           与三形态的说明收进行尾 InfoHint —— 图例和操作提示不该并列成一行同类字 -->
+      <span class="enc">块宽 ≈ 讲话时长（估算）</span>
+      <span class="hint-slot">
+        <InfoHint
+          title="时间脊怎么看"
+          content="同一份数据有三种形态，缩放即切换：整场结构（这一屏，只看块的位置与宽窄）、精读（文字逐句展开，顶部仍有按真实比例的时间带）、缩略（一行小脊，给列表和浮条用）。
+
+点色块跳到对应的那句话；点细轨的空白处，从那一时刻开始播放；菱形点是这场录音里记下的待办锚点。
+
+块宽按讲话时长估算：转写只给出每句的开始时间，句末时长按字数估出来，所以宽度是近似值；块之间的空隙就是静默，超过阈值的静默会折叠起来。"
+        />
+      </span>
     </p>
   </div>
 
@@ -625,9 +639,16 @@ function onAxisClick(e: MouseEvent): void {
   gap: 5px;
 }
 
-.legend .dim {
+/* 编码规则留在图例里：caption + text-2 —— 它回答「这张图在编码什么」，是必须读的一句 */
+.legend .enc {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+/* 交互说明（点块跳转 / 三形态）收进行尾 InfoHint：与图例同行，但不同形态 */
+.legend .hint-slot {
   margin-left: auto;
-  color: var(--text-3);
+  display: inline-flex;
 }
 
 .sw {
@@ -812,20 +833,22 @@ function onAxisClick(e: MouseEvent): void {
   padding: 5px 8px 5px 0;
 }
 
+/* 折叠掉的那段空场有多长，是这一行唯一的读数：时间戳抬到 caption + text-2，
+   不再叠 opacity 做二次手调弱化（0.6 一叠，亮暗两色下都糊） */
 .stime {
   flex: none;
   width: 34px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  opacity: 0.6;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
+/* 标签保留胶囊形态：surface-2 底 + text-2 字，当「折叠静默」的形态标记 */
 .slabel {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   padding: 2px 9px;
   border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--text-3) 12%, transparent);
+  background: var(--surface-2);
 }
 
 .pinbar {

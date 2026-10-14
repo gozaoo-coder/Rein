@@ -4,6 +4,7 @@ import { ChevronRight, Flame } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 
 import ExerciseBars from '@/components/exercise/ExerciseBars.vue'
+import WorkoutSourceTag from '@/components/exercise/WorkoutSourceTag.vue'
 import { WORKOUT_META } from '@/config/domain'
 import { useExerciseStore } from '@/stores/exercise'
 import { fmtDateCn, minToHHmm, WEEKDAY_LABELS } from '@/utils/date'
@@ -91,6 +92,8 @@ function goDetail(): void {
       <i class="l-ic col center">{{ latestInitial }}</i>
       <span class="l-txt">
         <b>{{ latest.name }}</b>
+        <!-- 最近一次的来源：手机同步进来的要标出来（本机的不标，见组件说明） -->
+        <WorkoutSourceTag :source="latest.source" />
         <em class="num">{{ latestMeta }}</em>
       </span>
       <span class="l-num num">{{ latest.durationMin }} 分钟</span>

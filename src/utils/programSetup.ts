@@ -248,7 +248,7 @@ export function rhythmText(weeks: PreviewWeek[]): string {
 
 /**
  * 约束 → 一行即时反馈（与生成结果同口径：pickWeekTemplate）。
- * 例：「4 练 · 健身房 · 四练 · 推拉腿加核心」。
+ * 例：「4 练 · 健身房 · 推拉腿加核心」。
  */
 export function constraintSummary(trainingDays: number, equipment: string): string {
   const eq = EQUIPMENT_LABELS[equipment] ?? equipment

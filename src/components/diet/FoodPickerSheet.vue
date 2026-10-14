@@ -149,7 +149,7 @@ function bump(delta: number): void {
             <b>{{ f.name }}</b>
             <small>{{ f.category ?? '其他' }}<template v-if="f.units.length"> · 1{{ f.defaultUnit ?? f.units[0]!.name }}≈{{ f.units[0]!.grams }}g</template></small>
           </span>
-          <span class="num kcal">{{ f.kcal }}<em>/100g</em></span>
+          <span class="num kcal">{{ f.kcal }}<em>大卡 / 100 g</em></span>
         </button>
       </li>
       <li v-if="results.length === 0" class="none t-3">没有匹配的食物</li>
@@ -163,7 +163,13 @@ function bump(delta: number): void {
 
       <header class="food-head">
         <h3>{{ selected.name }}</h3>
-        <p class="num t-3">{{ selected.kcal }} 大卡 / 100g · 蛋白 {{ selected.protein }}g · 碳水 {{ selected.carb }}g · 脂肪 {{ selected.fat }}g</p>
+        <!-- 每 100g 口径：热量是主数值，三大宏量降为次要读数，竖线分隔 -->
+        <p class="fmacros">
+          <b class="num fkcal">{{ selected.kcal }}<em>大卡 / 100 g</em></b>
+          <span class="fmitem">蛋白 {{ selected.protein }}g</span>
+          <span class="fmitem">碳水 {{ selected.carb }}g</span>
+          <span class="fmitem">脂肪 {{ selected.fat }}g</span>
+        </p>
       </header>
 
       <SegmentedControl
@@ -253,14 +259,16 @@ function bump(delta: number): void {
 .kcal {
   font-weight: 700;
   font-size: var(--fs-callout);
+  /* 选食物时最该比的热量：主数值走最深一档 */
+  color: var(--text-1);
 }
 
 .kcal em {
   font-style: normal;
-  /* 「大卡」单位后缀，装饰性微字 */
-  font-size: var(--fs-micro);
+  /* 单位是必读信息（「167」读不出是什么量），不吃 11px 水印档 */
+  font-size: var(--fs-caption);
   font-weight: 400;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .none {
@@ -294,6 +302,32 @@ function bump(delta: number): void {
 .food-head p {
   font-size: var(--fs-caption);
   margin: 2px 0 4px;
+  color: var(--text-3);
+}
+
+/* 详情头：每 100g 热量提为主数值，宏量读数竖线分隔、降一档灰 */
+.fkcal {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.fkcal em {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: 4px;
+}
+
+.fmitem {
+  margin-left: 8px;
+}
+
+.fmitem + .fmitem::before {
+  content: '|';
+  margin-right: 8px;
+  color: var(--text-3);
 }
 
 .stepper {
@@ -368,6 +402,6 @@ function bump(delta: number): void {
 }
 
 .add:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
 }
 </style>

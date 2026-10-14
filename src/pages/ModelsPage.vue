@@ -222,11 +222,12 @@ const onlineTone = computed(() => {
           />
         </section>
 
-        <button class="card add-pv" @click="addProvider()">
+        <!-- 空列表时这张卡兼作引导；有列表后添加入口只留页头那颗钮 -->
+        <button v-if="providerCards.length === 0" class="card add-pv" @click="addProvider()">
           <span class="ic ic-add"><Plus :size="15" /></span>
           <span class="vt">
             <b>添加提供商</b>
-            <em>选适配器与接入方式，填 Key 后自动拉模型清单</em>
+            <em>选适配器与接入方式，填 API Key 后自动拉模型清单</em>
           </span>
           <span class="v-go">›</span>
         </button>
@@ -241,7 +242,8 @@ const onlineTone = computed(() => {
             <i v-if="voiceConfigured(voiceConfig)" class="tag ok-t">已连接</i>
             <i v-else class="tag">未配置</i>
           </b>
-          <em>识别与朗读的凭据 · 音色与语速 · 连通性测试</em>
+          <em class="em-main">识别与朗读的凭据</em>
+          <em class="em-sub">音色与语速 · 连通性测试</em>
         </span>
         <span class="v-go">›</span>
       </button>
@@ -249,19 +251,11 @@ const onlineTone = computed(() => {
         <span class="ic ic-spark"><Sparkles :size="15" /></span>
         <span class="vt">
           <b>让 AI 帮我配置</b>
-          <em>聊天里直接填 Key、拉模型、切换服务模型（工具按需装载）</em>
+          <em>聊天里直接填 API Key、拉模型、切换服务模型</em>
         </span>
         <span class="v-go">›</span>
       </button>
     </div>
-
-    <!-- 悬浮按钮移出页面层（Teleport）：页面层 translate 会改 fixed 后代的包含块，留在层内拖动时会跑位 -->
-    <Teleport to="body">
-      <button class="fab row center" aria-label="添加提供商" @click="addProvider()">
-        <Plus :size="17" />
-        添加提供商
-      </button>
-    </Teleport>
 
     <!-- 抽屉层：选择 / 全部模型 / 在线服务 / 提供商 / 表单 -->
     <ModelPickerSheet
@@ -317,7 +311,7 @@ const onlineTone = computed(() => {
     100dvh - var(--safe-top) - var(--tabbar-h) - var(--safe-bottom) - var(--wbar-reserve, 0px)
   );
   overflow-y: auto;
-  padding: 0 var(--page-pad-x) 96px;
+  padding: 0 var(--page-pad-x) var(--page-pad-bottom);
   scrollbar-width: none;
 }
 
@@ -329,7 +323,12 @@ const onlineTone = computed(() => {
   margin-top: 10px;
 }
 
-.card {
+/* 只有**按钮**卡吃这一条（在线服务 / 提供商 / 添加 / 语音 / AI 配置）。
+   裸 `.card` 会顺着 scope id 落到子组件的根节点上（ServiceModelsCard 的 section.card.sm），
+   于是「服务模型」卡被压成 flex 横排、标题栏只剩 44px 宽、断成「服务模/型」两行。
+   结构卡（section.card.empty）与子组件根节点各按自己的块级流排版：前者自带
+   display:block + padding 8px 14px，后者自带 padding 13px 14px 并把 ul 排在标题下方。 */
+button.card {
   display: flex;
   align-items: center;
   gap: 11px;
@@ -399,6 +398,16 @@ const onlineTone = computed(() => {
   word-break: break-all;
 }
 
+/* 副文案分层：主项一句话（升一档），其余两项降成更小更浅的次行 */
+.vt em.em-main {
+  font-size: var(--fs-footnote);
+  color: var(--text-2);
+}
+
+.vt em.em-sub {
+  font-size: var(--fs-micro);
+}
+
 .vt em.perr {
   color: var(--danger);
 }
@@ -419,12 +428,12 @@ const onlineTone = computed(() => {
 
 .chip-idle {
   background: var(--surface-2);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .chip-warn {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  color: var(--danger);
+  background: var(--warn-soft);
+  color: var(--warn-strong);
 }
 
 .tag {
@@ -505,26 +514,5 @@ const onlineTone = computed(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: var(--desk-gap);
-}
-
-.fab {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(var(--dock-top) + 14px);
-  z-index: 50;
-  gap: 5px;
-  padding: 13px 24px;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--on-accent);
-  box-shadow: var(--shadow-float);
-  font-size: var(--fs-headline);
-  font-weight: 700;
-  transition: transform var(--dur-fast) var(--ease-standard);
-}
-
-.fab:active {
-  transform: translateX(-50%) scale(0.95);
 }
 </style>

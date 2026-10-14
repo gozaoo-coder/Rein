@@ -10,6 +10,7 @@ import { computed } from 'vue'
 import { ChevronRight } from 'lucide-vue-next'
 
 import FileIcon from '@/components/files/FileIcon.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import { toFileItem } from '@/files/provider'
 import type { KbEntry } from '@/types'
 import { humanBytes } from '@/utils/format'
@@ -24,12 +25,17 @@ const emit = defineEmits<{ open: [file: KbEntry] }>()
 /** 视图模型：只用来喂 FileIcon（图标 / 只读标记），不参与跳转 */
 const item = computed(() => toFileItem(props.file, false))
 
-/** 一行副标题：在哪 + 多大（目录给子项数 —— 体积对目录没有意义） */
+/** 副标题：多大（目录给子项数 —— 体积对目录没有意义）。
+ *  根目录文件的 path 就是文件名本身，拼「工作区根目录 / …」只会把标题重复一遍，故不再拼前缀。 */
 const meta = computed(() => {
   const f = props.file
-  const where = f.path.includes('/') ? f.path : `工作区根目录 / ${f.path}`
-  const size = f.kind === 'folder' ? `${f.childCount} 项` : humanBytes(f.size)
-  return `${where} · ${size}`
+  return f.kind === 'folder' ? `${f.childCount} 项` : humanBytes(f.size)
+})
+
+/** 目录层级：只给父路径（不含文件名），根目录文件为空 */
+const dir = computed(() => {
+  const i = props.file.path.lastIndexOf('/')
+  return i > 0 ? props.file.path.slice(0, i) : ''
 })
 </script>
 
@@ -43,7 +49,10 @@ const meta = computed(() => {
     <FileIcon :item="item" :size="20" />
     <span class="fc-col">
       <span class="fc-name">{{ file.name }}</span>
-      <span class="fc-meta">{{ meta }}</span>
+      <span class="fc-meta">
+        <PillChip v-if="dir" tone="muted" size="sm">{{ dir }}</PillChip>
+        <span class="num">{{ meta }}</span>
+      </span>
     </span>
     <ChevronRight :size="15" class="fc-go" />
   </button>
@@ -84,11 +93,16 @@ const meta = computed(() => {
 }
 
 .fc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   font-size: var(--fs-caption);
   color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.fc-meta .num {
+  flex: none;
 }
 
 /* 箭头只在悬停时亮起来：卡片本身是「一句话」，指路的那一撇不用一直抢注意力 */

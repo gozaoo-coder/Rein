@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { AlertTriangle, Info, RotateCcw } from 'lucide-vue-next'
+import { AlertTriangle, RotateCcw } from 'lucide-vue-next'
 
 import GrabTimeline from '@/components/campus/GrabTimeline.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
@@ -16,8 +17,9 @@ import type { GrabSettings } from '@/types'
  * 只暴露**真正需要动的旋钮**，其余（退避上限、轮询上限）留给默认值 ——
  * 一个抢课页面不该有一屏工程参数，调错了还会让人以为程序坏了。
  *
- * 每个数字旁边都写清「调大/调小会怎样」，因为这些值的取舍是**概率**而不是对错：
- * 快一点更容易被风控，慢一点更容易被别人抢走。用户该知道自己在换什么。
+ * 每个数字面上只留一行结论，完整解释收进标题行右侧的说明入口 ——
+ * 这些值的取舍是**概率**而不是对错：快一点更容易被风控，慢一点更容易被别人抢走。
+ * 用户该知道自己在换什么，但只想改一个数字的人不该先扫过七段散文。
  */
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -197,109 +199,120 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
     </div>
 
     <div class="rows" @focusin="markActive" @pointerdown="markActive">
+      <!-- 每个参数：面上只留一行结论，完整解释收进标题行右侧的说明入口。
+           一屏七个参数各带一段散文，想改一个数字的人要先扫过整面文字墙 -->
       <section class="block" data-key="minIntervalMs" @pointerenter="active = 'minIntervalMs'">
-        <NumberStepper
-          :model-value="s.minIntervalMs"
-          :min="10"
-          :max="5000"
-          :step="50"
-          unit="ms"
-          label="两次提交的最小间隔"
-          @update:model-value="set('minIntervalMs', $event)"
-        />
-        <p class="hint">
-          <Info :size="13" />
-          <span>
-            所有任务共用一个闸门 —— 排 5 门课不会变成 5 倍请求量。
-            <b>它才是「多久打一次教务」的总开关</b>，其余几个等待都得排在它后面。
-          </span>
-        </p>
+        <div class="p-head">
+          <NumberStepper
+            :model-value="s.minIntervalMs"
+            :min="10"
+            :max="5000"
+            :step="50"
+            unit="ms"
+            label="两次提交的最小间隔"
+            @update:model-value="set('minIntervalMs', $event)"
+          />
+          <InfoHint title="两次提交的最小间隔">
+            <p>所有任务共用一个闸门 —— 排 5 门课不会变成 5 倍请求量。</p>
+            <p><strong>它才是「多久打一次教务」的总开关</strong>，其余几个等待都得排在它后面。</p>
+          </InfoHint>
+        </div>
+        <p class="concl">排 5 门课也不会变成 5 倍请求量</p>
       </section>
 
       <section class="block" data-key="leadMs" @pointerenter="active = 'leadMs'">
-        <NumberStepper
-          :model-value="s.leadMs"
-          :min="0"
-          :max="3000"
-          :step="50"
-          unit="ms"
-          label="开窗前提前出手"
-          @update:model-value="set('leadMs', $event)"
-        />
-        <p class="hint">
-          <Info :size="13" />
-          <span>
-            请求在路上要走一会。提前这一点出手，才能让<b>请求本身</b>落在开窗那一瞬间，
-            而不是排在开窗之后。网络越慢越该调大。
-          </span>
-        </p>
+        <div class="p-head">
+          <NumberStepper
+            :model-value="s.leadMs"
+            :min="0"
+            :max="3000"
+            :step="50"
+            unit="ms"
+            label="开窗前提前出手"
+            @update:model-value="set('leadMs', $event)"
+          />
+          <InfoHint title="开窗前提前出手">
+            <p>请求在路上要走一会。提前这一点出手，才能让<strong>请求本身</strong>落在开窗那一瞬间，而不是排在开窗之后。</p>
+            <p>网络越慢越该调大。</p>
+          </InfoHint>
+        </div>
+        <p class="concl">网络越慢越该调大</p>
       </section>
 
       <section class="block" data-key="pollIntervalMs" @pointerenter="active = 'pollIntervalMs'">
-        <NumberStepper
-          :model-value="s.pollIntervalMs"
-          :min="50"
-          :max="10000"
-          :step="100"
-          unit="ms"
-          label="查结果间隔"
-          @update:model-value="set('pollIntervalMs', $event)"
-        />
-        <p class="hint">
-          <Info :size="13" /> 提交之后隔多久问一次「选上了吗」。教务自己也是 2 秒一次。
-        </p>
+        <div class="p-head">
+          <NumberStepper
+            :model-value="s.pollIntervalMs"
+            :min="50"
+            :max="10000"
+            :step="100"
+            unit="ms"
+            label="查结果间隔"
+            @update:model-value="set('pollIntervalMs', $event)"
+          />
+          <InfoHint
+            title="查结果间隔"
+            content="提交之后隔多久问一次「选上了吗」。教务自己也是 2 秒一次。"
+          />
+        </div>
+        <p class="concl">教务自己也是 2 秒一次</p>
       </section>
 
       <section class="block" data-key="fullRetryMs" @pointerenter="active = 'fullRetryMs'">
-        <NumberStepper
-          :model-value="s.fullRetryMs"
-          :min="100"
-          :max="60000"
-          :step="100"
-          unit="ms"
-          label="满员后重试间隔"
-          @update:model-value="set('fullRetryMs', $event)"
-        />
-        <p class="hint">
-          <Info :size="13" />
-          「已满」会一直守着，但节奏放慢 —— 名额释放是稀疏事件，打快了只是白费力气。
-        </p>
+        <div class="p-head">
+          <NumberStepper
+            :model-value="s.fullRetryMs"
+            :min="100"
+            :max="60000"
+            :step="100"
+            unit="ms"
+            label="满员后重试间隔"
+            @update:model-value="set('fullRetryMs', $event)"
+          />
+          <InfoHint
+            title="满员后重试间隔"
+            content="「已满」会一直守着，但节奏放慢 —— 名额释放是稀疏事件，打快了只是白费力气。"
+          />
+        </div>
+        <p class="concl">「已满」会一直守着，只是放慢节奏</p>
       </section>
 
       <section class="block" data-key="maxAttempts" @pointerenter="active = 'maxAttempts'">
-        <NumberStepper
-          :model-value="s.maxAttempts"
-          :min="0"
-          :max="500"
-          :step="5"
-          unit="次"
-          label="最多提交次数"
-          @update:model-value="set('maxAttempts', $event)"
-        />
-        <p class="hint">
-          <Info :size="13" /> 0 = 不限，一直抢到窗口关闭。抢课通常都设 0；
-          只在你想限制「试几次不行就算了」时才填。
-        </p>
+        <div class="p-head">
+          <NumberStepper
+            :model-value="s.maxAttempts"
+            :min="0"
+            :max="500"
+            :step="5"
+            unit="次"
+            label="最多提交次数"
+            @update:model-value="set('maxAttempts', $event)"
+          />
+          <InfoHint
+            title="最多提交次数"
+            content="0 = 不限，一直抢到窗口关闭。抢课通常都设 0；只在你想限制「试几次不行就算了」时才填。"
+          />
+        </div>
+        <p class="concl">0 = 不限，一直抢到窗口关闭</p>
       </section>
 
       <!-- 志愿组：这条是「互斥备选」的耐心旋钮 -->
       <section class="block" data-key="cedeAfterMs" @pointerenter="active = 'cedeAfterMs'">
-        <NumberStepper
-          v-model="cedeMin"
-          :min="0"
-          :max="120"
-          :step="1"
-          unit="分钟"
-          label="让贤期限"
-        />
-        <p class="hint">
-          <Info :size="13" />
-          <span>
-            只在<b>志愿组</b>里有意义。当前志愿一直满员超过这么久，就把出手机会让给下一志愿。
-            <b>0 = 死守</b>：只有它彻底没戏（时间冲突 / 连败 / 窗口关闭）才轮到下一个 ——
-            满员是等得到名额的，所以默认死守。
-          </span>
-        </p>
+        <div class="p-head">
+          <NumberStepper
+            v-model="cedeMin"
+            :min="0"
+            :max="120"
+            :step="1"
+            unit="分钟"
+            label="让贤期限"
+          />
+          <InfoHint title="让贤期限">
+            <p>只在<strong>志愿组</strong>里有意义。当前志愿一直满员超过这么久，就把出手机会让给下一志愿。</p>
+            <p><strong>0 = 死守</strong>：只有它彻底没戏（时间冲突 / 连败 / 窗口关闭）才轮到下一个 —— 满员是等得到名额的，所以默认死守。</p>
+          </InfoHint>
+        </div>
+        <p class="concl">0 = 死守（默认）</p>
       </section>
 
       <section class="block toggle-row" data-key="watchWindow" @pointerenter="active = 'watchWindow'">
@@ -312,14 +325,11 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
           label="窗口监听"
           @update:model-value="set('watchWindow', $event)"
         />
-        <p class="hint">
-          <Info :size="13" />
-          <span>
-            关掉它，你就只能在手动刷新页面时才发现窗口开了。开着才可能「窗口一开就收到提示」。
-            <b>监听同样活在 App 进程里</b>：App 被划掉或清理后它就不再问教务了 ——
-            窗口按教务处的钟点开，而那时人往往不在电脑前。
-          </span>
-        </p>
+        <InfoHint title="窗口监听">
+          <p>关掉它，你就只能在手动刷新页面时才发现窗口开了。开着才可能「窗口一开就收到提示」。</p>
+          <p><strong>监听同样活在 App 进程里</strong>：App 被划掉或清理后它就不再问教务了 —— 窗口按教务处的钟点开，而那时人往往不在电脑前。</p>
+        </InfoHint>
+        <p class="concl">关掉它，只能手动刷新页面时才发现窗口开了</p>
       </section>
     </div>
 
@@ -414,7 +424,7 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
 
 .toggle-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 4px 10px;
 }
@@ -438,25 +448,29 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
   line-height: 1.45;
 }
 
-.toggle-row .hint {
-  grid-column: 1 / -1;
-}
-
-/* 这七个数字各自是什么意思、动了会怎样，全靠这一行说明 ——
-   它是整个抽屉里信息密度最高的地方，不能又是最淡的一档 */
-.hint {
+/* 参数行：步进器占满一行，说明入口贴在右端（与步进钮同一行、垂直居中） */
+.p-head {
   display: flex;
-  align-items: flex-start;
-  gap: 5px;
-  font-size: var(--fs-caption);
-  color: var(--text-2);
-  line-height: 1.5;
-  margin-top: 4px;
+  align-items: center;
+  gap: 4px;
 }
 
-.hint svg {
-  flex: none;
+/* 步进器撑满剩余宽度：否则它收缩成内容宽，「? 」会掉到行中间 */
+.p-head .stepper {
+  flex: 1;
+}
+
+/* 每个参数面上只留一行结论 —— 完整解释在标题行右侧的 InfoHint 里。
+   一行结论也要读得出来（--text-2），不能是最淡的那档 */
+.concl {
+  font-size: var(--fs-caption);
+  line-height: 1.5;
   margin-top: 2px;
+  color: var(--text-2);
+}
+
+.toggle-row .concl {
+  grid-column: 1 / -1;
 }
 
 .acts {
@@ -489,6 +503,6 @@ function applyPreset(p: (typeof PRESETS)[number]): void {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 </style>

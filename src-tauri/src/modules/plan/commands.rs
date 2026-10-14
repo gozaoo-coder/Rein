@@ -81,6 +81,23 @@ pub(crate) fn list_workout_plans_on(conn: &rusqlite::Connection) -> Result<Vec<P
     Ok(list)
 }
 
+/// 对外网关专用：带 SQL 侧 `LIMIT` 的 `list_workout_plans`（contract §6.4「每页 LIMIT，
+/// 禁止无界全表」）。前端命令仍用无 LIMIT 的 [`list_workout_plans_on`]，网关这条只服务外部调用。
+pub(crate) fn list_workout_plans_on_limited(
+    conn: &rusqlite::Connection,
+    limit: i64,
+) -> Result<Vec<PlanRecord>> {
+    let sql = format!(
+        "SELECT {PLAN_COLS} FROM workout_plans \
+         ORDER BY (last_used_at IS NULL), last_used_at DESC, updated_at DESC LIMIT ?1"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let list = stmt
+        .query_map([limit], plan_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(list)
+}
+
 #[tauri::command]
 pub fn get_workout_plan(state: State<AppState>, id: String) -> Result<PlanRecord> {
     let conn = state.db.lock();
@@ -146,4 +163,36 @@ pub fn touch_workout_plan(state: State<AppState>, id: String) -> Result<()> {
         [&id],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn fresh() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    /// 对外网关专用的 LIMIT 变体：SQL 侧限行（contract §6.4；第一轮复核补齐 plan）。
+    #[test]
+    fn list_workout_plans_on_limited_caps_rows_in_sql() {
+        let conn = fresh();
+        for i in 0..5 {
+            conn.execute(
+                "INSERT INTO workout_plans (id, name, subtitle, workout_type, exercises_json, created_at, updated_at) \
+                 VALUES (?1, ?2, '', 'strength', '[]', datetime('now'), datetime('now'))",
+                rusqlite::params![format!("p{i}"), format!("课{i}")],
+            )
+            .unwrap();
+        }
+        assert_eq!(list_workout_plans_on(&conn).unwrap().len(), 5);
+        assert_eq!(
+            list_workout_plans_on_limited(&conn, 2).unwrap().len(),
+            2,
+            "LIMIT 生效"
+        );
+    }
 }

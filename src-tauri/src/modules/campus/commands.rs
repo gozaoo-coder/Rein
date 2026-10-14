@@ -1396,7 +1396,21 @@ pub fn campus_schedule(
     to: Option<String>,
 ) -> Result<ScheduleView> {
     let conn = state.db.lock();
-    let account = load_active_account(&conn)?;
+    campus_schedule_on(&conn, semester_id, from, to)
+}
+
+/// `campus_schedule` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
+/// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
+///
+/// **副作用（契约 §13.2 认账）**：内部调用 `materialize_todos` 把课表派生行写进 `todos` ——
+/// 这是幂等的本地写，会被同步钩子捕获。对外语义仍是「读课表」，否则「今天日程」会缺课表行。
+pub(crate) fn campus_schedule_on(
+    conn: &Connection,
+    semester_id: Option<i64>,
+    from: Option<String>,
+    to: Option<String>,
+) -> Result<ScheduleView> {
+    let account = load_active_account(conn)?;
     let Some(account) = account else {
         return Ok(ScheduleView {
             account: None,
@@ -1409,7 +1423,7 @@ pub fn campus_schedule(
 
     let Some(sem_id) = (match semester_id {
         Some(id) => Some(id),
-        None => current_semester_id(&conn, account.id)?,
+        None => current_semester_id(conn, account.id)?,
     }) else {
         return Ok(ScheduleView {
             account: Some(to_account(account)),
@@ -1420,12 +1434,12 @@ pub fn campus_schedule(
         });
     };
 
-    let sem = load_semester(&conn, account.id, sem_id)?;
-    let sessions = load_sessions(&conn, account.id, sem_id)?;
+    let sem = load_semester(conn, account.id, sem_id)?;
+    let sessions = load_sessions(conn, account.id, sem_id)?;
     // 调休计划**只从缓存组装**：打开课表这条路上不该出现网络请求（联网补缓存见 `campus_sync`）
     let years = holiday::years_of(&sem.start_date, &sem.end_date);
-    let plan = holiday::plan_from_cache(&conn, &years, &HolidayConfig::load(&conn));
-    materialize_todos(&conn, account.id, &sem, &sessions, &plan)?;
+    let plan = holiday::plan_from_cache(conn, &years, &HolidayConfig::load(conn));
+    materialize_todos(conn, account.id, &sem, &sessions, &plan)?;
 
     let today = Local::now().date_naive();
     let lo = from
@@ -1446,7 +1460,7 @@ pub fn campus_schedule(
         .filter(|e| e.date >= lo_s && e.date <= hi_s)
         .collect();
     let time_slots = build_time_slots(&sessions);
-    let courses = load_courses(&conn, account.id, sem_id)?;
+    let courses = load_courses(conn, account.id, sem_id)?;
 
     Ok(ScheduleView {
         account: Some(to_account(account)),

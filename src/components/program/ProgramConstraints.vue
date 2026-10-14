@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import { DIET_RESTRICTION_PRESETS, EQUIPMENT_LABELS, TIME_SLOT_LABELS } from '@/config/domain'
 import { useNutritionStore } from '@/stores/nutrition'
 import type { ProgramStart } from '@/types'
@@ -116,16 +117,18 @@ const customRestrictions = computed(() =>
   draftRestrictions.value.filter((r) => !DIET_RESTRICTION_PRESETS.includes(r)),
 )
 
-const previewText = computed(() => {
-  let text = constraintSummary(draftDays.value, draftEquipment.value)
+/** 预览行拆两级：主数值（「N 练 / 纯饮食」）+ 其余条件，同屏不同字档 */
+const preview = computed(() => {
+  const parts = constraintSummary(draftDays.value, draftEquipment.value).split(' · ')
+  const rest = parts.slice(1)
   if (startMode.value !== 'next') {
-    text += ` · ${startMode.value === 'today' ? '今天' : '明天'}开跑`
+    rest.push(`${startMode.value === 'today' ? '今天' : '明天'}开跑`)
   }
   if (firstCourseId.value) {
     const name = courseOptions.value.find((c) => c.id === firstCourseId.value)?.name
-    if (name) text += ` · 首练${name}`
+    if (name) rest.push(`首练${name}`)
   }
-  return text
+  return { main: parts[0] ?? '', rest }
 })
 const warning = computed(() => constraintWarning(draftDays.value))
 
@@ -238,7 +241,16 @@ async function applyAndGenerate(): Promise<void> {
 
     <!-- 提前开跑时的相位平移：接续当前训练节奏，避免连续同部位高负荷 -->
     <div v-if="(startMode !== 'next' || nextIsTomorrow) && courseOptions.length" class="group">
-      <p class="glabel">首个训练日练（今天已经练过？接着练下个部位，别连着来）</p>
+      <p class="glabel row">
+        首个训练日练
+        <!-- 「别连着来」的由来：提前开跑的相位平移口径，收进标签行右端 -->
+        <InfoHint
+          title="首个训练日练"
+          content="提前开跑时，方案按本周模板接着往下排：上次练过的部位不紧跟第二次，中间换部位或休息，避免同一部位连续高负荷。
+
+不选就按模板顺序开始；选了某个课程，第一个训练日就练它。"
+        />
+      </p>
       <div class="chips">
         <button
           class="chip"
@@ -278,7 +290,16 @@ async function applyAndGenerate(): Promise<void> {
     </div>
 
     <div class="group">
-      <p class="glabel">忌口（点选排除，引擎会自动换掉含它们的食谱）</p>
+      <p class="glabel row">
+        忌口
+        <!-- 「引擎」是内部术语：说明收进标签行右端，卡面只留标签二字 -->
+        <InfoHint
+          title="忌口"
+          content="点选排除的忌口会参与方案生成：含这些食材的食谱会被自动替换，不用自己核对每餐配料。
+
+预设之外的忌口在下面填关键词（如芒果、花生），回车即添加。"
+        />
+      </p>
       <div class="chips">
         <button
           v-for="r in DIET_RESTRICTION_PRESETS"
@@ -333,7 +354,10 @@ async function applyAndGenerate(): Promise<void> {
 
     <div class="preview num">
       <span class="pv-label">按此条件</span>
-      <span class="pv-value">{{ previewText }}</span>
+      <div class="pv-value">
+        <b class="pv-main">{{ preview.main }}</b>
+        <span class="pv-rest">{{ preview.rest.join(' ｜ ') }}</span>
+      </div>
     </div>
 
     <p v-if="warning" class="warn-note">{{ warning }}</p>
@@ -379,6 +403,17 @@ async function applyAndGenerate(): Promise<void> {
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
+}
+
+/* 标签行带说明入口的：? 推到行右端，与标签同行 */
+.glabel.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.glabel.row .info-hint {
+  margin-left: auto;
 }
 
 .chips {
@@ -432,7 +467,7 @@ async function applyAndGenerate(): Promise<void> {
   font-weight: 600;
 }
 
-/* 即时结果预览：方案输入参数的直接反馈（上下堆叠，长条件串不与标签挤一行） */
+/* 即时结果预览：方案输入参数的直接反馈（主数值提档，其余条件降为次要行） */
 .preview {
   margin-top: 14px;
   padding: 11px 13px;
@@ -446,28 +481,42 @@ async function applyAndGenerate(): Promise<void> {
   margin-bottom: 3px;
   font-size: var(--fs-micro);
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-strong);
 }
 
+/* soft 底上的字走 strong 档；主数值是这一屏唯一 19px 读数 */
 .pv-value {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+.pv-main {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.pv-rest {
   font-size: var(--fs-caption);
   font-weight: 600;
-  color: var(--accent);
+  color: var(--text-3);
   line-height: 1.5;
 }
 
+/* 两条必须读出来的提示：实底档 --warn 当字对比度约 2:1，走 --warn-strong */
 .warn-note {
   margin-top: 9px;
   font-size: var(--fs-caption);
-  color: var(--warn);
+  color: var(--warn-strong);
   line-height: 1.5;
 }
 
 .stale-note {
   margin-top: 9px;
   font-size: var(--fs-caption);
-  color: var(--warn);
+  color: var(--warn-strong);
   line-height: 1.5;
 }
 
@@ -486,6 +535,6 @@ async function applyAndGenerate(): Promise<void> {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 </style>

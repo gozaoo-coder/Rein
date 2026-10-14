@@ -308,10 +308,16 @@ async function save(): Promise<void> {
   font-weight: 700;
 }
 
+/* 档位文字（主攻/辅助/稳定）不用 opacity 压层级：它在 --text-2 上再乘 0.75，
+   亮暗两档都更接近看不见，而这行字正是「我标了哪几块肌肉」的凭据。
+   层级靠字号（micro）/ 字重（700）区分；选中态实色继承 --on-accent。 */
 .chip b {
   font-size: var(--fs-micro);
   font-weight: 700;
-  opacity: 0.75;
+}
+
+.chip.on b {
+  color: var(--on-accent);
 }
 
 .save {
@@ -327,6 +333,6 @@ async function save(): Promise<void> {
 }
 
 .save:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 </style>

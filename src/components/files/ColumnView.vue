@@ -118,7 +118,8 @@ function iconOf(item: FileItem) {
           >
             <component :is="iconOf(it)" :size="14" class="ic" />
             <span class="nm">{{ it.displayName }}</span>
-            <span v-if="!it.isDir && it.size !== undefined" class="sz t-3">{{ humanBytes(it.size) }}</span>
+            <!-- 大小列与 FileRow 同一套数字口径：等宽数字，位数不齐也不再左右跳 -->
+            <span v-if="!it.isDir && it.size !== undefined" class="sz t-3 num">{{ humanBytes(it.size) }}</span>
             <ChevronRight v-if="it.isDir" :size="13" class="t-3" />
           </button>
         </li>

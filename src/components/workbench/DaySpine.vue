@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, type Component } from 'vue'
 import { ChevronRight, Dumbbell, Scale, Timer, TrendingUp, Wallet } from 'lucide-vue-next'
 
+import WorkoutSourceTag from '@/components/exercise/WorkoutSourceTag.vue'
 import { CATEGORY_META, MEAL_LABELS, MEAL_META, mealKcal } from '@/config/domain'
 import { categoryOf, fmtCents } from '@/config/ledger'
 import { useDietStore } from '@/stores/diet'
@@ -11,6 +12,7 @@ import { useNutritionStore } from '@/stores/nutrition'
 import { usePomodoroStore } from '@/stores/pomodoro'
 import { useTodoStore } from '@/stores/todo'
 import { minToHHmm, nowMin, todayStr } from '@/utils/date'
+import type { WorkoutSource } from '@/types'
 
 /** 桌面主页 · 一日脊柱：把今天已发生的记录按时间轴纵向陈列，未来安排用虚线标示。 */
 
@@ -23,6 +25,8 @@ interface SpineEvent {
   value: string | null
   colorVar: string
   icon: Component
+  /** 运动记录的来源；非运动条目没有。只用来决定要不要打「手机同步」标签 */
+  source?: WorkoutSource
   done?: boolean
   planned?: boolean
   live?: boolean
@@ -65,10 +69,12 @@ const events = computed<SpineEvent[]>(() => {
   const m0 = metrics.find((m) => m.date === today && m.weightKg != null)
   if (m0) {
     const prev = metrics.find((m) => m.date < today && m.weightKg != null)
-    let sub = '体重记录'
+    // 副行不再复述「体重记录」（标题「晨重 x kg」+ 左侧 Scale 图标已表态）；
+    // 只留变化量，并补上单位
+    let sub = ''
     if (prev?.weightKg != null && prev.weightKg !== 0) {
       const d = m0.weightKg! - prev.weightKg
-      sub += ` · 较前次 ${d >= 0 ? '↑' : '↓'} ${Math.abs(d).toFixed(1)}`
+      sub = `较前次 ${d >= 0 ? '↑' : '↓'} ${Math.abs(d).toFixed(1)} kg`
     }
     out.push({ key: 'weight', min: 0, label: `晨重 ${m0.weightKg} kg`, sub, value: null, colorVar: 'var(--accent)', icon: Scale })
   }
@@ -98,6 +104,7 @@ const events = computed<SpineEvent[]>(() => {
       value: `${w.kcal} kcal`,
       colorVar: 'var(--c-exercise)',
       icon: Dumbbell,
+      source: w.source,
     })
   }
 
@@ -213,7 +220,10 @@ function fmtMin(min: number | null): string {
           <section class="ecard">
             <i class="eic"><component :is="row.e.icon" :size="19" /></i>
             <div class="col flex-1">
-              <span class="ett" :class="{ done: row.e.done }">{{ row.e.label }}</span>
+              <span class="ett-line">
+                <span class="ett" :class="{ done: row.e.done }">{{ row.e.label }}</span>
+                <WorkoutSourceTag v-if="row.e.source" :source="row.e.source" />
+              </span>
               <span class="esb">{{ row.e.sub }}</span>
             </div>
             <b v-if="row.e.value" class="eval_ num">{{ row.e.value }}</b>
@@ -226,8 +236,12 @@ function fmtMin(min: number | null): string {
 </template>
 
 <style scoped>
+/* 在工作台列（--frame-max-wide 1240，居中）里再收一档并自己居中：
+   时间轴整条走在列的中间，右侧不再单边空一截（1512 信息栏开时 222px，1920 收起 928px）。
+   900 而不是 1240：卡面行拉得再宽，时间的纵轴就读不出来了。 */
 .spine {
-  max-width: 860px;
+  max-width: 900px;
+  margin-inline: auto;
   padding-bottom: 40px;
 }
 
@@ -301,9 +315,21 @@ function fmtMin(min: number | null): string {
   color: var(--ec);
 }
 
+/* 标题行：名字 + 来源标签（只有手机同步进来的才有标签）。
+   名字自己可截断，标签不吃压缩 —— 与 WorkoutRow 同一套排法 */
+.ev .ett-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .ev .ett {
   font-size: var(--fs-callout);
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ev .esb {

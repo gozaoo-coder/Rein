@@ -106,11 +106,11 @@ const coreMacros = computed(() => macroStatsFrom(data.value).filter((m) => m.key
       <span class="ref" :style="{ left: `${LINE}%` }" />
     </div>
 
+    <!-- 图例只说配色归属：数字在上方主读数里（同一 kcalIntake 在图例里再报一遍，
+         会被误读成另一件事） -->
     <div class="legend">
-      <span class="li"><i class="dot" style="background: var(--c-intake)" />已吃<b class="num">{{ kcalIntake }}</b></span>
-      <span v-if="exerciseKcal > 0" class="li">
-        <i class="dot" style="background: var(--c-exercise)" />运动加回<b class="num">+{{ exerciseKcal }}</b>
-      </span>
+      <span class="li"><i class="dot" style="background: var(--c-intake)" />已吃</span>
+      <span v-if="exerciseKcal > 0" class="li"><i class="dot" style="background: var(--c-exercise)" />运动加回</span>
       <span class="li"><span class="glyph" />目标线</span>
     </div>
 
@@ -291,12 +291,6 @@ const coreMacros = computed(() => macroStatsFrom(data.value).filter((m) => m.key
   font-size: var(--fs-caption);
   color: var(--text-2);
   white-space: nowrap;
-}
-
-.li b {
-  font-weight: 800;
-  color: var(--text-1);
-  font-variant-numeric: tabular-nums;
 }
 
 .dot {

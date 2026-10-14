@@ -3,6 +3,7 @@ import { computed, nextTick, ref, type ComponentPublicInstance } from 'vue'
 import { CalendarDays, Dumbbell, House, Sparkles, User } from 'lucide-vue-next'
 
 import GlassDockAssembly from '@/components/common/GlassDockAssembly.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import {
   GLASS_PARAM_SPECS,
@@ -22,10 +23,10 @@ import { liquidGlass, setPerfMode } from '@/system/perf'
  * 位移；三块玻璃按真实 Dock 的装配摆（圆 + 药丸 + 圆）。台内换的是与标本台
  * 同一套暗场玻璃上下文（--hero-* 那组），所以这里看到的材质就是 Dock 上的材质。
  *
- * 每一行 = 英文键名（与 GlassSurface 的 prop 同名）+ 中文名 + 当前值 + 滑杆：
- * 值点一下就地输入（吸附到步长、夹回区间），滑杆给的是宽区间 —— 这一页是给
- * 「调到合适为止」用的，不是日常微调。改动即时写进 system/glassParams 并存本地，
- * 定稿后把那组数写回 GLASS_DEFAULTS 即可。
+ * 每一行 = 中文名 + 当前值 + 滑杆（英文键名与 GlassSurface 的 prop 同名，只保留在
+ * 读屏与 DOM 里，不占可见行位）：值点一下就地输入（吸附到步长、夹回区间），滑杆给的
+ * 是宽区间 —— 这一页是给「调到合适为止」用的，不是日常微调。改动即时写进
+ * system/glassParams 并存本地，定稿后把那组数写回 GLASS_DEFAULTS 即可。
  */
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -156,10 +157,14 @@ const stateText = computed(() =>
       </div>
     </div>
 
-    <p class="pnote t-3">
-      按管线顺序排：位移贴图（边缘厚度 / 中心亮度 / 贴图模糊 / 贴图分辨率）→ 位移强度 →
-      收尾柔化 → 表面（背景饱和度 / 底色浓度）。
-      数值点一下可直接输入；改动即时生效并存在本机。
+    <!-- 面板上下不再各罗列一遍参数名：管线顺序这种背景收进 InfoHint，面上只留操作结论 -->
+    <p class="pnote">
+      <span class="t-3">数值点一下可直接输入；改动即时生效并存在本机。</span>
+      <InfoHint
+        class="hint"
+        title="参数的排布依据"
+        content="面板按渲染管线的顺序排：位移贴图（边缘厚度 / 中心亮度 / 贴图模糊 / 贴图分辨率）→ 位移强度 → 收尾柔化 → 表面（背景饱和度 / 底色浓度）。"
+      />
     </p>
   </SheetModal>
 </template>
@@ -176,7 +181,7 @@ const stateText = computed(() =>
 }
 
 .reset:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 /* ---------- 暗场预览 ---------- */
@@ -278,14 +283,16 @@ const stateText = computed(() =>
   gap: 7px;
 }
 
+/* 英文键名退出可见行位（面板看起来不再是调试属性表），但节点与文本保留：
+   e2e 按它定位参数行（scripts/e2e-perf-glass.mjs），读屏与开发对照也仍拿得到 */
 .pkey {
-  flex: none;
-  padding: 1px 5px;
-  border-radius: var(--radius-s);
-  background: var(--surface-2);
-  color: var(--text-2);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-micro);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .pcn {
@@ -358,8 +365,13 @@ const stateText = computed(() =>
   box-shadow: var(--shadow-thumb);
 }
 
+/* 操作结论一行 + 行内帮助入口（管线顺序的背景说明收进 InfoHint） */
 .pnote {
   margin-top: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: var(--fs-caption);
   line-height: 1.6;
 }

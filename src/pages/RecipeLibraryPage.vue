@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { LoaderCircle, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-vue-next'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { dietService } from '@/services/dietService'
@@ -76,8 +78,7 @@ const aiGenerating = ref(false)
 const aiMeals = ref<AiMenuMeal[]>([])
 const aiWarnings = ref<string[]>([])
 const aiError = ref('')
-/** 流式过程：工具活动摘要 + 已流出餐次的名称预览 */
-const aiStreamTool = ref('')
+/** 流式过程：已流出餐次的名称预览（工具名与原始入参是开发者日志，不上屏） */
 const aiStreamMeals = ref<{ name: string; slotHint: string }[]>([])
 
 async function startAiMenu(): Promise<void> {
@@ -93,7 +94,6 @@ async function generateAi(): Promise<void> {
   aiError.value = ''
   aiMeals.value = []
   aiWarnings.value = []
-  aiStreamTool.value = ''
   aiStreamMeals.value = []
   try {
     await models.load()
@@ -115,7 +115,6 @@ async function generateAi(): Promise<void> {
         dislikes,
       },
       {
-        onTool: (brief) => (aiStreamTool.value = brief),
         onMeals: (meals) => (aiStreamMeals.value = meals),
       },
     )
@@ -151,8 +150,16 @@ const aiTotal = computed(() =>
       <div class="row" style="gap: 10px">
         <i class="ai-ic center"><Sparkles :size="18" /></i>
         <div class="col flex-1" style="gap: 2px">
-          <b>AI 定制一日菜单</b>
-          <span class="t-3 ai-sub">按你的目标与偏好生成，热量由食物库实算</span>
+          <div class="ai-head">
+            <b>AI 定制一日菜单</b>
+            <InfoHint
+              title="AI 菜单的营养口径"
+              content="菜单里的热量与蛋白、碳水、脂肪，按 AI 选中的食材从食物库逐项实算得出，不是按经验公式估算。
+
+这套口径与页头说明一致：食谱库的全部数值都实算自食物库。"
+            />
+          </div>
+          <span class="t-3 ai-sub">按你的目标与偏好生成</span>
         </div>
         <button class="ai-go pressable" @click="startAiMenu">生成</button>
       </div>
@@ -169,11 +176,13 @@ const aiTotal = computed(() =>
             {{ r.name }}<em class="slot">{{ MEAL_TYPE_LABEL[r.mealType] }}</em>
             <span v-if="isRestrictedFor(r)" class="badge">忌口</span>
           </p>
-          <p class="num rmeta">
-            <b>{{ r.baseKcal }}</b> 大卡 · 蛋白 <b>{{ r.baseProtein }}</b>g · 碳水
-            <b>{{ r.baseCarb }}</b>g · 脂肪 <b>{{ r.baseFat }}</b>g
+          <p class="rmeta num">
+            <b class="rkcal">{{ r.baseKcal }}<span>大卡</span></b>
+            <span class="rmac">蛋白 {{ r.baseProtein }}g</span>
+            <span class="rmac">碳水 {{ r.baseCarb }}g</span>
+            <span class="rmac">脂肪 {{ r.baseFat }}g</span>
           </p>
-          <p class="tags t-3">
+          <p class="tags t-2">
             <span v-for="a in r.allergens" :key="a" class="tag">{{ a }}</span>
             <span v-if="!r.allergens.length" class="tag">无常见过敏原</span>
           </p>
@@ -222,9 +231,10 @@ const aiTotal = computed(() =>
 
         <template v-else-if="aiGenerating">
           <p class="t-2 center ai-wait">正在按你的目标设计菜单并实算营养…</p>
-          <!-- 流式：匹配食材活动 + 已流出餐次逐个上屏 -->
-          <p v-if="aiStreamTool" class="t-3 center num ai-tool">
-            <LoaderCircle :size="13" class="spin" /> {{ aiStreamTool }}
+          <!-- 流式：只说人话状态（工具名 + 原始 JSON 入参是开发者日志，不上屏），
+               已流出的餐次逐个上屏 -->
+          <p class="t-3 center ai-tool">
+            <LoaderCircle :size="13" class="spin" /> 正在从食物库匹配食材…
           </p>
           <ul v-if="aiStreamMeals.length" class="ai-meals">
             <li v-for="(m, i) in aiStreamMeals" :key="i">
@@ -236,9 +246,13 @@ const aiTotal = computed(() =>
         </template>
 
         <template v-else-if="aiMeals.length">
-          <p class="num t-2 ai-total">
-            全天合计 <b>{{ aiTotal.kcal }}</b> 大卡 · 蛋白 <b>{{ aiTotal.protein }}</b>g
-          </p>
+          <div class="ai-total-row">
+            <p class="ai-total num">
+              <span class="ai-total-lab">全天合计</span><b>{{ aiTotal.kcal }}</b>大卡
+            </p>
+            <PillChip v-if="n.profile" size="sm">目标 {{ n.profile.targets.kcal }} 大卡</PillChip>
+            <span class="ai-protein num">蛋白 {{ aiTotal.protein }}g</span>
+          </div>
           <ul class="ai-meals">
             <li v-for="(m, i) in aiMeals" :key="i">
               <p class="ai-mhead">
@@ -279,6 +293,13 @@ const aiTotal = computed(() =>
 
 .ai-card b {
   font-size: var(--fs-callout);
+}
+
+/* 标题行右端挂说明入口（与生成键同行不同元素，卡头是标题所在行的右端） */
+.ai-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .ai-sub {
@@ -328,7 +349,8 @@ const aiTotal = computed(() =>
 }
 
 .rrow.off {
-  opacity: 0.45;
+  /* 忌口行整行降级走禁用浓度令牌，不写裸值 —— 0.45 会把该读的数值一起压掉 */
+  opacity: var(--disabled-opacity);
 }
 
 .rname {
@@ -359,14 +381,32 @@ const aiTotal = computed(() =>
   color: var(--danger);
 }
 
+/* 营养行：热量是主数值（19px + 等宽），三项宏量降为次要项 ——
+   一行四个同字号数字要扫读的人逐个读完才有结论 */
 .rmeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 10px;
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
-.rmeta b {
+.rmeta .rkcal {
+  font-size: var(--fs-title3);
+  font-weight: 700;
   color: var(--text-1);
-  font-weight: 600;
+}
+
+.rmeta .rkcal span {
+  margin-left: 3px;
+  font-size: var(--fs-caption);
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.rmeta .rmac {
+  color: var(--text-2);
 }
 
 .tags {
@@ -423,7 +463,7 @@ const aiTotal = computed(() =>
   padding: 30px 0;
 }
 
-/* 流式过程：工具活动行 + 打字光标 */
+/* 流式过程：人话状态行（工具细节是开发者日志，已不上屏）+ 打字光标 */
 .ai-tool {
   display: flex;
   align-items: center;
@@ -480,12 +520,34 @@ const aiTotal = computed(() =>
   font-size: var(--fs-subhead);
 }
 
+/* 全天合计：热量做主角（19px + 等宽），旁边挂目标值胶囊对照，蛋白降为次要行 */
+.ai-total-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
 .ai-total {
   font-size: var(--fs-subhead);
+  color: var(--text-2);
+}
+
+.ai-total .ai-total-lab {
+  margin-right: 4px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .ai-total b {
+  margin-right: 2px;
+  font-size: var(--fs-title3);
   color: var(--text-1);
+}
+
+.ai-protein {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .ai-meals {

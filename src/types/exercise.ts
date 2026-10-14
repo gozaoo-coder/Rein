@@ -142,6 +142,16 @@ export interface ExerciseInput {
   weightStep?: number
 }
 
+/**
+ * 一条运动记录是谁的。
+ *
+ * `local` = Rein 自己记的（补录 / 课程 / 跑步）；`health_connect` = 从系统
+ * Health Connect 同步进来的第三方数据。两者归属不同：前者以本机为准（会回写 HC，
+ * 删除时连带收掉 HC 那副本），后者以 HC 为准（在 Rein 里改会被下次同步覆盖回、
+ * 删只写墓碑不动 HC 那份）。DB 列默认 `local`，且参与跨设备同步。
+ */
+export type WorkoutSource = 'local' | 'health_connect'
+
 export interface Workout {
   id: number
   name: string
@@ -161,6 +171,8 @@ export interface Workout {
   note: string | null
   /** 来源会话（训练课/跑步保存时落关联）；手动添加为 null */
   sessionId: number | null
+  /** 来源：本机记的 / 手机同步进来的第三方数据（见 [`WorkoutSource`]） */
+  source: WorkoutSource
   createdAt: string
 }
 

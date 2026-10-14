@@ -78,6 +78,18 @@ pub fn session_start(
     state_json: Value,
 ) -> Result<SessionRecord> {
     let conn = state.db.lock();
+    session_start_on(&conn, plan_id, plan_name, started_at, state_json)
+}
+
+/// `session_start` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
+/// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
+pub(crate) fn session_start_on(
+    conn: &rusqlite::Connection,
+    plan_id: String,
+    plan_name: String,
+    started_at: String,
+    state_json: Value,
+) -> Result<SessionRecord> {
     conn.execute(
         "UPDATE workout_sessions SET status = 'aborted' WHERE status = 'active'",
         [],
@@ -88,7 +100,7 @@ pub fn session_start(
          VALUES (?1, ?2, 'active', ?3, datetime('now'), 0, 1, 0, ?4)",
         rusqlite::params![plan_id, plan_name, started_at, state_json.to_string()],
     )?;
-    read_by_id(&conn, conn.last_insert_rowid())
+    read_by_id(conn, conn.last_insert_rowid())
 }
 
 /// 事件级快照：每个训练事件（做组/休息/计时/重量调整…）调用一次。
@@ -103,6 +115,18 @@ pub fn session_snapshot(
     state_json: Value,
 ) -> Result<()> {
     let conn = state.db.lock();
+    session_snapshot_on(&conn, id, ex_index, set_index, weight_kg, state_json)
+}
+
+/// `session_snapshot` 的本体（见 [`session_start_on`]）。
+pub(crate) fn session_snapshot_on(
+    conn: &rusqlite::Connection,
+    id: i64,
+    ex_index: i64,
+    set_index: i64,
+    weight_kg: f64,
+    state_json: Value,
+) -> Result<()> {
     conn.execute(
         "UPDATE workout_sessions SET \
            ex_index = ?2, set_index = ?3, weight_kg = ?4, state_json = ?5, \
@@ -118,6 +142,11 @@ pub fn session_snapshot(
 #[tauri::command]
 pub fn session_active(state: State<AppState>) -> Result<Option<SessionRecord>> {
     let conn = state.db.lock();
+    session_active_on(&conn)
+}
+
+/// `session_active` 的本体（见 [`session_start_on`]）。
+pub(crate) fn session_active_on(conn: &rusqlite::Connection) -> Result<Option<SessionRecord>> {
     let res = conn.query_row(
         "SELECT id, plan_id, plan_name, status, started_at, updated_at, ex_index, \
          set_index, weight_kg, elapsed_sec, state_json \
@@ -153,6 +182,15 @@ pub fn session_finish(
     input: FinishInput,
 ) -> Result<crate::modules::exercise::models::Workout> {
     let mut conn = state.db.lock();
+    session_finish_on(&mut conn, input)
+}
+
+/// `session_finish` 的本体：内部用可变事务（`transaction()` 需要 `&mut Connection`，
+/// contract §6.3）。命令体用 `let mut conn = state.db.lock();` 取锁后转调。
+pub(crate) fn session_finish_on(
+    conn: &mut rusqlite::Connection,
+    input: FinishInput,
+) -> Result<crate::modules::exercise::models::Workout> {
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO workouts (name, type, date, start_min, duration_min, kcal, intensity, note, session_id, created_at) \
@@ -215,13 +253,18 @@ pub fn session_finish(
         [input.id],
     )?;
     tx.commit()?;
-    workout_by_id(&conn, workout_id)
+    workout_by_id(conn, workout_id)
 }
 
 /// 正常结束（放弃）：只关闭会话，不写训练记录。
 #[tauri::command]
 pub fn session_abort(state: State<AppState>, id: i64) -> Result<()> {
     let conn = state.db.lock();
+    session_abort_on(&conn, id)
+}
+
+/// `session_abort` 的本体（见 [`session_start_on`]）。
+pub(crate) fn session_abort_on(conn: &rusqlite::Connection, id: i64) -> Result<()> {
     conn.execute(
         "UPDATE workout_sessions SET status = 'aborted', updated_at = datetime('now') WHERE id = ?1",
         [id],
@@ -448,4 +491,155 @@ pub(crate) fn strength_recent_sets_on(
         .query_map([days], strength_set_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::session::models::{FinishInput, FinishSet};
+    use rusqlite::Connection;
+
+    fn fresh() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    /// `session_start_on`：新开一场 active；旧的 active 自动标 aborted（行为与原命令一致）。
+    #[test]
+    fn session_start_on_aborts_previous_and_returns_active_row() {
+        let conn = fresh();
+        let a = session_start_on(
+            &conn,
+            "p1".into(),
+            "胸推日".into(),
+            "2026-01-01T09:00:00Z".into(),
+            Value::Null,
+        )
+        .unwrap();
+        assert_eq!(a.status, "active");
+        assert_eq!(a.plan_name, "胸推日");
+
+        let b = session_start_on(
+            &conn,
+            "p2".into(),
+            "腿日".into(),
+            "2026-01-01T10:00:00Z".into(),
+            Value::Null,
+        )
+        .unwrap();
+        assert!(b.id > a.id);
+        let a_status: String = conn
+            .query_row("SELECT status FROM workout_sessions WHERE id = ?1", [a.id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(a_status, "aborted", "旧 active 会话被防御性中止");
+        assert_eq!(session_active_on(&conn).unwrap().unwrap().id, b.id);
+    }
+
+    /// `session_snapshot_on`：把事件级快照写进行内（相位 / 索引 / 重量）。
+    #[test]
+    fn session_snapshot_on_updates_the_active_row() {
+        let conn = fresh();
+        let s = session_start_on(
+            &conn,
+            "p1".into(),
+            "胸推日".into(),
+            "2026-01-01T09:00:00Z".into(),
+            Value::Null,
+        )
+        .unwrap();
+        session_snapshot_on(
+            &conn,
+            s.id,
+            1,
+            3,
+            40.0,
+            serde_json::json!({ "phase": "exercise" }),
+        )
+        .unwrap();
+        let rec = session_active_on(&conn).unwrap().unwrap();
+        assert_eq!(rec.ex_index, 1);
+        assert_eq!(rec.set_index, 3);
+        assert_eq!(rec.weight_kg, 40.0);
+        assert_eq!(rec.state["phase"], "exercise");
+    }
+
+    /// `session_abort_on`：只关会话，不写训练记录（放弃）。
+    #[test]
+    fn session_abort_on_closes_without_writing_a_workout() {
+        let conn = fresh();
+        let s = session_start_on(
+            &conn,
+            "p1".into(),
+            "胸推日".into(),
+            "2026-01-01T09:00:00Z".into(),
+            Value::Null,
+        )
+        .unwrap();
+        session_abort_on(&conn, s.id).unwrap();
+        assert!(session_active_on(&conn).unwrap().is_none(), "abort 后无活跃会话");
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM workouts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "放弃不写训练记录");
+    }
+
+    /// `session_finish_on`：同一事务写训练记录 + 逐组明细 + 关会话（可变事务本体）。
+    #[test]
+    fn session_finish_on_writes_workout_and_closes_the_session() {
+        let mut conn = fresh();
+        let s = session_start_on(
+            &conn,
+            "p1".into(),
+            "胸推日".into(),
+            "2026-01-01T09:00:00Z".into(),
+            Value::Null,
+        )
+        .unwrap();
+        let workout = session_finish_on(
+            &mut conn,
+            FinishInput {
+                id: s.id,
+                name: "胸推日".into(),
+                workout_type: "strength".into(),
+                date: "2026-01-01".into(),
+                duration_min: 42.0,
+                intensity: None,
+                kcal: 300.0,
+                note: None,
+                sets: vec![FinishSet {
+                    exercise_key: "bench".into(),
+                    exercise_name: "卧推".into(),
+                    exercise_id: None,
+                    kind: "strength".into(),
+                    set_no: 1,
+                    weight_kg: Some(40.0),
+                    reps: Some(8),
+                    sec: None,
+                    warmup: false,
+                }],
+            },
+        )
+        .unwrap();
+        assert_eq!(workout.name, "胸推日");
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM workout_sessions WHERE id = ?1",
+                [s.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "finished");
+        let sets: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workout_sets WHERE workout_id = ?1",
+                [workout.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sets, 1, "逐组明细落库");
+        assert!(session_active_on(&conn).unwrap().is_none(), "结束后无活跃会话");
+    }
 }

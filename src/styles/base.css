@@ -103,6 +103,13 @@ button {
   user-select: none;
 }
 
+/* 禁用态的光标：全库有 8 种各写各的禁用浓度（收编不在本轮），但**行为**那一半
+   现在就补齐 —— 点不动的按钮不该继续摆一个「可点」的箭头。零像素改动：
+   只换指针形状，不动任何盒模型 / 颜色（浓度值待收编，见 --disabled-opacity）。 */
+button:disabled {
+  cursor: default;
+}
+
 input,
 textarea,
 select {
@@ -132,6 +139,52 @@ svg {
 
 * {
   scrollbar-width: none;
+}
+
+/* ---------- 桌面：把主人区的滚动条要回来 ----------
+   上面两条是**手机**的苹果风格：滚动条藏掉，靠「内容本身被裁」暗示还能滚 ——
+   手指一推就有反馈，藏起来是对的。桌面换了输入方式，这条规则就开始有害：
+   .desk-main（桌面主人区唯一的滚动容器）之外只有滚轮，没有任何东西告诉用户
+   「下面还有一屏」；边到边的大卡片被窗口下缘齐齐切掉，读起来像「页面就这么长」。
+   这正是课表周视图那条细滚动条存在的理由（src/components/campus/ScheduleWeekView.vue:207
+   起的 .wrap），这里按同一套值把它还给主人区。
+
+   限定 .desk-main：手机壳（.app-frame）与各页内部的滚动区照旧全局隐藏、也不限宽。 */
+.desk-main {
+  scrollbar-width: thin;
+  /* 轨道透明、滑块用分隔线的颜色：一条细线足够说「还有」，但不抢内容 */
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+/* 要按类选择器写才压得住上面那条全局 `::-webkit-scrollbar { width: 0 }`
+   （(0,1,0) > (0,0,0)，与 ScheduleWeekView 的做法一致） */
+.desk-main::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.desk-main::-webkit-scrollbar-track,
+.desk-main::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.desk-main::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--radius-full);
+}
+
+.desk-main::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+/* ---------- 桌面：通栏卡里的正文行长 ----------
+   桌面把卡片拉到整宽（--desk-content 1040，更宽时 --desk-wide），一行 82–89 字的
+   正文会丢行 —— 中文正文的可读行长约 40–45 字。1512 实测正是 note / pnote / hint
+   这三类说明段落在 85–89 字/行（#/settings、#/settings/features、#/settings/update、
+   #/ai/models），所以只给它们收一条上限，不在这里给所有 <p> 一刀切：
+   正文段落的结构性收口归各页自己（整宽表格、代码块、证据面板本来就不该收窄）。 */
+.desk-main :is(p.note, p.pnote, p.hint) {
+  max-width: 44em;
 }
 
 /* ---------- 「这里可以横滑」的 affordance ----------
@@ -193,6 +246,28 @@ button:active,
 
 .card + .card {
   margin-top: 14px;
+}
+
+/* ---------- 桌面：基础元素的两处低特指度覆盖 ----------
+   ① 卡片内距 20 → 16：桌面一屏十来张卡，20px 内距配 12px 圆角（tokens 的桌面覆盖）
+      显得空；16 与 12px 圆角同一档呼吸。
+   用 :where(html[data-shell='desk']) 把选择器压回与基线 .card 同级（0,1,0）——
+   于是它**只赢在源码顺序**（本块写在 .card 之后），谁都不必用 !important：
+   .card.sub 的 14px（(0,2,0)）与各页 scoped 的 .card 规则（类 + scoped 属性选择器，
+   同样是 (0,2,0)）照旧压过它，卡片自带语义内距的页面不受影响。
+   注：这正是「.card.sub 内距被误顶到 16px」那个副作用的解药 —— 高特指度写法会
+   连二级分组面一起改掉，低特指度不会。 */
+:where(html[data-shell='desk']) .card {
+  padding: 16px;
+}
+
+/* ② <small> 只限桌面：桌面档把 --fs-footnote 压到 12px 之后，UA 给 small 的
+   0.8333 会算出 10.83px——直接掉出字号阶梯（R4 的下限 11px，见 desktop-metrics）。
+   接住的只是「自己没写字号」的那些 small：本规则 (0,0,1)，组件里那二十来条
+   自带 font-size 的 small 规则（scoped 后至少 (0,1,1)）照旧赢。
+   手机档不动 —— 那边没有降级，也就没有这个坑。 */
+:where(html[data-shell='desk']) small {
+  font-size: var(--fs-caption);
 }
 
 /* 卡片内的**二级分组面**（SettingsPage 的 .rows、SyncPage 的 .frow 这类「一组行」）：

@@ -15,6 +15,9 @@ import {
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import HealthWorkoutList from '@/components/health/HealthWorkoutList.vue'
 import MetricDetailSheet from '@/components/health/MetricDetailSheet.vue'
 import { useToast } from '@/composables/useToast'
@@ -410,6 +413,14 @@ const previewEmptyText = computed(() =>
     : '先在上方完成「运动」组的授权，再同步一次即可',
 )
 
+/** 同步规则全文：四条「谁能改谁」收进「同步规则」卡面的 InfoHint，卡面只留一行结论 */
+const syncRules = [
+  '从手机同步进来的记录：以 Health Connect 为准，那边改了会覆盖这边，那边删了这边也跟着删。',
+  '每日体征数据：只是 Health Connect 的镜像，每次同步整表刷新，不会动你手填的体重等档案。',
+  'Rein 自己记的运动：以本机为准，删除时会连带收掉回写出去的那一份。',
+  '在这里删掉一条同步记录：只从 Rein 移除，不删 Health Connect 里那份（它可能是别的 App 写的）。',
+].join('\n\n')
+
 /* ---- 指标详情抽屉 ---- */
 const detailOpen = ref(false)
 const detail = ref<{ meta: HealthMetricMeta; series: HealthMetricSeries } | null>(null)
@@ -505,10 +516,16 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
       <div class="rows">
         <div class="frow row">
           <span class="col ftxt">
-            <b>{{ fmtTime(status?.lastSyncAt ?? null) }}</b>
-            <small>
-              已导入 {{ status?.importedCount ?? 0 }} 条 · 已回写 {{ status?.exportedCount ?? 0 }} 条
-            </small>
+            <b class="num">{{ fmtTime(status?.lastSyncAt ?? null) }}</b>
+            <!-- 累计导入/回写：两枚胶囊各自成形，不用「·」串成一句；「本次」的分项在下方报告行 -->
+            <span class="cum">
+              <PillChip tone="muted" size="sm">
+                累计已导入 <span class="num">{{ status?.importedCount ?? 0 }}</span> 条
+              </PillChip>
+              <PillChip tone="muted" size="sm">
+                累计已回写 <span class="num">{{ status?.exportedCount ?? 0 }}</span> 条
+              </PillChip>
+            </span>
           </span>
           <button class="act" type="button" :disabled="!canSync" @click="runSync">
             <RefreshCw :size="14" :class="{ spin: syncing }" />
@@ -561,15 +578,17 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
         </p>
 
         <div v-if="report" class="rep">
-          <span v-if="report.imported">导入 {{ report.imported }}</span>
-          <span v-if="report.updated">更新 {{ report.updated }}</span>
-          <span v-if="report.removed">移除 {{ report.removed }}</span>
-          <span v-if="report.metricsImported">体征 {{ report.metricsImported }} 天</span>
-          <span v-if="report.exported">回写 {{ report.exported }}</span>
-          <span v-if="report.reExported">重写 {{ report.reExported }}</span>
-          <span v-if="report.skipped">跳过 {{ report.skipped }}（没填开始时间，见下方）</span>
+          <!-- 「本次」二字把报告行与上方的累计行分开：同一个数在两处指的不是一回事 -->
+          <StatusChip tone="accent" size="sm">本次</StatusChip>
+          <span v-if="report.imported">导入 <span class="num">{{ report.imported }}</span></span>
+          <span v-if="report.updated">更新 <span class="num">{{ report.updated }}</span></span>
+          <span v-if="report.removed">移除 <span class="num">{{ report.removed }}</span></span>
+          <span v-if="report.metricsImported">体征 <span class="num">{{ report.metricsImported }}</span> 天</span>
+          <span v-if="report.exported">回写 <span class="num">{{ report.exported }}</span></span>
+          <span v-if="report.reExported">重写 <span class="num">{{ report.reExported }}</span></span>
+          <span v-if="report.skipped">跳过 <span class="num">{{ report.skipped }}</span>（没填开始时间，见下方）</span>
           <span v-if="!report.imported && !report.updated && !report.removed && !report.exported && !report.reExported">
-            读到 {{ report.scanned }} 条，没有变化
+            读到 <span class="num">{{ report.scanned }}</span> 条，没有变化
           </span>
         </div>
       </div>
@@ -632,11 +651,11 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
         <h3 class="mtitle">从手机同步进来的</h3>
         <HealthWorkoutList v-if="importedWorkouts.length" :items="importedWorkouts" />
         <p v-else class="empty">
-          {{ readGranted ? '还没有导入记录 —— 在上面同步一次即可' : '先完成「运动」组授权再同步' }}
+          {{ readGranted ? '还没有导入记录 —— 在上面同步一次即可' : '「运动」组授权后，这里会列出从手机同步进来的运动记录' }}
         </p>
 
         <h3 class="mtitle">没填开始时间的本机记录</h3>
-        <p class="empty">这些是回写 Health Connect 时被跳过的本机记录（HC 里没开始时间就没处安放）</p>
+        <p class="empty">这些是回写 Health Connect 时被跳过的本机记录（Health Connect 里没有开始时间就没处安放）</p>
         <HealthWorkoutList
           v-if="missingStartWorkouts.length"
           :items="missingStartWorkouts"
@@ -646,35 +665,16 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
       </template>
     </section>
 
-    <!-- 4. 规则说明：双向同步必须把「谁能改谁」讲清楚，否则用户不敢点同步 -->
+    <!-- 4. 规则说明：双向同步必须把「谁能改谁」讲清楚，否则用户不敢点同步。
+         四条归属规则收进标题行 InfoHint，卡面只留一行结论 -->
     <section class="card">
-      <h2 class="gtitle">同步规则</h2>
-      <div class="rows">
-        <div class="frow row">
-          <span class="col ftxt">
-            <b>从手机同步进来的记录</b>
-            <small>以 Health Connect 为准：那边改了会覆盖这边，那边删了这边也跟着删</small>
-          </span>
-        </div>
-        <div class="frow row">
-          <span class="col ftxt">
-            <b>每日体征数据</b>
-            <small>只是 Health Connect 的镜像，每次同步整表刷新；不会动你手填的体重等档案</small>
-          </span>
-        </div>
-        <div class="frow row">
-          <span class="col ftxt">
-            <b>Rein 自己记的运动</b>
-            <small>以本机为准；删除时会连带收掉回写出去的那一份</small>
-          </span>
-        </div>
-        <div class="frow row">
-          <span class="col ftxt">
-            <b>在这里删掉一条同步记录</b>
-            <small>只从 Rein 移除，不删 Health Connect 里那份（它可能是别的 App 写的）</small>
-          </span>
-        </div>
-      </div>
+      <h2 class="gtitle rules-head">
+        同步规则
+        <InfoHint title="同步规则" :content="syncRules" />
+      </h2>
+      <!-- 两个方向各一枚胶囊：nowrap 的单枚装不下整句，拆开才不在窄屏溢出 -->
+      <StatusChip tone="neutral" size="sm">手机导入以 Health Connect 为准</StatusChip>
+      <StatusChip tone="neutral" size="sm">本机记录以 Rein 为准</StatusChip>
     </section>
 
     <!-- 指标详情：趋势 + raw 数据（预览卡点行打开） -->
@@ -750,6 +750,25 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
   line-height: 1.4;
 }
 
+/* 累计导入 / 回写：两枚胶囊并列，替代原先「·」串成的一句 */
+.cum {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+/* 同步规则标题行：整卡收进 InfoHint，只剩一枚「?」在标题右端 */
+.rules-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rules-head :deep(.info-hint) {
+  margin-left: auto;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -783,7 +802,7 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility)
 }
 
 .act:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
   cursor: default;
 }
 

@@ -160,7 +160,10 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 { "v": 1, "event": "gateway.auth.granted", "data": { … } }
 ```
 
-### 4.4 v1 方法清单（15 条）
+### 4.4 方法清单（28 条 = v1 15 条 + 第二轮 13 条）
+
+> 第二轮新增的 13 条在 §13 给出完整参数/返回与副作用；下表同步登记，方法与 scope 的注册处是
+> `src-tauri/src/modules/gateway/protocol.rs`（`Method::ALL`）与 `models.rs`（`Scope::ALL`）。
 
 参数/返回字段一律 **camelCase**（与 IPC 一致，STANDARDS §2）。「映射」列是必须调用的现有函数。
 
@@ -172,7 +175,10 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 | `schedule.listAll` | 无 | `TodoDto[]` | `schedule.read` | `list_all_todos`（todo/commands.rs:140） |
 | `schedule.create` | `title:string`, `notes?:string`, `date?:string`, `startMin?:int`, `durationMin?:int`, `category?:string`, `priority?:int` | `TodoDto` | `schedule.create` | `create_todo`（todo/commands.rs:247，其余参数取默认） |
 | `schedule.update` | `todo:TodoInput`（见下） | `TodoDto` | `schedule.write` | `update_todo`（todo/commands.rs:296） |
-| `schedule.delete` | `id:int` | `{}` | `schedule.write` | `delete_todo`（todo/commands.rs:330） |
+| `schedule.delete` | `id:int` | `{}` | **`schedule.delete`**（第二轮由 `schedule.write` 拆出） | `delete_todo_on`（todo/commands.rs:428） |
+| `schedule.campus` | `semesterId?:int`, `from?:string`, `to?:string` | `ScheduleView` | `schedule.read` | `campus_schedule`（campus/commands.rs:1392）→ §13 |
+| `schedule.programs` | 无 | `ProgramRecord[]` | `schedule.read` | `program_list`（program/commands.rs:43）→ §13 |
+| `schedule.programActive` | 无 | `ProgramRecord ｜ null` | `schedule.read` | `program_get_active`（program/commands.rs:55）→ §13 |
 
 `TodoInput` = `{ id:int, title:string, notes?:string|null, date?:string|null, startMin?:int|null, durationMin?:int|null, category:string, priority:int, status:string, completedAt?:string|null }`。
 **注意**：`update_todo` 是**全量覆盖**（todo/commands.rs:296-329 用 `?13` 覆盖 attachments），
@@ -190,6 +196,12 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 | `workout.strengthExercises` | 无 | `StrengthExerciseRef[]` | `workout.read` | `strength_exercises`（session/commands.rs:335） |
 | `workout.lastWeights` | `exerciseIds:string[]` | `StrengthLastWeight[]` | `workout.read` | `strength_last_weights`（session/commands.rs:364） |
 | `workout.recentSets` | `days?:int`（默认 42，clamp 1..365） | `StrengthSetRecord[]` | `workout.read` | `strength_recent_sets`（session/commands.rs:400） |
+| `workout.sessionActive` | 无 | `SessionLive ｜ null` | `workout.read` | `session_active`（session/commands.rs:119）→ §13/§14 |
+| `workout.sessionStart` | `planId:string`, `planName:string`, `startedAt:string`, `state?:object` | `{accepted:true}` | `workout.write` | 下行事件 → `session_start`（session/commands.rs:73）→ §14 |
+| `workout.sessionSnapshot` | `id:int`, `exIndex:int`, `setIndex:int`, `weightKg:float`, `state:object` | `{accepted:true}` | `workout.write` | 下行事件 → `session_snapshot`（session/commands.rs:97）→ §14 |
+| `workout.sessionFinish` | `sessionFinish:SessionFinishInput`（§13） | `{accepted:true}` | `workout.write` | 下行事件 → `session_finish`（session/commands.rs:151）→ §14 |
+| `workout.sessionAbort` | `id:int` | `{accepted:true}` | `workout.write` | 下行事件 → `session_abort`（session/commands.rs:223）→ §14 |
+| `workout.delete` | `id:int` | `{}` | **`workout.delete`**（第二轮新增） | `delete_workout`（exercise/commands.rs:118），HC 传播照旧 → §13 |
 
 **pomodoro（番茄钟）**
 
@@ -197,6 +209,10 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 | --- | --- | --- | --- | --- |
 | `pomodoro.list` | `startDate:string`, `endDate:string` | `PomodoroDto[]` | `pomodoro.read` | `list_pomodoro_sessions`（pomodoro/commands.rs:49） |
 | `pomodoro.save` | `session:PomodoroInput`=`{ todoId?:int|null, startedAt:string, endedAt:string, focusMin:float, breakMin:float, completed:bool }` | `PomodoroDto` | `pomodoro.write` | `save_pomodoro_session`（pomodoro/commands.rs:25） |
+| `pomodoro.status` | 无 | `FocusRuntime ｜ null` | `pomodoro.read` | 新建 `runtime::focus_state_on`（读 `app_meta`，§14） |
+| `pomodoro.start` | `focusMin?:int`, `breakMin?:int`, `todoId?:int｜null` | `{accepted:true}` | `pomodoro.control` | 下行事件 → `pomodoroStore.start()` → §14 |
+| `pomodoro.pause` | 无 | `{accepted:true}` | `pomodoro.control` | 下行事件 → `pomodoroStore.pause()` → §14 |
+| `pomodoro.stop` | 无 | `{accepted:true}` | `pomodoro.control` | 下行事件 → `pomodoroStore.reset()` → §14 |
 
 **对外 DTO（剥离前端专属列，与现有 model 的差异必须照此实现）**
 
@@ -239,6 +255,14 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 订阅者追不上（服务端广播 `Lagged`）时应自行**全量重查**，服务端不补齐。契约此前的 §4.4/§4.5 只冻结了
 3 条 auth 事件，此处把这条实现补齐的约定正式写入。
 
+**第二轮新增的 Tauri 命令与事件（前端照抄字符串，§14/§17）**：
+命令 `focus_publish`、`focus_unpublish`（前端→后端运行态上报/清除，1 秒一次）、
+`gateway_audit_recent`（设置页读最近审计）；
+Tauri→前端事件 `gateway://pomodoro-command`（`{action, args}`）、`gateway://session-command`（`{action, args}`）——
+外部控制经此落到前端 store 执行，对外方法只回 `{accepted:true}` 受理回执。
+三条命令同样要三处同步（`lib.rs` / `gatewayService.ts` / `mock/server.ts`）。
+**`Origin` 白名单变更不动本节的这三道门**：见 §15。
+
 **前端类型（新建 `src/types/externalAccess.ts`）**：
 `GatewayAuthRequest = { requestId, clientId, clientName, origin, ip:string|null, scopes:string[], createdAt, timeoutMs }`
 （`ip` = 服务端从 socket 取的来源 IP，请求方无法伪造；`origin` 因握手拒一切带 Origin 的连接而恒为 null）；
@@ -246,7 +270,8 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 `GatewayBlocked = { clientId, name, reason:"deny"｜"revoked"｜"ignore", lastSeen:string|null, ip:string|null }`；
 `GatewayStatus = { enabled:bool, bindMode:"local"｜"lan", port:number|null, pairToken:string|null, pendingCount:number, clients:GatewayClient[], blocked:GatewayBlocked[] }`
 （`blocked` = 被拒绝 / 已撤销 / 连续忽略进入静默的客户端，设置页可**解除**——`gateway_revoke_client`
-对 deny/ignore 行删行、对 allow 行置撤销位）。
+对 deny/ignore 行删行；对 allow 行首次置撤销位、**对已置撤销位的行再调一次则删行**，
+好让「已撤销」不永远滞留在「被拦下」清单里）。
 （`pairToken` = 安装级配对令牌，LAN 模式必填，仅本机设置页显示，用户可复制给外部客户端）。
 
 ### 4.6 错误码表（响应 `error.code`）
@@ -282,6 +307,9 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 - 会话态与连接**结构性绑定**：`conn_id` 由服务端在 accept 时生成，外部无法自报（自报即可伪造重连）。
   这是硬要求 1「链接中断即会话结束」唯一可靠的实现方式。
 - `session grant` 可随时升级为 `always`；`deny` 行可由设置页解除；`allow` 行可撤销/收窄。
+- **第二轮定稿**（完整规则见 §16）：授权超时 **60 秒**（`auth.rs` 的 `AUTH_PENDING_TIMEOUT_MS` 由 `30_000` 改 `60_000`），
+  **以后端计时为准**，前端只显示倒计时；「允许本次会话」**不加任何宽限窗口**（用户硬性要求）；
+  忽略/拒绝的静默与限频、以及超时/忽略计入按 IP 失败限频，均以 §16 为准。
 
 ### 5.2 token 格式与存储
 
@@ -294,13 +322,18 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 
 ### 5.3 scope 定义与校验点
 
-- 字符串：`schedule.read` `schedule.create` `schedule.write` `workout.read` `workout.write`
-  `pomodoro.read` `pomodoro.write`。`Scope` Rust 枚举（`scope.rs`）是**唯一定义处**，前端与 mock 只消费同名串。
+- 字符串（**10 条**）：`schedule.read` `schedule.create` `schedule.write` `schedule.delete`
+  `workout.read` `workout.write` `workout.delete` `pomodoro.read` `pomodoro.write` `pomodoro.control`。
+  `Scope` Rust 枚举的**唯一定义处**是 `src-tauri/src/modules/gateway/models.rs`（`Scope::ALL: [Scope; 10]` —
+  第二轮由 7 条扩到 10 条）；前端与 mock 只消费同名串。
+  第二轮新增 3 条：`schedule.delete`（删待办）、`workout.delete`（删运动记录）、`pomodoro.control`（控制运行态番茄钟）。
 - 解析一律**精确匹配**（枚举集合 `find`），绝不用前缀/通配——杜绝 `schedule.read` 命中未来的 `schedule.read_secret`。
 - **默认最小集 = 仅 `schedule.read`**（对应「小组件显示今天日程」）；任何写入 scope 默认**不勾**，
   必须用户在配对时逐项显式勾选；scope 与 client 绑定（不是全局开关）。
-- **校验点**：每个入站 WS 调用在进入业务逻辑之前 `gateway::scope::require(conn, hub, conn_id, client_id, need)`；
+- **校验点**：每个入站 WS 调用在进入业务逻辑之前 `gateway::auth::require(conn, hub, conn_id, need)`；
   每次查 DB 校验、**不缓存**（缓存即撤销延迟生效）。handler 里必须先 `require` 再 `state.db.lock()`。
+  （`require` 的唯一定义处是 `src-tauri/src/modules/gateway/auth.rs`；此处旧稿误写的 `scope::require`
+  与 `scope.rs` 均不存在。）
 
 ### 5.4 审计字段（`ext_audit`，只落库）
 
@@ -379,7 +412,12 @@ CREATE TABLE ext_audit (
   detail TEXT, ip TEXT, duration_ms INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_ext_audit_at ON ext_audit(at DESC);
+-- 第二轮增补（MIGRATION_0043）；历史条目 0042 不改
+CREATE INDEX idx_ext_audit_client ON ext_audit(client_id, at DESC);
 ```
+
+> `ext_audit.detail` 从第二轮起**承载请求参数摘要**（JSON 文本：按 scope 白名单挑字段、逐字段截断长度，
+> 见 §17「审计参数」）。`origins`（§15 的 Origin 白名单）存 `app_meta` 键 `gateway.allowedOrigins`，**不建表列**。
 
 - `ext_clients` / `ext_audit` **不进** `sync/tables.rs` 白名单（`tables.rs:1-2,87`）：凭据复制到第二台设备是安全决定，
   不该被同步默认替用户做（先例：`campus_accounts`、`ai_models.api_key` 均按此处理）。
@@ -409,8 +447,10 @@ CREATE INDEX idx_ext_audit_at ON ext_audit(at DESC);
 - 单例状态机：新建 `src/system/externalAccessRuntime.ts`，在 `src/main.ts` 启动调用 `init()`
   （幂等，仿 `src/system/shareInbox.ts:24-34`「启动 poll 一次 + 收事件再 poll」），冷启动必须拉一次 `gateway_authorization_pending`。
 - 设置页：`src/pages/SettingsPage.vue` 追加一张「外部访问」卡（`gtitle` + `frow` 入口，仿 `:162-168` 的多设备同步卡），
-  新建 `src/pages/ExternalAccessPage.vue`（开关 `ToggleSwitch`、绑定模式 `SegmentedControl`、客户端列表 `EmptyState` +
-  逐行「名称/权限摘要/最后活跃/撤销」，仿 `src/pages/SyncPage.vue` 的已配对设备列表）。`src/router.ts` 登记 `/settings/external`。
+  **内嵌** `src/components/settings/ExternalAccessSection.vue`（开关 `ToggleSwitch`、绑定模式 `SegmentedControl`、
+  客户端列表 `EmptyState` + 逐行「名称/权限摘要/最后活跃/撤销」，仿 `src/pages/SyncPage.vue` 的已配对设备列表）。
+  > 历史计划里写的独立页 `src/pages/ExternalAccessPage.vue` 与 `/settings/external` 路由**已取消**，
+  > 整块内嵌为上述分区（与 §3 文件表、§9.4 实际落地一致）；此处正文为历史计划，以代码为准。
 - 服务：新建 `src/services/gatewayService.ts`，命令封装照抄 `src/services/pomodoroService.ts` 的对象字面量写法；
   事件桥照抄 `src/services/voiceService.ts:36-40` / `src/services/agentService.ts:23-33`（isTauri→`listen`，否则挂 mock 钩子）。
 
@@ -523,6 +563,321 @@ CREATE INDEX idx_ext_audit_at ON ext_audit(at DESC);
 
 正文引用的现存文件（本文写作时已真实存在）：
 
+本章列的是正文引用到的现存文件。**机器可校验清单在本文档末尾**（那一段 check-refs 注释块），
+格式与位置由校验脚本约定；本轮新增章节（§13–§17）引用的现存文件已并入该清单。
+
+---
+
+## 13. 第二轮范围扩展：新增方法与权限
+
+> 本章是第二轮（用户已拍板范围）的**增量契约**。方法/scope 的注册处：
+> `src-tauri/src/modules/gateway/protocol.rs` 的 `Method::ALL`（现 `[Method; 15]` → `[Method; 28]`）、
+> `src-tauri/src/modules/gateway/models.rs` 的 `Scope::ALL`（现 `[Scope; 7]` → `[Scope; 10]`）。
+> 两处枚举与 `as_str` / `parse` 同步改，既有单测（models.rs:409-454、protocol.rs:320-345）同步扩容。
+
+### 13.1 新增 scope（3 条）
+
+| scope 字符串 | 覆盖方法 | 拆分理由 |
+| --- | --- | --- |
+| `schedule.delete` | `schedule.delete` | 从 `schedule.write` 拆出：有写权 ≠ 有删权（用户要求「scope 增加删除权限」） |
+| `workout.delete` | `workout.delete` | 删除运动记录（含 Health Connect 传播），风险独立 |
+| `pomodoro.control` | `pomodoro.start/pause/stop` | 控制**运行中**的番茄钟，与「写已落盘会话记录」的 `pomodoro.write` 分离 |
+
+`schedule.read` / `schedule.create` / `schedule.write` / `workout.read` / `workout.write` / `pomodoro.read` / `pomodoro.write`
+保持原义（`workout.*` 运动数据、`schedule.*` 日程域＝待办＋课表＋训练方案）。仍**精确匹配**，无前缀通配。
+
+### 13.2 新增方法（13 条）
+
+日程域（scope 见行内；`ScheduleView` = campus/models.rs:661，`ProgramRecord` = program/models.rs:9）：
+
+| 方法字符串 | 参数 | 返回 | scope | 映射现有 Rust 函数 |
+| --- | --- | --- | --- | --- |
+| `schedule.campus` | `semesterId?:int`, `from?:string`, `to?:string`（YYYY-MM-DD） | `ScheduleView` | `schedule.read` | `campus_schedule`（campus/commands.rs:1392） |
+| `schedule.programs` | 无 | `ProgramRecord[]` | `schedule.read` | `program_list`（program/commands.rs:43） |
+| `schedule.programActive` | 无 | `ProgramRecord ｜ null` | `schedule.read` | `program_get_active`（program/commands.rs:55） |
+
+运动域（事件级写入走 §14.3 下行通道，对外只回受理回执）：
+
+| 方法字符串 | 参数 | 返回 | scope | 映射 |
+| --- | --- | --- | --- | --- |
+| `workout.sessionActive` | 无 | `SessionLive ｜ null` | `workout.read` | 抽 `session_active_on`（session/commands.rs:119）＋补时投影（§14.2） |
+| `workout.sessionStart` | `planId:string`, `planName:string`, `startedAt:string`, `state?:object` | `{accepted:true}` | `workout.write` | 下行 `start` → `session_start`（session/commands.rs:73） |
+| `workout.sessionSnapshot` | `id:int`, `exIndex:int`, `setIndex:int`, `weightKg:float`, `state:object` | `{accepted:true}` | `workout.write` | 下行 `snapshot` → `session_snapshot`（session/commands.rs:97） |
+| `workout.sessionFinish` | `sessionFinish:SessionFinishInput` | `{accepted:true}` | `workout.write` | 下行 `finish` → `session_finish`（session/commands.rs:151） |
+| `workout.sessionAbort` | `id:int` | `{accepted:true}` | `workout.write` | 下行 `abort` → `session_abort`（session/commands.rs:223） |
+| `workout.delete` | `id:int` | `{}` | `workout.delete` | `delete_workout`（exercise/commands.rs:118，§13.3） |
+
+`SessionFinishInput` = `{ id:int, name:string, workoutType:string, date:string, durationMin:float, intensity?:string, kcal:float, note?:string, sets:FinishSet[] }`；
+`FinishSet` = `{ exerciseKey:string, exerciseName:string, exerciseId?:string, kind:string, setNo:int, weightKg?:float, reps?:int, sec?:int, warmup?:bool }`
+（对齐 `session/models.rs:29` 的 `FinishInput` / `:46` 的 `FinishSet`；`sets` 缺省 = 空）。
+
+番茄钟域：
+
+| 方法字符串 | 参数 | 返回 | scope | 映射 |
+| --- | --- | --- | --- | --- |
+| `pomodoro.status` | 无 | `FocusRuntime ｜ null` | `pomodoro.read` | 新建 `runtime::focus_state_on(conn)` 读 `app_meta` 键 `runtime.focus.v1`（§14.1） |
+| `pomodoro.start` | `focusMin?:int`, `breakMin?:int`, `todoId?:int｜null` | `{accepted:true}` | `pomodoro.control` | 下行 `start` → `pomodoroStore.start()`（src/stores/pomodoro.ts:52） |
+| `pomodoro.pause` | 无 | `{accepted:true}` | `pomodoro.control` | 下行 `pause` → `pomodoroStore.pause()`（:59） |
+| `pomodoro.stop` | 无 | `{accepted:true}` | `pomodoro.control` | 下行 `stop` → `pomodoroStore.reset()`（:65） |
+
+**`schedule.campus` 的副作用（必须写明）**：`campus_schedule` 内部会调用 `materialize_todos`
+（campus/commands.rs:1421）把课表派生行写进 `todos`——这是幂等的**本地写**，会被同步钩子捕获。
+对外语义是「读课表」，但它会顺带物化今天的日程行；契约接受这一副作用（否则「今天日程」会缺课表行）。
+为复用，抽 `pub(crate) fn campus_schedule_on(conn: &Connection, semester_id: Option<i64>, from: Option<String>, to: Option<String>) -> Result<ScheduleView>`，命令退化为壳。
+
+> **破坏性副作用（第二轮复核认账）**：物化是**先删后建**（`campus/commands.rs` 的 `materialize_todos`
+> 第一步 `DELETE FROM todos WHERE status != 'done' AND course_session_id IN (…本账号课时…)`）。
+> 也就是说，**只授 `schedule.read` 的连接调用 `schedule.campus`**（或任一 UI 打开课表）会：
+> ① 删掉该账号名下 `status != 'done'` 的课表派生待办（`category='class'`），并按当前课表重建 ——
+> 用户对这些派生行的编辑会丢失、回退成课表原样；`status='done'` 的历史行不受影响（永删的只有未完成行）。
+> ② 这是**可被反复触发**的写放大（每调一次都重跑该 DELETE）。
+> 本轮**接受**这一行为（`schedule.campus` 对外仍是 `schedule.read`，与 UI 打开课表同路径、同语义）；
+> 需要「读不删派生行」时，把物化从读路径拆出（只由 `campus_sync` 触发）或另立一个写/同步 scope。
+
+### 13.3 删除方法语义（与 UI 删除同路径）
+
+- `todo.delete` → 内部 `delete_todo_on(conn, id)`（todo/commands.rs:428）＝ UI `delete_todo` 的本体
+  （todo/commands.rs:330 退化为壳）。attachments/subtasks 是 `todos` 行内 JSON 列，随行删除，无额外副作用。
+- `workout.delete` → 内部与 UI `delete_workout` **同一条路径**（exercise/commands.rs:118），删除语义照旧（该处 :126-137 注释）：
+  - `source='local'`：删行；若已导出到 Health Connect 且回写开关开 → **顺手删 HC 侧副本**（`healthsync::propagate_delete`）。
+  - `source='health_connect'`：HC 是权威，**只记墓碑**（`healthsync::add_tombstone`），不动 HC 侧。
+  - **网关无 `tauri::Webview`**：把 `healthsync::commands::propagate_delete` / `dispatch` 的入参由
+    `&tauri::Webview<tauri::Wry>` 泛化为 `&tauri::AppHandle`（`Webview` 路径经其 `app_handle()` 取 `AppHandle`）；
+    抽 `pub(crate) fn delete_workout_on(conn: &Connection, id: i64) -> Result<Option<String>>`（返回 `Some(external_id)` = 需传播），
+    命令与网关共用，**传播在锁外**由调用方用 `AppHandle` 触发（§6.1 单连接铁律）。
+
+---
+
+## 14. 运行态桥接
+
+外部要读/控「进行中」的番茄钟与训练课，但运行态真源在前端（番茄钟：`src/stores/pomodoro.ts`；训练课：`src/stores/session.ts`）。
+桥接分两段：**上行（状态写 app_meta）** 与 **下行（控制经 Tauri 事件落到前端）**。
+
+### 14.1 番茄钟：秒级上报（上行）
+
+- 落点：`app_meta` 键 `runtime.focus.v1`，值 = JSON `FocusRuntime`：
+
+```jsonc
+{ "phase": "focus" | "break", "running": true,
+  "remainingSec": 1234,
+  "plannedFocusMin": 25, "plannedBreakMin": 5,
+  "phaseStartedAt": "2026-10-13T09:00:00Z",   // 相位起点墙钟
+  "linkedTodoId": 42 | null, "completedRounds": 2,
+  "reportedAt": "2026-10-13T09:12:03Z" }      // 本次上报时刻（UTC）
+```
+
+- **谁写**：前端 `pomodoroStore`。`running` 时每 **1 秒**调一次 `focus_publish(snapshot)`；并在
+  `start`/`pause`/`reset`/`finishPhase` 立即各上报一次（不等 1s 周期）。
+- **谁清**：`pause`/`reset`/`finishPhase` 调 `focus_unpublish()`（删键）；进程退出不显式清，靠陈旧判定。
+- **陈旧判定**：`now - reportedAt > FOCUS_RUNTIME_TTL_MS`（**5000 ms**）→ `pomodoro.status` 返回 `null`，
+  运行态推送发 `null`。判定在**后端**做（不信前端）。
+- **只写 app_meta，绝不写 `pomodoro_sessions`**（后者在同步白名单，写它会广播到其他设备）。
+- 新增 Tauri 命令 `focus_publish` / `focus_unpublish`（前端→后端，三处同步）；`pomodoro.status` 走 `focus_state_on` 直读。
+
+**重启恢复语义（用户定稿）**：启动自检在后端 setup（`db::init` 之后、与网关同批）执行 `runtime::recover_focus(conn, now)`：
+1. 读 `runtime.focus.v1`；无键 → 无操作。
+2. 若 `running==true` 且 `phaseStartedAt + remainingSec <= now`（倒计时归零发生在应用关闭期间）
+   → 按「**计时确实走完**」用 `save_pomodoro_session_on` 补写一行：
+   `startedAt=phaseStartedAt`、`endedAt=phaseStartedAt+remainingSec`、`focusMin=plannedFocusMin`、`breakMin=0`、`completed=true`，**并删键**（同一事务，幂等）。
+3. 其余情况（未到零、或相位是 `break`）→ 仅删陈旧键，**不补写**（`break` 不落库，与前端 `finishPhase` 一致：只有 focus 写库，src/stores/pomodoro.ts:81-97）。
+
+### 14.2 训练课：活跃会话投影（读）
+
+`workout.sessionActive` → `SessionLive`（读 `workout_sessions` 里 `status='active'` 最近一条）：
+
+```jsonc
+{ "id": 7, "planId": "…", "planName": "…", "status": "active",
+  "startedAt": "…", "updatedAt": "…",
+  "exIndex": 1, "setIndex": 3, "weightKg": 40.0,
+  "elapsedSec": 1830.0,        // 服务端按快照间隔累加的真实流逝秒（session_snapshot 维护）
+  "restLeftSec": 42,           // 仅当快照 state 处于休息时；已按 updatedAt 补时；否则 null
+  "reportedAt": "…" }          // = updatedAt
+```
+
+`restLeftSec` **必须服务端补时**：`state_json.restLeft` 是「上次事件时刻」的值，前端自己都要按真实流逝补偿
+（src/stores/session.ts:1126 起）；把补时收在投影里，外部不必复刻。`timedElapsed` 不落盘、**不作为权威**。
+
+### 14.3 外部控制：下行通道（Tauri 事件 → 前端 store，接口只回受理回执）
+
+外部控制**不直写**状态机表（直写会被前端内存旧值在下次 `touch()` 静默覆盖），而是：
+
+```
+外部方法 → 服务端校验 scope → app.emit("<下行事件>", {action,args}) → 前端 runtime 监听 → 调 store 动作
+        → store 走既有落盘路径（session_snapshot / saveSession / focus_publish）→ 外部用 status/sessionActive 观察结果
+```
+
+对外方法在 emit 成功后**立即**回 `{accepted:true}`（受理回执，不代表已执行完）。
+
+| 对外方法 | Tauri 事件（后端→前端） | 事件载荷 | 前端动作 | 前端最终调的现有命令 |
+| --- | --- | --- | --- | --- |
+| `pomodoro.start` | `gateway://pomodoro-command` | `{action:"start", args:{focusMin?,breakMin?,todoId?}}` | `pomodoroStore.start()` | `focus_publish` |
+| `pomodoro.pause` | `gateway://pomodoro-command` | `{action:"pause", args:{}}` | `pomodoroStore.pause()` | `focus_publish` |
+| `pomodoro.stop` | `gateway://pomodoro-command` | `{action:"stop", args:{}}` | `pomodoroStore.reset()` | `focus_unpublish` |
+| `workout.sessionStart` | `gateway://session-command` | `{action:"start", args:{planId,planName,startedAt,state?}}` | `sessionStore.start(plan)` | `session_start`（session/commands.rs:73） |
+| `workout.sessionSnapshot` | `gateway://session-command` | `{action:"snapshot", args:{id,exIndex,setIndex,weightKg,state}}` | `sessionStore` 持久化 | `session_snapshot`（:97） |
+| `workout.sessionFinish` | `gateway://session-command` | `{action:"finish", args:{sessionFinish}}` | `sessionStore.finish(...)` | `session_finish`（:151） |
+| `workout.sessionAbort` | `gateway://session-command` | `{action:"abort", args:{id}}` | `sessionStore.abort(id)` | `session_abort`（:223） |
+
+- **冲突守卫**：若 Rein 自家 UI 正持有内存中的活跃会话，`sessionStart` 下行事件被前端**拒绝**（不再新开）；
+  外部经 `workout.sessionActive` 观察到即知。番茄钟同理（已在计时则 `start` 幂等忽略，见 src/stores/pomodoro.ts:53）。
+- **下行只触发、参数仅作意图记录（已知限制）**：`pomodoro.start` 的 `focusMin/breakMin/todoId`、
+  `workout.sessionStart` 的 `startedAt/state` 当前**不被 store 采用** —— `pomodoroStore.start()` 无参（用本地设置时长），
+  `sessionStore.start(plan)` 自行以 `new Date()` 定 `startedAt`、忽略外部 `state`、并用课程库里的 `planName`
+  （`src/system/externalAccessRuntime.ts` 的 `applyPomodoroCommand` / `applySessionCommand`）。上表只写「→ store 动作」，
+  外部以 `pomodoro.status` / `workout.sessionActive` 观察到的结果可能与请求参数不符。要让参数真正生效需改 store 动作签名（另立改动）。
+- 下行事件名前端照抄；监听挂在 `externalAccessRuntime`（§8.1）。
+
+### 14.4 谁写谁清（速查）
+
+| 运行态 | 载体 | 写 | 清 | 陈旧 |
+| --- | --- | --- | --- | --- |
+| 番茄钟 | `app_meta:runtime.focus.v1` | 前端 1s `focus_publish` | 前端 `focus_unpublish`（pause/reset/finish） | `now-reportedAt > 5000ms` |
+| 训练课 | `workout_sessions` 行 | 前端事件级 `session_snapshot` | `session_finish`/`session_abort` | 无（行即真源；`restLeftSec` 按 `updatedAt` 补时） |
+
+### 14.5 WS 推送（走现有通道）
+
+- 业务表变更：`gateway.change`（§4.5），**按连接 scope 过滤**（第二轮补齐，§17）——只有含某域 read 权限的连接才收该域 `kind` 的变更元数据。
+- 运行态变更：新增 WS 事件 `gateway.runtime`，载荷 `{ kind:"focus", data:FocusRuntime|null, at:int }`；
+  由后端在 `focus_publish`/`focus_unpublish` 后推给已鉴权且含 `pomodoro.read` 的连接。
+- 端口变化：绑定实际端口与设置项不一致时（§17），向已连接客户端推 `{ event:"gateway.server", data:{ event:"port-changed", port } }`。
+
+---
+
+## 15. HTML 客户端与 Origin 白名单
+
+目标场景（用户定稿）：桌面小组件是 **HTML**（WebView2 / Electron / file://），握手会带 `Origin`。
+因此 §4.1 的「Origin 必须缺失」改为「**原生放行、网页需命中白名单**」。
+
+### 15.1 握手规则（改写 §4.1 第 1 条）
+
+固定顺序：
+1. `Origin` **缺失或为空** → 放行（原生客户端，行为不变）。
+2. `Origin` **非空** → 必须**精确命中**已批准白名单，否则 `403` 拒绝（记审计，见 §15.2b）。
+3. `Host` 闸门照旧执行（不改），并补两处（§17）：`local_addr()` 为 `None` 时**跳过**该闸门；LAN 下**主机名**放行。
+4. 握手成功仍是「未进网」：5 秒内发首帧令牌，未鉴权并发/限频照旧。
+
+白名单匹配规则：**精确字符串相等**（大小写敏感），不做通配、不做子域包含、不做 URL 前缀。
+`file://` 页面的 Origin 是字面量字符串 `"null"`——把它加白即放行本地 HTML 组件（Electron/WebView2 自定义 scheme 同理，以其实际 Origin 为准）。
+
+### 15.2 白名单存储与写入时机
+
+- **存储**：`app_meta` 键 `gateway.allowedOrigins`，值 = JSON 字符串数组（如 `["null","http://localhost:5173"]`）。
+  与 `gateway.*` 其余设置同处，不建表列、不进同步白名单。
+- **什么时候写进去**：
+  - (a) 设置页「外部访问」分区新增「允许的网页来源」列表，用户手动增删 Origin 字符串。
+  - (b) 被 403 拒绝的 Origin 会落一条审计（`ext_audit.detail` 含 origin）；设置页「被拦下的来源」列出这些 Origin，
+    一键「加入白名单」= 写入 (a) 的列表。这是用户知道该填什么的唯一实用路径。
+
+### 15.3 不变的部分（放行 Origin ≠ 放松鉴权）
+
+- 首帧令牌校验、四态授权、每次调用逐次 scope 校验、Host 闸门 —— **全部不变**。
+- `Origin` 只是**握手期**额外的一道门；放行某个 Origin 不会让该来源跳过令牌或拿到超出授权 scope 的数据。
+- 默认最小集仍是仅 `schedule.read`；写入/删除/控制 scope 默认不勾。
+
+---
+
+## 16. 授权语义定稿
+
+本章是用户对四态与未决项的**正式规则**，覆盖 §5.1 的早期表述。硬性要求「允许本次会话：链接中断即算会话结束」原样保留。
+
+| 状态 | 触发 | 存储位置 | 失效条件 |
+| --- | --- | --- | --- |
+| `pending` | 新客户端首帧无有效 `clientToken` | 内存待决队列（`gateway/auth.rs`） | 用户决策、或 **60 秒**后端超时 |
+| **允许本次会话** | 弹窗点「允许本次会话」 | 内存 `conn_id → ConnGrant`（`auth.rs`） | **连接一断即失效；重连重新问；无任何宽限窗口** |
+| **始终允许** | 弹窗点「始终允许」 | `ext_clients.decision='allow'` + `scopes` + `token_hash`；签发 `rein_ext_…` 回写一次 | `revoked_at` 置位 / 收窄 scope / `gateway_revoke_client` |
+| **忽略** | 弹窗点「忽略」 | 不落决策，只更新 `last_prompt_at` / `prompt_count`（一条 `decision='ignore'` 的**限频记录**，不含 token/scopes，读授权时等价于不存在） | 保持 `pending` 直到超时；同一 `client_id` **30 秒**内不重复弹窗；**连续 3 次忽略 → 该 client 静默挂起**（不再弹窗，连接按超时结束） |
+| **拒绝** | 弹窗点「拒绝」 | `ext_clients.decision='deny'` | 立即 `1008` 断连；此后**静默拒绝**（不弹窗） |
+
+**逐条规则**
+
+1. **「允许本次会话」不加宽限窗口**（用户硬性要求）：`conn_id → ConnGrant` 随连接消亡即清；
+   重连必落回 `pending` 重新问。**定时刷新的桌面小组件应当使用「始终允许」**，不要用「本次会话」——
+   否则每条短连接都会重新弹窗。
+2. **授权超时 = 60 秒**，常量 `AUTH_PENDING_TIMEOUT_MS` 由 `30_000` 改为 `60_000`（`gateway/auth.rs:32`）。
+   **以后端计时为准**，前端只显示倒计时（`timeoutMs` 由 `gateway://authorization-required` 带给前端）。
+3. **应用不在前台**：授权弹窗走全局常驻层（`src/App.vue`）之外，**同时**用 `notifyService`
+   （`src/services/notifyService.ts` 的 `notifyGrabResult`/`ensureNotifyPermission`）发一条系统通知做降级；
+   若通知权限不可得 → 该请求按「忽略」处理（规则 5 的限频照常计入）。
+4. **拒绝** = 落 `deny` 行 + 立即 `1008` 断连 + 之后静默拒绝。设置页「被拦下」清单可**解除**（删该行 → 回到无记录）。
+5. **忽略** = 不落决策、仅记限频；30 秒同 client 不重复弹窗；连续 3 次 → 该 client 静默挂起。
+   设置页「被拦下」清单可解除静默（重置 `prompt_count`）。
+6. **超时与忽略两条路径都计入按 IP 的失败限频**（第一轮缺口，§17 补齐）：待决超时、用户忽略
+   都调用与「握手被拒」相同的 `note_failure`（`gateway/server.rs:383` 同款），
+   纳入 `AUTH_FAIL_PER_MIN=5` / `AUTH_FAIL_WINDOW=60s` / `AUTH_BAN=600s`（`auth.rs:41-45`）。
+7. 授权「始终允许」时可勾选 scope 子集；默认最小集仅 `schedule.read`；写入/删除/控制 scope 默认不勾。
+8. `gateway_authorization_pending` 供冷启动补漏（事件会丢）。
+
+---
+
+## 17. 第二轮落地计划
+
+依赖顺序同 §9.5：存储层 → 协议与域绑定 → 服务与授权 → 前端。**所有写操作仍必须走同一条
+`state::Db::lock()`**（§6.1）；网关与域新抽的 `*_on` 都收 `&Connection`（`session_finish` 那条收 `&mut Connection`）。
+
+### 17.1 存储层（各域 `*_on` 与删除/会话/方案抽函数）
+
+- [ ] `todo`：`delete_todo_on` 已存在（todo/commands.rs:428）——`schedule.delete` 改指它，无需新抽。
+- [ ] `session/commands.rs`：抽 `session_start_on` / `session_snapshot_on` / `session_abort_on` /
+      `session_active_on`，`session_finish_on(&mut Connection, …)`（:73/:97/:119/:151/:223 命令退化为壳）。
+- [ ] `exercise/commands.rs`：抽 `delete_workout_on(conn, id) -> Result<Option<String>>`（:118 命令退化为壳）。
+- [ ] `campus/commands.rs`：抽 `campus_schedule_on(conn, semester_id, from, to)`（:1392）。
+- [ ] `program/commands.rs`：抽 `program_list_on(conn)` / `program_get_active_on(conn)`（:43/:55）。
+- [ ] `plan/commands.rs`：补 `list_workout_plans_on_limited(conn, limit)`（**SQL 侧 LIMIT**，§17.4 复核项）。
+- [x] `db.rs`：追加 `MIGRATION_0043`（`idx_ext_audit_client`，§6.5）；不改 0042。
+- [x] 新建 `modules/gateway/runtime.rs`：`focus_state_on` / `focus_publish_on` / `focus_unpublish_on` / `recover_focus`（§14.1）。
+- 依赖：无。**验收**：`cargo check` 通过；`*_on` 在内存库单测（行为与原命令一致），`recover_focus` 覆盖「关闭期间走完 → 补写一行」「未到零 → 只清键」两例。
+
+### 17.2 协议与域绑定（枚举扩容 + 方法绑定 + 下行事件）
+
+- [ ] `gateway/models.rs`：`Scope` 增 `ScheduleDelete`/`WorkoutDelete`/`PomodoroControl`（`ALL` 7→10），扩 `as_str/parse` 与单测。
+- [ ] `gateway/protocol.rs`：`Method` 增 13 条（`ALL` 15→28），改 `ScheduleDelete.scope()` → `schedule.delete`，扩 `name/scope/from_name` 与单测。
+- [ ] `gateway/methods.rs`：13 条新方法的 `dispatch` 分支（读走 `*_on`，控制走下行 emit）；`check_len` 覆盖所有新写方法（§17.4）。
+- [x] `gateway/server.rs`：`gate_origin` 改白名单（§15.1）；`gate_host` 补 `local_addr=None` 跳过 + 主机名放行；`gateway.change` 按 scope 过滤；`gateway.runtime` / `port-changed` 推送。
+      （第二轮收口：`handle_request` 改用 `methods::dispatch_with_effects`，在**锁外**执行 `Effect::Emit`（下行控制）与 `Effect::PropagateDelete`（Health Connect 删除传播）——此前直接调 `dispatch` 把整包 effects 丢弃，外部控制与删除传播在真机上是死的。）
+- 依赖：17.1。**验收**：`cargo test` 的 `Method`/`Scope` 枚举单测通过；Origin 三态（缺失/命中/未命中）与 Host（IP/主机名/None）单测。
+
+### 17.3 服务与授权（下行事件 + 命令 + 审计）
+
+- [ ] `gateway/auth.rs`：`AUTH_PENDING_TIMEOUT_MS` 改 `60_000`；忽略/超时计入 `note_failure`（§16.6）；连续 3 次忽略 → 静默挂起。
+- [ ] `gateway/server.rs`：把 `gateway://pomodoro-command` / `gateway://session-command` 的 emit 接进方法派发；emit 后回 `{accepted:true}`。
+- [ ] `gateway/store.rs`：审计 `detail` 写参数摘要（§17.4）；`allowedOrigins` 增删读；`gateway_audit_recent` 的查询。
+- [ ] `gateway/commands.rs`：新增 `gateway_audit_recent(limit?:int, clientId?:string)`；注册进 `lib.rs`（`generate_handler!`）。
+- [ ] `lib.rs`：启动自检调用 `runtime::recover_focus`；注册 `focus_publish` / `focus_unpublish` / `gateway_audit_recent`（三条命令三处同步）。
+- 依赖：17.1、17.2。**验收**：`node scripts/check-ipc-contract.mjs` 三处数量相等（现 273/273/273 → +4 = 277/277/277）；四态单测含「超时计入失败限频」「连续 3 次忽略静默」。
+- **未做（如实认账）**：经过 `handle_connection` 的 **server 级集成单测**（错令牌 1008 / 对令牌拿结果、无 `clientToken` 首帧进 pending、下行 `Effect::Emit` 与 `PropagateDelete` 的锁外落地）仍未写 —— 需要 tauri `AppHandle`/`State` 测试夹具（`tauri` 的 `test` feature：`mock_app`/`mock_context`），当前 `cargo test` 无一条经过 `handle_connection`。effects 的**接线**由 `methods` 层单测（`control_dispatch_emits_effect_for_the_service_layer` / `workout_delete_effects_handle_health_connect_semantics`）与代码审阅覆盖，端到端行为未在单测里跑。`runtime::recover_focus` 的「关闭期间走完 → 补写一行」「未到零 → 只清键」两例已补内存库单测。
+
+### 17.4 前端（上报/下行监听/白名单/审计界面）
+
+- [ ] `src/stores/pomodoro.ts`：`running` 时 1s `focus_publish`；`start/pause/reset/finishPhase` 立即上报/清除。
+- [ ] `src/system/externalAccessRuntime.ts`：监听 `gateway://pomodoro-command` / `gateway://session-command` → 调 store 动作；
+      处理后台弹窗 + `notifyService` 通知降级。
+- [ ] `src/components/settings/ExternalAccessSection.vue`：新增「允许的网页来源」（增删 Origin）、
+      「被拦下的来源」（从审计读，一键加白）、「最近访问记录」（`gateway_audit_recent`）。
+- [ ] `src/services/gatewayService.ts`：补 `auditRecent`；`src/mock/server.ts` 补 `focus_publish`/`focus_unpublish`/`gateway_audit_recent` 三条顶层 case 与 `mockGateway` 下行事件钩子。
+- [ ] `src/types/externalAccess.ts`：补 `FocusRuntime` / `SessionLive` / 白名单与审计类型；barrel 不变。
+- 依赖：17.2（方法/事件名冻结）、17.3（命令名冻结）。**验收**：`npm run lint && npm run typecheck && npm run build` 通过；`npm run contract` 一致；`node scripts/e2e-external-api.mjs`（扩授权/白名单/审计三幕）。
+
+### 17.5 第一轮复核意见收口（逐条）
+
+- [ ] **待决路径失败限频**：待决超时与「忽略」计入按 IP 失败限频（§16.6，17.3）。
+- [ ] **列表 SQL 侧 LIMIT（含 plan）**：`list_workout_plans_on_limited` 补齐（§6.4 现只覆盖 todos/workouts/pomodoro，plan 漏了）。
+- [ ] **变更推送按 scope 过滤**：`gateway.change` 只推连接 scope 覆盖的域（§14.5、17.2）。
+- [ ] **审计参数**：`ext_audit.detail` 写请求参数摘要（按 scope 白名单挑字段、逐字段截断），
+      并加 `gateway_audit_recent` 让设置页看最近记录（§17.3/§17.4）。
+- [ ] **写字段长度校验**：`check_len`（methods.rs:218-222 的 `MAX_TITLE=500`/`MAX_TEXT=10_000`）覆盖
+      所有第二轮写入方法（含 `sessionFinish` 的 `name`/`note`）。
+- [ ] **Host 闸门在 `local_addr()` 为 `None` 时跳过**（当前 server.rs:232-233 是「按拒处理」）。
+- [ ] **LAN 下用主机名连接被 403**：`gate_host` 放行集合加入本机主机名（Windows 取 `COMPUTERNAME`，其余 `hostname`），
+      与既有 IP + `localhost` 别名并列。
+- [ ] **文档偏差清理**：§5.3 的 `scope.rs` 实为 `gateway/models.rs`（本轮已改）；§8.1 的
+      `ExternalAccessPage.vue`/`/settings/external` 实为内嵌 `ExternalAccessSection.vue`（§3 已注）；其余以代码为准。
+
+---
+
+## 12b. 引用清单（机器可校验）
+
+正文（含 §1–§17）引用到的、写作时**已真实存在**的工作区文件。计划新建的文件一律不进本清单。
+
 <!-- check-refs -->
 src-tauri/src/lib.rs
 src-tauri/src/state.rs
@@ -541,10 +896,23 @@ src-tauri/src/modules/todo/models.rs
 src-tauri/src/modules/session/models.rs
 src-tauri/src/modules/exercise/models.rs
 src-tauri/src/modules/plan/models.rs
+src-tauri/src/modules/campus/commands.rs
+src-tauri/src/modules/campus/models.rs
+src-tauri/src/modules/program/commands.rs
+src-tauri/src/modules/program/models.rs
+src-tauri/src/modules/gateway/mod.rs
+src-tauri/src/modules/gateway/models.rs
+src-tauri/src/modules/gateway/protocol.rs
+src-tauri/src/modules/gateway/methods.rs
+src-tauri/src/modules/gateway/auth.rs
+src-tauri/src/modules/gateway/store.rs
+src-tauri/src/modules/gateway/server.rs
+src-tauri/src/modules/gateway/commands.rs
 src-tauri/Cargo.toml
 src-tauri/capabilities/default.json
 scripts/check-ipc-contract.mjs
 scripts/e2e-data-clear.mjs
+scripts/e2e-external-api.mjs
 docs/STANDARDS.md
 docs/ARCHITECTURE.md
 docs/SYNC.md
@@ -552,10 +920,17 @@ src/App.vue
 src/main.ts
 src/router.ts
 src/pages/SettingsPage.vue
+src/stores/session.ts
 src/stores/pomodoro.ts
-src/services/voiceService.ts
 src/services/agentService.ts
+src/services/gatewayService.ts
+src/services/notifyService.ts
 src/services/pomodoroService.ts
+src/services/voiceService.ts
+src/system/externalAccessRuntime.ts
+src/components/settings/GatewayAuthSheet.vue
+src/components/settings/ExternalAccessSection.vue
 src/mock/server.ts
 src/types/index.ts
+src/types/externalAccess.ts
 <!-- /check-refs -->

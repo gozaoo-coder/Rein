@@ -5,6 +5,7 @@ import { Archive } from 'lucide-vue-next'
 import FoodParseEditor from '@/components/diet/FoodParseEditor.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { MEAL_LABELS, MEAL_ORDER, suggestMeal } from '@/config/domain'
 import { recordCardOutcome } from '@/ai/cardOutcomes'
 import { useToast } from '@/composables/useToast'
@@ -109,9 +110,12 @@ function close(): void {
     <div class="ready">
       <div class="sum row">
         <img v-if="thumb" :src="`data:image/jpeg;base64,${thumb}`" alt="照片缩略图" class="mini">
-        <p class="flex-1">
-          识别到 {{ stats.total }} 项 · ≈{{ stats.totalKcal }} 大卡<span v-if="stats.matched < stats.total">
-            （{{ stats.matched }} 项可写入）</span>
+        <p class="flex-1 sum-line">
+          <b class="kcal num">≈{{ stats.totalKcal }}<i class="t-unit">大卡</i></b>
+          <span v-if="stats.matched > 0" class="sub">
+            识别到 {{ stats.total }} 项<span v-if="stats.matched < stats.total">，{{ stats.matched }} 项可写入</span>
+          </span>
+          <StatusChip v-else-if="stats.total > 0" tone="warn" size="sm">全部未匹配，无法写入</StatusChip>
         </p>
       </div>
 
@@ -131,7 +135,6 @@ function close(): void {
           {{ committing ? '写入中…' : `写入今日${MEAL_LABELS[meal]}` }}
         </button>
       </div>
-      <p v-if="stats.matched === 0" class="hint">所有条目都未匹配到食物库，无法写入；可存草稿稍后处理。</p>
     </div>
   </SheetModal>
 </template>
@@ -142,9 +145,31 @@ function close(): void {
   margin-bottom: 8px;
 }
 
-.sum p {
-  font-size: var(--fs-footnote);
+/* 总热量是这一行的主数值，项数与可写入数是副行（胶囊/说明文字降一档） */
+.sum-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.kcal {
+  font-size: var(--fs-title3);
   font-weight: 700;
+  color: var(--text-1);
+}
+
+.t-unit {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: 3px;
+}
+
+.sub {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
 }
 
 .mini {
@@ -176,7 +201,7 @@ function close(): void {
 }
 
 .ghost:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .primary {
@@ -189,13 +214,6 @@ function close(): void {
 }
 
 .primary:disabled {
-  opacity: 0.35;
-}
-
-.hint {
-  margin-top: 8px;
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  text-align: center;
+  opacity: var(--disabled-opacity);
 }
 </style>

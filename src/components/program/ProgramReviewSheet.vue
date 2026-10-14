@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { useNutritionStore } from '@/stores/nutrition'
 import type { ProgramChange, ProgramParams } from '@/types'
@@ -193,14 +194,16 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
           <section v-if="compare" class="card">
             <header class="card-head">
               <b>本周执行度</b>
-              <span class="t-3">本周 vs 上周</span>
+              <!-- 卡片头不再写「本周 vs 上周」这种并列短语：方向和条义各钉一处
+                   —— 数值行写「上周 → 本周」，这里只说明横条按本周画 -->
+              <span class="t-3">横条表示本周</span>
             </header>
             <div class="bars">
               <div v-for="p in compare.points" :key="p.label" class="bar-row">
                 <div class="bar-top">
                   <span>{{ p.label }}</span>
                   <span class="num">
-                    {{ p.prev }} → {{ p.now }} {{ p.unit }}
+                    上周 {{ p.prev }} → 本周 {{ p.now }} {{ p.unit }}
                     <b class="arrow" :class="arrowOf(p).cls">{{ arrowOf(p).text }}</b>
                   </span>
                 </div>
@@ -223,7 +226,16 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
           <section v-if="cards.length" class="card">
             <header class="card-head">
               <b>建议（可逐条采纳）</b>
-              <span class="tag num">已选 {{ selectedCount }} / {{ cards.length }}</span>
+              <div class="head-side">
+                <!-- 「已按安全值生效」的由来（引擎钳制）收进标题行右端的说明入口 -->
+                <InfoHint
+                  title="安全范围"
+                  content="模型建议的数值如果超出安全范围，应用会按安全值生效，不会照单全收 —— 卡片上「已按安全值生效」就是这个情形。
+
+安全范围由身体数据与方案参数推出；生效中的方案参数永远是安全范围内的值。"
+                />
+                <span class="tag num">已选 {{ selectedCount }} / {{ cards.length }}</span>
+              </div>
             </header>
             <div v-for="f in cards" :key="f.key" class="sug">
               <button
@@ -239,7 +251,7 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
                 <p class="sug-title" :class="{ dim: !selected[f.key] }">{{ f.title }}</p>
                 <p class="sug-reason">{{ f.reason }}</p>
                 <span v-if="cardChange(f)" class="tag num">{{ cardChange(f)!.before }} → {{ cardChange(f)!.after }}</span>
-                <span v-if="cardChange(f) && isClamped(f, cardChange(f))" class="tag clamp">超出安全范围 · 已钳制</span>
+                <span v-if="cardChange(f) && isClamped(f, cardChange(f))" class="tag clamp">超出安全范围，已按安全值生效</span>
               </div>
             </div>
           </section>
@@ -260,9 +272,13 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
             </ul>
           </section>
 
-          <ul v-if="advice.length" class="advice">
-            <li v-for="a in advice" :key="a">{{ a }}</li>
-          </ul>
+          <!-- 模型的补充建议：无标题的一串子弹句原先夹在卡片与主按钮之间，来路全靠猜 -->
+          <template v-if="advice.length">
+            <p class="advice-title">下周执行建议</p>
+            <ul class="advice">
+              <li v-for="a in advice" :key="a">{{ a }}</li>
+            </ul>
+          </template>
 
           <button v-if="selectedCount" class="primary" @click="apply">
             应用这 {{ selectedCount }} 条并重排日程
@@ -326,6 +342,13 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   margin-bottom: 9px;
 }
 
+/* 标题行右端：说明入口 + 计数，与标题同一行 */
+.card-head .head-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .card-head b {
   font-size: var(--fs-subhead);
   font-weight: 700;
@@ -344,10 +367,11 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   font-weight: 700;
 }
 
+/* 超出安全范围：soft 底 + strong 字配套令牌（实底档 --warn 不当文字用） */
 .tag.clamp {
   margin-left: 6px;
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-  color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn-strong);
 }
 
 /* 数据先行条 */
@@ -366,12 +390,11 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   color: var(--text-2);
 }
 
-.arrow.up {
-  color: var(--ok-strong);
-}
-
+/* 方向箭头只表示升降、不臧否得失：减脂目标下摄入升高并非好事，
+   统一走中性色（原 up 染绿 / down 染红会把「升」读成「进步」） */
+.arrow.up,
 .arrow.down {
-  color: var(--danger);
+  color: var(--text-2);
 }
 
 .arrow.flat {
@@ -472,10 +495,11 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   color: var(--text-3);
 }
 
+/* 采纳理由是要读的判断依据：三级灰是「补充」档，提到 --text-2 */
 .sug-reason {
   margin-top: 2px;
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--text-2);
   line-height: 1.5;
 }
 
@@ -508,9 +532,17 @@ const arrowOf = (p: { now: number; prev: number }): { text: string; cls: string 
   color: var(--accent);
 }
 
+/* 补充建议的小标题：交代这串子弹句是模型给的下周执行建议 */
+.advice-title {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  font-weight: 600;
+}
+
 .advice {
   display: grid;
   gap: 5px;
+  margin-top: 5px;
   padding-left: 17px;
   list-style: disc;
 }

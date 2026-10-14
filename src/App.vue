@@ -136,8 +136,10 @@ watch(
     // 现场先快照，再异步加载救援模块（理由见下方 import 注释）
     const scene = courseSelect.grab
     void import('@/utils/campusAi').then(({ askAiForGrabRescue }) => askAiForGrabRescue(scene))
+    // 先给结论的短句：ToastHost 超宽会从尾部截断，技术原因（参数错误）不占这条的额度 ——
+    // 它收在抢课页标题行右侧的帮助入口里（GrabFloatBar 侧），这里只保证「已交给 AI」读得到
     toast.toast(
-      `教务拒绝了抢课请求（参数错误）：「${first.courseName ?? first.lessonName ?? '这门课'}」已交给 AI 排查`,
+      `抢课请求被教务拒绝，已交给 AI 排查：${first.courseName ?? first.lessonName ?? '这门课'}`,
     )
   },
 )
@@ -270,8 +272,11 @@ onMounted(() => {
   <VoiceSessionView />
   <!-- 训练课沉浸层：常驻挂载不走路由（system/sessionImmersive 驱动显隐与形变） -->
   <SessionOverlay />
-  <!-- 命令面板（⌘K）：桌面专属 —— 它是键盘入口，触屏上没有对应手势 -->
-  <CommandPalette v-if="isDesktop" :open="paletteOpen" @close="paletteOpen = false" />
+  <!-- 命令面板（⌘K）：跟着**设备能力**挂（hasKeyboard），不是跟着桌面壳 ——
+       它是键盘入口，触屏上没有对应手势。原先跟 isDesktop 走，于是 800–1099 的桌面用户
+       （分屏 / 半宽窗口）里，导航轨的搜索钮不渲染（DesktopRail 只在桌面壳里）、
+       面板也没挂：⌘K 完全没有入口。壳层是布局、快捷键是输入能力，两者该分开。 -->
+  <CommandPalette v-if="hasKeyboard" :open="paletteOpen" @close="paletteOpen = false" />
   <!-- 启动检查到新版本时的更新卡片（立即更新 / 稍后 / 跳过此版本） -->
   <UpdatePrompt :open="updatePrompt" @close="updatePrompt = false" />
   <!-- 外部程序授权弹窗：单例 runtime 驱动，任何外部连接请求进来都由它唤起（system/externalAccessRuntime） -->
@@ -313,13 +318,21 @@ onMounted(() => {
    这里把页面根直接铺成两栏栅格：**通栏是缺省、卡片是半栏**——
    因为页面里除卡片之外的东西（页头、看板、通栏列表、提示条）本来就该占满一行，
    而 .card 正是「可以并排的一块」，这样一个规则就让二十来个卡片页在桌面上自动成形，
-   不需要每页各写一遍媒体查询。只有真正需要另一种构图的页面才去加 d-full / d-split。 */
+   不需要每页各写一遍媒体查询。只有真正需要另一种构图的页面才去加 d-full / d-split。
+
+   **列数由宽度自己算**（auto-fit + 360px 下限），不写死两栏：
+   · 1512 的 --desk-content 经两页内边距后是 972px → 仍然是两栏（479px/栏），
+     与从前 repeat(2, 1fr) 逐像素一致；
+   · 900–1163 这一段如果用户把信息栏展开（⌘I），主人区掉到 538–802px ——
+     两栏会把每张卡挤成 228–328px（比手机卡还窄），auto-fit 自动退回单栏；
+   · 360px 是「这张卡还读得下去」的下限（题、副标、右上角两颗按钮不打架），
+     不是审美偏好：再窄就该整行，而不是把卡片压扁。 */
 .desk-main:not(.wide) :deep(.page) {
   max-width: var(--desk-content);
   margin: 0 auto;
   padding-top: 26px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: var(--desk-gap);
   /* stretch：同行两卡高度对齐（矮卡填满格子），灰底画布不再从卡下漏出；
      align-content: start：内容不满一屏时多余高度留在底部，而不是被分到行间

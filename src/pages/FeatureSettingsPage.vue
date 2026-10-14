@@ -2,6 +2,9 @@
 import { computed } from 'vue'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { toggleablePlugins, type PluginSpec } from '@/plugins'
 import { useFeaturesStore } from '@/stores/features'
@@ -34,7 +37,17 @@ function iconStyle(p: PluginSpec): Record<string, string> {
 
 <template>
   <div class="page">
-    <PageHeader title="打开或关闭功能" back />
+    <PageHeader title="打开或关闭功能" back>
+      <!-- 关闭功能的影响（原先平铺在卡面下方的三段说明）收进页头帮助入口 -->
+      <template #action>
+        <span class="hdr-btn">
+          <InfoHint
+            title="关闭功能的影响"
+            content="关闭后入口与页面一起隐藏，已有数据原样保留，随时可以再打开。"
+          />
+        </span>
+      </template>
+    </PageHeader>
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
@@ -73,12 +86,11 @@ function iconStyle(p: PluginSpec): Record<string, string> {
               <b>{{ child.name }}</b>
               <i class="tag">子模块</i>
             </span>
-            <em class="t-3">
-              {{ child.desc }}
-              <template v-if="!features.isEnabled(row.plugin.id)">
-                · {{ row.plugin.name }}关闭时不可用
-              </template>
-            </em>
+            <em class="t-2">{{ child.desc }}</em>
+            <!-- 「为什么按不动」从描述里剥出来单独成态：父模块关闭时子模块跟着不可用 -->
+            <StatusChip v-if="!features.isEnabled(row.plugin.id)" tone="warn">
+              {{ row.plugin.name }}已关闭
+            </StatusChip>
           </span>
           <ToggleSwitch
             :model-value="features.isEnabled(child.id)"
@@ -90,10 +102,11 @@ function iconStyle(p: PluginSpec): Record<string, string> {
       </template>
     </section>
 
-    <p class="note t-3">
-      关闭后入口与页面一起隐藏，已有数据原样保留，随时可以再打开。子模块默认关闭，
-      开启后它才真正开始工作（含后台任务）。更多模块正在接入这套插件层。
-    </p>
+    <!-- 页尾说明：一行结论胶囊 + 「子模块默认关闭」的状态交代（完整解释在页头帮助入口） -->
+    <div class="note">
+      <PillChip tone="muted">关闭只隐藏入口，数据保留</PillChip>
+      <p class="t-3">子模块默认关闭，开启后它才真正开始工作（含后台任务）。</p>
+    </div>
     </div>
   </div>
 </template>
@@ -135,10 +148,14 @@ function iconStyle(p: PluginSpec): Record<string, string> {
   background: var(--line);
 }
 
-/* 关闭态整行降透明：开关本身仍在，但一眼能看出这一行没在生效 */
-.prow.off .pic,
-.prow.off .ptxt {
-  opacity: 0.5;
+/* 关闭态：图标章降到禁用浓度，模块名降一档字色；描述保持 --text-3 不再二次压暗
+   （12px 的 --text-3 再乘裸透明度实测约 1.8:1，会看不清自己关掉的是哪个模块） */
+.prow.off .pic {
+  opacity: var(--disabled-opacity);
+}
+
+.prow.off .ptxt b {
+  color: var(--text-2);
 }
 
 .pic {
@@ -166,6 +183,11 @@ function iconStyle(p: PluginSpec): Record<string, string> {
   font-weight: 600;
 }
 
+/* 状态胶囊只占内容宽：.col 默认 stretch 会把软底撑满整列 */
+.ptxt .schip {
+  align-self: flex-start;
+}
+
 .namerow {
   display: flex;
   align-items: center;
@@ -185,12 +207,16 @@ function iconStyle(p: PluginSpec): Record<string, string> {
   font-weight: 600;
   padding: 1px 6px;
   border-radius: var(--radius-full);
-  color: var(--text-3);
+  color: var(--text-2);
   background: var(--surface-2);
 }
 
 .note {
   margin: 14px 4px 0;
+}
+
+.note p {
+  margin-top: 6px;
   font-size: var(--fs-caption);
   line-height: 1.6;
 }

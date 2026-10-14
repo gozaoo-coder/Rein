@@ -30,7 +30,7 @@ import MuscleCatchupSheet from '@/components/exercise/MuscleCatchupSheet.vue'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
 import { MEAL_LABELS, MEAL_ORDER } from '@/config/domain'
 import { fmtCents } from '@/config/ledger'
-import { type ScoreGroupKey } from '@/config/muscles'
+import { type HeatLevel, type ScoreGroupKey } from '@/config/muscles'
 import type { ToolContribution } from '@/plugins'
 import type { ToolAction } from '@/plugins/types'
 import type { WorkoutPlan } from '@/types'
@@ -46,13 +46,13 @@ import { useProgramStore } from '@/stores/program'
 import { useSessionStore } from '@/stores/session'
 import { useTodoStore } from '@/stores/todo'
 import { useToast } from '@/composables/useToast'
-import { sessionService } from '@/services/sessionService'
+import { loadScoreInput } from '@/services/scoreInput'
 import { openImmersive } from '@/system/sessionImmersive'
 import { openView as openVoiceView } from '@/system/voiceRuntime'
 import { diffDays, todayStr } from '@/utils/date'
 import { courseOnDate, programStatus } from '@/utils/programCycle'
 import { parseBlob } from '@/utils/programEngine'
-import { computeTrainingScore, type GroupScore, type TrainingScoreResult } from '@/utils/trainingScore'
+import { computeTrainingScore, heatLevelOf, type GroupScore, type TrainingScoreResult } from '@/utils/trainingScore'
 import { focusGroup, lapsedIdleGroups, matchCourse, courseGroups, weakGroups, type MusclesResolver } from '@/utils/weakMuscles'
 
 const props = defineProps<{ date: string }>()
@@ -185,6 +185,8 @@ function awayFrom(entry: { date: string; session: { startTime: string; weekday: 
   const d = toMin(entry.session.startTime) - nowMin.value
   if (d <= 0) return '现在'
   const h = Math.floor(d / 60)
+  // 整点分支（课多排在整点）：余数为 0 时只说「N 小时后」，不拼出「2 小时 0 分后」
+  if (h && d % 60 === 0) return `${h} 小时后`
   return h ? `${h} 小时 ${d % 60} 分后` : `${d} 分钟后`
 }
 
@@ -285,6 +287,29 @@ const focus = computed<GroupScore | null>(() => {
   return focusGroup(gs, c ? courseGroupKeys(c.courseId) : null)
 })
 
+/**
+ * 没有焦点组（都练够了 / 今天的课已覆盖）但有分数时的兜底：
+ * 卡头改报平均分、状态点用平均分档着色（hs0–hs4，与热力图同一套颜色），
+ * 副文说清「练到什么程度」—— 不因为挑不出"最该练谁"就把分数藏掉。
+ */
+const scoreAvg = computed<string>(() => {
+  const g = score.value
+  return g && g.trainedCount > 0 ? `平均 ${g.average} 分` : ''
+})
+
+const scoreFallbackLevel = computed<HeatLevel>(() => {
+  const g = score.value
+  return g && g.trainedCount > 0 ? heatLevelOf(g.average, g.trainedCount) : 0
+})
+
+/** 兜底副文：有记录就说练了几个肌群、还剩几个没练 */
+const scoreFallbackNote = computed<string>(() => {
+  const g = score.value
+  if (!g || g.trainedCount <= 0) return ''
+  const idle = g.totalCount - g.trainedCount
+  return idle > 0 ? `本周练了 ${g.trainedCount} 个肌群 · ${idle} 个未练` : `本周 ${g.totalCount} 个肌群都有记录`
+})
+
 /** 方案里主攻焦点组的那节课（「腿还没练 → 腿日」） */
 const recommendedCourse = computed<{ courseId: string; courseName: string } | null>(() => {
   const f = focus.value
@@ -332,6 +357,18 @@ const trainMain = computed(() => {
   return todayCourse.value?.courseName ?? '休息'
 })
 
+/**
+ * 今天这节课的两条定量事实，分两级交模板渲染：「约 N 分钟」是主线
+ * （--fs-caption / --text-2 + .num），「N 个动作」降为次要注（--fs-micro / --text-3）。
+ * 从前三件事（课程指代 / 动作数 / 时长）用「·」串成同字档一行，读不出重点是时长。
+ */
+const trainStat = computed<{ main: string; sub: string } | null>(() => {
+  const c = todayCourse.value
+  if (!c) return null
+  const acts = planStore.byId(c.courseId)?.exercises.length
+  return { main: `约 ${c.durationMin} 分钟`, sub: `${acts ?? '—'} 个动作` }
+})
+
 const trainNote = computed(() => {
   const f = focus.value
   /** 焦点组的现状：未练 / 练得不够（两条退路共用同一句话） */
@@ -348,6 +385,7 @@ const trainNote = computed(() => {
     if (f && coursePick.value) return `${state} · ${pickName}`
     if (f?.idle) return `${f.label}本周还没练 · 加练一次补上`
     if (f) return `本周${f.label}练得不够 · 排一份方案跟着练`
+    if (scoreFallbackNote.value) return scoreFallbackNote.value
     return '排一份健康方案 · 训练跟着日程走'
   }
   const c = todayCourse.value
@@ -363,14 +401,15 @@ const trainNote = computed(() => {
     // 方案里没有对症的课，但课程库里有目的高度一致的现成课 —— 立刻练直接开它
     if (f && coursePick.value) return `${state} · ${pickName}`
     if (f?.idle) return `${f.label}还没练 · 想练就来一次加练`
-    return f ? '今天不排训练 · 想练就来一次加练' : '今天不排训练 · 想动就去运动页'
+    if (f) return '今天不排训练 · 想练就来一次加练'
+    if (scoreFallbackNote.value) return scoreFallbackNote.value
+    return '今天不排训练 · 想动就去运动页'
   }
-  const n = planStore.byId(c.courseId)?.exercises.length
-  const suffix = `${n ?? '—'} 个动作 · 约 ${c.durationMin} 分钟`
+  // 今天的课：指代句留在本行，定量事实走 trainStat（见上）
   if (f && courseCovers(c.courseId, f.group)) {
-    return f.idle ? `正好补上未练的${f.label} · ${suffix}` : `正好补它 · ${suffix}`
+    return f.idle ? `正好补上未练的${f.label}` : '正好补它'
   }
-  return suffix
+  return ''
 })
 
 /* ---- 立刻练：卡上一步开练，不让用户去训练页翻 ---- */
@@ -453,12 +492,15 @@ async function loadScore(): Promise<void> {
   try {
     await lib.ensureLoaded()
     await nutrition.loadProfile()
-    const sets = await sessionService.strengthRecentSets(42)
-    if (sets.length) {
+    const today = todayStr()
+    const { sets, workouts } = await loadScoreInput(today)
+    // 逐组与运动记录任一有货就出分：纯跑步 / 纯手动补录的用户也该看到练卡上的数字
+    if (sets.length || workouts.length) {
       score.value = computeTrainingScore({
         sets,
+        workouts,
         library: lib.list,
-        today: todayStr(),
+        today,
         goal: nutrition.profile?.goal ?? null,
       })
     }
@@ -561,14 +603,22 @@ onMounted(() => {
     <section v-if="trainMembers.length" class="hf-zone" data-testid="hf-zone-train" style="--tint: var(--accent)">
       <header class="hf-z1">
         <i class="hf-zk"><Dumbbell :size="14" :stroke-width="2.2" />练</i>
-        <!-- 得分状态点：五档与肌肉热力图同一份颜色（MuscleMap 图例），未练=灰档、颜色粗分 -->
-        <i v-if="focus" class="hf-heat" :class="`hs${focus.level}`" aria-hidden="true" />
+        <!-- 得分状态点：五档与肌肉热力图同一份颜色（MuscleMap 图例），未练=灰档、颜色粗分。
+             挑不出焦点组（都练够了）时退化到平均分档 —— 分数不因"没有最该练的"而消失 -->
+        <i
+          v-if="focus || scoreAvg"
+          class="hf-heat"
+          :class="`hs${focus ? focus.level : scoreFallbackLevel}`"
+          aria-hidden="true"
+        />
         <b class="hf-zv">
-          <!-- 值 = 主事实 · 焦点组状态（有方案：「拉日 · 背未练」/「拉日 · 背 48」；无方案：焦点组就是主事实） -->
+          <!-- 值 = 主事实 · 焦点组状态（有方案：「拉日 · 背未练」/「拉日 · 背 48 分」；无方案：焦点组就是主事实） -->
           <template v-if="program.active && focus">
             {{ trainMain }}<span class="hf-zsep">·</span>{{ focus.label }}
             <span v-if="focus.idle" class="hf-idle">未练</span>
-            <span v-else class="hf-score" :class="`hs${focus.level}`">{{ focus.score }}</span>
+            <!-- 方案开跑时分数是副事实：降一档 + 补「分」单位，与标题级主值形态分开；
+                 颜色仍走热力图五档（.hf-score.hsN）-->
+            <span v-else class="hf-idle hf-score" :class="`hs${focus.level}`">{{ focus.score }} 分</span>
           </template>
           <template v-else-if="focus">
             {{ focus.label }}
@@ -577,9 +627,22 @@ onMounted(() => {
               <span class="hf-score" :class="`hs${focus.level}`">{{ focus.score }}</span> 分
             </template>
           </template>
+          <template v-else-if="scoreAvg">
+            <template v-if="program.active">{{ trainMain }}<span class="hf-zsep">·</span></template>{{ scoreAvg }}
+          </template>
           <template v-else>{{ trainMain }}</template>
         </b>
-        <span class="hf-zn">{{ trainNote }}</span>
+        <!-- 副行：指代句 + 今天这节课的定量事实。时长是主线（text-2 + .num），
+             动作数降为次要注，中间用细竖线分层 —— 不再「·」串三个同权事实 -->
+        <span class="hf-zn">
+          <template v-if="trainNote">{{ trainNote }}</template>
+          <i v-if="trainNote && trainStat" class="zn-bar" aria-hidden="true" />
+          <template v-if="trainStat">
+            <b class="zn-main num">{{ trainStat.main }}</b>
+            <i class="zn-bar" aria-hidden="true" />
+            <span class="zn-sub num">{{ trainStat.sub }}</span>
+          </template>
+        </span>
       </header>
       <div class="hf-members">
         <!-- 立刻练：今天的课 / 能补上未练的那节课 / 弱项加练 —— 卡上唯一的实底动作 -->
@@ -624,7 +687,13 @@ onMounted(() => {
           <i class="hf-fk"><Timer :size="13" />专注</i>
           <b class="hf-fv">{{ focusMin }}<em>分钟</em></b>
         </span>
-        <span class="hf-fn">{{ focusMin > 0 ? `${doneSessions.length} 段番茄 · ${openTodos} 条待办` : `今天还没专注 · ${openTodos} 条待办` }}</span>
+        <!-- 注：只报专注域的事实（N 段番茄）；待办条数降成脚注，不当成本卡的第二个主话题 -->
+        <span class="hf-fn">
+          <b v-if="focusMin > 0" class="fn-main num">{{ doneSessions.length }} 段番茄</b>
+          <span v-else>今天还没专注</span>
+          <i class="zn-bar" aria-hidden="true" />
+          <span class="fn-sub num">{{ openTodos }} 条待办</span>
+        </span>
       </button>
 
       <button
@@ -859,6 +928,27 @@ onMounted(() => {
   text-overflow: ellipsis;
 }
 
+/* 副行内的分级：细竖线切开「主线 / 次要注」两档字（替下原先的「·」） */
+.zn-bar {
+  display: inline-block;
+  width: 1px;
+  height: 9px;
+  margin: 0 6px;
+  background: var(--line-strong);
+  vertical-align: -1px;
+}
+
+/* 「约 N 分钟」：副行里唯一的主数值，提到 --text-2 并加 .num（等宽） */
+.zn-main {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+/* 「N 个动作」：次要注，11px / --text-3 */
+.zn-sub {
+  font-size: var(--fs-micro);
+}
+
 /* 练够分状态色：点用肌肉热力图的原色（图例同源），文字取白底可读的 strong/deep 档。
    两套不能混用 —— --danger 压白底只有 3.55:1，--c-exercise 更是只有 1.6:1，
    只能当色块；文字一律走 --danger-strong / --warn-strong / --c-exercise-deep。 */
@@ -952,7 +1042,8 @@ onMounted(() => {
 }
 
 .hf-member.is-start:disabled {
-  opacity: 0.45;
+  /* 禁用浓度走令牌（tokens.css:37-40），不与其它组件的禁用态分叉 */
+  opacity: var(--disabled-opacity);
 }
 
 /* ---------- 状态格 ---------- */
@@ -1019,6 +1110,16 @@ onMounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 「N 段番茄」：本格的主事实，提到 --text-2 + .num；待办条数降为脚注 */
+.hf-fn .fn-main {
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.hf-fn .fn-sub {
+  font-size: var(--fs-micro);
 }
 
 /* ---------- 工具行 ---------- */

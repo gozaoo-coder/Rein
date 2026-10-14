@@ -6,16 +6,22 @@ import { useRouter } from 'vue-router'
 import { useTodoStore } from '@/stores/todo'
 import { cmpUrgency } from '@/utils/todo'
 import SmartAddSheet from '@/components/common/SmartAddSheet.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import TodoItem from './TodoItem.vue'
 
-/** 主页「待办」卡：按紧急程度排序仅展示前 3 条；「查看全部」进 /todos 二级页。 */
-const props = defineProps<{ date: string }>()
+/** 主页「待办」卡：按紧急程度排序仅展示前 limit 条；「查看全部」进 /todos 二级页。
+ *  limit 由宿主决定：桌面便当的格子越高能盛下的条越多；缺省 3 ——
+ *  手机端与历史调用都不传，行为与改动前逐像素一致。 */
+const props = defineProps<{ date: string; limit?: number }>()
 
 const router = useRouter()
 const store = useTodoStore()
 const addOpen = ref(false)
 
-const urgent = computed(() => [...store.allTodos].sort(cmpUrgency).slice(0, 3))
+/** 实际展示条数（props.limit ?? 3）；模板里的「另有 N 条未展示」也按它算 */
+const limit = computed(() => props.limit ?? 3)
+
+const urgent = computed(() => [...store.allTodos].sort(cmpUrgency).slice(0, limit.value))
 const openCount = computed(() => store.allTodos.filter((t) => t.status !== 'done').length)
 
 onMounted(() => {
@@ -31,10 +37,13 @@ onMounted(() => {
         <button class="add row center" aria-label="添加待办" @click="addOpen = true">
           <Plus :size="17" :stroke-width="2.4" />
         </button>
-        <button class="all-link row center" @click="router.push('/todos')">
-          <span class="num">全部 {{ store.allTodos.length }}</span>
-          <ChevronRight :size="15" />
-        </button>
+        <!-- 两个 /todos 入口合并成卡头这一枚（位置更靠上、信息更全：总数 + 未展示数），
+             卡尾「查看全部」链接删掉 -->
+        <PillChip as="button" tone="action" class="all-link" @click="router.push('/todos')">
+          全部 <span class="num">{{ store.allTodos.length }}</span>
+          <span v-if="store.allTodos.length > limit">· {{ store.allTodos.length - limit }} 条未展示</span>
+          <ChevronRight :size="13" :stroke-width="2.6" />
+        </PillChip>
       </div>
     </header>
 
@@ -43,13 +52,7 @@ onMounted(() => {
     </ul>
     <p v-else class="empty t-3">还没有待办，点右上角「+」添加一条吧</p>
 
-    <template v-if="store.allTodos.length > 3">
-      <p class="foot t-3">
-        按紧急程度排序 · 另有 {{ store.allTodos.length - 3 }} 条未展示
-        <router-link class="more pressable" to="/todos">查看全部</router-link>
-      </p>
-    </template>
-    <p v-else-if="urgent.length" class="foot t-3">
+    <p v-if="urgent.length" class="foot t-3">
       <span class="num">{{ openCount }}</span> 条未完成
     </p>
 
@@ -85,18 +88,17 @@ onMounted(() => {
   border-radius: 50%;
 }
 
+/* 卡头去处胶囊：PillChip tone=action（规格在 PillChip.vue），这里只补命中区 ——
+   纵向撑到 44（原 .all-link 同款惯用法：胶囊自身约 26px 高，低于拇指下限） */
 .all-link {
   position: relative;
-  gap: 1px;
-  /* 纵向补到 44（原来 5px 内边距只有约 26px 高）；横向左侧吃 10px 内边距 */
-  padding: 12px 2px 12px 10px;
-  font-size: var(--fs-footnote);
-  font-weight: 600;
-  color: var(--text-2);
 }
 
-.all-link:active {
-  opacity: 0.6;
+.all-link::after {
+  content: '';
+  position: absolute;
+  inset: -9px -4px;
+  border-radius: var(--radius-full);
 }
 
 .list {
@@ -110,15 +112,5 @@ onMounted(() => {
 
 .foot {
   padding-bottom: 4px;
-}
-
-.more {
-  margin-left: 6px;
-  font-weight: 700;
-  color: var(--accent);
-}
-
-.more::after {
-  content: ' ›';
 }
 </style>

@@ -165,6 +165,16 @@ const editorOpen = ref(false)
   padding: 2px;
 }
 
+/* 桌面壳：指针精度下 ≥22 才点得住，而行尾这两颗原本是 16 图标 + 2px 内边距 = 20×20
+   （低于下限，`/` 与 `/sports` 都被守卫量到）。内边距提到 4px → 24×24，仍在
+   .edit/.del::after 那条 36×44 的命中区之内，触态那颗也照旧。
+   只加在 .desk-main 下：22 是**指针精度**的下限 —— 手机上这两颗的命中区本来就由
+   44px 的 ::after 撑着（拇指下限），不该让触屏行去付这一档内边距。 */
+.desk-main .edit,
+.desk-main .del {
+  padding: 4px;
+}
+
 /* 行尾编辑/删除：16px 图标 + 2px 内边距 ≈ 20px 见方，命中区纵向外扩到 44
    （横向不外扩，两颗相隔 8px，扩出去会互相抢） */
 .edit::after,
@@ -178,7 +188,11 @@ const editorOpen = ref(false)
   transform: translate(-50%, -50%);
 }
 
-.item:hover .ops {
+/* 行尾两颗是「悬停才显形」的次操作 —— 但 opacity:0 **不妨碍聚焦**：
+   TAB 落到 .edit/.del 上时，焦点在一条看不见的按钮上，键盘用户完全不知道自己在哪。
+   所以焦点进到行内任何位置就整组显形（照 WorkoutRow 的 .item:hover/.del:focus-visible）。 */
+.item:hover .ops,
+.item:focus-within .ops {
   opacity: 1;
 }
 

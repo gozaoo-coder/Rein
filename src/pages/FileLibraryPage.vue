@@ -23,8 +23,11 @@ import {
 
 import PageHeader from '@/components/layout/PageHeader.vue'
 import FileExplorer from '@/components/files/FileExplorer.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { kbService, invalidateUsage, usageCached } from '@/services/kbService'
+import { isTauri } from '@/services/transport'
 import { humanBytes } from '@/utils/format'
 import { useAiStore } from '@/stores/ai'
 import { useToast } from '@/composables/useToast'
@@ -238,7 +241,7 @@ const sourceLabel = computed(() => {
 const sizeLabel = computed(() => {
   const r = reader.value
   if (!r) return ''
-  return r.raw !== null ? `${r.chars.toLocaleString()} 字` : `共 ${r.totalChunks} 块`
+  return r.raw !== null ? `${r.chars.toLocaleString()} 字` : `共 ${r.totalChunks} 段`
 })
 
 const classifyLabel = computed(() => {
@@ -330,9 +333,9 @@ const origin = computed(() => (reader.value ? ORIGIN[reader.value.sourceType] : 
 const originRoute = computed(() => origin.value?.path ?? null)
 const originLabel = computed(() => origin.value?.label ?? '原页面')
 
-/** 模态展示名（chips） */
+/** 模态展示名（chips）。text / 图片 / 音频 / 视频 之外的模态（原始二进制）落到「附件」 */
 function modalLabel(m: string): string {
-  return m === 'text' ? '文本' : m === 'image' ? '图片' : m === 'audio' ? '音频' : m === 'video' ? '视频' : '本体'
+  return m === 'text' ? '文本' : m === 'image' ? '图片' : m === 'audio' ? '音频' : m === 'video' ? '视频' : '附件'
 }
 
 /** 打开本体（data URL 预览）。过大时只展示元信息与提示。 */
@@ -347,6 +350,50 @@ async function viewModal(modal: KbModal | 'text'): Promise<void> {
     toast.toast(errMsg(e))
   } finally {
     r.mediaBusy = false
+  }
+}
+
+/** 本体过大未内联时导出到本地：与文件管理器同一条路（桌面端落盘，浏览器走下载）。 */
+async function exportMedia(): Promise<void> {
+  const r = reader.value
+  if (!r) return
+  if (r.fileId === null) {
+    toast.toast('该条目没有可导出的文件')
+    return
+  }
+  if (isTauri) {
+    try {
+      const path = await kbService.exportFile(r.fileId)
+      toast.toast(`已导出到 ${path}`)
+    } catch (e) {
+      toast.toast(errMsg(e))
+    }
+    return
+  }
+  // 浏览器：本体（或正文）当文件下载
+  try {
+    let blob: Blob
+    let name = r.title
+    const modal = r.modalities.find((m) => m !== 'text')
+    if (modal) {
+      const media = await kbService.mediaGet(r.docId, modal as KbModal)
+      if (!media.dataUrl) throw new Error('文件没有内联数据')
+      blob = await (await fetch(media.dataUrl)).blob()
+      if (media.mime && !name.includes('.')) name = `${name}.bin`
+    } else {
+      const d = await kbService.read(r.docId, 'l2', 0, 64)
+      blob = new Blob([d.chunks.map((c) => c.text).join('\n')], { type: 'text/markdown' })
+      if (!name.includes('.')) name = `${name}.md`
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.toast(`已下载 ${name}`)
+  } catch (e) {
+    toast.toast(errMsg(e))
   }
 }
 
@@ -629,15 +676,26 @@ onMounted(async () => {
           <h2 class="rtitle">{{ reader.title }}</h2>
           <p v-if="reader.path" class="rpath">{{ reader.path }}</p>
         </div>
+        <!-- 分段加载 / 空正文投影 / 解压口径三处说明合并成标题行右侧这一枚入口 -->
+        <span class="rhint">
+          <InfoHint title="文档说明">
+            <p>长文档按段分批读入：读完一段点「继续加载」，全部读完会显示字数与「已到末尾」。</p>
+            <p v-if="structuredHint">
+              有的记录只是「标题 + 结构化字段」的投影，本身没有长文，上面的标签就是它的全部信息；要改这条记录的{{ structuredHint }}，请回到它自己的页面。
+            </p>
+            <p v-if="archiveCandidate">解压按文件内容真解压：文本会成为可检索的笔记。</p>
+          </InfoHint>
+        </span>
       </div>
 
+      <!-- 主状态（待归类 / 已归类）单独一颗强调胶囊；日期与大小降为次要读数，竖线隔开 -->
       <div class="meta row">
         <span class="pill">{{ sourceLabel }}</span>
-        <span v-if="reader.occurredOn" class="pill">{{ reader.occurredOn }}</span>
-        <span v-if="reader.system" class="pill ro"><Lock :size="11" /> 系统文件</span>
-        <span v-if="classifyLabel" class="pill">{{ classifyLabel }}</span>
-        <span v-if="reader.pinned" class="pill ro"><Pin :size="11" /> 已钉住</span>
-        <span class="pill">{{ sizeLabel }}</span>
+        <StatusChip v-if="classifyLabel" tone="accent">{{ classifyLabel }}</StatusChip>
+        <span v-if="reader.system" class="pill"><Lock :size="11" /> 系统文件</span>
+        <span v-if="reader.pinned" class="pill"><Pin :size="11" /> 已钉住</span>
+        <span v-if="reader.occurredOn" class="mtext">{{ reader.occurredOn }}</span>
+        <span class="mtext">{{ sizeLabel }}</span>
       </div>
       <div v-if="reader.tags.length" class="tags row">
         <span v-for="t in reader.tags" :key="t" class="tag">{{ t }}</span>
@@ -667,7 +725,6 @@ onMounted(async () => {
             <PackageOpen :size="14" />
             {{ reader.archive ? '重新读取' : '打开压缩包' }}
           </button>
-          <span class="t-3 hint-inline">按内容真解压：文本会成为可检索的笔记</span>
         </div>
         <p v-if="reader.archiveErr" class="err"><AlertCircle :size="13" /> {{ reader.archiveErr }}</p>
 
@@ -680,7 +737,7 @@ onMounted(async () => {
               压缩包 {{ humanBytes(reader.archive.packedBytes) }}
             </span>
           </div>
-          <p v-for="(n, i) in reader.archive.notes" :key="`${i}-${n}`" class="t-3 hint-inline">{{ n }}</p>
+          <p v-for="(n, i) in reader.archive.notes" :key="`${i}-${n}`" class="t-2 hint-inline">{{ n }}</p>
 
           <ul class="arc-list">
             <li
@@ -729,7 +786,7 @@ onMounted(async () => {
             <p
               v-for="(n, i) in reader.archiveReport.skipped.slice(0, 5)"
               :key="`${i}-${n}`"
-              class="t-3 hint-inline"
+              class="t-2 hint-inline"
             >
               {{ n }}
             </p>
@@ -752,12 +809,6 @@ onMounted(async () => {
           <div v-if="bodyText" class="doc">{{ bodyText }}</div>
           <div v-else class="thin">
             <p class="thin-t">这条记录没有更多正文</p>
-            <p class="thin-b">
-              工作区里的{{ sourceLabel }}条目是按「标题 + 结构化字段」导出的投影<template
-                v-if="structuredHint"
-              >（{{ structuredHint }}）</template>，它本身没有可展开的长文。
-              上面那些标签就是这条记录的全部信息；要改内容请回它自己的页面。
-            </p>
             <button v-if="originRoute" class="btn" @click="router.push(originRoute)">
               去{{ originLabel }}
             </button>
@@ -766,17 +817,19 @@ onMounted(async () => {
           <!-- 分页读取：只有走分块（非 note 真源直读）的文档才有"下一页" -->
           <div v-if="canPageMore && reader.hasMore" class="row more-row">
             <button class="btn ghost" :disabled="reader.loadingMore || reader.busy" @click="loadMore">
-              {{ reader.loadingMore ? '加载中…' : `继续加载（${reader.chunks.length}/${reader.totalChunks} 块）` }}
+              {{ reader.loadingMore ? '加载中…' : `继续加载（${reader.chunks.length}/${reader.totalChunks} 段）` }}
             </button>
             <button class="btn ghost" :disabled="reader.busy" @click="loadAll">一次读完</button>
           </div>
-          <p v-else-if="canPageMore && bodyText && reader.totalChunks > 1" class="t-3 fin">
-            已到末尾 · 约 {{ reader.chars.toLocaleString() }} 字
-          </p>
+          <!-- 读到底：状态词交给胶囊，字数升为主数值（--fs-title3 + .num） -->
+          <div v-else-if="canPageMore && bodyText && reader.totalChunks > 1" class="finrow row">
+            <StatusChip tone="ok">已到末尾</StatusChip>
+            <span class="finnum num">约 {{ reader.chars.toLocaleString() }} 字</span>
+          </div>
         </template>
       </template>
 
-      <!-- 本体模态（图片 / 音频 / 视频 / 其他二进制） -->
+      <!-- 非文本模态（图片 / 音频 / 视频 / 二进制附件） -->
       <template v-else>
         <p v-if="reader.media?.degraded" class="degrade">
           已降级为文本：{{ reader.media.degradeReason }}
@@ -799,7 +852,11 @@ onMounted(async () => {
           controls
           :src="reader.media.dataUrl"
         />
-        <p v-if="reader.media?.tooLarge" class="t-3 fin">本体较大，未在页面内联；可导出后外部打开。</p>
+        <!-- 未内联时给出真实的导出入口（与文件管理器的「导出到本地」同一条路） -->
+        <div v-if="reader.media?.tooLarge" class="row toobig">
+          <span class="t-3">文件较大，未在页面内联</span>
+          <button class="btn ghost" @click="exportMedia">导出到本地</button>
+        </div>
         <p v-if="reader.media?.hint" class="t-3 fin">{{ reader.media.hint }}</p>
         <blockquote v-if="reader.media && !reader.media.dataUrl && !reader.media.tooLarge" class="doc fallback">
           {{ reader.media.text ?? '（该模态没有可展示的内容）' }}
@@ -952,6 +1009,12 @@ li + li .item {
   gap: 8px;
 }
 
+/* 标题行右侧的帮助入口：InfoHint 是多根组件，类要落在包裹元素上 */
+.rhint {
+  margin-left: auto;
+  flex: none;
+}
+
 .back {
   position: relative;
   flex: none;
@@ -1001,9 +1064,15 @@ li + li .item {
   font-size: var(--fs-caption);
 }
 
-.pill.ro {
-  background: var(--accent-soft);
-  color: var(--accent);
+/* 日期与大小是次要读数：不进胶囊，降一档字色，两项之间竖线隔开 */
+.mtext {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+.mtext + .mtext {
+  padding-left: 7px;
+  border-left: 0.5px solid var(--line);
 }
 
 .tags {
@@ -1030,10 +1099,10 @@ li + li .item {
   color: var(--text-2);
 }
 
-/* 模态 chips */
+/* 行内提示：字号降一档，字色由 t-2 / t-3 决定（解压跳过原因与档案 notes 走 t-2，
+   80 项截断脚注保持 t-3） */
 .hint-inline {
   font-size: var(--fs-caption);
-  color: var(--text-3);
 }
 
 /* 压缩包面板 */
@@ -1149,7 +1218,7 @@ li + li .item {
   flex-wrap: wrap;
 }
 
-/* 本体预览 */
+/* 模态预览 */
 .preview-img,
 .preview-video {
   width: 100%;
@@ -1188,7 +1257,8 @@ li + li .item {
 
 /* 「这条记录没有更多正文」：派生文档只带标题与结构化字段，而那些字段已经在
    上面的 pills 里说过了 —— 正文区于是常常是空的。原先直接留白，用户读到的是
-   「文件坏了」；这里把原因讲清，并把人送回真身所在页面。 */
+   「文件坏了」；现在卡面只留结论 + 回真身的按钮，完整原因在标题行右侧的
+   帮助入口里（投影口径一次说清）。 */
 .thin {
   margin-top: 12px;
   padding: 14px 16px;
@@ -1201,14 +1271,6 @@ li + li .item {
   font-size: var(--fs-subhead);
   font-weight: 700;
   color: var(--text-1);
-}
-
-.thin-b {
-  margin: 6px auto 0;
-  max-width: 34em;
-  font-size: var(--fs-caption);
-  line-height: 1.6;
-  color: var(--text-2);
 }
 
 .thin .btn {
@@ -1230,6 +1292,27 @@ li + li .item {
 
 .more-row .btn {
   flex: 1;
+}
+
+/* 读到底：状态词与字数各占其位，字数是这一行的主数值 */
+.finrow {
+  gap: 8px;
+  margin-top: 12px;
+  justify-content: center;
+}
+
+.finnum {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+/* 文件过大：提示 + 真实导出入口同行 */
+.toobig {
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+  font-size: var(--fs-caption);
 }
 
 .fin {
@@ -1303,7 +1386,7 @@ li + li .item {
 }
 
 .btn:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 /* ============================================================

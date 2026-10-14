@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CheckCircle2, ExternalLink, RefreshCw, RotateCcw, Sparkles } from 'lucide-vue-next'
+import {
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
+  ExternalLink,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+} from 'lucide-vue-next'
 
 import { useToast } from '@/composables/useToast'
 import { useCampusStore } from '@/stores/campus'
@@ -67,6 +75,24 @@ const headline = computed(() => {
   if (rejected.value.length) bits.push(`请求被拒 ${rejected.value.length} 门`)
   const tail = cancelled.value.length ? `（另有 ${cancelled.value.length} 条已取消）` : ''
   return bits.join(' · ') + tail
+})
+
+/**
+ * 结论行的图标与颜色跟着结论切档。
+ *
+ * 原先固定挂一枚绿对勾：没抢到、全取消时第一眼收到的还是「成功」的信号 ——
+ * 而这块板是给**不在场、只扫一眼**的人看的，图标先于文字被读到。
+ * 抢到 → 绿对勾；有没抢到/免听/被拒 → 黄三角；全是取消 → 中性图标。
+ */
+const leadIcon = computed(() => {
+  if (won.value.length) return CheckCircle2
+  if (failed.value.length || conflict.value.length || rejected.value.length) return AlertTriangle
+  return Ban
+})
+const leadTone = computed(() => {
+  if (won.value.length) return 'ok'
+  if (failed.value.length || conflict.value.length || rejected.value.length) return 'warn'
+  return 'idle'
 })
 
 /** 结果行：抢到的在前，**需要行动的**（免听 / 被拒）紧随，其余按原顺序 */
@@ -156,7 +182,7 @@ async function onSync(): Promise<void> {
   <div class="result">
     <!-- 结论是这条链路上最该被读出来的一句话：用户不在场时它是唯一的"结果播报" -->
     <p class="lead" role="status">
-      <CheckCircle2 :size="14" class="ico" />
+      <component :is="leadIcon" :size="14" class="ico" :class="leadTone" />
       <b>{{ headline }}</b>
     </p>
 
@@ -239,8 +265,17 @@ async function onSync(): Promise<void> {
   color: var(--text-1);
 }
 
-.ico {
+/* 图标色随结论切档：抢到的绿、出事的黄、全取消的中性 */
+.ico.ok {
   color: var(--ok);
+}
+
+.ico.warn {
+  color: var(--warn-strong);
+}
+
+.ico.idle {
+  color: var(--text-2);
 }
 
 .rows {
@@ -313,7 +348,7 @@ async function onSync(): Promise<void> {
 
 .chip.warn {
   color: var(--warn-strong);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  background: var(--warn-soft);
 }
 
 .chip.bad {
@@ -370,7 +405,7 @@ async function onSync(): Promise<void> {
 }
 
 .primary:disabled {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
 }
 
 .sub {

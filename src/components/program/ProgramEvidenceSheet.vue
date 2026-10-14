@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import type { ProgramTier } from '@/types'
@@ -86,7 +87,9 @@ const marks = computed<Mark[]>(() => {
     ]
   }
   if (c.key === 'sleep') {
-    return [{ x: 8, label: '推荐', sub: '7.5-8h', on: true }]
+    // 与曲线背景分区、要点表同一个区间（7–8h）：原先标记写 7.5-8h、
+    // 表格写 7-8h、分区是 7→8，三处对不上，读者不知道该信哪个
+    return [{ x: 8, label: '推荐', sub: '7-8h', on: true }]
   }
   return []
 })
@@ -172,7 +175,18 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
           <section class="card">
         <header class="card-head">
           <b>{{ curve.title }}</b>
-          <span class="unit">{{ curve.axisLabel }}</span>
+          <div class="head-side">
+            <span class="unit">{{ curve.axisLabel }}</span>
+            <!-- 「社交时差」的定义与睡眠数据未接入的说明：收进曲线卡标题行右端，
+                 卡面只留一行结论 -->
+            <InfoHint
+              v-if="curve.key === 'jetlag'"
+              title="社交时差"
+              content="社交时差 = 工作日与休息日「睡眠中点」的差值：两者越接近，曲线越靠左，力量增长损失越小。
+
+现在还没有记录睡眠数据，所以曲线只展示它与档位选择的关系，不标你的位置；接入睡眠记录后即可把你的位置标到曲线上。"
+            />
+          </div>
         </header>
 
         <svg class="chart" viewBox="0 0 330 176" role="img" :aria-label="curve.title">
@@ -355,9 +369,9 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
 
       <p class="note">{{ curve.conclusion }}</p>
 
-      <p v-if="curve.key === 'jetlag'" class="note sub">
-        社交时差 = 工作日与休息日「睡眠中点」的差值。当前版本尚未记录睡眠数据，
-        这里只展示其与档位选择的关系；接入睡眠记录后即可把你的位置标到曲线上。
+      <!-- 睡眠数据未接入前的一行结论；完整定义收进曲线卡标题行右端的 InfoHint -->
+      <p v-if="curve.key === 'jetlag'" class="note concl">
+        暂未记录睡眠数据，先看档位耐受度
       </p>
         </div>
       </Transition>
@@ -403,6 +417,13 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+/* 标题行右端：轴标 + 说明入口 */
+.card-head .head-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .card-head b {
@@ -473,18 +494,20 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
   white-space: nowrap;
 }
 
+/* soft 底上的字一律走对应 --*-strong：实底档（--accent/--warn/--danger）
+   直接当文字对比度只有 2:1 上下 */
 .rows li.best .rv {
-  color: var(--accent);
+  color: var(--accent-strong);
   font-weight: 700;
 }
 
 .rows li.risk .rv {
-  color: var(--danger);
+  color: var(--danger-strong);
   font-weight: 600;
 }
 
 .rows li.warn .rv {
-  color: var(--warn);
+  color: var(--warn-strong);
   font-weight: 600;
 }
 
@@ -494,9 +517,11 @@ const strengthAt = (x: number): number => sampleCurve(curve.value, x).strength
   line-height: 1.6;
 }
 
-.note.sub {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+/* 睡眠数据未接入的一行结论：比 .note 重一档，不再是 11px 三级灰 */
+.note.concl {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+  font-weight: 600;
 }
 
 .primary {

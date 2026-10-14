@@ -1,18 +1,31 @@
 /** 外部访问（对外服务网关）管理面 IPC 封装 · 对应 modules/gateway/commands.rs。
  *
- * 除 6 条管理命令外，还负责把 Rust 的 2 个事件桥接成订阅回调：
+ * 除管理命令外，还负责把 Rust 的事件桥接成订阅回调：
  * - Tauri 环境：@tauri-apps/api/event listen；
- * - 浏览器 mock：mock/server.ts 的 mockGateway 挂钩（伪造授权请求 / 状态变更）。
- * 事件名字符串严格照抄 Rust 常量（contract §4.5），一个字符都不改。 */
+ * - 浏览器 mock：mock/server.ts 的 mockGateway 挂钩（伪造授权请求 / 状态变更 / 下行控制）。
+ * 事件名字符串严格照抄 Rust 常量（contract §4.5、§14.3），一个字符都不改。 */
 
-import type { GatewayAuthDecision, GatewayAuthRequest, GatewayBindMode, GatewayStatus } from '@/types'
+import type {
+  FocusRuntime,
+  GatewayAuditEntry,
+  GatewayAuthDecision,
+  GatewayAuthRequest,
+  GatewayBindMode,
+  GatewayPomodoroCommand,
+  GatewaySessionCommand,
+  GatewayStatus,
+} from '@/types'
 import { invoke, isTauri } from './transport'
 
 type AuthRequestListener = (e: GatewayAuthRequest) => void
 type StatusListener = (s: GatewayStatus) => void
+type PomodoroCommandListener = (c: GatewayPomodoroCommand) => void
+type SessionCommandListener = (c: GatewaySessionCommand) => void
 
 const requiredListeners = new Set<AuthRequestListener>()
 const changedListeners = new Set<StatusListener>()
+const pomodoroCommandListeners = new Set<PomodoroCommandListener>()
+const sessionCommandListeners = new Set<SessionCommandListener>()
 let bridged = false
 
 function dispatchRequired(e: GatewayAuthRequest): void {
@@ -23,6 +36,14 @@ function dispatchChanged(s: GatewayStatus): void {
   for (const l of changedListeners) l(s)
 }
 
+function dispatchPomodoroCommand(c: GatewayPomodoroCommand): void {
+  for (const l of pomodoroCommandListeners) l(c)
+}
+
+function dispatchSessionCommand(c: GatewaySessionCommand): void {
+  for (const l of sessionCommandListeners) l(c)
+}
+
 async function bridgeEvents(): Promise<void> {
   if (bridged) return
   bridged = true
@@ -30,11 +51,15 @@ async function bridgeEvents(): Promise<void> {
     const { listen } = await import('@tauri-apps/api/event')
     await listen<GatewayAuthRequest>('gateway://authorization-required', (e) => dispatchRequired(e.payload))
     await listen<GatewayStatus>('gateway://authorization-changed', (e) => dispatchChanged(e.payload))
+    await listen<GatewayPomodoroCommand>('gateway://pomodoro-command', (e) => dispatchPomodoroCommand(e.payload))
+    await listen<GatewaySessionCommand>('gateway://session-command', (e) => dispatchSessionCommand(e.payload))
     return
   }
   const { mockGateway } = await import('@/mock/server')
   mockGateway.onRequired = dispatchRequired as (e: unknown) => void
   mockGateway.onChanged = dispatchChanged as (s: unknown) => void
+  mockGateway.onPomodoroCommand = dispatchPomodoroCommand as (c: unknown) => void
+  mockGateway.onSessionCommand = dispatchSessionCommand as (c: unknown) => void
 }
 
 export const gatewayService = {
@@ -53,6 +78,28 @@ export const gatewayService = {
     changedListeners.add(cb)
     return () => changedListeners.delete(cb)
   },
+
+  /** 订阅外部发来的番茄钟控制（`gateway://pomodoro-command`）；返回取消订阅函数。 */
+  async onPomodoroCommand(cb: PomodoroCommandListener): Promise<() => void> {
+    await bridgeEvents()
+    pomodoroCommandListeners.add(cb)
+    return () => pomodoroCommandListeners.delete(cb)
+  },
+
+  /** 订阅外部发来的训练课控制（`gateway://session-command`）；返回取消订阅函数。 */
+  async onSessionCommand(cb: SessionCommandListener): Promise<() => void> {
+    await bridgeEvents()
+    sessionCommandListeners.add(cb)
+    return () => sessionCommandListeners.delete(cb)
+  },
+
+  /* ---- 运行态上报（前端 → 后端，contract §14.1） ---- */
+
+  /** 上报一份番茄钟运行态快照（写 `app_meta:runtime.focus.v1`）；失败静默由调用方决定。 */
+  focusPublish: (snapshot: FocusRuntime) => invoke<Record<string, never>>('focus_publish', { snapshot }),
+
+  /** 清除运行态快照（pause / reset / 相位结束）；幂等。 */
+  focusUnpublish: () => invoke<Record<string, never>>('focus_unpublish', {}),
 
   /* ---- 管理面命令 ---- */
 
@@ -73,6 +120,16 @@ export const gatewayService = {
   authorizationRespond: (requestId: string, decision: GatewayAuthDecision, scopes: string[]) =>
     invoke<Record<string, never>>('gateway_authorization_respond', { requestId, decision, scopes }),
 
-  /** 撤销某个客户端的授权（allow 行置撤销位、deny 行删行，两情形都清活动会话授权）。 */
+  /** 撤销某个客户端的授权（allow 行置撤销位、deny/ignore 行删行，两情形都清活动会话授权）。 */
   revokeClient: (clientId: string) => invoke<GatewayStatus>('gateway_revoke_client', { clientId }),
+
+  /** 覆写「允许的网页来源」白名单（**整表替换**：设置页的加 / 删都走它，contract §15.2a）。
+   * 传空数组即清空 —— 此后只放行不带 `Origin` 的原生客户端。 */
+  setAllowedOrigins: (origins: string[]) =>
+    invoke<GatewayStatus>('gateway_set_allowed_origins', { origins }),
+
+  /** 最近若干条访问审计（谁 / 何时 / 方法 / 结果 / 参数摘要）。`limit` 缺省 50、夹到 [1, 500]；
+   * `clientId` 给了就只看那个客户端（设置页不做筛选，此处留口给别的调用方）。 */
+  auditRecent: (limit?: number | null, clientId?: string | null) =>
+    invoke<GatewayAuditEntry[]>('gateway_audit_recent', { limit: limit ?? null, clientId: clientId ?? null }),
 }

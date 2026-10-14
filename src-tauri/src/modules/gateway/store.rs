@@ -18,7 +18,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
-use crate::error::Result;
+use crate::error::{ReinError, Result};
 use crate::modules::gateway::models::{
     AuditEntry, AuditRecord, BindMode, ClientDecision, ExtClient, PromptGate, ScopeSet,
 };
@@ -28,10 +28,10 @@ use crate::modules::gateway::models::{
 /// 令牌前缀。标识「这是 Rein 外部访问令牌」，便于用户与日志辨认。
 pub const TOKEN_PREFIX: &str = "rein_ext_";
 
-/// 忽略静默窗口（秒）：同一客户端 30 秒内的重复挂起不再弹窗（contract §5.1）。
+/// 忽略静默窗口（秒）：同一客户端 30 秒内的重复挂起不再弹窗（contract §16「忽略」那一行）。
 pub const IGNORE_WINDOW_SECS: i64 = 30;
 
-/// 连续忽略到这一次后转为静默挂起，不再打扰用户（contract §5.1「连续 3 次静默挂起」）。
+/// 连续忽略到这一次后转为静默挂起，不再打扰用户（contract §16「连续 3 次 → 静默挂起」）。
 pub const MAX_SILENT_PROMPTS: i64 = 3;
 
 /// 生成一枚外部客户端令牌：32 字节 `OsRng` → base64url（无填充）+ 前缀 `rein_ext_`。
@@ -138,6 +138,177 @@ pub fn ensure_pair_token(conn: &Connection) -> Result<String> {
     let token = URL_SAFE_NO_PAD.encode(buf);
     crate::db::meta_set(conn, KEY_PAIR_TOKEN, &token)?;
     Ok(token)
+}
+
+// ---------------------------------------------------------------- Origin 白名单（contract §15）
+
+/// 用户批准过的网页来源（`Origin` 头）白名单，JSON 字符串数组。
+pub const KEY_ALLOWED_ORIGINS: &str = "gateway.allowedOrigins";
+
+/// 单个 Origin 的长度上限（写侧校验，contract §17.5「写字段长度校验」）。
+pub const MAX_ORIGIN_LEN: usize = 512;
+
+/// 白名单条数上限（超限拒绝，不静默截断）。
+pub const MAX_ORIGINS: usize = 64;
+
+/// 被拒握手的审计 `detail` 前缀 —— [`list_blocked_origins`] 靠它把 Origin 捞回来
+/// （contract §15.2b：被 403 的 Origin 落审计，设置页据此列出「被拦下的来源」）。
+pub const ORIGIN_BLOCKED_PREFIX: &str = "浏览器来源未在白名单：";
+
+/// 读白名单。坏 JSON / 非字符串数组一律当空表（宁可拒绝，不可放行）。
+pub fn get_allowed_origins(conn: &Connection) -> Vec<String> {
+    crate::db::meta_get(conn, KEY_ALLOWED_ORIGINS)
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .map(|list| normalize_origins_lossy(&list))
+        .unwrap_or_default()
+}
+
+/// 清洗一份白名单：去空白项、去重（保序）。
+fn normalize_origins_lossy(list: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in list {
+        let o = raw.trim();
+        if !o.is_empty() && !out.iter().any(|x| x == o) {
+            out.push(o.to_string());
+        }
+    }
+    out
+}
+
+/// 写入白名单（整表替换语义）。空表写入 `"[]"`（键保留、读取解析为空表；无害的常驻键）。
+/// 长度 / 条数超限回 `bad_request`（写侧校验，contract §17.5）——错误文案不回显来源串本身，
+/// 避免把可疑内容带进 UI。
+pub fn set_allowed_origins(conn: &Connection, origins: &[String]) -> Result<Vec<String>> {
+    let cleaned = normalize_origins_lossy(origins);
+    if cleaned.len() > MAX_ORIGINS {
+        return Err(ReinError::coded(
+            "bad_request",
+            format!("来源条数超限（上限 {MAX_ORIGINS} 条）"),
+        ));
+    }
+    if cleaned.iter().any(|o| o.chars().count() > MAX_ORIGIN_LEN) {
+        return Err(ReinError::coded(
+            "bad_request",
+            format!("来源过长（上限 {MAX_ORIGIN_LEN} 字符）"),
+        ));
+    }
+    // 序列化不会失败（元素都是字符串），失败也退化成空数组。
+    let json = serde_json::to_string(&cleaned).unwrap_or_else(|_| "[]".to_string());
+    crate::db::meta_set(conn, KEY_ALLOWED_ORIGINS, &json)?;
+    Ok(cleaned)
+}
+
+/// 「被拦下的来源」：被 Origin 闸门拒过、且**尚未**加入白名单的 Origin（去重、最近优先）。
+/// 设置页据此一键「加入白名单」（contract §15.2b）。
+pub fn list_blocked_origins(conn: &Connection, limit: i64) -> Result<Vec<String>> {
+    let take = clamp_limit(limit) as usize;
+    let allowed = get_allowed_origins(conn);
+    let mut stmt = conn.prepare(
+        "SELECT detail FROM ext_audit \
+         WHERE method = '' AND decision = 'denied' AND detail LIKE ?1 \
+         ORDER BY at DESC, id DESC LIMIT ?2",
+    )?;
+    // 一个 Origin 可能被拒很多次：多扫一些行再在 Rust 侧去重（接不上就少列几个，不影响正确性）。
+    let rows = stmt.query_map(
+        params![format!("{ORIGIN_BLOCKED_PREFIX}%"), (take * 10) as i64],
+        |r| r.get::<_, String>(0),
+    )?;
+    let mut out: Vec<String> = Vec::new();
+    for row in rows {
+        let detail = row?;
+        let Some(origin) = detail.strip_prefix(ORIGIN_BLOCKED_PREFIX) else {
+            continue;
+        };
+        let origin = origin.trim();
+        if origin.is_empty()
+            || allowed.iter().any(|a| a == origin)
+            || out.iter().any(|o| o == origin)
+        {
+            continue;
+        }
+        out.push(origin.to_string());
+        if out.len() >= take {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------- 运行态快照（contract §14）
+
+/// 番茄钟运行态快照的 `app_meta` 键（值 = 原样 JSON `FocusRuntime`）。
+pub const KEY_FOCUS_RUNTIME: &str = "runtime.focus.v1";
+
+/// 运行态陈旧阈值（毫秒）：前端 1 秒一次上报（`focus_publish`），超过 5 秒没有新值即视作已停。
+/// 判定用**服务端**写入时刻，不信前端自报的 `reportedAt`（contract §14.1）。
+pub const RUNTIME_TTL_MS: i64 = 5_000;
+
+/// 写入时刻存在快照键的兄弟键上（`runtime.focus.v1.at`），值 = ISO-8601。
+const RUNTIME_AT_SUFFIX: &str = ".at";
+
+/// 一份运行态快照：原样载荷 + 服务端写入时刻。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSnapshot {
+    /// `app_meta` 里那份原样 JSON 文本（上层自己解析成 `FocusRuntime`）。
+    pub payload: String,
+    /// ISO-8601（服务端时钟）。
+    pub written_at: String,
+}
+
+/// 写入时刻的伴随键名。
+pub fn runtime_at_key(key: &str) -> String {
+    format!("{key}{RUNTIME_AT_SUFFIX}")
+}
+
+/// 写一份运行态快照（写入时刻 = 现在）。载荷原样落库，本层不解析其形状。
+pub fn put_runtime_snapshot(conn: &Connection, key: &str, payload: &str) -> Result<()> {
+    put_runtime_snapshot_at(conn, key, payload, &now_iso())
+}
+
+/// 指定写入时刻（测试 / 重启恢复用）。
+pub fn put_runtime_snapshot_at(
+    conn: &Connection,
+    key: &str,
+    payload: &str,
+    at: &str,
+) -> Result<()> {
+    crate::db::meta_set(conn, key, payload)?;
+    crate::db::meta_set(conn, &runtime_at_key(key), at)
+}
+
+/// 读一份运行态快照（不存在返回 `None`）。缺写入时刻的旧快照照样返回，陈旧判定自会判它陈旧。
+pub fn get_runtime_snapshot(conn: &Connection, key: &str) -> Result<Option<RuntimeSnapshot>> {
+    let Some(payload) = crate::db::meta_get(conn, key) else {
+        return Ok(None);
+    };
+    Ok(Some(RuntimeSnapshot {
+        payload,
+        written_at: crate::db::meta_get(conn, &runtime_at_key(key)).unwrap_or_default(),
+    }))
+}
+
+/// 清掉运行态快照（键 + 写入时刻键）。`focus_unpublish` / 恢复自检用它。
+pub fn clear_runtime_snapshot(conn: &Connection, key: &str) -> Result<()> {
+    crate::db::meta_del(conn, key)?;
+    crate::db::meta_del(conn, &runtime_at_key(key))
+}
+
+/// 快照是否已陈旧：`now - writtenAt > ttlMs`。时间戳缺失 / 解不出来一律按陈旧处理
+/// （宁可对外报「没有运行态」，也不报一个来历不明的旧值）。
+pub fn is_runtime_stale(written_at: &str, now: DateTime<Utc>, ttl_ms: i64) -> bool {
+    match DateTime::parse_from_rfc3339(written_at) {
+        Ok(t) => now
+            .signed_duration_since(t.with_timezone(&Utc))
+            .num_milliseconds()
+            > ttl_ms,
+        Err(_) => true,
+    }
+}
+
+/// 只在**未陈旧**时返回快照 —— `pomodoro.status` 用这一个就够（陈旧即 `null`，contract §14.1）。
+pub fn fresh_runtime_snapshot(conn: &Connection, key: &str) -> Result<Option<RuntimeSnapshot>> {
+    Ok(get_runtime_snapshot(conn, key)?
+        .filter(|s| !is_runtime_stale(&s.written_at, Utc::now(), RUNTIME_TTL_MS)))
 }
 
 // ---------------------------------------------------------------- ext_clients 读写
@@ -566,6 +737,140 @@ mod tests {
         // limit 统一夹到 [1, 500]：0 退化为 1，巨大值退化为上限
         assert_eq!(list_audit(&conn, 0).unwrap().len(), 1);
         assert_eq!(list_audit(&conn, i64::MAX).unwrap().len(), 2);
+    }
+
+    /// Origin 白名单：默认空、写入去重保序、超长/超量拒绝（写侧校验）。
+    #[test]
+    fn allowed_origins_are_normalized_and_bounded() {
+        let conn = db();
+        assert!(get_allowed_origins(&conn).is_empty(), "默认没有放行任何来源");
+
+        let saved = set_allowed_origins(
+            &conn,
+            &[
+                " null ".into(),
+                "http://localhost:5173".into(),
+                "null".into(),
+                "".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(saved, vec!["null", "http://localhost:5173"], "去空白 + 去重 + 保序");
+        assert_eq!(get_allowed_origins(&conn), saved);
+
+        // 超长单条 → bad_request，且不落库（旧值原样保留）
+        let long = "x".repeat(MAX_ORIGIN_LEN + 1);
+        assert_eq!(
+            set_allowed_origins(&conn, &[long]).unwrap_err().code(),
+            "bad_request"
+        );
+        assert_eq!(get_allowed_origins(&conn), saved);
+
+        // 超量 → bad_request
+        let many: Vec<String> = (0..(MAX_ORIGINS + 1)).map(|i| format!("http://h{i}")).collect();
+        assert_eq!(
+            set_allowed_origins(&conn, &many).unwrap_err().code(),
+            "bad_request"
+        );
+
+        // 空表 = 清空（写入 "[]"，读取解析为空表；不删键）
+        assert!(set_allowed_origins(&conn, &[]).unwrap().is_empty());
+        assert!(get_allowed_origins(&conn).is_empty());
+        // 坏 JSON 当空表（宁可拒绝，不可放行）
+        crate::db::meta_set(&conn, KEY_ALLOWED_ORIGINS, "{ not json").unwrap();
+        assert!(get_allowed_origins(&conn).is_empty());
+    }
+
+    /// 被 Origin 闸门拒过的来源进「被拦下的来源」；加入白名单后即从该清单消失。
+    #[test]
+    fn blocked_origins_come_from_audit_and_leave_once_allowed() {
+        let conn = db();
+        let audit = |origin: &str| AuditRecord {
+            at: now_iso(),
+            client_id: None,
+            method: String::new(),
+            scope: String::new(),
+            decision: AuditDecision::Denied,
+            detail: Some(format!("{ORIGIN_BLOCKED_PREFIX}{origin}")),
+            ip: Some("127.0.0.1".into()),
+            duration_ms: 0,
+        };
+        insert_audit(&conn, &audit("http://evil.example")).unwrap();
+        insert_audit(&conn, &audit("http://evil.example")).unwrap(); // 重复拒绝只列一次
+        insert_audit(&conn, &audit("null")).unwrap();
+        // 别的审计行（不是 Origin 拒绝）不该被当成来源
+        insert_audit(
+            &conn,
+            &AuditRecord {
+                detail: Some("握手被拒".into()),
+                ..audit("ignored")
+            },
+        )
+        .unwrap();
+
+        let blocked = list_blocked_origins(&conn, 10).unwrap();
+        assert_eq!(blocked.len(), 2, "去重后两条：{blocked:?}");
+        assert!(blocked.contains(&"http://evil.example".to_string()));
+        assert!(blocked.contains(&"null".to_string()));
+
+        // 用户点「允许」→ 写进白名单 → 从「被拦下的来源」消失
+        set_allowed_origins(&conn, &["null".into()]).unwrap();
+        let after = list_blocked_origins(&conn, 10).unwrap();
+        assert_eq!(after, vec!["http://evil.example"], "已加白的来源不再列出");
+
+        // limit 生效且夹到 [1, 500]
+        assert_eq!(list_blocked_origins(&conn, 1).unwrap().len(), 1);
+    }
+
+    /// 运行态快照：原样读写 + 服务端写入时刻 + 陈旧判定（5 秒）。
+    #[test]
+    fn runtime_snapshot_roundtrip_and_staleness() {
+        let conn = db();
+        assert_eq!(get_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME).unwrap(), None);
+        assert_eq!(fresh_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME).unwrap(), None);
+
+        let payload = r#"{"phase":"focus","running":true,"remainingSec":1234}"#;
+        put_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME, payload).unwrap();
+        let snap = get_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME).unwrap().unwrap();
+        assert_eq!(snap.payload, payload, "载荷原样落库");
+        assert!(!snap.written_at.is_empty(), "写入时刻由服务端记");
+        // 刚写完 → 未陈旧
+        assert!(fresh_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME).unwrap().is_some());
+
+        // 只写载荷、没有写入时刻（老版本 / 坏数据）→ 判陈旧
+        crate::db::meta_del(&conn, &runtime_at_key(KEY_FOCUS_RUNTIME)).unwrap();
+        assert!(fresh_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME).unwrap().is_none());
+        assert!(is_runtime_stale("", Utc::now(), RUNTIME_TTL_MS));
+
+        // 眨眼间的时间差：4.9s 未陈旧，5.1s 陈旧（阈值 5000ms，判定在后端）
+        let now = Utc::now();
+        let at = |ms: i64| (now - chrono::Duration::milliseconds(ms)).to_rfc3339();
+        assert!(!is_runtime_stale(&at(4_900), now, RUNTIME_TTL_MS));
+        assert!(is_runtime_stale(&at(5_100), now, RUNTIME_TTL_MS));
+
+        // 清除 = 两个键一起没
+        clear_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME).unwrap();
+        assert_eq!(get_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME).unwrap(), None);
+        assert_eq!(crate::db::meta_get(&conn, &runtime_at_key(KEY_FOCUS_RUNTIME)), None);
+    }
+
+    /// 运行态只落 `app_meta`，绝不碰业务表（写业务表会产生脏记录并被广播，contract §14.1）。
+    #[test]
+    fn runtime_snapshot_never_touches_business_tables() {
+        let conn = db();
+        put_runtime_snapshot(&conn, KEY_FOCUS_RUNTIME, r#"{"running":true}"#).unwrap();
+        let pomodoro_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pomodoro_sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pomodoro_rows, 0, "运行态快照不进 pomodoro_sessions");
+        let in_meta: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM app_meta WHERE key LIKE 'runtime.focus.v1%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(in_meta, 2, "载荷 + 写入时刻都在 app_meta");
     }
 
     #[test]

@@ -135,7 +135,8 @@ const insight = computed(() => {
 }
 
 .lab b {
-  font-size: 20px;
+  /* 环心完成率是周总结的主读数：用阶梯上的 --fs-title2，不写裸值 20px */
+  font-size: var(--fs-title2);
   font-weight: 800;
 }
 

@@ -1,23 +1,42 @@
 <script setup lang="ts">
 /**
- * 设置页「外部访问」分区：对外服务网关的开关 / 绑定模式 / 端口 / 已授权程序列表。
+ * 设置页「外部访问」分区：对外服务网关的开关 / 绑定模式 / 端口 / 配对令牌 /
+ * 已授权与被拦下的程序 / 允许的网页来源（Origin 白名单）/ 最近访问记录。
  *
  * 只接管理面里「看一眼、改一下、撤一个」这半张脸（`gateway_status` / `gateway_set_enabled` /
- * `gateway_set_bind` / `gateway_revoke_client`）；授权弹窗与它的单例状态机在另一层
+ * `gateway_set_bind` / `gateway_revoke_client` / `gateway_set_allowed_origins` /
+ * `gateway_audit_recent`）；授权弹窗与它的单例状态机在另一层
  * （`components/settings/GatewayAuthSheet.vue` + `system/externalAccessRuntime.ts`）。
  *
  * 服务**默认关**：用户开了才监听端口（contract §4.1）—— 界面文案照此写实，不美化。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { Ban, Globe, KeyRound, Link2, Power, Server, TriangleAlert, Unplug } from 'lucide-vue-next'
+import {
+  AlertCircle,
+  Ban,
+  CheckCircle2,
+  Globe,
+  History,
+  KeyRound,
+  Link2,
+  Power,
+  RefreshCw,
+  Server,
+  ShieldAlert,
+  TriangleAlert,
+  Unplug,
+} from 'lucide-vue-next'
 
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { useToast } from '@/composables/useToast'
 import { gatewayService } from '@/services/gatewayService'
 import {
   GATEWAY_SCOPE_LABELS,
+  type GatewayAuditEntry,
   type GatewayBindMode,
   type GatewayBlocked,
   type GatewayClient,
@@ -27,7 +46,13 @@ import {
 
 const { toast } = useToast()
 
+/** 设置页只看最近这些条访问记录（最小实现，不做筛选）；后端把 limit 夹在 [1, 500]。 */
+const AUDIT_LIMIT = 20
+
 const status = ref<GatewayStatus | null>(null)
+const audit = ref<GatewayAuditEntry[]>([])
+/** 「允许的网页来源」输入框的待添加串（回车或点「添加」提交）。 */
+const originDraft = ref('')
 const busy = ref(false)
 
 const BIND_OPTIONS = [
@@ -42,8 +67,10 @@ const clients = computed(() => status.value?.clients ?? [])
 const blocked = computed(() => status.value?.blocked ?? [])
 const pendingCount = computed(() => status.value?.pendingCount ?? 0)
 const pairToken = computed(() => status.value?.pairToken ?? null)
+const allowedOrigins = computed(() => status.value?.allowedOrigins ?? [])
+const blockedOrigins = computed(() => status.value?.blockedOrigins ?? [])
 
-/** 复制配对令牌（LAN 模式给外部客户端首帧用）。失败时不吞掉，给用户提示手动抄。 */
+/** 复制配对令牌（局域网模式下外部程序第一次连接要带它）。失败时不吞掉，给用户提示手动抄。 */
 async function copyPairToken(): Promise<void> {
   const t = pairToken.value
   if (!t) return
@@ -72,6 +99,16 @@ async function refresh(): Promise<void> {
     status.value = await gatewayService.status()
   } catch (e) {
     console.warn('[gateway] 读取服务状态失败', e)
+  }
+}
+
+/** 拉最近若干条访问审计。外部调用**不会**推 `authorization-changed`（它只在开关 / 授权变更时发），
+ * 所以这里除了挂载与事件，还得有个手动「刷新」出口，否则用户永远看不到别人的调用记录。 */
+async function refreshAudit(): Promise<void> {
+  try {
+    audit.value = await gatewayService.auditRecent(AUDIT_LIMIT)
+  } catch (e) {
+    console.warn('[gateway] 读取访问记录失败', e)
   }
 }
 
@@ -114,6 +151,40 @@ async function revoke(c: { clientId: string; name: string }): Promise<void> {
   if (ok) toast(`已解除「${name}」的限制`)
 }
 
+/* ---- 允许的网页来源（Origin 白名单，contract §15.2） ---- */
+
+/** 写白名单是**整表替换**：增与删都算出新表，交给同一个命令。 */
+async function writeOrigins(next: string[], okText: string): Promise<boolean> {
+  const ok = await run(() => gatewayService.setAllowedOrigins(next), '设置失败，请稍后重试')
+  if (ok) toast(okText)
+  return ok
+}
+
+/** 加一个来源。空串 / 重复一律不提交（匹配是精确字符串相等，重复项没有意义）。 */
+async function addOrigin(): Promise<void> {
+  const origin = originDraft.value.trim()
+  if (!origin) return
+  if (allowedOrigins.value.includes(origin)) {
+    toast('这个来源已经在白名单里了')
+    return
+  }
+  if (await writeOrigins([...allowedOrigins.value, origin], `已放行「${origin}」`)) {
+    originDraft.value = ''
+  }
+}
+
+async function removeOrigin(origin: string): Promise<void> {
+  await writeOrigins(
+    allowedOrigins.value.filter((o) => o !== origin),
+    `已不再放行「${origin}」`,
+  )
+}
+
+/** 「被拦下的来源」一键加白（§15.2b：这是用户知道该填什么的唯一实用路径）。 */
+async function allowOrigin(origin: string): Promise<void> {
+  await writeOrigins([...allowedOrigins.value, origin], `已放行「${origin}」`)
+}
+
 /** 「被拦下」的原因文案。 */
 function blockedReason(b: GatewayBlocked): string {
   if (b.reason === 'deny') return '你拒绝过它'
@@ -128,7 +199,7 @@ function scopeLabel(s: string): string {
 
 function scopesText(c: GatewayClient): string {
   if (c.scopes.length === 0) return '未授予任何权限'
-  return `${c.scopes.length} 项权限 · ${c.scopes.map(scopeLabel).join('、')}`
+  return c.scopes.map(scopeLabel).join('、')
 }
 
 function fmtSeen(iso: string): string {
@@ -146,18 +217,45 @@ function fmtSeen(iso: string): string {
   })
 }
 
+/** 最后活跃时间；「在线」本身由行首图标章 + 胶囊承载，不挤进这句话 */
 function seenText(c: GatewayClient): string {
-  if (!c.lastSeen) return c.online ? '在线' : '从未活跃'
-  return c.online ? `在线 · 最后活跃 ${fmtSeen(c.lastSeen)}` : `最后活跃 ${fmtSeen(c.lastSeen)}`
+  if (!c.lastSeen) return '从未活跃'
+  return `最后活跃 ${fmtSeen(c.lastSeen)}`
+}
+
+/* ---- 最近访问记录（`gateway_audit_recent`） ---- */
+
+/** 一行审计里「谁」：认出来了就显示 clientId（截断，完整串对用户没信息量），否则只能给 IP。 */
+function auditWho(a: GatewayAuditEntry): string {
+  if (a.clientId) return a.clientId.length > 14 ? `${a.clientId.slice(0, 14)}…` : a.clientId
+  return a.ip ? `来源 ${a.ip}` : '未知来源'
+}
+
+function auditResult(a: GatewayAuditEntry): string {
+  if (a.decision === 'allowed') return '成功'
+  if (a.decision === 'denied') return '被拒'
+  return '出错'
+}
+
+/** 「何时 · 做了什么 · 耗时」。结果（成功/被拒/出错）提到行首胶囊，方法标识只显示中文 scope 名
+    （`todo.list` 这类后端标识符对用户没有信息量）。`method` 为空串 = 连接 / 鉴权阶段就结束了。 */
+function auditWhat(a: GatewayAuditEntry): string {
+  if (!a.method) return `${fmtSeen(a.at)} · 连接 / 鉴权未通过${a.ip ? ` · ${a.ip}` : ''}`
+  const what = a.scope ? scopeLabel(a.scope) : a.method
+  const cost = a.durationMs > 0 ? ` · ${a.durationMs}ms` : ''
+  return `${fmtSeen(a.at)} · ${what}${cost}`
 }
 
 let offChanged: (() => void) | null = null
 
 onMounted(async () => {
   await refresh()
+  await refreshAudit()
   // 授权 / 撤销后 Rust 会推一份新状态；订阅它，列表就不必轮询
   offChanged = await gatewayService.onAuthorizationChanged((s) => {
     status.value = s
+    // 授权裁决本身会落审计（拒绝 / 超时 / 忽略），顺带把记录刷新一次
+    void refreshAudit()
   })
 })
 
@@ -212,17 +310,23 @@ onUnmounted(() => {
         <b>局域网模式把这个端口开给了同网段的设备</b>
         <em>
           同一个 WiFi（宿舍、公司、咖啡店）里的其它设备都能扫到它，拿到配对令牌就能读写你授权过的数据；
-          本轮不做端到端加密。只在自家可信网络里开，用完切回「仅本机」。
+          局域网模式下数据不经加密，只在自家可信网络里开，用完切回「仅本机」。
         </em>
       </span>
     </p>
 
-    <div v-if="bindMode === 'lan' && pairToken" class="card sub rows paircard">
+    <div v-if="pairToken" class="card sub rows paircard">
       <div class="frow row">
         <i class="fic on"><KeyRound :size="17" /></i>
         <span class="col ftxt">
           <b>配对令牌</b>
-          <em class="t-3">外部客户端首帧必须带上它（LAN 模式必填）。仅本机设置页可见，别外传。</em>
+          <em class="t-3">
+            {{
+              bindMode === 'lan'
+                ? '外部程序第一次连接时必须带上它。仅本机设置页可见，别外传。'
+                : '仅本机模式不必带；切到「局域网」后，外部程序第一次连接时也要带上它。别外传。'
+            }}
+          </em>
           <code class="paircode" data-testid="gateway-pair-token">{{ pairToken }}</code>
         </span>
         <button
@@ -256,7 +360,13 @@ onUnmounted(() => {
         </i>
         <span class="col ftxt">
           <b>{{ c.name || '未命名程序' }}</b>
-          <em class="t-3">{{ c.grant === 'always' ? '始终允许' : '本次会话' }} · {{ scopesText(c) }}</em>
+          <!-- 授权方式 / 权限条数 / 在线态各走胶囊；名单与活跃时间降为次要行，不再「·」串同权灰字 -->
+          <span class="fmeta">
+            <StatusChip v-if="c.online" tone="ok">在线</StatusChip>
+            <StatusChip>{{ c.grant === 'always' ? '始终允许' : '本次会话' }}</StatusChip>
+            <StatusChip v-if="c.scopes.length">{{ c.scopes.length }} 项权限</StatusChip>
+          </span>
+          <em class="t-3">{{ scopesText(c) }}</em>
           <em class="t-3">{{ seenText(c) }}</em>
         </span>
         <button
@@ -304,6 +414,154 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
+
+    <h3 class="stitle row">
+      允许的网页来源
+      <!-- WebView2 / Origin / 字面量 null / 匹配规则：实现细节收进标题行右端，卡面只留结论 -->
+      <InfoHint
+        title="允许的网页来源"
+        content="桌面小组件是 HTML（WebView2 / Electron / file://）时，握手会带 Origin；原生程序不带，不受这里影响。
+
+匹配是精确字符串相等、大小写敏感：不做通配、子域与前缀。file:// 页面的 Origin 就是字面量 null。
+
+被拦下来的来源列在下方「被拦下的来源」，可以在那里一键加白。"
+      />
+    </h3>
+    <p class="pnote t-3">
+      只有精确等于下列字符串的来源能被网页客户端连入（区分大小写，不支持通配）。
+    </p>
+    <div class="addrow row">
+      <input
+        v-model="originDraft"
+        class="input mono"
+        placeholder="http://localhost:5173 或 null"
+        autocomplete="off"
+        spellcheck="false"
+        data-testid="gateway-origin-input"
+        @keyup.enter="addOrigin"
+      />
+      <button
+        type="button"
+        class="copy"
+        :disabled="busy || !originDraft.trim()"
+        data-testid="gateway-origin-add"
+        @click="addOrigin"
+      >
+        添加
+      </button>
+    </div>
+
+    <EmptyState
+      v-if="allowedOrigins.length === 0"
+      :icon="Globe"
+      title="还没有放行任何网页来源"
+      hint="默认只放行不带 Origin 的原生程序；网页客户端要先在这里加白"
+    />
+    <div v-else class="card sub rows">
+      <div
+        v-for="(o, i) in allowedOrigins"
+        :key="o"
+        class="frow row"
+        :data-testid="`gateway-origin-${i}`"
+      >
+        <i class="fic on"><Globe :size="17" /></i>
+        <span class="col ftxt">
+          <b class="mono origin">{{ o }}</b>
+        </span>
+        <button
+          type="button"
+          class="revoke"
+          :disabled="busy"
+          :data-testid="`gateway-origin-remove-${i}`"
+          :aria-label="`不再放行「${o}」`"
+          @click="removeOrigin(o)"
+        >
+          移除
+        </button>
+      </div>
+    </div>
+
+    <template v-if="blockedOrigins.length > 0">
+      <h3 class="stitle">被拦下的来源</h3>
+      <p class="pnote t-3">
+        这些来源在握手阶段被拒（403，已记进下面的访问记录）。「加入白名单」即放行它的连接
+        —— 放行不等于免检：它照样要过配对令牌与授权弹窗。
+      </p>
+      <div class="card sub rows">
+        <div
+          v-for="(o, i) in blockedOrigins"
+          :key="o"
+          class="frow row"
+          :data-testid="`gateway-blocked-origin-${i}`"
+        >
+          <i class="fic"><ShieldAlert :size="17" /></i>
+          <span class="col ftxt">
+            <b class="mono origin">{{ o }}</b>
+          </span>
+          <button
+            type="button"
+            class="unblock"
+            :disabled="busy"
+            :data-testid="`gateway-blocked-origin-allow-${i}`"
+            :aria-label="`放行来源「${o}」`"
+            @click="allowOrigin(o)"
+          >
+            加入白名单
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <h3 class="stitle">
+      最近访问记录
+      <button
+        type="button"
+        class="refresh"
+        :disabled="busy"
+        data-testid="gateway-audit-refresh"
+        aria-label="刷新访问记录"
+        @click="refreshAudit"
+      >
+        <RefreshCw :size="13" />刷新
+      </button>
+    </h3>
+    <div class="audit-note row">
+      <p class="pnote t-3">每次调用与每次被拒都记一行，只读成功不记。</p>
+      <!-- 记录边界（参数挑字段、截断、大字段不入表）是后端存储实现，收进说明入口 -->
+      <InfoHint
+        title="访问记录记什么"
+        content="每次调用与每次被拒都记一行，只读成功不记。
+
+记下的参数按域白名单挑字段并做截断，附件一类大字段不入表 —— 这是存储边界，不是审计范围的变化。"
+      />
+    </div>
+    <EmptyState
+      v-if="audit.length === 0"
+      :icon="History"
+      title="还没有访问记录"
+      hint="有外部程序连上来（哪怕被拒）之后，这里就会出现条目"
+    />
+    <div v-else class="card sub rows">
+      <div
+        v-for="a in audit"
+        :key="a.id"
+        class="frow row"
+        :data-testid="`gateway-audit-${a.id}`"
+      >
+        <i class="fic" :class="a.decision === 'allowed' ? 'on' : 'bad'">
+          <component :is="a.decision === 'allowed' ? CheckCircle2 : AlertCircle" :size="17" />
+        </i>
+        <span class="col ftxt">
+          <b class="audit-who">
+            {{ auditWho(a) }}
+            <!-- 结果提到行首胶囊（配行首图标章）；方法标识只显示中文 scope 名 -->
+            <StatusChip :tone="a.decision === 'allowed' ? 'ok' : 'danger'">{{ auditResult(a) }}</StatusChip>
+          </b>
+          <em class="t-3">{{ auditWhat(a) }}</em>
+          <em v-if="a.detail" class="t-3 detail">{{ a.detail }}</em>
+        </span>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -317,6 +575,15 @@ onUnmounted(() => {
 
 .stitle {
   margin-top: 16px;
+}
+
+/* 小节标题行带说明入口的：? 推到行尾，与标题同行（落点约定见 InfoHint 注释） */
+.stitle.row {
+  gap: 8px;
+}
+
+.stitle.row .info-hint {
+  margin-left: auto;
 }
 
 /* 卡头与下面那口浅井之间恒为 4px（与设置页其它分区同一条节奏） */
@@ -378,6 +645,15 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+/* 授权方式 / 权限条数 / 在线态各走一枚胶囊；权限名单与活跃时间才是下面的次要行 */
+.fmeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
 /* 行间细线，首行不留线 */
 .rows > * + * {
   border-top: 0.5px solid var(--line);
@@ -417,6 +693,7 @@ onUnmounted(() => {
   color: var(--danger-strong);
   font-size: var(--fs-caption);
   font-weight: 600;
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
 .paircard {
@@ -432,6 +709,7 @@ onUnmounted(() => {
   color: var(--text-1);
   font-size: var(--fs-caption);
   font-weight: 600;
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
 /* 令牌串：等宽、可选中、长串换行，别被 ellipsis 吞掉尾部 */
@@ -445,7 +723,7 @@ onUnmounted(() => {
 }
 
 .revoke:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 /* 「被拦下」的解除按钮：中性色（不是破坏性操作） */
@@ -457,9 +735,105 @@ onUnmounted(() => {
   color: var(--text-1);
   font-size: var(--fs-caption);
   font-weight: 600;
+  transition: transform var(--dur-fast) var(--ease-standard);
 }
 
 .unblock:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
+}
+
+/* 「允许的网页来源」输入行：输入框 + 添加 */
+.addrow {
+  margin-top: 10px;
+  gap: 8px;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 13px;
+  border-radius: var(--radius-full);
+  border: 0.5px solid var(--line);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-caption);
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+/* Origin / clientId 这类机器串：等宽、可选中；长串换行别被 ellipsis 吞掉尾部 */
+.mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.origin {
+  word-break: break-all;
+  user-select: all;
+}
+
+.fic.bad {
+  background: var(--danger-soft);
+  color: var(--danger-strong);
+}
+
+/* 审计的参数摘要 / 错误串：整行可读优先，不吃 .ftxt em 的单行截断 */
+.ftxt em.detail {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+/* 审计行主标题：截断 ID + 结果胶囊同一行，长 ID 不把胶囊顶出行外 */
+.audit-who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* 审计标题右侧的刷新（外部调用不推事件，只能手动拉） */
+.refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* 可见按压态（STANDARDS §4）：四枚行尾按钮同一档缩放 */
+.revoke:active,
+.copy:active,
+.unblock:active,
+.refresh:active {
+  transform: scale(0.97);
+}
+
+.refresh:disabled {
+  opacity: var(--disabled-opacity);
+}
+
+/* 「添加」空串时禁点：与其它禁点按钮同一档禁用浓度 */
+.copy:disabled {
+  opacity: var(--disabled-opacity);
+}
+
+/* 记录边界的一行结论 + 说明入口：入口推到行尾 */
+.audit-note {
+  gap: 8px;
+  align-items: center;
+}
+
+.audit-note .info-hint {
+  margin-left: auto;
 }
 </style>

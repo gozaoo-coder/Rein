@@ -61,7 +61,10 @@ const argsText = computed(() => (shown.value ? prettyJson(shown.value.arguments)
     <template v-if="shown">
       <div class="head">
         <span class="state" :class="state">{{ stateText }}</span>
-        <span v-if="shown.rawName" class="rawname">{{ shown.rawName }}</span>
+        <!-- 原始接口名是面向排查的信息：给一枚前置标签，不与状态胶囊抢形态 -->
+        <span v-if="shown.rawName" class="rawname">
+          <span class="raw-lab">原始名</span>{{ shown.rawName }}
+        </span>
       </div>
 
       <p class="sec">输入参数</p>
@@ -126,6 +129,12 @@ const argsText = computed(() => (shown.value ? prettyJson(shown.value.arguments)
   font-size: var(--fs-caption);
   color: var(--text-3);
   overflow-wrap: anywhere;
+}
+
+.raw-lab {
+  font-family: var(--font);
+  color: var(--text-3);
+  margin-right: 5px;
 }
 
 .sec {

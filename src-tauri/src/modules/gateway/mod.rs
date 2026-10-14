@@ -3,11 +3,12 @@
 //! - [`store`]：凭据表 / 审计表读写（`db.rs` MIGRATION_0042）、token 生成 / sha256 入库 /
 //!   恒定时间比较、`app_meta` 设置键；
 //! - [`models`]：`Scope` 枚举与 `ScopeSet`、凭据行 / 审计行 / 变更事件形状；
-//! - [`protocol`]：消息信封、错误码、15 条方法注册表（`Method`）；
+//! - [`protocol`]：消息信封、错误码、28 条方法注册表（`Method`）；
 //! - [`auth`]：四态状态机、连接级会话表、待决队列、逐次 `require`、按 client/IP 限流；
 //! - [`server`]：WS 监听与握手闸门、首帧令牌、请求分派、变更推送（`EVENT_CHANGE`）；
-//! - [`methods`]：把 15 条方法接到各域 `*_on`（不注册成 tauri 命令）；
-//! - [`commands`]：6 条管理面 tauri 命令（`gateway_*`）；
+//! - [`methods`]：把 28 条方法接到各域 `*_on`（不注册成 tauri 命令）；
+//! - [`runtime`]：番茄钟运行态桥接（上行 `focus_publish`/`focus_unpublish` + 重启恢复 `recover_focus`）；
+//! - [`commands`]：8 条管理面 tauri 命令（`gateway_*`）；
 //! - [`ChangeFeed`]：变更广播 hub（容量 256），由 `sync/engine.rs` 的 `set_feed` 接上。
 //!
 //! 整模块挂 `allow(dead_code)` 的原因：`lib.rs` 里是私有 `mod modules;`，rustc 的死代码分析
@@ -20,6 +21,7 @@ pub mod commands;
 pub mod methods;
 pub mod models;
 pub mod protocol;
+pub mod runtime;
 pub mod server;
 pub mod store;
 

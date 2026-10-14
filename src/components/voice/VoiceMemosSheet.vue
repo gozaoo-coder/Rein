@@ -67,9 +67,11 @@ const filtered = computed(() => {
   )
 })
 
+/** 时长写法与 AI 页语音气泡（fmtVoiceDur）统一成 mm:ss：'" 分秒记号在中文界面里
+    容易被读成装饰符号，且与其他地方的计时写法不一致 */
 function fmtMs(ms: number): string {
   const s = Math.floor(ms / 1000)
-  return `${Math.floor(s / 60)}'${String(s % 60).padStart(2, '0')}"`
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
 function fmtWhen(iso: string): string {
@@ -100,7 +102,12 @@ async function onDelete(m: VoiceMemo): Promise<void> {
       <li v-for="m in filtered" :key="m.id" class="row" @click="emit('pick', m)">
         <span class="mt">
           <b>{{ m.title || '未命名纪要' }}</b>
-          <em>{{ fmtWhen(m.createdAt) }} · {{ fmtMs(m.durationMs) }} · {{ m.sentences.length }} 句</em>
+          <!-- 时长是这一行的主数值（subhead + text-2 + 等宽），排在最先；
+               日期与句数是它的注脚（caption + text-3），两级不用同一个分隔符 -->
+          <em>
+            <span class="mdur num">{{ fmtMs(m.durationMs) }}</span>
+            <span class="mmeta">{{ fmtWhen(m.createdAt) }} · {{ m.sentences.length }} 句</span>
+          </em>
           <TimeSpine
             v-if="m.sentences.length"
             class="rowspine"
@@ -181,12 +188,31 @@ async function onDelete(m: VoiceMemo): Promise<void> {
   text-overflow: ellipsis;
 }
 
+/* 时长与注脚本是同一直系的两级：基线对齐，主数值在前、注脚靠间距分开 */
 .mt em {
   font-style: normal;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 1px;
+}
+
+/* 时长是主数值：与标题同档但不抢标题的粗黑（text-2 + 等宽） */
+.mt .mdur {
+  flex: none;
+  font-size: var(--fs-subhead);
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+/* 日期与句数是注脚：caption + text-3，超出省略 */
+.mt .mmeta {
   font-size: var(--fs-caption);
   color: var(--text-3);
-  display: block;
-  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .play {

@@ -130,7 +130,8 @@ const html = computed(() => {
 
 .md :deep(.md-table th) {
   font-weight: 600;
-  color: var(--text-3);
+  /* 表头与表体同档 --text-2：表头比数据还浅会层级倒置，加重只留字重 */
+  color: var(--text-2);
   white-space: nowrap;
 }
 

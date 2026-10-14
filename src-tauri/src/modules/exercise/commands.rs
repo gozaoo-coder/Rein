@@ -150,15 +150,36 @@ pub(crate) fn create_workout_on(
 ///   （那可能是别家 App 写进去的数据），只记一条墓碑，免得下次同步又拉回来。
 #[tauri::command]
 pub fn delete_workout(
-    webview: tauri::Webview<tauri::Wry>,
+    app: tauri::AppHandle,
     state: State<AppState>,
     id: i64,
 ) -> Result<()> {
+    use crate::modules::healthsync::commands as health;
+
+    let conn = state.db.lock();
+    let propagate = delete_workout_on(&conn, id)?;
+    if let Some(external_id) = propagate {
+        drop(conn);
+        // JNI 必须在锁外发（dispatch 会切到 WebView 主线程）；传 AppHandle，
+        // 与网关照到的删除共用同一条传播路径（contract §13.3）。
+        health::propagate_delete(&app, &external_id);
+    }
+    Ok(())
+}
+
+/// `delete_workout` 的本体：删行 + 按 `source` 决定 HC 语义，返回**需要传播删除**的
+/// `external_id`（`Some` = 本地记录且已导出、且回写开关开）。
+///
+/// 收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用（contract §6.1 单连接铁律）。
+/// **传播在锁外由调用方触发**：网关侧无 `Webview`，只能拿到这个返回值（contract §13.3）。
+pub(crate) fn delete_workout_on(
+    conn: &rusqlite::Connection,
+    id: i64,
+) -> Result<Option<String>> {
     use rusqlite::OptionalExtension;
 
     use crate::modules::healthsync::commands as health;
 
-    let conn = state.db.lock();
     let link: Option<(String, Option<String>)> = conn
         .query_row(
             "SELECT source, external_id FROM workouts WHERE id = ?1",
@@ -170,14 +191,13 @@ pub fn delete_workout(
 
     if let Some((source, Some(external_id))) = link {
         if source == "health_connect" {
-            health::add_tombstone(&conn, &external_id)?;
-        } else if health::is_push_enabled(&conn) {
-            drop(conn);
-            // JNI 必须在锁外发（dispatch 会切到 WebView 主线程）
-            health::propagate_delete(&webview, &external_id);
+            health::add_tombstone(conn, &external_id)?;
+        } else if health::is_push_enabled(conn) {
+            // 本地记录 + 回写开：把 externalId 交回调用方，由它在锁外传播删除
+            return Ok(Some(external_id));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 #[cfg(test)]

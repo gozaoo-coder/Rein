@@ -396,13 +396,17 @@ function waitingOn(t: GrabTask): string {
  * 大一新生在窗口开放前没有任何任务可排，这条就是他唯一能看到的进展。
  */
 const listenedTurns = computed(() => store.grab?.turns ?? [])
+/* 「它还在盯着」这句话只在该说的时候说 —— 上面的阶段行没有排课时已经在
+   说「正在盯着选课窗口 / 还没有排队的课程」了，探测还没报出任何批次时
+   再把同一句话写第二遍，读者只会浪费时间去找那句并不存在的差别。
+   所以只有探测真的有实质新信息（报出了批次，或窗口已开放）才返回内容 */
 const listenText = computed(() => {
   const open = listenedTurns.value.filter((t) => t.allowEnter)
   if (open.length) return `窗口已开放：${open.map((t) => t.name ?? t.id).join('、')}`
   if (listenedTurns.value.length) {
     return `已发现 ${listenedTurns.value.length} 个批次，但还不能进入`
   }
-  return '正在监听选课窗口…'
+  return ''
 })
 /**
  * 「它还在盯着」这句话必须**只在该说的时候说**。
@@ -545,10 +549,10 @@ function handToAi(): void {
       </div>
     </div>
 
-    <!-- 没有任务时只剩「引擎在替你看什么」这一条新信息 ——
-         上面那句阶段陈述已经在说「还没有排队的课程」了，
+    <!-- 没有任务时，只在探测真的报出东西（批次 / 窗口开放）时才显示这一行。
+         同卡上面的阶段句没有排课时已经在说「还没有排课」了，
          同一张卡上把同一句话说两遍，只是让人多读一遍 -->
-    <p v-if="!hasAny" class="listen-line">{{ listenText }}</p>
+    <p v-if="!hasAny && listenText" class="listen-line">{{ listenText }}</p>
 
     <!-- 结束态：没有在抢的了 —— 把「结果」顶上来。此刻「正在抢什么」已经没有内容，
          而用户（多半是睡醒的人）要的是「拿到了什么、还欠什么、现在做什么」 -->
@@ -769,7 +773,7 @@ function handToAi(): void {
   gap: 4px;
   min-height: 30px;
   padding: 5px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-full);
   background: transparent;
   color: var(--text-2);
@@ -786,7 +790,7 @@ function handToAi(): void {
 }
 
 .pf-go:disabled {
-  opacity: 0.6;
+  opacity: var(--disabled-opacity);
   cursor: default;
 }
 
@@ -1102,7 +1106,7 @@ function handToAi(): void {
 
 .chip.warn {
   color: var(--warn-strong);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  background: var(--warn-soft);
 }
 
 .chip.bad {

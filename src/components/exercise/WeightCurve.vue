@@ -5,7 +5,7 @@ import { fmtKg, type StrengthDay } from '@/utils/strength'
 
 /**
  * 动作重量曲线：每次训练的最大重量组连成折线（渐进超负荷可视化）。
- * 点 = 单次训练 top set；右上标注最新重量，左下/左上标注区间。仅 SVG，无依赖。
+ * 点 = 单次训练 top set；最新重量与区间只在图例里给一次（图上不再重复标注），仅 SVG，无依赖。
  */
 const props = withDefaults(
   defineProps<{
@@ -102,7 +102,6 @@ function shortDate(date: string): string {
       </g>
 
       <template v-if="last">
-        <text class="lastval num" :x="W - PAD.r + 8" :y="last.y + 4">{{ fmtKg(last.top) }}</text>
         <text class="xdate" :x="last.x" :y="height - 4" text-anchor="end">{{ shortDate(last.date) }}</text>
       </template>
       <text v-if="pts.length >= 2" class="xdate" :x="pts[0]!.x" :y="height - 4" text-anchor="start">
@@ -135,7 +134,9 @@ function shortDate(date: string): string {
 }
 
 .ylabel {
-  font-size: 10px;
+  /* SVG 用户单位字号走阶梯：10px 是 --fs-micro（11px）的名义屏幕值再低一档，
+     按微字档计，屏幕实际像素会小于标称 */
+  font-size: var(--fs-micro);
   fill: var(--text-3);
   text-anchor: end;
 }
@@ -159,14 +160,8 @@ function shortDate(date: string): string {
   stroke-width: 2;
 }
 
-.lastval {
-  font-size: 12px;
-  font-weight: 700;
-  fill: var(--text-1);
-}
-
 .xdate {
-  font-size: 10px;
+  font-size: var(--fs-micro);
   fill: var(--text-3);
 }
 

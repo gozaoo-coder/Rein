@@ -3,11 +3,14 @@
  *
  * 回答一句话：**这个肌群，练够了吗？**（100 分 = 运动充分）
  *
- * 只吃 4 类已有数据（与规范一致）：
+ * 只吃 5 类已有数据（4 类与规范一致，第 5 类是按本软件实况加的）：
  *  · 频率时间戳 —— `workout_sets` 的 date / workoutId
  *  · 强度        —— 组数 + 重量（weightKg）+ 单组次数（reps）
  *  · 体感        —— 训练会话的「今日状态自评」readiness（5、4 良好 / 3 一般 / 1、2 差）
  *  · 目标        —— `profile.goal`（cut → 减脂；bulk / keep → 增肌）
+ *  · 有氧等效组  —— `workouts`（记运动 / 跑步）按 aerobicLoad 折算成组数，**只往上补**
+ *                  （`setsForScore = max(力量组, min(力量组 + 有氧等效组, 满分区下沿))`）。
+ *                  没有它，纯跑步 / 纯"记运动"的用户永远看不到热力图。
  *
  * 计算（规范第 3 节）：
  *   练够分   = 频率分 × 频率权重 + 强度分 × 强度权重 + 体感分 × 体感权重（封顶 100，四舍五入）
@@ -26,6 +29,7 @@
  * 而规范的建议话术本来就是按这 10 组给的（「胸本周 7 组偏少」）。
  */
 
+import { aerobicSetsByGroup, type AerobicGroupLoad } from '@/utils/aerobicLoad'
 import { addDays } from '@/utils/date'
 import { libraryMuscles } from '@/utils/libraryMuscles'
 import { ACTIVATION_WEIGHT } from '@/utils/trainingAdvice'
@@ -38,7 +42,7 @@ import {
   type MuscleKey,
   type ScoreGroupKey,
 } from '@/config/muscles'
-import type { ExerciseRecord, Goal, StrengthSetRecord } from '@/types'
+import type { ExerciseRecord, Goal, StrengthSetRecord, Workout } from '@/types'
 
 /* ---------------- 常量与口径表（全部照规范抄录，便于复核） ---------------- */
 
@@ -223,10 +227,19 @@ export interface GroupScore {
   bandHint: string
   /** 热力档位（0..4） */
   level: HeatLevel
-  /** 本周训练次数（同日合并为 1 次；激活 ≥2 才计） */
+  /** 本周训练次数（力量日期 ∪ 有氧日期；同日合并为 1 次；力量侧激活 ≥2 才计） */
   freqCount: number
-  /** 本周加权正式组数（激活折算） */
+  /** 本周加权正式组数（力量侧，激活折算） */
   sets: number
+  /** 本周有氧折算的等效组数（已按激活折算、每肌群每周封顶 6） */
+  aeroSets: number
+  /**
+   * 组数分的实际输入：`max(力量组, min(力量组 + 有氧等效组, 满分区下沿))` —— 有氧只往上补，
+   * 补到满分区下沿为止（再多是堆量，且「有氧单独最高只到基本够」由此保证）。
+   */
+  setsForScore: number
+  /** 有氧等效组的主要来源显示名（如「跑步」）；无有氧来源为 '' */
+  aeroLabel: string
   /**
    * 基线窗（本周之前的 4 周）里「真练到」（激活 ≥2）的组数。
    * 断练判据用：本周没练（idle）但 baseSets > 0 = 最近常练、这周断掉的，
@@ -283,6 +296,11 @@ export interface TrainingScoreInput {
   today: string
   /** 用户当前目标 */
   goal: Goal | null | undefined
+  /**
+   * 同窗口的运动记录（`list_workouts`）——有氧等效组的原料。
+   * 缺省 [] = 完全退回旧口径（今天的行为不变），逐组记录已覆盖的课由 workoutId 去重。
+   */
+  workouts?: Workout[]
 }
 
 /* ---------------- 主入口 ---------------- */
@@ -299,6 +317,8 @@ interface Acc {
   days: Set<string>
   /** 本周该组的会话 → 自评值（同一天多次训练也只算一个体感样本） */
   sessionFeel: Map<number, number | null>
+  /** 本周该组的有氧折算（无有氧来源为 null） */
+  aero: AerobicGroupLoad | null
 }
 
 function emptyAcc(): Acc {
@@ -312,6 +332,7 @@ function emptyAcc(): Acc {
     weightW: 0,
     days: new Set(),
     sessionFeel: new Map(),
+    aero: null,
   }
 }
 
@@ -384,6 +405,19 @@ export function computeTrainingScore(input: TrainingScoreInput): TrainingScoreRe
     }
   }
 
+  // 有氧等效组：只收本周记录（调用方按 42 天取数，和 sets 同窗口，切周归引擎管），
+  // 逐组记录已覆盖的课按 workoutId 跳过（力量课 / HIIT 课落库时既有运动记录
+  // 又有逐组记录，不跳过就会被记两遍）；去重按 id 不按 type —— 手动补录的「力量训练」
+  // 没有逐组记录，正是该走有氧折算的那一类。
+  const coveredBySets = new Set(input.sets.map((s) => s.workoutId))
+  for (const [g, load] of aerobicSetsByGroup(
+    (input.workouts ?? []).filter((w) => w.date >= weekStart && !coveredBySets.has(w.id)),
+    goal,
+  )) {
+    const acc = week.get(g)
+    if (acc) acc.aero = load
+  }
+
   const groups: GroupScore[] = SCORE_GROUPS.map((g) =>
     scoreGroup(g.key, g.label, goal, weights, week.get(g.key)!, base.get(g.key)!),
   )
@@ -445,6 +479,9 @@ function idleGroup(
     level: 0,
     freqCount: 0,
     sets: 0,
+    aeroSets: 0,
+    setsForScore: 0,
+    aeroLabel: '',
     baseSets,
     setsTarget: SETS_SWEET[goal],
     avgReps: null,
@@ -474,9 +511,15 @@ function scoreGroup(
   acc: Acc,
   baseW: { sum: number; n: number; sets: number },
 ): GroupScore {
-  const idle = acc.sets <= 0
+  // 组数分输入 = max(力量组, min(力量组 + 有氧等效组, 满分区下沿))：有氧只往上补，且补到
+  // 满分区下沿为止。这一刀必须夹 —— 否则力量 19 组 + 有氧 6 组会被算成 25 组，
+  // 落进「>24 组偏多」的降档建议；有氧是补量，不该反过来触发堆量降档。
+  const setsForScore = Math.max(acc.sets, Math.min(acc.sets + (acc.aero?.sets ?? 0), SETS_SWEET[goal][0]))
+  const idle = setsForScore <= 0
   const sets = round1(acc.sets)
-  const freqCount = acc.days.size
+  const aeroSets = round1(acc.aero?.sets ?? 0)
+  const aeroLabel = acc.aero?.label ?? ''
+  const freqCount = new Set([...acc.days, ...(acc.aero?.days ?? [])]).size
 
   // 未练：不给任何「中性默认值」留幻觉空间 —— 分数就是 0，档位就是未练。
   // （否则 0 组 + 次数/重量的占位分会让一个从没练过的肌群显示成 29 分）
@@ -487,7 +530,7 @@ function scoreGroup(
   const baseWeight = baseW.n > 0 ? round1(baseW.sum / baseW.n) : null
 
   const fScore = freqScoreOf(goal, freqCount)
-  const sScore = setsScoreOf(goal, sets)
+  const sScore = setsScoreOf(goal, setsForScore)
   // 没有次数数据（如纯计时动作）时给中性分，不因缺字段判"次数低"
   const rScore = avgReps == null ? FEELING_DEFAULT : repsScoreOf(goal, avgReps)
   const wScore = weightScoreOf(avgWeight, baseWeight)
@@ -537,13 +580,15 @@ function scoreGroup(
     contribution: Math.round(fScore * weights.frequency * 10) / 10,
     note: `本周 ${freqCount} 次（同日合并计 1 次）`,
   }
+  /** 组数在文案里的写法：含有氧来源时点明出处，别让「6 组」看起来是举出来的 */
+  const aeroNote = aeroSets > 0 && aeroLabel ? `（含${aeroLabel}等效 ${aeroSets} 组）` : ''
   const intensity: Dimension = {
     key: 'intensity',
     label: '强度',
     score: Math.round(intensityRaw),
     weight: weights.intensity,
     contribution: Math.round(intensityRaw * weights.intensity * 10) / 10,
-    note: `${sets} 组 · 每组约 ${avgReps ?? '—'} 次 · ${weightNote(avgWeight, baseWeight)}`,
+    note: `${round1(setsForScore)} 组${aeroNote} · 每组约 ${avgReps ?? '—'} 次 · ${weightNote(avgWeight, baseWeight)}`,
   }
   const feeling: Dimension = {
     key: 'feeling',
@@ -562,7 +607,7 @@ function scoreGroup(
     score: sScore,
     weight: INTENSITY_SUB.sets,
     contribution: Math.round((sScore * INTENSITY_SUB.sets + Number.EPSILON) * 10) / 10,
-    note: `${sets} 组 · 满分区间 ${SETS_SWEET[goal][0]}–${SETS_SWEET[goal][1]} 组`,
+    note: `${round1(setsForScore)} 组${aeroNote} · 满分区间 ${SETS_SWEET[goal][0]}–${SETS_SWEET[goal][1]} 组`,
   }
   const repsScore: SubScore = {
     key: 'reps',
@@ -587,9 +632,12 @@ function scoreGroup(
     score: total,
     band: band.label,
     bandHint: band.hint,
-    level: heatLevelOf(total, acc.sets),
+    level: heatLevelOf(total, setsForScore),
     freqCount,
     sets,
+    aeroSets,
+    setsForScore: round1(setsForScore),
+    aeroLabel,
     baseSets: baseW.sets,
     setsTarget: SETS_SWEET[goal],
     avgReps,
@@ -605,7 +653,7 @@ function scoreGroup(
     feelingMissing,
     confidence,
     weakest: weakest.key,
-    advice: buildAdvice(weakest, goal, sets, avgReps, total, idle),
+    advice: buildAdvice(weakest, goal, round1(setsForScore), avgReps, total, idle),
     idle,
   }
 }
@@ -696,7 +744,11 @@ export function groupTooltipMap(result: TrainingScoreResult): Record<MuscleKey, 
   const out = {} as Record<MuscleKey, string>
   for (const g of SCORE_GROUPS) {
     const s = byGroup.get(g.key)
-    for (const m of g.members) out[m] = s && !s.idle ? `${s.label} ${s.score} 分 · ${s.band}` : `${g.label} · 未练`
+    // 有氧来源要在悬停副标里点出来：同样的 6 组，是举铁还是跑步，用户看一眼就该知道
+    const aero = s && !s.idle && s.aeroSets > 0 && s.aeroLabel ? ` · 含${s.aeroLabel}等效 ${s.aeroSets} 组` : ''
+    for (const m of g.members) {
+      out[m] = s && !s.idle ? `${s.label} ${s.score} 分 · ${s.band}${aero}` : `${g.label} · 未练`
+    }
   }
   return out
 }
@@ -717,7 +769,9 @@ export function groupRows(result: TrainingScoreResult): {
     score: g.score,
     level: g.level,
     band: g.band,
-    note: g.idle ? '本周未练' : `${g.sets} 组 · ${g.freqCount} 次 · 体感 ${g.feeling.score}`,
+    note: g.idle
+      ? '本周未练'
+      : `${g.setsForScore} 组${g.aeroSets > 0 && g.aeroLabel ? `（含${g.aeroLabel}等效 ${g.aeroSets} 组）` : ''} · ${g.freqCount} 次 · 体感 ${g.feeling.score}`,
     idle: g.idle,
   }))
 }

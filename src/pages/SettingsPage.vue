@@ -5,6 +5,7 @@ import { ChevronRight, HeartPulse, RefreshCw, Sparkles, ToggleLeft, Trash2 } fro
 
 import DataClearSheet from '@/components/settings/DataClearSheet.vue'
 import ExternalAccessSection from '@/components/settings/ExternalAccessSection.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -67,12 +68,12 @@ const motionChoice = computed({
   },
 })
 
-/** 副标要报**实际生效**的那一档：被系统减弱动效、或被掉帧压回默认时，
+/** 副标要报**实际生效**的那一档：被系统减弱动效、或被画质档位压回默认时，
  *  用户选的那一档并没有生效 —— 与 perfHint 同一条原则（如实说，别让人对着假象猜） */
 const motionHint = computed(() => {
   if (motionLevel.value === 'off') return '不做补间'
   if (motionEffective.value !== motionLevel.value) {
-    return motionEffective.value === 'off' ? '系统已要求减弱动效' : '已随掉帧退回默认'
+    return motionEffective.value === 'off' ? '系统已要求减弱动效' : '画质选「流畅」时退回默认'
   }
   return `当前${MOTION_LEVELS.find((m) => m.value === motionLevel.value)?.label ?? ''}`
 })
@@ -108,7 +109,7 @@ onMounted(() => {
     <section class="card">
       <header class="row between ghead">
         <h2 class="gtitle">番茄钟</h2>
-        <span class="num t-3">今日专注 {{ pomo.todayFocusMin }} 分钟</span>
+        <span class="num gstate t-3">今日专注 {{ pomo.todayFocusMin }} 分钟</span>
       </header>
       <div class="card sub rows">
         <NumberStepper v-model="pomo.settings.focusMin" label="专注时长" unit="分钟" :step="5" :min="5" :max="120" />
@@ -120,15 +121,18 @@ onMounted(() => {
 
     <!-- 性能：画面档位（掉帧判定与降级落地见 system/perf） -->
     <section class="card">
-      <header class="row between ghead">
+      <header class="row ghead">
         <h2 class="gtitle">性能</h2>
-        <span class="t-3">{{ perfHint }}</span>
+        <span class="gstate t-2">{{ perfHint }}</span>
+        <span class="hint-slot">
+          <InfoHint title="画质档位说明">
+            <p>「流畅」把玻璃顶成实底，关掉模糊与循环动画，最省电；「默认」「超高」「极致」逐档更透，也更吃性能。</p>
+            <p>四档都是手动档，切换后立即生效，不会在后台自己切，也不会自己升降。</p>
+          </InfoHint>
+        </span>
       </header>
       <SegmentedControl v-model="perfChoice" class="perfseg" :options="PERF_OPTIONS" />
-      <p class="pnote t-3">
-        四档都是固定的，不会在后台自己切。低端机选「流畅」：玻璃顶成实底、关掉模糊与循环动画；
-        其余三档画质逐档更透，也更吃性能；跑不动时会自动往下降一档。
-      </p>
+      <p class="pnote t-2">四档都是手动档，不会自己切；卡顿就手动切到「流畅」。</p>
 
       <button class="frow row" @click="router.push({ name: 'settings-perf' })">
         <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
@@ -144,34 +148,37 @@ onMounted(() => {
 
     <!-- 动效：与画质档位正交的另一档（判定与落地见 system/motion） -->
     <section class="card">
-      <header class="row between ghead">
+      <header class="row ghead">
         <h2 class="gtitle">动效</h2>
-        <span class="t-3">{{ motionHint }}</span>
+        <span class="gstate t-2">{{ motionHint }}</span>
+        <span class="hint-slot">
+          <InfoHint title="动效档位说明">
+            <p>「默认」就是现在这一套，不加装饰；「丰富」多加液态动作；「关闭」不做补间，状态直接切换。</p>
+            <p>画质档位管「玻璃画不画得出来」，这里管「界面动不动」——两件事互不影响。</p>
+            <p>画质选「流畅」时，「丰富」会退回「默认」；系统要求减弱动效时，全部档位都按「关闭」执行。</p>
+          </InfoHint>
+        </span>
       </header>
       <SegmentedControl v-model="motionChoice" class="perfseg" :options="MOTION_OPTIONS" />
-      <p class="pnote t-3">
-        「默认」就是现在这一套，不加装饰；「丰富」多加液态动作；「关闭」不做补间，状态直接切换。
-        画质档位管「玻璃画不画得出来」，这里管「界面动不动」——两件事互不影响。
-      </p>
-      <p class="pnote t-3">
-        选「丰富」后如果一直掉帧，会自动退回「默认」，不会一边掉帧一边加重负担。
-      </p>
     </section>
 
     <!-- 多设备同步 -->
     <section class="card">
-      <h2 class="gtitle">多设备同步</h2>
-      <p class="pnote t-3">
-        手机、电脑之间同步记录：同一网段直接连，跨网段先用云服务器换地址打洞直连，
-        都走不通才经云服务器中转 —— 三条路上跑的都是端到端加密的密文，
-        服务器看不到内容，也不存业务数据。
-      </p>
+      <header class="row ghead">
+        <h2 class="gtitle">多设备同步</h2>
+        <span class="hint-slot">
+          <InfoHint title="同步怎么连">
+            <p>同一网段直接连；跨网段先用云服务器换地址打洞直连；都走不通才经云服务器中转。</p>
+            <p>三条路上跑的都是端到端加密的密文，服务器看不到内容，也不存业务数据。</p>
+          </InfoHint>
+        </span>
+      </header>
+      <p class="pnote t-2">设备之间端到端加密同步，服务器不存内容。</p>
       <button class="frow row" @click="router.push({ name: 'settings-sync' })">
         <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
           <RefreshCw :size="18" />
         </i>
         <span class="col ftxt">
-          <b>多设备同步</b>
           <em class="t-3">配一台新设备、看上次走的哪条路、处理冲突</em>
         </span>
       </button>
@@ -192,7 +199,6 @@ onMounted(() => {
           <HeartPulse :size="18" />
         </i>
         <span class="col ftxt">
-          <b>第三方数据管理</b>
           <em class="t-3">健康数据授权、同步手环/运动 App 的记录</em>
         </span>
       </button>
@@ -207,7 +213,7 @@ onMounted(() => {
         </i>
         <span class="col ftxt">
           <b>清除软件数据</b>
-          <em class="t-3">缓存 · AI 会话 · 业务数据 · 恢复出厂，四档深度可选</em>
+          <em class="t-3">四档由浅到深，清除前先列出清单再确认</em>
         </span>
         <ChevronRight :size="16" class="t-3" />
       </button>
@@ -215,7 +221,15 @@ onMounted(() => {
 
     <!-- 关于 -->
     <section class="card d-full">
-      <h2 class="gtitle">关于</h2>
+      <header class="row ghead">
+        <h2 class="gtitle">关于</h2>
+        <span class="hint-slot">
+          <InfoHint title="关于 Rein">
+            <p>Rein 基于 Tauri + Vue + Rust 构建。</p>
+            <p>架构与编码规范见 docs/ARCHITECTURE.md 与 docs/STANDARDS.md；更新链路（多源 + 验签 + 安装）见 docs/UPDATES.md。</p>
+          </InfoHint>
+        </span>
+      </header>
       <button class="frow row" @click="router.push({ name: 'settings-update' })">
         <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
           <RefreshCw :size="18" />
@@ -226,11 +240,6 @@ onMounted(() => {
         </span>
         <ChevronRight :size="16" class="t-3" />
       </button>
-      <p class="about t-3">
-        Rein v{{ update.currentVersion || '0.2.1' }} · Tauri + Vue + Rust<br>
-        架构与编码规范见 docs/ARCHITECTURE.md 与 docs/STANDARDS.md；<br>
-        更新链路（多源 + 验签 + 安装）见 docs/UPDATES.md
-      </p>
     </section>
     </div>
 
@@ -248,6 +257,24 @@ onMounted(() => {
   font-size: var(--fs-footnote);
   font-weight: 700;
   color: var(--text-2);
+}
+
+/* 卡头行：标题 + 状态副标 + 右侧帮助入口 */
+.ghead {
+  gap: 8px;
+}
+
+/* 卡头状态副标：原先只给颜色不给字号，继承了 body 的 17px，比 13px 的卡头标题还大；
+   此刻生效的是哪一档是必读信息，走 --text-2，补充性事实（如今日专注）才压 t-3 */
+.gstate {
+  font-size: var(--fs-caption);
+}
+
+/* 标题行右侧的帮助入口：InfoHint 是多根组件，类要落在包裹元素上 */
+.hint-slot {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
 }
 
 /* 番茄钟卡内行组与卡头之间恒为 4px（.rows 成了 .card.sub，原来的 .ghead + .rows 4px 保留） */
@@ -297,12 +324,6 @@ onMounted(() => {
    这里只留「行间细线，首行不留线」这一条分组自己的规则 */
 .rows > * + * {
   border-top: 0.5px solid var(--line);
-}
-
-.about {
-  margin-top: 10px;
-  font-size: var(--fs-caption);
-  line-height: 1.7;
 }
 
 .perfseg {

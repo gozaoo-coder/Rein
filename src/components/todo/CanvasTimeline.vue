@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ChevronRight, Layers, Pencil, Target } from 'lucide-vue-next'
+import { ChevronRight, Layers, Pencil } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import { CATEGORY_META } from '@/config/domain'
 import { minToHHmm, nowMin, todayStr } from '@/utils/date'
 import { durationOf as durOfShared, layoutDayBlocks } from '@/utils/timelineLayout'
@@ -465,7 +466,10 @@ onBeforeUnmount(() => {
                 @click.stop="emit('toggle', b.t)"
               />
               <div class="body">
-                <span class="tt"><Target v-if="b.t.programId != null" :size="9" :stroke-width="3" class="src" aria-label="来自健康方案" />{{ b.t.title }}</span>
+                <!-- 「来自健康方案」原先只写在 Target 图标的 aria-label 里，界面上只剩
+                     一枚没图例的靶心；改成标题前一枚「方案」胶囊，来源一眼可读 -->
+                <StatusChip v-if="b.t.programId != null" tone="accent" size="sm" class="srcchip">方案</StatusChip>
+                <span class="tt">{{ b.t.title }}</span>
               </div>
               <button
                 class="edit"
@@ -511,7 +515,8 @@ onBeforeUnmount(() => {
                 @click.stop="emit('toggle', s.front)"
               />
               <div class="body">
-                <span class="tt"><Target v-if="s.front.programId != null" :size="9" :stroke-width="3" class="src" aria-label="来自健康方案" />{{ s.front.title }}</span>
+                <StatusChip v-if="s.front.programId != null" tone="accent" size="sm" class="srcchip">方案</StatusChip>
+                <span class="tt">{{ s.front.title }}</span>
               </div>
               <div class="card-acts">
                 <button class="stk-more" :aria-label="`展开同时段 ${s.items.length} 项日程`" @pointerdown.stop @click.stop="openStack(s)">
@@ -564,7 +569,7 @@ onBeforeUnmount(() => {
           </button>
         </li>
       </ul>
-      <p class="stk-hint t-3">点条目在画布上置顶并查看详情；勾选直接完成。</p>
+      <p class="stk-hint t-2">点条目在画布上置顶并查看详情。</p>
     </SheetModal>
   </div>
 </template>
@@ -758,7 +763,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-/* 来自健康方案的条目：分类色之外再加一道强调色左棱 + 标题前的方案标记，
+/* 来自健康方案的条目：分类色之外再加一道强调色左棱 + 标题前的「方案」胶囊，
    与普通待办一眼可分（方案日程是「课表」，不是随手记的待办）；
    颜色仍走分类色 + 一个强调色棱，不新增一套颜色语义 */
 .blk.prog .blk-card,
@@ -766,10 +771,10 @@ onBeforeUnmount(() => {
   border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
-.src {
-  vertical-align: -1px;
-  margin-right: 3px;
-  color: var(--accent);
+/* 「方案」胶囊：块内不放缩，标题再窄也先砍标题（.tt 有 line-clamp） */
+.srcchip {
+  flex: none;
+  align-self: center;
 }
 
 /* 起止时间标记：上方起点、下方终点；拖拽中高亮为实时时间。
@@ -1169,5 +1174,100 @@ onBeforeUnmount(() => {
 
 .compact .bmin-start {
   top: -13px;
+}
+
+/* ============ 桌面壳：画布上的两枚小控件放大到指针精度 ============
+
+   实测（1512 #/todos）：.ck 17×17、.edit 14×14 —— 都低于 22 的下限，一屏十来个。
+   但这两个尺寸不是随手的：.ck 与首行行高等大（`--ck`，与 `--blk-lh`、行数折算
+   三个数必须永远相等，见 TS 的 lineH），.edit 是右下角一枚角标，它们的**视觉**
+   尺寸是排版规格，不能动。
+
+   所以这里只放大**按钮盒**，圆环/角标改由内层伪元素按原尺寸画：
+   · 盒用负外边距吃回原占位（WorkoutRow 的 .del 同款惯用法）——
+     块宽、标题折行、与首行的居中关系全都不变，minBlkH 也照旧；
+   · 盒以原中心为心放大，所以在最小块（minBlkH = 行高 17 + 卡片内边距 8 = 25）里
+     也不会被 .blk-card 的 overflow 裁到：.ck 的盒占 1.5~23.5，
+     .edit 的盒贴到卡片下缘（3~25），都在卡片内。
+   · 叠层卡的 .card-acts 是纵向排布（.stk-more 18 + 间隙 2 + .edit），
+     负外边距让 .edit 的**外边距盒**仍是 14，那一列的总高没变 ——
+     所以 minStackH(42) 不需要跟着改。 */
+
+.desk-main .ck {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  min-height: 22px;
+  /* (--ck - 22) / 2：原占位一分不多一分不少，圆环还在首行的同一条中线上 */
+  margin: calc((var(--ck) - 22px) / 2);
+  border: 0;
+}
+
+.desk-main .ck::before {
+  content: '';
+  width: var(--ck);
+  height: var(--ck);
+  border-radius: 50%;
+  border: 1.5px solid var(--line-strong);
+}
+
+/* 基准的 .ck:hover 画在按钮自己的盒上（描边 + 淡绿底）——盒放大后那一圈会明显比
+   圆环大一码，所以底色/描边一律改到 ::before 上，按钮盒保持透明。 */
+.desk-main .ck:hover {
+  background: transparent;
+}
+
+@media (hover: hover) {
+  .desk-main .ck:hover::before {
+    border-color: var(--ok);
+    background: color-mix(in srgb, var(--ok) 18%, transparent);
+  }
+}
+
+.desk-main .edit {
+  min-width: 22px;
+  min-height: 22px;
+  /* margin-left 仍是 auto（贴右端）；多出的 4px 用负外边距吃回，右下角位置不动 */
+  margin: -4px -4px -4px auto;
+  background: transparent;
+}
+
+/* 角标改画在绝对定位的伪元素上：若做成流内 flex 项，它会把铅笔图标挤到旁边 */
+.desk-main .edit::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-1) 9%, transparent);
+}
+
+/* 基准的 .edit:hover 也是画在按钮盒上的（会变成一颗 22px 的灰丸），照 .ck 的处置 */
+.desk-main .edit:hover {
+  background: transparent;
+}
+
+@media (hover: hover) {
+  .desk-main .edit:hover {
+    color: var(--text-1);
+  }
+
+  .desk-main .edit:hover::before {
+    background: color-mix(in srgb, var(--text-1) 16%, transparent);
+  }
+}
+
+/* 叠层卡的展开钮（18px）同一配方：它只在同一时段挤了 ≥3 条时才出现，
+   当前夹具里没有，但它是同一类「小于 22 的可见控件」，一并补上。
+   同样用负外边距保住 .card-acts 那一列的排布（18 + 2 + 14）。 */
+.desk-main .stk-more {
+  min-height: 22px;
+  margin-block: -2px;
 }
 </style>

@@ -204,7 +204,7 @@ async function main() {
     )
     let st = await storeState()
     ok('S1b 首动作 = 开合跳（timed），准备页阶段正确', st.phase === 'timed-ready' && st.exKind === 'timed' && st.exName === '开合跳', JSON.stringify(st))
-    ok('S1c 准备页文案：计时动作 + 目标 40s × 4 组', (await paneMeta()).includes('目标40s×4组·组间休息20s'), await paneMeta())
+    ok('S1c 准备页文案：计时动作 + 目标 40 秒 × 4 组', (await paneMeta()).includes('目标40秒×4组·组间休息20秒'), await paneMeta())
     ok('S1d 准备坞主按钮 = 我准备好了', (await dockButtons()).some((b) => b.includes('我准备好了')), JSON.stringify(await dockButtons()))
 
     /* ---------- S2. 加练一组 → 准备页组数跟走（effSets） ---------- */
@@ -212,7 +212,7 @@ async function main() {
     await sleep(400)
     await clickButton('再加一组')
     await sleep(500)
-    ok('S2a 加练后准备页显示 5 组', (await paneMeta()).includes('目标40s×5组'), await paneMeta())
+    ok('S2a 加练后准备页显示 5 组', (await paneMeta()).includes('目标40秒×5组'), await paneMeta())
     ok('S2b 顶栏分母 = 19 组（18 + 加练 1）', (await topCounter()).startsWith('0/19'), await topCounter())
 
     /* ---------- S3. 我准备好了 → 3·2·1 → 计时中 ---------- */

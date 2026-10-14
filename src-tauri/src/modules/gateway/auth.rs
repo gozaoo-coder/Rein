@@ -21,15 +21,17 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tokio::sync::{oneshot, watch};
+use serde_json::Value;
+use tokio::sync::{broadcast, oneshot, watch};
 
 use crate::error::{ReinError, Result};
 use crate::modules::gateway::models::{PromptGate, Scope, ScopeSet};
 use crate::modules::gateway::{store, ChangeFeed};
 
-/// 待决授权请求的有效期（毫秒）。超时未决 → 关连接（contract §4.1 首帧后 5s 内要令牌，
-/// 令牌后进入待决由用户决定；这里给用户 30s 决策窗口）。
-pub const AUTH_PENDING_TIMEOUT_MS: i64 = 30_000;
+/// 待决授权请求的有效期（毫秒）。超时未决 → 回 `gateway.auth.denied` 并关连接
+/// （contract §16 规则 2：**60 秒**，以后端计时为准，前端只显示倒计时；
+/// 待决超时同时计入按 IP 的失败限频，见 `server.rs::note_failure`）。
+pub const AUTH_PENDING_TIMEOUT_MS: i64 = 60_000;
 
 /// 每 token（按 client_id 计）每分钟最大调用数；超限回 `busy`（contract §4.1）。
 pub const TOKEN_RATE_PER_MIN: usize = 120;
@@ -53,6 +55,22 @@ pub const PROMPT_WINDOW_IP: Duration = Duration::from_secs(60);
 /// `commands.rs`（授权结果）都要发，`auth` 是两者共同的底座。
 pub const EVENT_AUTH_REQUIRED: &str = "gateway://authorization-required";
 pub const EVENT_AUTH_CHANGED: &str = "gateway://authorization-changed";
+
+/// 控制面推送事件的广播容量（`gateway.runtime` / `gateway.server`）。
+/// 比业务变更流小：这两类事件稀疏，订阅者够快，堆积即已异常。
+pub const EVENT_CAPACITY: usize = 64;
+
+/// 服务端 → 外部连接的**控制面推送**（非业务表变更，contract §14.5）。
+///
+/// 由 tauri 命令（`focus_publish` / `focus_unpublish` / 端口写回）发布，连接任务订阅后
+/// 编码成 WS 事件帧发给已鉴权客户端（运行态事件只发含 `pomodoro.read` 的连接）。
+#[derive(Debug, Clone)]
+pub enum ServerEvent {
+    /// 番茄钟运行态变更：`data` 是 `FocusRuntime` JSON；`Null` 表示已清（不再有计时）。
+    Focus { data: Value, at: i64 },
+    /// 实际监听端口与设置项不一致：通知已连接客户端改连（contract §14.5 / §17.2）。
+    PortChanged { port: u16 },
+}
 
 /// 授权的持久性：本次会话（内存）还是始终允许（落库）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +120,8 @@ pub struct PendingAuth {
     pub request_id: String,
     pub client_id: String,
     pub client_name: String,
-    /// 该连接握手时的 Origin（带 Origin 的连接已在握手被拒，故通常为 None）。
+    /// 该连接握手请求头里的 Origin（原生客户端没有这个头 → `None`）。**客户端无法自报**，
+    /// 取自握手请求；带 Origin 的连接必须已命中白名单才可能走到这里（contract §15）。
     pub origin: Option<String>,
     /// 请求来源 IP（服务端从 socket 取，请求方无法伪造）——弹窗上「谁在请求」的可核验信息。
     pub ip: Option<String>,
@@ -143,10 +162,13 @@ pub struct GatewayHub {
     bans: Mutex<HashMap<String, Instant>>,
     /// 授权弹窗时刻（按来源 IP），防轮换 clientId 刷弹窗。
     prompt_ip: Mutex<HashMap<String, Vec<Instant>>>,
+    /// 控制面推送（运行态 / 端口变化）的广播发送端。
+    events: broadcast::Sender<ServerEvent>,
 }
 
 impl GatewayHub {
     pub fn new() -> Self {
+        let (events, _rx) = broadcast::channel(EVENT_CAPACITY);
         Self {
             feed: Arc::new(ChangeFeed::new()),
             sessions: Mutex::new(HashMap::new()),
@@ -157,6 +179,7 @@ impl GatewayHub {
             auth_fail: Mutex::new(HashMap::new()),
             bans: Mutex::new(HashMap::new()),
             prompt_ip: Mutex::new(HashMap::new()),
+            events,
         }
     }
 
@@ -186,6 +209,20 @@ impl GatewayHub {
             .unwrap()
             .get(conn_id)
             .map(|g| g.client_id.clone())
+    }
+
+    /// 连接当前持有的 scope 集合（**变更推送过滤**用，contract §14.5：只推该连接 scope
+    /// 覆盖的域）。连接不在会话表里 = 空集（什么都不推）。
+    ///
+    /// 与 [`require`] 的区别：`require` 每次回 DB 复核「始终允许」的行（撤销立刻生效），
+    /// 这里读的是授权那一刻的内存副本 —— 推送是元数据、不是数据，撤销由下一次调用兜住。
+    pub fn session_scopes(&self, conn_id: &str) -> ScopeSet {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(conn_id)
+            .map(|g| g.scopes.clone())
+            .unwrap_or_default()
     }
 
     /// 全部活动中的连接授权（管理面列「session」客户端用）。
@@ -276,6 +313,18 @@ impl GatewayHub {
             .unwrap()
             .get(request_id)
             .map(|e| e.conn_id.clone())
+    }
+
+    // ---------- 控制面推送（§14.5） ----------
+
+    /// 订阅控制面推送流（连接任务在鉴权成功后调用）。
+    pub fn subscribe_events(&self) -> broadcast::Receiver<ServerEvent> {
+        self.events.subscribe()
+    }
+
+    /// 发布一条控制面推送。无订阅者时静默丢弃（网关没开、外部没人连时照常无碍）。
+    pub fn publish_event(&self, ev: ServerEvent) {
+        let _ = self.events.send(ev);
     }
 
     // ---------- 服务生命周期 ----------
@@ -447,6 +496,47 @@ mod tests {
         assert_eq!(hub.session_client("conn-1").as_deref(), Some("c-1"));
         hub.end_conn("conn-1");
         assert!(hub.session("conn-1").is_none(), "连接结束即清除会话授权");
+    }
+
+    /// 授权的决策窗口按契约定稿为 60 秒（contract §16 规则 2），且以后端计时为准。
+    #[test]
+    fn auth_pending_timeout_is_sixty_seconds() {
+        assert_eq!(AUTH_PENDING_TIMEOUT_MS, 60_000);
+    }
+
+    /// 会话 scope 供变更推送过滤：随授权走、随连接消亡。
+    #[test]
+    fn session_scopes_follow_the_grant_and_die_with_the_connection() {
+        let hub = GatewayHub::new();
+        assert!(hub.session_scopes("conn-nope").is_empty(), "未登记连接没有 scope");
+        let scopes: ScopeSet = [Scope::ScheduleRead, Scope::WorkoutRead].into_iter().collect();
+        hub.grant(
+            "conn-1",
+            ConnGrant {
+                client_id: "c-1".into(),
+                name: "小组件".into(),
+                scopes: scopes.clone(),
+                kind: GrantKind::Session,
+            },
+        );
+        let got = hub.session_scopes("conn-1");
+        assert!(got.contains(Scope::ScheduleRead) && got.contains(Scope::WorkoutRead));
+        assert!(!got.contains(Scope::PomodoroRead));
+        hub.end_conn("conn-1");
+        assert!(hub.session_scopes("conn-1").is_empty(), "断链即不再推任何域");
+    }
+
+    /// 超时 / 忽略都走 `note_auth_failure`：打满窗口即封该来源 IP（contract §16.6）。
+    #[test]
+    fn auth_failures_ban_the_source_ip() {
+        let hub = GatewayHub::new();
+        for _ in 0..(AUTH_FAIL_PER_MIN - 1) {
+            hub.note_auth_failure("10.0.0.7");
+            assert!(!hub.is_ip_banned("10.0.0.7"), "未打满窗口不该封");
+        }
+        hub.note_auth_failure("10.0.0.7");
+        assert!(hub.is_ip_banned("10.0.0.7"), "第 5 次失败即封禁");
+        assert!(!hub.is_ip_banned("10.0.0.8"), "只封来源 IP，不牵连别的地址");
     }
 
     #[test]

@@ -110,7 +110,13 @@ function onMove(t: Todo, startMin: number): void {
     <header class="row between head">
       <h2>今日画布</h2>
       <div class="row center hright">
-        <span class="num t-2 meta">{{ scheduled.length }} 个安排 · {{ pool.length }} 条未安排</span>
+        <!-- 计数分两级：「N 个安排」是主项，「N 条未安排」降一档（下方池子本身就是它）；
+             两档用细竖线切开，不再「·」串两个等重数字 -->
+        <span class="meta">
+          <b class="num t-2">{{ scheduled.length }} 个安排</b>
+          <i class="m-sep" aria-hidden="true" />
+          <span class="num t-3 m-sub">{{ pool.length }} 条未安排</span>
+        </span>
         <!-- 「详情 ›」胶囊：取代卡片底部原来那行「打开完整画布 N 条未完成 ›」。
              它本来就是同一件事（进 /todos 看全部），但那一行占了整条卡片宽度、
              还要一条分隔线把它与正文切开，而它承载的只有一个去处的入口 ——
@@ -184,7 +190,21 @@ function onMove(t: Todo, startMin: number): void {
 }
 
 .head .meta {
+  font-size: var(--fs-footnote);
+}
+
+/* 次项计数：压回 caption + --text-3；与主项之间一枚细竖线（不是「·」） */
+.meta .m-sub {
   font-size: var(--fs-caption);
+}
+
+.meta .m-sep {
+  display: inline-block;
+  width: 1px;
+  height: 10px;
+  margin: 0 2px;
+  background: var(--line-strong);
+  vertical-align: -1px;
 }
 
 /* 未安排池：横向 chips，点卡片进编辑抽屉快排。
@@ -236,8 +256,8 @@ function onMove(t: Todo, startMin: number): void {
   margin-top: 10px;
 }
 
-/* 卡头右侧：计数 + 「详情 ›」胶囊。
-   两者不要再挤：计数是灰的次要信息（tabular 数字），胶囊是可点的去处 ——
+/* 卡头右侧：两级计数 + 「详情 ›」胶囊。
+   计数主项是灰的次要信息（tabular 数字），次项再浅一档，胶囊是可点的去处 ——
    形态差异本身就说明了「哪个能点」，不靠颜色大小去抢。 */
 .hright {
   gap: 8px;

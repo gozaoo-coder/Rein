@@ -25,6 +25,7 @@ import { warmupPrescription } from '@/utils/warmup'
 import { RUN_PLAN_ID } from '@/types'
 import type {
   DoneSet,
+  GatewaySessionFinish,
   PlanExercise,
   SessionPhase,
   SessionRecord,
@@ -154,6 +155,46 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
 
   /** 每个状态事件后的落盘触发点 */
   function touch(): void {
+    void persist()
+  }
+
+  /* ---------- 运行态上报（contract §14.2） ---------- */
+
+  /** 上报周期（毫秒）：活跃会话每秒对一次当前快照，**变了才写**。 */
+  const REPORT_INTERVAL_MS = 1000
+  let reportTimer: ReturnType<typeof setInterval> | null = null
+  /** 最近一次上报的载荷（JSON）：与它相同就不发。 */
+  let lastReported = ''
+
+  function stopReporter(): void {
+    if (reportTimer) {
+      clearInterval(reportTimer)
+      reportTimer = null
+    }
+    lastReported = ''
+  }
+
+  function startReporter(): void {
+    reportTimer ??= setInterval(reportTick, REPORT_INTERVAL_MS)
+  }
+
+  /** 每秒对一次快照：`elapsed_sec` 由服务端按两次快照的间隔累加，安静相位不必每秒刷。
+   *  休息倒计时（`state.restLeft`）逐秒变，所以休息期间自然每秒落一盘。 */
+  function reportTick(): void {
+    if (!sessionId.value) {
+      stopReporter()
+      return
+    }
+    const payload = {
+      id: sessionId.value,
+      exIndex: exIndex.value,
+      setIndex: setIndex.value,
+      weightKg: weight.value,
+      state: snapshotState(),
+    }
+    const key = JSON.stringify(payload)
+    if (key === lastReported) return
+    lastReported = key
     void persist()
   }
 
@@ -1089,6 +1130,71 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     finishError.value = ''
   }
 
+  /* ---------- 外部控制（contract §14.3） ---------- */
+
+  /**
+   * 外部客户端送来的快照：落到**本地状态机**再由既有落盘路径写库。
+   *
+   * 为什么不直接写库：本地内存态是下一次 `touch()` 的写入源，绕过它写库会在下一拍被旧值
+   * 静默覆盖（contract §14.3 的原话）。所以外部驱动时，本地机器要跟着外部走。
+   * `id` 必须是本机在跑的那一场；不是则不动（外部自持状态时可自行调 `session_snapshot`）。
+   */
+  async function applyExternalSnapshot(p: {
+    id: number
+    exIndex: number
+    setIndex: number
+    weightKg: number
+    state: SessionSnapshotState
+  }): Promise<boolean> {
+    if (sessionId.value !== p.id) return false
+    const st = p.state
+    exIndex.value = p.exIndex
+    setIndex.value = p.setIndex
+    weight.value = p.weightKg
+    doneSets.value = st.doneSets ?? {}
+    extraSets.value = st.extraSets ?? {}
+    skippedSets.value = st.skippedSets ?? {}
+    readiness.value = st.readiness ?? null
+    reps.value = st.reps ?? null
+    restIsTemp.value = st.restIsTemp ?? false
+    restWarmup.value = st.restWarmup ?? false
+    restTargetIsNextSet.value = st.restTargetIsNextSet ?? true
+    timedTotal.value = st.timedTotal ?? 0
+    // 相位与休息倒计时：只有换了相位才重建计时器，免得打断本地正走的同一段休息
+    if (st.phase !== phase.value) {
+      stopTimer()
+      phase.value = st.phase
+      if (st.phase === 'rest') {
+        restLeft.value = Math.max(0, Math.round(st.restLeft ?? 0))
+        restTotal.value = Math.max(restLeft.value, Math.round(st.restLeft ?? restLeft.value))
+        startRestTimer()
+      }
+    } else if (st.phase === 'rest') {
+      restLeft.value = Math.max(0, Math.round(st.restLeft ?? restLeft.value))
+    }
+    await persist()
+    return true
+  }
+
+  /**
+   * 外部送来的结束载荷（contract §14.3）：
+   * - 本机正是这一场 → 走既有 `finishAndSave()`（本地权威，含收尾与统计刷新）；
+   * - 否则只把这条记录写进去（外部自持状态机，本机没有会话要收尾）。
+   */
+  async function finishFromExternal(input: GatewaySessionFinish): Promise<boolean> {
+    if (sessionId.value === input.id) {
+      await finishAndSave()
+      return true
+    }
+    // 可空字段补成显式 null：IPC 走 JSON，`undefined` 会把键整个丢掉（Rust 侧是 Option，缺键不安全）
+    await sessionService.finish({
+      ...input,
+      intensity: input.intensity ?? null,
+      note: input.note ?? null,
+    })
+    return true
+  }
+
   /* ---------- 中断恢复 ---------- */
 
   /**
@@ -1222,6 +1328,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     if (p === 'idle') stopTimer()
   })
 
+  // 会话一建立就起「每秒对快照」的上报，会话结束（endLocal / 服务端关闭）即停（contract §14.2）
+  watch(sessionId, (id) => {
+    if (id) startReporter()
+    else stopReporter()
+  })
+
   // 后台 / 最小化期间 interval 会被节流：回到可见瞬间立即校正剩余休息，
   // 该归零的当场归零（会话恢复路径 applyRecord 已按真实流逝补偿过一次）
   document.addEventListener('visibilitychange', () => {
@@ -1297,5 +1409,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     discard,
     discardById,
     hydrateFromServer,
+    applyExternalSnapshot,
+    finishFromExternal,
   }
 })

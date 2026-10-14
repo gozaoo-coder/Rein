@@ -374,10 +374,12 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   line-height: 1.15;
 }
 
+/* 节次区间只是时间柱的补充读数（主角是上下两端实际上课时间）：
+   不叠 opacity —— --text-3 的 3.6:1 再乘 0.75 只剩约 2.5:1，
+   左侧时间列几乎读不出来，层级靠字号与颜色差，不靠透明度 */
 .unit {
   font-size: var(--fs-micro);
   color: var(--text-3);
-  opacity: 0.75;
   line-height: 1.1;
 }
 

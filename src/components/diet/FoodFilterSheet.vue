@@ -72,7 +72,7 @@ const DIMS: {
   {
     key: 'proteinMin',
     label: '蛋白质',
-    unit: 'g / 100g',
+    unit: 'g / 100 g',
     opts: [
       { label: '≥10g', v: 10 },
       { label: '≥20g', v: 20 },
@@ -82,7 +82,7 @@ const DIMS: {
   {
     key: 'carbMax',
     label: '碳水化合物',
-    unit: 'g / 100g',
+    unit: 'g / 100 g',
     opts: [
       { label: '≤10g', v: 10 },
       { label: '≤25g', v: 25 },
@@ -92,7 +92,7 @@ const DIMS: {
   {
     key: 'fatMax',
     label: '脂肪',
-    unit: 'g / 100g',
+    unit: 'g / 100 g',
     opts: [
       { label: '≤5g', v: 5 },
       { label: '≤15g', v: 15 },
@@ -102,7 +102,7 @@ const DIMS: {
   {
     key: 'sodiumMax',
     label: '钠',
-    unit: 'mg / 100g',
+    unit: 'mg / 100 g',
     opts: [
       { label: '≤120mg', v: 120 },
       { label: '≤600mg', v: 600 },
@@ -110,10 +110,11 @@ const DIMS: {
   },
 ]
 
+/* 热量档自带单位（与其它维度同形态），基准口径只在分组头出现一次 */
 const KCAL_OPTS: Opt[] = [
-  { label: '≤100', v: 100 },
-  { label: '≤200', v: 200 },
-  { label: '≤350', v: 350 },
+  { label: '≤100 大卡', v: 100 },
+  { label: '≤200 大卡', v: 200 },
+  { label: '≤350 大卡', v: 350 },
 ]
 
 function setDim(key: 'proteinMin' | 'carbMax' | 'fatMax' | 'sodiumMax', v: number | null): void {
@@ -152,7 +153,7 @@ function onReset(): void {
       <section class="dim">
         <header class="dhead">
           <h3>热量</h3>
-          <span class="unit">大卡 / 100g</span>
+          <span class="unit">大卡 / 100 g</span>
         </header>
         <div class="opts">
           <button class="opt" :class="{ on: draft.kcalMax === null }" @click="setKcalMax(null)">
@@ -169,10 +170,9 @@ function onReset(): void {
           </button>
         </div>
         <div class="range">
-          <input v-model.number="kcalMinText" type="number" inputmode="decimal" min="0" placeholder="最少">
-          <span class="sep">–</span>
-          <input v-model.number="kcalMaxText" type="number" inputmode="decimal" min="0" placeholder="最多">
-          <span class="unit">大卡</span>
+          <input v-model.number="kcalMinText" type="number" inputmode="decimal" min="0" placeholder="热量下限">
+          <span class="sep">至</span>
+          <input v-model.number="kcalMaxText" type="number" inputmode="decimal" min="0" placeholder="热量上限">
         </div>
       </section>
 
@@ -223,9 +223,9 @@ function onReset(): void {
 }
 
 .unit {
-  /* 「kcal」单位后缀，装饰性微字 */
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  /* 分组头的单位口径（「≥10」是 10 克还是 10 大卡全看它）：必读信息，不吃 11px 水印档 */
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .opts {

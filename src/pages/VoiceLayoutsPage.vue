@@ -2,6 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ListTodo, MessageCircle, Users } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
+
 /**
  * 语音会话 · 10 种版式对照（设计探索页，不属于产品导航）。
  *
@@ -111,6 +115,10 @@ const wave = computed(() =>
   ),
 )
 
+/** 波形里「已听」那一段的柱数：按 31 秒 / 总长的真实进度算 ——
+ *  原来写死 42 根（= 1/3），而页脚读数说的是 31 秒 / 42 分 18 秒，两者差 27 倍 */
+const heardBars = computed(() => Math.round((wave.value.length * 31_000) / SESSION.durationMs))
+
 /** 小地图：每句一条，当前句高亮 */
 const readAt = ref(3)
 
@@ -154,7 +162,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <span>{{ v.name }}</span>
         </button>
       </nav>
-      <p class="idea">{{ current.name }} —— {{ current.idea }}</p>
+      <p class="idea">{{ current.idea }}</p>
     </header>
 
     <!-- 版式舞台 -->
@@ -188,9 +196,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           </ol>
         </div>
         <aside class="col-r">
-          <h3 class="ct">同步纪要</h3>
+          <h3 class="ct">
+            同步纪要
+            <!-- 两种图标的含义原先只能靠认图标，说明收进标题行右侧这枚入口 -->
+            <span class="hint-slot">
+              <InfoHint title="纪要的两种图标">
+                <p>待办（清单图标）：需要有人去做、要跟进的事。</p>
+                <p>结论（对话图标）：会上定下来的判断与结果。</p>
+              </InfoHint>
+            </span>
+          </h3>
           <div v-for="(n, i) in SESSION.notes" :key="i" class="note" :class="n.kind">
             <component :is="n.kind === 'todo' ? ListTodo : MessageCircle" :size="13" />
+            <StatusChip v-if="n.kind === 'todo'" tone="warn" size="sm">待办</StatusChip>
+            <PillChip v-else tone="muted" size="sm">结论</PillChip>
             <p>{{ n.text }}</p>
           </div>
         </aside>
@@ -230,7 +249,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       <section v-else-if="active === 5" class="v v5">
         <div class="vhead slim">
           <h2>{{ SESSION.title }}</h2>
-          <p class="meta">按真实时间比例排列</p>
+          <p class="meta">{{ fmtLong(SESSION.durationMs) }} · {{ SESSION.sentences }} 句</p>
         </div>
         <div class="ruler-wrap">
           <div class="ruler" aria-hidden="true">
@@ -278,7 +297,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
             <div><b class="num">{{ fmtLong(SESSION.durationMs) }}</b><span>时长</span></div>
             <div><b class="num">{{ SESSION.sentences }}</b><span>句</span></div>
             <div><b class="num">{{ SESSION.words }}</b><span>字</span></div>
-            <div><b class="num">{{ SESSION.notes.length }}</b><span>条目</span></div>
+            <div><b class="num">{{ SESSION.notes.length }}</b><span>纪要</span></div>
           </div>
         </div>
         <ol class="stream tight">
@@ -325,11 +344,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       <section v-else-if="active === 9" class="v v9">
         <div class="wav">
           <div class="wav-bars" aria-hidden="true">
-            <i v-for="(h, i) in wave" :key="i" :style="{ height: `${h}%` }" :class="{ past: i < 42 }" />
+            <i v-for="(h, i) in wave" :key="i" :style="{ height: `${h}%` }" :class="{ past: i < heardBars }" />
           </div>
+          <!-- 已听与总时长分层：已听做成胶囊（原来两个读数同字号并排，量级差 27 倍读不出主次） -->
           <div class="wav-foot">
-            <span class="num">{{ fmt(31_000) }}</span>
-            <span class="num t-3">{{ fmtLong(SESSION.durationMs) }}</span>
+            <PillChip size="sm" tone="action">已听 <b class="num">{{ fmt(31_000) }}</b></PillChip>
+            <span class="num">{{ fmtLong(SESSION.durationMs) }}</span>
           </div>
         </div>
         <ol class="rows">
@@ -354,6 +374,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
         <footer class="mag-foot">
           <div v-for="(n, i) in SESSION.notes" :key="i" class="mag-note">
             <component :is="n.kind === 'todo' ? ListTodo : MessageCircle" :size="13" />
+            <StatusChip v-if="n.kind === 'todo'" tone="warn" size="sm">待办</StatusChip>
+            <PillChip v-else tone="muted" size="sm">结论</PillChip>
             <span>{{ n.text }}</span>
           </div>
         </footer>
@@ -498,11 +520,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 
 .ct {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--text-3);
   margin-bottom: 10px;
+}
+
+/* 标题行右侧的帮助入口：InfoHint 是多根组件，类要落在包裹元素上 */
+.hint-slot {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
 }
 
 .num {
@@ -809,8 +841,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 
 .stats span {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 /* ===== ⑧ 小地图 ===== */
@@ -892,7 +924,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 .wav-foot {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 10px;
   margin-top: 10px;
   font-size: var(--fs-micro);
   color: var(--text-3);
@@ -980,7 +1014,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 .mag-cols .lead::first-letter {
   float: left;
   margin: 4px 8px 0 0;
-  font-size: 46px;
+  font-size: var(--fs-display-l);
   line-height: 0.9;
   font-weight: 700;
   color: var(--led-shopping);

@@ -53,7 +53,7 @@ function onKey(e: KeyboardEvent, i: number): void {
     class="seg"
     :class="{ goo }"
     role="radiogroup"
-    :style="{ '--n': options.length, '--seg-fs': options.length > 4 ? '12px' : 'var(--fs-subhead)' }"
+    :style="{ '--n': options.length, '--seg-fs': options.length > 4 ? 'var(--fs-caption)' : 'var(--fs-subhead)' }"
   >
     <GlassThumb v-if="goo" :index="index" :count="options.length" />
     <div v-else class="thumb" :style="{ transform: `translateX(${index * 100}%)` }" />
@@ -105,7 +105,8 @@ function onKey(e: KeyboardEvent, i: number): void {
   width: calc((100% - 4px) / var(--n));
   height: calc(100% - 4px);
   background: var(--surface);
-  border-radius: 8px;
+  /* 滑块圆角 = 轨道 --radius-s 减 2px 内缩，跟着令牌走（别写死 8px） */
+  border-radius: calc(var(--radius-s) - 2px);
   box-shadow: var(--shadow-thumb);
   transition: transform var(--dur-base) var(--ease-standard);
 }

@@ -27,7 +27,9 @@ const route = useRoute()
 
 <template>
   <nav class="rail glass-surface glass-edge-r" aria-label="主导航">
-    <button class="logo" aria-label="Rein 主页" data-label="回到总览" @click="$router.push({ name: 'home' })" />
+    <!-- 无障碍名与悬停标签同值「回到总览」：读屏 / 语音控制用户按看到的名字找这颗钮
+         （WCAG 2.5.3 Label in Name）。与「总览」导航空格在文案上已经区分开 -->
+    <button class="logo" aria-label="回到总览" data-label="回到总览" @click="$router.push({ name: 'home' })" />
     <div class="navs col">
       <RouterLink
         v-for="it in items"

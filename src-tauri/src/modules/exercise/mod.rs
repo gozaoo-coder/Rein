@@ -8,9 +8,10 @@ use rusqlite::Row;
 use crate::error::Result;
 use models::Workout;
 
-/// workouts 表列清单（SELECT 时必须使用，保证行映射下标稳定）
+/// workouts 表列清单（SELECT 时必须使用，保证行映射下标稳定）。
+/// 新列一律**追加在末尾**：中间插入会把后面所有下标推一位，而调用方是按序号读的。
 pub(crate) const WORKOUT_COLS: &str =
-    "id, name, type, date, start_min, duration_min, kcal, intensity, effort, note, session_id, created_at";
+    "id, name, type, date, start_min, duration_min, kcal, intensity, effort, note, session_id, created_at, source";
 
 pub(crate) fn workout_from_row(row: &Row<'_>) -> rusqlite::Result<Workout> {
     Ok(Workout {
@@ -26,6 +27,7 @@ pub(crate) fn workout_from_row(row: &Row<'_>) -> rusqlite::Result<Workout> {
         note: row.get(9)?,
         session_id: row.get(10)?,
         created_at: row.get(11)?,
+        source: row.get(12)?,
     })
 }
 

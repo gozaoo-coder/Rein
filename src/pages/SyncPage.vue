@@ -5,7 +5,9 @@ import { ChevronRight, Fingerprint, KeyRound, Link2, LogIn, Package, Smartphone,
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import { useToast } from '@/composables/useToast'
 import { syncService } from '@/services/syncService'
 import type { PairStatus, SyncPeerInfo, SyncRunResult, SyncRunStats, SyncStatus } from '@/types'
@@ -59,32 +61,50 @@ const peerActions = computed(() => [
   { label: `解除与「${peerSheet.value?.name || peerSheet.value?.short || ''}」的配对`, value: 'forget', danger: true },
 ])
 
+/** 本机计数：一次只说最要紧的一条（冲突 > 待打包 > 表结构变更），
+ *  三条计数的含义与「同步账」的口径收进「本机」卡标题行右侧的 InfoHint */
 const pendingHint = computed(() => {
   const s = status.value
   if (!s) return ''
-  const bits: string[] = []
-  if (s.pending > 0) bits.push(`${s.pending} 条正在打包`)
-  if (s.staleTables > 0) bits.push(`${s.staleTables} 张表结构变了，会重新补录`)
-  if (s.conflicts > 0) bits.push(`${s.conflicts} 处冲突留档`)
-  return bits.length > 0 ? bits.join(' · ') : '改动会自动打包，同步时只发对方没有的'
+  if (s.conflicts > 0) return `${s.conflicts} 处冲突留档`
+  if (s.pending > 0) return `${s.pending} 条改动正在打包`
+  if (s.staleTables > 0) return `${s.staleTables} 张表结构变了，会重新补录`
+  return ''
 })
 
 /**
  * 「上次走的是哪条路」这一行。
  * 本次会话刚回来时用事件里的明细（含用时与流量）；重新进页面时退回到状态里记的那一份 ——
  * 用户最想知道的就是这句话，不该只在刚同步完的那几分钟里看得见。
+ * 拆成「结论行（哪条路 + 用时/时间）+ 次要行（收到 / 冲突 / 上下行）」：原先六七个事实
+ * 用「·」串成一条 12px 灰字，最关键的「走的哪条路」混在中间读不出来。
  */
 const lastSummary = computed(() => {
   const run = lastRun.value
   if (run) {
-    const tail = run.notes.length > 0 ? ` · ${run.notes.join(' · ')}` : ''
-    return `这次走「${run.pathLabel}」· 收到 ${run.applied} 条 · 冲突 ${run.conflicts} 处 · 用时 ${secs(run.ms)} 秒 · ↑${fmtBytes(run.up)} ↓${fmtBytes(run.down)}${tail}`
+    return {
+      verb: '这次',
+      path: run.pathLabel,
+      lead: `用时 ${secs(run.ms)} 秒`,
+      detail: [
+        `收到 ${run.applied} 条`,
+        `冲突 ${run.conflicts} 处`,
+        `上传 ${fmtBytes(run.up)}`,
+        `下载 ${fmtBytes(run.down)}`,
+        ...run.notes,
+      ],
+    }
   }
   const s = status.value
   if (s?.lastAt) {
-    return `上次同步 ${fmtTime(s.lastAt)} · 走「${pathText(s.lastPath)}」· ↑${fmtBytes(s.lastUp)} ↓${fmtBytes(s.lastDown)}`
+    return {
+      verb: '上次',
+      path: pathText(s.lastPath),
+      lead: fmtTime(s.lastAt),
+      detail: [`上传 ${fmtBytes(s.lastUp)}`, `下载 ${fmtBytes(s.lastDown)}`],
+    }
   }
-  return ''
+  return null
 })
 
 function pathText(p: string | null | undefined): string {
@@ -249,7 +269,16 @@ onUnmounted(() => {
     <div class="d-grid sync-grid">
     <!-- 本机 -->
     <section class="card">
-      <h2 class="gtitle">本机</h2>
+      <header class="row ghead">
+        <h2 class="gtitle">本机</h2>
+        <span class="hint-slot">
+          <InfoHint title="本机计数与同步机制">
+            <p>「本机共 N 条记录在同步里」说的是纳入同步的记录总数；改动会自动打包，同步时只发对方没有的。</p>
+            <p>计数行一次只说最要紧的一条：待打包的是还没发出去的改动；表结构变了会在下次同步重新补录；冲突留档指同一条记录两边都改过、各留一份。</p>
+            <p>配对时两端会互换公钥指纹：两边显示的一致，才说明中间没有人插进来。之后每次连接都按这把公钥校验，换了就拒连。</p>
+          </InfoHint>
+        </span>
+      </header>
       <div class="card sub rows">
         <div class="frow row">
           <i class="fic"><Smartphone :size="17" /></i>
@@ -268,15 +297,12 @@ onUnmounted(() => {
         <div class="frow row">
           <i class="fic"><Package :size="17" /></i>
           <span class="col ftxt">
-            <b>{{ status?.objects ?? 0 }} 条在同步账上</b>
-            <em class="t-3">{{ pendingHint }}</em>
+            <b class="num">本机共 {{ status?.objects ?? 0 }} 条记录在同步里</b>
+            <em v-if="pendingHint" class="t-3 num">{{ pendingHint }}</em>
           </span>
         </div>
       </div>
-      <p class="pnote t-3">
-        配对时两端会互换公钥指纹：两边显示的一致，才说明中间没有人插进来。
-        之后每次连接都按这把公钥校验，换了就拒连。
-      </p>
+      <p class="pnote t-2">两端指纹一致，才说明没有被中间人插入。</p>
     </section>
 
     <!-- 已配对设备 -->
@@ -298,7 +324,7 @@ onUnmounted(() => {
               <b>{{ p.name || '未命名设备' }}</b>
               <em class="t-3">{{ p.short }} · 上次 {{ fmtTime(p.lastSeen) }}</em>
             </span>
-            <span class="tag" :class="p.path ?? 'none'">{{ pathText(p.path) }}</span>
+            <PillChip size="md" :tone="p.path === 'punch' ? 'action' : 'muted'">{{ pathText(p.path) }}</PillChip>
             <ChevronRight :size="16" class="t-3" />
           </button>
         </div>
@@ -308,7 +334,13 @@ onUnmounted(() => {
           {{ busy ? '同步中…' : '立即同步' }}
         </button>
 
-        <p v-if="lastSummary" class="pnote t-3">{{ lastSummary }}</p>
+        <div v-if="lastSummary" class="lastsum">
+          <p class="sum-main">
+            <PillChip size="md" tone="action">{{ lastSummary.verb }}走「{{ lastSummary.path }}」</PillChip>
+            <span class="sum-lead num">{{ lastSummary.lead }}</span>
+          </p>
+          <p class="pnote t-3 num">{{ lastSummary.detail.join(' · ') }}</p>
+        </div>
       </template>
     </section>
 
@@ -371,6 +403,18 @@ onUnmounted(() => {
   color: var(--text-2);
 }
 
+/* 卡头行：标题 + 右侧帮助入口（计数口径与同步机制原先平铺在卡面） */
+.ghead {
+  gap: 8px;
+}
+
+/* 标题行右侧的帮助入口：InfoHint 是多根组件，类要落在包裹元素上 */
+.hint-slot {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
+
 /* 分组行：整组挂在 .card.sub 那口浅井上（底 / 圆角 / 内距 / 无影都在 base.css 里），
    这里只留「行间细线，首行不留线」与卡头之下那 4px（与设置页同一套） */
 .rows {
@@ -425,26 +469,6 @@ onUnmounted(() => {
   letter-spacing: 0.02em;
 }
 
-/* 路径标签：走成打洞时给一点强调色 —— 这是用户最想确认的事 */
-.tag {
-  flex: none;
-  padding: 3px 9px;
-  border-radius: var(--radius-full);
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  background: var(--surface-2);
-}
-
-.tag.punch {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.tag.lan {
-  color: var(--text-2);
-  background: var(--surface-2);
-}
-
 .btn {
   display: inline-flex;
   align-items: center;
@@ -461,7 +485,7 @@ onUnmounted(() => {
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .btn.small {
@@ -482,7 +506,7 @@ onUnmounted(() => {
 }
 
 .code b {
-  font-size: 30px;
+  font-size: var(--fs-display-s);
   font-weight: 700;
   letter-spacing: 0.18em;
   color: var(--text-1);
@@ -498,6 +522,20 @@ onUnmounted(() => {
   margin-top: 12px;
   font-size: var(--fs-caption);
   line-height: 1.7;
+}
+
+/* 上次走哪条路：结论（哪条路 + 用时 / 时间）一行，明细降次要行 */
+.sum-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.sum-lead {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 .claim {

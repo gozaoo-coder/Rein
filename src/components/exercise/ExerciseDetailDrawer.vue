@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import ExerciseHistoryPanel from '@/components/exercise/ExerciseHistoryPanel.vue'
 import MuscleMap from '@/components/exercise/MuscleMap.vue'
@@ -10,10 +11,10 @@ import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { fmtDateCn } from '@/utils/date'
 import { aggregateStrengthDays, fmtKg, type StrengthDay } from '@/utils/strength'
 import type { PlanExercise } from '@/types'
-import { exerciseBadge, exerciseSub } from '@/utils/plan'
+import { exerciseBadge } from '@/utils/plan'
 
 /** 动作详情抽屉：课程详情页点击动作唤起。
- *  内容 = 动作名与参数摘要 + 激活肌群图 + 训练参数格 + 重量变化曲线（有记录才显示）+ 动作要点。
+ *  内容 = 动作名与徽标 + 激活肌群图 + 训练参数格 + 重量变化曲线（有记录才显示）+ 动作要点。
  *  名称/肌群取动作库（改名跟随），曲线按动作库 id 查询。 */
 const props = defineProps<{
   open: boolean
@@ -59,12 +60,16 @@ watch(
   { immediate: true },
 )
 
-/** 最近一次的做组摘要行 */
+/** 最近一次做组的结论行：带标签与单位（kg × 次），日期降为次要 */
 const lastSetLine = computed(() => {
   const d = curveDays.value[curveDays.value.length - 1]
   if (!d) return ''
-  const chips = d.sets.map((s) => `${fmtKg(s.weightKg ?? 0)}×${s.reps ?? '?'}`).join(' · ')
-  return `${chips}（${fmtDateCn(d.date)}）`
+  return `${fmtKg(d.top)} kg × ${d.topReps ?? '—'} 次`
+})
+
+const lastSetDate = computed(() => {
+  const d = curveDays.value[curveDays.value.length - 1]
+  return d ? fmtDateCn(d.date) : ''
 })
 
 const stats = computed<{ k: string; v: string }[]>(() => {
@@ -80,7 +85,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
     if (e.warmups?.length) {
       rows.push({
         k: '激活热身',
-        v: e.warmups.map((w) => `${fmtKg(w.weightKg)}kg×${w.reps}`).join(' / '),
+        v: e.warmups.map((w) => `${fmtKg(w.weightKg)} kg × ${w.reps}`).join(' / '),
       })
     }
     return rows
@@ -103,7 +108,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
         <h3 class="name">{{ displayName }}</h3>
         <span v-if="exerciseBadge(exercise)" class="badge">{{ exerciseBadge(exercise) }}</span>
       </div>
-      <p class="sub">{{ exerciseSub(exercise) }}</p>
+      <!-- 摘要行删去：参数格（组数/次数/重量/休息）是同一组事实的更全写法 -->
 
       <template v-if="activation">
         <p class="sec">激活肌群</p>
@@ -122,15 +127,38 @@ const stats = computed<{ k: string; v: string }[]>(() => {
       </div>
 
       <template v-if="curveDays.length">
-        <p class="sec">重量曲线<span class="secsub">每次训练的最大重量组</span></p>
+        <p class="sec">
+          重量曲线
+          <!-- 曲线口径与「正式组」统计口径收进标题行右侧 InfoHint，标题行只留标题 -->
+          <InfoHint
+            class="sec-hint"
+            title="曲线与历史口径"
+            content="曲线连的是每次训练里的最大重量组。
+
+历史成绩按正式组统计，热身组不计入训练量。训练量 = 组数 × 次数 × 重量。"
+          />
+        </p>
         <div class="curvebox">
           <WeightCurve :days="curveDays" :height="130" />
-          <p class="lastline num">{{ lastSetLine }}</p>
+          <p class="lastline num">
+            最近一次 {{ lastSetLine }}
+            <span v-if="lastSetDate" class="ldate t-3">（{{ lastSetDate }}）</span>
+          </p>
         </div>
       </template>
 
       <template v-if="exercise.exerciseId">
-        <p class="sec">历史与 PR<span class="secsub">正式组口径，热身不计容量</span></p>
+        <p class="sec">
+          历史成绩
+          <!-- PR / 1RM / 训练量都是圈内缩写与黑话：定义收进 InfoHint，卡面只留结论 -->
+          <InfoHint
+            class="sec-hint"
+            title="术语与口径"
+            content="1RM（一次最大重量）：某个动作只能标准完成 1 次的重量。本软件不直接测极限，按你练过的组次估算，所以叫 e1RM。
+
+训练量 = 组数 × 次数 × 重量，热身组不计入；「最佳单次训练量」是单次训练里的最大值。"
+          />
+        </p>
         <ExerciseHistoryPanel :exercise-id="exercise.exerciseId" />
       </template>
 
@@ -140,7 +168,7 @@ const stats = computed<{ k: string; v: string }[]>(() => {
       </template>
 
       <template v-if="steps.length">
-        <p class="sec">动作要领<span class="secsub">按顺序一步步做</span></p>
+        <p class="sec">动作要领</p>
         <ol class="steps">
           <li v-for="(s, i) in steps" :key="i">{{ s }}</li>
         </ol>
@@ -167,28 +195,25 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   font-weight: 700;
   padding: 3px 9px;
   border-radius: var(--radius-xs);
-  background: rgba(30, 234, 239, 0.14);
-  color: #00858a;
+  /* 与 PlanDetailPage 同一枚徽标：不新增 --balance-soft 令牌，
+     底色按 c-balance 14% 现混、文字取 c-balance 实档（暗色档跟随主色，不再覆写） */
+  background: color-mix(in srgb, var(--c-balance) 14%, transparent);
+  color: var(--c-balance);
 }
 
-@media (prefers-color-scheme: dark) {
-  .badge {
-    color: #1eeaef;
-  }
-}
-
-.sub {
-  margin-top: 4px;
-  font-size: var(--fs-footnote);
-  color: var(--text-2);
-}
-
+/* 小节标题行：右侧留帮助入口位（sec-hint 用 margin-left:auto 顶到行尾） */
 .sec {
   margin: 18px 0 10px;
+  display: flex;
+  align-items: center;
   font-size: var(--fs-caption);
   font-weight: 700;
   letter-spacing: 0.4px;
   color: var(--text-3);
+}
+
+.sec-hint {
+  margin-left: auto;
 }
 
 /* 动作要领：分步说明 */
@@ -226,12 +251,6 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   text-align: center;
 }
 
-.secsub {
-  margin-left: 8px;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-
 .curvebox {
   border-radius: var(--radius-l);
   background: var(--surface-2);
@@ -242,6 +261,11 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   margin-top: 6px;
   font-size: var(--fs-caption);
   color: var(--text-2);
+}
+
+/* 最近一次的日期：结论的注脚，压到三级灰 */
+.ldate {
+  margin-left: 6px;
 }
 
 .mapcard {
@@ -277,9 +301,11 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   letter-spacing: -0.5px;
 }
 
+/* 参数格标签：caption + text-2 —— 全抽屉最浅档（micro/text-3）会把
+   「4 是组数还是次数」变成猜谜；值保持 .num 与 title2 不动 */
 .cell .k {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   margin-top: 2px;
 }
 

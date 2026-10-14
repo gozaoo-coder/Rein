@@ -7,7 +7,9 @@ import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, Pl
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
 import CountdownOverlay from '@/components/common/CountdownOverlay.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import RingProgress from '@/components/common/RingProgress.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 // 这两块按需加载：肌群图本体是 160 KB 的解剖 SVG（三个视图 raw 内联）＋ 一处
 // 只在点开动作详情时才出现的抽屉。它们是沉浸层**内部**的详情块，用户不开到那一屏
 // 就用不到 —— 而沉浸层挂在 App 根上，静态 import 等于让每个路由都背着这 160 KB 首屏。
@@ -303,16 +305,24 @@ const nextExDesc = computed(() => {
 
 const nextExName = computed(() => (nextEx.value ? lib.resolveName(nextEx.value) : ''))
 
-const restMetaText = computed(() => {
-  if (s.restWarmup) return '激活热身组间 · 准备下一次小重量激活'
-  if (s.restIsTemp) return '临时休息 · 结束后继续当前训练'
-    if (s.restTargetIsNextSet) {
-      const parts = [`下一组 · 第 ${s.setIndex + 1} 组`]
-      if (s.reps != null) parts.push(`${s.reps} 次`)
-      if (s.weight > 0) parts.push(`${fmtKg(s.weight)} kg`)
-      return parts.join(' · ')
-    }
-  return `下一个 · ${nextExName.value}`
+/**
+ * 休息屏 meta 行：eyebrow（位置更靠上）已经是状态名（临时休息 / 热身组间 / 组间休息），
+ * 这里只留结论 —— 同一屏两个同义标签会把真正的差异信息淹掉。
+ *
+ * 下一组分支再拆一层主次：「第 N 组」是主数值（title3 + .num，setIndex 就是刚做完的
+ * 那一组），次数与重量降为 caption 次要说明，中间用竖线分层。
+ * 「下一组」前缀删掉：它与「第 N 组」指同一件事，写两遍读者要多花一步才读出主角。
+ */
+const restMeta = computed(() => {
+  if (s.restWarmup) return { lead: '', rest: '准备下一次小重量激活' }
+  if (s.restIsTemp) return { lead: '', rest: '结束后继续当前训练' }
+  if (s.restTargetIsNextSet) {
+    const bits: string[] = []
+    if (s.reps != null) bits.push(`${s.reps} 次`)
+    if (s.weight > 0) bits.push(`${fmtKg(s.weight)} kg`)
+    return { lead: `第 ${s.setIndex + 1} 组`, rest: bits.join(' · ') }
+  }
+  return { lead: '', rest: `下一个 · ${nextExName.value}` }
 })
 
 const restSheetTitle = computed(() => `还要休息多久？剩余 ${s.restLeft} 秒`)
@@ -1065,7 +1075,22 @@ watch(immersiveOpen, (open) => {
                 </button>
               </div>
 
-              <p class="whint">{{ warmupNote || '热身组不计入组数与总容量，重量可按需调整' }}</p>
+              <!-- 热身换算依据：卡面只留结论胶囊 + 一行「按推荐重量换算」的指引，
+                   「按哪个比例、取整到多少、逐组算出什么」收进右侧 InfoHint ——
+                   11px 灰字承载不了那种换算说明，真机上几乎读不清，用户会以为重量算错。
+                   指引句刻意保留「推荐重量」这个词：e2e-session-warmup.mjs 断言
+                   .whint 写明换算依据，可见层要能指到这些数字的来处
+                   （比例 / 取整 / 逐组结果仍只在 InfoHint 里）。
+                   本卡本来没有标题行，帮助入口就落在结论行右端（aria-label 由
+                   InfoHint 自己保证，见 STANDARDS §4）。 -->
+              <div v-if="warmupNote" class="whint-row">
+                <p class="whint">
+                  <StatusChip tone="neutral" size="sm">热身组不计入组数与总容量</StatusChip>
+                  <span class="wbasis">按推荐重量换算</span>
+                </p>
+                <InfoHint title="热身重量怎么换算" :content="warmupNote" />
+              </div>
+              <p v-else class="whint">热身组不计入组数与总容量，重量可按需调整</p>
             </div>
 
             <div v-if="activation" class="blockcard">
@@ -1161,7 +1186,12 @@ watch(immersiveOpen, (open) => {
 
             <div v-if="nextEx" class="blockcard">
               <h3>接下来</h3>
-              <p class="nextrow">▸ 下一动作 · <b>{{ nextExName }}</b> · {{ nextExDesc }}</p>
+              <!-- 标题已交代「接下来」，正文不再写「下一动作」前缀，也不放 ▸：
+                   一行里两个同义前缀，读者要多花一步才看出主角是动作名 -->
+              <p class="nextrow">
+                <b>{{ nextExName }}</b>
+                <span>{{ nextExDesc }}</span>
+              </p>
             </div>
           </div>
 
@@ -1172,7 +1202,11 @@ watch(immersiveOpen, (open) => {
               <b class="num restnum">{{ s.restLeft }}</b>
               <span class="restsec">秒</span>
             </RingProgress>
-            <p class="meta">{{ restMetaText }}</p>
+            <p class="meta" :class="{ 'meta-lead': restMeta.lead }">
+              <b v-if="restMeta.lead" class="num rlead">{{ restMeta.lead }}</b>
+              <i v-if="restMeta.lead && restMeta.rest" class="rsep" aria-hidden="true" />
+              <span v-if="restMeta.rest">{{ restMeta.rest }}</span>
+            </p>
           </div>
 
           <!-- 计时动作准备 -->
@@ -1181,8 +1215,8 @@ watch(immersiveOpen, (open) => {
             <h1 class="actname">{{ displayName }}</h1>
             <p class="meta">
               目标
-              {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec}s × ${s.effSets(s.currentEx)} 组` : `${s.currentEx.durationMin} 分钟` }}
-              <template v-if="s.currentEx.kind === 'timed'"> · 组间休息 {{ s.currentEx.restSec }}s</template>
+              {{ s.currentEx.kind === 'timed' ? `${s.currentEx.targetSec} 秒 × ${s.effSets(s.currentEx)} 组` : `${s.currentEx.durationMin} 分钟` }}
+              <template v-if="s.currentEx.kind === 'timed'"> · 组间休息 {{ s.currentEx.restSec }} 秒</template>
             </p>
             <div v-if="activation" class="blockcard">
               <h3>肌群激活</h3>
@@ -1592,10 +1626,11 @@ watch(immersiveOpen, (open) => {
 
 /* 同步失败警示：它是页面 flex 列的第一行，而顶簇是绝对定位的 —— 从前两者互不知情，
    一有同步失败，警示就被那块玻璃整个盖住（审查实测：警示在 y=0..24，顶簇在 10..78）。
-   现在顶簇的 top 加上 `--warn-h`（见脚本里的 ResizeObserver），整块让开这一段；
+   现在顶簇的 top 加上 `--warn-h`（见脚本里的 ResizeObserver），整条让开这一段；
    内容区在它之后的流里，自然也让出同样的高度，于是"警示 → 顶簇 → 内容"的次序
    在任何高度下都成立，不需要写死任何一行的像素数。
-   底是**不透明**的：它压着页面画布，半透明底在暗色下会糊成一片看不出是警示。 */
+   底走 --warn-soft（不再是手搓 color-mix：tokens.css 已把这档收成一份令牌，
+   原先散落在各组件里），字走 --warn-strong —— 实底档 --warn 不当文字用。 */
 .warn {
   flex: none;
   margin: 0 26px;
@@ -1604,7 +1639,7 @@ watch(immersiveOpen, (open) => {
   text-align: center;
   font-size: var(--fs-micro);
   color: var(--warn-strong);
-  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  background: var(--warn-soft);
 }
 
 /* 组格行：它坐在 SessionGlassButton 那块玻璃的 .gbody 里（那一层已经是 100%×100%
@@ -1705,6 +1740,39 @@ watch(immersiveOpen, (open) => {
   line-height: 1.6;
 }
 
+/* 下一组分支：主数值「第 N 组」与次要说明（次数 · 重量）同行分层。
+   字档压在 title3 不再往上 —— 休息屏的焦点是中央那枚 76px 的环，这条 meta 是它的
+   注脚，再大一档就反过来跟环抢主角了。 */
+.meta-lead {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rlead {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+/* 竖线分隔：主数值与次要说明是两层，不用同一个「·」串成一锅 */
+.rsep {
+  flex: none;
+  width: 1px;
+  height: 13px;
+  background: var(--line-strong);
+  align-self: center;
+}
+
+/* 次要项（次数 · 重量）：降为 caption / --text-3 —— 主数值已是 title3 / --text-1，
+   同一行两档之间必须读得出主次（无主次时整行仍是 .meta 的 subhead / --text-2） */
+.meta-lead span {
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
 /* 本组登记卡：重量与次数同卡同构 —— 标签定宽在左、± 分列两端、数值居中，
    两行因此左右严格对齐，读起来是一张表，而不是几块拼图。
    今日状态（首次进入时的一次性自评）也收进这张卡：它是建议重量的输入，
@@ -1753,9 +1821,26 @@ watch(immersiveOpen, (open) => {
   border-top: 0.5px solid var(--line);
 }
 
+/* 热身结论行：结论胶囊 + 换算指引 + 右侧帮助入口一行排开。
+   指引句比胶囊再轻一档，只负责指到数字的来处；换算说明整段收进 InfoHint ——
+   11px 灰字读不清那种信息密度 */
+.whint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .whint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-micro);
   color: var(--text-3);
+}
+
+.wbasis {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
 /* 一键填入：建议 / 上次 / 计划 等宽并列（同一个重量的三个出处） */
@@ -1905,6 +1990,12 @@ watch(immersiveOpen, (open) => {
 
 .nextrow b {
   color: var(--text-1);
+}
+
+/* 动作名之后的处方摘要（组数 · 次数）：与名字同为正文档，靠间距分层而不是 「·」 ——
+   名字是主角（--text-1 加粗），摘要是补充（--text-2） */
+.nextrow span {
+  min-width: 0;
 }
 
 /* 休息 */

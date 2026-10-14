@@ -19,7 +19,7 @@ import { definePlugin } from '../registry'
 export const campusGrabPlugin = definePlugin({
   id: 'campus-grab',
   name: '抢课',
-  desc: '自动选课 · 窗口监听 · 任务队列（默认关闭）',
+  desc: '自动选课 · 窗口监听 · 任务队列',
   icon: Zap,
   accent: '--cat-class',
   toggleable: true,

@@ -2,6 +2,7 @@
 import { onMounted, reactive, watch } from 'vue'
 
 import PageHeader from '@/components/layout/PageHeader.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import AiTargetAdjustCard from '@/components/nutrition/AiTargetAdjustCard.vue'
 import BodyTrackerCard from '@/components/nutrition/BodyTrackerCard.vue'
 import TargetCalculator from '@/components/nutrition/TargetCalculator.vue'
@@ -42,7 +43,7 @@ watch(targets, () => {
 <template>
   <div class="page">
     <!-- 桌面这几张卡要显式排一遍，所以每个根元素上都挂一个定位用的类（类会合并到组件根元素上） -->
-    <PageHeader class="lp-head" title="饮食调整" subtitle="方案计算 · AI 建议 · 手动微调" back />
+    <PageHeader class="lp-head" title="饮食调整" back />
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
@@ -59,7 +60,7 @@ watch(targets, () => {
     <section class="card lp-targets">
       <header class="head">
         <h2>手动微调</h2>
-        <p class="t-3">直接修改各项数值 · 自动保存</p>
+        <PillChip tone="muted">自动保存</PillChip>
       </header>
       <TargetsEditor v-model="targets" />
     </section>
@@ -78,9 +79,10 @@ watch(targets, () => {
   letter-spacing: -0.3px;
 }
 
-.head p {
-  font-size: var(--fs-caption);
-  margin-top: 1px;
+/* 「自动保存」是界面推不出的那半句（六行步进器已明说「直接改」），
+   做成中性胶囊与周围 --text-3 正文分层 */
+.head .chip {
+  margin-top: 4px;
 }
 
 /* ---------- 桌面（≥ --desk-min 时壳层才渲染 .desk-main，所以这里不用写断点） ----------

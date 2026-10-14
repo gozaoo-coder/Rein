@@ -14,6 +14,8 @@ import {
 
 import ActivityRings from '@/components/common/ActivityRings.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import { useAiStore } from '@/stores/ai'
 import { useNutritionStore } from '@/stores/nutrition'
 import { listFoodDrafts, type FoodDraft } from '@/utils/foodDrafts'
@@ -171,19 +173,26 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
       <ActivityRings :rings="rings" :size="52" />
       <div class="t-stats">
         <div class="t-row">
-          <b class="num">{{ stats.intake }}</b>
-          <span class="t-lab">已摄入 / {{ stats.target }} 大卡</span>
+          <b class="num">{{ stats.intake }}<i class="t-unit">大卡</i></b>
+          <span class="t-lab">已摄入</span>
+          <PillChip tone="muted" size="sm">目标 <span class="num">{{ stats.target }}</span> 大卡</PillChip>
         </div>
         <p class="t-sub">
-          <span><i class="d" style="background: var(--c-exercise)" />运动 {{ stats.exercise }}</span>
-          <span><i class="d" style="background: var(--c-balance)" />还可吃 {{ stats.left }}</span>
+          <span><i class="d" style="background: var(--c-exercise)" />运动 <span class="num">{{ stats.exercise }}</span> 大卡</span>
+          <span><i class="d" style="background: var(--c-balance)" />还可吃 <span class="num">{{ stats.left }}</span> 大卡</span>
         </p>
       </div>
     </section>
 
     <!-- 2. 做什么 -->
     <section class="sec">
-      <h2 class="sec-t">做什么</h2>
+      <h2 class="sec-t">
+        做什么
+        <InfoHint
+          title="点一下会发生什么"
+          content="点一下只是把话递给你 —— 接下来你说多少、问什么，AI 那边自己判断。"
+        />
+      </h2>
       <TransitionGroup appear name="pop" tag="div" class="grid">
         <button
           v-for="(q, i) in quickAsks"
@@ -201,7 +210,9 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
           </span>
         </button>
       </TransitionGroup>
-      <p class="qa-tip">点一下只是把话递给你 —— 接下来你说多少、问什么，AI 那边自己判断。</p>
+      <p class="qa-tip">
+        <PillChip tone="muted" size="sm">点一下只是把话递给你</PillChip>
+      </p>
     </section>
 
     <!-- 3. 接着聊 -->
@@ -262,6 +273,15 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
   box-shadow: var(--shadow-card);
 }
 
+/* 桌面：这张卡是「一圈环 + 三个数」，整幅铺开时右侧空掉五百多像素
+   （实测卡宽 756、内容只占 460 上下）—— 按内容收口，但要**收在栅格线上**：
+   下面那条看板是三列，卡收到「两列 + 一个缝」，右缘正好落在第二格右沿。
+   原来写死 460px，在 756 的栏里既不铺满也不对齐，读起来像卡没渲染完
+   （换人看图的 1512 那组就是这么报的）。手机不动：430 上铺满是合理的。 */
+.desk-main .today {
+  max-width: calc((100% - 20px) / 3 * 2 + 10px);
+}
+
 .t-stats {
   min-width: 0;
   flex: 1;
@@ -280,6 +300,14 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
   line-height: 1;
   color: var(--c-intake);
   font-variant-numeric: tabular-nums;
+}
+
+.t-unit {
+  font-style: normal;
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: 3px;
 }
 
 .t-lab {
@@ -309,6 +337,9 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
 }
 
 .sec-t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--fs-footnote);
   font-weight: 700;
   color: var(--text-2);
@@ -321,6 +352,15 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+/* 桌面：整块看板落在 760 的阅读栏里（实测 756），两列时每格 373px，
+   而格子内容（40 圆章 + 两行字）只要 111–128px —— 右侧三百多像素全空着，
+   六格还被拉成三屏高。三列收口：每格 ~245px，格内可用宽 ~170px，
+   最长的那条提示「让 AI 看真实条目」约 92px，仍留得下（不会走到省略号）。
+   只在 .desk-main 下生效：手机（430）保持两列，不放宽也不挤窄。 */
+.desk-main .grid {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .qa {
@@ -368,12 +408,27 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
   text-overflow: ellipsis;
 }
 
+/* 六格入口的结论行：胶囊承载；完整解释收进标题行 InfoHint，分层不重复 */
 .qa-tip {
   margin-top: 10px;
   padding-left: 2px;
-  font-size: var(--fs-caption);
-  line-height: 1.5;
-  color: var(--text-3);
+}
+
+/* 悬停反馈（只有真有指针的设备才要）：内容卡走「抬影」—— 与 base.css 里
+   桌面统一补的那条同一条约定（.desk-main .card.pressable:hover 也是 --shadow-float）。
+   前缀 .desk-main 不是为了区分形态，是**特异性**：base.css 给 .qa 铺玻璃材质那条是
+   `html[data-perf]:not([data-perf='low']) .qa`（0,3,1），
+   而 scoped 的 `.qa:hover` 只有 0,3,0 —— 不加前缀，悬停影会被那一条整条吃掉，
+   在高画质及以上档位（也就是默认档）等于没写。
+   会话行（.ch）在白色列表里，走底色那一档，与 FileRow 等长列表同一条。 */
+@media (hover: hover) {
+  .desk-main .qa:hover {
+    box-shadow: var(--shadow-float);
+  }
+
+  .ch:hover {
+    background: var(--surface-2);
+  }
 }
 
 /* 看板入场：六格按 --i 递增延迟依次淡入上移。appear 让空会话刚挂上时也播一遍。

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Trash2 } from 'lucide-vue-next'
 
 import SheetModal from '@/components/common/SheetModal.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import { MICROS } from '@/config/dri'
 import { MEAL_LABELS, fmtGrams, mealKcal, mealQtyText } from '@/config/domain'
 import type { DailyTargets, MealLog, NutrientIntake } from '@/types'
@@ -141,6 +142,7 @@ watch(
                 <i class="dot" :style="{ background: `var(${m.colorVar})` }" />
                 <span class="ml">{{ m.label }}</span>
                 <b class="num">{{ fmtGrams(scaled[m.key]) }}g</b>
+                <em class="mpct num">· {{ Math.round(m.pct) }}%</em>
               </li>
             </ul>
           </div>
@@ -157,12 +159,8 @@ watch(
               :style="{ flex: m.pct, background: `var(${m.colorVar})`, '--i': i }"
             />
           </div>
-          <p v-if="share.length" class="share-label num t-3">
-            <template v-for="(m, i) in share" :key="m.key">
-              {{ i > 0 ? ' · ' : '' }}{{ m.label }} {{ Math.round(m.pct) }}%
-            </template>
-            <span class="src">供能占比</span>
-          </p>
+          <!-- 占比已并进右上宏量列表（克数 + 占比同项），色条只留一行标签 -->
+          <p v-if="share.length" class="share-label">供能占比</p>
         </section>
 
         <!-- 占本日：这一笔在当日目标里的分量 -->
@@ -194,22 +192,32 @@ watch(
 
         <!-- 微量营养素 · 实际摄入量对照 DRI -->
         <section v-if="microRows.length" class="card">
-          <header class="head"><h2>微量营养素</h2><p class="t-3">按这份的实际克重折算</p></header>
+          <!-- 折算口径与 DRI 出处收进标题行右侧 InfoHint，卡面只留唯一图例 -->
+          <header class="head row">
+            <h2>微量营养素</h2>
+            <InfoHint
+              class="hint"
+              title="微量营养素：折算口径"
+              content="含量按这一笔的实际克重折算（每 100g 营养 × 克重 ÷ 100）。百分比以《中国居民膳食营养素参考摄入量》成人数值为基准：标记「上限」的项目对照每日建议上限，其余对照每日推荐摄入量。"
+            />
+          </header>
+          <p class="legend">百分比 = 这一笔实际含量占每日推荐摄入的比例；上限项对照建议上限</p>
           <ul class="micros">
             <li v-for="m in microRows" :key="m.key">
               <div class="row between mrow">
                 <span class="mlabel">
                   {{ m.label }}<em v-if="m.isLimit" class="lim">上限</em>
                 </span>
-                <span class="num mval">{{ fmtGrams(m.value) }} {{ m.unit }}</span>
+                <span class="mright">
+                  <span class="num mval">{{ fmtGrams(m.value) }}<em class="munit"> {{ m.unit }}</em></span>
+                  <b class="num mpct">{{ m.pct }}%</b>
+                </span>
               </div>
               <div class="bar">
                 <div class="fill" :class="{ limit: m.isLimit }" :style="{ '--p': `${Math.min(m.pct, 100)}%` }" />
               </div>
-              <p class="num mpct t-3">约占每日{{ m.isLimit ? '建议上限' : '推荐摄入' }}的 {{ m.pct }}%</p>
             </li>
           </ul>
-          <p class="note t-3">百分比以《中国居民膳食营养素参考摄入量》成人数值为基准。</p>
         </section>
       </div>
     </template>
@@ -248,9 +256,17 @@ watch(
   letter-spacing: -0.3px;
 }
 
-.head p {
+/* 卡头行：标题 + 帮助入口同行（该卡唯一的图例说明在下方 .legend） */
+.head .hint {
+  margin-left: auto;
+}
+
+/* 唯一图例：解释行末百分比是什么（真实读得出的信息，不吃 11px 水印档） */
+.legend {
+  margin-top: 2px;
   font-size: var(--fs-caption);
-  margin-top: 1px;
+  color: var(--text-2);
+  line-height: 1.5;
 }
 
 .hero .top {
@@ -334,10 +350,14 @@ watch(
 .share-label {
   margin-top: 7px;
   font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 
-.share-label .src {
-  float: right;
+/* 供能占比并进宏量列表：克数是主、占比是次（色点与堆叠条同色） */
+.macros .mpct {
+  font-style: normal;
+  margin-left: 4px;
+  color: var(--text-3);
 }
 
 /* 占本日 */
@@ -432,6 +452,25 @@ watch(
   margin-bottom: 6px;
 }
 
+/* 实际含量 + 结论占比同一行右端：含量是详情，占比是结论 */
+.mright {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.mval em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.mpct {
+  font-size: var(--fs-caption);
+  font-weight: 700;
+  color: var(--text-2);
+}
+
 .mlabel {
   font-size: var(--fs-subhead);
   font-weight: 600;
@@ -451,18 +490,6 @@ watch(
 
 .mval {
   font-weight: 600;
-}
-
-.mpct {
-  margin-top: 4px;
-  /* 供能占比，是要读的数 */
-  font-size: var(--fs-caption);
-}
-
-.note {
-  margin-top: 14px;
-  /* 兜底说明（「没有可用的过程快照」这类），是要照着做的提示 */
-  font-size: var(--fs-caption);
 }
 
 /* 删除入口：抽屉固定操作区，内容从下方滚过时不被顶走 */

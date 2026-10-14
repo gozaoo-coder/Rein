@@ -148,7 +148,7 @@ function isOn(c: ModelCandidate): boolean {
 }
 
 .item:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .item.on {

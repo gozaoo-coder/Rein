@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import { useDietStore } from '@/stores/diet'
 
 /** 今日建议打卡：按食物类别检查六大类覆盖情况（膳食指南多样性建议）。 */
@@ -33,7 +34,16 @@ const doneCount = computed(() => checks.value.filter((c) => c.done).length)
         <h2>今日建议打卡</h2>
         <p class="t-3">六大类食物 · 尽量每日覆盖</p>
       </div>
-      <span class="num count">{{ doneCount }}<em>/{{ checks.length }}</em></span>
+      <!-- 判类口径与「为什么六类」收进标题行右端的说明入口，卡面只留副标题一行结论 -->
+      <div class="head-side">
+        <InfoHint
+          title="今日建议打卡"
+          content="打卡按类别判断当天吃没吃过：主食、优质蛋白、蔬菜、水果、奶制品、坚果各算一类，右边的计数就是吃到的类数。
+
+依据是膳食指南的食物多样性建议 —— 一天里尽量六类都吃到，长期这样营养结构更均衡；不看过量，也不要求一顿吃齐。"
+        />
+        <span class="num count">{{ doneCount }}<em>/{{ checks.length }}</em></span>
+      </div>
     </header>
 
     <ul class="checks">
@@ -41,10 +51,6 @@ const doneCount = computed(() => checks.value.filter((c) => c.done).length)
         <span class="mark">{{ c.done ? '✓' : '' }}</span>{{ c.label }}
       </li>
     </ul>
-
-    <p class="tip t-3">
-      参照膳食指南的食物多样性建议：主食、优质蛋白、蔬菜、水果、奶制品、坚果六类尽量都吃到，营养结构更均衡。
-    </p>
   </section>
 </template>
 
@@ -58,6 +64,13 @@ const doneCount = computed(() => checks.value.filter((c) => c.done).length)
 .head p {
   font-size: var(--fs-caption);
   margin-top: 1px;
+}
+
+/* 标题行右端：说明入口 + x/6 计数 */
+.head-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .count {
@@ -105,11 +118,5 @@ const doneCount = computed(() => checks.value.filter((c) => c.done).length)
 .chip.done {
   background: var(--ok-soft);
   color: var(--ok-strong);
-}
-
-.tip {
-  margin-top: 12px;
-  font-size: var(--fs-footnote);
-  line-height: 1.6;
 }
 </style>

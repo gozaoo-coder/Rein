@@ -15,6 +15,7 @@ import { AlertCircle, Check, CloudDownload, Trash2 } from 'lucide-vue-next'
 import SecretInput from '@/components/ai/fields/SecretInput.vue'
 import UrlInput from '@/components/ai/fields/UrlInput.vue'
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { KIND_LABEL } from '@/ai/providerCatalog'
 import { useToast } from '@/composables/useToast'
@@ -204,6 +205,16 @@ async function onDelete(value: string): Promise<void> {
 
 <template>
   <SheetModal :open="open" :title="editing ? '编辑提供商' : '添加提供商'" initial-snap="large" @close="emit('close')">
+    <template #action>
+      <!-- 富内容（URL 带 <code>）走默认插槽；面上只留结论一行 -->
+      <InfoHint title="存储与拉取说明">
+        <p>
+          密钥只存在本机（与模型配置同一套存储）；拉清单走本机直连
+          <code>{{ (baseUrl || '…').replace(/\/+$/, '') }}{{ adapter?.modelsPath || '' }}</code>
+          ，不通时会列出内置参考目录，也可以手填模型 ID。
+        </p>
+      </InfoHint>
+    </template>
     <div class="form">
       <!-- 适配器：新建时可选；编辑时锁定（换适配器等于换一个账号）。
            分两组呈现（内置 / 自定义）：卡片本身与从前逐字一致，只多两个组头。 -->
@@ -328,11 +339,7 @@ async function onDelete(value: string): Promise<void> {
         删除提供商
       </button>
 
-      <p class="hint t-3">
-        密钥只存在本机（与模型配置同一套存储）；拉清单走本机直连
-        <code>{{ (baseUrl || '…').replace(/\/+$/, '') }}{{ adapter?.modelsPath || '' }}</code>，
-        不通时会列出内置参考目录，也可以手填模型 ID。
-      </p>
+      <p class="hint t-3">密钥只存本机；拉不到清单时会给出内置参考目录，也可手填模型 ID</p>
     </div>
 
     <ActionSheet
@@ -420,7 +427,7 @@ async function onDelete(value: string): Promise<void> {
 }
 
 .ad.on {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
@@ -472,8 +479,8 @@ async function onDelete(value: string): Promise<void> {
 }
 
 .st.on {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .st.on small {
@@ -493,7 +500,7 @@ async function onDelete(value: string): Promise<void> {
   padding: 13px 0;
   border-radius: var(--radius-full);
   background: var(--surface-2);
-  color: var(--text);
+  color: var(--text-1);
   font-size: var(--fs-footnote);
   font-weight: 700;
 }
@@ -505,7 +512,7 @@ async function onDelete(value: string): Promise<void> {
 }
 
 .btn:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .del {

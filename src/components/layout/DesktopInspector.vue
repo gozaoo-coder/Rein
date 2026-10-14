@@ -17,6 +17,7 @@ import {
 } from 'lucide-vue-next'
 
 import ActivityRings from '@/components/common/ActivityRings.vue'
+import WorkoutSourceTag from '@/components/exercise/WorkoutSourceTag.vue'
 import { CATEGORY_META } from '@/config/domain'
 import { categoryOf, fmtCents } from '@/config/ledger'
 import { useExerciseStore } from '@/stores/exercise'
@@ -210,6 +211,23 @@ function hhmm(startMin: number): string {
 }
 
 const ask = ref('')
+const askInput = ref<HTMLInputElement | null>(null)
+
+/**
+ * 玻璃条的空隙也算这条输入框的一部分。
+ *
+ * 实测（改前）：点在条子上下留白上 activeElement 仍是 BODY —— 那条 56px 的玻璃条里，
+ * 只有中间 16px 高的一条文字行能聚焦（206×16），上下各有约 19px 是死区。
+ * 用户看见的是一整条输入框，点上去没反应就是「这控件坏了」。所以 padding 区自己
+ * 把焦点交给 input（.self 修饰符：只有点在 form 自己的留白上才触发，点发送钮不受影响）。
+ *
+ * preventDefault 是必需的：pointerdown 之后浏览器还会补一发 mousedown，
+ * 而「mousedown 落在不可聚焦元素上 → 焦点回到 body」的默认行为会把刚拿到的焦点抢走。
+ */
+function focusAsk(e: PointerEvent): void {
+  e.preventDefault()
+  askInput.value?.focus()
+}
 
 /**
  * 提问：问题随路由带到 AI 页预填（AIPage 的 route.query.ask watcher 接住）。
@@ -305,7 +323,9 @@ function askQuick(q: string): void {
           <li v-for="w in exercise.recent.slice(0, 3)" :key="w.id" class="mini-row">
             <Dumbbell :size="14" class="mini-ic" />
             <span class="mini-name">{{ w.name }}</span>
-            <span class="num mini-meta">{{ w.durationMin }}′</span>
+            <WorkoutSourceTag :source="w.source" />
+            <!-- 同一信息栏只用一种计时写法：与上方「本周运动」的「分钟」一致，不用撇号 -->
+            <span class="num mini-meta">{{ w.durationMin }} 分钟</span>
           </li>
         </ul>
       </section>
@@ -508,8 +528,8 @@ function askQuick(q: string): void {
     </section>
 
     <!-- ============ AI 提问：常驻（占位文案随分组变） ============ -->
-    <form class="ask row glass-surface" @submit.prevent="sendAsk">
-      <input v-model="ask" :placeholder="ASK_HINT[group]" aria-label="向 AI 提问" />
+    <form class="ask row glass-surface" @submit.prevent="sendAsk" @pointerdown.self="focusAsk">
+      <input ref="askInput" v-model="ask" :placeholder="ASK_HINT[group]" aria-label="向 AI 提问" />
       <button class="send" aria-label="发送" type="submit">
         <ArrowRight :size="17" :stroke-width="2.4" />
       </button>
@@ -557,15 +577,29 @@ function askQuick(q: string): void {
   letter-spacing: -0.3px;
 }
 
+/* 「记录 / 全部 / 总览」这枚角标链接实测只有 39×17 —— 一枚文字链接的体量，
+   但在指针精度下 22 是下限（桌面守卫 T2），而信息栏里带卡头角标的卡片有一半。
+   padding-block 把盒撑到 25；多出的 8px 用负外边距吃回（WorkoutRow 的 .del 同款惯用法）：
+   .c-head 是基线对齐，负外边距让它的基线距离与占位都回到原值 ——
+   量出来的卡头高度仍是 22（改前 22），h2 的 y 也不动，只有那 8px 变成可点。 */
 .c-more {
   display: flex;
   align-items: center;
   gap: 2px;
   flex: none;
+  padding-block: 4px;
+  margin-block: -4px;
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--accent-strong);
   text-decoration: none;
+}
+
+/* 指上要有回执：它从前连 hover 都没有，而这条栏里其它东西都有 */
+@media (hover: hover) {
+  .c-more:hover {
+    color: var(--accent);
+  }
 }
 
 /* ---------- 数字行（标签在左、值在右） ---------- */
@@ -895,9 +929,12 @@ function askQuick(q: string): void {
   border-radius: var(--radius-full);
 }
 
+/* 34px 高：玻璃条的内高由它撑满（11+11 内边距 + 描边 → 整条实测 58px），
+   顺带把输入框自己的点击高从实测 16px 抬到 34 —— 指针精度下的下限是 22。 */
 .ask input {
   flex: 1;
   min-width: 0;
+  min-height: 34px;
   font-size: var(--fs-footnote);
   font-weight: 500;
 }

@@ -58,12 +58,12 @@ watch(
       </div>
       <div class="pr">
         <span class="pv num">{{ history.prs.e1rm ? fmtKg(history.prs.e1rm.value) : '—' }}</span>
-        <span class="pk">最佳估算 1RM</span>
+        <span class="pk">估算极限重量（1RM）</span>
         <span class="pd t-3">{{ history.prs.e1rm ? fmtDateCn(history.prs.e1rm.date) : '' }}</span>
       </div>
       <div class="pr">
         <span class="pv num">{{ history.prs.volume ? history.prs.volume.value : '—' }}</span>
-        <span class="pk">最佳单次容量 kg</span>
+        <span class="pk">最佳单次训练量 kg</span>
         <span class="pd t-3">{{ history.prs.volume ? fmtDateCn(history.prs.volume.date) : '' }}</span>
       </div>
     </div>
@@ -72,7 +72,8 @@ watch(
       <li v-for="s in rows" :key="s.workoutId" class="hrow row">
         <span class="hdate t-2">{{ fmtDateCn(s.date) }}</span>
         <span class="hmain num">{{ s.sets }} 组 · 最重 {{ fmtKg(s.topWeightKg) }}kg<span v-if="s.topReps">×{{ s.topReps }}</span></span>
-        <span class="hvol num t-3">{{ s.volumeKg }} kg</span>
+        <!-- 训练量带标签：同单位下它比「最重」大一个量级，不标出来会误读成当天最大重量 -->
+        <span class="hvol num t-3">训练量 {{ s.volumeKg }} kg</span>
       </li>
     </ul>
 
@@ -144,6 +145,8 @@ watch(
 
 .hvol {
   flex: none;
+  /* 训练量与「最重」同单位不同量级：降一档字、交给 --text-3，别跟主读数抢 */
+  font-size: var(--fs-caption);
 }
 
 .more {

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { WORKOUT_META } from '@/config/domain'
+import StatusChip from '@/components/common/StatusChip.vue'
+import WorkoutSourceTag from '@/components/exercise/WorkoutSourceTag.vue'
 import { fmtDateCn, minToHHmm } from '@/utils/date'
 import type { HealthSyncWorkout, WorkoutType } from '@/types'
 
@@ -25,14 +27,9 @@ function typeLabel(t: string): string {
   return WORKOUT_META[t as WorkoutType]?.label ?? t
 }
 
-/** 日期 · 时刻；没有开始时间就直说，别留空白让人以为是渲染坏了 */
-function timeLine(w: HealthSyncWorkout): string {
-  return `${fmtDateCn(w.date)} · ${w.startMin != null ? minToHHmm(w.startMin) : '未填开始时间'}`
-}
-
-const SOURCE_LABEL: Record<HealthSyncWorkout['source'], string> = {
-  health_connect: '手机同步',
-  local: '本机',
+/** 开始时刻；没有开始时间就直说，别留空白让人以为是渲染坏了 */
+function timeOf(w: HealthSyncWorkout): string {
+  return w.startMin != null ? minToHHmm(w.startMin) : '未填开始时间'
 }
 </script>
 
@@ -43,15 +40,18 @@ const SOURCE_LABEL: Record<HealthSyncWorkout['source'], string> = {
       <div class="flex-1">
         <p class="name">
           <span class="nm">{{ w.name }}</span>
-          <span v-if="props.showSource" class="src" :class="w.source">
-            {{ SOURCE_LABEL[w.source] }}
-          </span>
+          <WorkoutSourceTag :source="w.source" :show-local="props.showSource" />
         </p>
-        <p class="meta num">{{ timeLine(w) }} · {{ typeLabel(w.type) }}</p>
+        <!-- 时刻是这一行要读的主值；日期是上下文，类型名让中性胶囊承载 -->
+        <p class="meta">
+          <span class="day">{{ fmtDateCn(w.date) }}</span>
+          <span class="when num">{{ timeOf(w) }}</span>
+          <StatusChip tone="neutral" size="sm">{{ typeLabel(w.type) }}</StatusChip>
+        </p>
         <p v-if="w.note" class="note">{{ w.note }}</p>
       </div>
       <div class="col right">
-        <b class="num kcal">{{ w.kcal }}</b>
+        <b class="num kcal">{{ w.kcal }}<i class="ku">千卡</i></b>
         <span class="unit num">{{ w.durationMin }} 分钟</span>
       </div>
     </li>
@@ -100,26 +100,23 @@ const SOURCE_LABEL: Record<HealthSyncWorkout['source'], string> = {
   text-overflow: ellipsis;
 }
 
-/* 来源标签：导入记录用强调色，本机记录用中性底 —— 「手机同步」是这一页的主角 */
-.src {
-  flex: none;
-  padding: 1px 7px;
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  color: var(--text-3);
-  font-size: var(--fs-micro);
-  font-weight: 600;
-}
-
-.src.health_connect {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
+/* 来源标签的样式在 WorkoutSourceTag 里（全站同一份实现，别在这里再抄一遍） */
 
 .meta {
   margin-top: 2px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: var(--fs-caption);
   color: var(--text-3);
+}
+
+/* 开始时刻是这一行要读的主值：日期只是上下文，类型名已让胶囊承载 */
+.when {
+  color: var(--text-1);
+  font-size: var(--fs-subhead);
+  font-weight: 600;
 }
 
 .note {
@@ -140,8 +137,18 @@ const SOURCE_LABEL: Record<HealthSyncWorkout['source'], string> = {
   font-size: var(--fs-callout);
 }
 
-.unit {
+/* 热量单位后缀：数字已是主值，单位退成微字（与「N 分钟」成对出现） */
+.ku {
+  font-style: normal;
   font-size: var(--fs-micro);
   color: var(--text-3);
+  font-weight: 600;
+  margin-left: 3px;
+}
+
+/* 时长是本行要读的数值：不吃 11px 水印档 */
+.unit {
+  font-size: var(--fs-caption);
+  color: var(--text-2);
 }
 </style>

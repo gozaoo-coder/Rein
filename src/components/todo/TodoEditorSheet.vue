@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ChevronDown, Image as ImageIcon, Mic, Minus, Paperclip, Plus, Square, Trash2, Type, X } from 'lucide-vue-next'
 
+import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { CATEGORY_META } from '@/config/domain'
@@ -446,7 +447,7 @@ onBeforeUnmount(() => {
             </div>
           </li>
         </ul>
-        <p v-else-if="!textDraftOpen" class="aempty t-3">无附件 — 可加文字标记、图片、文件或录音。</p>
+        <p v-else-if="!textDraftOpen" class="aempty t-3">暂无附件</p>
       </div>
 
       <!-- 首层：备注 -->
@@ -645,7 +646,14 @@ onBeforeUnmount(() => {
               <button class="chip" :class="{ on: !form.recEnd }" @click="form.recEnd = ''">永不</button>
               <input v-model="form.recEnd" class="date" type="date" aria-label="结束日期">
             </div>
-            <p v-if="form.recFreq !== 'none'" class="recnote">以后的日子会自动生成这条待办；改规则后未完成的未来实例会重建。</p>
+            <!-- 面上只留一行结论；「未来实例重建」是实现语义，收进句末说明入口 -->
+            <p v-if="form.recFreq !== 'none'" class="recnote row center">
+              重复规则会在未来日期自动生成这条待办
+              <InfoHint
+                title="改规则会怎样"
+                content="保存后，未完成的未来条目会按新规则重排；补选的星期 / 间隔同样只对未来的日子生效。"
+              />
+            </p>
           </div>
         </div>
       </div>
@@ -755,7 +763,8 @@ onBeforeUnmount(() => {
 }
 
 .dstep-btn:disabled {
-  opacity: 0.3;
+  /* 禁用浓度走令牌（tokens.css:37-40）：与本文件其余禁用态同一档，不另写裸值 */
+  opacity: var(--disabled-opacity);
 }
 
 .dval {
@@ -832,8 +841,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-  color: var(--danger);
+  /* soft 底走令牌（--danger-soft），底色上的图标/文字一律对应 --danger-strong（tokens.css:163-168） */
+  background: var(--danger-soft);
+  color: var(--danger-strong);
 }
 
 .save {
@@ -847,7 +857,7 @@ onBeforeUnmount(() => {
 }
 
 .save:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .cnt {
@@ -879,12 +889,13 @@ onBeforeUnmount(() => {
 }
 
 .abtn:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .abtn.rec.on {
-  background: color-mix(in srgb, var(--danger) 13%, transparent);
-  color: var(--danger);
+  /* 同 .danger：soft 底 + strong 字都走令牌 */
+  background: var(--danger-soft);
+  color: var(--danger-strong);
 }
 
 .atch-text {
@@ -910,7 +921,7 @@ onBeforeUnmount(() => {
 }
 
 .mini:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .atch-list {
@@ -1196,7 +1207,7 @@ onBeforeUnmount(() => {
 }
 
 .subbtn:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .wd {

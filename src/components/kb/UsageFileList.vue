@@ -53,9 +53,10 @@ function baseName(path: string): string {
         <component :is="kindIcon(f.kind)" :size="15" class="fic" />
         <span class="col flex-1">
           <b>{{ baseName(f.path) }}</b>
+          <!-- 路径是分辨「同名文件是哪一份」的唯一依据：caption + --text-2，不再落进 11px 微字档 -->
           <small>{{ f.path }}</small>
         </span>
-        <span class="fr-bytes">{{ humanBytes(f.bytes) }}</span>
+        <span class="fr-bytes num">{{ humanBytes(f.bytes) }}</span>
         <ChevronRight :size="14" class="t-3" />
       </button>
       <span class="track split" :style="{ width: barWidth(f) }">
@@ -97,17 +98,17 @@ function baseName(path: string): string {
 
 .filerow small {
   display: block;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 等宽数字统一走 base.css 的 .num，不再手抄一份 font-variant-numeric */
 .fr-bytes {
   font-size: var(--fs-caption);
   color: var(--text-2);
-  font-variant-numeric: tabular-nums;
 }
 
 .track {

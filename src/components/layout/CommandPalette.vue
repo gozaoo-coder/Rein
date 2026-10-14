@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -152,7 +152,7 @@ const actionCmds = computed<Cmd[]>(() => {
     { id: 'act:ledger', group: '动作', label: '记一笔账', sub: '记账', icon: Wallet, run: () => void router.push({ name: 'ledger' }) },
     { id: 'act:todo', group: '动作', label: '添加待办', sub: '全部待办', keywords: '任务 todo', icon: ListTodo, run: () => void router.push({ name: 'todos' }) },
     { id: 'act:focus', group: '动作', label: '开始专注', sub: '番茄钟', keywords: '番茄 pomodoro', icon: Timer, run: () => void router.push({ name: 'focus' }) },
-    { id: 'act:inspector', group: '动作', label: '显示 / 隐藏信息栏', sub: '右侧第三窗格', keys: MOD + 'I', icon: SlidersHorizontal, run: () => toggleInspector() },
+    { id: 'act:inspector', group: '动作', label: '显示 / 隐藏信息栏', sub: '右侧面板', keys: MOD + 'I', icon: SlidersHorizontal, run: () => toggleInspector() },
     { id: 'act:features', group: '动作', label: '打开或关闭功能', sub: '功能模块开关', icon: SlidersHorizontal, run: () => void router.push({ name: 'settings-features' }) },
     { id: 'act:update', group: '动作', label: '检查软件更新', sub: '版本与更新通道', icon: Download, run: () => void router.push({ name: 'settings-update' }) },
     { id: 'act:sync', group: '动作', label: '多设备同步', sub: '同一网段直连', icon: Cloud, run: () => void router.push({ name: 'settings-sync' }) },
@@ -195,11 +195,20 @@ const q = ref('')
 
 const all = computed<Cmd[]>(() => {
   const byName = new Map(routeCmds.value.map((c) => [c.id.slice(6), c]))
+  const current = 'route:' + String(router.currentRoute.value.name ?? '')
+  const recentNames = new Set(recentRoutes.value)
+  /* 最近组已把这条路由搬到最上面，原分组里那一份要去掉：同一屏出现两遍会让人
+     以为有两处入口，上下键还要多走一格。位置更靠上、语义更明的「最近」那份留。 */
   const recent: Cmd[] = recentRoutes.value
     .map((n) => byName.get(n))
-    .filter((c): c is Cmd => Boolean(c) && c!.id !== 'route:' + String(router.currentRoute.value.name ?? ''))
+    .filter((c): c is Cmd => Boolean(c) && c!.id !== current)
     .map((c) => ({ ...c, group: '最近' }))
-  return [...recent, ...actionCmds.value, ...dockCmds.value, ...routeCmds.value]
+  return [
+    ...recent,
+    ...actionCmds.value,
+    ...dockCmds.value,
+    ...routeCmds.value.filter((c) => !recentNames.has(c.id.slice(6))),
+  ]
 })
 
 const results = computed<Cmd[]>(() => {
@@ -237,18 +246,43 @@ watch(results, () => {
   active.value = 0
 })
 
-/** 打开时清空上一次的输入：面板每次进来都该是「干净的一屏」 */
+/** 打开时把应用根置为 inert：面板是模态的（role=dialog + aria-modal），
+    Tab 不该跑到背后的导航轨/页面上。只作用在 #app 子树 —— 面板 teleport 到 body，
+    在它外面，所以面板自己（连同遮罩）不受影响。 */
+function setAppInert(on: boolean): void {
+  const app = document.getElementById('app')
+  if (!app) return
+  if (on) app.setAttribute('inert', '')
+  else app.removeAttribute('inert')
+}
+
+/** 面板打开前的焦点所在：关闭时还回去，键盘用户的「来路」不被抹掉 */
+let focusBefore: HTMLElement | null = null
+
+/** 打开时清空上一次的输入：面板每次进来都该是「干净的一屏」；
+    关闭时**必须**摘掉 inert —— 残留会把整个界面锁死（点不动、也聚焦不了）。 */
 watch(
   () => props.open,
   (v) => {
-    if (!v) return
+    if (!v) {
+      setAppInert(false)
+      if (focusBefore?.isConnected) focusBefore.focus()
+      focusBefore = null
+      return
+    }
     q.value = ''
     active.value = 0
+    focusBefore = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setAppInert(true)
     void nextTick(() => inputEl.value?.focus())
   },
 )
 
 const inputEl = ref<HTMLInputElement | null>(null)
+
+/* 组件自己被卸载（设备能力变化 → App 的 v-if 收掉面板）时也要摘 inert：
+   残留的 inert 与「关闭时忘摘」同罪，都会把整个界面锁死。 */
+onBeforeUnmount(() => setAppInert(false))
 
 function move(delta: number): void {
   const n = flat.value.length
@@ -259,9 +293,13 @@ function move(delta: number): void {
   })
 }
 
-function runActive(): void {
-  const cmd = flat.value[active.value]
-  if (!cmd) return
+/**
+ * 跑一条命令：记来路 → 执行 → 收面板。**行点击与回车共用这一条路** ——
+ * 从前行按钮绑的是 runActive()，而 active 是「鼠标移过哪行」的独立状态：
+ * 触屏 / 快速点击时 pointermove 可能还没落到被点的那行，于是点 A 跑了 B
+ * （点「记账」跳去「专注」）。谁被点就由谁自己带着命令进来，不再走指针状态。
+ */
+function run(cmd: Cmd): void {
   const name = String(router.currentRoute.value.name ?? '')
   if (cmd.id.startsWith('route:')) rememberRoute(cmd.id.slice(6))
   else if (name) rememberRoute(name)
@@ -269,14 +307,19 @@ function runActive(): void {
   emit('close')
 }
 
+/** 回车：跑键盘选中的那一条 */
+function runActive(): void {
+  const cmd = flat.value[active.value]
+  if (cmd) run(cmd)
+}
+
 /** 当前页面对应的命令下标（面板打开时默认落在它身上，回车=回到当前页也没关系） */
+/** 页脚只放行内无处承载的快捷键：⌘1–⌘4 / ⌘I 在结果行上、esc 在输入框右侧，
+     屏上已经有键帽了，这里再列一遍只是白占两行高度。 */
 const shortcutHints = [
   { keys: MOD + 'K', what: '打开命令面板' },
-  { keys: MOD + '1 – ' + MOD + '4', what: '今天 / 运动 / AI / 我' },
-  { keys: MOD + 'I', what: '显示或隐藏信息栏' },
   { keys: '↑ ↓', what: '在结果间移动' },
   { keys: '↵', what: '打开选中的一项' },
-  { keys: 'esc', what: '关闭' },
 ]
 </script>
 
@@ -315,7 +358,7 @@ const shortcutHints = [
                 class="rowitem"
                 :class="{ on: flat.indexOf(c) === active }"
                 @pointermove="active = flat.indexOf(c)"
-                @click="runActive"
+                @click="run(c)"
               >
                 <component :is="c.icon" :size="16" class="ic" />
                 <span class="label">{{ c.label }}</span>

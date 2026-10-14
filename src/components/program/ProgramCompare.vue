@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 
+import PillChip from '@/components/common/PillChip.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import type { Goal, ProgramPlan, ProgramTier } from '@/types'
 import { PROGRAM_TIERS } from '@/types'
 import {
+  courseShort,
   matrixRows,
   rhythmText,
   tierDiffText,
@@ -72,6 +75,19 @@ const peakWeekIdx = computed(() => {
   const max = Math.max(...totals)
   return max > 0 ? totals.indexOf(max) : -1
 })
+
+/** 网格图例：格子里那 1 字是课程缩写（courseShort 取首字），不列出课程名读不懂 */
+const courseLegend = computed(() => {
+  const seen = new Map<string, string>()
+  for (const d of selPlan.value?.days ?? []) {
+    if (d.rest || !d.courseName) continue
+    if (!seen.has(d.courseName)) seen.set(d.courseName, courseShort(d.courseName))
+  }
+  return [...seen].map(([name, short]) => ({ name, short }))
+})
+
+/** 有没有「训练日但没有课名」的日子（格子以 — 占位，图例里要交代） */
+const hasUnnamedDay = computed(() => (selPlan.value?.days ?? []).some((d) => !d.rest && !d.courseName))
 </script>
 
 <template>
@@ -96,8 +112,10 @@ const peakWeekIdx = computed(() => {
                   :disabled="!p.feasible"
                   @click="emit('select', p.tier)"
                 >
-                  {{ p.tierLabel }}<span v-if="!p.feasible" class="off-tag">不可用</span>
+                  {{ p.tierLabel }}
                 </button>
+                <!-- 不可用档：胶囊单独承载，不吃整列压暗，11px 也读得清 -->
+                <PillChip v-if="!p.feasible" class="off-tag" size="sm" tone="muted">不可用</PillChip>
               </th>
             </tr>
           </thead>
@@ -138,13 +156,24 @@ const peakWeekIdx = computed(() => {
           </button>
         </div>
 
+        <!-- 格子里那 1 字是课程缩写：图例放网格正上方，缩写 → 课程名 -->
+        <p v-if="courseLegend.length" class="grid-legend">
+          <span v-for="c in courseLegend" :key="c.name" class="gl-item">
+            <b class="gl-key">{{ c.short }}</b>{{ c.name }}
+          </span>
+          <span v-if="hasUnnamedDay" class="gl-item">
+            <b class="gl-key">—</b>未命名课程
+          </span>
+        </p>
+
         <div class="grid">
           <div class="week-row head">
             <span class="wlabel" />
             <div class="cells">
               <span v-for="w in weekdayHead" :key="w" class="wd">{{ w }}</span>
             </div>
-            <span class="wtotal" />
+            <!-- 周时长列的单位列头（行内只留数字，11px 放得下） -->
+            <span class="wtotal">分钟</span>
           </div>
           <div v-for="(w, wi) in weeks" :key="w.label" class="week-row">
             <span class="wlabel">{{ w.label }}</span>
@@ -157,10 +186,10 @@ const peakWeekIdx = computed(() => {
                 class="cell"
                 :class="[loadClass(c.min), { rest: c.rest }]"
               >
-                {{ c.rest ? '休' : (c.label ?? '·') }}
+                {{ c.rest ? '休' : (c.label ?? '—') }}
               </span>
             </div>
-            <span class="wtotal num" :class="{ hot: wi === peakWeekIdx }">{{ w.totalMin }}′</span>
+            <span class="wtotal num" :class="{ hot: wi === peakWeekIdx }">{{ w.totalMin }}</span>
           </div>
         </div>
       </section>
@@ -189,7 +218,7 @@ const peakWeekIdx = computed(() => {
       <section v-if="view === 'load' && rhythm" class="pod">
         <header class="pod-head">
           <b>强度节奏</b>
-          <span v-if="peakWeekIdx > 0" class="pill warn">第 {{ peakWeekIdx + 1 }} 周最累</span>
+          <StatusChip v-if="peakWeekIdx > 0" tone="warn">第 {{ peakWeekIdx + 1 }} 周最累</StatusChip>
         </header>
         <p class="explain">{{ rhythm }}</p>
       </section>
@@ -243,11 +272,6 @@ const peakWeekIdx = computed(() => {
 .pill.ghost {
   background: var(--surface-2);
   color: var(--text-3);
-}
-
-.pill.warn {
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-  color: var(--warn);
 }
 
 .explain {
@@ -334,21 +358,50 @@ th.on .col-hit {
   font-weight: 700;
 }
 
-th.off {
-  opacity: 0.45;
+/* 不可用档：压暗只落在列头按钮上（禁用态浓度走令牌），
+   「不可用」胶囊在压暗之外单独承载，不叠 opacity */
+th.off .col-hit {
+  opacity: var(--disabled-opacity);
 }
 
 .off-tag {
-  display: block;
-  font-size: 9px;
-  color: var(--text-3);
-  font-weight: 600;
+  margin-top: 3px;
 }
 
 /* 强度预览网格 */
 .grid {
   display: grid;
   gap: 5px;
+}
+
+/* 网格图例：缩写 → 课程名（11px + --text-3，一行铺开） */
+.grid-legend {
+  margin-bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+.gl-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 缩写键：仿格子本身的底色，图例与网格对得上 */
+.gl-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 600;
 }
 
 .week-row {
@@ -393,7 +446,7 @@ th.off {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 600;
   background: var(--surface-2);
   color: var(--text-3);
@@ -459,7 +512,7 @@ th.off {
 }
 
 .chip.off {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 .primary {
@@ -476,7 +529,7 @@ th.off {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 /* 视图/解说块的进出场：内容整体更换，只走不透明度且进出同向 */

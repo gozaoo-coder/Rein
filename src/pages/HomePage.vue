@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import HomeCanvas from '@/components/home/HomeCanvas.vue'
 import HomeFooter from '@/components/home/HomeFooter.vue'
+import HomeTodoFeed from '@/components/home/HomeTodoFeed.vue'
 import IntakeOverview from '@/components/nutrition/IntakeOverview.vue'
 import ProgramStatusCard from '@/components/program/ProgramStatusCard.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -125,6 +126,10 @@ const weightAlert = computed(() =>
 
         <!-- 页脚动作区：课程条 / 吃 / 练 / 专注·钱 / 工具（HomeFooter 持有抽屉与就地动作） -->
         <HomeFooter :date="today" />
+
+        <!-- 全部待办信息流：未完成在前（未安排→逾期→今天→未来）、已完成沉底；
+             拉到底边附近才逐批追加下一批（取数与渲染的说明在 HomeTodoFeed.vue） -->
+        <HomeTodoFeed :today="today" />
       </div>
     </template>
   </div>
@@ -135,13 +140,24 @@ const weightAlert = computed(() =>
   padding: 10px var(--page-pad-x) var(--page-pad-bottom);
 }
 
-/* 桌面：主人区全宽内容，内部由工作台组件约束 */
+/* 桌面工作台列：便当总览与一日脊柱共用同一条 1240px 列（居中）。
+   列宽比卡片流页的 --desk-content(1040) 宽一档 —— 它是「看今天」的画布，
+   而每个工作台视图内部再自己收口（bento 的 12 栏 / 脊柱的 900px 时间轴）。
+   页头挂在同一个 .page 盒上，随列一起居中；--ph-bleed 跟着横向内边距走，
+   否则页头遮罩两侧会露出没被遮住的窄条。 */
 .page.desk-home {
-  max-width: none;
-  padding: 26px 34px 48px;
-  /* 页头遮罩按页面横向内边距向外铺满整帧（默认取 --page-pad-x=18px）；
-     这里内边距是 34px，不跟着改的话两侧会露出没被遮住的窄条 */
-  --ph-bleed: 34px;
+  max-width: var(--frame-max-wide);
+  margin-inline: auto;
+  padding: 26px var(--desk-gutter) 48px;
+  --ph-bleed: var(--desk-gutter);
+}
+
+/* 页头那枚「便当总览 / 一日脊柱」是**内容宽**控件（分段零横向内距），实测每段
+   52px 正好等于 4 个 13px 汉字 —— 选中胶囊的边就压在字的笔画上，整枚控件读成
+   「便当总览一日脊柱」一串。给两侧各留一格呼吸：控件长到 ~156px，页头右侧
+   还有 500px 余量，不会挤到标题。只作用于主页这一处调用点。 */
+.page.desk-home :deep(.seg-item) {
+  padding: 6px 12px;
 }
 
 /* 摄入总览：整条是按钮、壳交给 .card（内边距 20px 与全站卡片一致，别在这里再叠一层），

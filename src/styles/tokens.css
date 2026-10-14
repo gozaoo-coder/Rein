@@ -34,6 +34,10 @@
   --surface-inset-solid: #f6f6f6;
   --scrim: rgba(0, 0, 0, 0.4); /* 全屏遮罩，弹层统一深浅 */
   --switch-knob: #ffffff; /* 开关滑块：亮暗色同为白（iOS 规格），暗色下靠影子托底 */
+  /* 禁用态的不透明度。全库现在有 8 种各写各的禁用浓度（0.4 / 0.45 / 0.5 / 0.55 …），
+     这一档是收编的目标值：**本轮只落令牌**（逐组件替换不在本轮），谁要压暗禁用元素
+     就引用它，别再各写一个裸值。 */
+  --disabled-opacity: 0.45;
 
   /* ---------- 悬浮玻璃 · 高画质档（悬浮 Dock 等玻璃表面） ----------
      玻璃由四层叠加：fill 半透明玻璃底（blur 写在组件里，弱档被 base.css 全局关掉）、
@@ -306,6 +310,10 @@
   --fs-display-l: 44px;
   --fs-display-m: 40px;
   --fs-display-s: 34px;
+  /* 两档超展示级：只给「一屏只有一个」的读数（实时页时长 84 / 准备页目标值 56），
+     是本轮把 RunPage 里这两个裸字号收编进来的。命名按契约冻结，不按字母顺序读。 */
+  --fs-display-xl: 84px;
+  --fs-display-2xl: 56px;
 
   /* ---------- 动效 ---------- */
   --ease-out: cubic-bezier(0.33, 1, 0.68, 1); /* 入场 / 退场（easeOutCubic：起始快、收尾缓） */
@@ -344,7 +352,7 @@
        --desk-aside    主区 + 侧栏（d-split）布局的侧栏宽
      --desk-min 必须与 src/config/domain.ts 的 DESKTOP_MIN 同值：媒体查询不能读 var()，
      断点真正的来源只有 TS 那一处，这里只是同一事实的备忘。 */
-  --desk-min: 1100px;
+  --desk-min: 900px;
   --desk-content: 1040px;
   --desk-wide: 1240px;
   --desk-gutter: 34px;
@@ -366,6 +374,59 @@
      systemGestures 宽度（按钮导航为 0），末位 20px 是桌面 / 老机型的兜底下限。 */
   --safe-left: max(env(safe-area-inset-left, 0px), var(--safe-left-native, 0px), 20px);
   --safe-right: max(env(safe-area-inset-right, 0px), var(--safe-right-native, 0px), 20px);
+}
+
+/* ============================================================
+   桌面覆盖 · 几何与字号阶梯
+   手机那套几何是「一屏一卡」的手感：28px 圆角 + 20px 内距 + 80px 模糊的落影，
+   在 430 宽下正是一张卡片该有的样子。搬到 1512 宽的栅格里就成了「放大的手机」——
+   一屏十来张卡，圆角占掉卡片短边的十分之一，大范围落影把画布糊成一片灰，
+   17px 正文配整宽通栏卡更是把行长拉到 80 字以上。这里换一档**桌面自己的几何**。
+
+   判定只认壳层写的 html[data-shell='desk']（App.vue 随断点写），不认宽度：
+   媒体查询读不到 --desk-min，而断点真正的来源只有 src/config/domain.ts 一处。
+   手机壳与 430 / 406 竖屏因此完全不受这份覆盖影响。
+   ============================================================ */
+html[data-shell='desk'] {
+  --radius-xl: 12px;
+  --radius-l: 10px;
+
+  /* 字号阶梯整体降一档（17/17/15/14/13 → 15/15/14/13/12）。
+     桌面视距更远、一屏信息更多，17px 正文在这里读起来是松垮而不是舒服。
+     --fs-caption 12 与 --fs-micro 11 **不动**：11px 就是字号阶梯的下限（R4），
+     再降一档会直接踩线；--fs-large-title 以上的展示级字号也不动 —— 页头大标题
+     与卡片主数值要的就是分量，桌面不需要把它们也压小。 */
+  --fs-body: 15px;
+  --fs-headline: 15px;
+  --fs-callout: 14px;
+  --fs-subhead: 13px;
+  --fs-footnote: 12px;
+
+  /* 栅格间距比手机的卡片间距松一档：桌面一屏排得下十来张卡，14px 会让整页读成一片 */
+  --desk-gap: 18px;
+
+  /* 桌面没有底部 Dock（导航在左侧轨，58px 的页签那一格不存在）：
+     把 --dock-top 从「安全区 + 悬浮距 + 页签高」换成「安全区 + 内容留白」——
+     --page-pad-bottom 与 .fab 的底距都从这条派生，一起自动收回，
+     不必再各自改一遍那条按「贴底整条 tabbar」算出来的公式。 */
+  --dock-top: calc(var(--safe-bottom) + var(--desk-gutter));
+}
+
+/* 桌面卡片换一条更紧的落影：手机那条 40px/80px 的大模糊是「一张卡浮在一屏上」的写法，
+   桌面一屏十来张，它只会把画布糊成一片灰。
+   **只限亮色**：暗色档刻意把 --shadow-card 写成 none（暗底没有比底色更深的影子可用），
+   而本块选择器 html[data-shell='desk']（0,1,1）的特指度高于暗色档的 :root（0,1,0）——
+   不套这层媒体查询就会在「暗色 + data-perf='low' + 桌面」下把 none 顶掉，给 .card
+   （base.css 的 box-shadow: var(--shadow-card)）加回一条黑底落影；而三条守线全跑
+   colorScheme:'light'，这个组合不会被任何一条抓到。
+   亮色这一档同时经 --glass-panel-shadow: var(--shadow-card)（本文件 :root）流到
+   高画质档的卡片上，两处自动同值。 */
+@media (prefers-color-scheme: light) {
+  html[data-shell='desk'] {
+    --shadow-card:
+      0 1px 2px rgba(0, 0, 0, 0.04),
+      0 8px 24px -12px rgba(0, 0, 0, 0.1);
+  }
 }
 
 @media (prefers-color-scheme: dark) {

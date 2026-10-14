@@ -16,8 +16,12 @@
     <!-- 跑步前台保活：锁屏后维持 GPS 与计时，防止进程被冻结/回收（用户感知为崩溃） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- 训练课常驻通知：课程不取定位，用 specialUse 型（Android 14+ 才有该型） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 通知触感：常驻通知本身 IMPORTANCE_LOW 不震，留着给课程相位提醒等后续用途 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- 应用内自更新：把验签通过的 APK 交给系统安装器（见 UpdateBridge.kt）。
          Android 8+ 还需用户在系统设置里允许 Rein「安装未知应用」，
@@ -116,11 +120,18 @@
             </intent-filter>
         </activity>
 
-        <!-- 跑步保活服务：由 TrackingBridge 在开跑时拉起（见 Rust modules/tracking） -->
+        <!-- 跑步采集前台服务：原生采集是运动真源（取点/计时/落轨迹都在这里），
+             由 TrackingBridge 在开跑/开课时拉起（见 modules/tracking + RunTrackingService.kt）。
+             两种前台服务类型共用同一个通知 id：location=采集、specialUse=训练课常驻通知。 -->
         <service
             android:name=".RunTrackingService"
             android:exported="false"
-            android:foregroundServiceType="location" />
+            android:foregroundServiceType="location|specialUse">
+            <!-- Android 14+ 要求 specialUse 型声明用途子类，缺了会在启动前台服务时被拒 -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="strength_training" />
+        </service>
 
         <!-- 健康数据用途说明（见 HealthRationaleActivity.kt）。
              **权限能否使用的前提**：android.permission.health.* 在 Android 14+ 要求

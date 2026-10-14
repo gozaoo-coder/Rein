@@ -40,6 +40,9 @@ import type {
   GatewayAuthRequest,
   GatewayClient,
   GatewayStatus,
+  GatewayPomodoroCommand,
+  GatewaySessionCommand,
+  FocusRuntime,
   GrabState,
   GrabTurnBrief,
   LedgerEntry,
@@ -204,6 +207,19 @@ function healthSyncWorkoutsSample(): unknown[] {
 /** 样例里最早一条导入记录的日期：与 health_sync_workouts 样例第一条一致，
  *  也就是「自动」模式此刻会采用的下界 */
 const HEALTH_AUTO_WINDOW_START = '2024-03-15'
+
+/**
+ * 样例里「本机记录且没填开始时间」的条数 —— 回写时会被 `build_push` 跳过的那批。
+ *
+ * 从样例算出来而不是写死一个数：这两处一旦不同步，页面上的「跳过 N（没填开始时间）」
+ * 就和它下面的明细块对不上，而这个 N 正是用户要看的东西。真机上 skipped 只在
+ * 开着回写时才有值（`build_push` 只在 push 分支里跑），所以调用处跟着 healthPush 走。
+ */
+function healthSkippedSample(): number {
+  return (
+    healthSyncWorkoutsSample() as { source: string; startMin: number | null }[]
+  ).filter((w) => w.source === 'local' && w.startMin == null).length
+}
 
 /** 体征预览的样例缓存（首次生成后固定，dev 迭代时数据不跳） */
 let healthMetricsCache: unknown[] | null = null
@@ -1489,6 +1505,71 @@ addTodo({
   recRule: { freq: 'weekly', weekdays: [0, 1, 2, 3, 4], intervalDays: 0, endDate: null },
 })
 
+/**
+ * 主页「全部待办」信息流（HomeTodoFeed / query_todo_feed）的演示种子 —— 三个开关都只服务
+ * scripts/e2e-home-todo-feed.mjs，默认（一个都不设）本函数不改任何数据，演示数据与从前逐字节一致：
+ *
+ *   · localStorage['rein.e2e.todoFeedBulk'] === '1' → 追加 296 条种子，条数远大于一页
+ *     （HomeTodoFeed 的 FEED_PAGE = 30），用来验证「滑到底边再逐批渲染」；
+ *   · window.__REIN_MOCK_TODO_EMPTY__ = true → 清空全部待办（连重复模板一起清，
+ *     于是 sync_recurrences 也不会再物化实例），用来验证信息流空态；
+ *   · window.__REIN_MOCK_TODO_FEED_FAIL__ = true → query_todo_feed 直接抛错（见 mockInvoke 的同名 case），
+ *     用来验证失败态与重试。
+ *
+ * 种子构成（296 = 8 + 36 + 12 + 200 + 40）覆盖四个日期桶与已完成：
+ *   未安排 8（date=null）· 逾期 36（today-1…today-36）· 今天 12 · 未来 40 天 × 5 = 200 ·
+ *   已完成 40（未安排 / 逾期 / 今天 / 未来各 10）。标题带序号便于 e2e 顺序抽查；
+ *   priority 取 i%3、startMin 按 i%2 交替，覆盖「无时间靠后 / 优先级降序」这两个排序键。
+ *
+ * 注意：默认演示数据（上面那批 addTodo）必须保持 ≤ FEED_PAGE（30 条）。
+ * 超过一页，主页信息流就会从「首屏一次挂完」切到「到边分批」，
+ * 于是滑到主页底边会持续长高、rubberScroll 的 band 起不来 ——
+ * scripts/e2e-rubber-scroll.mjs 的 I2a/I3a 会红（阈值见 HomeTodoFeed.vue 的 FEED_PAGE）。
+ */
+function seedTodoFeedBulk(): void {
+  if (mockFlag('__REIN_MOCK_TODO_EMPTY__')) {
+    todos.length = 0
+    return
+  }
+  const bulk =
+    typeof localStorage !== 'undefined' && localStorage.getItem('rein.e2e.todoFeedBulk') === '1'
+  if (!bulk) return
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  // 不走 addTodo：它的 date 参数是非空 string，而种子要造收件箱（date=null）行
+  const seed = (title: string, date: string | null, i: number, status: Todo['status'] = 'todo'): void => {
+    todos.push({
+      id: ++todoId,
+      title,
+      notes: null,
+      date,
+      startMin: i % 2 === 1 ? null : 9 * 60 + i,
+      durationMin: null,
+      category: 'general',
+      priority: i % 3,
+      status,
+      completedAt: status === 'done' ? `${date ?? today}T09:00:00` : null,
+      createdAt: `${date ?? today}T07:00:00`,
+      programId: null,
+      recRule: null,
+      recKey: null,
+      subtasks: null,
+    })
+  }
+  for (let i = 1; i <= 8; i++) seed(`未安排待办 ${pad(i)}`, null, i)
+  for (let i = 1; i <= 36; i++) seed(`逾期待办 ${pad(i)}`, addDays(today, -i), i)
+  for (let i = 1; i <= 12; i++) seed(`今日待办 ${pad(i)}`, today, i)
+  for (let d = 1; d <= 40; d++) {
+    for (let k = 1; k <= 5; k++) seed(`未来待办 ${pad(d)}-${k}`, addDays(today, d), d * 5 + k)
+  }
+  for (let i = 1; i <= 10; i++) seed(`已完成未安排 ${pad(i)}`, null, i, 'done')
+  for (let i = 1; i <= 10; i++) seed(`已完成逾期 ${pad(i)}`, addDays(today, -i), i, 'done')
+  for (let i = 1; i <= 10; i++) seed(`已完成今天 ${pad(i)}`, today, i, 'done')
+  // 已完成 · 未来统一落在今天+40：让 done 段只多出一个日期分组
+  for (let i = 1; i <= 10; i++) seed(`已完成未来 ${pad(i)}`, addDays(today, 40), i, 'done')
+}
+
+seedTodoFeedBulk()
+
 function addWorkout(w: Partial<Workout> & { name: string; type: Workout['type']; date: string; durationMin: number; kcal: number }): void {
   workouts.push({
     id: ++workoutId,
@@ -1502,11 +1583,17 @@ function addWorkout(w: Partial<Workout> & { name: string; type: Workout['type'];
     effort: w.effort ?? null,
     note: w.note ?? null,
     sessionId: w.sessionId ?? null,
+    // 种子记录默认是本机记的；要一条「手机同步」样例见下面「晨跑」那条
+    source: w.source ?? 'local',
     createdAt: `${w.date}T20:00:00`,
   })
 }
 
-addWorkout({ name: '夜跑', type: 'run', date: addDays(today, -2), startMin: 19 * 60 + 30, durationMin: 30, intensity: 'high', kcal: 360 })
+// 「夜跑」这条标成手机同步：dev 里唯一能看到「手机同步」徽标的记录。
+// 只改这一条的来源、**不新插记录** —— 这份数据同时喂着浏览器 e2e，多一条就会动到
+// 「本周分钟 / 大卡 / 次数」与记录页行数这类断言（见 scripts/e2e-feature-toggles.mjs、
+// scripts/e2e-strength.mjs）。真机上这个值由 Rust 从 workouts.source 读，不由 mock 决定。
+addWorkout({ name: '夜跑', type: 'run', date: addDays(today, -2), startMin: 19 * 60 + 30, durationMin: 30, intensity: 'high', kcal: 360, source: 'health_connect' })
 addWorkout({ name: '力量训练 · 下肢', type: 'strength', date: yesterday, startMin: 18 * 60 + 30, durationMin: 40, intensity: 'moderate', kcal: 245 })
 // 手动补录样例：走体感 + 用户直接给热量那条路（effort 有值、intensity 是派生档位）
 addWorkout({ name: '羽毛球 · 47分钟', type: 'badminton', date: today, startMin: 20 * 60, durationMin: 47, intensity: 'moderate', effort: 4, kcal: 412 })
@@ -1677,6 +1764,8 @@ function synthTrack(totalKm: number, totalSec: number, laps = 4): { lat: number;
       effort: null,
       note: null,
       sessionId: null,
+      // 本机记的（真机由 workouts.source 列的默认值决定）
+      source: 'local',
       createdAt: new Date().toISOString(),
     }
     workouts.push(w)
@@ -2164,17 +2253,87 @@ async function playMockRun(runId: string, script: MockAgentStep[]): Promise<void
 /* ---------------- 外部访问（对外服务网关，modules/gateway 同契约） ---------------- */
 
 /**
- * 浏览器 mock 的事件出口：gatewayService 在非 Tauri 环境把两个订阅挂到这里
- * （真机的事件由 Rust 侧 `gateway://authorization-required` / `gateway://authorization-changed` 发出）。
+ * 浏览器 mock 的事件出口：gatewayService 在非 Tauri 环境把订阅挂到这里
+ * （真机的事件由 Rust 侧 `gateway://authorization-required` / `gateway://authorization-changed` /
+ * 两条下行控制事件发出）。
  */
 export const mockGateway: {
   onRequired: ((e: unknown) => void) | null
   onChanged: ((s: unknown) => void) | null
-} = { onRequired: null, onChanged: null }
+  onPomodoroCommand: ((c: unknown) => void) | null
+  onSessionCommand: ((c: unknown) => void) | null
+} = { onRequired: null, onChanged: null, onPomodoroCommand: null, onSessionCommand: null }
+
+/** mock 的运行态快照：与真机 `app_meta:runtime.focus.v1` 同形（`focus_publish` 写它）。 */
+let gwFocusRuntime: FocusRuntime | null = null
+
+/** e2e / 调试入口：伪造一条外部下行控制（真机由 WS 方法经 AppHandle emit 发出）。 */
+export function mockGatewayPomodoroCommand(cmd: GatewayPomodoroCommand): void {
+  mockGateway.onPomodoroCommand?.(cmd)
+}
+
+export function mockGatewaySessionCommand(cmd: GatewaySessionCommand): void {
+  mockGateway.onSessionCommand?.(cmd)
+}
+
+/** e2e / 调试入口：读回最近一次 `focus_publish` 的快照（真机由 `pomodoro.status` 读）。 */
+export function mockGatewayFocusRuntime(): FocusRuntime | null {
+  return gwFocusRuntime ? { ...gwFocusRuntime } : null
+}
 
 /** 演示态：默认关（与真机一致 —— 用户开了才监听）。字段与 `GatewayStatus` 同形。 */
-const gwState: GatewayStatus = { enabled: false, bindMode: 'local', port: null, pairToken: null, pendingCount: 0, clients: [], blocked: [] }
+const gwState: GatewayStatus = {
+  enabled: false,
+  bindMode: 'local',
+  port: null,
+  pairToken: null,
+  pendingCount: 0,
+  clients: [],
+  blocked: [],
+  allowedOrigins: [],
+  blockedOrigins: [],
+}
 const gwPending: GatewayAuthRequest[] = []
+
+/**
+ * 用户批准过的网页来源（Origin）白名单 —— 与真机的 `app_meta` 键
+ * `gateway.allowedOrigins` 同语义：整表替换、精确匹配、`file://` 的 Origin 就是字面量 `"null"`。
+ */
+let gwAllowedOrigins: string[] = []
+
+/** 审计流水（与 `ext_audit` 同形；真机落库，mock 只在内存里留最近的）。 */
+interface MockGatewayAudit {
+  id: number
+  at: string
+  clientId: string | null
+  method: string
+  scope: string
+  decision: 'allowed' | 'denied' | 'error'
+  detail: string | null
+  ip: string | null
+  durationMs: number
+}
+const gwAudit: MockGatewayAudit[] = []
+let gwAuditSeq = 0
+
+/** 与 Rust `store::ORIGIN_BLOCKED_PREFIX` 同一串（被 Origin 闸门拒的审计详情前缀）。 */
+const gwOriginRejectedPrefix = '浏览器来源未在白名单：'
+
+function gwAuditPush(rec: Omit<MockGatewayAudit, 'id' | 'at'>): void {
+  gwAudit.unshift({ id: ++gwAuditSeq, at: new Date().toISOString(), ...rec })
+  if (gwAudit.length > 200) gwAudit.length = 200
+}
+
+/** 「被拦下的来源」：与真机一样从审计反解 —— 列被拒过且尚未加白的 Origin（去重、最近优先）。 */
+function gwBlockedOrigins(): string[] {
+  const allowed = new Set(gwAllowedOrigins)
+  const out: string[] = []
+  for (const r of gwAudit) {
+    const origin = r.detail?.startsWith(gwOriginRejectedPrefix) ? r.detail.slice(gwOriginRejectedPrefix.length) : ''
+    if (origin && !allowed.has(origin) && !out.includes(origin)) out.push(origin)
+  }
+  return out
+}
 
 function gwStatus(): GatewayStatus {
   return {
@@ -2182,6 +2341,9 @@ function gwStatus(): GatewayStatus {
     pendingCount: gwPending.length,
     clients: gwState.clients.map((c) => ({ ...c })),
     blocked: gwState.blocked.map((b) => ({ ...b })),
+    // 真机靠 `build_status` 从 app_meta / 审计读这两列；mock 同口径。
+    allowedOrigins: [...gwAllowedOrigins],
+    blockedOrigins: gwBlockedOrigins(),
   }
 }
 
@@ -2200,16 +2362,40 @@ export function mockGatewayPrompt(patch: Partial<GatewayAuthRequest> = {}): void
     ip: '127.0.0.1',
     scopes: ['schedule.read'],
     createdAt: new Date().toISOString(),
-    timeoutMs: 30000,
+    timeoutMs: 60000,
     ...patch,
   }
   gwPending.push(req)
   mockGateway.onRequired?.(req)
 }
 
+/** e2e / 调试入口：造一条「来源被 Origin 闸门拦下」的审计（真机由握手 403 落审计）。 */
+export function mockGatewayBlockedOrigin(origin: string, ip = '127.0.0.1'): void {
+  gwAuditPush({
+    clientId: null,
+    method: '',
+    scope: '',
+    decision: 'denied',
+    detail: `${gwOriginRejectedPrefix}${origin}`,
+    ip,
+    durationMs: 0,
+  })
+  gwChanged()
+}
+
 if (typeof window !== 'undefined') {
-  const w = window as unknown as { __REIN_MOCK_GATEWAY_PROMPT__?: (patch?: Partial<GatewayAuthRequest>) => void }
+  const w = window as unknown as {
+    __REIN_MOCK_GATEWAY_PROMPT__?: (patch?: Partial<GatewayAuthRequest>) => void
+    __REIN_MOCK_GATEWAY_BLOCKED_ORIGIN__?: (origin: string, ip?: string) => void
+    __REIN_MOCK_GATEWAY_POMODORO__?: (cmd: GatewayPomodoroCommand) => void
+    __REIN_MOCK_GATEWAY_SESSION__?: (cmd: GatewaySessionCommand) => void
+    __REIN_MOCK_GATEWAY_FOCUS__?: () => FocusRuntime | null
+  }
   w.__REIN_MOCK_GATEWAY_PROMPT__ = mockGatewayPrompt
+  w.__REIN_MOCK_GATEWAY_BLOCKED_ORIGIN__ = mockGatewayBlockedOrigin
+  w.__REIN_MOCK_GATEWAY_POMODORO__ = mockGatewayPomodoroCommand
+  w.__REIN_MOCK_GATEWAY_SESSION__ = mockGatewaySessionCommand
+  w.__REIN_MOCK_GATEWAY_FOCUS__ = mockGatewayFocusRuntime
 }
 
 /* ---------------- 语音对话（modules/voice 同契约） ---------------- */
@@ -5600,6 +5786,54 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       } as T)
     }
 
+    case 'query_todo_feed': {
+      // e2e 专用失败注入（scripts/e2e-home-todo-feed.mjs 的 fail 阶段）：
+      // 首行先于任何取数逻辑，用来验错误态与「点此重试」。
+      if (mockFlag('__REIN_MOCK_TODO_FEED_FAIL__')) throw new Error('mock：待办信息流取数失败')
+      // 与 Rust query_todo_feed 逐桶同语义（两端口径必须一致，改一处就得同步改另一处）：
+      // 全表不过滤（含已完成 / 收件箱 / 课表派生行）→ 未完成在前、已完成沉底 →
+      // 日期桶 未安排(0) → 逾期(1) → 今天(2) → 未来(3) → date 升序（逾期里最早欠的排最前）→
+      // 有时间的在前、时间早的在前 → priority 降序 → id 兜底（全序唯一，翻页边界确定）。
+      const todayS = String(args.today)
+      // 与 Rust parse_date（NaiveDate::parse_from_str "%Y-%m-%d"）同口径：形状须 YYYY-MM-DD
+      // 且是真实存在的日历日。注意不能只用 Date.parse —— JS 会把 '2026-02-30' 滚成 3 月 2 日，
+      // 而 Rust 侧会拒绝，所以回读三键校验。
+      const dm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todayS)
+      const y = Number(dm?.[1])
+      const mo = Number(dm?.[2])
+      const day = Number(dm?.[3])
+      const probe = new Date(0)
+      probe.setUTCFullYear(y, mo - 1, day)
+      if (
+        !dm ||
+        probe.getUTCFullYear() !== y ||
+        probe.getUTCMonth() !== mo - 1 ||
+        probe.getUTCDate() !== day
+      ) {
+        throw new Error('日期格式应为 YYYY-MM-DD')
+      }
+      const limit = Math.min(Math.max(Number(args.limit ?? 30), 1), 100)
+      const offset = Math.max(Number(args.offset ?? 0), 0)
+      const bucketOf = (t: Todo): number =>
+        t.date === null ? 0 : t.date < todayS ? 1 : t.date === todayS ? 2 : 3
+      const sorted = [...todos].sort(
+        (a, b) =>
+          (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) ||
+          bucketOf(a) - bucketOf(b) ||
+          (a.date ?? '').localeCompare(b.date ?? '') ||
+          (a.startMin ?? 9999) - (b.startMin ?? 9999) ||
+          b.priority - a.priority ||
+          a.id - b.id,
+      )
+      // total 与 Rust 的 SELECT COUNT(*) FROM todos 同口径：不过滤的全表条数
+      return delay({
+        items: structuredClone(sorted.slice(offset, offset + limit)),
+        total: todos.length,
+        limit,
+        offset,
+      } as T)
+    }
+
     case 'todo_distribution': {
       const todayS = String(args.today)
       const days = new Map<string, number>()
@@ -5738,6 +5972,8 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         effort: (args.effort as Workout['effort'] | null) ?? null,
         note: (args.note as string | null) ?? null,
         sessionId: null,
+        // 补录/课程/跑步都是 Rein 自己记的：source 恒为 local（第三方来源只由同步写入）
+        source: 'local',
         createdAt: new Date().toISOString(),
       }
       workouts.push(w)
@@ -5801,7 +6037,10 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         exported: healthPush ? (first ? 2 : 0) : 0,
         reExported: 0,
         unexported: 0,
-        skipped: 0,
+        // 之前这里是恒 0，于是「跳过 N（没填开始时间）」那句文案在浏览器里永远不渲染 ——
+        // 而这句正是这次改动要对齐用户诉求的地方，dev 里看不见就等于改不了。
+        // 口径同真机：只在开着回写时才有跳过（build_push 只在 push 分支里跑）。
+        skipped: healthPush ? (first ? healthSkippedSample() : 0) : 0,
         scanned: healthImported,
         metricsImported: first
           ? (healthMetricsSample() as { points: unknown[] }[]).reduce(
@@ -5916,6 +6155,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         effort: null, // 课程会话无体感输入（见 db.rs MIGRATION_0035）
         note: input.note,
         sessionId: input.id,
+        source: 'local',
         createdAt: new Date().toISOString(),
       }
       workouts.push(w)
@@ -7190,7 +7430,24 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'tracking_keepalive':
       return delay(undefined as T)
     case 'tracking_status':
-      return delay({ granted: true, busy: false } as T)
+      return delay({ granted: true, busy: false, notify: true, native: false } as T)
+    // 原生采集命令族：浏览器下 native=false，调用方读到兜底常量后自己走 navigator.geolocation
+    case 'tracking_run_begin':
+      return delay(undefined as T)
+    case 'tracking_run_phase':
+      return delay(undefined as T)
+    case 'tracking_run_end':
+      return delay(undefined as T)
+    case 'tracking_live':
+      return delay(
+        '{"active":false,"autoPaused":false,"elapsedMs":0,"distanceM":0,"paceSecPerKm":null,"lastFixMs":0,"accM":0,"lat":0,"lon":0,"provider":"","gapSlowCount":0,"gapFastCount":0,"gapDropCount":0,"gapSlowMs":0,"gapFastMs":0,"gapDropMs":0,"gapCount":0,"gapMs":0}' as unknown as T,
+      )
+    case 'tracking_track_take':
+      return delay('{"lines":0,"data":""}' as unknown as T)
+    case 'tracking_notify':
+      return delay(undefined as T)
+    case 'tracking_open_pending':
+      return delay('' as unknown as T)
 
     /* ---------- 多设备同步（浏览器开发用的空实现：形状与 Rust 一致，流程可走通） ---------- */
     case 'sync_status':
@@ -9778,7 +10035,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       } as T)
     }
 
-    /* ---- 外部访问（对外服务网关）：6 条管理命令，与 modules/gateway/commands.rs 同名 ---- */
+    /* ---- 外部访问（对外服务网关）：8 条管理命令，与 modules/gateway/commands.rs 同名 ---- */
 
     case 'gateway_status':
       return delay(gwStatus() as T)
@@ -9788,6 +10045,10 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       gwState.enabled = on
       // 真机开启时按设置绑定、把**实际**端口写回；mock 固定 17650（真机被占会顺延、全占退系统分配）
       gwState.port = on ? 17650 : null
+      // 真机开启时 `store::ensure_pair_token` 一定把令牌生成出来（设置页要显示它）；
+      // 这里同口径补一把（真机是 base64url(32 随机字节)，mock 用固定串好让 e2e 断言），
+      // 否则「配对令牌」那张卡在 mock 里永远不出现。
+      if (on && !gwState.pairToken) gwState.pairToken = 'mZq3f1yR8k0TvP2sL5nQ7xW4bJ6dH9cA1eG3iK5oM7U'
       // 关闭 = 断链，本次会话授权随之消亡（contract §5.1）；「始终允许」的行留下
       if (!on) gwState.clients = gwState.clients.filter((c) => c.grant === 'always')
       gwChanged()
@@ -9824,9 +10085,31 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           ip: null,
         }
         gwState.clients = [...gwState.clients.filter((c) => c.clientId !== req.clientId), granted]
+        // 真机每次裁决都往 ext_audit 落一行；mock 照落，好让「最近访问记录」有内容可看。
+        gwAuditPush({
+          clientId: req.clientId,
+          method: '',
+          scope: scopes.join(','),
+          decision: 'allowed',
+          detail: `授权：${decision}`,
+          ip: req.ip,
+          durationMs: 0,
+        })
         gwChanged()
       }
       // 「拒绝」在真机上会记 deny 行并以 1008 关连；deny 行不进已授权列表（build_status 会跳过）
+      if (decision === 'deny') {
+        gwAuditPush({
+          clientId: req.clientId,
+          method: '',
+          scope: '',
+          decision: 'denied',
+          detail: '用户拒绝授权',
+          ip: req.ip,
+          durationMs: 0,
+        })
+        gwChanged()
+      }
       return delay({} as T)
     }
 
@@ -9838,6 +10121,35 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       gwChanged()
       return delay(gwStatus() as T)
     }
+
+    case 'gateway_set_allowed_origins': {
+      // 整表替换（与 Rust store::set_allowed_origins 同语义）：去空白、去重、保序。
+      const raw = Array.isArray(args.origins) ? args.origins : []
+      gwAllowedOrigins = [...new Set(raw.map((o) => String(o).trim()).filter((o) => o !== ''))]
+      gwChanged()
+      return delay(gwStatus() as T)
+    }
+
+    case 'gateway_audit_recent': {
+      // 真机从 ext_audit 读（limit 夹到 [1,500]，缺省 50）；mock 从内存流水里同口径取。
+      const want = Number(args.limit)
+      const limit = Number.isFinite(want) ? Math.max(1, Math.min(500, Math.trunc(want))) : 50
+      const clientId = args.clientId === null || args.clientId === undefined ? null : String(args.clientId)
+      const rows = gwAudit.filter((r) => clientId === null || clientId === '' || r.clientId === clientId)
+      return delay(rows.slice(0, limit).map((r) => ({ ...r })) as T)
+    }
+
+    /* ---- 运行态上报（前端 → 后端，contract §14.1）---- */
+
+    case 'focus_publish': {
+      // 真机写 app_meta:runtime.focus.v1（原样 JSON）；mock 只留在内存里，供 e2e 读回。
+      gwFocusRuntime = args.snapshot ? ({ ...(args.snapshot as FocusRuntime) }) : null
+      return delay({} as T)
+    }
+
+    case 'focus_unpublish':
+      gwFocusRuntime = null
+      return delay({} as T)
 
     default:
       throw new Error(`mock 未实现的命令: ${cmd}`)

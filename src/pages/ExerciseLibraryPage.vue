@@ -6,7 +6,9 @@ import ExerciseFilterSheet from '@/components/exercise/ExerciseFilterSheet.vue'
 import ExerciseFormSheet from '@/components/exercise/ExerciseFormSheet.vue'
 import ExerciseLibrarySheet from '@/components/exercise/ExerciseLibrarySheet.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import InfoHint from '@/components/common/InfoHint.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { useToast } from '@/composables/useToast'
 import { EXERCISE_CATEGORY_LABELS, EXERCISE_CATEGORY_META, EXERCISE_EQUIPMENT_LABELS } from '@/config/domain'
@@ -75,14 +77,6 @@ function muscleLine(e: ExerciseRecord): string {
   return EXERCISE_CATEGORY_LABELS[e.category]
 }
 
-function subtitleOf(e: ExerciseRecord): string {
-  const bits: string[] = []
-  if (e.equipment) bits.push(EXERCISE_EQUIPMENT_LABELS[e.equipment])
-  if (e.sessions > 0) bits.push(`练过 ${e.sessions} 次`)
-  else bits.push('还没练过')
-  return bits.join(' · ')
-}
-
 function openDetail(e: ExerciseRecord): void {
   detail.value = e
   detailOpen.value = true
@@ -113,17 +107,23 @@ function onSaved(e: ExerciseRecord): void {
 
 <template>
   <div class="page">
-    <PageHeader
-      back
-      title="动作库"
-      :subtitle="`${lib.list.length} 个动作 · 课程的唯一动作来源`"
-    />
+    <PageHeader back title="动作库" :subtitle="`${lib.list.length} 个动作`">
+      <!-- 「课程的唯一动作来源」是系统设计事实：收进页头帮助入口，副标题只留计数 -->
+      <template #action>
+        <span class="hdr-btn">
+          <InfoHint
+            title="动作来源"
+            content="课程里添加动作时只能从本页挑选 —— 这里是课程的唯一动作来源。"
+          />
+        </span>
+      </template>
+    </PageHeader>
     <!-- 超范围平移层：页头留在层外，到边拖动时只有内容位移（system/rubberScroll） -->
     <div class="rubber-layer" data-rubber-content>
 
     <div class="searchrow row">
       <Search :size="15" />
-      <input v-model="kw" class="search" type="search" placeholder="搜索动作名或别名" aria-label="搜索动作" />
+      <input v-model="kw" class="search" type="search" placeholder="搜索动作名" aria-label="搜索动作" />
       <button class="filterbtn row" type="button" @click="filterOpen = true">
         <SlidersHorizontal :size="14" />
         <span>筛选</span>
@@ -162,7 +162,13 @@ function onSaved(e: ExerciseRecord): void {
                 <b v-if="e.isCustom" class="tag">自建</b>
                 <b v-if="e.hidden" class="tag muted">已隐藏</b>
               </span>
-              <span class="emeta t-3">{{ muscleLine(e) }} · {{ subtitleOf(e) }}</span>
+              <!-- 肌群是主信息（胶囊），器材与次数降一档、竖线分开：同一行不再四件事平铺 -->
+              <span class="emeta">
+                <PillChip tone="muted" size="sm">{{ muscleLine(e) }}</PillChip>
+                <span v-if="e.equipment" class="esub">{{ EXERCISE_EQUIPMENT_LABELS[e.equipment] }}</span>
+                <span v-if="e.sessions > 0" class="esub">练过 <b class="num">{{ e.sessions }}</b> 次</span>
+                <span v-else class="esub">还没练过</span>
+              </span>
             </span>
             <ChevronRight :size="16" class="t-3" />
           </button>
@@ -335,7 +341,7 @@ function onSaved(e: ExerciseRecord): void {
 }
 
 .starbtn.on {
-  color: #e8a33d;
+  color: var(--warn);
 }
 
 .list li + li {
@@ -365,11 +371,34 @@ function onSaved(e: ExerciseRecord): void {
   color: var(--text-3);
 }
 
+/* 元信息行：肌群胶囊（主）+ 器材/次数（次，竖线分开）。胶囊不收缩，
+   次数那截超长时省略号收尾。 */
 .emeta {
-  font-size: var(--fs-caption);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.emeta .chip {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.esub {
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-size: var(--fs-caption);
+  color: var(--text-3);
+}
+
+/* 竖线分隔：与肌群胶囊的「·」不是同一枚分隔符，两层信息不同符 */
+.esub + .esub {
+  padding-left: 7px;
+  border-left: 0.5px solid var(--line);
 }
 
 .newrow {
@@ -394,7 +423,7 @@ function onSaved(e: ExerciseRecord): void {
    81 个动作在 970px 里一行一名、右边空掉大半行，是手机版被拉宽的痕迹。
    桌面上摊成两栏流 —— 动作库是**无序清单**，分栏后「先读完左栏再读右栏」不影响理解。
 
-   为什么用多栏流（columns）而不是 grid：副标题「肌群 · 器材 · 练过几次」长短不一、
+   为什么用多栏流（columns）而不是 grid：行里的元信息（肌群胶囊 + 器材 / 练过几次）长短不一、
    名字也会换行，条目高度是参差的；grid 会把同一行的两条一起撑到较高那条，
    一屏下来全是锯齿状空白，多栏流则是自然瀑布。
 

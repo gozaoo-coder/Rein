@@ -10,8 +10,9 @@ import type { GrabSettings } from '@/types'
  * 用户调完只看到任务开始跑了，却看不出自己刚把哪一段拉长了。所以这里把循环摊开：
  * 每一段可调的延迟画成一根**按真实比例**伸缩的条，再用引导线把「它叫什么、现在是多少」拉出来。
  *
- * 四条泳道，**各有各的刻度**：提前量是毫秒级、重试是秒级，硬塞进一个刻度里
- * 要么把毫秒压成看不见、要么把秒级的差异抹平。每条泳道的满宽代表多少时间写在右上角。
+ * 四条泳道，**各有各的刻度**：提前量、重试、退避的量级差着几十倍，
+ * 硬塞进一个刻度里要么把小的压成看不见、要么把大的差异抹平。
+ * 每条泳道的满宽代表多少时间写在右上角，单位一律是毫秒 —— 和旋钮上一致。
  *
  * 两条互斥的路径（满员 / 出错）**分开画**：它们不会同时发生，
  * 排成一条会让人以为「满员之后还要再退避一次」。
@@ -52,25 +53,37 @@ interface Lane {
   endAt?: number
 }
 
-/** 给人读的时长：口语里没人说「2000 毫秒」，所以按量级换成秒/分 */
-function fmt(ms: number): string {
-  if (ms >= 60_000) return `${Math.round(ms / 60_000)} 分`
-  if (ms >= 1000) {
-    const s = ms / 1000
-    return `${Number.isInteger(s) ? s : s.toFixed(1)} 秒`
-  }
+/**
+ * 参数值：一律毫秒，图上也只说毫秒。
+ *
+ * 参数名自己就带 `Ms`（`leadMs` / `pollIntervalMs` / `minIntervalMs`），
+ * 图上写成「2 秒」而下面的旋钮写着「2000 ms」，是在同一屏里给同一件事两种说法 ——
+ * 对照着调参数的人会被迫自己做换算。原先东一处 `fmt()`（秒）西一处 `fmtMs()`（ms），
+ * 同一张图里混着三种写法；现在只剩这一份，要给人读的秒/分去改旋钮上的单位。
+ */
+function fmtMs(ms: number): string {
   return `${Math.round(ms)} ms`
 }
 
 /**
- * 参数值：一律毫秒。
+ * 参数的中文名 —— 与抽屉里旋钮上的标签同一份。
  *
- * 参数名自己就带 `Ms`（`leadMs` / `pollIntervalMs` / `minIntervalMs`），
- * 图上写成「2 秒」而下面的旋钮写着「2000 ms」，是在同一屏里给同一件事两种说法 ——
- * 对照着调参数的人会被迫自己做换算。
+ * 引导线标签原先把字段名原样印在图上（`leadMs` / `minIntervalMs`…）：用户没法把
+ * 一整行 camelCase 缩写和刚调过的旋钮对上号。字段名只留在代码里，界面上说人话。
+ * 「退避间隔 / 退避上限」两个参数不进旋钮（见 GrabSettingsSheet 的说明），
+ * 名字沿用那边注释里的同一套说法。
  */
-function fmtMs(ms: number): string {
-  return `${Math.round(ms)} ms`
+const KEY_LABEL: Partial<Record<keyof GrabSettings, string>> = {
+  minIntervalMs: '两次提交的最小间隔',
+  leadMs: '开窗前提前出手',
+  pollIntervalMs: '查结果间隔',
+  fullRetryMs: '满员后重试间隔',
+  backoffMs: '退避间隔',
+  maxBackoffMs: '退避上限',
+}
+
+function segLabel(seg: Seg): string {
+  return (seg.key && KEY_LABEL[seg.key]) || ''
 }
 
 const s = computed(() => props.settings)
@@ -149,9 +162,11 @@ const lanes = computed<Lane[]>(() => {
     {
       id: 'error',
       title: '出错时',
-      hint: `连败才退避：${fmt(b1)} → ${fmt(b2)} → 封顶 ${fmt(b3)}`,
+      // 提示行只留形状（连败多久之后多等一档）；封顶值由下面的刻度标签承载，
+      // 同一泳道里同一件事不说两遍
+      hint: `连败才退避：${fmtMs(b1)} → ${fmtMs(b2)}`,
       span: spanD,
-      marks: [{ at: b1 + b2 + b3, label: `封顶 ${fmt(v.maxBackoffMs)}` }],
+      marks: [{ at: b1 + b2 + b3, label: `封顶 ${fmtMs(v.maxBackoffMs)}` }],
       segs: [
         { key: 'backoffMs', text: '第 1 次', ms: b1, tone: 'accent' },
         { key: 'backoffMs', text: '第 2 次', ms: b2, tone: 'accent' },
@@ -260,8 +275,8 @@ const rateWord = computed(() =>
       <g v-for="({ lane, placed }, li) in board" :key="lane.id" :transform="`translate(0 ${li * LANE_H})`">
         <text class="lane-title" :x="PAD" y="11">{{ lane.title }}</text>
         <text class="lane-hint" :x="PAD" y="21">{{ lane.hint }}</text>
-        <text class="lane-scale" :x="W - PAD" y="11" text-anchor="end">
-          满宽 = {{ lane.span < 1000 ? `${lane.span}ms` : `${Math.round(lane.span / 1000)}s` }}
+        <text class="lane-scale num" :x="W - PAD" y="11" text-anchor="end">
+          满宽 = {{ fmtMs(lane.span) }}
         </text>
 
         <line class="base" :x1="PAD" :y1="34" :x2="W - PAD" :y2="34" />
@@ -293,8 +308,8 @@ const rateWord = computed(() =>
             <circle class="dot" :cx="b.cx" cy="42" r="2" />
             <line class="leader" :x1="b.cx" :y1="42" :x2="b.cx" :y2="56" />
             <line class="leader" :x1="b.cx" :y1="56" :x2="b.lx + 5" :y2="56" />
-            <text class="seg-label" :class="{ hot: b.seg.key === active }" :x="b.lx" y="70">
-              {{ b.seg.key }} = {{ fmtMs(b.seg.ms) }}
+            <text class="seg-label num" :class="{ hot: b.seg.key === active }" :x="b.lx" y="70">
+              {{ segLabel(b.seg) }} = {{ fmtMs(b.seg.ms) }}
             </text>
           </template>
         </g>
@@ -345,7 +360,7 @@ const rateWord = computed(() =>
 
 .rate.warn {
   color: var(--warn-strong);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  background: var(--warn-soft);
 }
 
 .rate.bad {
@@ -402,6 +417,7 @@ const rateWord = computed(() =>
 .mark-label {
   fill: var(--text-2);
   font-size: 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 .seg {

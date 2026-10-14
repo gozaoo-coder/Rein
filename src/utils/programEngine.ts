@@ -90,18 +90,18 @@ export interface WeekTemplate {
 
 const WEEK_TEMPLATES: Record<'gym' | 'home', WeekTemplate[]> = {
   gym: [
-    { id: 'gym-3', label: '三练 · 全身×3（每肌群 3 次/周）', days: ['gym-fullbody', null, 'gym-fullbody', null, 'gym-fullbody', null, null] },
-    { id: 'gym-4', label: '四练 · 上下×2（每肌群 2 次/周）', days: ['gym-upper', 'gym-lower', null, 'gym-upper', 'gym-lower', null, null] },
-    { id: 'gym-5', label: '五练 · 推拉腿加上下（每肌群 2 次/周）', days: ['ppl-push', 'ppl-pull', 'ppl-legs', null, 'gym-upper', 'gym-lower', null] },
-    { id: 'gym-6', label: '六练 · 推拉腿上下核（每肌群 2 次/周）', days: ['ppl-push', 'ppl-pull', 'ppl-legs', 'gym-upper', 'gym-lower', 'core', null] },
-    { id: 'gym-7', label: '七练 · 推拉腿循环（每肌群 2 次/周）', days: ['ppl-push', 'ppl-pull', 'ppl-legs', 'gym-upper', 'gym-lower', 'home-hiit', 'core'] },
+    { id: 'gym-3', label: '全身×3（每肌群 3 次/周）', days: ['gym-fullbody', null, 'gym-fullbody', null, 'gym-fullbody', null, null] },
+    { id: 'gym-4', label: '上下×2（每肌群 2 次/周）', days: ['gym-upper', 'gym-lower', null, 'gym-upper', 'gym-lower', null, null] },
+    { id: 'gym-5', label: '推拉腿加上下（每肌群 2 次/周）', days: ['ppl-push', 'ppl-pull', 'ppl-legs', null, 'gym-upper', 'gym-lower', null] },
+    { id: 'gym-6', label: '推拉腿上下核（每肌群 2 次/周）', days: ['ppl-push', 'ppl-pull', 'ppl-legs', 'gym-upper', 'gym-lower', 'core', null] },
+    { id: 'gym-7', label: '推拉腿循环（每肌群 2 次/周）', days: ['ppl-push', 'ppl-pull', 'ppl-legs', 'gym-upper', 'gym-lower', 'home-hiit', 'core'] },
   ],
   home: [
-    { id: 'home-3', label: '居家三练 · 全身上下（每肌群 2 次/周）', days: ['home-fullbody', null, 'home-upper', null, 'home-lower', null, null] },
-    { id: 'home-4', label: '居家四练 · 加燃脂间歇（每肌群 2 次/周）', days: ['home-fullbody', 'home-upper', null, 'home-lower', null, 'home-hiit', null] },
-    { id: 'home-5', label: '居家五练 · 循环加量（每肌群 2 次/周）', days: ['home-fullbody', 'home-upper', 'home-lower', null, 'home-hiit', 'core', null] },
-    { id: 'home-6', label: '居家六练 · 高频循环（每肌群 3 次/周）', days: ['home-fullbody', 'home-upper', 'home-lower', 'home-hiit', 'home-fullbody', 'core', null] },
-    { id: 'home-7', label: '居家七练 · 每日循环（每肌群 3 次/周）', days: ['home-fullbody', 'home-upper', 'home-lower', 'home-hiit', 'home-upper', 'home-lower', 'core'] },
+    { id: 'home-3', label: '全身上下（每肌群 2 次/周）', days: ['home-fullbody', null, 'home-upper', null, 'home-lower', null, null] },
+    { id: 'home-4', label: '加燃脂间歇（每肌群 2 次/周）', days: ['home-fullbody', 'home-upper', null, 'home-lower', null, 'home-hiit', null] },
+    { id: 'home-5', label: '循环加量（每肌群 2 次/周）', days: ['home-fullbody', 'home-upper', 'home-lower', null, 'home-hiit', 'core', null] },
+    { id: 'home-6', label: '高频循环（每肌群 3 次/周）', days: ['home-fullbody', 'home-upper', 'home-lower', 'home-hiit', 'home-fullbody', 'core', null] },
+    { id: 'home-7', label: '每日循环（每肌群 3 次/周）', days: ['home-fullbody', 'home-upper', 'home-lower', 'home-hiit', 'home-upper', 'home-lower', 'core'] },
   ],
 }
 

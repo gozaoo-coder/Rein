@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   AlertTriangle,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
@@ -26,6 +25,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
+import StatusChip from '@/components/common/StatusChip.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
@@ -251,6 +251,23 @@ function grabChip(l: CourseSelectLesson): { label: string; tone: string } | null
   return grabStatusMeta(t)
 }
 
+/** 抢课状态折算成 StatusChip 的语义档：store 侧是 run/ok/warn/bad/idle 五态，
+ *  run 落 accent（进行中）、idle 落 neutral（已取消/暂停这类无色彩状态） */
+function grabTone(tone: string): 'accent' | 'ok' | 'warn' | 'danger' | 'neutral' {
+  switch (tone) {
+    case 'ok':
+      return 'ok'
+    case 'warn':
+      return 'warn'
+    case 'bad':
+      return 'danger'
+    case 'idle':
+      return 'neutral'
+    default:
+      return 'accent'
+  }
+}
+
 async function onRefresh(): Promise<void> {
   refresh.value = true
   try {
@@ -381,7 +398,7 @@ watch(
 const lessonsAge = computed(() => {
   if (!lessonsAt.value) return ''
   const s = Math.max(0, Math.floor((stampNow.value - lessonsAt.value) / 1000))
-  if (s < 10) return '刚刚'
+  // 不满一分钟一律落到秒：「刚刚」档看不出是 2 秒还是 9 秒，而这句存在的全部理由就是新鲜度
   return s < 60 ? `${s} 秒前` : `${Math.floor(s / 60)} 分钟前`
 })
 
@@ -589,7 +606,7 @@ onBeforeUnmount(() => {
   <div class="page">
     <PageHeader
       :title="store.activeTurn ? '选择教学班' : '选课'"
-      :subtitle="store.activeTurn ? String(store.activeTurn.name ?? '') : '直连教务选课接口'"
+      :subtitle="store.activeTurn ? String(store.activeTurn.name ?? '') : '直接向教务提交选课'"
       back
     >
       <template #action>
@@ -600,10 +617,11 @@ onBeforeUnmount(() => {
           <span v-if="failedCount" class="badge num" aria-hidden="true">{{ failedCount }}</span>
         </RouterLink>
         <!-- 多选是个**模式**：开着的时候点整行不再是「打开设置」而是「追加一个志愿」。
-           一旦这个模式滚出视野，用户就没有任何线索知道自己处在哪种解释里了 ——
-           所以它的状态与出口交给**页头**（本来就吸顶），而不是列表顶上那条会滚走的工具条 -->
+             一旦这个模式滚出视野，用户就没有任何线索知道自己处在哪种解释里了 ——
+             所以它的状态与出口交给**页头**（本来就吸顶），而不是列表顶上那条会滚走的工具条。
+             出口只此一个：件数交给工具条的「已选 N」，这里不再跟一个「· 3」 -->
         <button v-if="store.selectMode" class="exit-sel" @click="store.exitSelect()">
-          退出多选<template v-if="store.selectedLessons.length"> · {{ store.selectedLessons.length }}</template>
+          退出多选
         </button>
         <template v-else>
           <button class="hdr-btn" aria-label="抢课节奏设置" @click="settingsOpen = true">
@@ -622,19 +640,19 @@ onBeforeUnmount(() => {
       v-if="!campus.hasAccount"
       :icon="AlertTriangle"
       title="还没有绑定教务系统账号"
-      hint="选课要用教务的登录态换令牌，先去「课表配置」登录一次"
+      hint="选课要先用教务账号登录 —— 先去「课表配置」登录一次"
     >
       <template #action>
         <RouterLink :to="{ name: 'campus-settings' }" class="cta">去配置</RouterLink>
       </template>
     </EmptyState>
 
-    <!-- 会话过期时给一条明确的路：选课令牌是拿教务会话换来的，重登一次即可恢复 -->
+    <!-- 会话过期时给一条明确的路：重登一次即可恢复（不再抛「登录态/令牌」术语） -->
     <EmptyState
       v-else-if="store.error"
       :icon="AlertTriangle"
       :title="store.error"
-      :hint="isSessionLostMessage(store.error) ? '选课令牌要用教务登录态换取，重新登录一次就能恢复' : '下拉刷新或稍后再试'"
+      :hint="isSessionLostMessage(store.error) ? '重新登录一次就能恢复' : '下拉刷新或稍后再试'"
     >
       <template v-if="isSessionLostMessage(store.error)" #action>
         <RouterLink :to="{ name: 'campus-settings' }" class="cta">去重新登录</RouterLink>
@@ -723,25 +741,23 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <!-- 名单是几秒前拉的。座位数每一秒都在变，而「已选 118 / 120」看上去永远是
+        <!-- 名单是几秒前拉的。座位数每一秒都在变，而「已选 118 / 120 人」看上去永远是
              当下的数字 —— 抢课当天，一份 90 秒前的名单和一份 3 秒前的名单，
-             看到的是同一行字，前者却可能已经没位了 -->
+             看到的是同一行字，前者却可能已经没位了。
+             量词提前成「名单 · N 秒前更新」：不再有「更新于 刚刚」这种病句 -->
         <p v-if="lessonsAge" class="fresh">
           <Clock :size="12" />
-          名单更新于 {{ lessonsAge }}
+          名单 · {{ lessonsAge }}更新
         </p>
 
         <!-- 多选工具条：模式的**状态与出口**在吸顶的页头里（见上面那个分支），
-             这里放的是「进入多选」和「批量下单」这两个动作本身 -->
+             这里放的是「进入多选」和「批量下单」这两个动作本身。
+             「退出多选」只出现在页头 —— 同一标签不在两处各写一遍 -->
         <div class="pick-bar">
-          <button
-            class="mini"
-            :class="{ on: store.selectMode }"
-            @click="store.selectMode ? store.exitSelect() : (store.selectMode = true)"
-          >
-            {{ store.selectMode ? '退出多选' : '多选预定' }}
+          <button v-if="!store.selectMode" class="mini" @click="store.selectMode = true">
+            多选预定
           </button>
-          <span v-if="store.selectMode" class="count">已选 {{ store.selectedLessons.length }}</span>
+          <span v-if="store.selectMode" class="count">已选 <b class="num">{{ store.selectedLessons.length }}</b></span>
           <button
             v-if="store.selectMode"
             class="mini primary-mini"
@@ -783,23 +799,35 @@ onBeforeUnmount(() => {
               <span class="l-top">
                 <span v-if="store.selectMode" class="tick" :class="{ on: isSelected(l) }" />
                 <span class="l-name">{{ lessonTitle(l) }}</span>
-                <span v-if="picked(l)" class="chip ok">已选</span>
-                <span v-else-if="full(l)" class="chip bad">已满</span>
-                <!-- 余量挨着课名：抢课当天最稀缺的就是座位，它该在视线落点上 -->
-                <span v-if="seatText(l)" class="seats num">{{ seatText(l) }}</span>
+                <!-- 既成事实交给课名旁的胶囊（soft 底 + strong 字，走 StatusChip）。
+                     class="chip" 是 e2e 选择器的钩子（scripts/e2e-course-select.mjs 断言 .chip.ok） -->
+                <StatusChip v-if="picked(l)" class="chip" tone="ok">已选</StatusChip>
+                <StatusChip v-else-if="full(l)" class="chip" tone="danger">已满</StatusChip>
+                <!-- 余量挨着课名：抢课当天最稀缺的就是座位，它该在视线落点上。
+                     标签与单位各自一档，读成「已选 118 / 120 人」 -->
+                <span v-if="seatText(l)" class="seats">
+                  <span class="seats-cap">已选</span>
+                  <span class="num">{{ seatText(l) }}</span>
+                  <span class="seats-unit">人</span>
+                </span>
               </span>
               <!-- 选班的依据：谁在教、什么时候上。一门课挂 7 个教学班时，
-                   这两项才是用户真正在比较的东西 —— 藏进抽屉等于让他逐个点开背下来 -->
+                   这两项才是用户真正在比较的东西 —— 藏进抽屉等于让他逐个点开背下来。
+                   主依据（教师 + 上课时间）与核对用的事实（代码 / 学分 / 小组）分两档 -->
               <span class="l-meta">
-                <span v-if="lessonCode(l)" class="num">{{ lessonCode(l) }}</span>
-                <span v-if="teacherText(l)">{{ teacherText(l) }}</span>
-                <span v-if="l.course?.credits != null">{{ l.course.credits }} 学分</span>
-                <span v-if="l.scheduleGroups?.length">{{ l.scheduleGroups.length }} 个小组</span>
-                <span v-if="isSelected(l)" class="num ord">第 {{ ordOf(l) }} 志愿</span>
+                <span class="l-key">
+                  <span v-if="teacherText(l)">{{ teacherText(l) }}</span>
+                  <span v-if="scheduleTextOf(l)" class="l-sched">{{ scheduleTextOf(l) }}</span>
+                </span>
+                <span class="l-facts">
+                  <span v-if="lessonCode(l)" class="num">{{ lessonCode(l) }}</span>
+                  <span v-if="l.course?.credits != null">{{ l.course.credits }} 学分</span>
+                  <span v-if="l.scheduleGroups?.length">{{ l.scheduleGroups.length }} 个小组</span>
+                  <span v-if="isSelected(l)" class="num ord">第 {{ ordOf(l) }} 志愿</span>
+                </span>
               </span>
               <!-- 同门课的班分得开：项目名当标题时，课程名与教学班名（院系在里面）落到这里 -->
               <span v-if="lessonSubtitle(l)" class="l-meta dim l-sched">{{ lessonSubtitle(l) }}</span>
-              <span v-if="scheduleTextOf(l)" class="l-meta dim l-sched">{{ scheduleTextOf(l) }}</span>
             </button>
 
             <!-- 多选模式下右槽让给「调顺序」：顺序**就是**志愿序，而它原先只能靠点按的
@@ -824,25 +852,24 @@ onBeforeUnmount(() => {
               </button>
             </span>
 
-            <!-- 已在任务单里：显示引擎给的状态，而不是再给一个按钮 -->
-            <span
+            <!-- 已在任务单里：显示引擎给的状态，而不是再给一个按钮。
+                 class="chip grab" 同样保留给 e2e 选择器（scripts/e2e-auto-grab.mjs） -->
+            <StatusChip
               v-else-if="grabChip(l) && !store.selectMode"
               class="chip grab"
-              :class="grabChip(l)!.tone"
-            >{{ grabChip(l)!.label }}</span>
-            <!-- 已选中的课不该变成一块点不动的砖：这颗按钮改成「查看」的语义，
-                 点开是对这门课当前设置的只读回执。
-                 标签也说实话 —— 它打开的是**设置**，不是「立刻出手」；
+              :tone="grabTone(grabChip(l)!.tone)"
+            >{{ grabChip(l)!.label }}</StatusChip>
+            <!-- 已选中的课不该变成一块点不动的砖：这颗按钮永远打开设置抽屉。
+                 标签说实话 —— 它打开的是**设置**，不是「立刻出手」；
+                 「已选」这个既成事实由课名旁的胶囊承担，按钮不再复读一遍。
                  真正的「立刻出手」是长按整行（加速器） -->
             <button
               v-else-if="!store.selectMode"
               class="pick"
-              :class="{ picked: picked(l) }"
               :disabled="store.grabBusy"
               @click="openSheet(l)"
             >
-              <template v-if="picked(l)"><Check :size="14" /> 已选</template>
-              <template v-else><Settings2 :size="14" /> 配置抢课</template>
+              <Settings2 :size="14" /> 查看设置
             </button>
           </li>
         </ul>
@@ -1024,7 +1051,7 @@ onBeforeUnmount(() => {
 }
 
 .primary:disabled {
-  opacity: 0.45;
+  opacity: var(--disabled-opacity);
 }
 
 /* ---------- 空态出口 ---------- */
@@ -1110,7 +1137,7 @@ onBeforeUnmount(() => {
 }
 
 .go:disabled {
-  opacity: 0.5;
+  opacity: var(--disabled-opacity);
 }
 
 .progress {
@@ -1155,11 +1182,27 @@ onBeforeUnmount(() => {
    是两个完全不同的处境），所以放在视线落点上、用正文色，而不是埋进 11px 灰字里 */
 .seats {
   flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-2);
   margin-left: auto;
   padding-left: 8px;
+}
+
+/* 「已选」是标签、「人」是单位：都比数字本身小一档，不再是没单位的裸数字对 */
+.seats-cap {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.seats-unit {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  color: var(--text-3);
 }
 
 .l-name {
@@ -1170,60 +1213,38 @@ onBeforeUnmount(() => {
   word-break: break-all;
 }
 
-.chip {
-  flex: none;
-  font-size: var(--fs-micro);
-  font-weight: 700;
-  padding: 1px 7px;
-  border-radius: var(--radius-full);
-}
+/* 行上的状态胶囊（已选 / 已满 / 抢课状态）一律用 StatusChip 承载语义色；
+   模板里仍带 class="chip"（+ grab）只是 e2e 选择器的钩子，样式不再手写 */
 
-.chip.ok {
-  color: var(--ok-strong);
-  background: var(--ok-soft);
-}
-
-.chip.bad {
-  color: var(--danger-strong);
-  background: var(--danger-soft);
-}
-
-.chip.grab {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-.chip.grab.ok {
-  color: var(--ok-strong);
-  background: var(--ok-soft);
-}
-
-.chip.grab.warn {
-  color: var(--warn-strong);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-}
-
-.chip.grab.bad {
-  color: var(--danger-strong);
-  background: var(--danger-soft);
-}
-
-.chip.grab.idle {
-  color: var(--text-2);
-  background: var(--surface-2);
-}
-
+/* 副信息分两档：主依据（谁在教、什么时候上）与核对用的事实（代码 / 学分 / 小组）。
+   两档都是 --text-2 —— 11px 的 --text-3 在亮色下只有 2.5:1，那是把要做决定的信息藏起来 */
 .l-meta {
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+/* 主依据：选班时真正在比较的东西，比事实行大一档 */
+.l-key {
+  display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 2px 12px;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.l-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
 
 /* 「N 个小组」与上课时间：都是**用来做决定的信息**（哪个班、什么时候上），
-   不是装饰。11px 的 --text-3 在亮色下只有 2.5:1、暗色下更低 —— 那等于把它们藏起来，
-   而它们恰恰是列表存在的理由。降级到 --text-2 就够：层级还在（比课名弱），读得出来 */
+   不是装饰 —— 降级到 --text-2 就够：层级还在（比课名弱），读得出来 */
 .l-meta.dim {
   color: var(--text-2);
 }
@@ -1270,14 +1291,6 @@ onBeforeUnmount(() => {
   color: var(--text-3);
 }
 
-/* 已选：从「蓝底白字的行动」变成「淡蓝底的既成事实」。
-   两颗按钮的差别是语义上的（一个让你去抢、一个已经抢到了），颜色要跟着变；
-   顺带也把它从白字压蓝底（4.0:1）抬到 accent-strong 压 accent-soft（4.6:1） */
-.pick.picked {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
 /* 调序的两个圆钮：占的是「抢课」胶囊在多选模式下本来就不显示的那个位置，
    所以不会挤掉任务行里的任何信息 */
 .ord-ops {
@@ -1313,7 +1326,7 @@ onBeforeUnmount(() => {
 }
 
 .ord-op:disabled {
-  opacity: 0.35;
+  opacity: var(--disabled-opacity);
   color: var(--text-3);
 }
 
@@ -1349,11 +1362,6 @@ onBeforeUnmount(() => {
   inset: -8px 0;
 }
 
-.mini.on {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
 .mini.primary-mini {
   background: var(--accent);
   color: var(--on-accent);
@@ -1361,7 +1369,7 @@ onBeforeUnmount(() => {
 }
 
 .mini:disabled {
-  opacity: 0.4;
+  opacity: var(--disabled-opacity);
 }
 
 .count {
@@ -1376,21 +1384,22 @@ onBeforeUnmount(() => {
   position: absolute;
   top: -3px;
   right: -3px;
-  min-width: 17px;
-  height: 17px;
+  min-width: 18px;
+  height: 18px;
   padding: 0 4px;
   border-radius: var(--radius-full);
   background: var(--danger);
   color: var(--on-accent);
-  font-size: 10px;
+  font-size: var(--fs-micro);
   font-weight: 700;
-  line-height: 17px;
+  line-height: 18px;
   text-align: center;
   box-shadow: 0 0 0 2px var(--surface);
 }
 
-/* 多选的退出键：材质与页头那两颗圆钮一致（surface + 卡片阴影 + 同高），
-   但它是胶囊配文字 —— 它说的是一句话（还开着、已选几个），不是一个图标动作 */
+/* 多选的退出键：材质与页头那两颗圆钮一致（surface + 卡片-shadow + 同高），
+   但它是胶囊配文字 —— 它说的是一句话（还开着多选），不是一个图标动作。
+   件数不在这里重复：工具条的「已选 N」是唯一报数的地方 */
 .exit-sel {
   flex: none;
   display: flex;

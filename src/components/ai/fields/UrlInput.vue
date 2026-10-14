@@ -90,11 +90,11 @@ function reset(): void {
       >
       <button v-if="canReset" type="button" class="reset" @click="reset">
         <RotateCcw :size="12" />
-        默认
+        恢复默认
       </button>
     </div>
     <p v-if="invalid" class="hint warn">
-      地址要以 {{ schemes.join(' / ') }} 开头
+      地址要以 {{ schemes.join(' 或 ') }} 开头
     </p>
     <p v-else-if="hint" class="hint t-3">{{ hint }}</p>
   </div>
