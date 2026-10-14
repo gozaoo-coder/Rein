@@ -262,7 +262,7 @@ async function onConfirmDelete(value: string): Promise<void> {
 
     <ActionSheet
       :open="confirmDel"
-      title="删除这笔账目？"
+      title="删除后这笔账目从账本与月度统计中移除，无法恢复"
       :actions="[{ label: '删除', value: 'delete', danger: true }]"
       @select="onConfirmDelete"
       @close="confirmDel = false"

@@ -1378,7 +1378,9 @@ watch(immersiveOpen, (open) => {
               </button>
             </SessionGlassButton>
             <SessionGlassButton h="var(--imm-btn-h)">
-              <button class="ghost danger" @click="s.abortTimed()">放弃</button>
+              <!-- 放弃未完成的事：浅灰次按钮（与实底主行动「完成」拉开层级），
+                   不铺危险色——红色留给确认层里那枚真破坏项 -->
+              <button class="ghost" @click="s.abortTimed()">放弃</button>
             </SessionGlassButton>
             <button class="primary flex-1" @click="s.finishTimed()">完成</button>
           </template>
@@ -1388,7 +1390,8 @@ watch(immersiveOpen, (open) => {
                不在底簇里，既够不着拇指，也和别的阶段不是一个地方 -->
           <template v-else-if="dockMode === 'summary'">
             <SessionGlassButton h="var(--imm-btn-h)">
-              <button class="ghost danger" @click="endOpen = true">放弃不保存</button>
+              <!-- 同 timed 的「放弃」：放弃未完成的事走浅灰次按钮，实底主按钮是「保存训练」 -->
+              <button class="ghost" @click="endOpen = true">放弃不保存</button>
             </SessionGlassButton>
             <button class="primary flex-1" @click="saveNow">保存训练</button>
           </template>
@@ -1412,10 +1415,11 @@ watch(immersiveOpen, (open) => {
         @close="onReadinessClose"
       />
 
-      <!-- 结束（二级确认）：只有这里才算正常结束 -->
+      <!-- 结束（二级确认）：只有这里才算正常结束。
+           标题说后果不说规定：写清「放弃」具体丢什么、「结束并保存」留下什么 -->
       <ActionSheet
         :open="endOpen"
-        title="结束本次训练？"
+        title="放弃会丢失本次训练已做的全部组数；结束并保存则留下这次记录"
         :actions="[
           { label: '结束并保存', value: 'save' },
           { label: '放弃本次训练（不保存）', value: 'discard', danger: true },
@@ -1890,7 +1894,9 @@ watch(immersiveOpen, (open) => {
 }
 
 .qseg.rec .qval {
-  color: var(--c-exercise-deep);
+  /* 候选值是数值：中性色（色彩配额，STANDARDS §4）。主推候选的「抬起来」
+     由白底 + 投影承担，不靠给文字上色。 */
+  color: var(--text-1);
 }
 
 /* 建议依据：全宽左对齐的展开行（从前是居中飘着的一行小字，看不出可点） */
@@ -1942,7 +1948,8 @@ watch(immersiveOpen, (open) => {
 
 .wstep.done {
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  /* 「✓ 60 kg × 10」是登记值：数值中性色，色相留在 soft 底的色块上（色彩配额，STANDARDS §4） */
+  color: var(--text-1);
 }
 
 /* 热身组格：重量标注，小一号 */
@@ -2098,10 +2105,11 @@ watch(immersiveOpen, (open) => {
     transform var(--dur-fast) var(--ease-standard);
 }
 
-/* 已完成的组：全仓统一的完成态（soft 底 + 深色前景） */
+/* 已完成的组：全仓统一的完成态（soft 底 + 中性深色前景）。
+   组号是数值：走 --text-1，色相只留在 soft 底的色块上（色彩配额，STANDARDS §4） */
 .dtile.done {
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 /* 待完成（当前组）：抬起来的**中性填充**，不带色相也不带渐变 —— 与底部 Dock 的活动底

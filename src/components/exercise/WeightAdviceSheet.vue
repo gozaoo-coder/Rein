@@ -407,7 +407,8 @@ const lastDateShort = computed(() => {
 
 .nval.final {
   font-size: var(--fs-title3);
-  color: var(--c-exercise-deep);
+  /* 终点建议值是数值：中性色（色彩配额，STANDARDS §4）；「结论」地位由字号抬档表达 */
+  color: var(--text-1);
 }
 
 /* 因子条：低于 1.0 刻度线的就是今天拖后腿的那项 */

@@ -154,6 +154,7 @@ watch(
   padding: 8px 0;
   width: 100%;
   font-size: var(--fs-caption);
-  color: var(--c-exercise-deep);
+  /* 「查看更多」是次要标签文字：中性色（色彩配额，STANDARDS §4） */
+  color: var(--text-2);
 }
 </style>

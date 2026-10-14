@@ -313,7 +313,7 @@ async function removeCustom(): Promise<void> {
 
   <ActionSheet
     :open="confirmDelete"
-    title="删除这个自建动作？"
+    title="删除后这个自建动作从动作库移除，无法恢复；用它记录过的训练历史仍在"
     :actions="[{ label: '删除动作', value: 'del', danger: true }]"
     @select="(v: string) => (v === 'del' ? void removeCustom() : (confirmDelete = false))"
     @close="confirmDelete = false"
@@ -338,8 +338,10 @@ async function removeCustom(): Promise<void> {
   font-weight: 700;
   padding: 3px 10px;
   border-radius: var(--radius-full);
+  /* 「自建 / 已隐藏」是来源标签，不是类型字章：文字走中性色，
+     色相留在 soft 底的色块上（色彩配额，STANDARDS §4） */
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 .badge.muted {
@@ -395,8 +397,9 @@ async function removeCustom(): Promise<void> {
   width: 18px;
   height: 18px;
   border-radius: 50%;
+  /* 序号是数值：走中性色。色相只留在圆点底上（色点/标记图元，STANDARDS §4） */
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
   font-size: var(--fs-micro);
   font-weight: 700;
   line-height: 18px;

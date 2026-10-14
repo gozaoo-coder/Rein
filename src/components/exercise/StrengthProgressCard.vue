@@ -341,10 +341,11 @@ function onPick(key: string): void {
   transition: color var(--dur-fast) var(--ease-standard);
 }
 
-/* 轮播开启时用运动色点亮 —— 与下面的曲线同一个色，读作"这个动作正在被自动翻看" */
+/* 轮播开启时用运动色点亮底 —— 与下面的曲线同一个色，读作"这个动作正在被自动翻看"。
+   文字（「轮播中」）是按钮标签：走中性色，色相只留在 soft 底的色块上（色彩配额，STANDARDS §4） */
 .rotate[aria-pressed='true'] {
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 .cmeta {

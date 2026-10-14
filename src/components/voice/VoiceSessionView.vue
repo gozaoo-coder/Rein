@@ -1050,7 +1050,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
-  color: var(--led-shopping);
+  color: var(--text-1);
   animation: vbreathe 4s var(--ease-standard) infinite;
 }
 
@@ -1117,7 +1117,7 @@ onBeforeUnmount(() => {
   height: 34px;
   border-radius: var(--radius-s);
   background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
-  color: var(--led-shopping);
+  color: var(--text-1);
   display: flex;
   align-items: center;
   justify-content: center;

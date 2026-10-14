@@ -676,7 +676,7 @@ onMounted(async () => {
 
     <ActionSheet
       :open="confirmOpen"
-      title="确认删除该账号？"
+      title="删除后教务账号、课表与派生的日程待办一并清除，且无法恢复"
       :actions="dangerActions"
       @close="confirmOpen = false"
       @select="onDanger"

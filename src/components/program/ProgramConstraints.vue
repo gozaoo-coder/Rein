@@ -437,11 +437,20 @@ async function applyAndGenerate(): Promise<void> {
     transform var(--dur-fast) var(--ease-standard);
 }
 
+/* 选中态 = 中性墨色实底，不是强调色：这一屏同时有主 CTA、--accent-soft 条件预览框
+   与「添加」链接三处强调色（决策与去处），选中胶囊再铺蓝会让主按钮反而不突出。
+   明暗两档都成立：--text-1 亮色近黑 / 暗色近白，--bg 相反——与 SegmentedControl
+   （白胶囊压灰轨道的中性选中）是同一套语言。 */
 .chip.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+  background: var(--text-1);
+  border-color: var(--text-1);
+  color: var(--bg);
   font-weight: 700;
+}
+
+/* 可见按压态：选中未选中都走同一份缩放反馈（全局只给了 button 的过渡） */
+.chip:active {
+  transform: scale(0.96);
 }
 
 .custom-add {

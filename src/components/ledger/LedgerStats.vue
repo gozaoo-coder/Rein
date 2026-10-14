@@ -84,13 +84,16 @@ const trendEmpty = computed(() =>
 <template>
   <section class="card stats">
     <div class="nums">
+      <!-- 收支数字一律中性色（色彩配额，STANDARDS §4）：一屏里几个彩色数字会互相争
+           注意力，而颜色一旦从图元泄漏到文字上，就没有任何东西能再当「强调」。
+           领域色退到字段名前的 6px 色点上；红/绿的最终归宿是下方图表的柱与图例。 -->
       <div class="num-cell">
-        <em>本月支出</em>
-        <b class="num" style="color: var(--led-expense)">¥{{ fmtCents(spend) }}</b>
+        <em><i class="dot" style="background: var(--led-expense)" />本月支出</em>
+        <b class="num">¥{{ fmtCents(spend) }}</b>
       </div>
       <div class="num-cell">
-        <em>本月收入</em>
-        <b class="num" style="color: var(--led-income)">¥{{ fmtCents(income) }}</b>
+        <em><i class="dot" style="background: var(--led-income)" />本月收入</em>
+        <b class="num">¥{{ fmtCents(income) }}</b>
       </div>
       <div class="num-cell">
         <em>结余</em>
@@ -209,6 +212,15 @@ const trendEmpty = computed(() =>
   color: var(--text-3);
 }
 
+/* 字段名色点：6px。支出/收入两格的色相只留在这里（色点），数字本身回中性 */
+.num-cell .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  margin-right: 5px;
+  vertical-align: 0.1em;
+}
+
 .num-cell b {
   display: block;
   margin-top: 3px;
@@ -224,17 +236,16 @@ h3 {
   margin-bottom: 8px;
 }
 
+/* 「调整 / 设置预算」是按钮标签：中性色（色彩配额，STANDARDS §4）。
+   原为 danger / accent 两档彩字，且基色那条从没有生效过（预算区那颗才是真的链接）——
+   两档合成一个 --text-2，冗余覆写删掉。 */
 .link {
   padding: 4px 10px;
   border-radius: var(--radius-full);
   background: var(--surface-2);
   font-size: var(--fs-caption);
   font-weight: 600;
-  color: var(--danger);
-}
-
-.budget .link {
-  color: var(--accent);
+  color: var(--text-2);
 }
 
 .track {

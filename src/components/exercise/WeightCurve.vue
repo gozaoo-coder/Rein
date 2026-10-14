@@ -176,6 +176,8 @@ function shortDate(date: string): string {
   font-weight: 700;
 }
 
+/* 图例是图表的附属品（不是正文/标签文字）：涨跌两支色相随曲线保留，
+   与记账统计屏「图表的红绿柱与图例保留」同一条口径（色彩配额，STANDARDS §4） */
 .legend b.up {
   color: var(--c-exercise);
 }

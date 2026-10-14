@@ -840,10 +840,11 @@ function requestCloseEditor(): void {
               <button
                 v-if="confirmDel === m.id"
                 class="op del-arm"
-                aria-label="再点一次确认删除"
+                aria-label="确认删除"
+                title="再点一次即永久删除：这条记忆不再参与检索与 AI 整理，无法恢复"
                 @click="tapDeleteMemory(m.id)"
               >
-                删除?
+                确认删除
               </button>
               <button
                 v-else

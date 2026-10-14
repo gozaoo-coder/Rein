@@ -617,7 +617,11 @@ function handToAi(): void {
               v-if="row.t.status === 'success' || row.t.status === 'cancelled'"
               class="op"
               :class="{ danger: pendingRemove === row.t.id }"
-              :title="pendingRemove === row.t.id ? '再点一次确认移除' : '移除'"
+              :title="
+                pendingRemove === row.t.id
+                  ? `再点一次确认移除「${title(row.t)}」：这条抢课记录将不再显示，也无法恢复`
+                  : '移除'
+              "
               :aria-label="pendingRemove === row.t.id ? '确认移除' : '移除'"
               @click="askRemove(row.t.id)"
             >

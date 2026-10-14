@@ -241,7 +241,8 @@ async function onSync(): Promise<void> {
           打开官方选课页核对 <ExternalLink :size="12" />
         </a>
         <button class="link" :class="{ danger: confirmClean }" @click="askClean">
-          {{ confirmClean ? '确认清空这些记录？' : `清掉这 ${tasks.length} 条记录` }}
+          <!-- 武装态说后果不说规定：这几条是「抢到了什么」的唯一本地记录，清掉即无法恢复 -->
+          {{ confirmClean ? `确认清空：这 ${tasks.length} 条记录是本地唯一记录，清掉后无法恢复` : `清掉这 ${tasks.length} 条记录` }}
         </button>
       </div>
     </div>

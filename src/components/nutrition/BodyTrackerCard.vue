@@ -297,7 +297,7 @@ async function onEntrySelect(value: string): Promise<void> {
     <!-- 单条记录操作 -->
     <ActionSheet
       :open="entryOpen"
-      :title="entry ? `${entry.date} 的记录` : undefined"
+      :title="entry ? `删除后 ${entry.date} 的身体记录不再计入趋势，无法恢复` : undefined"
       :actions="[{ label: '删除这条记录', value: 'delete', danger: true }]"
       @select="onEntrySelect"
       @close="entryOpen = false"

@@ -195,7 +195,9 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   font-weight: 700;
   padding: 3px 9px;
   border-radius: var(--radius-xs);
-  /* 与 PlanDetailPage 同一枚徽标：不新增 --balance-soft 令牌，
+  /* 类型字章（「计时 / 有氧」＝这是哪一类）：色相保留的少数例外之一，
+     但仅限 ≤ --fs-caption 且整屏只出现一枚 —— 本抽屉标题行正是如此。
+     列表里的同款徽标（PlanDetailPage 逐动作行）不满足「只出现一次」，已改中性色。
      底色按 c-balance 14% 现混、文字取 c-balance 实档（暗色档跟随主色，不再覆写） */
   background: color-mix(in srgb, var(--c-balance) 14%, transparent);
   color: var(--c-balance);
@@ -243,8 +245,9 @@ const stats = computed<{ k: string; v: string }[]>(() => {
   width: 18px;
   height: 18px;
   border-radius: 50%;
+  /* 序号是数值：走中性色。色相只留在圆点底上（色点/标记图元，STANDARDS §4） */
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
   font-size: var(--fs-micro);
   font-weight: 700;
   line-height: 18px;

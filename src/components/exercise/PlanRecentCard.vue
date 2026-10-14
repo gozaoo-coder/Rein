@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ChevronRight, Play, Plus } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import { usePlanStore } from '@/stores/plan'
 import { useSessionStore } from '@/stores/session'
 import { openImmersive } from '@/system/sessionImmersive'
@@ -65,9 +66,18 @@ function goConflict(): void {
         <button class="row body flex-1" type="button" @click="void router.push(`/sports/plans/${p.id}`)">
           <span class="flex-1">
             <b class="name">{{ p.name }}</b>
-            <small class="meta num">
-              {{ p.subtitle || '自定义课程' }} · {{ p.exercises.length }} 个动作 · 约 {{ estimatePlanMinutes(p) }} 分钟
-            </small>
+            <!-- 副行拆两级：肌群退居 --text-3 次要文字（行尾截断，不把整行撑开）；
+                 动作数与时长走两枚中性胶囊，不再用「·」把五个等权词串成一行。
+                 时长不提档——上方 .name（fs-body/600）才是主角，见审计 L1309 的不落地裁定 -->
+            <small class="meta">{{ p.subtitle || '自定义课程' }}</small>
+            <span class="pills">
+              <PillChip size="sm" tone="muted">
+                <span class="num">{{ p.exercises.length }}</span> 个动作
+              </PillChip>
+              <PillChip size="sm" tone="muted">
+                约 <span class="num">{{ estimatePlanMinutes(p) }}</span> 分钟
+              </PillChip>
+            </span>
           </span>
         </button>
         <button
@@ -159,6 +169,17 @@ function goConflict(): void {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 两枚中性胶囊跟在肌群行下：一行里至多「次要文字 / 中性胶囊」两个层级；
+   wrap 兜窄屏，min-width: 0 让 flex 子项可压缩（配 .body 的 ellipsis 链） */
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  min-width: 0;
 }
 
 .play {

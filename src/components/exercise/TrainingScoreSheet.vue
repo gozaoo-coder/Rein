@@ -373,7 +373,8 @@ const aerobicOnlyHint = computed(() => {
   color: var(--text-1);
 }
 
-/* 置信度：高/中/低三档只换色不换形 —— 它是"这个分有多可信"的注脚，不该抢主分 */
+/* 置信度：高/中/低三档只换中性深浅不换形 —— 它是"这个分有多可信"的注脚，
+   不该抢主分，也不给注脚上色相（色彩配额，STANDARDS §4） */
 .conf {
   padding: 3px 9px;
   border-radius: var(--radius-full);
@@ -384,11 +385,11 @@ const aerobicOnlyHint = computed(() => {
 }
 
 .conf-high {
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 .conf-low {
-  color: var(--warn-strong);
+  color: var(--text-1);
 }
 
 .hero-score {
@@ -577,7 +578,8 @@ const aerobicOnlyHint = computed(() => {
 
 .nval.final {
   font-size: var(--fs-title3);
-  color: var(--c-exercise-deep);
+  /* 链条终值是数值：中性色（色彩配额，STANDARDS §4）；「结论」地位由字号抬档表达 */
+  color: var(--text-1);
 }
 
 .ncap {

@@ -980,17 +980,16 @@ onMounted(() => {
   background: var(--c-exercise);
 }
 
-.hf-score.hs1 {
-  color: var(--danger-strong);
-}
+/* 练够分状态色：点用肌肉热力图的原色（图例同源），文字一律中性色。
+   分数是数值：五档共用一个 --text-1（色彩配额，STANDARDS §4）——
+   从前 hs1/hs2 走 strong 档、hs3/hs4 走 deep 档，同一枚分数在四个档位上四种色相，
+   正是「彩色数字互相争注意力」的那类问题；档位区分交给 .hf-heat 色点与「未练」文案。
 
-.hf-score.hs2 {
-  color: var(--warn-strong);
-}
-
+.hf-score.hs1,
+.hf-score.hs2,
 .hf-score.hs3,
 .hf-score.hs4 {
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 /* 成员：同一种胶囊、同一个尺寸 —— 不做「一个主按钮 + 几个小链接」的层级 */

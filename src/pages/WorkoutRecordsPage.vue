@@ -308,7 +308,7 @@ async function confirmDelete(value: string): Promise<void> {
     <!-- 删除确认层：行尾删除钮只负责开门，删除本身必须过这一层 -->
     <ActionSheet
       :open="delOpen"
-      title="删除这次训练记录？"
+      title="删除后这条训练记录与逐组明细一并移除，力量曲线同步重算，且无法恢复"
       :actions="[{ label: '删除', value: 'delete', danger: true }]"
       @select="confirmDelete"
       @close="delOpen = false"

@@ -387,9 +387,10 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
   background: var(--line-strong);
 }
 
-/* 完成：登记值用运动绿点题；跳过：整行压暗表示不计入统计 */
+/* 完成：登记值用主字色点题（数值走中性色，色相留给 soft 底的色块）；
+   跳过：整行压暗表示不计入统计 */
 .setrow.is-done .setmeta {
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
   font-weight: 600;
 }
 
@@ -412,7 +413,7 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
 }
 
 .setrow.is-current .setmeta {
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
   font-weight: 700;
 }
 

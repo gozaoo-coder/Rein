@@ -357,8 +357,9 @@ watch(
   padding: 1px 7px;
   border-radius: var(--radius-full);
   background: var(--danger-soft);
-  color: var(--c-sodium);
-  /* 「高钠」是健康状态词，读不出来等于没标 */
+  /* 「高钠」是健康状态词，读不出来等于没标。soft 底上的文字走 strong 档
+     （--c-sodium 是 danger 实底档，压 soft 底只有 3.5:1，STANDARDS §4） */
+  color: var(--danger-strong);
   font-size: var(--fs-caption);
   font-weight: 700;
 }

@@ -149,7 +149,7 @@ const mealChips = computed(() =>
 
         <!-- AI 入口 -->
         <section v-else-if="c.id === 'ai'" class="card b-surf b-ai">
-          <div class="row" style="gap: 10px; color: var(--cat-study)">
+          <div class="row" style="gap: 10px">
             <i class="qic" style="background: color-mix(in srgb, var(--cat-study) 14%, transparent); color: var(--cat-study)"><Sparkles :size="19" /></i>
             <div class="col">
               <b style="font-size: var(--fs-headline)">AI 助手</b>

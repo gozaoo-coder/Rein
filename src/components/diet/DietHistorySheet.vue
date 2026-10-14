@@ -312,7 +312,7 @@ async function onDelete(): Promise<void> {
     <!-- 删除确认（Teleport 到 body） -->
     <ActionSheet
       :open="delTarget !== null"
-      :title="`删除「${delTarget?.food?.name ?? '记录'}」？`"
+      :title="`删除「${delTarget?.food?.name ?? '记录'}」后，这条饮食记录从当日摄入与统计中移除，无法恢复`"
       :actions="[{ label: '删除这条记录', value: 'delete', danger: true }]"
       @close="delTarget = null"
       @select="onDelete"

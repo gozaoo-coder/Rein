@@ -768,7 +768,7 @@ function onAxisClick(e: MouseEvent): void {
   padding: 0 6px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
-  color: var(--led-shopping);
+  color: var(--text-1);
 }
 
 .tl p {
@@ -818,12 +818,12 @@ function onAxisClick(e: MouseEvent): void {
   vertical-align: -2px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--led-shopping) 16%, transparent);
-  color: var(--led-shopping);
+  color: var(--text-1);
 }
 
 .ipin.todo {
   background: color-mix(in srgb, var(--cat-work) 18%, transparent);
-  color: var(--cat-work);
+  color: var(--text-1);
 }
 
 .silence {

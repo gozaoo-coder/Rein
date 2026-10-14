@@ -298,7 +298,9 @@ const isEmpty = computed(() => recent.value.length === 0 && drafts.value.length 
   font-weight: 200;
   letter-spacing: -1px;
   line-height: 1;
-  color: var(--c-intake);
+  /* 摄入量是数值：数值一律中性色 —— 色相只允许出现在图标/色点/进度条与图表/类型字章上
+     （色彩配额，STANDARDS §4）。intake 的色相留在色点与条上，不爬到数字上来。 */
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
 

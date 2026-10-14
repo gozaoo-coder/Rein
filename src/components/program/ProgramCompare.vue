@@ -460,13 +460,14 @@ th.off .col-hit {
 /* 色深即负荷 */
 .cell.l1 {
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  /* 日期是数值：中性色（色彩配额，STANDARDS §4）。负荷深浅由底色（及 l1 的压暗）表达 */
+  color: var(--text-1);
   opacity: 0.6;
 }
 
 .cell.l2 {
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 .cell.l3 {

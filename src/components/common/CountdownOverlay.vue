@@ -109,9 +109,10 @@ watch(
 }
 
 .big.go {
-  color: var(--c-intake);
+  /* GO! 是读数：数值走中性色（色彩配额，STANDARDS §4）。随字色一起去掉粉色光晕 ——
+     光晕是同一支色相爬在文字上的另一种形态；「开始了」由字号、字重与画面本身表达。 */
+  color: var(--text-1);
   font-weight: 300;
-  text-shadow: 0 0 40px var(--intake-glow);
 }
 
 .sub {

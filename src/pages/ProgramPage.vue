@@ -579,7 +579,16 @@ function adjustmentsOf(r: ProgramRecord): number {
           <button v-if="!isEnded" class="cap" @click="archiveCurrent">
             <Archive :size="14" />归档方案
           </button>
-          <button class="cap danger" :class="{ armed: deleteArmed }" @click="deleteCurrent">
+          <button
+            class="cap danger"
+            :class="{ armed: deleteArmed }"
+            :title="
+              deleteArmed
+                ? '再点一次：方案与它排的日程待办一并移除，无法恢复'
+                : '删除后方案与它排的日程待办一并移除，无法恢复'
+            "
+            @click="deleteCurrent"
+          >
             <Trash2 :size="14" />
             {{ deleteArmed ? '再点一次确认删除' : '删除方案' }}
           </button>

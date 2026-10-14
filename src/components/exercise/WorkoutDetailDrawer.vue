@@ -627,7 +627,7 @@ const courseTotals = computed(() => {
   <!-- 删除确认层：与 WorkoutRecordsPage 行尾删除钮同一套（ActionSheet + danger 项） -->
   <ActionSheet
     :open="delOpen"
-    title="删除这次训练记录？"
+    title="删除后这条训练记录与逐组明细一并移除，力量曲线同步重算，且无法恢复"
     :actions="[{ label: '删除', value: 'delete', danger: true }]"
     @select="confirmDelete"
     @close="delOpen = false"
@@ -840,12 +840,14 @@ const courseTotals = computed(() => {
 .mv-s {
   font-size: var(--fs-caption);
   font-weight: 700;
-  color: var(--c-exercise-deep);
+  /* 「均已练够」是状态词：次要标签走中性色（色彩配额，STANDARDS §4） */
+  color: var(--text-2);
 }
 
-/* 有不足（练够分 < 60）时用青色 —— 与「不足」这一档在全应用的颜色一致（周分数的 low 也是它） */
+/* 有不足（练够分 < 60）时提到主字色一档 —— 「N 个仍不足」是数值 + 告警，
+   不再上青色：青色的岗位在下方的不足条上（.mv-bar.low） */
 .mv-s.low {
-  color: var(--c-balance);
+  color: var(--text-1);
 }
 
 .mv-row {
@@ -908,7 +910,8 @@ const courseTotals = computed(() => {
 }
 
 .mv-st.low {
-  color: var(--c-balance);
+  /* 「不足」是告警档名：提到主字色一档（不再上青色，告警的色相在 .mv-bar.low 的条上） */
+  color: var(--text-1);
 }
 
 .mv-note {
@@ -977,8 +980,9 @@ const courseTotals = computed(() => {
 .chip {
   padding: 5px 11px;
   border-radius: var(--radius-full);
+  /* 「60×8」是登记值：数值中性色，色相留在 soft 底的色块上（色彩配额，STANDARDS §4） */
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
   font-size: var(--fs-caption);
   font-weight: 600;
 }

@@ -306,7 +306,11 @@ async function onSaveEdit(payload: {
               <button
                 class="op"
                 :class="{ danger: pendingRemove === t.id }"
-                :title="pendingRemove === t.id ? '再点一次确认移除' : '移除'"
+                :title="
+                  pendingRemove === t.id
+                    ? `再点一次确认移除「${title(t)}」：这条抢课记录将不再显示，也无法恢复（已同步进课表的课程不受影响）`
+                    : '移除'
+                "
                 :aria-label="pendingRemove === t.id ? '确认移除' : '移除'"
                 @click="askRemove(t.id)"
               >
@@ -366,7 +370,11 @@ async function onSaveEdit(payload: {
               <button
                 class="op"
                 :class="{ danger: pendingRemove === t.id }"
-                :title="pendingRemove === t.id ? '再点一次确认移除' : '移除'"
+                :title="
+                  pendingRemove === t.id
+                    ? `再点一次确认移除「${title(t)}」：这条抢课记录将不再显示，也无法恢复`
+                    : '移除'
+                "
                 :aria-label="pendingRemove === t.id ? '确认移除' : '移除'"
                 @click="askRemove(t.id)"
               >

@@ -120,7 +120,8 @@ const metaLine = computed(() => {
 }
 
 .kcal {
-  color: var(--c-exercise-deep);
+  /* 热量是数值：中性色（色彩配额，STANDARDS §4）。运动域的色相留给左侧字首头像的色底 */
+  color: var(--text-1);
   font-weight: 800;
   font-size: var(--fs-callout);
 }

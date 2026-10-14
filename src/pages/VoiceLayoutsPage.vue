@@ -455,11 +455,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
 .pill.on {
   background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
-  color: var(--led-shopping);
+  color: var(--text-1);
 }
 
 .pill.on b {
-  color: var(--led-shopping);
+  color: var(--text-1);
 }
 
 .idea {
@@ -516,7 +516,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   padding: 1px 7px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--led-shopping) 12%, transparent);
-  color: var(--led-shopping);
+  color: var(--text-1);
 }
 
 .ct {
@@ -671,7 +671,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 }
 
 .bub.me .bwho {
-  color: var(--led-shopping);
+  color: var(--text-2);
 }
 
 /* ===== ④ 卡片流 ===== */
@@ -1017,7 +1017,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   font-size: var(--fs-display-l);
   line-height: 0.9;
   font-weight: 700;
-  color: var(--led-shopping);
+  color: var(--text-1);
 }
 
 .mag-foot {

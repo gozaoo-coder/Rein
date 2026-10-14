@@ -468,12 +468,13 @@ const endTitle = computed(() => {
   return '结束本次跑步？'
 })
 
-/** 总结页是唯一「已经跑完、还没落库」的位置：选项里多一条继续核对（不丢记录的那条路） */
+/** 总结页是唯一「已经跑完、还没落库」的位置：选项里多一条继续核对（不丢记录的那条路）。
+ *  顺序即主次：「继续核对」排最上（不做的那个选项是视觉主选项），放弃垫后。 */
 const endActions = computed(() =>
   r.phase === 'summary'
     ? [
-        { label: '放弃不保存', value: 'discard', danger: true },
         { label: '继续核对', value: 'keep' },
+        { label: '放弃不保存', value: 'discard', danger: true },
       ]
     : [
         { label: '结束并保存', value: 'finish' },
@@ -2014,13 +2015,16 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 
 /* 开始跑步：全屏那颗最大的离散控件 —— 走玻璃材质（模板上的 .glass-surface）。
    3px 绿描边收成 1px 透明边框（受光边由背景渐变画出，硬描边会盖掉它），
-   悬停仍翻成实底 —— 那是"确认要开始了"，不该被半透明削弱。 */
+   悬停仍翻成实底 —— 那是"确认要开始了"，不该被半透明削弱。
+   Play 图标 + 「开始跑步」是图标与标签：文字走 --text-1（色彩配额，STANDARDS §4）。
+   原为写死的 #3d7a00 绿（另有一条暗色档覆写翻成 --c-exercise）—— 两档都是
+   「彩色文字」，且那支绿还是魔法值；统一收成中性色后，暗色档覆写成为冗余，删。 */
 .gobtn {
   width: 216px;
   height: 216px;
   margin-top: 10px;
   border-radius: 50%;
-  color: #3d7a00;
+  color: var(--text-1);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2044,12 +2048,6 @@ html[data-motion='rich'] .drawer.is-scrolled::before {
 
 .gobtn:active {
   transform: scale(0.95);
-}
-
-@media (prefers-color-scheme: dark) {
-  .gobtn {
-    color: var(--c-exercise);
-  }
 }
 
 /* 进行中：内容贴顶（收起档 peek 正好露出 hero 行），控制行沉底。

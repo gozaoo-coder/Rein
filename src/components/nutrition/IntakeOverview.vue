@@ -181,12 +181,12 @@ const coreMacros = computed(() => macroStatsFrom(data.value).filter((m) => m.key
   font-weight: 800;
   letter-spacing: -1.2px;
   line-height: 1;
-  color: var(--c-intake);
+  /* 摄入量是数值：数值一律中性色（色彩配额，STANDARDS §4）。
+     一屏只留一个英雄数字（就是它）；「吃超了」由条上那段红（.seg.over）与
+     「已超」文案表达，不再让英雄数字本身翻红 —— 彩色数字互相争注意力，
+     而颜色一旦从图元泄漏到文字上，就没有任何东西能再当强调。 */
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
-}
-
-.big.over {
-  color: var(--danger);
 }
 
 .target {
@@ -201,22 +201,21 @@ const coreMacros = computed(() => macroStatsFrom(data.value).filter((m) => m.key
   gap: 4px;
 }
 
+/* 「剩余可吃」组降一级：它不是这一屏的英雄（英雄是左边的摄入量），
+   数值降到 title3、标签退到 caption + text-2 —— 参考实现里英雄值:标签 ≈ 3.2:1，
+   两个同等字号的英雄数字会让读者不知道先看哪个。 */
 .rest-k {
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .rest-v {
-  font-size: var(--fs-title2);
+  font-size: var(--fs-title3);
   font-weight: 800;
   letter-spacing: -0.5px;
   line-height: 1;
+  color: var(--text-1);
   font-variant-numeric: tabular-nums;
-}
-
-.rest.over .rest-k,
-.rest.over .rest-v {
-  color: var(--danger);
 }
 
 /* ── 条 + 目标线 ──
@@ -344,7 +343,8 @@ const coreMacros = computed(() => macroStatsFrom(data.value).filter((m) => m.key
 /* 宏量数字走中性色，**不**用各自的指标色：
    四个指标色都是给「色块」设计的，当文字用在浅底上全部不达标
    （#34C759 ≈1.7:1、#FF9F0A ≈2.0:1、#FFCC00 ≈1.4:1，AA 要 4.5:1），脂肪那档几乎糊没。
-   颜色留在条上，数字回中性 —— 顺带让热量那个红数字成为全屏唯一的高饱和数字。 */
+   颜色留在条上，数字回中性 —— 整屏的数字（摄入、剩余可吃、三大宏量）至此全部中性，
+   色相只出现在色点、进度条与图例上（色彩配额，STANDARDS §4）。 */
 .m-cur {
   font-size: var(--fs-title2);
   font-weight: 800;

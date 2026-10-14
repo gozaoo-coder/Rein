@@ -356,14 +356,15 @@ function onSaved(e: ExerciseRecord): void {
   font-weight: 700;
 }
 
-/* 自建/隐藏标签：程序 .pill 几何（胶囊），自建保留运动域色 */
+/* 自建/隐藏标签：程序 .pill 几何（胶囊）。「自建」是来源标签不是类型字章：
+   文字走中性色，运动域色相留在 soft 底的色块上（色彩配额，STANDARDS §4） */
 .tag {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--c-exercise-soft);
   font-size: var(--fs-caption);
   font-weight: 700;
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 .tag.muted {

@@ -231,8 +231,9 @@ function bump(d: number): void {
   flex: none;
   padding: 6px 10px;
   border-radius: var(--radius-full);
+  /* 「确定」是按钮标签：文字中性色，色相留在 soft 底的色块上（色彩配额，STANDARDS §4） */
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
   font-size: var(--fs-caption);
   font-weight: 700;
 }

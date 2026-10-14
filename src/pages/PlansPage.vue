@@ -147,13 +147,16 @@ function fmtUsed(lastUsedAt: string | null): string {
   gap: 2px;
 }
 
+/* 计划类型签。虽然是「哪一类」的标签，但它逐行重复出现，不满足类型字章
+   「只出现一次」的保留条件：文字走中性色，色相留在 soft 底色块上（色彩配额，STANDARDS §4）。
+   单实例的同款字章（ExerciseDetailDrawer 标题行）按字章例外保留。 */
 .type {
   font-size: var(--fs-micro);
   font-weight: 700;
   padding: 3px 9px;
   border-radius: var(--radius-xs);
   background: var(--c-exercise-soft);
-  color: var(--c-exercise-deep);
+  color: var(--text-1);
 }
 
 .used {

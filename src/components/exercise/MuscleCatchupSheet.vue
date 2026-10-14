@@ -364,7 +364,8 @@ function goConflict(): void {
 .wgap {
   font-size: var(--fs-caption);
   font-weight: 700;
-  color: var(--c-balance);
+  /* 「差 N 组」是数值：中性色（色彩配额，STANDARDS §4） */
+  color: var(--text-1);
 }
 
 .wex {

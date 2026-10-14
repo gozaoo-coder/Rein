@@ -145,6 +145,6 @@ const groups = computed<DayGroup[]>(() => {
 }
 
 .amt.income {
-  color: var(--led-income);
+  color: var(--text-1);
 }
 </style>

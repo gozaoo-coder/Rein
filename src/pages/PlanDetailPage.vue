@@ -134,7 +134,7 @@ async function doDelete(): Promise<void> {
 
     <ActionSheet
       :open="delOpen"
-      title="删除后无法恢复"
+      :title="`删除「${plan?.name ?? '课程'}」后，课程从列表移除且无法恢复；用它跑过的训练记录仍在`"
       :actions="[{ label: `删除「${plan?.name ?? ''}」`, value: 'del', danger: true }]"
       @select="doDelete"
       @close="delOpen = false"
@@ -238,6 +238,9 @@ async function doDelete(): Promise<void> {
   line-height: 1.45;
 }
 
+/* 动作类型签（「计时 / 有氧」）。与 ExerciseDetailDrawer 标题行那枚同款，但这里
+   逐动作行重复出现，不满足类型字章「只出现一次」的保留条件：文字走中性色，
+   色相留在 soft 底的色块上（色彩配额，STANDARDS §4） */
 .badge {
   flex: none;
   font-size: var(--fs-micro);
@@ -245,7 +248,7 @@ async function doDelete(): Promise<void> {
   padding: 3px 9px;
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--c-balance) 14%, transparent);
-  color: var(--c-balance);
+  color: var(--text-1);
 }
 
 .chev {
