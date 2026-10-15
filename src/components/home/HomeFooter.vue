@@ -540,8 +540,10 @@ onMounted(() => {
           <span class="hf-left">{{ currentLeft }}</span>
         </span>
         <span class="hf-bar" aria-hidden="true">
-          <i :style="{ width: `${currentPct}%` }" />
           <em class="hf-from">{{ currentEntry.session.startTime }}</em>
+          <span class="hf-track">
+            <i :style="{ width: `${currentPct}%` }" />
+          </span>
           <em class="hf-to">{{ currentEntry.session.endTime }}</em>
         </span>
         <span v-if="nextEntry" class="hf-c2">
@@ -832,16 +834,26 @@ onMounted(() => {
   font-variant-numeric: tabular-nums;
 }
 
+/* 时刻夹住轨道（[上课] ──进度── [下课]）：两端各占 12px 行高、轨道 4px 居中，
+   三者是同一 flex 行里的兄弟 —— 不再把 12px 文字绝对定位到 4px 轨道上（那样
+   进度填充必然横穿时刻文字）。 */
 .hf-bar {
-  position: relative;
-  display: block;
-  height: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 8px 0 9px;
+}
+
+.hf-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 4px;
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--text-1) 12%, transparent);
 }
 
-.hf-bar i {
+.hf-track i {
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: var(--radius-full);
@@ -849,22 +861,13 @@ onMounted(() => {
 }
 
 .hf-bar em {
-  position: absolute;
-  top: -2px;
+  flex: none;
   font-style: normal;
   /* 课条两端的上下课时刻：它是「现在是在哪节课里」的定位依据 */
   font-size: var(--fs-caption);
   line-height: var(--fs-caption);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
-}
-
-.hf-from {
-  left: 0;
-}
-
-.hf-to {
-  right: 0;
 }
 
 /* ---------- 记录域（吃 / 练） ---------- */
