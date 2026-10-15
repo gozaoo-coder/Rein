@@ -21,6 +21,7 @@ import type { Todo } from '@/types'
  * 唯一保留的写操作是打勾（标记完成）：那是用户自己的考勤记录，
  * 而且 `materialize_todos` 对 `status='done'` 的行有「永不删除」的不变量，
  * 打了卡就不会被同步覆盖 —— 这条不变量正是这个按钮敢留着的原因。
+ * 已经下课的课由后端 `auto_complete_past_courses` 自动打卡，这里只陈述事实、不再给按钮。
  */
 const props = defineProps<{
   open: boolean
@@ -53,6 +54,20 @@ const timeLabel = computed(() => {
 })
 
 const done = computed(() => props.todo?.status === 'done')
+
+/**
+ * 下课时刻是否已过。课表派生行由后端 `auto_complete_past_courses` 自动打卡，
+ * 已下课的课不该再给「撤销打卡」—— 撤销会在下次加载时被自动打卡立刻翻回来，
+ * 那个按钮等于骗人。所以已下课只展示「已自动打卡」这个事实，把手工勾选留给未下课的课。
+ */
+const ended = computed(() => {
+  const t = props.todo
+  if (!t?.date || t.startMin == null) return false
+  const end = new Date(`${t.date}T00:00:00`)
+  if (Number.isNaN(end.getTime())) return false
+  end.setMinutes(end.getMinutes() + t.startMin + (t.durationMin ?? 95))
+  return end.getTime() <= Date.now()
+})
 
 function openSchedule(): void {
   emit('close')
@@ -96,7 +111,11 @@ function openSchedule(): void {
       <PillChip tone="label" size="md">只读 · 改课到课表配置页</PillChip>
 
       <div class="acts">
-        <button class="primary" @click="todo && emit('toggle', todo)">
+        <!-- 已下课：打卡是自动的，不给手工按钮（撤销会被下次自动打卡翻回来） -->
+        <p v-if="ended" class="auto">
+          <Check :size="15" /> 已自动打卡 · 下课即记
+        </p>
+        <button v-else class="primary" @click="todo && emit('toggle', todo)">
           <component :is="done ? Undo2 : Check" :size="15" />
           {{ done ? '撤销打卡' : '标记已完成' }}
         </button>
@@ -215,6 +234,20 @@ function openSchedule(): void {
 .primary {
   background: var(--accent);
   color: var(--on-accent);
+}
+
+/* 已自动打卡：与按钮同尺寸的静态行，读作「状态」而不是「动作」 */
+.auto {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  border-radius: var(--radius-m);
+  background: var(--ok-soft);
+  color: var(--ok-strong);
+  font-size: var(--fs-callout);
+  font-weight: 700;
 }
 
 .ghost {

@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::{Datelike, Duration, Local, NaiveDate, Utc};
+use chrono::{Datelike, Duration, Local, NaiveDate, Timelike, Utc};
 use rusqlite::Connection;
 use tauri::{AppHandle, State};
 
@@ -634,6 +634,49 @@ fn materialize_todos(
         written += 1;
     }
     Ok(written)
+}
+
+/// 给**已经上完**的课表派生行自动打卡（`status='done'`），返回本次翻转的条数。
+///
+/// 派生行是只读投影，用户在时间线上没法像普通待办那样勾选；这条函数把「上完即打卡」
+/// 落成规则：以 `date + start_min + duration_min`（缺 duration 用 [`DEFAULT_CLASS_MIN`]）
+/// 为下课时刻，早于「现在」即标完成。只翻未完成的行 —— 已打卡的历史行原样保留，
+/// 因此与 [`materialize_todos`] 的「done 行永不删除」不变量相容，幂等可重复调用。
+pub(crate) fn auto_complete_past_courses(conn: &Connection) -> Result<usize> {
+    let now = Local::now().naive_local();
+    let today = now.date().format("%Y-%m-%d").to_string();
+    let now_min = now.hour() as i64 * 60 + now.minute() as i64;
+
+    // 只捞可能已经下课的派生行：日期在今之前，或今天且下课时刻已到。
+    // 比较口径与前端 `minToHHmm(startMin + durationMin)` 一致（都是距 00:00 的分钟数）。
+    let stale: Vec<i64> = {
+        let mut stmt = conn.prepare(
+            "SELECT id FROM todos \
+             WHERE course_session_id IS NOT NULL AND status != 'done' AND date IS NOT NULL \
+               AND (date < ?1 \
+                    OR (date = ?1 AND start_min IS NOT NULL \
+                        AND start_min + COALESCE(duration_min, ?3) <= ?2))",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![today, now_min, DEFAULT_CLASS_MIN],
+            |r| r.get::<_, i64>(0),
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if stale.is_empty() {
+        return Ok(0);
+    }
+
+    let now_s = now_iso();
+    let mut completed = 0usize;
+    for id in stale {
+        completed += conn.execute(
+            "UPDATE todos SET status = 'done', completed_at = ?1 \
+             WHERE id = ?2 AND status != 'done'",
+            rusqlite::params![now_s, id],
+        )?;
+    }
+    Ok(completed)
 }
 
 /// 清理远端已消失的时段（换课 / 退课），返回被删掉的时段数。
@@ -1402,13 +1445,44 @@ pub fn campus_schedule(
 /// `campus_schedule` 的本体：收 `&Connection` 而不是 `State`，供 tauri 命令与对外网关共用
 /// （网关拿的是同一把 `state.db.lock()`，见 contract §6.1 单连接铁律）。
 ///
-/// **副作用（契约 §13.2 认账）**：内部调用 `materialize_todos` 把课表派生行写进 `todos` ——
-/// 这是幂等的本地写，会被同步钩子捕获。对外语义仍是「读课表」，否则「今天日程」会缺课表行。
+/// **副作用（契约 §13.2 认账）**：内部调用 `materialize_todos` 把课表派生行写进 `todos`，
+/// 并调用 `auto_complete_past_courses` 给已下课的派生行自动打卡 —— 都是幂等的本地写，
+/// 会被同步钩子捕获。对外语义仍是「读课表」，否则「今天日程」会缺课表行。
 pub(crate) fn campus_schedule_on(
     conn: &Connection,
     semester_id: Option<i64>,
     from: Option<String>,
     to: Option<String>,
+) -> Result<ScheduleView> {
+    schedule_view_on(conn, semester_id, from, to, true)
+}
+
+/// 对外网关读路径专用：**只做投影、绝不写库**的课表视图。
+///
+/// 与 [`campus_schedule_on`] 的唯一差别是跳过 `materialize_todos` / `auto_complete_past_courses`。
+/// 理由在权限模型上：网关的 `schedule.read` 只授了「读」，而 `materialize_todos` 开头就是
+/// `DELETE FROM todos WHERE status != 'done' AND course_session_id IN (本账号会话)` ——
+/// 拿读权限能删掉用户没打完卡的派生待办，是不能有的写副作用。
+/// 课表视图本身读 `campus_sessions`（不依赖派生行），跳过物化不影响返回内容。
+pub(crate) fn campus_schedule_readonly_on(
+    conn: &Connection,
+    semester_id: Option<i64>,
+    from: Option<String>,
+    to: Option<String>,
+) -> Result<ScheduleView> {
+    schedule_view_on(conn, semester_id, from, to, false)
+}
+
+/// [`campus_schedule_on`] / [`campus_schedule_readonly_on`] 的共用本体。
+///
+/// `rebuild` = 是否重建时间线派生行（`materialize_todos` + 自动打卡）：
+/// tauri 命令（= 前端语义）要那一步，否则「今天日程」会缺课表行；网关读路径不要。
+fn schedule_view_on(
+    conn: &Connection,
+    semester_id: Option<i64>,
+    from: Option<String>,
+    to: Option<String>,
+    rebuild: bool,
 ) -> Result<ScheduleView> {
     let account = load_active_account(conn)?;
     let Some(account) = account else {
@@ -1439,7 +1513,12 @@ pub(crate) fn campus_schedule_on(
     // 调休计划**只从缓存组装**：打开课表这条路上不该出现网络请求（联网补缓存见 `campus_sync`）
     let years = holiday::years_of(&sem.start_date, &sem.end_date);
     let plan = holiday::plan_from_cache(conn, &years, &HolidayConfig::load(conn));
-    materialize_todos(conn, account.id, &sem, &sessions, &plan)?;
+    if rebuild {
+        materialize_todos(conn, account.id, &sem, &sessions, &plan)?;
+        // 重建后立刻补一遍自动打卡：物化会把过去的课重新插成未完成，这一步让「上完=已打卡」
+        // 在打开课表/时间线的当下就成立。
+        auto_complete_past_courses(conn)?;
+    }
 
     let today = Local::now().date_naive();
     let lo = from
@@ -1559,7 +1638,9 @@ async fn materialize_with_holiday(
     }
     let conn = db.lock();
     let plan = holiday::plan_from_cache(&conn, &years, &cfg);
-    materialize_todos(&conn, account_id, sem, sessions, &plan)
+    let written = materialize_todos(&conn, account_id, sem, sessions, &plan)?;
+    auto_complete_past_courses(&conn)?;
+    Ok(written)
 }
 
 /// 调休映射配置：开关 + 按日期的手动覆盖 + 当前生效的映射（供设置页展示/纠正）。
@@ -3791,6 +3872,53 @@ mod tests {
         assert_eq!(title, "高等数学");
     }
 
+    /// 上完的课表派生行自动打卡：过去日期、今天已下课 → 翻转；今天未下课、未来、
+    /// 以及已手动打卡的行一律不动。课表派生行是只读投影，这是它唯一的完成入口。
+    #[test]
+    fn auto_complete_flips_only_finished_classes() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        seed_account(&conn); // 建出 campus_sessions id=1，供外键引用
+
+        let today = Local::now().date_naive();
+        let ymd = |d: NaiveDate| d.format("%Y-%m-%d").to_string();
+        let ins = |date: &str, start_min: i64, duration: i64, status: &str| -> i64 {
+            conn.execute(
+                "INSERT INTO todos (title, date, start_min, duration_min, category, status, created_at, course_session_id) \
+                 VALUES ('高数', ?1, ?2, ?3, 'class', ?4, '2026-01-01T00:00:00Z', 1)",
+                rusqlite::params![date, start_min, duration, status],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let past = ins(&ymd(today - Duration::days(1)), 480, 95, "todo"); // 昨天 08:00–09:35
+        let ended_today = ins(&ymd(today), 0, 0, "todo"); // 今天 00:00 起、零时长 → 必已下课
+        let later_today = ins(&ymd(today), 23 * 60, 95, "todo"); // 今天 23:00 → 未下课
+        let tomorrow = ins(&ymd(today + Duration::days(1)), 480, 95, "todo"); // 未来
+        let manual = ins(&ymd(today - Duration::days(2)), 480, 95, "done"); // 已手动打卡
+
+        let flipped = auto_complete_past_courses(&conn).unwrap();
+        assert_eq!(flipped, 2, "只有昨天与今天已下课的两行翻转");
+
+        let status_of = |id: i64| -> String {
+            conn.query_row("SELECT status FROM todos WHERE id = ?1", [id], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(status_of(past), "done");
+        assert_eq!(status_of(ended_today), "done");
+        assert_eq!(status_of(later_today), "todo", "今天还没上完的课不能提前打卡");
+        assert_eq!(status_of(tomorrow), "todo");
+        assert_eq!(status_of(manual), "done", "已打卡的行原样保留");
+
+        // 幂等：再跑一次不再翻转
+        assert_eq!(auto_complete_past_courses(&conn).unwrap(), 0);
+        // 自动打卡写下的 completed_at 非空（时间线据此展示）
+        let at: Option<String> = conn
+            .query_row("SELECT completed_at FROM todos WHERE id = ?1", [past], |r| r.get(0))
+            .unwrap();
+        assert!(at.is_some(), "自动打卡必须落下 completed_at");
+    }
+
     /// 退课/换课后：远端消失的时段被清掉，但已经打过卡的历史行**不能被牵连删除**。
     /// 这正是外键 + 「done 行永不删」两条约束的交叉点，之前就是在这里炸的。
     #[test]
@@ -4001,5 +4129,83 @@ mod tests {
         seed_account(&conn);
         assert_eq!(delete_stale_sessions(&conn, 1, 1, &[1]).unwrap(), 0);
         assert_eq!(delete_stale_sessions(&conn, 1, 99, &[]).unwrap(), 0);
+    }
+
+    /// 网关读路径（`campus_schedule_readonly_on`）**只投影、不写库**：
+    /// 一堆未完成的派生待办（含重建窗口之外的那些）调完之后必须一条不少。
+    ///
+    /// 这条守的是权限模型：`schedule.read` 只授了读，而 `campus_schedule_on` 里的
+    /// `materialize_todos` 开头就是 `DELETE FROM todos WHERE status != 'done'
+    /// AND course_session_id IN (本账号)` —— 走错版本，外部客户端拿读权限就能删掉
+    /// 用户没打完卡的待办（窗口外的那些删了就再也不回来）。
+    #[test]
+    fn readonly_schedule_view_never_deletes_derived_todos() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate_for_test(&conn).unwrap();
+        seed_account(&conn); // 学期第 1 周 = 今天，课在第 1~6 与第 20 周（session id = 1）
+
+        let today = Local::now().date_naive();
+        let ymd = |d: NaiveDate| d.format("%Y-%m-%d").to_string();
+        let inside = ymd(today + Duration::days(35)); // 第 6 周：物化窗口（today+35）的最后一格
+        let outside = ymd(today + Duration::days(133)); // 第 20 周：远在窗口之外
+        let ins = |date: &str, status: &str| -> i64 {
+            conn.execute(
+                "INSERT INTO todos (title, date, start_min, duration_min, category, status, created_at, course_session_id) \
+                 VALUES ('高等数学', ?1, 480, 95, 'class', ?2, '2026-01-01T00:00:00Z', 1)",
+                rusqlite::params![date, status],
+            )
+            .unwrap();
+            conn.last_insert_rowid()
+        };
+        let inside_id = ins(&inside, "todo");
+        let outside_id = ins(&outside, "todo");
+
+        let view = campus_schedule_readonly_on(
+            &conn,
+            Some(1),
+            Some(ymd(today - Duration::days(1))),
+            Some(ymd(today + Duration::days(140))),
+        )
+        .unwrap();
+
+        // 投影本身正确：第 1~6 周 + 第 20 周都在查询区间里，形状照旧
+        let dates: Vec<&str> = view.entries.iter().map(|e| e.date.as_str()).collect();
+        assert_eq!(dates.len(), 7, "7 次课（6 次窗口内 + 1 次窗口外）");
+        assert!(dates.contains(&inside.as_str()) && dates.contains(&outside.as_str()));
+        assert!(view.entries.iter().all(|e| e.session.course_name == "高等数学"));
+        assert_eq!(view.entries[0].session.start_time, "08:00");
+        assert_eq!(view.semester.as_ref().map(|s| s.id), Some(1));
+
+        // 关键断言：两条未完成的派生行原样还在（id / date / status 逐字段对上）
+        let kept: Vec<(i64, String, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT id, date, status FROM todos ORDER BY id")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+                })
+                .unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        assert_eq!(
+            kept,
+            vec![
+                (inside_id, inside.clone(), "todo".to_string()),
+                (outside_id, outside.clone(), "todo".to_string()),
+            ],
+            "只读变体一条派生待办都不许删、不许改"
+        );
+
+        // 对照（非期望行为）：前端那条路会物化，窗口外的未完成派生行先删之后不再重建。
+        campus_schedule_on(&conn, Some(1), None, None).unwrap();
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM todos WHERE id IN (?1, ?2)",
+                rusqlite::params![inside_id, outside_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(left, 0, "对照：物化版把这两行都删了（这正是网关不能走它的原因）");
     }
 }
