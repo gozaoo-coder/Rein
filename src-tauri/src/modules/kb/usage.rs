@@ -135,7 +135,7 @@ pub fn list_orphans(conn: &Connection, root: &Path) -> Result<Vec<(String, i64)>
         let size = entry.metadata().map(|m| m.len() as i64).unwrap_or(0);
         out.push((rel, size));
     }
-    out.sort_by(|a, b| b.1.cmp(&a.1));
+    out.sort_by_key(|x| std::cmp::Reverse(x.1));
     Ok(out)
 }
 

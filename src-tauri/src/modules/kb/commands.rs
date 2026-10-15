@@ -1,6 +1,6 @@
 //! 知识库域命令 · 命令名与前端 `src/services/kbService.ts` 对应。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -568,7 +568,7 @@ pub fn kb_embed_test(
 ///
 /// 只认 note 来源的多模态节点；其它来源（日程附件、语音本体）给可读的理由，
 /// 而不是一个含糊的「读不到」。
-fn archive_source(conn: &rusqlite::Connection, root: &PathBuf, doc_id: i64) -> Result<(Vec<u8>, String)> {
+fn archive_source(conn: &rusqlite::Connection, root: &Path, doc_id: i64) -> Result<(Vec<u8>, String)> {
     let row: Option<(String, String, String, String, String)> = conn
         .query_row(
             "SELECT source_type, source_id, path, title, kind FROM kb_docs WHERE id = ?1",
@@ -995,7 +995,7 @@ pub fn kb_trash_restore(
 ) -> Result<KbTrashBatchResult> {
     let out = {
         let conn = state.db.lock();
-        batch(&conn, &ids, |conn, id| files::untrash(conn, id))
+        batch(&conn, &ids, files::untrash)
     };
     hub.notify();
     Ok(out)

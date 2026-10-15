@@ -34,11 +34,11 @@ pub fn big_section_of(start_unit: i64) -> i64 {
 /// 优先按 `(星期, 起始小节)` 精确命中 —— 同一门课一周可能上多次、地点还不同
 /// （实验课尤其如此），用户点的是课表上哪个格子，就该看到哪个格子的信息。
 /// 退而求其次只按星期，再不行退回第一个：**宁可给出「相近」的信息，也好过空手**。
-fn pick_activity<'a>(
-    activities: &'a [TimetableActivity],
+fn pick_activity(
+    activities: &[TimetableActivity],
     weekday: Option<i64>,
     start_unit: Option<i64>,
-) -> Option<&'a TimetableActivity> {
+) -> Option<&TimetableActivity> {
     if activities.is_empty() {
         return None;
     }

@@ -31,6 +31,7 @@ pub struct RegisteredTool {
     /// 前端 ToolGroup 同名（装载策略在前端 resolveToolPlan）
     pub group: &'static str,
     /// 中文短名（UI 过程卡展示）
+    #[allow(dead_code)] // 由描述表统一携带，当前无读取点
     pub label: &'static str,
     pub description: &'static str,
     /// JSON Schema（对齐 TS defineTool 的 TypeBox 形状）
@@ -148,11 +149,13 @@ pub(crate) fn str_arg<'a>(args: &'a Value, key: &str) -> crate::error::Result<&'
 }
 
 /// 本地今天（YYYY-MM-DD）
+#[allow(dead_code)] // 工具入参解析的公共件，当前无调用点
 pub(crate) fn today_str() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
 /// 日期入参：缺省 = 今天；传了则校验 YYYY-MM-DD（对齐 TS resolveDate）
+#[allow(dead_code)] // 同上：留给工具实现接线
 pub(crate) fn resolve_date(args: &Value, key: &str) -> crate::error::Result<String> {
     let v = match args.get(key).and_then(|x| x.as_str()) {
         Some(s) => s.trim(),
@@ -178,6 +181,7 @@ pub(crate) fn resolve_date(args: &Value, key: &str) -> crate::error::Result<Stri
 }
 
 /// 结果投影统一 JSON 化（serde_json::json! 直接构造则无需此函数）
+#[allow(dead_code)] // 恒等投影：留作统一出口，当前无调用点
 pub(crate) fn to_outcome_json(v: Result<Value>) -> Result<Value> {
     v
 }

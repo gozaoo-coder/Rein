@@ -13,15 +13,9 @@
 //!   `payload.output.sentence = {begin_time, end_time, text}`，**end_time 非 null 即句终**。
 //!
 //!   2026-10-12 真实凭据实测（本文件末尾有回归测试）：
-//!   · 顶层字段名必须是 **`header`（单数）**；写成 `headers` 服务端直接
-//!     `InvalidParameter Missing required parameter 'header'`（历史实现就是这个坑，
-//!     百炼一路从来没通）——finish-task 同样要带 `streaming: "duplex"`。
-//!   · 已验模型（同一 run-task 协议、同一端点，句子级定稿与豆包同体验）：
-//!     `paraformer-realtime-v2`（默认，中文）、`qwen-audio-3.1-asr-flash-streaming`、
-//!     `fun-asr-realtime`。
-//!   · `qwen3-asr-flash-realtime` 是**另一套 session 协议**（/api-ws/v1/realtime，
-//!     session.update + input_audio_buffer.append），本层不支持；实测手动提交模式下
-//!     长音频会 `model repeat output happened` / 输出重复，暂不接入。
+//!   · 顶层字段名必须是 **`header`（单数）**；写成 `headers` 服务端直接 `InvalidParameter Missing required parameter 'header'`（历史实现就是这个坑，百炼一路从来没通）——finish-task 同样要带 `streaming: "duplex"`。
+//!   · 已验模型（同一 run-task 协议、同一端点，句子级定稿与豆包同体验）：`paraformer-realtime-v2`（默认，中文）、`qwen-audio-3.1-asr-flash-streaming`、`fun-asr-realtime`。
+//!   · `qwen3-asr-flash-realtime` 是**另一套 session 协议**（/api-ws/v1/realtime，session.update + input_audio_buffer.append），本层不支持；实测手动提交模式下长音频会 `model repeat output happened` / 输出重复，暂不接入。
 //!
 //! 新增厂商 = 实现本 trait + 在 `AnyAsrAdapter` 枚举里加一个分支。
 

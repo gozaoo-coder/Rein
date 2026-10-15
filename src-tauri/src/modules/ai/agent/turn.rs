@@ -93,6 +93,7 @@ pub trait TurnHooks: Send + Sync {
 }
 
 /// 空回调（测试 / 无 UI 场景）
+#[allow(dead_code)] // 最小 TurnHooks 实现：当前无构造点，留给测试与无 UI 场景
 pub struct NoHooks;
 impl TurnHooks for NoHooks {}
 

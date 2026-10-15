@@ -108,7 +108,7 @@ pub mod spec {
     pub const EXIT_ANCHOR_M: f64 = 10.0;
     pub const EXIT_CREDIT_MAX_M: f64 = 60.0;
     /// 4 点方向防抖（用户口径）：最近 4 个被接受 fix 连成 3 段，各段航向转角之和
-    /// > 90° 即判为异常抖动（原地漂移的之字形）→ 最早 3 点取均值压成一个有效点。
+    /// 超过 90° 即判为异常抖动（原地漂移的之字形）→ 最早 3 点取均值压成一个有效点。
     /// 距离、瞬时配速、自动暂停都只吃这条防抖后的流。
     pub const JITTER_WINDOW: usize = 4;
     pub const JITTER_MAX_TURN_DEG: f64 = 90.0;
@@ -542,7 +542,8 @@ pub mod spec {
                 ..Default::default()
             };
             // 精度门（NaN 也落这里）
-            if !(f.acc <= ACC_GATE_M) {
+            // 用方法调用表达「不满足 ≤」：与 `!(a <= b)` 语义完全一致（NaN 恒不 ≤，仍落这里）
+            if !f.acc.le(&ACC_GATE_M) {
                 out.dropped = true;
                 out.disp_m = self.disp_m;
                 return out;

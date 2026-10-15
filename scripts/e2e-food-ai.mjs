@@ -89,7 +89,7 @@ await page.waitForTimeout(1600) // 等静默更新检查把提示卡弹出来（
 await dismissUpdate(page)
 await page.waitForTimeout(400)
 
-const draftChip = page.locator('button.chip', { hasText: '草稿箱' })
+const draftChip = page.locator('button.dr', { hasText: '草稿箱' })
 ok('草稿箱 chip 显示条数', (await draftChip.innerText()).includes('· 2'))
 await draftChip.click()
 await page.waitForTimeout(400)
