@@ -265,7 +265,7 @@ Tauri→前端事件 `gateway://pomodoro-command`（`{action, args}`）、`gatew
 
 **前端类型（新建 `src/types/externalAccess.ts`）**：
 `GatewayAuthRequest = { requestId, clientId, clientName, origin, ip:string|null, scopes:string[], createdAt, timeoutMs }`
-（`ip` = 服务端从 socket 取的来源 IP，请求方无法伪造；`origin` 因握手拒一切带 Origin 的连接而恒为 null）；
+（`ip` = 服务端从 socket 取的来源 IP，请求方无法伪造；`origin` = 握手时带的来源，无 `Origin` 的原生客户端为 null，带 `Origin` 的必须先命中 §15 的白名单才会走到待决流程）；
 `GatewayClient = { clientId, name, grant:"session"｜"always", scopes:string[], lastSeen:string|null, online:bool, ip:string|null }`；
 `GatewayBlocked = { clientId, name, reason:"deny"｜"revoked"｜"ignore", lastSeen:string|null, ip:string|null }`；
 `GatewayStatus = { enabled:bool, bindMode:"local"｜"lan", port:number|null, pairToken:string|null, pendingCount:number, clients:GatewayClient[], blocked:GatewayBlocked[] }`
@@ -621,7 +621,8 @@ CREATE INDEX idx_ext_audit_client ON ext_audit(client_id, at DESC);
 | `pomodoro.stop` | 无 | `{accepted:true}` | `pomodoro.control` | 下行 `stop` → `pomodoroStore.reset()`（:65） |
 
 **`schedule.campus` 的副作用（必须写明）**：`campus_schedule` 内部会调用 `materialize_todos`
-（campus/commands.rs:1421）把课表派生行写进 `todos`——这是幂等的**本地写**，会被同步钩子捕获。
+（campus/commands.rs:1421）把课表派生行写进 `todos`，随后调用 `auto_complete_past_courses`
+给已下课的派生行自动打卡——都是幂等的**本地写**，会被同步钩子捕获。
 对外语义是「读课表」，但它会顺带物化今天的日程行；契约接受这一副作用（否则「今天日程」会缺课表行）。
 为复用，抽 `pub(crate) fn campus_schedule_on(conn: &Connection, semester_id: Option<i64>, from: Option<String>, to: Option<String>) -> Result<ScheduleView>`，命令退化为壳。
 

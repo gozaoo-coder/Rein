@@ -10,11 +10,6 @@
 //! - [`runtime`]：番茄钟运行态桥接（上行 `focus_publish`/`focus_unpublish` + 重启恢复 `recover_focus`）；
 //! - [`commands`]：8 条管理面 tauri 命令（`gateway_*`）；
 //! - [`ChangeFeed`]：变更广播 hub（容量 256），由 `sync/engine.rs` 的 `set_feed` 接上。
-//!
-//! 整模块挂 `allow(dead_code)` 的原因：`lib.rs` 里是私有 `mod modules;`，rustc 的死代码分析
-//! 看不到「跨层调用」；且审计查询（`list_audit*`）等 pub 面暂无应用内调用方。
-//! 这些面接出 UI / 命令后应删掉这一行（先例：`modules/ai/agent/llm/mod.rs:12`）。
-#![allow(dead_code)]
 
 pub mod auth;
 pub mod commands;
@@ -70,7 +65,8 @@ impl ChangeFeed {
         let _ = self.tx.send(event);
     }
 
-    /// 当前订阅者数（诊断/测试用）。
+    /// 当前订阅者数（只给单测用；生产侧不关心这个数，见类型注释第 2 条）。
+    #[cfg(test)]
     pub fn subscribers(&self) -> usize {
         self.tx.receiver_count()
     }

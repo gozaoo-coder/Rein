@@ -73,6 +73,9 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
 }
 
 /// 明文令牌与库里存的哈希做恒定时间比较。
+///
+/// 生产侧走 [`find_by_token`]（它自己逐行比哈希），这条目前只有单测在用。
+#[cfg(test)]
 pub fn token_matches(token: &str, stored_hash: &str) -> bool {
     constant_time_eq(&hash_token(token), stored_hash)
 }

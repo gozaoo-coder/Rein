@@ -153,15 +153,17 @@ async function decide(decision: GatewayAuthDecision, scopes?: string[]): Promise
  * 外部番茄钟控制：落到本地计时状态机。
  *
  * 幂等由 store 保证：`start` 已在跑就忽略（`src/stores/pomodoro.ts` 的守卫）、
- * `pause` 没在跑就忽略、`reset` 复位到初始态（重复来结果相同）。契约把这三个动作
- * 映射到 store 的 `start/pause/reset`，所以载荷里的 `focusMin/breakMin/todoId`
- * 只作为外部请求的意图记录，不在这里改写用户保存在 localStorage 的番茄钟设置。
+ * `pause` 没在跑就忽略、`reset` 复位到初始态（重复来结果相同）—— 重复命令不会重复起跑，
+ * 番茄钟记录只在相位结束时写一条，命令本身不落记录。
+ *
+ * 载荷里的 `focusMin/breakMin/todoId` 交给 store 的 `start` 作**本轮**覆盖：时长按外部
+ * 要求起跑、待办关联到这一轮，但**不**改写用户保存在 localStorage 的番茄钟设置。
  */
 function applyPomodoroCommand(cmd: GatewayPomodoroCommand): void {
   const pomo = usePomodoroStore()
   switch (cmd.action) {
     case 'start':
-      pomo.start()
+      pomo.start({ focusMin: cmd.args.focusMin, breakMin: cmd.args.breakMin, todoId: cmd.args.todoId })
       break
     case 'pause':
       pomo.pause()
@@ -178,27 +180,44 @@ function applyPomodoroCommand(cmd: GatewayPomodoroCommand): void {
  * 冲突守卫：本机 UI 正持有活跃会话时 `start` 被**拒绝**（不再新开），外部经
  * `workout.sessionActive` 观察到即知；`snapshot/finish/abort` 只对本地在跑的那一场生效
  * （见 `applyExternalSnapshot` / `finishFromExternal` 的说明）。
+ *
+ * 幂等：命令的 await 之间允许重复投递，所以两个会**改库**的动作各有一道去重 ——
+ * `sessionStartPending` 挡住重复 `start`（后端 `session_start` 会把上一场 active 自动
+ * 标 aborted，重复起跑等于当场丢掉刚起的那一场）、`finishedSessionIds` 挡住重复 `finish`
+ * （`session_finish` 是「写一条训练记录 + 关会话」，落两次就是两条记录）。
  */
+
+/** 上一场 `start` 还没返回（处于 await 之间）：期间到达的重复 `start` 直接丢弃。 */
+let sessionStartPending = false
+/** 已经成功结束（写库 / 本地收尾均已完成）的会话 id：重复 `finish` 不再落第二条记录。 */
+const finishedSessionIds = new Set<number>()
+
 async function applySessionCommand(cmd: GatewaySessionCommand): Promise<void> {
   const store = useSessionStore()
   const args = cmd.args
   switch (cmd.action) {
     case 'start': {
-      if (store.isActive || store.sessionId != null) return
-      const planId = args.planId
-      if (!planId) return
-      const plans = usePlanStore()
-      if (!plans.byId(planId)) {
-        try {
-          await plans.ensureLoaded()
-        } catch {
-          /* 课程库拉不到：按「该课程不存在」处理，不新开 */
+      if (sessionStartPending || store.isActive || store.sessionId != null) return
+      sessionStartPending = true
+      try {
+        const planId = args.planId
+        if (!planId) return
+        const plans = usePlanStore()
+        if (!plans.byId(planId)) {
+          try {
+            await plans.ensureLoaded()
+          } catch {
+            /* 课程库拉不到：按「该课程不存在」处理，不新开 */
+          }
         }
+        const plan = plans.byId(planId)
+        if (!plan) return
+        // start() 内部还会再查一次服务端 active：撞上竞态时回 'conflict'，同样不新开
+        // 载荷里的 startedAt / state 交给 store：起始时刻与初始进度按外部要求落库（缺省 = 本地此刻 + 空进度）
+        await store.start(plan, { startedAt: args.startedAt, state: args.state })
+      } finally {
+        sessionStartPending = false
       }
-      const plan = plans.byId(planId)
-      if (!plan) return
-      // start() 内部还会再查一次服务端 active：撞上竞态时回 'conflict'，同样不新开
-      await store.start(plan)
       break
     }
     case 'snapshot': {
@@ -214,8 +233,18 @@ async function applySessionCommand(cmd: GatewaySessionCommand): Promise<void> {
       break
     }
     case 'finish': {
-      if (!args.sessionFinish) return
-      await store.finishFromExternal(args.sessionFinish)
+      const payload = args.sessionFinish
+      if (!payload) return
+      // 幂等：同一场结束过一次就不再落记录。先占位再 await —— 两条重复命令同时到达时，
+      // 后到的会在 `session_finish` 返回前就撞上占位被丢掉。首次失败不留位，留给外部原样重试。
+      if (finishedSessionIds.has(payload.id)) return
+      finishedSessionIds.add(payload.id)
+      try {
+        await store.finishFromExternal(payload)
+      } catch (e: unknown) {
+        finishedSessionIds.delete(payload.id)
+        throw e
+      }
       break
     }
     case 'abort': {

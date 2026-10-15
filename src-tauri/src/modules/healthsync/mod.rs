@@ -122,7 +122,11 @@ pub(crate) fn remove_file(app: &tauri::AppHandle, name: &str) {
 /// （连接任务在 tokio 线程上），要让它也能触发删除传播，这里从 AppHandle 取当前 webview。
 /// `tauri` 命令路径同样传 `AppHandle`（命令签名里本就有），两路共用同一函数。
 #[cfg(target_os = "android")]
-pub(crate) fn dispatch(app: &tauri::AppHandle, method: &'static str, arg: Option<String>) {
+pub(crate) fn dispatch<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    method: &'static str,
+    arg: Option<String>,
+) {
     // 用 `webview_windows()` 而不是 `webviews()`：后者是 `tauri::Manager` 的
     // trait 方法且带 `unstable` feature 门，而安卓构建的 feature 集不含它（E0599）。
     // 前者无 feature 门，两端都在；取到的 `WebviewWindow` 同样带 `with_webview`。
@@ -202,6 +206,10 @@ pub(crate) fn dispatch(app: &tauri::AppHandle, method: &'static str, arg: Option
 
 /// 非 Android：没有 Health Connect，指令一律丢弃（命令层已经按 `supported=false` 短路）
 #[cfg(not(target_os = "android"))]
-pub(crate) fn dispatch(_app: &tauri::AppHandle, method: &'static str, _arg: Option<String>) {
+pub(crate) fn dispatch<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    method: &'static str,
+    _arg: Option<String>,
+) {
     eprintln!("[healthsync] 当前平台不支持 Health Connect，忽略 {method}");
 }

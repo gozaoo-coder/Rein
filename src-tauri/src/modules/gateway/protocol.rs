@@ -359,8 +359,9 @@ impl Method {
     /// 该方法是写操作吗（会改数据：直接写库、或经下行事件落到前端再写库）？
     /// 审计据此记**参数摘要**（contract §17.4），`check_len` 据此覆盖所有写入方法（§17.5）。
     ///
-    /// 说明：`schedule.campus` 虽然会顺带物化课表派生行（contract §13.2 认账的幂等本地写），
-    /// 但对外语义是「读课表」，故不在此列；`pomodoro.status` / 各读方法同理。
+    /// 说明：`schedule.campus` 经网关走**只读**变体（`campus_schedule_readonly_on`，不写库）；
+    /// 物化课表派生行只发生在前端打开课表那条路（`campus_schedule` → `campus_schedule_on`），
+    /// 故它在本表里是读方法；`pomodoro.status` / 各读方法同理。
     pub fn is_write(self) -> bool {
         matches!(
             self,
@@ -382,6 +383,10 @@ impl Method {
 
     /// 该方法是不是「下行控制」——只回受理回执，实际动作由前端 store 完成
     /// （contract §14.3：`control_command` 的入参）。非控制方法返回 `false`。
+    ///
+    /// 目前只有单测用它（`control_command` 自己按方法名穷举，不查这个判据）；
+    /// 挂 `#[cfg(test)]` 而不是让它以死代码形态挂着。
+    #[cfg(test)]
     pub fn is_control(self) -> bool {
         matches!(
             self,

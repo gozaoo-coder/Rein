@@ -266,10 +266,12 @@ pub fn sync_run(app: AppHandle) -> Result<()> {
                 let state = handle.state::<AppState>();
                 let hub = handle.state::<super::engine::SyncHub>();
                 let store = super::blobs::BlobStore::new(hub.data_dir());
+                // 先把手头还没落成对象的改动冲掉，否则「刚改的没过去」。
+                // `flush` 自己取锁、并在锁外投递变更事件（见 engine.rs::flush）；
+                // 因此它必须在这一轮会话取锁**之前**调用 —— 别把它挪回 `conn` 的持锁区间里。
+                hub.flush(&state, &store)?;
                 let conn = state.db.lock();
                 let me = identity::ensure(&conn)?;
-                // 先把手头还没落成对象的改动冲掉，否则「刚改的没过去」
-                hub.flush(&conn, &store, &me.device_id)?;
                 super::runner::run_all(&conn, &store, &me)
             })();
             let payload = match outcome {

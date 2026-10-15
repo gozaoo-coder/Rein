@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, watch, OwnedSemaphorePermit, Semaphore};
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
@@ -129,7 +129,7 @@ pub fn start(app: AppHandle, hub: Arc<GatewayHub>, bind: BindMode, port: Option<
             }
         });
     }
-    hub.set_server(tx, actual);
+    hub.set_server(tx);
     Ok(actual)
 }
 
@@ -466,8 +466,10 @@ impl ConnGuard {
     }
 }
 
-async fn handle_connection(
-    app: AppHandle,
+/// `R` 泛型只为单元测试：测试用 `tauri::test::MockRuntime` 起 AppHandle，
+/// 否则要真起一个 Wry 事件循环才能拿到 `AppHandle`。生产路径照旧是默认运行时。
+async fn handle_connection<R: Runtime>(
+    app: AppHandle<R>,
     hub: Arc<GatewayHub>,
     stream: TcpStream,
     peer: SocketAddr,
@@ -649,8 +651,8 @@ async fn handle_connection(
 }
 
 /// 首帧令牌 → 四态授权。成功返回 `Some(grant)`；被拒 / 超时返回 `None`（连接已收尾）。
-async fn authorize(
-    app: &AppHandle,
+async fn authorize<R: Runtime>(
+    app: &AppHandle<R>,
     hub: &GatewayHub,
     out_tx: &mpsc::Sender<Message>,
     read: &mut SplitStream<WebSocketStream<TcpStream>>,
@@ -909,8 +911,8 @@ impl Drop for ProgressGuard<'_> {
 }
 
 /// 处理一条已授权连接上的请求。返回（响应 JSON，需要关闭连接时的关闭码）。
-fn handle_request(
-    app: &AppHandle,
+fn handle_request<R: Runtime>(
+    app: &AppHandle<R>,
     hub: &GatewayHub,
     conn_id: &str,
     ip: &str,
@@ -1045,7 +1047,7 @@ fn handle_request(
 ///
 /// 除握手被拒 / 首帧非法 / 令牌无效外，**待决超时与用户「忽略」也走这里**
 /// （contract §16 规则 6）：两条路径都计入 `AUTH_FAIL_PER_MIN` / `AUTH_BAN`。
-fn note_failure(app: &AppHandle, hub: &GatewayHub, ip: &str, detail: &str) {
+fn note_failure<R: Runtime>(app: &AppHandle<R>, hub: &GatewayHub, ip: &str, detail: &str) {
     hub.note_auth_failure(ip);
     let state = app.state::<AppState>();
     let conn = state.db.lock();
@@ -1399,5 +1401,75 @@ mod tests {
         });
         let big = summarize_params("workout.create", &many).unwrap();
         assert!(big.chars().count() <= AUDIT_DETAIL_MAX + 1, "整体截断到 {AUDIT_DETAIL_MAX} 字符");
+    }
+
+    // 这里原本还有一组走 `handle_connection` 全链路的用例（真 socket · 真首帧 · 真 authorize）：
+    // 它们要 `tauri::test::mock_app`，而 mock 运行时的代码在 Windows 上必须链进应用清单，
+    // 否则测试进程在 `main` 之前就以 STATUS_ENTRYPOINT_NOT_FOUND（0xc0000139）结束；清单只能
+    // 靠覆盖 bin 的链接指令送进去，而那会把 `resource.lib` 的 VERSION 资源链进 bin 两次
+    // （CVTRES CVT1100: duplicate resource）—— 结果是「单测跑得动、App 链不出来」。
+    // 把事件发送与 `AppHandle` 解耦（测试用空通知器）之后可以把它们原样搬回来；
+    // 全链路的真机覆盖眼下由 `scripts/e2e-external-api.mjs` 承担。
+    //
+    // 下面这条**不需要** AppHandle（`handshake` 只要 stream / local / 白名单），所以既留在 CI
+    // 里，也验到 Origin 闸门的活路径：真监听、真客户端、真 403 / 真 101。
+
+    /// 起一个只做握手的监听，返回地址与任务句柄（调用方负责 abort）。
+    ///
+    /// 传 `local = None`：Host 闸门在这种情况下**按设计跳过**（见 [`gate_host`]），
+    /// 于是这条测试只测 Origin 闸门 —— Host 闸门自有 `host_gate_covers_*` 单测，
+    /// 它在真机上的组合行为由 `scripts/e2e-external-api.mjs` 覆盖。若不跳过，临时端口
+    /// 与 `gate_host` 的别名集合对不上，会把 Origin 的结论污染成「Host 不符」。
+    async fn once_handshake(allowed: Vec<String>) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            if let Ok((stream, _local)) = listener.accept().await {
+                let meta = Arc::new(Mutex::new(HandshakeMeta::default()));
+                let _ = handshake(stream, None, allowed, meta).await;
+            }
+        });
+        (addr, handle)
+    }
+
+    /// Origin 闸门的活路径：白名单外必须被 403 挡下，白名单内必须放行（101）。
+    ///
+    /// 为什么要有这条：真机端到端里这一块会与「按 IP 的未鉴权失败限频」相互干扰（负向握手
+    /// 计失败次数、失败多了整段被拒），于是它只能在这里拿到确定性证据。
+    #[tokio::test]
+    async fn origin_gate_blocks_unlisted_and_allows_listed_on_the_wire() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let origin = "http://widget.e2e";
+
+        let (addr, srv) = once_handshake(vec![origin.to_string()]).await;
+        let mut req = format!("ws://{addr}/").into_client_request().unwrap();
+        req.headers_mut()
+            .insert("Origin", "http://evil.example".parse().unwrap());
+        let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        match tokio_tungstenite::client_async(req, stream).await {
+            Ok(_) => panic!("白名单外的 Origin 必须被拒"),
+            Err(tokio_tungstenite::tungstenite::Error::Http(resp)) => {
+                let status = resp.status().as_u16();
+                let body = String::from_utf8_lossy(&resp.body().clone().unwrap_or_default()).into_owned();
+                assert_eq!(status, 403, "应当是 403，实际 {status}；body={body}");
+            }
+            Err(e) => panic!("应当被 403 拒绝，实际：{e}"),
+        }
+        srv.abort();
+
+        let (addr, srv) = once_handshake(vec![origin.to_string()]).await;
+        let mut req = format!("ws://{addr}/").into_client_request().unwrap();
+        req.headers_mut().insert("Origin", origin.parse().unwrap());
+        let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        match tokio_tungstenite::client_async(req, stream).await {
+            Ok(_) => {}
+            Err(tokio_tungstenite::tungstenite::Error::Http(resp)) => panic!(
+                "白名单内的 Origin 被拒：{} body={}",
+                resp.status(),
+                String::from_utf8_lossy(&resp.body().clone().unwrap_or_default())
+            ),
+            Err(e) => panic!("白名单内的 Origin 必须放行，实际被拒：{e}"),
+        }
+        srv.abort();
     }
 }

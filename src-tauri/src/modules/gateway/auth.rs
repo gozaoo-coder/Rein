@@ -142,9 +142,8 @@ struct PendingEntry {
 #[derive(Default)]
 struct ServerHandle {
     /// 服务运行时的关停信号；`Some` = 正在监听。
+    /// （实际监听端口不在这里存：它是设置项 `gateway.port`，由 `commands.rs` 读写。）
     shutdown: Option<watch::Sender<bool>>,
-    /// 实际监听端口。
-    port: Option<u16>,
 }
 
 /// 网关的进程内状态：变更广播 hub + 连接会话表 + 待决队列 + 服务生命周期 + 限流。
@@ -307,6 +306,8 @@ impl GatewayHub {
     }
 
     /// 该待决请求所属的连接 id（用来登记会话授权）。
+    /// 只在单测里用 —— 命令层登记授权走的是 `pending_by_id` 的第二个返回值。
+    #[cfg(test)]
     pub fn pending_conn(&self, request_id: &str) -> Option<String> {
         self.pending
             .lock()
@@ -333,21 +334,13 @@ impl GatewayHub {
         self.server.lock().unwrap().shutdown.is_some()
     }
 
-    pub fn set_server(&self, shutdown: watch::Sender<bool>, port: u16) {
-        let mut guard = self.server.lock().unwrap();
-        guard.shutdown = Some(shutdown);
-        guard.port = Some(port);
+    pub fn set_server(&self, shutdown: watch::Sender<bool>) {
+        self.server.lock().unwrap().shutdown = Some(shutdown);
     }
 
     /// 取出关停信号并标记停止（返回 None 表示本就没在跑）。
     pub fn take_shutdown(&self) -> Option<watch::Sender<bool>> {
-        let mut guard = self.server.lock().unwrap();
-        guard.port = None;
-        guard.shutdown.take()
-    }
-
-    pub fn port(&self) -> Option<u16> {
-        self.server.lock().unwrap().port
+        self.server.lock().unwrap().shutdown.take()
     }
 
     // ---------- 限流 ----------

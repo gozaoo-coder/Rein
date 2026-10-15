@@ -523,7 +523,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
    * 提示方式由 store 决定、service 层不吞错（ARCHITECTURE §3）；调用方只需
    * catch 复位按钮，无需各自再提示。
    */
-  async function start(p: WorkoutPlan): Promise<'ok' | 'conflict'> {
+  async function start(
+    p: WorkoutPlan,
+    /** 外部下行控制（`workout.sessionStart` 载荷，contract §14.3）带入：起始时刻与初始快照。
+     *  省略时 = 本地此刻起跑 + 空进度，与不含参数时行为一致。 */
+    opts?: { startedAt?: string; state?: SessionSnapshotState },
+  ): Promise<'ok' | 'conflict'> {
     try {
       const existing = await sessionService.getActive()
       if (existing) {
@@ -537,7 +542,10 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       // 深拷贝动作列表：会话内允许临时换动作，不能直接改 planStore 里那份课程
       plan.value = { ...p, exercises: p.exercises.map(cloneExercise) }
       sessionId.value = null
-      startedAtIso.value = new Date().toISOString()
+      // 起始时刻：载荷给了可用值就用它（时长 / 记录以它为准），否则本地此刻
+      const seedStartedAt = opts?.startedAt
+      startedAtIso.value =
+        seedStartedAt && !Number.isNaN(Date.parse(seedStartedAt)) ? seedStartedAt : new Date().toISOString()
       exIndex.value = 0
       setIndex.value = 1
       doneSets.value = {}
@@ -553,15 +561,29 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
         loadLastWeights(p.exercises.map((e) => e.exerciseId)),
       ])
       weight.value = p.exercises[0] ? weightFor(p.exercises[0]) : 0
+      const seed = opts?.state
       const rec = await sessionService.start({
         planId: p.id,
         planName: p.name,
         startedAt: startedAtIso.value,
-        state: { doneSets: {}, exIndex: 0, setIndex: 1, weight: weight.value, phase: 'exercise' },
+        // 初始快照：载荷给了就用它，否则空进度（相位以第一个动作的类型为准，见 beginExercise）
+        state: seed ?? { doneSets: {}, exIndex: 0, setIndex: 1, weight: weight.value, phase: 'exercise' },
       })
       sessionId.value = rec.id
-      beginExercise()
-      await persist()
+      if (seed) {
+        // 外部载入的进度必须同时接管**本地**状态机：紧接着的落盘会把本地内存态当写入源，
+        // 不同步就会在下一拍用空进度把外部给的状态冲掉（与 sessionSnapshot 同一条路径）。
+        await applyExternalSnapshot({
+          id: rec.id,
+          exIndex: Math.min(Math.max(0, Math.trunc(seed.exIndex)), Math.max(0, p.exercises.length - 1)),
+          setIndex: Math.max(1, Math.trunc(seed.setIndex)),
+          weightKg: seed.weight,
+          state: seed,
+        })
+      } else {
+        beginExercise()
+        await persist()
+      }
       void usePlanStore().touch(p.id) // 维护「最近使用」排序
       return 'ok'
     } catch (e: unknown) {

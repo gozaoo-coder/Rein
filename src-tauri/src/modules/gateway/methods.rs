@@ -399,6 +399,8 @@ pub enum Effect {
 ///
 /// 保留这个签名是给「不需要处理锁外动作」的调用方用；服务层应改用
 /// [`dispatch_with_effects`] 并**在锁外**执行返回的动作。
+/// 目前只有单测用它（服务层已全部改走 `dispatch_with_effects`），故挂 `#[cfg(test)]`。
+#[cfg(test)]
 pub fn dispatch(conn: &Connection, method: Method, params: &Value) -> Result<Value> {
     dispatch_with_effects(conn, method, params).map(|(value, _effects)| value)
 }
@@ -472,8 +474,11 @@ fn dispatch_inner(
         }
         Method::ScheduleCampus => {
             let p: ScheduleCampusParams = parse(params)?;
-            // 读课表：内部会幂等物化课表派生行（contract §13.2 认账的本地写）。
-            let view = campus::commands::campus_schedule_on(conn, p.semester_id, p.from, p.to)?;
+            // 读课表：走**只读**变体 —— `schedule.read` 只授了读，而 `campus_schedule_on`
+            // 会先 `DELETE` 该账号全部未完成派生待办再重建（contract §13.2 认账的本地写）。
+            // 网关这条路径绝不能带着写副作用（`session::commands` 那批 `_on` 同理）。
+            let view =
+                campus::commands::campus_schedule_readonly_on(conn, p.semester_id, p.from, p.to)?;
             to_value(view)
         }
         Method::SchedulePrograms => {
@@ -560,18 +565,27 @@ fn dispatch_inner(
         }
         Method::WorkoutStrengthHistory => {
             let p: ExerciseIdParams = parse(params)?;
-            to_value(cap_rows(session::commands::strength_history_on(conn, &p.exercise_id)?))
+            // SQL 侧 LIMIT（`_on_limited`）+ 这里的 `cap_rows` 兜底，两道都留着（contract §6.4）。
+            to_value(cap_rows(session::commands::strength_history_on_limited(
+                conn,
+                &p.exercise_id,
+                MAX_LIST_ROWS as i64,
+            )?))
         }
-        Method::WorkoutStrengthExercises => {
-            to_value(cap_rows(session::commands::strength_exercises_on(conn)?))
-        }
+        Method::WorkoutStrengthExercises => to_value(cap_rows(
+            session::commands::strength_exercises_on_limited(conn, MAX_LIST_ROWS as i64)?,
+        )),
         Method::WorkoutLastWeights => {
             let p: ExerciseIdsParams = parse(params)?;
             to_value(cap_rows(session::commands::strength_last_weights_on(conn, &p.exercise_ids)?))
         }
         Method::WorkoutRecentSets => {
             let p: RecentSetsParams = parse(params)?;
-            to_value(cap_rows(session::commands::strength_recent_sets_on(conn, p.days)?))
+            to_value(cap_rows(session::commands::strength_recent_sets_on_limited(
+                conn,
+                p.days,
+                MAX_LIST_ROWS as i64,
+            )?))
         }
         Method::PomodoroList => {
             let p: PomodoroListParams = parse(params)?;

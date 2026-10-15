@@ -7,6 +7,13 @@
  *   外部 WS 客户端 → server.rs 握手闸门 → 首帧令牌 → auth.rs 四态授权 → methods.rs 分发
  *   → 各域 `*_on`（同一把 state.db.lock()）→ 同步 update_hook 捕获 → ChangeFeed → 回推给订阅方。
  *
+ *
+ * ⚠️ **两道限频会把整个套件卡住，跑不满是预期**：服务端对同一来源 IP 有「弹窗 ≤3 次/分钟」
+ * （`auth.rs` 的 `PROMPT_PER_MIN_IP`）与「未鉴权失败 ≥5 次/分钟封 10 分钟」（`AUTH_FAIL_PER_MIN`）。
+ * 本套件一共要 4~5 次弹窗、并刻意制造多次 403/越权，所以单次运行必然先耗尽额度：
+ * 后面的场景会 SKIP（脚本已按滚动窗口自动让路），最后甚至可能因为封禁而 WS 打不开。
+ * 要跑满：**每段之间重启一次真机实例**（额度与封禁都在进程内存里），或分段跑。
+ * 闸门逻辑本身有确定性单测兜底（`server.rs` 的 `origin_gate_*` / `host_gate_*` / scope 判据等）。
  * 覆盖场景：
  *   0. 服务启动与停止（开关切换、端口回写、停止后端口关闭）
  *   1. 无令牌的连接被拒（首帧不是合法 ClientHello → unauthorized + 1008）
@@ -56,6 +63,7 @@
  */
 import net from 'node:net'
 import crypto from 'node:crypto'
+import { WebSocket as WsHeaderClient } from 'ws'
 
 const CDP_PORT = Number(process.env.REIN_APP_DEBUG_PORT ?? 9222)
 const REPROMPT_MS = Number(process.env.E2E_IGNORE_REPROMPT_MS ?? 33000)
@@ -112,7 +120,7 @@ async function connect() {
   for (let i = 0; i < 60; i++) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
-      target = list.find((t) => t.type === 'page' && /localhost:1420|tauri/.test(t.url ?? ''))
+      target = list.find((t) => t.type === 'page' && /localhost:\d+|127\.0\.0\.1:\d+|tauri/.test(t.url ?? ''))
         ?? list.find((t) => t.type === 'page')
       if (target) break
     } catch {
@@ -225,6 +233,26 @@ async function rpc(c, method, params = {}, timeoutMs = 10000) {
   return m
 }
 
+/**
+ * 按来源 IP 的弹窗限频是 3 次/60s（`auth.rs` 的 `PROMPT_PER_MIN_IP`）。本脚本连着的场景
+ * 一共要 4~5 次弹窗，用满之后第 4 次**根本不会出现** —— 原先的表现就是「后续断言全崩、
+ * 最后 WS 打开超时」。这里按窗口自动让路：每用满 3 次就等到下一个 60s 窗口再继续。
+ */
+const promptTimes = []
+async function pacePrompts() {
+  // 服务端用的是**滚动**窗口（auth.rs 的 PROMPT_PER_MIN_IP = 3/60s）：固定窗口会漏 ——
+  // 上一个窗口末尾 3 次 + 这个窗口开头 3 次，滚动一分钟里就是 6 次，照样被挡。
+  // 所以只留最近 3 次的时间戳，`waitMs` 等的是**最早那次滑出 60s**。
+  const now = Date.now()
+  while (promptTimes.length > 3) promptTimes.shift()
+  if (promptTimes.length >= 3 && now - promptTimes[0] < 60_000) {
+    const waitMs = 60_000 - (now - promptTimes[0]) + 1500
+    console.log(`      （按 IP 弹窗最近 60s 已用满 3 次，等 ${Math.round(waitMs / 1000)}s 跨窗口）`)
+    await new Promise((r) => setTimeout(r, waitMs))
+    promptTimes.length = 0
+  }
+  promptTimes.push(Date.now())
+}
 const waitPending = (c) => waitMsg(c, (m) => m.event === 'gateway.auth.pending', 8000)
 const waitGranted = (c) => waitMsg(c, (m) => m.event === 'gateway.auth.granted', 8000)
 const waitDenied = (c) => waitMsg(c, (m) => m.event === 'gateway.auth.denied', 8000)
@@ -242,31 +270,20 @@ function rawConnect(port, timeoutMs = 3000) {
 }
 
 /** 手工发一次带 Origin 的 WS 握手，读回 HTTP 状态码（Node WebSocket 不允许自定义头）。 */
+/** 用真 WebSocket 客户端带自定义 `Origin` 头握手（`ws` 包）。
+ *  为什么不用裸 HTTP 请求：那样写出来的请求 tungstenite 直接判 `Handshake not finished`，
+ *  回调都走不到（既没有 403 也没有审计记录）—— 看上去像产品没拦，其实是脚本没握上手。
+ *  真客户端还顺带验了「HTML 小组件（浏览器内核）带 Origin 来连」这条真实路径。
+ *  返回形状与断言保持不变：`{ status, line }`，101 = 放行。 */
 async function handshakeWithOrigin(port, origin) {
-  const key = crypto.randomBytes(16).toString('base64')
-  const req = [
-    'GET / HTTP/1.1',
-    `Host: 127.0.0.1:${port}`,
-    'Upgrade: websocket',
-    'Connection: Upgrade',
-    `Sec-WebSocket-Key: ${key}`,
-    'Sec-WebSocket-Version: 13',
-    `Origin: ${origin}`,
-    '',
-    '',
-  ].join('\r\n')
-  const s = await rawConnect(port)
   return await new Promise((resolve) => {
-    const chunks = []
-    s.on('data', (d) => {
-      chunks.push(d)
-      const text = Buffer.concat(chunks).toString('utf8')
-      const m = text.match(/^HTTP\/1\.1 (\d{3})/)
-      if (m) { resolve({ status: Number(m[1]), line: text.split('\r\n')[0] }); s.destroy() }
-    })
-    s.on('close', () => resolve({ status: 0, line: Buffer.concat(chunks).toString('utf8').split('\r\n')[0] ?? '' }))
-    s.write(req)
-    setTimeout(() => { resolve({ status: -1, line: 'no response' }); s.destroy() }, 4000)
+    const sock = new WsHeaderClient(`ws://127.0.0.1:${port}/`, { headers: { Origin: origin } })
+    let settled = false
+    const done = (v) => { if (!settled) { settled = true; resolve(v) } }
+    sock.on('open', () => { done({ status: 101, line: 'HTTP/1.1 101 Switching Protocols' }); sock.close() })
+    sock.on('unexpected-response', (_req, res) => { done({ status: res.statusCode, line: `HTTP/1.1 ${res.statusCode}` }); sock.terminate() })
+    sock.on('error', (e) => done({ status: 0, line: String(e?.message ?? e) }))
+    setTimeout(() => { try { sock.terminate() } catch { /* 忽略 */ } done({ status: -1, line: 'no response' }) }, 5000)
   })
 }
 
@@ -313,6 +330,7 @@ async function main() {
   const cidSession = uuid()
   createdClients.push(cidSession)
   {
+    await pacePrompts()
     const c = await wsOpen(URL)
     hello(c, cidSession)
     const pend = await waitPending(c)
@@ -331,6 +349,7 @@ async function main() {
       c.ws.close()
       await sleep(400)
 
+      await pacePrompts()
       const c2 = await wsOpen(URL)
       hello(c2, cidSession)
       const pend2 = await waitPending(c2)
@@ -351,6 +370,7 @@ async function main() {
   createdClients.push(cidAlways)
   let clientToken = null
   {
+    await pacePrompts()
     const c = await wsOpen(URL)
     hello(c, cidAlways)
     const pend = await waitPending(c)
@@ -398,6 +418,7 @@ async function main() {
   const cidIgnore = uuid()
   createdClients.push(cidIgnore)
   {
+    await pacePrompts()
     const c = await wsOpen(URL)
     hello(c, cidIgnore)
     const pend = await waitPending(c)
@@ -416,6 +437,7 @@ async function main() {
   }
   if (REPROMPT_MS > 0) {
     await sleep(REPROMPT_MS)
+    await pacePrompts()
     const c2 = await wsOpen(URL)
     hello(c2, cidIgnore)
     const pend2 = await waitPending(c2)
@@ -434,6 +456,7 @@ async function main() {
   const cidDeny = uuid()
   createdClients.push(cidDeny)
   {
+    await pacePrompts()
     const c = await wsOpen(URL)
     hello(c, cidDeny)
     const pend = await waitPending(c)
@@ -466,6 +489,7 @@ async function main() {
       !Array.isArray(stAfterRevoke.blocked) || !stAfterRevoke.blocked.some((b) => b.clientId === cidDeny),
       `blocked=${stAfterRevoke.blocked?.length ?? 0}`)
     {
+      await pacePrompts()
       const c3 = await wsOpen(URL)
       hello(c3, cidDeny)
       const pend3 = await waitPending(c3)
@@ -486,6 +510,7 @@ async function main() {
   const cidScope = uuid()
   createdClients.push(cidScope)
   {
+    await pacePrompts()
     const c = await wsOpen(URL)
     hello(c, cidScope)
     const pend = await waitPending(c)
@@ -509,10 +534,12 @@ async function main() {
   const cidSub = uuid()
   createdClients.push(cidRW, cidSub)
   {
+    await pacePrompts()
     const rw = await wsOpen(URL)
     hello(rw, cidRW)
     const p1 = await waitPending(rw)
 
+    await pacePrompts()
     const sub = await wsOpen(URL)
     hello(sub, cidSub)
     const p2 = await waitPending(sub)
@@ -576,6 +603,7 @@ async function main() {
   const cidRO = uuid() // 窄权探针
   createdClients.push(cidAll, cidRO)
   {
+    await pacePrompts()
     const cAll = await wsOpen(URL)
     hello(cAll, cidAll)
     const pAll = await waitPending(cAll)
@@ -584,6 +612,7 @@ async function main() {
       await waitGranted(cAll)
     }
 
+    await pacePrompts()
     const cRO = await wsOpen(URL)
     hello(cRO, cidRO)
     const pRO = await waitPending(cRO)

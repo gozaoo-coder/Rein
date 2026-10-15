@@ -642,17 +642,27 @@ impl SyncHub {
     /// 立刻把脏队列落成对象。同步会话开始前调用 —— 否则刚改的东西会落在这一次之后，
     /// 用户看到的就是「点了同步，刚才那条没过去」。
     ///
-    /// 注意：调用方（`sync_run`）是**自己持锁**再传 `&conn` 进来的，所以这里的投递发生在
-    /// 那把锁仍被持有的期间。`broadcast::send` 只碰广播自己的内部锁、不重入 DB 连接，
-    /// 与契约 §6.2 担心的「钩子回调里重入连接」是两回事；保持这个签名可不动同步调用点。
-    pub fn flush(&self, conn: &Connection, store: &BlobStore, me: &str) -> Result<usize> {
-        let batch = self.dirty.drain(0);
-        let events = Self::capture_events(conn, store, me, &batch)?;
-        if !batch.is_empty() {
-            set_pending(0);
-        }
+    /// 锁由本函数自己取（而不是像 [`Self::capture_batch`] 那样由调用方传 `&Connection`）：
+    /// `sync_run` 在 flush 之后还要持锁跑整轮会话，若把连接传进来，投递必然落在锁内。
+    /// 这里「锁内收集 → 松锁 → 投递」三段式与 [`Self::capture_batch`] 完全同款
+    /// （广播的分发路径不该有任何机会重入 SQLite 连接，`engine.rs:9` 与 `ChangeFeed` 约定 1）。
+    ///
+    /// 收 `&AppState` 而不是 `&AppHandle`：本函数只需要那条连接，于是单测能拿内存库直接
+    /// 构造一个 AppState 来调它，不必为测试起 Tauri mock 运行时（那在 Windows 上还会
+    /// 连带要求测试进程链进应用清单，见 `gateway/server.rs` 测试模块顶部那段说明）。
+    pub fn flush(&self, state: &crate::state::AppState, store: &BlobStore) -> Result<usize> {
+        let (written, events) = {
+            let conn = state.db.lock();
+            let me = identity::ensure(&conn)?.device_id;
+            let batch = self.dirty.drain(0);
+            let events = Self::capture_events(&conn, store, &me, &batch)?;
+            if !batch.is_empty() {
+                set_pending(0);
+            }
+            (batch.len(), events)
+        };
         self.publish(&events);
-        Ok(batch.len())
+        Ok(written)
     }
 
     /// 数据目录（命令层要用它拼 blob 库路径）。
@@ -709,6 +719,51 @@ mod tests {
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .unwrap();
         rows.map(|r| r.unwrap()).collect()
+    }
+
+    /// `flush` 自己取锁、在**锁外**投递（`sync_run` 因此可以「先 flush，再取锁跑整轮会话」）。
+    /// 这条钉住语义没变：脏队列照样落成对象，变更事件照样广播给订阅者。
+    #[test]
+    fn flush_captures_and_publishes_without_a_caller_held_lock() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_for_test(&conn).unwrap();
+        let dir =
+            std::env::temp_dir().join(format!("rein-sync-flush-{}", rand::random::<u32>()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = BlobStore::new(&dir);
+        let dirty = Arc::new(Dirty::new());
+        install_hook(&conn, Arc::clone(&dirty));
+        let hub = SyncHub::new(dir.clone(), Arc::clone(&dirty));
+        // 变更广播 hub：订阅端在测试手里，`flush` 投递的东西要能从这儿收到
+        let feed = Arc::new(ChangeFeed::new());
+        let mut rx = feed.subscribe();
+        hub.set_feed(Arc::clone(&feed));
+
+        // 只构造 AppState，不起 Tauri 运行时（`flush` 要的就是它）
+        let state = crate::state::AppState::new(conn);
+
+        // 一条本地改动（`update_hook` 已装，进脏队列）
+        {
+            let conn = state.db.lock();
+            conn.execute(
+                "INSERT INTO todos (id, title, created_at) VALUES (9, '买菜', '2026-09-28')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 调用点**不持锁**（与 `sync_run` 一致）：锁由 flush 自己取、自己放
+        let written = hub.flush(&state, &store).unwrap();
+        assert_eq!(written, 1, "脏队列里那一条已落成对象");
+
+        {
+            let conn = state.db.lock();
+            assert_eq!(objects(&conn).len(), 1, "sync_objects 里有它");
+        }
+        let ev = rx.try_recv().expect("投递没发生：订阅端应当收到这条变更");
+        assert_eq!(ev.kind, "todos");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

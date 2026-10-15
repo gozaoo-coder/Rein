@@ -480,7 +480,10 @@ pub(crate) fn health_sync_workouts_on(conn: &rusqlite::Connection) -> Result<Vec
 ///
 /// 入参是 `&AppHandle`（contract §13.3）：网关服务层拿不到 `Webview`，只能给 `AppHandle`，
 /// 由 `super::dispatch` 内部取 webview。`tauri` 命令路径经 `webview.app_handle()` 传同一份。
-pub(crate) fn propagate_delete(app: &tauri::AppHandle, record_id: &str) {
+///
+/// 泛型只为「调用方不绑死运行时」：网关的 `handle_connection` 是 `R: Runtime` 泛型
+/// （单元测试用 `tauri::test::MockRuntime`），这里跟着泛型就不必为测试改道。
+pub(crate) fn propagate_delete<R: tauri::Runtime>(app: &tauri::AppHandle<R>, record_id: &str) {
     super::dispatch(app, "deleteRecord", Some(record_id.to_string()));
 }
 

@@ -51,23 +51,41 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
   /** 是否已经报过一份还没清的状态（决定要不要发 `focus_unpublish`）。 */
   let published = false
 
-  /** 本轮的休息时长（分钟）：长休息按完成轮次判定，与 `finishPhase` 进入休息时的算法一致。 */
+  /**
+   * 外部起跑（`pomodoro.start` 载荷）为本轮指定的一次性时长（分钟）；null = 用本地设置。
+   * 只作用于这一轮，**不**写进 settings / localStorage —— 外部控制不改用户保存的偏好。
+   */
+  const runFocusMin = ref<number | null>(null)
+  const runBreakMin = ref<number | null>(null)
+
+  /** 本轮生效的专注时长（分钟）：外部起跑覆盖优先，否则本地设置。 */
+  function focusMinValue(): number {
+    return runFocusMin.value ?? settings.value.focusMin
+  }
+
+  /** 本轮生效的短休息时长（分钟）：外部起跑覆盖优先，否则本地设置。 */
+  function breakMinValue(): number {
+    return runBreakMin.value ?? settings.value.breakMin
+  }
+
+  /** 本轮的休息时长（分钟）：长休息按完成轮次判定，与 `finishPhase` 进入休息时的算法一致。
+   *  外部载荷只带 `breakMin`（短休息），所以长休息仍按本地设置。 */
   function breakPlannedMin(): number {
     const isLong =
       completedRounds.value > 0 && completedRounds.value % settings.value.roundsBeforeLongBreak === 0
-    return isLong ? settings.value.longBreakMin : settings.value.breakMin
+    return isLong ? settings.value.longBreakMin : breakMinValue()
   }
 
   /** 拼一份对外快照。相位锚点由 endAt 反推：`phaseStartedAt + remainingSec` = 预计结束时刻，
    *  后端的 `recover_focus` 就按这条等式判「关闭期间是否已走完」（contract §14.1）。 */
   function runtimeSnapshot(): FocusRuntime {
-    const phaseSec = (phase.value === 'focus' ? settings.value.focusMin : breakPlannedMin()) * 60
+    const phaseSec = (phase.value === 'focus' ? focusMinValue() : breakPlannedMin()) * 60
     const anchorMs = endAt > 0 ? endAt - remainingSec.value * 1000 : Date.now() - (phaseSec - remainingSec.value) * 1000
     return {
       phase: phase.value,
       running: running.value,
       remainingSec: remainingSec.value,
-      plannedFocusMin: settings.value.focusMin,
+      plannedFocusMin: focusMinValue(),
       plannedBreakMin: breakPlannedMin(),
       phaseStartedAt: new Date(anchorMs).toISOString(),
       linkedTodoId: linkedTodoId.value,
@@ -105,8 +123,28 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     if (remainingSec.value === 0) void finishPhase()
   }
 
-  function start(): void {
-    if (running.value || remainingSec.value === 0) return
+  /**
+   * 起跑。可选参数由外部下行控制（`pomodoro.start` 载荷，contract §14.3）带入：
+   * `focusMin` / `breakMin` 覆盖本轮时长，`todoId` 关联待办。全部省略时与无参调用行为一致
+   * （界面按钮走的就是无参这条）。
+   *
+   * 已经在跑就直接返回 —— 重复收到同一 `start` 不会重新起跑、也不会改写本轮参数（幂等）。
+   */
+  function start(opts?: { focusMin?: number; breakMin?: number; todoId?: number | null }): void {
+    if (running.value) return
+    if (opts) {
+      // 只在专注相位（含复位后的初始态）采用外部时长：休息相位里的 start 是「续走休息」，
+      // 与专注/休息参数无关，别让它改到下一轮的算法上去。
+      if (phase.value === 'focus') {
+        if (opts.focusMin != null && opts.focusMin > 0) {
+          runFocusMin.value = opts.focusMin
+          remainingSec.value = Math.round(opts.focusMin * 60)
+        }
+        if (opts.breakMin != null && opts.breakMin > 0) runBreakMin.value = opts.breakMin
+      }
+      if (opts.todoId !== undefined) linkedTodoId.value = opts.todoId ?? null
+    }
+    if (remainingSec.value === 0) return
     endAt = Date.now() + remainingSec.value * 1000
     running.value = true
     timer ??= setInterval(tick, 250)
@@ -126,6 +164,9 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     stopTimer()
     clearRuntime()
     phase.value = 'focus'
+    // 外部起跑带来的一次性覆盖随「停止」作废：回到用户本地设置
+    runFocusMin.value = null
+    runBreakMin.value = null
     remainingSec.value = settings.value.focusMin * 60
   }
 
@@ -146,25 +187,28 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     stopTimer()
     if (phase.value === 'focus') {
       const now = new Date().toISOString()
-      const startedAt = new Date(Date.now() - settings.value.focusMin * 60_000).toISOString()
+      const startedAt = new Date(Date.now() - focusMinValue() * 60_000).toISOString()
       await pomodoroService.saveSession({
         todoId: linkedTodoId.value,
         startedAt,
         endedAt: now,
-        focusMin: settings.value.focusMin,
+        focusMin: focusMinValue(),
         breakMin: 0,
         completed: true,
       })
       completedRounds.value++
       phase.value = 'break'
-      const isLong = completedRounds.value % settings.value.roundsBeforeLongBreak === 0
-      remainingSec.value = (isLong ? settings.value.longBreakMin : settings.value.breakMin) * 60
+      // 休息时长与进入休息时的算法同源（含外部起跑的覆盖）
+      remainingSec.value = breakPlannedMin() * 60
       await loadToday()
       // 转入休息：接着 `start()` 会立刻报一份休息态，所以这里不先清（免得白跑一趟 unpublish）
       start()
     } else {
       clearRuntime() // 休息结束：这一轮专注结束，对外回到「没有进行中的计时」
       phase.value = 'focus'
+      // 外部起跑的一次性覆盖只覆盖「这一轮专注 + 它的休息」；回到新轮次即失效（回到本地设置）
+      runFocusMin.value = null
+      runBreakMin.value = null
       remainingSec.value = settings.value.focusMin * 60
     }
   }
@@ -177,7 +221,7 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
 
   const progress = computed(() => {
     const total =
-      (phase.value === 'focus' ? settings.value.focusMin : settings.value.breakMin) * 60
+      (phase.value === 'focus' ? focusMinValue() : breakMinValue()) * 60
     return total <= 0 ? 0 : 1 - remainingSec.value / total
   })
 

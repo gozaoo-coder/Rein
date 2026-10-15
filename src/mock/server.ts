@@ -5939,6 +5939,22 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
           inserted++
         }
       }
+      // 与 Rust auto_complete_past_courses 同语义：已经上完的课表派生行自动打卡。
+      // 派生行是只读投影（用户勾不了），下课时刻 = date + startMin + durationMin（缺省 95）。
+      {
+        const nowD = new Date()
+        const todayNow = ymd(nowD)
+        const nowMin = nowD.getHours() * 60 + nowD.getMinutes()
+        const nowIso = nowD.toISOString()
+        for (const t of todos) {
+          if (t.courseSessionId == null || t.status === 'done' || !t.date || t.startMin == null) continue
+          const endMin = t.startMin + (t.durationMin ?? 95)
+          if (t.date < todayNow || (t.date === todayNow && endMin <= nowMin)) {
+            t.status = 'done'
+            t.completedAt = nowIso
+          }
+        }
+      }
       return delay(inserted as T)
     }
 

@@ -508,9 +508,15 @@ pub(crate) fn get_todo_on(conn: &rusqlite::Connection, id: i64) -> Result<Option
 /// 1) 规则已不匹配/越界的未来未完成实例 → 删除（改规则、改结束日期后自动收敛）；
 /// 2) 窗口 [今天-1, 今天+7] 内缺失的实例 → 按模板补建（rec_key = "模板id:日期"）。
 /// 返回本次新增实例数。
+///
+/// 顺带把**已经上完的课表派生行**自动打卡（见 [`crate::modules::campus::commands::auto_complete_past_courses`]）：
+/// 课表派生行是只读投影、用户勾不了，而前端每条加载路径都会走这条命令，
+/// 「上完自动打勾」于是不依赖用户专门打开课表页。
 pub fn sync_recurrences(state: State<AppState>, today: String) -> Result<usize> {
     let conn = state.db.lock();
-    sync_recurrences_on(&conn, &today)
+    let inserted = sync_recurrences_on(&conn, &today)?;
+    crate::modules::campus::commands::auto_complete_past_courses(&conn)?;
+    Ok(inserted)
 }
 
 /// `sync_recurrences` 的本体：收 `&Connection` 而不是 `State`，测试才能在内存库上直接跑

@@ -364,6 +364,31 @@ pub(crate) fn strength_history_on(
     Ok(list)
 }
 
+/// 对外网关专用：带 SQL 侧 `LIMIT` 的 [`strength_history_on`]（contract §6.4「禁止无界全表」）。
+/// 顺序与无 LIMIT 版逐字一致，所以「取前 N 条」与网关侧 `cap_rows` 截断的结果相同 ——
+/// 差别只在有没有把整表读出来。
+pub(crate) fn strength_history_on_limited(
+    conn: &rusqlite::Connection,
+    exercise_id: &str,
+    limit: i64,
+) -> Result<Vec<StrengthSetRecord>> {
+    let id = resolve_exercise_id(conn, exercise_id)?;
+    let raw = exercise_id.trim().to_string();
+    let mut stmt = conn.prepare(
+        "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
+                s.set_no, s.weight_kg, s.reps, s.sec, s.warmup, \
+                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER) \
+         FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
+         LEFT JOIN workout_sessions ss ON ss.id = w.session_id \
+         WHERE s.exercise_id = ?1 OR (s.exercise_id IS NULL AND s.exercise_name = ?2) \
+         ORDER BY w.date ASC, s.workout_id ASC, s.id ASC LIMIT ?3",
+    )?;
+    let list = stmt
+        .query_map(rusqlite::params![id, raw, limit], strength_set_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(list)
+}
+
 fn strength_set_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StrengthSetRecord> {
     Ok(StrengthSetRecord {
         workout_id: r.get(0)?,
@@ -405,6 +430,34 @@ pub(crate) fn strength_exercises_on(
     )?;
     let list = stmt
         .query_map([], |r| {
+            Ok(StrengthExerciseRef {
+                exercise_id: r.get(0)?,
+                name: r.get(1)?,
+                last_date: r.get(2)?,
+                sessions: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(list)
+}
+
+/// 对外网关专用：带 SQL 侧 `LIMIT` 的 [`strength_exercises_on`]（见 [`strength_history_on_limited`]）。
+pub(crate) fn strength_exercises_on_limited(
+    conn: &rusqlite::Connection,
+    limit: i64,
+) -> Result<Vec<StrengthExerciseRef>> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(NULLIF(s.exercise_id, ''), ''), \
+                COALESCE(e.name, MAX(s.exercise_name)) AS display_name, \
+                MAX(w.date) AS last_date, COUNT(DISTINCT s.workout_id) AS sessions \
+         FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
+         LEFT JOIN exercises e ON e.id = s.exercise_id \
+         WHERE s.warmup = 0 AND s.weight_kg IS NOT NULL \
+         GROUP BY COALESCE(NULLIF(s.exercise_id, ''), s.exercise_name) \
+         ORDER BY last_date DESC LIMIT ?1",
+    )?;
+    let list = stmt
+        .query_map([limit], |r| {
             Ok(StrengthExerciseRef {
                 exercise_id: r.get(0)?,
                 name: r.get(1)?,
@@ -489,6 +542,28 @@ pub(crate) fn strength_recent_sets_on(
     )?;
     let list = stmt
         .query_map([days], strength_set_from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(list)
+}
+
+/// 对外网关专用：带 SQL 侧 `LIMIT` 的 [`strength_recent_sets_on`]（见 [`strength_history_on_limited`]）。
+pub(crate) fn strength_recent_sets_on_limited(
+    conn: &rusqlite::Connection,
+    days: Option<i64>,
+    limit: i64,
+) -> Result<Vec<StrengthSetRecord>> {
+    let days = days.unwrap_or(42).clamp(1, 365);
+    let mut stmt = conn.prepare(
+        "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
+                s.set_no, s.weight_kg, s.reps, s.sec, s.warmup, \
+                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER) \
+         FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
+         LEFT JOIN workout_sessions ss ON ss.id = w.session_id \
+         WHERE w.date >= date('now', 'localtime', '-' || ?1 || ' days') \
+         ORDER BY w.date ASC, s.workout_id ASC, s.id ASC LIMIT ?2",
+    )?;
+    let list = stmt
+        .query_map(rusqlite::params![days, limit], strength_set_from_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(list)
 }
@@ -641,5 +716,37 @@ mod tests {
             .unwrap();
         assert_eq!(sets, 1, "逐组明细落库");
         assert!(session_active_on(&conn).unwrap().is_none(), "结束后无活跃会话");
+    }
+
+    /// 网关专用的三个 LIMIT 变体：`LIMIT` 必须落在 **SQL 侧**（contract §6.4「禁止无界全表」），
+    /// 且占位符个数/位置要对得上（写错会当场炸「参数个数不符」）。
+    #[test]
+    fn strength_limited_variants_cap_rows_in_sql() {
+        let conn = fresh();
+        // 两堂课 × 3 组，同一个动作：无 LIMIT 版给 6 行，限行版按 limit 裁
+        for wid in 1..=2i64 {
+            conn.execute(
+                "INSERT INTO workouts (id, name, type, date, duration_min, kcal, created_at) \
+                 VALUES (?1, '胸推日', 'strength', date('now', 'localtime', '-' || ?1 || ' days'), 60, 300, '2026-01-01T00:00:00Z')",
+                [wid],
+            )
+            .unwrap();
+            for set_no in 1..=3i64 {
+                conn.execute(
+                    "INSERT INTO workout_sets (workout_id, exercise_key, exercise_id, exercise_name, \
+                     set_no, kind, weight_kg, reps, warmup, created_at) \
+                     VALUES (?1, 'bench', 'ex-bench', '卧推', ?2, 'strength', 60, 8, 0, '2026-01-01T00:00:00Z')",
+                    rusqlite::params![wid, set_no],
+                )
+                .unwrap();
+            }
+        }
+
+        assert_eq!(strength_history_on(&conn, "ex-bench").unwrap().len(), 6);
+        assert_eq!(strength_history_on_limited(&conn, "ex-bench", 2).unwrap().len(), 2);
+        assert_eq!(strength_recent_sets_on(&conn, Some(7)).unwrap().len(), 6);
+        assert_eq!(strength_recent_sets_on_limited(&conn, Some(7), 4).unwrap().len(), 4);
+        assert_eq!(strength_exercises_on(&conn).unwrap().len(), 1, "只有一个动作");
+        assert_eq!(strength_exercises_on_limited(&conn, 0).unwrap().len(), 0);
     }
 }

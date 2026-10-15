@@ -26,6 +26,10 @@ pub enum Scope {
 impl Scope {
     /// 全部权限，供管理面「逐项勾选」与「列出全部」用。顺序即界面展示顺序
     /// （与 contract §5.3 的 10 条字符串同序）。
+    ///
+    /// 当前只有单测在用（管理面 UI 还没接出来）—— 挂 `#[cfg(test)]` 而不是 `allow(dead_code)`，
+    /// 免得这一整块「先写好的公有面」在别处悄悄烂着。
+    #[cfg(test)]
     pub const ALL: [Scope; 10] = [
         Scope::ScheduleRead,
         Scope::ScheduleCreate,
@@ -140,18 +144,15 @@ impl ScopeSet {
         self.0.iter().map(|s| s.as_str().to_string()).collect()
     }
 
-    pub fn as_slice(&self) -> &[Scope] {
-        &self.0
-    }
-
-    pub fn iter(&self) -> std::iter::Copied<std::slice::Iter<'_, Scope>> {
-        self.0.iter().copied()
-    }
-
+    // 以下 3 个门面（计数 / 判空 / 多权限判据）目前只有单测在用（管理面还没接线），
+    // 一律挂 `#[cfg(test)]`，等真正有调用方时再放开 —— 不做「先摆着」的死代码。
+    // （原先还有 `as_slice` / `iter` 两个，全仓没人用，已删。）
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -170,7 +171,8 @@ impl ScopeSet {
         self.0.contains(&need)
     }
 
-    /// 是否包含全部指定权限（多 scope 方法用）。
+    /// 是否包含全部指定权限（多 scope 方法用）。当前只有单测在用，理由同 [`Self::len`]。
+    #[cfg(test)]
     pub fn contains_all(&self, needs: &[Scope]) -> bool {
         needs.iter().all(|n| self.contains(*n))
     }
