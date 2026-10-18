@@ -6,6 +6,11 @@ import type { PlanExercise, WorkoutPlan } from '@/types'
 /**
  * 粗估课程时长（分钟）：有氧按分钟数；计时组按目标秒（缺省 30s）；
  * 力量正式组按 45s；激活热身组同样按 45s 计（不额外加组间休息）；含组间休息。
+ *
+ * 组间休息按「组与组之间」算（n 组 → n−1 段）：最后一组做完这个动作就结束了，
+ * 后面没有等待。从前写成 `sets × (per + restSec)`，等于每个动作都白搭一段休息
+ * （4 组 90s 休息多算 90 秒；六个动作的课虚高约 9 分钟）——「约 N 分钟」是这页
+ * 的主数值，系统性偏高就是在骗用户。
  */
 export function estimatePlanMinutes(plan: WorkoutPlan): number {
   const WORKING_SET_SEC = 45
@@ -14,7 +19,7 @@ export function estimatePlanMinutes(plan: WorkoutPlan): number {
     if (e.kind === 'cardio') s += (e.durationMin ?? 0) * 60
     else {
       const per = e.kind === 'timed' ? (e.targetSec ?? 30) : WORKING_SET_SEC
-      s += e.sets * (per + e.restSec)
+      s += e.sets * per + Math.max(0, e.sets - 1) * e.restSec
       if (e.kind === 'strength') s += (e.warmups?.length ?? 0) * WORKING_SET_SEC
     }
   }

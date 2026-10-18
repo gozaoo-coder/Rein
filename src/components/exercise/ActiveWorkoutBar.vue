@@ -143,8 +143,9 @@ const endActions = computed(() =>
 function goImmersive(): void {
   // 训练课：从浮窗当前位置形变展开为沉浸层（不走路由，任意吸附位同理）；
   // 跑步仍是路由沉浸页。锚点走 provider（量 body，圆角正确）
-  if (rt.kind.value === 'course') openImmersive()
-  else void router.push(rt.immersiveRoute.value)
+  const target = rt.immersiveRoute.value
+  if (target) void router.push(target)
+  else openImmersive()
 }
 
 async function onEndPick(value: string): Promise<void> {

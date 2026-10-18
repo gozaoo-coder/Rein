@@ -28,6 +28,13 @@ const ready = ref(false)
 const detailEx = ref<PlanExercise | null>(null)
 const conflictOpen = ref(false)
 const delOpen = ref(false)
+/**
+ * 开课防重入。`session.start` 里串了 getActive + 建议引擎 + 上次重量 + session_start 一串 IPC，
+ * 全程没有任何守卫；双击就让两次并发 start 都读到「无 active」而各建一场 —— 后端会静默把旧的
+ * 那行标 aborted（计时被重置），而本地 sessionId 还可能指向已被 abort 的行，此后每次
+ * session_snapshot 都打偏。HomeFooter 与 MuscleCatchupSheet 都有这道守卫，最常用的这处反而没有。
+ */
+const starting = ref(false)
 
 onMounted(async () => {
   await Promise.all([planStore.ensureLoaded(), lib.ensureLoaded()])
@@ -35,14 +42,34 @@ onMounted(async () => {
 })
 
 const plan = computed(() => planStore.byId(String(route.params.id)))
+
+/** 进行中的那场是哪种运动：store 只给了目标路由，这里翻成用户看得懂的说法。
+ *  从前这条弹窗一律写「已有进行中的训练」，跑步也在里面 —— 用户点下去时并不知道
+ *  自己会被送去哪（跑步页还是训练沉浸层），而 store 明明知道。 */
+const conflictIsRun = computed(() => session.foreignRoute === '/session/run')
+const conflictTitle = computed(() =>
+  conflictIsRun.value
+    ? '正在跑步，请先接续'
+    : `正在上「${session.plan?.name ?? '训练课'}」，请先接续`,
+)
+const conflictAction = computed(() => (conflictIsRun.value ? '回到跑步' : '回到进行中的训练'))
+
 /** 开始训练；已有进行中会话（训练课/跑步）时提示前往接续。
  *  形变锚点 = 开始按钮（从哪点从哪长出）。 */
 async function onStart(e: MouseEvent): Promise<void> {
-  if (!plan.value) return
+  if (!plan.value || starting.value) return
   const origin = e.currentTarget as HTMLElement | null // await 后 currentTarget 已置 null，同步先抓
-  const r = await session.start(plan.value)
-  if (r === 'conflict') conflictOpen.value = true
-  else openImmersive(origin)
+  starting.value = true
+  try {
+    const r = await session.start(plan.value)
+    if (r === 'conflict') conflictOpen.value = true
+    else openImmersive(origin)
+  } catch {
+    // 失败原因由 store 统一 toast（ARCHITECTURE §3：提示由 store 决定、service 不吞错），
+    // 这里只负责把按钮放回可点状态。
+  } finally {
+    starting.value = false
+  }
 }
 
 /** 接续进行中的会话：训练课开沉浸层，跑步转跑步路由 */
@@ -112,9 +139,20 @@ async function doDelete(): Promise<void> {
           </div>
 
           <!-- 按钮暂留课程名：scripts/e2e-session-timed.mjs:194/199 断言按钮文案含「开始「<课程名>」」，
-               收成「开始训练」要等那条断言先改（审计方案 PlanDetailPage.vue L107） -->
-          <button type="button" class="start row center" @click="onStart">
-            <Play :size="18" /> 开始「{{ plan.name }}」
+               收成「开始训练」要等那条断言先改（审计方案 PlanDetailPage.vue L107）。
+               准备中换成另一句文案：准备期要读近 42 天做组记录，冷启动并非瞬时，而 HIG 要求
+               操作发起后超过约 100ms 就得给出进行中的反馈。点击那一刻文案仍是原样，
+               所以上面那条断言照常命中。 -->
+          <button
+            type="button"
+            class="start row center"
+            :disabled="starting"
+            :aria-busy="starting || undefined"
+            @click="onStart"
+          >
+            <span v-if="starting" class="spin" aria-hidden="true" />
+            <Play v-else :size="18" />
+            {{ starting ? '正在准备今日处方…' : `开始「${plan.name}」` }}
           </button>
         </section>
 
@@ -126,8 +164,8 @@ async function doDelete(): Promise<void> {
 
     <ActionSheet
       :open="conflictOpen"
-      title="已有进行中的训练，请先接续"
-      :actions="[{ label: '前往继续', value: 'go' }]"
+      :title="conflictTitle"
+      :actions="[{ label: conflictAction, value: 'go' }]"
       @select="goConflict"
       @close="conflictOpen = false"
     />
@@ -266,6 +304,35 @@ async function doDelete(): Promise<void> {
   font-size: var(--fs-body);
   font-weight: 700;
   box-shadow: var(--shadow-float);
+}
+
+.start:disabled {
+  opacity: var(--disabled-opacity);
+}
+
+/* 准备中的旋环：纯 CSS，不引图标库 —— 少一个「这颗图标在不在这个版本里」的来源。 */
+.spin {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid color-mix(in srgb, var(--bg) 30%, transparent);
+  border-top-color: var(--bg);
+  border-radius: var(--radius-full);
+  animation: start-spin 700ms linear infinite;
+}
+
+@keyframes start-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 旋转是「正在跑」的语义本身，不能按装饰性动效一删了事；降级成静止的环 —— 它仍然
+   说明「已经点了、正在准备」，只是不再转。 */
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
 }
 
 .del {

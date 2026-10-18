@@ -108,6 +108,21 @@ export function estimateOneRepMax(weightKg: number, reps: number): number {
   return weightKg * (1 + reps / 30)
 }
 
+/**
+ * `estimateOneRepMax` 的反函数：给定估算极限与目标次数，回推工作重量。
+ *
+ * 这一支必须存在，否则「估算」与「封顶」会变成两套口径：封顶从前写死 Epley
+ * `ceiling / (1 + r/30)`，而 13 次以上 `estimateOneRepMax` 走的是 Brzycki ——
+ * r>10 时 Brzycki 更高，它的反函数就更低，15 次目标的封顶因此比一致口径高约 9%。
+ * 同一个 e1rm 在「估算」与「封顶」里必须是同一个数。
+ */
+export function weightForReps(e1rm: number, reps: number): number {
+  if (!Number.isFinite(e1rm) || !Number.isFinite(reps) || e1rm <= 0 || reps <= 0) return 0
+  if (reps > MAX_E1RM_REPS) return 0
+  if (reps > 12) return (e1rm * (37 - reps)) / 36
+  return e1rm / (1 + reps / 30)
+}
+
 /** 按器材步进取整（向下取整到步进，避免建议重量超出今日能力）；step ≤ 0 = 不取整 */
 export function roundToStep(kg: number, step: number): number {
   if (!Number.isFinite(kg)) return kg
@@ -375,8 +390,21 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
         recoveryMuscle = m
       }
     }
+    // 无记录 = 中性 1.0，不是扣分：`hoursSince` 保持 `Infinity` 时会落到最后一档，
+    // 让「全新动作 / 从未专门练过的肌群」白拿一个 ×0.98 —— 而同一处的文案还写着
+    // 「该肌群近期无训练记录」。没数据不等于没恢复，也不该把权重建议往下拉。
     const recoveryFactor =
-      hoursSince < 24 ? 0.9 : hoursSince < 48 ? 0.95 : hoursSince < 72 ? 1.0 : hoursSince < 120 ? 1.02 : 0.98
+      hoursSince === Infinity
+        ? 1.0
+        : hoursSince < 24
+          ? 0.9
+          : hoursSince < 48
+            ? 0.95
+            : hoursSince < 72
+              ? 1.0
+              : hoursSince < 120
+                ? 1.02
+                : 0.98
     const recoveryNote =
       hoursSince === Infinity
         ? '该肌群近期无训练记录'
@@ -455,8 +483,10 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
         base = last.topWeight
         anchorNote = '今日状态略低 → 维持上次重量，不做递增'
       }
-      // 今日极限封顶：目标次数下的等价重量；但不低于上次实际完成过的重量（已证明可行）
-      const ceilingWeight = todayCeiling / (1 + targetReps / 30)
+      // 今日极限封顶：目标次数下的等价重量（走 weightForReps，与 estimateOneRepMax 同一口径）；
+      // 但不低于上次实际完成过的重量（已证明可行）。次数超出可估上限时 weightForReps 返回 0
+      // =「不可估」，此时不做抬高，cap 落回上次已完成的重量。
+      const ceilingWeight = weightForReps(todayCeiling, targetReps)
       const cap = Math.max(last.topWeight, ceilingWeight)
       const lo = Math.max(0, last.topWeight * 0.85)
       const clamped = clamp(base, lo, cap)

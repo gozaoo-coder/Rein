@@ -232,6 +232,9 @@ function bump(d: number): void {
 
 .wok {
   flex: none;
+  /* 命中区撑到 44，与两侧 ± 步进钮同高：输入法弹出时这一行最容易被误触，
+     而这颗「确定」从前只有 28 高。这是全批最小的热区。 */
+  min-height: 44px;
   padding: 6px 10px;
   border-radius: var(--radius-full);
   /* 「确定」是按钮标签：文字中性色，色相留在 soft 底的色块上（色彩配额，STANDARDS §4） */

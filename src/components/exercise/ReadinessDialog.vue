@@ -530,6 +530,9 @@ watch(
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* 命中区抬到 44：这两颗是弹窗的主操作，而 caption 档字号让盒子只有 38 高。
+     这里不用 `.rd-x` 那种伪元素外扩 —— 两颗钮并排、下面紧着下一段，外扩会互相抢点击。 */
+  min-height: 44px;
   padding: 10px 14px;
   border-radius: var(--radius-s);
   background: var(--surface-2);

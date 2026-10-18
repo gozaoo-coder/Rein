@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { createLayout } from 'animejs'
-import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, PlusCircle, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, ClockPlus, Coffee, Ellipsis, Gauge, Info, PlusCircle, Repeat, RotateCcw, SkipForward, Timer } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import AppMenu, { type MenuItem } from '@/components/common/AppMenu.vue'
@@ -23,6 +23,7 @@ const WeightAdviceSheet = defineAsyncComponent(
 const MuscleMap = defineAsyncComponent(() => import('@/components/exercise/MuscleMap.vue'))
 import SessionBigNumberInput from '@/components/exercise/SessionBigNumberInput.vue'
 import SessionCourseDrawer from '@/components/exercise/SessionCourseDrawer.vue'
+import SessionExerciseSwapSheet from '@/components/exercise/SessionExerciseSwapSheet.vue'
 import SessionGlassButton from '@/components/exercise/SessionGlassButton.vue'
 import SessionSummaryPane from '@/components/exercise/SessionSummaryPane.vue'
 import ReadinessDialog from '@/components/exercise/ReadinessDialog.vue'
@@ -45,6 +46,8 @@ import {
   settleClosed,
   type ImmersiveOriginSnapshot,
 } from '@/system/sessionImmersive'
+import { fmtKg } from '@/utils/strength'
+import type { SwapCandidate } from '@/types'
 
 /**
  * 运动模式 · 训练课沉浸层（底部坞 × 组格矩阵）：覆盖整个窗口（含底部导航栏）。
@@ -54,7 +57,7 @@ import {
  * 结构：顶栏 → 全课分格进度条（每格一组，按动作分组留缝）→ 可滚动内容区
  * （动作名 hero ＋ 重量输入 ＋ 次数输入 ＋ 动作要点 ＋ 接下来）→ 常驻底部操作坞
  * （组格即完成控件；热身态为小重量激活格；休息态为时长抽屉图标＋跳过）。
- * 坞内「更多」菜单提供跳过当前组 / 临时休息 / 再加一组 / 上一组 / 当前动作详解。
+ * 坞内「更多」菜单提供跳过当前组 / 临时休息 / 再加一组 / 上一组 / 临时更换本动作 / 当前动作详解。
  * 顶部组数胶囊（带 ›）唤起全课浏览抽屉：逐动作逐组浏览、跳至某组、临时更换未做的动作。
  * 重量 / 次数登记：数字可点，就地变成输入框用输入法键入；也可用 ± 步进微调。
  * 正式组与激活热身组都支持现场调整，完成组即落当前值，结束保存后展开为逐组记录
@@ -70,6 +73,7 @@ const restSheetOpen = ref(false)
 const moreOpen = ref(false)
 const detailOpen = ref(false)
 const courseOpen = ref(false)
+const swapOpen = ref(false)
 
 /** bind 菜单锚定元素：坞内触发各菜单的图标钮；临时休息从更多菜单二级唤起，沿用更多钮位置 */
 const moreAnchor = ref<HTMLElement | null>(null)
@@ -83,11 +87,6 @@ function openMore(e: MouseEvent): void {
 function openRestAdd(e: MouseEvent): void {
   restAnchor.value = (e.currentTarget as HTMLElement) ?? null
   restSheetOpen.value = true
-}
-
-/** 重量显示：整数不带小数，62.5 保留一位 */
-function fmtKg(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(1)
 }
 
 /** 上次做组参照（渐进超负荷对照，按动作库 id 取） */
@@ -373,6 +372,12 @@ const MORE_ACTIONS = computed<MenuItem[]>(() => {
     { label: '再加一组', value: 'extra-set', icon: PlusCircle },
     { label: '上一组（重做）', value: 'redo-last', icon: RotateCcw },
     { label: '今日状态', value: 'readiness', icon: Gauge, children: READINESS_ACTIONS },
+    // 临时更换本动作：换动作是健身房里最高频的中断之一，可它此前只藏在
+    // 「顶栏 n/N → 全课抽屉 → 找到当前动作 → 更换」四步之后。这里直通同一张
+    // 选择面板（候选池仍是动作库内的同类型动作，编排沿用本课程）。
+    ...(s.canSwapExercise(s.exIndex)
+      ? [{ label: '临时更换本动作', value: 'swap', icon: Repeat }]
+      : []),
     { label: '当前动作详解', value: 'detail', icon: Info },
   )
   return list
@@ -464,6 +469,8 @@ function onMorePick(value: string): void {
   } else if (value === '5' || value === '4' || value === '3' || value === '2' || value === '1') {
     s.setReadiness(Number(value))
     toast('已记录今日状态 · 建议重量已同步调整')
+  } else if (value === 'swap') {
+    swapOpen.value = true
   } else if (value === 'detail') {
     detailOpen.value = true
   } else {
@@ -471,6 +478,13 @@ function onMorePick(value: string): void {
     const min = Number(value)
     if (Number.isFinite(min) && min > 0 && s.startTempRest(min)) toast(`临时休息 ${min} 分钟`)
   }
+}
+
+/** 换动作：与全课抽屉里那颗「更换」走同一条路径（同一张选择面板、同一个 store 方法） */
+function onSwapPick(src: SwapCandidate): void {
+  swapOpen.value = false
+  if (s.swapExercise(s.exIndex, src)) toast(`已更换为「${src.name}」`)
+  else toast('该动作已经做过，不能更换')
 }
 
 const restProgress = computed(() =>
@@ -1040,6 +1054,41 @@ watch(immersiveOpen, (open) => {
   if (back?.isConnected) back.focus({ preventScroll: true })
   else if (layerEl.value?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur()
 })
+
+/**
+ * 焦点陷阱：`aria-modal` 只在**无障碍语义**上让读屏忽略背景，它拦不住 Tab ——
+ * 键盘用户依然能把焦点一路移到被盖住的页面元素上（「看不见但点得到」，
+ * 比没有模态语义更糟）。这里把 Tab 收在层内循环。
+ *
+ * 只认**可见且可聚焦**的元素：层里挂着一批 v-show 收纳的子层（抽屉 / 弹窗 / 建议面板），
+ * display:none 的那些 offsetParent 为 null，不能进循环 —— 否则焦点会掉进隐藏面板。
+ * 一个可聚焦元素都没有时把焦点留在层本身（层是 tabindex="-1" 的容器，不会掉出窗口）。
+ */
+function trapFocus(e: KeyboardEvent): void {
+  if (e.key !== 'Tab' || !immersiveOpen.value) return
+  const root = layerEl.value
+  if (!root) return
+  const nodes = root.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )
+  const items = Array.from(nodes).filter((el) => el.offsetParent !== null)
+  if (items.length === 0) {
+    e.preventDefault()
+    root.focus({ preventScroll: true })
+    return
+  }
+  const first = items[0]!
+  const last = items[items.length - 1]!
+  const active = document.activeElement
+  const inside = active instanceof HTMLElement && root.contains(active)
+  if (e.shiftKey && (!inside || active === first || active === root)) {
+    e.preventDefault()
+    last.focus({ preventScroll: true })
+  } else if (!e.shiftKey && (!inside || active === last)) {
+    e.preventDefault()
+    first.focus({ preventScroll: true })
+  }
+}
 </script>
 
 <template>
@@ -1053,6 +1102,7 @@ watch(immersiveOpen, (open) => {
     ref="layerEl"
     class="session-layer"
     tabindex="-1"
+    @keydown="trapFocus"
     :role="immersiveOpen ? 'dialog' : undefined"
     :aria-modal="immersiveOpen ? 'true' : undefined"
     :aria-label="immersiveOpen ? '训练课' : undefined"
@@ -1523,6 +1573,15 @@ watch(immersiveOpen, (open) => {
       <!-- 全课浏览抽屉：逐组进度 / 跳至该组 / 临时换动作 -->
       <SessionCourseDrawer :open="courseOpen" @close="courseOpen = false" />
 
+      <!-- 临时更换本动作（更多菜单直通）：候选池 = 动作库内的同类型动作 -->
+      <SessionExerciseSwapSheet
+        :open="swapOpen"
+        :kind="s.currentEx?.kind ?? 'strength'"
+        :current-id="s.currentEx?.exerciseId ?? ''"
+        @pick="onSwapPick"
+        @close="swapOpen = false"
+      />
+
       <!-- 重量建议说明抽屉：RM 单位 / 本次依据 / 四步计算过程 -->
       <WeightAdviceSheet
         :open="adviceOpen"
@@ -1979,6 +2038,9 @@ watch(immersiveOpen, (open) => {
 /* 建议依据：全宽左对齐的展开行（从前是居中飘着的一行小字，看不出可点） */
 .whydis {
   width: 100%;
+  /* 命中区撑到 44：这是建议抽屉的唯一入口，而 caption 字号让整行只有约 18 高 ——
+     全屏里点得最多的入口配最小的热区。整行本来就是通栏，加高不像其它胶囊那样动观感。 */
+  min-height: 44px;
   display: flex;
   align-items: center;
   gap: 8px;

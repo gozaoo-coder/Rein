@@ -98,8 +98,16 @@ const kind = computed<WorkoutKind>(() => {
   return 'none'
 })
 
-/** 恢复沉浸模式的目标路由 */
-const immersiveRoute = computed(() => (kind.value === 'run' ? '/session/run' : '/session'))
+/**
+ * 恢复沉浸模式的目标路由。
+ *
+ * 只有跑步是「路由沉浸页」；训练课的沉浸层与路由早已解耦（收起/展开只换 v-show，
+ * 见 SessionOverlay 顶部注释）。课程分支从前返回 `/session`，而那条路由已经移除
+ * （ARCHITECTURE §8）——留着一个不存在的路径，就是给后来人准备的一个死值：
+ * 谁照着 `immersiveRoute` 写一行 `router.push`，谁就跳进空白页。返回 null，
+ * 调用方据此去开沉浸层。
+ */
+const immersiveRoute = computed(() => (kind.value === 'run' ? '/session/run' : null))
 
 const view = computed<WorkoutBarView | null>(() => {
   if (kind.value === 'run') {

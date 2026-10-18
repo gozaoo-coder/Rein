@@ -11,6 +11,7 @@ import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import { useToast } from '@/composables/useToast'
 import { exerciseSub } from '@/utils/plan'
+import { fmtKg } from '@/utils/strength'
 import type { PlanExercise, SessionSetSlot, SwapCandidate } from '@/types'
 
 /**
@@ -159,10 +160,6 @@ function onSwapPick(src: SwapCandidate): void {
 }
 
 /* ---------- 展示 ---------- */
-
-function fmtKg(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(1)
-}
 
 /** 每组的右侧状态文本：完成态展示真实登记值，其余展示状态词。
  *  热身标识只由左侧 .wtag 胶囊承担 —— 右侧再写一遍「热身」前缀，
