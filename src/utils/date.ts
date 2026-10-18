@@ -13,6 +13,19 @@ export function todayStr(): string {
   return toDateStr(new Date())
 }
 
+/**
+ * ISO-8601 时间戳 → **本地时区**的 `YYYY-MM-DD`。
+ *
+ * 为什么需要它：后端按 `substr(started_at,1,10)` 过滤，那是 UTC 日期；而前端日界用本地
+ * `todayStr()`。UTC+8 下 00:00–08:00 的专注，其 UTC 前缀仍是昨天——直接按前缀归日会把
+ * 凌晨那段算到前一天。凡要「按本地日切分 UTC 时间戳」的地方都走这里。
+ * 时间戳本身仍是 ISO-8601（STANDARDS §5），不改格式。
+ */
+export function localDateOf(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : toDateStr(d)
+}
+
 export function parseDate(s: string): Date {
   const [y, m, d] = s.split('-').map(Number)
   return new Date(y!, (m ?? 1) - 1, d ?? 1)

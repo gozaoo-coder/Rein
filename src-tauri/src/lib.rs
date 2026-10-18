@@ -423,6 +423,7 @@ pub fn run() {
             modules::gateway::commands::gateway_status,
             modules::gateway::commands::gateway_set_enabled,
             modules::gateway::commands::gateway_set_bind,
+            modules::gateway::commands::gateway_set_enabled_modules,
             modules::gateway::commands::gateway_authorization_pending,
             modules::gateway::commands::gateway_authorization_respond,
             modules::gateway::commands::gateway_revoke_client,

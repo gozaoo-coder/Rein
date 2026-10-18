@@ -7,6 +7,8 @@ import CommandPalette from '@/components/layout/CommandPalette.vue'
 import DesktopRail from '@/components/layout/DesktopRail.vue'
 import DesktopInspector from '@/components/layout/DesktopInspector.vue'
 import ActiveWorkoutBar from '@/components/exercise/ActiveWorkoutBar.vue'
+import FocusFloatBar from '@/components/pomodoro/FocusFloatBar.vue'
+import FocusNoticeBar from '@/components/pomodoro/FocusNoticeBar.vue'
 import RecordFloatBar from '@/components/record/RecordFloatBar.vue'
 import GrabFloatBar from '@/components/campus/GrabFloatBar.vue'
 import VoiceSessionView from '@/components/voice/VoiceSessionView.vue'
@@ -18,6 +20,9 @@ import ToastHost from '@/components/common/ToastHost.vue'
 import { useMediaQuery } from '@/composables/useMediaQuery'
 import { DESKTOP_MIN } from '@/config/domain'
 import { campusService } from '@/services/campusService'
+import { gatewayService } from '@/services/gatewayService'
+import { recorder, stopRecording } from '@/system/recorderRuntime'
+import { finishSpeaking, isLive as voiceIsLive } from '@/system/voiceRuntime'
 import { inspectorOpen, rememberRoute, toggleInspector } from '@/system/deskShell'
 import { useFeaturesStore } from '@/stores/features'
 import { useUpdateStore } from '@/stores/update'
@@ -123,6 +128,11 @@ const courseSelect = useCourseSelectStore()
 const features = useFeaturesStore()
 /** 抢课模块是否开着（课表的子模块，默认关闭） */
 const grabOn = computed(() => features.isEnabled('campus-grab'))
+/** 语音会话浮层 / 转写浮条、录音浮条：各自听自己的模块开关（关掉就不该有任何常驻 UI） */
+const voiceOn = computed(() => features.isEnabled('voice'))
+const recordOn = computed(() => features.isEnabled('record'))
+/** 专注浮条 / 相位提示条：番茄钟计时切页后仍在跑，常态要看得见 —— 关掉专注则整条收起 */
+const focusOn = computed(() => features.isEnabled('focus'))
 const toast = useToast()
 const aiHandedOff = new Set<number>()
 watch(
@@ -160,6 +170,49 @@ watch(
   },
   { immediate: true },
 )
+
+/**
+ * 把「已启用的功能模块」同步给对外服务网关（contract §4.7）。
+ *
+ * 网关的 28 条对外方法里，14 条属运动、6 条属专注、2 条属健康方案、1 条属课表 —— 用户
+ * 关掉其中任一模块后，这些方法一律回 `module_disabled`。理由与上面抢课那条同源：
+ * **只关 UI 等于没关**（`pomodoro.start` 足以驱动一个前端已经不显示的计时器）。
+ *
+ * 三个时机：启动（快照必须先于任何外部连接存在）、开关拨动、以及父模块被关掉带动子模块
+ * 失效 —— 后两者不必分别处理，`activePlugins` 已经把「父关子关」的继承判定算进去了。
+ */
+const enabledModuleIds = computed(() => features.activePlugins.map((p) => p.id))
+watch(
+  enabledModuleIds,
+  (ids) => {
+    void gatewayService.setEnabledModules(ids).catch(() => {
+      /* 推失败不弹错：下次拨动或重启会再推一次（缺快照的语义是「全部放行」） */
+    })
+  },
+  { immediate: true },
+)
+
+/**
+ * 关掉模块时必须**收手**正在跑的那个会话，而不是只把界面藏起来。
+ *
+ * 语音会话浮层、转写浮条、录音浮条都是 `v-if` 挂的：会话进行中去关掉模块，UI 会整个消失，
+ * 而 `voiceRuntime` / `recorderRuntime` 还在采 —— 麦克风占着，界面上已经没有能停它的按钮
+ * （待办抽屉里那枚录音钮也随模块一起收起），用户只能重启应用。
+ *
+ * 两条都按「不丢数据」收尾，与「关闭只影响入口与路由、不删任何数据」同一条纪律：
+ *  - 语音：走 `finishSpeaking()` 正常结算（纪要照常落库）。**不用** `cancelSession()` ——
+ *    那会丢掉刚说完的转写，而用户关模块的意思不是「这段不要了」；
+ *  - 录音：走 `stopRecording()`，take 留在内存列表里，模块再打开就看得见（不 cancel）。
+ */
+watch(voiceOn, (on) => {
+  if (on || !voiceIsLive()) return
+  void finishSpeaking().catch(() => {
+    /* 收尾失败不改状态：转写逐句落过草稿，下次进语音还能捞回来 */
+  })
+})
+watch(recordOn, (on) => {
+  if (!on && recorder.status === 'recording') stopRecording()
+})
 
 /**
  * 启动静默检查更新：只在「开关开着 + 距上次检查超过间隔」时真的联网，
@@ -261,15 +314,22 @@ onMounted(() => {
   </div>
   <!-- 悬浮运动条：收起完成后才恢复，自身按停靠方向渐入 -->
   <ActiveWorkoutBar />
-  <!-- 录音悬浮条：录音进行中常驻（可拖拽停靠，轻点进录音页） -->
-  <RecordFloatBar v-show="shellVisible" data-immersive-shell />
-  <!-- 语音转写悬浮条：语音会话收起后台转写继续（与录音浮条同套停靠、独立 key） -->
-  <VoiceFloatBar v-show="shellVisible" data-immersive-shell />
+  <!-- 录音悬浮条：录音进行中常驻（可拖拽停靠，轻点进录音页）。受录音模块开关管 -->
+  <RecordFloatBar v-if="recordOn" v-show="shellVisible" data-immersive-shell />
+  <!-- 专注悬浮条：番茄钟进行中 / 暂停态常驻（受专注模块开关管）。为什么专注走**底部活动族**
+      而不是像抢课那样上移：抢课是「监视器」（抬头看一眼，顶部更合直觉），专注是「活动」——
+       与运动、录音一样是「我此刻正在做一件事」的计时，天然与运动互斥（练时不会开番茄），
+       同族还共用 useDragDock 的停靠手感与 glass-surface 材质，用户不必为它记第二套交互。 -->
+  <FocusFloatBar v-if="focusOn" v-show="shellVisible" data-immersive-shell />
+  <!-- 专注相位提示条：只在相位切换的系统通知**没送达**时顶部落一条（常驻送达条） -->
+  <FocusNoticeBar v-if="focusOn" />
+  <!-- 语音转写悬浮条：语音会话收起后台转写继续（与录音浮条同套停靠、独立 key）。受语音模块开关管 -->
+  <VoiceFloatBar v-if="voiceOn" v-show="shellVisible" data-immersive-shell />
   <!-- 抢课监视器：后台引擎有活儿时顶部落一条，点进选课页（顶部定位，不与底部三条浮条抢位）。
        受模块开关管：关掉抢课（默认关）就不该有任何常驻 UI。 -->
   <GrabFloatBar v-if="grabOn" v-show="shellVisible" data-immersive-shell />
   <!-- 语音会话视图：单例 runtime 驱动，任何入口可唤起（voiceRuntime.openView） -->
-  <VoiceSessionView />
+  <VoiceSessionView v-if="voiceOn" />
   <!-- 训练课沉浸层：常驻挂载不走路由（system/sessionImmersive 驱动显隐与形变） -->
   <SessionOverlay />
   <!-- 命令面板（⌘K）：跟着**设备能力**挂（hasKeyboard），不是跟着桌面壳 ——

@@ -13,15 +13,15 @@ import { useFeaturesStore } from '@/stores/features'
                                      order = 升序，即渲染顺序
 
    三条边界：
-     · **项可增可减**（运动模块开关决定 wk / qa-workout 在不在）——所以持久化里
+     · **项可增可减**（模块开关决定哪些项在不在，见 MODULE_ITEMS）——所以持久化里
        只认「已知 id」，未知 id 丢弃；本版本新增的 id 按缺省位补齐；缺字段回落缺省。
        隐藏的项仍留在状态里（只不渲染），模块再打开时位置还在。
      · **缺省排布**要和原区域表长得一样：hero/todo 是 4 列 × 2 行的「大砖」，
        番茄钟 + AI 各占 4 列叠在右上（靠栅格的 dense 回填实现），四磁贴各 3 列，
        记账 / 本周运动各 6 列，今日饮食通栏。
-     · **运动关掉时不留空洞**：快捷入口只剩 3 个（3×3=9 列）、记账独占一行
-       —— 原实现靠第二份 grid-template-areas 做到，这里在渲染期把「还在缺省值上」
-       的那几项自动摊开（用户自己调过尺寸的项一律尊重用户）。
+     · **模块关掉时不留空洞**：快捷入口少几个就几个（自动摊满这一行）、记账在本周运动
+       不在时独占一行 —— 原实现靠第二份 grid-template-areas（`.no-sports`）做到，
+       这里在渲染期把「还在缺省值上」的那几项自动摊开（用户自己调过尺寸的项一律尊重用户）。
 
    状态是**模块单例**：BentoOverview（栅格）与 BentoLayoutSheet（面板）两处消费同一份，
    各自 useBentoLayout() 拿到的是同一组 ref/computed，谁改另一边立刻跟上。
@@ -92,8 +92,17 @@ const SPEC_BY_ID = new Map<BentoItemId, BentoSpec>(BENTO_SPECS.map((s) => [s.id,
 
 const DEFAULT_ORDER = new Map<BentoItemId, number>(BENTO_SPECS.map((s, i) => [s.id, i]))
 
-/** 运动模块关掉时一起消失的两块（沿用原 .no-sports 的第二份区域表） */
-const SPORTS_ITEMS: readonly BentoItemId[] = ['wk', 'qa-workout']
+/**
+ * 模块 → 便当里跟着一起消失的项。判据是「这块卡的内容完全来自那个模块」：
+ * 关掉模块之后留着它，就是一块读不出任何内容的空壳（原实现只有运动一份，
+ * 写死成 `.no-sports` 的第二份区域表；现在按插件开关逐模块摊开）。
+ */
+const MODULE_ITEMS: Record<string, readonly BentoItemId[]> = {
+  sports: ['wk', 'qa-workout'],
+  nutrition: ['hero', 'qa-food', 'diet'],
+  focus: ['pomodoro', 'qa-focus'],
+  ledger: ['led'],
+}
 
 function isBentoItemId(v: unknown): v is BentoItemId {
   return typeof v === 'string' && SPEC_BY_ID.has(v as BentoItemId)
@@ -176,7 +185,9 @@ function persist(): void {
 
 function hiddenOf(features: ReturnType<typeof useFeaturesStore>): Set<BentoItemId> {
   const out = new Set<BentoItemId>()
-  if (!features.isEnabled('sports')) for (const id of SPORTS_ITEMS) out.add(id)
+  for (const [plugin, ids] of Object.entries(MODULE_ITEMS)) {
+    if (!features.isEnabled(plugin)) for (const id of ids) out.add(id)
+  }
   return out
 }
 

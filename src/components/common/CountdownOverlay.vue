@@ -8,6 +8,18 @@ import { ref, watch } from 'vue'
  * 结束后 emit('done') 并自动隐藏。
  * immediate：沉浸页可能在 overlay 已 show 的状态下才挂载（悬浮运动条
  * 完成组后 store 侧触发了 flash），挂载即接管倒计时而不是卡在静态层。
+ *
+ * ---------- 播报（无障碍）----------
+ * 整层是 `role="status"` + `aria-live="polite"` + `aria-atomic`：3·2·1 与「开始第 N 组」
+ * 这类闪现是**离散事件**，正是 live region 的用途 —— 视障用户此前完全听不到节奏推进。
+ *
+ * 已知局限：本层是 `v-if` 挂载的，live region 与它的内容**同时**进入 DOM，而部分读屏会忽略
+ * 「区域出现时就已经带着内容」这种变化。彻底稳妥的做法是常驻一个空 region、由 store 事件
+ * 更新它的文本 —— 那要把它挪到页面根部并改驱动方式，属另一件事，本轮不做（现状是
+ * 「有些读屏会念、没有一个会漏」，不劣于改动前）。
+ *
+ * 休息倒数与计时中**不**走这里：它们每 100ms–1s 变一次，逐秒播报会淹没其他信息。
+ * 那两处用 `role="timer"`（其隐式 aria-live 就是 off），读屏用户需要时可主动读到当前值。
  */
 const props = withDefaults(
   defineProps<{
@@ -79,7 +91,7 @@ watch(
 <template>
   <Teleport to="body">
     <Transition name="ov-fade">
-      <div v-if="show" class="overlay col center">
+      <div v-if="show" class="overlay col center" role="status" aria-live="polite" aria-atomic="true">
         <p class="sub">{{ sub }}</p>
         <!-- :key 触发重新挂载，让 pop 动画每个数字都播放 -->
         <b :key="text" class="big num" :class="{ go: isGo }">{{ text }}</b>

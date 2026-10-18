@@ -218,7 +218,15 @@ watch(
  * 现在只有一行胶囊 —— 内容区凭空多出的 32px 就是这次顶栏改版的直接收益之一。
  */
 const TOP_OFFSET = 10
-const CAP_H = 36
+/**
+ * 顶栏胶囊的高度。取 44 而不是 36：这三枚（收起 / 全课进度 / 结束）是沉浸层里**唯一**
+ * 的一行入口，而 44 是全仓通行的触控命中区下限（步进钮 44、菜单项 44、抽屉关闭热区 44、
+ * 浮条按钮 44）—— 36 是这一处唯一的例外。这里没有用「伪元素把热区撑到 44」那条路：
+ * 胶囊的材质根是 GlassSurface，它带 `overflow: hidden`（折射层要按圆角裁），
+ * 伪元素外扩会被它裁掉，撑不出来。所以直接把视觉高度本身抬到 44 ——
+ * `--cap-h` 与 `topHeight` 共用这一个常量，内容区留白自动跟着走，不会只剩一边更新。
+ */
+const CAP_H = 44
 const TOP_GAP = 16
 
 const topHeight = computed(() => TOP_OFFSET + CAP_H + TOP_GAP)
@@ -273,11 +281,24 @@ const dockHeight = computed(() => {
   return DOCK_ROW_H
 })
 
-/** 坞内组格的当前序号：exercise 用 setIndex；rest 中下一组 = 已完成 + 1 */
-const curTile = computed(() => (s.phase === 'exercise' ? s.setIndex : s.exDoneSets.filter((d) => !d.warmup).length + 1))
+/**
+ * 坞内组格：读 store 的 `setSlots`（与顶栏「n/N 组」胶囊、全课抽屉同一份数据源），
+ * 每一格按**自己的状态**渲染。
+ *
+ * 为什么不能用「已完成数前推」（旧实现 `i <= workingDone`）：跳过一组之后那种数量对齐
+ * 就整体错位 —— 跳过第 1 组再做完第 2 组时 `workingDone = 1`，✓ 会落在写着「1」的格上，
+ * 而同一刻抽屉与顶栏的口径是「1 跳过 / 2 完成 / 3 当前」。训练时唯一一眼可见的读数
+ * 因此是错的。格状态由 `setSlots` 的游标唯一决定，这里只做呈现。
+ */
+const curTiles = computed(() => s.setSlots.filter((x) => x.exIdx === s.exIndex))
 
-/** 当前动作已完成正式组数（热身行不计入组格） */
-const workingDone = computed(() => s.exDoneSets.filter((d) => !d.warmup).length)
+/** 坞内组格的无障碍标签：屏幕上只有数字与 ✓，读屏需要把状态念出来 */
+const TILE_STATE_LABEL: Record<'done' | 'current' | 'skipped' | 'pending', string> = {
+  done: '已完成',
+  current: '进行中',
+  skipped: '已跳过',
+  pending: '待完成',
+}
 
 const nextEx = computed(() => s.plan?.exercises[s.exIndex + 1] ?? null)
 
@@ -522,11 +543,20 @@ const fadeEl = ref<HTMLElement | null>(null)
 usePressGlow(layerEl, '.glow-layer')
 
 /* 滚动边缘（丰富档）：内容滚离顶部即置位，CSS 据此浮起底坞的暗带。
- *  解析走 useScrolled 的就近链：关闭态整层 opacity:0，可滚祖先会一路解析到文档 ——
- *  主页一滚它也跟着翻（类的写显隐在模板处与 immersiveOpen 相与，见 .session-page）。
- *  这里只负责读：rAF 合并、值不变不写，开着时判定照旧。 */
-const scrollEl = ref<HTMLElement | null>(null)
-const bodyScrolled = useScrolled(scrollEl)
+ *
+ * ⚠️ 探测点必须是**滚动容器内的后代**，不能把 ref 放在滚动框自己身上 ——
+ * `useScrolled` 的解析是从 `el.parentElement` 起步的（它不看传入元素本身），
+ * 而 `.scrollbody` 的父链（.session-page → .session-layer）两级的 overflow 都是 hidden，
+ * 于是会一路解析到 window。训练中真正在滚的是 `.scrollbody`（window.scrollY 恒为 0），
+ * `is-scrolled` 因此永不置位 —— 那条「内容滑到玻璃底下、影子变重」的浮起反馈等于没接上。
+ * 挂到 `.rubber-layer`（滚动框的直接子元素）之后，父链第一跳就命中 `.scrollbody`。
+ * 顺带解掉旧注释里那笔账：以前解析到文档，主页一滚它也跟着翻，所以模板处必须与
+ * `immersiveOpen` 相与；现在解析结果与开合无关，那个相与仍留着（关层时不写类，
+ * 语义更清楚），但不再是「防串台」的必需品。
+ *
+ * 这里只负责读：rAF 合并、值不变不写，开着时判定照旧。 */
+const scrollProbeEl = ref<HTMLElement | null>(null)
+const bodyScrolled = useScrolled(scrollProbeEl)
 
 const EXPAND_MS = 480
 const COLLAPSE_MS = 400
@@ -983,17 +1013,51 @@ watch(immersiveOpenSeq, () => playExpand(), { flush: 'post' })
 watch(immersiveClosing, (closing) => {
   if (closing) playCollapse()
 }, { flush: 'post' })
+/**
+ * 开层把焦点移进层内、关层归还。
+ *
+ * 为什么必须有：本层开层时就是 role="dialog" + aria-modal="true"（见模板），
+ * 而无障碍的模态语义要求焦点**落在模态内部** —— 否则键盘用户按 Tab 会从层外的
+ * 页面元素开始走，读屏用户也不知道"现在到了一个对话框"。
+ * 反过来，关层后本层被 aria-hidden，焦点若还留在里面就成了「焦点在 aria-hidden 元素上」
+ * ——两边都不成立的那一格，所以关闭时必须把焦点还回开层前那个元素。
+ * 元素在开层期间已被卸载（`isConnected` 为假）时就退回 blur，同样不留悬空焦点。
+ */
+let focusBeforeOpen: HTMLElement | null = null
+
 watch(immersiveOpen, (open) => {
-  if (!open) {
-    layerEl.value?.classList.remove('is-open')
-    stopMorph()
+  if (open) {
+    const active = document.activeElement
+    focusBeforeOpen = active instanceof HTMLElement ? active : null
+    // preventScroll：聚焦一个大容器不该顺带把底下的页面滚一下
+    layerEl.value?.focus({ preventScroll: true })
+    return
   }
+  layerEl.value?.classList.remove('is-open')
+  stopMorph()
+  const back = focusBeforeOpen
+  focusBeforeOpen = null
+  if (back?.isConnected) back.focus({ preventScroll: true })
+  else if (layerEl.value?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur()
 })
 </script>
 
 <template>
-  <!-- 沉浸层根：形变壳（transform/border-radius 由 container transform 动画驱动，静止恒为全屏） -->
-  <div ref="layerEl" class="session-layer">
+  <!-- 沉浸层根：形变壳（transform/border-radius 由 container transform 动画驱动，静止恒为全屏）。
+       无障碍语义：**开层时**才是 role="dialog" + aria-modal，关层时整层 aria-hidden ——
+       本层是常驻挂载的（收起只是 opacity:0 + pointer-events:none，不卸载），
+       若把 role/aria-modal 常挂上去，无障碍树里会始终存在一个看不见的 dialog，
+       读屏用户在没开课时也能"进"到里面去。tabindex="-1" 只为程序化聚焦（见脚本里的
+       focusBeforeOpen）：开层把焦点带进来、关层还回去，焦点不会停在一个 aria-hidden 的元素上。 -->
+  <div
+    ref="layerEl"
+    class="session-layer"
+    tabindex="-1"
+    :role="immersiveOpen ? 'dialog' : undefined"
+    :aria-modal="immersiveOpen ? 'true' : undefined"
+    :aria-label="immersiveOpen ? '训练课' : undefined"
+    :aria-hidden="immersiveOpen ? undefined : 'true'"
+  >
     <!-- 内容画布 + 浮起的控制层。派生的 --dock-h 让内容区知道底簇占了多高，
          内容因此从玻璃**下面**滚过（玻璃才有东西可采样），而不是被玻璃切掉。 -->
     <div
@@ -1020,11 +1084,11 @@ watch(immersiveOpen, (open) => {
            滚到玻璃底下的内容「溶解」进背景，而不是被一条横线切断。
            两簇玻璃是它的绝对定位兄弟 —— 内容因此从玻璃**下面**滚过（玻璃才有东西
            可采样），而不是被夹在两条不透明玻璃条之间。 -->
-      <main ref="scrollEl" class="scrollbody">
+      <main class="scrollbody">
         <!-- 超范围平移层：页面级滚动区走 item 超伸 —— 滚动框站住，只有 item 位移
              （system/rubberScroll）。各态的 .pane 都留在层内：它们带 fadeUp 入场动画，
              自己不能当层（会与动画抢同一个 transform）。 -->
-        <div class="rubber-layer" data-rubber-content>
+        <div ref="scrollProbeEl" class="rubber-layer" data-rubber-content>
           <!-- 激活热身：小重量找发力感 / 复合动作渐进 ramp-up -->
           <div v-if="s.phase === 'warmup' && s.currentEx" class="pane col center">
             <p class="eyebrow">激活热身 · 第 {{ s.warmupDone(s.currentEx) + 1 }} / {{ curWarmups.length }} 组</p>
@@ -1199,7 +1263,7 @@ watch(immersiveOpen, (open) => {
           <div v-else-if="s.phase === 'rest'" class="pane col center">
             <p class="eyebrow">{{ s.restIsTemp ? '临时休息' : s.restWarmup ? '热身组间' : '组间休息' }}</p>
             <RingProgress :value="restProgress" color-var="--c-balance" :size="216" :stroke="13">
-              <b class="num restnum">{{ s.restLeft }}</b>
+              <b class="num restnum" role="timer" aria-label="休息倒计时">{{ s.restLeft }}</b>
               <span class="restsec">秒</span>
             </RingProgress>
             <p class="meta" :class="{ 'meta-lead': restMeta.lead }">
@@ -1228,7 +1292,7 @@ watch(immersiveOpen, (open) => {
           <!-- 计时进行中 -->
           <div v-else-if="s.phase === 'timed-run'" class="pane col center">
             <RingProgress :value="timedProgress" color-var="--c-intake" :size="248" :stroke="15">
-              <b class="num timernum">{{ timedText }}</b>
+              <b class="num timernum" role="timer" aria-label="已用时">{{ timedText }}</b>
               <span class="hint">目标 {{ timedTargetText }}</span>
             </RingProgress>
           </div>
@@ -1301,16 +1365,21 @@ watch(immersiveOpen, (open) => {
             </template>
             <template v-else>
               <button
-                v-for="i in s.effSets(s.currentEx!)"
-                :key="i"
+                v-for="t in curTiles"
+                :key="t.setNo"
                 type="button"
                 class="dtile num"
-                :class="{ done: i <= workingDone, cur: i === curTile }"
-                :disabled="i !== curTile"
+                :class="{
+                  done: t.state === 'done',
+                  skipped: t.state === 'skipped',
+                  cur: t.state === 'current',
+                }"
+                :disabled="t.state !== 'current'"
+                :aria-label="`第 ${t.setNo} 组 · ${TILE_STATE_LABEL[t.state]}`"
                 @click="s.completeSet()"
               >
-                <template v-if="i <= workingDone">✓</template>
-                <template v-else>{{ i }}</template>
+                <template v-if="t.state === 'done'">✓</template>
+                <template v-else>{{ t.setNo }}</template>
               </button>
             </template>
           </div>
@@ -1489,6 +1558,13 @@ watch(immersiveOpen, (open) => {
 .session-layer.is-open {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* 沉浸层自己不是可交互控件：程序化聚焦只为把键盘 / 读屏的焦点带进层内，
+   不给它画焦点环（层内按钮、抽屉、输入框各自的焦点环不受影响）。 */
+.session-layer:focus,
+.session-layer:focus-visible {
+  outline: none;
 }
 
 /* 落位溶解：收起到位后壳面原地短淡出（层还停在悬浮条的 rect 上），交棒给
@@ -1729,7 +1805,8 @@ watch(immersiveOpen, (open) => {
 }
 
 .actname {
-  font-size: 40px;
+  /* 40px 就是 --fs-display-m 这一档：阶梯外禁止裸字号，且桌面壳调字号阶梯时这处要跟随 */
+  font-size: var(--fs-display-m);
   font-weight: 800;
   letter-spacing: -1px;
   line-height: 1.1;
@@ -2007,7 +2084,7 @@ watch(immersiveOpen, (open) => {
 
 /* 休息 */
 .restnum {
-  font-size: 76px;
+  font-size: var(--fs-readout-lg);
   font-weight: 200;
   letter-spacing: -3px;
   line-height: 1;
@@ -2021,7 +2098,7 @@ watch(immersiveOpen, (open) => {
 
 /* 计时中 */
 .timernum {
-  font-size: 64px;
+  font-size: var(--fs-readout-md);
   font-weight: 200;
   letter-spacing: -2.5px;
   line-height: 1;
@@ -2110,6 +2187,15 @@ watch(immersiveOpen, (open) => {
 .dtile.done {
   background: var(--c-exercise-soft);
   color: var(--text-1);
+}
+
+/* 跳过的组：与全课抽屉的 `.setrow.is-skipped`（`opacity: --disabled-opacity` + 组号划掉）
+   同一套语言。跳过 = 未做 = 不统计，所以它既不带完成态的 soft 底，也不是「当前组」的
+   抬起填充 —— 格上留着组号并划掉，正好说明「这一格存在、但没做」。 */
+.dtile.skipped {
+  opacity: var(--disabled-opacity);
+  text-decoration: line-through;
+  cursor: default;
 }
 
 /* 待完成（当前组）：抬起来的**中性填充**，不带色相也不带渐变 —— 与底部 Dock 的活动底

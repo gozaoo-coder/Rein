@@ -3,6 +3,7 @@ import { createApp } from 'vue'
 
 import App from './App.vue'
 import { router } from './router'
+import { usePomodoroStore } from './stores/pomodoro'
 import { externalAccessRuntime } from './system/externalAccessRuntime'
 import { initRubberScroll } from './system/rubberScroll'
 import { shareInbox } from './system/shareInbox'
@@ -14,6 +15,8 @@ import './styles/base.css'
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
+// 番茄钟状态核：恢复今日轮次 / 关联待办，并接管上次未走完的运行态（幂等，只在这里调一次）
+usePomodoroStore().init()
 // 运动系统运行时：启动即接管未完成的运动（计时/GPS/落盘独立于组件，
 // 悬浮运动条与沉浸页共用这一份数据源）
 workoutRuntime.init()

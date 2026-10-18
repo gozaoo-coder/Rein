@@ -266,8 +266,11 @@ function askQuick(q: string): void {
             <span class="cap">摄入 kcal</span>
           </div>
           <div class="stat">
-            <b class="num">{{ pomo.todayFocusMin }}</b>
-            <span class="cap">专注 分</span>
+            <!-- 有进行中 / 暂停未走完的一轮时，这一格从「今日累计」切成「此刻」：
+                 显示相位 + 倒计时（如「专注中 24:58」），让右栏在任何页面都能一眼看到计时。
+                 静止时仍报今日累计分钟。两态都是数值，走 .num + 中性色 -->
+            <b class="num">{{ pomo.active ? pomo.displayTime : pomo.todayFocusMin }}</b>
+            <span class="cap">{{ pomo.active ? (pomo.phase === 'focus' ? '专注中' : '休息中') : '专注 分' }}</span>
           </div>
           <div v-if="group === 'today'" class="stat">
             <b class="num">¥{{ fmtCents(todayExpenseCents) }}</b>
@@ -480,11 +483,11 @@ function askQuick(q: string): void {
         <li>
           <button class="nav-row pressable" @click="router.push({ name: 'settings-features' })">
             <SlidersHorizontal :size="16" class="nav-ic" />
-            <span class="col nav-txt"><b>打开或关闭功能</b><em>运动 · 课表 · 健康方案</em></span>
+            <span class="col nav-txt"><b>打开或关闭功能</b><em>逐项开关功能模块</em></span>
             <ArrowRight :size="14" class="nav-go" />
           </button>
         </li>
-        <li>
+        <li v-if="features.isEnabled('sync')">
           <button class="nav-row pressable" @click="router.push({ name: 'settings-sync' })">
             <Cloud :size="16" class="nav-ic" />
             <span class="col nav-txt"><b>多设备同步</b><em>同一网段直连</em></span>

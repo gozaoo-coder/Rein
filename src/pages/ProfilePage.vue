@@ -30,12 +30,20 @@ const n = useNutritionStore()
 const ledger = useLedgerStore()
 const program = useProgramStore()
 const features = useFeaturesStore()
+/** 「目标与结余」两栏各属一个模块：关掉的那栏连同它的数据请求一起收掉，
+ *  只剩一栏时那栏通栏（不然右半屏会空出一块，读成没画完） */
+const nutritionOn = computed(() => features.isEnabled('nutrition'))
+const ledgerOn = computed(() => features.isEnabled('ledger'))
 
 onMounted(() => {
-  void n.loadProfile()
-  void n.loadSummary(todayStr())
-  void ledger.loadMonth()
-  void ledger.loadBudget()
+  if (nutritionOn.value) {
+    void n.loadProfile()
+    void n.loadSummary(todayStr())
+  }
+  if (ledgerOn.value) {
+    void ledger.loadMonth()
+    void ledger.loadBudget()
+  }
   // 「有方案 / 没方案」决定约束卡上那条链路的文案，只有开着模块时才拉
   if (features.isEnabled('program')) void program.load()
 })
@@ -142,15 +150,16 @@ function openEdit(): void {
       <MonthView v-else class="cbody" :selected="selectedDate" @select="selectedDate = $event" />
     </section>
 
-    <!-- 目标与结余：一卡两栏，发丝线分栏（摄入总览宏量区同一版式） -->
-    <section class="card">
-      <div class="stats">
-        <button class="stat" @click="router.push('/nutrition/adjust')">
+    <!-- 目标与结余：一卡两栏，发丝线分栏（摄入总览宏量区同一版式）。
+         两栏分别属「营养」与「记账」模块，都关掉时整卡不出现 -->
+    <section v-if="nutritionOn || ledgerOn" class="card">
+      <div class="stats" :class="{ one: !nutritionOn || !ledgerOn }">
+        <button v-if="nutritionOn" class="stat" @click="router.push('/nutrition/adjust')">
           <span class="s-label">每日目标</span>
           <span class="s-big num">{{ targetKcal ?? '--' }}<i>大卡</i></span>
           <span class="s-sub">{{ targetSub }}</span>
         </button>
-        <button class="stat" @click="router.push('/ledger')">
+        <button v-if="ledgerOn" class="stat" @click="router.push('/ledger')">
           <span class="s-label">本月结余</span>
           <!-- 带千分位的金额比目标数字长一截：统一起见两栏同用 display-s，不折行 -->
           <span class="s-big num" :class="balancePos ? 'pos' : 'neg'">
@@ -304,6 +313,11 @@ function openEdit(): void {
 .stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
+}
+
+/* 只剩一栏（另一栏的模块被关掉）：通栏，不留半屏空洞 */
+.stats.one {
+  grid-template-columns: 1fr;
 }
 
 .stat {

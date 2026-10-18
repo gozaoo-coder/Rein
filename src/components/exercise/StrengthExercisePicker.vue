@@ -58,7 +58,7 @@ function pick(r: StrengthExerciseRef): void {
   <SheetModal :open="open" title="选择动作" initial-snap="large" @close="emit('close')">
     <div class="finder row">
       <Search :size="16" class="t-3" />
-      <input v-model="query" type="text" placeholder="按名称搜索，如「卧推」">
+      <input v-model="query" type="text" placeholder="按名称搜索，如「卧推」" aria-label="搜索动作">
       <button v-if="query" class="clear" aria-label="清空搜索" @click="query = ''">
         <X :size="14" />
       </button>

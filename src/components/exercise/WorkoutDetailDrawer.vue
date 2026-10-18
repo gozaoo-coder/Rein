@@ -18,6 +18,7 @@ import { fmtClock, fmtPace } from '@/stores/run'
 import { todayStr, fmtDateCn, minToHHmm } from '@/utils/date'
 import { projectTrack, trackAscentM, trackSplits } from '@/utils/geo'
 import { libraryMuscles } from '@/utils/libraryMuscles'
+import { setVolumeKg } from '@/utils/sessionSummary'
 import { ACTIVATION_WEIGHT } from '@/utils/trainingAdvice'
 import { computeTrainingScore, type GroupScore, type TrainingScoreResult } from '@/utils/trainingScore'
 import type { DoneSet, PlanExercise, RunSnapshot, Workout } from '@/types'
@@ -334,12 +335,17 @@ interface SplitRow {
   color: string
 }
 
-/** 快→慢从绿渐变到红（Apple 配速色带的简化版） */
+/**
+ * 快→慢从绿渐变到红（Apple 配速色带的简化版）。
+ *
+ * 两端取 `--pace-fast` / `--pace-slow` 两个**配速专用**令牌，在 CSS 里用 color-mix 插值 ——
+ * 从前是两个十进制三元组写死在 JS 里（`[146,232,42]` / `[250,17,79]`，值恰好等于
+ * `--c-exercise` / `--c-intake`，但那只是巧合）：配速色带与三环是两个语义，绑在一起会让
+ * 「给运动环换色」顺带改掉配速色带，这也是全仓魔法色的收编点之一。
+ */
 function splitColor(norm: number): string {
-  const fast = [146, 232, 42]
-  const slow = [250, 17, 79]
-  const c = fast.map((f, i) => Math.round(f + (slow[i]! - f) * norm))
-  return `rgb(${c[0]},${c[1]},${c[2]})`
+  const t = Math.round(Math.max(0, Math.min(1, norm)) * 100)
+  return `color-mix(in srgb, var(--pace-slow) ${t}%, var(--pace-fast))`
 }
 
 const splitRows = computed<SplitRow[]>(() => {
@@ -458,11 +464,9 @@ const courseTotals = computed(() => {
     totalCount += row.plannedSets
     doneCount += Math.min(row.done.length, row.plannedSets)
     for (const d of row.done) {
-      if (d.weight != null) {
-        // 逐组登记次数优先，课程定义兜底；都没有则按 1 次计容量（避免凭空夸大）
-        const reps = d.reps ?? row.reps
-        volume += d.weight * (reps ?? 1)
-      }
+      // 容量口径走全端唯一那份 setVolumeKg（逐组登记 → 课程处方 → 1 次兜底），
+      // 与训练中的实时容量、总结页容量同源
+      volume += setVolumeKg(d.weight, d.reps ?? null, row.reps)
       if (d.sec != null) timedSec += d.sec
     }
   }
@@ -941,9 +945,11 @@ const courseTotals = computed(() => {
 }
 
 .cell .k {
-  /* 统计格字段名（「完成组数」）不吃 11px；同格的单位后缀（.v .sub）已在 callout 档 */
+  /* 统计格字段名（「完成组数」）不吃 11px；同格的单位后缀（.v .sub）已在 callout 档。
+     颜色走 --text-2：统计格的字段名是「这个数字是什么」的**必读**标签，
+     与动作详解抽屉的 `.cell .k` 同档（决策见 docs/exercise-quality-review-2026-10-17.md §8 D3）。 */
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  color: var(--text-2);
   margin-top: 2px;
 }
 

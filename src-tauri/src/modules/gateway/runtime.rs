@@ -10,7 +10,7 @@
 //! 另有 **`recover_focus`**（用户定稿的重启恢复语义）：应用关闭期间倒计时走完时，
 //! 启动自检用 `save_pomodoro_session_on` 补写一行，并删掉陈旧键；未到零 / 休息相位只清键。
 //! `FocusRuntime.phaseStartedAt + remainingSec` 就是「预计结束时刻」，前端拼快照时按这条
-//! 等式锚定（`src/stores/pomodoro.ts:63-65`），恢复自检据此判「关闭期间是否已走完」。
+//! 等式锚定（`src/stores/pomodoro.ts` 的 `runtimeSnapshot`），恢复自检据此判「关闭期间是否已走完」。
 
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::Connection;
@@ -52,7 +52,9 @@ pub fn focus_unpublish_on(conn: &Connection) -> Result<()> {
 /// 1. 无键 → 无操作。
 /// 2. `running==true` 且相位为 `focus`，且 `phaseStartedAt + remainingSec <= now`
 ///    （倒计时归零发生在应用关闭期间）→ 按「计时确实走完」用 `save_pomodoro_session_on`
-///    补写一行，**同一事务**删键（幂等：不会因中途崩溃补写两次）。
+///    补写一行，**同一事务**删键（幂等：不会因中途崩溃补写两次）。补写的是「关闭期间已走完」
+///    的整轮，故 `completed=true`（与前端新三态口径的「完成」一致；前端冷启动接管也走同一条）。
+///    若 `linked_todo_id` 指向的待办已删，回退 `todo_id=NULL` 再试一次，避免外键失败丢掉整条恢复。
 /// 3. 其余情况（未到零、或相位是 `break`、或载荷坏到解不出锚点）→ 仅删陈旧键，不补写
 ///    （`break` 不落库，与前端 `finishPhase` 一致：只有 focus 写库）。
 pub fn recover_focus(conn: &Connection, now: DateTime<Utc>) -> Result<()> {
@@ -68,7 +70,17 @@ pub fn recover_focus(conn: &Connection, now: DateTime<Utc>) -> Result<()> {
 
     // 补写 + 删键同一事务：崩在中间也不会补写两次（幂等）。
     let tx = conn.unchecked_transaction()?;
-    save_pomodoro_session_on(&tx, &input)?;
+    let mut input = input;
+    // `linked_todo_id` 指向的待办可能已被删（前端快照不校验存在性）：外键失败会让**整条恢复丢失**。
+    // 回退 todo_id 再试一次，宁可少一条关联，也不丢掉这段已走完的专注；无关联可退时如实报错。
+    if let Err(e) = save_pomodoro_session_on(&tx, &input) {
+        if input.todo_id.is_some() {
+            input.todo_id = None;
+            save_pomodoro_session_on(&tx, &input)?;
+        } else {
+            return Err(e);
+        }
+    }
     store::clear_runtime_snapshot(&tx, store::KEY_FOCUS_RUNTIME)?;
     tx.commit()?;
     Ok(())
@@ -99,8 +111,12 @@ fn backfill_input(snapshot: &Value, now: DateTime<Utc>) -> Option<PomodoroSessio
             .get("plannedFocusMin")
             .and_then(Value::as_f64)
             .unwrap_or(0.0),
-        // `break` 不落库；补写的都是 focus 相位，breakMin 固定 0（contract §14.1 第 2 条）。
-        break_min: 0.0,
+        // break_min 统一为「该轮计划休息分钟」：取快照里的 plannedBreakMin（前端在专注相位报的就是
+        // 「这一段结束后将进入的休息」）。与前端新口径一致，不再是固定 0。
+        break_min: snapshot
+            .get("plannedBreakMin")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
         completed: true,
     })
 }
@@ -202,7 +218,7 @@ mod tests {
         assert_eq!(rows[0].0, Some(42), "关联待办透传");
         assert_eq!(rows[0].2, "2026-10-13T09:25:00+00:00", "endedAt = 起点 + 剩余");
         assert_eq!(rows[0].3, 25.0);
-        assert_eq!(rows[0].4, 0.0, "focus 补写 breakMin=0");
+        assert_eq!(rows[0].4, 5.0, "breakMin = 快照里的 plannedBreakMin（该轮计划休息分钟）");
         assert_eq!(rows[0].5, 1, "completed=true");
         assert!(focus_state_on(&conn).unwrap().is_none(), "补写后键已删");
         // 幂等：再跑一次不会再补一行
@@ -211,6 +227,32 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM pomodoro_sessions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1, "重复恢复不重复补写");
+    }
+
+    /// 关联待办已被删（外键会失败）→ 回退 todo_id=NULL 再补写，整条恢复不丢。
+    #[test]
+    fn recover_backfills_with_null_todo_when_linked_missing() {
+        let conn = db();
+        put(
+            &conn,
+            serde_json::json!({
+                "phase": "focus", "running": true, "remainingSec": 1500,
+                "plannedFocusMin": 25, "plannedBreakMin": 5,
+                "phaseStartedAt": "2026-10-13T09:00:00Z", "linkedTodoId": 999
+            }),
+        );
+        let now = "2026-10-13T10:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        recover_focus(&conn, now).unwrap();
+        let (todo_id, focus_min): (Option<i64>, f64) = conn
+            .query_row(
+                "SELECT todo_id, focus_min FROM pomodoro_sessions",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(todo_id, None, "外键失败 → todo_id 回退为 NULL，但记录仍补上");
+        assert_eq!(focus_min, 25.0);
+        assert!(focus_state_on(&conn).unwrap().is_none(), "补写后键已删");
     }
 
     /// 未到零 → 只清键，不补写。

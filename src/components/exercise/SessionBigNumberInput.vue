@@ -208,7 +208,10 @@ function bump(d: number): void {
 .wunit {
   font-size: var(--fs-callout);
   font-weight: 500;
-  color: var(--text-3);
+  /* 单位是大数字的**必读**部分（「62.5」不带 kg 就不是一个重量），而 15px 不属于
+     WCAG 的 large text：--text-3（3.6:1）在这个字号上过不了 AA。同批的 .restsec /
+     .punit 也都取 --text-2，这里跟随。 */
+  color: var(--text-2);
   white-space: nowrap;
 }
 

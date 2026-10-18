@@ -18,6 +18,7 @@ import { useDietStore } from '@/stores/diet'
 import { useExerciseStore } from '@/stores/exercise'
 import { useLedgerStore } from '@/stores/ledger'
 import { useNutritionStore } from '@/stores/nutrition'
+import { usePomodoroStore } from '@/stores/pomodoro'
 import { todayStr } from '@/utils/date'
 
 /**
@@ -34,6 +35,16 @@ const exercise = useExerciseStore()
 const ledger = useLedgerStore()
 const diet = useDietStore()
 const nutrition = useNutritionStore()
+const pomo = usePomodoroStore()
+
+/**
+ * 专注快捷磁贴：与 ⌘K 的「开始专注」一致 —— 真起跑再跳转（从前只 push 到 /focus，
+ * 磁贴写着「专注」点进去却没有计时在跑）。start() 幂等，已在跑时再点等于只跳转。
+ */
+function startFocus(): void {
+  pomo.start()
+  void router.push({ name: 'focus' })
+}
 
 /* 记运动入口与「本周运动」概览都属运动插件：模块关掉时两块一起从排布里消失
    （由 useBentoLayout 决定哪些项可用，模板只渲染 cells）。 */
@@ -188,7 +199,7 @@ const mealChips = computed(() =>
           label="专注"
           icon-bg="color-mix(in srgb, var(--cat-work) 12%, transparent)"
           icon-color="var(--cat-work)"
-          @click="router.push({ name: 'focus' })"
+          @click="startFocus"
         >
           <Timer :size="20" />
         </QuickTile>

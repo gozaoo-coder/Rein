@@ -113,6 +113,13 @@ export const gatewayService = {
   setBind: (bindMode: GatewayBindMode, port: number | null) =>
     invoke<GatewayStatus>('gateway_set_bind', { bindMode, port }),
 
+  /** 推一份「已启用的功能模块 id」快照（**整表替换**）。网关据此对已关闭模块的对外方法
+   * 回 `module_disabled`（contract §4.7）—— 关闭开关是界面动作，但接口必须跟着一起关，
+   * 否则外部程序仍能驱动一个界面上已经关掉的功能（`pomodoro.start` 就是一例）。
+   * 返回清洗后的列表。调用点是 `App.vue` 对功能开关的 watcher（启动 + 每次拨动）。 */
+  setEnabledModules: (ids: string[]) =>
+    invoke<string[]>('gateway_set_enabled_modules', { ids }),
+
   /** 冷启动补漏：所有尚未裁决的授权请求。 */
   authorizationPending: () => invoke<GatewayAuthRequest[]>('gateway_authorization_pending', {}),
 

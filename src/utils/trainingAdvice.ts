@@ -6,8 +6,12 @@
  *  2. 这周各肌群的容量够不够（`muscleLoad`）——按每肌群周组数地标判定。
  *
  * 科学依据（写在代码里，便于复核与调整）：
- *  - 1RM 估算：Epley `w×(1+r/30)`；次数 > 12 时换 Brzycki `w×36/(37−r)`（高次数下 Epley 高估）。
- *    Epley 1985；Brzycki 1993。
+ *  - 1RM 估算：Epley `w×(1+r/30)`；次数 > 12 时换 Brzycki `w×36/(37−r)`。
+ *    Epley 1985；Brzycki 1993。两式在 r=10 处交叉（同为 1.333×）：r<10 时 Epley 略高，
+ *    r>10 时 Brzycki 更高 —— 所以「>12 换 Brzycki」的效果是**抬高**高次数的估值，
+ *    而不是压低。这一取向与 Brzycki 的出身一致：它是经典 rep-max 百分比表
+ *    （20 次 ≈ 50% 1RM）的反函数，r=1 时精确给出 1.000×，13–20 次区间比 Epley
+ *    更贴近该表；代价是 r 逼近 37 时发散，故有 MAX_E1RM_REPS 上限。
  *  - RIR ↔ %1RM：RIR 0=100% / 1=97.5% / 2=95% / 3=92.5% / 4=90% / 5=87.5%（Zourdos 等 2016 RPE 表）。
  *    增肌训练的目标强度取 RIR 1–3。
  *  - 容量地标：每肌群每周组数的 MEV（最小有效容量）/ MAV（最佳适应区间）/ MRV（可恢复上限），
@@ -85,9 +89,21 @@ export const READINESS_FACTOR: Record<number, number> = { 1: 0.9, 2: 0.95, 3: 1.
 
 /* ---------------- 基础工具 ---------------- */
 
-/** 估算 1RM：次数 ≤12 用 Epley，>12 用 Brzycki；次数 ≤0 视为无效 */
+/**
+ * 可估算 1RM 的次数上限。Brzycki 的系数 `36/(37−r)` 在 r 逼近 37 时发散：
+ * r=25 → 3.0 倍工作重量、r=30 → 5.1 倍、r=36 → 36 倍、r=37 → 除零得 Infinity、r>37 → 负数。
+ * 20 是这条曲线还站得住的最后一格：r=20 给 2.12×，与经典 rep-max 表（20 次 ≈ 50% → 2.0×）
+ * 相差约 6%；再往上误差超线性放大，而 20 次以上的组已属肌耐力范畴，反推出来的
+ * 「极限」不再描述力量水平。留着它只会让一个 36 倍工作重量的假数字流进重量曲线、
+ * PR 判定与下次建议的基线。因此超出上限一律返回 0 =「不可估」，由调用方按
+ * 「没有估算值」处理（各调用点本就只认 > 0 的有效估算）。
+ */
+export const MAX_E1RM_REPS = 20
+
+/** 估算 1RM：次数 ≤12 用 Epley，13–MAX_E1RM_REPS 用 Brzycki；次数 ≤0 或 > 上限视为不可估 */
 export function estimateOneRepMax(weightKg: number, reps: number): number {
   if (!Number.isFinite(weightKg) || !Number.isFinite(reps) || weightKg <= 0 || reps <= 0) return 0
+  if (reps > MAX_E1RM_REPS) return 0
   if (reps > 12) return (weightKg * 36) / (37 - reps)
   return weightKg * (1 + reps / 30)
 }
@@ -252,7 +268,10 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
   const weekly = new Map<MuscleKey, number>()
   const lastTrained = new Map<MuscleKey, string>()
   const primaryLast = new Map<MuscleKey, string>()
-  const windowStart = shiftDate(today, -volumeDays)
+  // 窗口是**含今天在内的 volumeDays 个日历天**（默认 7 → [today−6, today]），
+  // 与练够分的 SCORE_WEEK_DAYS 同口径。写成 `-volumeDays` 会多算一天（today−7），
+  // 于是同一节课在两处显示成两个「本周组数」——差一天就足以跨过 MEV/MAV 档位边界。
+  const windowStart = shiftDate(today, -(volumeDays - 1))
   for (const r of sets) {
     if (r.warmup) continue
     if (r.weightKg == null && r.reps == null && r.sec == null) continue

@@ -55,3 +55,22 @@ export async function notifyGrabResult(title: string, body: string): Promise<boo
     return false
   }
 }
+
+/**
+ * 发一条番茄钟相位结束通知（专注完成 / 休息结束）。
+ *
+ * 与 `notifyGrabResult` 同一口径：`true` = 系统通知已发出；`false` = 当前环境发不出去，
+ * **调用方必须把结果留在页面上**（专注域用 `FocusNotice.delivered`）。
+ * 权限沿用 `ensureNotifyPermission`——只在用户已表达要通知的场景（这里＝跑起番茄钟）后问一次。
+ */
+export async function notifyFocusPhase(title: string, body: string): Promise<boolean> {
+  if (!isTauri) return false
+  try {
+    const n = await import('@tauri-apps/plugin-notification')
+    if (!(await ensureNotifyPermission())) return false
+    n.sendNotification({ title, body })
+    return true
+  } catch {
+    return false
+  }
+}

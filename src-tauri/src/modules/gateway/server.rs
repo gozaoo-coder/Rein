@@ -966,14 +966,19 @@ fn handle_request<R: Runtime>(
     let (outcome, decision, effects) = {
         // RAII：本作用域结束时（含 panic 展开）一定摘掉预算。
         let _guard = ProgressGuard { conn: &conn };
-        match auth::require(&conn, hub, conn_id, method.scope()) {
+        // 模块门禁**先于** scope 校验（contract §4.7）：关掉的功能，客户端拿着全部 scope
+        // 也不该可用 —— 这是「这个功能此刻在不在」的事实，不是授权判定，所以同样记 denied。
+        match store::module_gate(&conn, method) {
             Err(e) => (Err(e), AuditDecision::Denied, Vec::new()),
-            // 用 `dispatch_with_effects` 收下锁外动作（下行 emit / HC 删除传播），
-            // 靠下面「松锁 → 执行 → 回帧」的三段式落地（contract §13.3 / §14.3 / §17.3）。
-            // 直接用 `dispatch` 会把 effects 整包丢掉：外部控制前端收不到、HC 副本不删。
-            Ok(()) => match methods::dispatch_with_effects(&conn, method, &env.params) {
-                Ok((v, effects)) => (Ok(v), AuditDecision::Allowed, effects),
-                Err(e) => (Err(e), AuditDecision::Error, Vec::new()),
+            Ok(()) => match auth::require(&conn, hub, conn_id, method.scope()) {
+                Err(e) => (Err(e), AuditDecision::Denied, Vec::new()),
+                // 用 `dispatch_with_effects` 收下锁外动作（下行 emit / HC 删除传播），
+                // 靠下面「松锁 → 执行 → 回帧」的三段式落地（contract §13.3 / §14.3 / §17.3）。
+                // 直接用 `dispatch` 会把 effects 整包丢掉：外部控制前端收不到、HC 副本不删。
+                Ok(()) => match methods::dispatch_with_effects(&conn, method, &env.params) {
+                    Ok((v, effects)) => (Ok(v), AuditDecision::Allowed, effects),
+                    Err(e) => (Err(e), AuditDecision::Error, Vec::new()),
+                },
             },
         }
     };

@@ -1,97 +1,16 @@
-import { BookOpen, Camera, ChefHat, History, ListTodo, Mic, PiggyBank, Sparkles, Timer, Utensils, Wallet } from 'lucide-vue-next'
+import { ListTodo, Sparkles } from 'lucide-vue-next'
 
 import { definePlugin } from '../registry'
-import { fmtCents } from '@/config/ledger'
-import { useLedgerStore } from '@/stores/ledger'
 
 /**
  * 内核插件：功能固定开启（不进「打开或关闭功能」），但同样走插件层声明自己的
  * 导航条目与工具卡——这样导航栏、主页工具格只有一条数据来源，没有第二份硬编码清单。
+ *
+ * 留在内核的是**应用主轴**：待办（画布 / 时间线 / 主页信息流的宿主，AI 的 todo 组
+ * 也是常驻组）与 AI（对话页是右独立圆钮的落点，知识库是统一检索面）。其余内容域
+ * 都已拆成可开关的模块，各自一个文件：营养 / 记账 / 专注 / 语音 / 录音 / 同步，
+ * 加上先前的 运动 / 课表 / 抢课 / 健康方案。
  */
-
-export const nutritionPlugin = definePlugin({
-  id: 'nutrition',
-  name: '营养',
-  desc: '记饮食、食物库与营养全览',
-  icon: Utensils,
-  accent: '--c-intake',
-  routes: ['nutrition', 'nutrition-adjust', 'nutrition-foods', 'nutrition-recipes'],
-  nav: [{ route: 'nutrition', label: '营养', icon: Utensils, surfaces: ['rail'], order: 110 }],
-  tools: [
-    {
-      id: 'nutrition.smart-add',
-      title: '记饮食',
-      sub: '拍照 / 文字 · AI 帮你记',
-      icon: Camera,
-      ic: {
-        background: 'color-mix(in srgb, var(--c-intake) 12%, transparent)',
-        color: 'var(--c-intake)',
-      },
-      order: 10,
-      action: 'smart-add',
-    },
-    // 查阅三件套：主页页脚的「吃」卡把它们与记饮食并列成同权成员（此前是页脚边上的
-    // 三颗小 chip，低到近乎看不见）。声明在插件层，关掉营养模块时四件一起消失。
-    {
-      id: 'nutrition.foods',
-      title: '饮食库',
-      sub: '按食物查营养',
-      icon: BookOpen,
-      ic: {
-        background: 'color-mix(in srgb, var(--c-intake) 12%, transparent)',
-        color: 'var(--c-intake)',
-      },
-      order: 11,
-      to: { name: 'nutrition-foods' },
-    },
-    {
-      id: 'nutrition.recipes',
-      title: '食谱库',
-      sub: '按菜谱做一顿',
-      icon: ChefHat,
-      ic: {
-        background: 'color-mix(in srgb, var(--c-intake) 12%, transparent)',
-        color: 'var(--c-intake)',
-      },
-      order: 12,
-      to: { name: 'nutrition-recipes' },
-    },
-    {
-      id: 'nutrition.history',
-      title: '饮食历史',
-      sub: '往日吃了什么',
-      icon: History,
-      ic: {
-        background: 'color-mix(in srgb, var(--c-intake) 12%, transparent)',
-        color: 'var(--c-intake)',
-      },
-      order: 13,
-      action: 'diet-history',
-    },
-  ],
-})
-
-export const voicePlugin = definePlugin({
-  id: 'voice',
-  name: '语音',
-  desc: '实时转写与 AI 纪要',
-  icon: Mic,
-  accent: '--led-shopping',
-  tools: [
-    {
-      id: 'voice.session',
-      title: '录音纪要',
-      sub: '实时转写 · AI 纪要',
-      icon: Mic,
-      ic: {
-        background: 'color-mix(in srgb, var(--led-shopping) 12%, transparent)',
-        color: 'var(--led-shopping)',
-      },
-      order: 40,
-      action: 'voice-session',
-    },
-  ],
-})
 
 export const aiPlugin = definePlugin({
   id: 'ai',
@@ -126,30 +45,6 @@ export const aiPlugin = definePlugin({
   ],
 })
 
-export const focusPlugin = definePlugin({
-  id: 'focus',
-  name: '专注',
-  desc: '番茄钟与专注记录',
-  icon: Timer,
-  accent: '--cat-work',
-  routes: ['focus'],
-  nav: [{ route: 'focus', label: '专注', icon: Timer, surfaces: ['rail'], order: 140 }],
-  tools: [
-    {
-      id: 'focus.open',
-      title: '专注',
-      sub: '番茄钟 · 待办 · 日程',
-      icon: Timer,
-      ic: {
-        background: 'color-mix(in srgb, var(--cat-work) 12%, transparent)',
-        color: 'var(--cat-work)',
-      },
-      order: 60,
-      to: { name: 'focus' },
-    },
-  ],
-})
-
 export const todoPlugin = definePlugin({
   id: 'todos',
   name: '待办',
@@ -158,28 +53,4 @@ export const todoPlugin = definePlugin({
   accent: '--cat-general',
   routes: ['todos'],
   nav: [{ route: 'todos', label: '待办', icon: ListTodo, surfaces: ['rail'], order: 150 }],
-})
-
-export const ledgerPlugin = definePlugin({
-  id: 'ledger',
-  name: '记账',
-  desc: '流水、预算与月度结余',
-  icon: Wallet,
-  accent: '--ok-strong',
-  routes: ['ledger'],
-  nav: [{ route: 'ledger', label: '记账', icon: PiggyBank, surfaces: ['rail'], order: 160 }],
-  tools: [
-    {
-      id: 'ledger.open',
-      title: '记账',
-      sub: () => `本月支出 ¥${fmtCents(useLedgerStore().monthExpenseCents)}`,
-      icon: Wallet,
-      ic: {
-        background: 'color-mix(in srgb, var(--cat-workout) 12%, transparent)',
-        color: 'var(--ok-strong)',
-      },
-      order: 70,
-      to: { name: 'ledger' },
-    },
-  ],
 })

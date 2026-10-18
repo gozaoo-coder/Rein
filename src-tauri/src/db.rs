@@ -1482,6 +1482,17 @@ const MIGRATION_0043: &str = r#"
 CREATE INDEX idx_ext_audit_client ON ext_audit(client_id, at DESC);
 "#;
 
+/// 0044 · 重复待办的**除外日期**：挂在模板行上的 JSON 数组（"YYYY-MM-DD"），
+/// 记「用户删掉了这一次」。
+///
+/// 没有它，删一条重复实例会被下一次 `sync_recurrences` 按规则原样补回来 ——
+/// 用户看到的就是「待办删不掉」（实例存在性只看 rec_key，删除不改变规则）。
+/// 不是对外暴露列（不在 `todo::commands::COLS` 里）：实例物化时读它，
+/// 前端的全量更新不写它，于是删过的日子不会因为一次编辑又被翻回来。
+const MIGRATION_0044: &str = r#"
+ALTER TABLE todos ADD COLUMN rec_exdates TEXT;
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1526,6 +1537,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0041,
     MIGRATION_0042,
     MIGRATION_0043,
+    MIGRATION_0044,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。

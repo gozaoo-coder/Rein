@@ -110,6 +110,18 @@ const menuAnchor = ref<HTMLElement | null>(null)
 
 const MENU_ACTIONS: MenuItem[] = [{ label: '跳至该组', value: 'jump', icon: FastForward }]
 
+/**
+ * 某组所属动作的**展示名**：走库内名（`lib.resolveName`），与行内名同源。
+ *
+ * `SessionSetSlot.exName` 只是课程条目写入时的名称快照（`PlanExercise.name`）——
+ * 换过动作、或库内改过名之后它就旧了。于是同一行同一组，行内显示新名，而「···」菜单标题
+ * 与跳转提示显示旧名。`exIdx` 越界（脏快照）时回落到快照名。
+ */
+function slotName(slot: SessionSetSlot): string {
+  const ex = s.plan?.exercises[slot.exIdx]
+  return ex ? lib.resolveName(ex) : slot.exName
+}
+
 function openMenu(e: MouseEvent, slot: SessionSetSlot): void {
   menuAnchor.value = (e.currentTarget as HTMLElement) ?? null
   menuTarget.value = slot
@@ -125,8 +137,8 @@ function onMenuPick(value: string): void {
     const skipped = skippedTotal.value - before
     toast(
       skipped > 0
-        ? `已跳至 ${t.exName} 第 ${t.setNo} 组 · 跳过 ${skipped} 组`
-        : `已跳至 ${t.exName} 第 ${t.setNo} 组`,
+        ? `已跳至 ${slotName(t)} 第 ${t.setNo} 组 · 跳过 ${skipped} 组`
+        : `已跳至 ${slotName(t)} 第 ${t.setNo} 组`,
     )
     emit('close')
   } else {
@@ -195,7 +207,9 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
           <span class="exname">{{ lib.resolveName(g.ex) }}</span>
           <span class="exsub num t-3">{{ g.sub }}</span>
         </div>
-        <span class="excount num t-3">{{ g.done }}/{{ g.total }} 组</span>
+        <!-- 每个动作的「做完了没」是这里要读的读数（旁边那行 .exsub 才是补充说明，留 --text-3），
+             与顶部「已完成 n/N 组」同档 -->
+        <span class="excount num t-2">{{ g.done }}/{{ g.total }} 组</span>
         <button
           v-if="g.canSwap"
           type="button"
@@ -245,7 +259,7 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
     <!-- 单组操作菜单（只向前跳到未做的组） -->
     <AppMenu
       :open="menuOpen"
-      :title="menuTarget ? `${menuTarget.exName} · 第 ${menuTarget.setNo} 组` : ''"
+      :title="menuTarget ? `${slotName(menuTarget)} · 第 ${menuTarget.setNo} 组` : ''"
       :actions="MENU_ACTIONS"
       :anchor="menuAnchor"
       @select="onMenuPick"
@@ -276,7 +290,9 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
   flex-wrap: wrap;
   gap: 6px;
   font-size: var(--fs-caption);
-  color: var(--text-3);
+  /* 「已完成 n/N 组」是这份抽屉的第一条结论读数，与顶栏那枚同义的胶囊同档：
+     它落到 --text-3（3.6:1）就比顶栏的同一句话淡一档，同义读数不该在两个位置两个浓度 */
+  color: var(--text-2);
 }
 
 .exblock {
@@ -314,6 +330,7 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
 
 .swapbtn {
   flex: none;
+  position: relative;
   padding: 5px 11px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
@@ -321,6 +338,14 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
   color: var(--accent-strong);
   font-size: var(--fs-caption);
   font-weight: 600;
+}
+
+/* 视觉约 27px 高，命中区撑到 44（视觉不动）。竖向 -9px 落进 .exblock 的 18px margin-top
+   与表头的 8px padding-bottom 里，不与相邻内容抢点击；横向 -4px 只吃掉 10px gap 的一半。 */
+.swapbtn::after {
+  content: '';
+  position: absolute;
+  inset: -9px -4px;
 }
 
 .sets {
@@ -373,6 +398,7 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
 
 .morebtn {
   flex: none;
+  position: relative;
   width: 32px;
   height: 32px;
   margin-right: -4px;
@@ -381,6 +407,14 @@ const STATE_CLASS: Record<SessionSetSlot['state'], string> = {
   align-items: center;
   justify-content: center;
   color: var(--text-3);
+}
+
+/* 视觉留 32、命中区撑到 44 —— 这个钮还带 -4px 负 margin，实际热区比 32 还小一点点，
+   而它是「跳至该组 / 更换这个动作」的唯一入口。 */
+.morebtn::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }
 
 .morebtn:active {

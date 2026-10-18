@@ -258,7 +258,10 @@ const chipsOf = (keys: string[], labels: Record<string, string>) =>
 .done {
   flex: 1;
   padding: 13px 0;
-  border-radius: var(--radius-s);
+  /* 注释自称「完成 = .primary 主按钮」，那就得与真正的 .primary 同形状（胶囊）——
+     从前它是 --radius-s 的圆角矩形，与 MuscleCatchupSheet 的 .primary 分道。
+     （决策见 docs/exercise-quality-review-2026-10-17.md §8 D5） */
+  border-radius: var(--radius-full);
   background: var(--accent);
   color: var(--on-accent);
   font-size: var(--fs-callout);

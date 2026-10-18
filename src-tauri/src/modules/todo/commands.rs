@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::error::Result;
 use crate::state::AppState;
-use chrono::{Datelike, Duration, NaiveDate, Utc};
+use chrono::{Datelike, Duration, Local, NaiveDate, Utc};
 use rusqlite::OptionalExtension;
 
 use super::models::{
@@ -53,6 +53,13 @@ fn rule_matches(rule: &RecRule, template_date: &str, date: &str) -> bool {
     }
 }
 
+/// `rec_key = "模板id:日期"` → `(模板 id, 日期)`；不成形状的历史脏数据返回 `None`。
+/// 清理、物化、删除三处都要认这个键，形状只在这里定义一次。
+fn parse_rec_key(key: &str) -> Option<(i64, &str)> {
+    let (tid, date) = key.rsplit_once(':')?;
+    Some((tid.parse::<i64>().ok()?, date))
+}
+
 /// 子任务实例化：结构照抄、勾选状态清零（新的一天从零开始）
 /// 重复待办模板行：物化实例所需的字段快照
 struct RecTemplate {
@@ -66,6 +73,8 @@ struct RecTemplate {
     subtasks: Option<String>,
     rec_rule: Option<String>,
     date: Option<String>,
+    /// 除外日期 JSON 数组（"YYYY-MM-DD"）：用户删掉的那几次，物化时跳过（见 [`add_rec_exdate`]）
+    rec_exdates: Option<String>,
 }
 
 fn reset_subtasks(raw: &Option<String>) -> Result<Option<String>> {
@@ -490,7 +499,83 @@ pub fn delete_todo(state: State<AppState>, id: i64) -> Result<()> {
 
 /// `delete_todo` 的本体（见 [`list_todos_on`]）。
 pub(crate) fn delete_todo_on(conn: &rusqlite::Connection, id: i64) -> Result<()> {
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    delete_todo_on_as_of(conn, id, &today)
+}
+
+/// `delete_todo` 的实际语义（`today` 显式传入，单测才能在固定日期上跑，套路同 [`sync_recurrences_on`]）：
+///
+/// - **删实例** = 跳过这一次：把日期记进模板的 `rec_exdates`（[`add_rec_exdate`]）。不记的话
+///   下一次 `sync_recurrences` 会按规则把这条原样补回来 —— 用户看到的就是「待办删不掉」。
+/// - **删模板** = 整条重复待办下线：连它今天及以后仍未完成的实例一并收走。未来实例本也会随
+///   规则失配被清理，提前到删除当场是为了那一天：清理只认 `date > today`，而「今天那条」若留下
+///   就是永久孤儿 —— 明天它变成过去，再没有谁会碰它。已完成的实例不追溯（done 行永不删）。
+pub(crate) fn delete_todo_on_as_of(
+    conn: &rusqlite::Connection,
+    id: i64,
+    today: &str,
+) -> Result<()> {
+    let row: Option<(Option<String>, Option<String>)> = conn
+        .query_row("SELECT rec_key, rec_rule FROM todos WHERE id = ?1", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .optional()?;
     conn.execute("DELETE FROM todos WHERE id = ?1", [id])?;
+    let Some((rec_key, rec_rule)) = row else {
+        return Ok(()); // 本来就没有这一行：保持幂等
+    };
+
+    // 删的是实例 → 记下这一天不再物化。模板自身的 rec_key 也长这样（"id:自己的日期"），
+    // 但它随模板一起没了，不必记。
+    if let Some((tid, date)) = rec_key.as_deref().and_then(parse_rec_key) {
+        if tid != id {
+            add_rec_exdate(conn, tid, date)?;
+        }
+    }
+
+    if rec_rule.is_some() {
+        let open: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(
+                "SELECT id, rec_key FROM todos \
+                 WHERE rec_key IS NOT NULL AND status != 'done' AND date IS NOT NULL AND date >= ?1",
+            )?;
+            let rows = stmt
+                .query_map([today], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        for (iid, key) in open {
+            if parse_rec_key(&key).is_some_and(|(tid, _)| tid == id) {
+                conn.execute("DELETE FROM todos WHERE id = ?1", [iid])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 把某一天记进模板的除外日期（去重、幂等）。模板已不在（连删、历史脏数据）就静默跳过 ——
+/// 删一条孤儿实例没理由失败。
+fn add_rec_exdate(conn: &rusqlite::Connection, template_id: i64, date: &str) -> Result<()> {
+    let existing: Option<Option<String>> = conn
+        .query_row("SELECT rec_exdates FROM todos WHERE id = ?1", [template_id], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    let Some(existing) = existing else {
+        return Ok(());
+    };
+    let mut dates: Vec<String> = existing
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+    if dates.iter().any(|d| d == date) {
+        return Ok(());
+    }
+    dates.push(date.to_string());
+    conn.execute(
+        "UPDATE todos SET rec_exdates = ?1 WHERE id = ?2",
+        rusqlite::params![serde_json::to_string(&dates)?, template_id],
+    )?;
     Ok(())
 }
 
@@ -506,7 +591,8 @@ pub(crate) fn get_todo_on(conn: &rusqlite::Connection, id: i64) -> Result<Option
 #[tauri::command]
 /// 重复实例物化（幂等，前端每次全量加载前调用）：
 /// 1) 规则已不匹配/越界的未来未完成实例 → 删除（改规则、改结束日期后自动收敛）；
-/// 2) 窗口 [今天-1, 今天+7] 内缺失的实例 → 按模板补建（rec_key = "模板id:日期"）。
+/// 2) 窗口 [今天-1, 今天+7] 内缺失的实例 → 按模板补建（rec_key = "模板id:日期"），
+///    但**用户删过的日子**（模板 `rec_exdates`）除外 —— 少了这一条，删除会被这一步当场撤销。
 /// 返回本次新增实例数。
 ///
 /// 顺带把**已经上完的课表派生行**自动打卡（见 [`crate::modules::campus::commands::auto_complete_past_courses`]）：
@@ -544,10 +630,7 @@ fn sync_recurrences_on(conn: &rusqlite::Connection, today: &str) -> Result<usize
     };
     let mut deleted = 0usize;
     for (id, key) in stale {
-        let Some((tid_s, ds)) = key.rsplit_once(':') else {
-            continue;
-        };
-        let Ok(tid) = tid_s.parse::<i64>() else {
+        let Some((tid, ds)) = parse_rec_key(&key) else {
             continue;
         };
         let keep = conn
@@ -572,11 +655,11 @@ fn sync_recurrences_on(conn: &rusqlite::Connection, today: &str) -> Result<usize
         }
     }
 
-    // 2) 物化窗口内缺失实例
+    // 2) 物化窗口内缺失实例（除模板自己的那一天与 rec_exdates 记下的「删过的日子」）
     let mut inserted = 0usize;
     let templates = {
         let mut stmt = conn.prepare(
-            "SELECT id, title, notes, start_min, duration_min, category, priority, subtasks, rec_rule, date \
+            "SELECT id, title, notes, start_min, duration_min, category, priority, subtasks, rec_rule, date, rec_exdates \
              FROM todos WHERE rec_rule IS NOT NULL AND date IS NOT NULL",
         )?;
         let rows = stmt
@@ -592,6 +675,7 @@ fn sync_recurrences_on(conn: &rusqlite::Connection, today: &str) -> Result<usize
                     subtasks: r.get(7)?,
                     rec_rule: r.get(8)?,
                     date: r.get(9)?,
+                    rec_exdates: r.get(10)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -604,6 +688,12 @@ fn sync_recurrences_on(conn: &rusqlite::Connection, today: &str) -> Result<usize
         let Some(rule) = serde_json::from_str::<RecRule>(&raw).ok() else {
             continue;
         };
+        // 用户删掉的每一次（见 `delete_todo_on_as_of`）在这里生效：规则仍匹配也不再重建。
+        let exdates: Vec<String> = t
+            .rec_exdates
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
         let mut d = parse_date(&win_start);
         while let Some(day) = d {
             if day > win_end_d {
@@ -611,7 +701,7 @@ fn sync_recurrences_on(conn: &rusqlite::Connection, today: &str) -> Result<usize
             }
             let ds = day.format("%Y-%m-%d").to_string();
             d = Some(day + Duration::days(1));
-            if ds == tdate || !rule_matches(&rule, &tdate, &ds) {
+            if ds == tdate || exdates.iter().any(|x| x == &ds) || !rule_matches(&rule, &tdate, &ds) {
                 continue;
             }
             let key = format!("{}:{}", t.id, ds);
@@ -801,6 +891,105 @@ mod tests {
                 ("2026-09-30".to_string(), false), // 周三
             ]
         );
+    }
+
+    /// 删掉重复待办的**一次实例**必须活过下一次物化 —— 修复前的症状就是「待办删不掉」：
+    /// 删除命令确实删了行，但前端删除后紧接着刷新走 `sync_recurrences`（每次全量加载都跑），
+    /// 按规则把这一天原样补建，用户看到的还是同一条。
+    #[test]
+    fn deleting_an_instance_sticks_and_records_exdate() {
+        let conn = fresh();
+        let tid = insert_template(&conn, r#"{"freq":"daily","weekdays":[],"intervalDays":1}"#);
+        // 窗口 09-22…09-30（模板日 09-21 不在窗口内）
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 9);
+
+        let iid: i64 = conn
+            .query_row(
+                "SELECT id FROM todos WHERE rec_key = ?1",
+                [format!("{tid}:2026-09-25")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        delete_todo_on_as_of(&conn, iid, "2026-09-23").unwrap();
+
+        // 行没了，且这一天被记进模板的除外日期
+        assert!(instances(&conn).iter().all(|(d, _)| d != "2026-09-25"));
+        let raw: Option<String> = conn
+            .query_row("SELECT rec_exdates FROM todos WHERE id = ?1", [tid], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(raw.as_deref(), Some(r#"["2026-09-25"]"#));
+
+        // 下一次加载（= 再跑一次物化）不再补回；其它日子一条不少
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 0);
+        let days: Vec<String> = instances(&conn).into_iter().map(|(d, _)| d).collect();
+        assert_eq!(days.len(), 8);
+        assert!(!days.contains(&"2026-09-25".to_string()));
+    }
+
+    /// 删**模板** = 整条重复待办下线：今天与以后的未完成实例一并收走（否则「今天那条」
+    /// 会以孤儿身份留下 —— 明天它就变成过去，再没有哪条清理规则会碰它）；历史不动：
+    /// 更早的实例行、已完成的实例行照旧留着（done 行永不追溯）。
+    #[test]
+    fn deleting_a_template_takes_today_and_future_instances_with_it() {
+        let conn = fresh();
+        let tid = insert_template(&conn, r#"{"freq":"daily","weekdays":[],"intervalDays":1}"#);
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 9);
+        conn.execute(
+            "UPDATE todos SET status = 'done' WHERE rec_key = ?1",
+            [format!("{tid}:2026-09-30")],
+        )
+        .unwrap();
+
+        delete_todo_on_as_of(&conn, tid, "2026-09-23").unwrap();
+
+        assert_eq!(
+            instances(&conn),
+            vec![
+                ("2026-09-22".to_string(), false), // 昨天：历史，留着
+                ("2026-09-30".to_string(), true),  // 已完成：留着
+            ]
+        );
+        // 模板已不在，再物化不会凭空重建
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 0);
+        assert_eq!(instances(&conn).len(), 2);
+
+        // 删一条孤儿实例（模板已删）不报错、也不再往不存在的模板上记除外日期
+        let orphan: i64 = conn
+            .query_row(
+                "SELECT id FROM todos WHERE rec_key = ?1",
+                [format!("{tid}:2026-09-22")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        delete_todo_on_as_of(&conn, orphan, "2026-09-23").unwrap();
+        assert_eq!(instances(&conn).len(), 1);
+    }
+
+    /// `rec_exdates` 是**内部列**：前端的全量更新（`update_todo_on` 只写它认识的列）
+    /// 不碰它，于是改个标题不会把已经删掉的那一天翻回来。
+    #[test]
+    fn exdate_survives_template_update() {
+        let conn = fresh();
+        let tid = insert_template(&conn, r#"{"freq":"daily","weekdays":[],"intervalDays":1}"#);
+        sync_recurrences_on(&conn, "2026-09-23").unwrap();
+        let iid: i64 = conn
+            .query_row(
+                "SELECT id FROM todos WHERE rec_key = ?1",
+                [format!("{tid}:2026-09-25")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        delete_todo_on_as_of(&conn, iid, "2026-09-23").unwrap();
+
+        // 模拟编辑器保存：整对象回写模板
+        let mut tpl = get_todo_on(&conn, tid).unwrap().unwrap();
+        tpl.title = "晨跑（改过）".into();
+        update_todo_on(&conn, &tpl).unwrap();
+
+        assert_eq!(sync_recurrences_on(&conn, "2026-09-23").unwrap(), 0);
+        assert!(instances(&conn).iter().all(|(d, _)| d != "2026-09-25"));
     }
 
     // ---- query_todo_feed（主页「全部待办」信息流）----

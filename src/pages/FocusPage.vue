@@ -17,6 +17,8 @@ const todo = useTodoStore()
 
 onMounted(() => {
   void pomo.loadToday()
+  // 近 7 天完成段：供番茄钟卡的建议时长（循证建议，非硬编码最优时长）
+  void pomo.loadRecent()
   void todo.loadDay(today)
 })
 </script>

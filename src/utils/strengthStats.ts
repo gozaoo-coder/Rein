@@ -7,6 +7,7 @@
  */
 
 import { estimateOneRepMax } from './trainingAdvice'
+import { setVolumeKg } from './sessionSummary'
 import type { StrengthSetRecord } from '@/types'
 
 export interface ExerciseSession {
@@ -69,7 +70,9 @@ export function buildExerciseHistory(rows: StrengthSetRecord[]): ExerciseHistory
         topWeightKg = w
         topReps = s.reps ?? null
       }
-      volumeKg += w * reps
+      // 容量走全端唯一那份口径（次数缺失时按 1 次兜底）—— 这里从前算的是 `w * reps`，
+      // reps 缺省为 0，于是这一组会从容量 PR 里静默消失
+      volumeKg += setVolumeKg(s.weightKg, s.reps, null)
       bestE1rm = Math.max(bestE1rm, estimateOneRepMax(w, reps))
     }
     sessions.push({

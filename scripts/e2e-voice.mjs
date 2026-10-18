@@ -150,8 +150,14 @@ async function main() {
     })())
 
     /* ---------- B. 配置豆包语音服务 ---------- */
+    // 语音服务卡的「未配置 / 已连接」是 `.tag` / `.tag.ok-t` 两个状态标记（ModelsPage.vue），
+    // 不是 2026-10 改版前的 `.v-no` / `.v-ok` —— 那批类名随百炼 ASR 那轮重写一起没了，
+    // 旧断言从此恒为 false（红着也不报错，只是没人看）。
     ok('B1 语音服务卡渲染（未配置态）', await evalJS(
-      `!!document.querySelector('.vcfg') && !!document.querySelector('.vcfg .v-no')`,
+      `(() => {
+        const tag = document.querySelector('.vcfg .tag')
+        return !!document.querySelector('.vcfg') && !!tag && tag.textContent.trim() === '未配置'
+      })()`,
     ))
     await evalJS(`document.querySelector('.vcfg')?.click()`)
     await waitFor(`!!document.querySelector('.form input')`, 5000, '语音配置抽屉')
@@ -160,7 +166,8 @@ async function main() {
     ok('B2 保存语音配置', await (async () => {
       await clickButton('保存')
       await sleep(700)
-      return evalJS(`!!document.querySelector('.vcfg .v-ok')`)
+      // 保存后卡面应翻成「已连接」（voiceConfigured：旧版模式要 appKey + accessKey 都在）
+      return evalJS(`!!document.querySelector('.vcfg .tag.ok-t')`)
     })())
 
     /* ---------- C. 录音转写 → 完成整理 ---------- */
@@ -173,8 +180,10 @@ async function main() {
     })())
     ok('C2 开始录音 → 转写态（状态带 + 计时）', await (async () => {
       await clickButton('开始说话')
-      await waitFor(`!!document.querySelector('.vs-root .live')`, 5000, '转写状态带')
-      return evalJS(`!!document.querySelector('.vs-root .live .time')`)
+      // 录音态的状态带是 `.vs-live`（波形 + 录音中/已暂停 + `.vl-time` 计时器），
+      // 顶栏在录音态不显示标题 —— 旧断言的 `.live` / `.time` 同样是不存在的类名。
+      await waitFor(`!!document.querySelector('.vs-root .vs-live')`, 5000, '转写状态带')
+      return evalJS(`!!document.querySelector('.vs-root .vs-live .vl-time')`)
     })())
     ok('C3 mock 转写逐句上屏（4 句）', await (async () => {
       await waitFor(`document.querySelectorAll('.vs-root .tr .tl:not(.partial)').length >= 4`, 9000, '4 句定稿')
@@ -266,13 +275,32 @@ async function main() {
     ok('G1 录音后取消 → 不落纪要', await (async () => {
       await goto('/')
       await sleep(600)
+      // 上一段结束后视图停在**纪要详情**（F2 打开的那条），而 `openView()` 只在
+      // `view === 'closed'` 时才回到待机态 —— 直接再点入口只会重新显示那条纪要。
+      //
+      // 两个坑（这轮踩到的）：
+      // ① 关掉有**退场动画**（≈420ms），所以「等 `.vs-root` 出现」会被**正在退场**的
+      //    那个元素当场骗过 —— 之后点「开始说话」点了个空，`.vs-live` 永远等不到；
+      // ② 因此判据要等**你要点的那个元素**（待机态的麦克风钮），而不是容器。
+      await evalJS(`document.querySelector('[aria-label="关闭"]')?.click()`)
+      await waitFor(`!document.querySelector('.vs-root')`, 6000, '上一段视图退场')
       await clickButton('录音纪要')
-      await waitFor(`!!document.querySelector('.vs-root')`, 5000, '语音视图')
+      await waitFor(`!!document.querySelector('[aria-label="开始说话"]')`, 6000, '待机态（麦克风钮）')
       await clickButton('开始说话')
-      await waitFor(`!!document.querySelector('.vs-root .live')`, 5000, '转写态')
+      await waitFor(`!!document.querySelector('.vs-root .vs-live')`, 6000, '转写态')
       await sleep(1200)
-      await clickButton('取消')
-      await sleep(600)
+      // 录音态**没有**直接「取消」按钮：取消是破坏性的，收在底栏那颗 `aria-label="工具"`
+      // 的菜单里（`VoiceSessionView` 的 toolActions），选中后再走一次 ActionSheet 二次确认。
+      // 老剧本直接点「取消」在这里点了个空 —— 录音一直在跑，后面的「全部纪要」也不会出现
+      // （那颗按钮 `v-if="!live"`）。
+      await evalJS(`document.querySelector('[aria-label="工具"]')?.click()`)
+      await waitFor(`!!document.querySelector('.panel[role="menu"]')`, 5000, '工具菜单')
+      await evalJS(`[...document.querySelectorAll('.panel[role="menu"] .item')]
+        .find((b) => b.textContent.includes('取消本次录音'))?.click()`)
+      await waitFor(`!!document.querySelector('[role="dialog"]')`, 5000, '取消确认面板')
+      await evalJS(`[...document.querySelectorAll('[role="dialog"] button')]
+        .find((b) => b.textContent.trim() === '取消录音')?.click()`)
+      await waitFor(`!!document.querySelector('[aria-label="开始说话"]')`, 5000, '取消后回到待机态')
       // 打开全部纪要比对：仍应只有此前那 1 条
       await clickButton('全部纪要')
       await waitFor(`[...document.querySelectorAll('.list .row')].length >= 1`, 5000, '列表再开')

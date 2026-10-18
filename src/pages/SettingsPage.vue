@@ -8,8 +8,11 @@ import ExternalAccessSection from '@/components/settings/ExternalAccessSection.v
 import InfoHint from '@/components/common/InfoHint.vue'
 import NumberStepper from '@/components/common/NumberStepper.vue'
 import PageHeader from '@/components/layout/PageHeader.vue'
+import PillChip from '@/components/common/PillChip.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { toggleablePlugins } from '@/plugins'
+import { useFeaturesStore } from '@/stores/features'
 import { usePomodoroStore } from '@/stores/pomodoro'
 import { useUpdateStore } from '@/stores/update'
 import { MOTION_LEVELS, motionEffective, motionLevel, setMotionLevel, type MotionLevel } from '@/system/motion'
@@ -22,6 +25,19 @@ import { PERF_MODES, liquidGlass, perfMode, setPerfMode, type PerfMode } from '@
 const router = useRouter()
 const pomo = usePomodoroStore()
 const update = useUpdateStore()
+const features = useFeaturesStore()
+
+/** 番茄钟配置属于「专注」模块、多设备同步属于「同步」模块：模块关掉时整卡收起
+ *  （配置项是那个模块的旋钮，模块不在就没有可调的对象 —— 半边留着就是「半关」） */
+const focusOn = computed(() => features.isEnabled('focus'))
+const syncOn = computed(() => features.isEnabled('sync'))
+
+/** 番茄钟时长档位快捷预设：与手调步进器并存（档位给快捷、步进给精确） */
+const FOCUS_PRESETS = [
+  { min: 25, label: '利落 25' },
+  { min: 45, label: '沉浸 45' },
+  { min: 90, label: '深流 90' },
+]
 
 /** 清除软件数据抽屉（四档深度 + 两段确认，见 DataClearSheet） */
 const clearOpen = ref(false)
@@ -105,17 +121,38 @@ onMounted(() => {
       </button>
     </section>
 
-    <!-- 番茄钟：完整配置（专注 / 短休 / 长休 / 轮数都在这一处调） -->
-    <section class="card">
+    <!-- 番茄钟：完整配置（专注 / 短休 / 长休 / 轮数都在这一处调）。属「专注」模块 -->
+    <section v-if="focusOn" class="card">
       <header class="row between ghead">
         <h2 class="gtitle">番茄钟</h2>
         <span class="num gstate t-3">今日专注 {{ pomo.todayFocusMin }} 分钟</span>
       </header>
       <div class="card sub rows">
+        <!-- 时长档位：三枚快捷预设写进 focusMin；下面的步进器仍可精确手调，两者不冲突 -->
+        <div class="preset-row">
+          <span class="slabel">时长档位</span>
+          <div class="row prow">
+            <PillChip
+              v-for="p in FOCUS_PRESETS"
+              :key="p.min"
+              as="button"
+              size="sm"
+              :tone="pomo.settings.focusMin === p.min ? 'action' : 'muted'"
+              :aria-label="`设置专注时长 ${p.min} 分钟`"
+              @click="pomo.settings.focusMin = p.min"
+            >
+              {{ p.label }}
+            </PillChip>
+          </div>
+        </div>
         <NumberStepper v-model="pomo.settings.focusMin" label="专注时长" unit="分钟" :step="5" :min="5" :max="120" />
         <NumberStepper v-model="pomo.settings.breakMin" label="短休息" unit="分钟" :step="1" :min="1" :max="30" />
         <NumberStepper v-model="pomo.settings.longBreakMin" label="长休息" unit="分钟" :step="5" :min="5" :max="60" />
         <NumberStepper v-model="pomo.settings.roundsBeforeLongBreak" label="长休间隔" unit="轮" :step="1" :min="2" :max="8" />
+        <div class="row between srow">
+          <span class="slabel">结束提示音</span>
+          <ToggleSwitch v-model="pomo.settings.chime" label="结束提示音" />
+        </div>
       </div>
     </section>
 
@@ -162,8 +199,8 @@ onMounted(() => {
       <SegmentedControl v-model="motionChoice" class="perfseg" :options="MOTION_OPTIONS" />
     </section>
 
-    <!-- 多设备同步 -->
-    <section class="card">
+    <!-- 多设备同步。属「同步」模块（模块关掉时整卡收起，直链也被守卫拦回主页） -->
+    <section v-if="syncOn" class="card">
       <header class="row ghead">
         <h2 class="gtitle">多设备同步</h2>
         <span class="hint-slot">
@@ -280,6 +317,36 @@ onMounted(() => {
 /* 番茄钟卡内行组与卡头之间恒为 4px（.rows 成了 .card.sub，原来的 .ghead + .rows 4px 保留） */
 .ghead + .card.sub {
   margin-top: 4px;
+}
+
+/* 番茄钟「时长档位」预设行：标签在上、胶囊在下（窄宽下胶囊可换行，不挤成一排） */
+.preset-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prow {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 与 NumberStepper 的 .label 同档（--fs-subhead / 500），行组里两种标签才并排一致 */
+.slabel {
+  font-size: var(--fs-subhead);
+  font-weight: 500;
+}
+
+/* 「结束提示音」开关行：与步进器行同一垂直节奏（.rows > * + * 已给行间细线） */
+.srow {
+  padding: 7px 0;
+}
+
+/* 桌面（有悬停）：预设胶囊给悬停反馈（按压由全局 button:active 承担） */
+@media (hover: hover) {
+  .prow .chip:hover {
+    background: var(--surface-3);
+  }
 }
 
 /* 功能行：图标章 + 标题/说明 + 尖括号（与「我」页的格内行同构） */

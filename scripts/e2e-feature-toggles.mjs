@@ -7,12 +7,19 @@
  *
  * 剧本：
  *   1. 「我」页的设置行 → 二级页「设置」三组齐备
- *   2. 「设置 › 打开或关闭功能」→ 三个模块开关（运动 / 课表 / 健康方案）
+ *   2. 「设置 › 打开或关闭功能」→ 十个模块开关（营养 / 记账 / 专注 / 语音 / 录音 / 多设备同步 /
+ *      运动 / 课表 / 抢课 / 健康方案）；抢课是课表的子模块且默认关
  *   3. 关掉「运动」→ 工具格无「记运动」、底栏无「运动」页签、直链 /#/sports 被拦回主页
  *   4. 关掉「课表」/「健康方案」→ 工具格对应卡片消失、直链 /#/program 被拦回主页
+ *   4b. 关掉「营养 / 记账 / 专注」→ 吃卡整块不渲染、两格状态卡收起、三条直链被拦
+ *   4c. 关掉「语音 / 录音 / 多设备同步」→ 录音纪要 chip 消失、设置页番茄钟与同步卡收起、
+ *       两条直链（/#/record、/#/settings/sync）被拦
+ *   4d. 对外服务网关拿到模块快照（关掉的模块一个都不在里面）—— Rust 侧门禁的前端那一半
  *   5. 重新打开「运动」→ 入口恢复
  *   6. 刷新后开关状态保持（localStorage 持久化）
  *   7. 底栏三块（左自定义圆钮 / 中药丸 / 右 AI 圆钮）：长按左钮换落点、关掉模块后回落
+ *   8. 桌面工作台：导航轨与便当快捷入口同样听开关，便当不留空洞
+ *   9. 内容域模块（营养 / 专注 / 记账）在桌面端的收法 + 拨动后网关快照同步
  *
  * 前置：npm run dev 已在 1420（或 REIN_E2E_URL 指向其它实例）
  * 运行：node scripts/e2e-feature-toggles.mjs
@@ -296,12 +303,12 @@ async function main() {
     await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页挂载')
     const rows = await evalJS(`[...document.querySelectorAll('.prow .ptxt b')].map((e) => e.textContent.trim())`)
     ok(
-      '开关页列出四个可开关模块（抢课是课表的子模块）',
-      rows.join() === '运动,课表,抢课,健康方案',
+      '开关页列出十个可开关模块（抢课缩进挂在课表下面）',
+      rows.join() === '营养,记账,专注,语音,录音,多设备同步,运动,课表,抢课,健康方案',
       rows.join(' · '),
     )
     const switches = await evalJS(`document.querySelectorAll('.prow [role="switch"]').length`)
-    ok('每个模块一个 role=switch 开关', switches === 4, `${switches} 个`)
+    ok('每个模块一个 role=switch 开关', switches === 10, `${switches} 个`)
     // 子模块必须缩进挂在父模块下面（DOM 顺序即视觉顺序）
     const nested = await evalJS(`(() => {
       const all = [...document.querySelectorAll('.prow')]
@@ -384,7 +391,9 @@ async function main() {
     ok('关闭「课表」开关', (await setToggle('课表', false)) === 'clicked')
     await sleep(300)
     // 子模块继承父模块：课表关了，抢课开关必须置灰且视为关闭 ——
-    // 「工具卡没了但直链还能进」那种半关状态就是这里防的
+    // 「工具卡没了但直链还能进」那种半关状态就是这里防的。
+    // 原因文案在**状态胶囊**里（2026-10 起从描述行剥出来单独成态，见 FeatureSettingsPage 的注释），
+    // 描述行只剩模块自己的说明 —— 断言别再去 em 里找那句话。
     const subOff = await evalJS(`(() => {
       const row = [...document.querySelectorAll('.prow')].find(
         (r) => r.querySelector('.ptxt b')?.textContent.trim() === '抢课',
@@ -393,7 +402,7 @@ async function main() {
       return {
         disabled: sw?.disabled === true,
         checked: sw?.getAttribute('aria-checked') === 'true',
-        hint: row?.querySelector('.ptxt em')?.textContent.includes('课表关闭时不可用') === true,
+        hint: row?.querySelector('.ptxt .schip')?.textContent.includes('课表关闭时不可用') === true,
       }
     })()`)
     ok(
@@ -431,6 +440,111 @@ async function main() {
     await evalJS(`location.hash = '#/program'`)
     await sleep(700)
     ok('直链 /#/program 被守卫拦回主页', (await evalJS(`location.hash`)) === '#/')
+
+    /* ---- 4b. 内容域模块：营养 / 记账 / 专注 一键收起 ---- */
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页')
+    for (const name of ['营养', '记账', '专注']) {
+      ok(`关闭「${name}」开关`, (await setToggle(name, false)) === 'clicked')
+    }
+    await sleep(400)
+    await evalJS(`location.hash = '#/'`)
+    await waitFor(`document.querySelectorAll('.hf-member, .hf-chip').length > 0`, 8000, '回主页')
+    await sleep(400)
+    const afterCoreOff = await toolTitles()
+    ok(
+      '营养关掉后「吃」卡整块不渲染（成员缺失即整区消失，不留空壳）',
+      !(await evalJS(`!!document.querySelector('[data-testid="hf-zone-eat"]')`)) &&
+        !afterCoreOff.includes('记饮食') &&
+        !afterCoreOff.includes('饮食库'),
+      afterCoreOff.join(' · '),
+    )
+    ok(
+      '记账 / 专注关掉后两格状态卡（钱 / 专注）一起收起',
+      !(await evalJS(`!!document.querySelector('[data-testid="hf-fact-money"]')`)) &&
+        !(await evalJS(`!!document.querySelector('[data-testid="hf-fact-focus"]')`)),
+    )
+    for (const [path, label] of [
+      ['#/nutrition', '营养'],
+      ['#/ledger', '记账'],
+      ['#/focus', '专注'],
+    ]) {
+      await evalJS(`location.hash = '${path}'`)
+      await sleep(500)
+      ok(
+        `${label}关掉后直链 /${path} 被守卫拦回主页`,
+        (await evalJS(`location.hash`)) === '#/',
+        await evalJS(`location.hash`),
+      )
+    }
+    await shot('4b-home-content-modules-off')
+
+    /* ---- 4c. 语音 / 录音 / 多设备同步：入口与设置卡一起收 ---- */
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页')
+    for (const name of ['语音', '录音', '多设备同步']) {
+      ok(`关闭「${name}」开关`, (await setToggle(name, false)) === 'clicked')
+    }
+    await sleep(400)
+    await evalJS(`location.hash = '#/'`)
+    await waitFor(`document.querySelectorAll('.hf-member, .hf-chip').length > 0`, 8000, '回主页')
+    await sleep(400)
+    const afterToolOff = await toolTitles()
+    ok(
+      '语音关掉后「录音纪要」chip 消失（AI 助手仍在）',
+      !afterToolOff.includes('录音纪要') && afterToolOff.includes('AI 助手'),
+      afterToolOff.join(' · '),
+    )
+    await evalJS(`location.hash = '#/record'`)
+    await sleep(600)
+    ok(
+      '录音关掉后直链 /#/record 被守卫拦回主页',
+      (await evalJS(`location.hash`)) === '#/',
+      await evalJS(`location.hash`),
+    )
+    await evalJS(`location.hash = '#/settings/sync'`)
+    await sleep(600)
+    ok(
+      '同步关掉后直链 /#/settings/sync 被守卫拦回主页',
+      (await evalJS(`location.hash`)) === '#/',
+      await evalJS(`location.hash`),
+    )
+    // 设置页：番茄钟配置卡属「专注」、同步卡属「多设备同步」，都应随模块一起收
+    await evalJS(`location.hash = '#/settings'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '设置'`, 8000, '设置二级页')
+    await sleep(400)
+    const groupsOff = await evalJS(
+      `[...document.querySelectorAll('.card .gtitle')].map((e) => e.textContent.trim())`,
+    )
+    ok(
+      '设置页的番茄钟与多设备同步两张卡随模块收起，其余分组仍在',
+      !groupsOff.includes('番茄钟') &&
+        !groupsOff.includes('多设备同步') &&
+        groupsOff.includes('性能') &&
+        groupsOff.includes('关于'),
+      groupsOff.join(' · '),
+    )
+    await shot('4c-settings-modules-off')
+
+    /* ---- 4d. 对外服务网关拿到模块快照（Rust 侧门禁的输入，contract §4.7） ----
+       真机的门禁在 `store::module_gate`（Rust 单测守住），这里守的是**前端那一半**：
+       App.vue 的 watcher 有没有把「已启用模块」推给 Rust —— 推丢了门禁就永远 fail-open。 */
+    const gwModules = await evalJS(`(async () => {
+      const { mockGatewayEnabledModules } = await import('/src/mock/server.ts')
+      return mockGatewayEnabledModules()
+    })()`)
+    const TOGGLEABLE = [
+      'sports', 'campus', 'campus-grab', 'program', 'nutrition',
+      'ledger', 'focus', 'voice', 'record', 'sync',
+    ]
+    ok(
+      '对外网关拿到模块快照：关掉的十个模块一个都不在，内核（ai / todos）在',
+      Array.isArray(gwModules) &&
+        gwModules.includes('ai') &&
+        gwModules.includes('todos') &&
+        gwModules.every((id) => !TOGGLEABLE.includes(id)),
+      JSON.stringify(gwModules),
+    )
 
     /* ---- 5. 重新打开「运动」 ---- */
     await evalJS(`location.hash = '#/settings/features'`)
@@ -497,6 +611,50 @@ async function main() {
       `最小块宽 ${bentoFit.minW}px · 横向溢出 ${bentoFit.overflowX}px`,
     )
     await shot('7-desktop-modules-off')
+
+    /* ---- 9. 内容域模块在桌面端的收法（导航轨 + 便当块 + 快捷磁贴一起收） ---- */
+    await evalJS(`location.hash = '#/settings/features'`)
+    await waitFor(`document.querySelector('h1')?.textContent === '打开或关闭功能'`, 8000, '功能开关页（桌面）')
+    for (const name of ['营养', '专注', '记账']) {
+      ok(`桌面端关闭「${name}」开关`, (await setToggle(name, false)) === 'clicked')
+    }
+    await evalJS(`location.hash = '#/'`)
+    await sleep(800)
+    const bentoOff = await evalJS(`(() => ({
+      ids: [...document.querySelectorAll('.bento .b-item')].map((e) => e.dataset.bentoId),
+      rail: [...document.querySelectorAll('.rail .ric')].map((e) => e.getAttribute('aria-label')),
+    }))()`)
+    ok(
+      '关掉营养 / 专注 / 记账后：便当对应的块（能量 / 今日饮食 / 记饮食磁贴 / 番茄钟 / 专注磁贴 / 记账）与导航轨条目一起消失',
+      !['hero', 'diet', 'qa-food', 'pomodoro', 'qa-focus', 'led'].some((id) => bentoOff.ids.includes(id)) &&
+        !['营养', '专注', '记账'].some((l) => bentoOff.rail.includes(l)) &&
+        bentoOff.rail.includes('待办'),
+      bentoOff.ids.join(' · '),
+    )
+    // 少了几块也不能冒出隐式轨道（与第 8 节同一条自检，这一轮少的是 6 块）
+    const bentoFit2 = await evalJS(`(() => {
+      const b = document.querySelector('.bento')
+      const kids = [...b.children].map((e) => Math.round(e.getBoundingClientRect().width))
+      return { overflowX: b.scrollWidth - b.clientWidth, minW: Math.min(...kids), cols: kids.length }
+    })()`)
+    ok(
+      '便当仍无隐式轨道（剩下每块宽度正常、无横向溢出）',
+      bentoFit2.overflowX <= 1 && bentoFit2.minW > 200,
+      `剩 ${bentoFit2.cols} 块 · 最小块宽 ${bentoFit2.minW}px · 横向溢出 ${bentoFit2.overflowX}px`,
+    )
+    // 桌面端拨动同样会推快照（证明 watcher 是「拨动时」也发，而不是只在启动发一次）
+    const gwDesktop = await evalJS(`(async () => {
+      const { mockGatewayEnabledModules } = await import('/src/mock/server.ts')
+      return mockGatewayEnabledModules()
+    })()`)
+    ok(
+      '桌面端拨动后网关快照同步：营养 / 专注 / 记账出局，待办 / AI 留下',
+      Array.isArray(gwDesktop) &&
+        gwDesktop.includes('todos') &&
+        !['nutrition', 'focus', 'ledger', 'sports', 'campus'].some((id) => gwDesktop.includes(id)),
+      JSON.stringify(gwDesktop),
+    )
+    await shot('8-desktop-content-modules-off')
 
     // 收尾：恢复默认，避免污染后续手工演示
     await cdp('Emulation.clearDeviceMetricsOverride')

@@ -34,6 +34,7 @@ import { addDays } from '@/utils/date'
 import { libraryMuscles } from '@/utils/libraryMuscles'
 import { ACTIVATION_WEIGHT } from '@/utils/trainingAdvice'
 import {
+  SCORE_BANDS,
   SCORE_GROUPS,
   SCORE_GROUP_LABELS,
   SCORE_GROUP_OF,
@@ -156,14 +157,17 @@ function weightScoreOf(avgWeight: number | null, baseAvg: number | null): number
   return 40
 }
 
-/** 规范第 0 节的分档（六段，文字用）；热力颜色用五档粗分 */
+/**
+ * 规范第 0 节的分档（六段，文字用）；热力颜色用五档粗分。
+ *
+ * 阈值只有 `config/muscles.SCORE_BANDS` 一份 —— 那也正是练够分抽屉图例
+ * （TrainingScoreSheet）渲染的同一份数组，而抽屉靠 `label` 字符串与本文给出的
+ * `band` 对齐（`b.label === current.band`）。两边各写一遍阈值，改一处就会漂移：
+ * 图例改了而引擎没改，抽屉里那一档就永远点不亮。因此这里改为**查表**，不重抄数字。
+ */
 export function scoreBandOf(score: number): { label: string; hint: string } {
-  if (score >= 100) return { label: '运动充分', hint: '当前目标下已经练够，维持即可' }
-  if (score >= 90) return { label: '高度充分', hint: '很够，可小幅渐进' }
-  if (score >= 75) return { label: '足够', hint: '基本够，有短板' }
-  if (score >= 60) return { label: '基本够', hint: '需要补一项或两项' }
-  if (score >= 40) return { label: '不够', hint: '刺激不足或体感拖后腿' }
-  return { label: '明显不足', hint: '优先查频率、强度或体感' }
+  const band = SCORE_BANDS.find((b) => score >= b.min) ?? SCORE_BANDS[SCORE_BANDS.length - 1]!
+  return { label: band.label, hint: band.hint }
 }
 
 /**
@@ -395,11 +399,15 @@ export function computeTrainingScore(input: TrainingScoreInput): TrainingScoreRe
         }
       } else if (inBase) {
         const b = base.get(g)!
-        // 断练判据只认「真练到」（辅助及以上，与频率同口径）；重量基线保持不滤激活档
+        // 断练判据只认「真练到」（辅助及以上，与频率同口径）
         if (lv >= 2) b.sets += 1
         if (s.weightKg != null && s.weightKg > 0) {
-          b.sum += s.weightKg
-          b.n += 1
+          // 基线重量与本周 `avgWeight` 走**同一套加权口径**（都按激活档折算）——
+          // 一边加权、一边简单平均，会让「肩」这种同时吃肩推(level 3)与卧推(level 2)的
+          // 评估组算出偏斜的比值，而 weightScoreOf 正是拿这个比值分 100/80/60/40 四档。
+          // （决策见 docs/exercise-quality-review-2026-10-17.md §8 D2）
+          b.sum += w * s.weightKg
+          b.n += w
         }
       }
     }

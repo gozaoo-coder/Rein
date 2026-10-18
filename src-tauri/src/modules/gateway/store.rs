@@ -22,6 +22,7 @@ use crate::error::{ReinError, Result};
 use crate::modules::gateway::models::{
     AuditEntry, AuditRecord, BindMode, ClientDecision, ExtClient, PromptGate, ScopeSet,
 };
+use crate::modules::gateway::protocol::Method;
 
 // ---------------------------------------------------------------- token 原语
 
@@ -141,6 +142,90 @@ pub fn ensure_pair_token(conn: &Connection) -> Result<String> {
     let token = URL_SAFE_NO_PAD.encode(buf);
     crate::db::meta_set(conn, KEY_PAIR_TOKEN, &token)?;
     Ok(token)
+}
+
+// ---------------------------------------------------------------- 功能模块开关快照（contract §4.7）
+
+/// 已启用的功能模块 id 快照（JSON 字符串数组）。前端 `stores/features.ts` 是唯一作者：
+/// 每次开/关（以及每次启动）把整份快照推过来，Rust 侧只读不写业务判断。
+pub const KEY_ENABLED_MODULES: &str = "gateway.enabledModules";
+
+/// 快照条数上限（当前只有 10 个可开关模块，留足余量；超限拒绝而不是静默截断）。
+pub const MAX_ENABLED_MODULES: usize = 64;
+
+/// 单个模块 id 的长度上限。
+pub const MAX_MODULE_ID_LEN: usize = 64;
+
+/// 清洗一份快照：去空白项、去重（保序）。超长 / 超量在写侧拒绝（与 Origin 白名单同一套纪律）。
+fn normalize_modules_lossy(ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in ids {
+        let id = raw.trim();
+        if !id.is_empty() && !out.iter().any(|x| x == id) {
+            out.push(id.to_string());
+        }
+    }
+    out
+}
+
+/// 读快照；`None` = 从没推过（前端尚未启动到推快照那一步），与「空表 = 全关」区分开。
+pub fn stored_modules(conn: &Connection) -> Option<Vec<String>> {
+    crate::db::meta_get(conn, KEY_ENABLED_MODULES)
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .map(|list| normalize_modules_lossy(&list))
+}
+
+/// 写入快照（整表替换语义）。返回清洗后的列表。
+pub fn set_enabled_modules(conn: &Connection, ids: &[String]) -> Result<Vec<String>> {
+    let cleaned = normalize_modules_lossy(ids);
+    if cleaned.len() > MAX_ENABLED_MODULES {
+        return Err(ReinError::coded(
+            "bad_request",
+            format!("模块条数超限（上限 {MAX_ENABLED_MODULES} 条）"),
+        ));
+    }
+    if cleaned.iter().any(|m| m.chars().count() > MAX_MODULE_ID_LEN) {
+        return Err(ReinError::coded(
+            "bad_request",
+            format!("模块 id 过长（上限 {MAX_MODULE_ID_LEN} 字符）"),
+        ));
+    }
+    let json = serde_json::to_string(&cleaned).unwrap_or_else(|_| "[]".to_string());
+    crate::db::meta_set(conn, KEY_ENABLED_MODULES, &json)?;
+    Ok(cleaned)
+}
+
+/// 某个功能模块此刻是否开着。
+///
+/// **缺快照 = 全部视为开着**（fail-open，刻意）：快照由前端启动时推，而网关只可能
+/// 从前端设置页打开 —— 真机上不存在「服务在跑但快照没推」的稳态。反过来 fail-closed
+/// 会把一次漏推放大成「对外接口整体不可用」，而这道门禁**不是安全边界**
+/// （边界是首帧令牌 + 逐次 scope + 用户授权），它只是一致性闸门。
+pub fn is_module_enabled(conn: &Connection, plugin: &str) -> bool {
+    match stored_modules(conn) {
+        None => true,
+        Some(list) => list.iter().any(|m| m == plugin),
+    }
+}
+
+/// 模块门禁：方法所属模块被用户关掉时拒绝（`server.rs::handle_request` 在短锁内调它）。
+///
+/// 顺序上**排在 scope 校验之前**：它是「这个功能此刻在不在」的事实，不是授权判定 ——
+/// 客户端即便拿着全部 scope，界面上关掉的功能也不该可用。
+pub fn module_gate(conn: &Connection, method: Method) -> Result<()> {
+    let Some(plugin) = method.plugin() else {
+        return Ok(());
+    };
+    if is_module_enabled(conn, plugin) {
+        return Ok(());
+    }
+    Err(ReinError::coded(
+        "module_disabled",
+        format!(
+            "功能「{plugin}」已关闭，「{}」暂不可用：请在设置 › 打开或关闭功能里开启它",
+            method.name()
+        ),
+    ))
 }
 
 // ---------------------------------------------------------------- Origin 白名单（contract §15）
@@ -874,6 +959,82 @@ mod tests {
             )
             .unwrap();
         assert_eq!(in_meta, 2, "载荷 + 写入时刻都在 app_meta");
+    }
+
+    /// 模块门禁：关掉的模块其对外方法一律 `module_disabled`，内核方法不受影响。
+    ///
+    /// 三条契约（contract §4.7）：① 从没推过快照 → 全部放行（fail-open，理由见 `is_module_enabled`）；
+    /// ② 推了快照之后就按快照判（**空表 = 全关**）；③ 开关拨回来立刻恢复 —— 没有缓存中间态。
+    #[test]
+    fn module_gate_rejects_only_disabled_modules() {
+        let conn = db();
+        // ① 从没推过快照：全部放行（含运动/专注这些可开关方法）
+        assert_eq!(stored_modules(&conn), None);
+        assert!(module_gate(&conn, Method::PomodoroStart).is_ok());
+        assert!(module_gate(&conn, Method::WorkoutList).is_ok());
+        assert!(module_gate(&conn, Method::ScheduleCampus).is_ok());
+
+        // ② 只开运动与待办（内核）：专注 / 课表 / 方案被拒
+        let saved = set_enabled_modules(&conn, &["sports".into(), "nutrition".into()]).unwrap();
+        assert_eq!(saved, vec!["sports", "nutrition"]);
+        assert!(module_gate(&conn, Method::WorkoutList).is_ok());
+        assert!(module_gate(&conn, Method::WorkoutSessionStart).is_ok(), "下行控制同组同命");
+        assert!(module_gate(&conn, Method::ScheduleList).is_ok(), "待办是内核，不受开关管");
+        for m in [
+            Method::PomodoroList,
+            Method::PomodoroStart,
+            Method::PomodoroStatus,
+            Method::ScheduleCampus,
+            Method::SchedulePrograms,
+        ] {
+            let e = module_gate(&conn, m).unwrap_err();
+            assert_eq!(e.code(), "module_disabled", "{} 应被门禁拒绝", m.name());
+            assert!(
+                e.to_string().contains(m.name()) && e.to_string().contains("打开或关闭功能"),
+                "错误文案要指得出方法与去处：{e}"
+            );
+        }
+
+        // ③ 空表 = 全关（不是 fail-open！）：只有内核方法活着
+        set_enabled_modules(&conn, &[]).unwrap();
+        assert!(module_gate(&conn, Method::WorkoutList).is_err());
+        assert!(module_gate(&conn, Method::ScheduleDelete).is_ok());
+
+        // 拨回来立刻恢复
+        set_enabled_modules(&conn, &["focus".into()]).unwrap();
+        assert!(module_gate(&conn, Method::PomodoroStart).is_ok());
+        assert!(module_gate(&conn, Method::WorkoutList).is_err());
+    }
+
+    /// 快照的清洗与边界：去空白 / 去重 / 超长与超量在写侧拒绝（坏 JSON 当未推过 → 放行）。
+    #[test]
+    fn enabled_modules_snapshot_is_normalized_and_bounded() {
+        let conn = db();
+        let saved = set_enabled_modules(
+            &conn,
+            &[" sports ".into(), "".into(), "sports".into(), "focus".into()],
+        )
+        .unwrap();
+        assert_eq!(saved, vec!["sports", "focus"], "去空白 + 去重 + 保序");
+        assert_eq!(stored_modules(&conn).as_deref(), Some(&saved[..]));
+
+        let long = "x".repeat(MAX_MODULE_ID_LEN + 1);
+        assert_eq!(
+            set_enabled_modules(&conn, &[long]).unwrap_err().code(),
+            "bad_request"
+        );
+        assert_eq!(stored_modules(&conn).as_deref(), Some(&saved[..]), "被拒不落库");
+
+        let many: Vec<String> = (0..(MAX_ENABLED_MODULES + 1)).map(|i| format!("m{i}")).collect();
+        assert_eq!(
+            set_enabled_modules(&conn, &many).unwrap_err().code(),
+            "bad_request"
+        );
+
+        // 坏 JSON / 手改过的库：当「未推过」→ fail-open，而不是崩或全关
+        crate::db::meta_set(&conn, KEY_ENABLED_MODULES, "{ not json").unwrap();
+        assert_eq!(stored_modules(&conn), None);
+        assert!(module_gate(&conn, Method::PomodoroStart).is_ok());
     }
 
     #[test]

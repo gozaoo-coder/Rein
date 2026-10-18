@@ -339,8 +339,14 @@ async function onEndPick(value: string): Promise<void> {
 }
 
 .wdock-root.immersive-measuring .dock-body {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  /* `!important` 是必须的：`.dock-body` 的 backdrop-filter 是**内联样式**
+     （`glassStyle` 在 liquidGlass 档生成 `url(#…) saturate(…)`，绑在 :style 上），
+     而内联的普通声明胜过作者的普通声明 —— 不带它这条规则恒不生效，收起那 400ms 里
+     整条全宽玻璃仍在逐帧重算折射（采样点全被形变壳盖住，白付一笔）。
+     同一手法见 SessionOverlay 的 `.session-layer.is-morphing :deep(.sgbtn)`：
+     那里也是压 GlassSurface 的内联 url()，同样带了 !important。 */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* 条形态：宽度沿用旧悬浮条的视口窄栏（居中由弹簧坐标负责，不靠 margin） */
@@ -483,12 +489,21 @@ async function onEndPick(value: string): Promise<void> {
 
 .abtn {
   flex: none;
+  position: relative;
   height: 38px;
   padding: 0 15px;
   border-radius: var(--radius-l);
   font-size: var(--fs-footnote);
   font-weight: 700;
   transition: transform var(--dur-fast) var(--ease-standard);
+}
+
+/* 视觉高度留 38（浮条的总高不能因为热区而涨），命中区上下各撑 3px 到 44：
+   收起状态下这里是「继续 / 完成本组」的唯一入口，练到力竭时更需要容错。 */
+.abtn::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
 }
 
 .abtn:active {

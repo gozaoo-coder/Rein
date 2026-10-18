@@ -156,6 +156,9 @@ pub enum ErrorCode {
     BadRequest,
     Unauthorized,
     ForbiddenScope,
+    /// 用户把这个方法所属的功能模块关掉了（contract §4.7）。**不是**权限问题 ——
+    /// 客户端可能拿着全部 scope，只是那个功能此刻在界面上是关的。
+    ModuleDisabled,
     PendingAuthorization,
     Denied,
     NotFound,
@@ -172,6 +175,7 @@ impl ErrorCode {
             ErrorCode::BadRequest => "bad_request",
             ErrorCode::Unauthorized => "unauthorized",
             ErrorCode::ForbiddenScope => "forbidden_scope",
+            ErrorCode::ModuleDisabled => "module_disabled",
             ErrorCode::PendingAuthorization => "pending_authorization",
             ErrorCode::Denied => "denied",
             ErrorCode::NotFound => "not_found",
@@ -191,8 +195,11 @@ impl ErrorCode {
             ErrorCode::Unauthorized | ErrorCode::Denied => Some(1008),
             // 消息过大：1009 message too big
             ErrorCode::PayloadTooLarge => Some(1009),
+            // module_disabled 与 forbidden_scope 一样是**逐次拒绝**：开关是随时会拨回来的，
+            // 断连只会逼客户端重连（而重连还要再走一次授权）。
             ErrorCode::BadRequest
             | ErrorCode::ForbiddenScope
+            | ErrorCode::ModuleDisabled
             | ErrorCode::PendingAuthorization
             | ErrorCode::NotFound
             | ErrorCode::Timeout
@@ -208,6 +215,7 @@ impl ErrorCode {
             "bad_request" => ErrorCode::BadRequest,
             "unauthorized" => ErrorCode::Unauthorized,
             "forbidden_scope" => ErrorCode::ForbiddenScope,
+            "module_disabled" => ErrorCode::ModuleDisabled,
             "pending_authorization" => ErrorCode::PendingAuthorization,
             "denied" => ErrorCode::Denied,
             "not_found" => ErrorCode::NotFound,
@@ -381,6 +389,54 @@ impl Method {
         )
     }
 
+    /// 该方法所属的**功能模块 id**（`src/plugins/builtin/<模块>.ts` 的 `id`），
+    /// `None` = 不属于任何可开关模块（内核数据，永远可用）。contract §4.7。
+    ///
+    /// 它是模块门禁的唯一判据（`store::module_gate`）：用户关掉「专注 / 运动 / 课表 /
+    /// 健康方案」之后，对应的方法一律回 `module_disabled` —— 理由与 AI 工具组同源：
+    /// 界面上关掉的功能，其对外接口不该还开着（`pomodoro.start` 甚至能驱动一个
+    /// 前端 UI 已经不显示的计时器）。
+    ///
+    /// **`schedule.*` 不是一个模块**：它下面混着三处数据 —— 日程（待办，内核恒开）
+    /// 与两条只读投影（`schedule.campus` 读课表、`schedule.programs` /
+    /// `schedule.programActive` 读健康方案），所以逐个方法给归属，而不是按前缀。
+    pub fn plugin(self) -> Option<&'static str> {
+        match self {
+            // 待办：应用主轴，不可关（plugins/builtin/core.ts）
+            Method::ScheduleList
+            | Method::ScheduleListAll
+            | Method::ScheduleCreate
+            | Method::ScheduleUpdate
+            | Method::ScheduleDelete => None,
+            // 课表：campus_schedule_readonly_on
+            Method::ScheduleCampus => Some("campus"),
+            // 健康方案：program_list / program_get_active
+            Method::SchedulePrograms | Method::ScheduleProgramActive => Some("program"),
+            // 运动：课程、动作库、力量曲线、会话与跑步（含 session* 下行控制）
+            Method::WorkoutPlans
+            | Method::WorkoutPlan
+            | Method::WorkoutList
+            | Method::WorkoutCreate
+            | Method::WorkoutStrengthHistory
+            | Method::WorkoutStrengthExercises
+            | Method::WorkoutLastWeights
+            | Method::WorkoutRecentSets
+            | Method::WorkoutSessionActive
+            | Method::WorkoutSessionStart
+            | Method::WorkoutSessionSnapshot
+            | Method::WorkoutSessionFinish
+            | Method::WorkoutSessionAbort
+            | Method::WorkoutDelete => Some("sports"),
+            // 专注：番茄钟（含 start/pause/stop 下行控制）
+            Method::PomodoroList
+            | Method::PomodoroSave
+            | Method::PomodoroStatus
+            | Method::PomodoroStart
+            | Method::PomodoroPause
+            | Method::PomodoroStop => Some("focus"),
+        }
+    }
+
     /// 该方法是不是「下行控制」——只回受理回执，实际动作由前端 store 完成
     /// （contract §14.3：`control_command` 的入参）。非控制方法返回 `false`。
     ///
@@ -539,7 +595,62 @@ mod tests {
         assert_eq!(ErrorCode::UnsupportedVersion.close_code(), Some(400));
         assert_eq!(ErrorCode::PayloadTooLarge.close_code(), Some(1009));
         assert_eq!(ErrorCode::ForbiddenScope.close_code(), None);
+        // 模块关掉是逐次拒绝，不断连（开关随时会拨回来）
+        assert_eq!(ErrorCode::ModuleDisabled.close_code(), None);
+        assert_eq!(ErrorCode::from_rein_code("module_disabled"), ErrorCode::ModuleDisabled);
         assert_eq!(ErrorCode::from_rein_code("anything-unknown"), ErrorCode::Internal);
+    }
+
+    /// 模块归属：28 条方法各有明确归属，且 `schedule.*` 按方法拆（不是按前缀）。
+    ///
+    /// 这条断言守的是门禁的**覆盖面**：新增一条对外方法却忘了给它定归属，
+    /// 它就会静默地永远不受开关管（`None` 与「漏写」在类型上没有区别）。
+    #[test]
+    fn plugin_mapping_splits_schedule_and_covers_every_method() {
+        use std::collections::HashMap;
+        let mut by_plugin: HashMap<&str, Vec<&str>> = HashMap::new();
+        for m in Method::ALL {
+            if let Some(p) = m.plugin() {
+                by_plugin.entry(p).or_default().push(m.name());
+            }
+        }
+        // 内核方法（不受开关管）只有日程那五条
+        let kernel: Vec<&str> = Method::ALL
+            .iter()
+            .filter(|m| m.plugin().is_none())
+            .map(|m| m.name())
+            .collect();
+        assert_eq!(
+            kernel,
+            vec![
+                "schedule.list",
+                "schedule.listAll",
+                "schedule.create",
+                "schedule.update",
+                "schedule.delete"
+            ],
+            "只有待办（内核）方法不受开关管"
+        );
+
+        assert_eq!(by_plugin["campus"], vec!["schedule.campus"]);
+        assert_eq!(
+            by_plugin["program"],
+            vec!["schedule.programs", "schedule.programActive"]
+        );
+        assert_eq!(by_plugin["sports"].len(), 14, "workout.* 全部归运动");
+        assert_eq!(by_plugin["focus"].len(), 6, "pomodoro.* 全部归专注");
+        assert!(
+            by_plugin["sports"].iter().all(|n| n.starts_with("workout.")),
+            "运动只认 workout.*：{:?}",
+            by_plugin["sports"]
+        );
+        assert!(
+            by_plugin["focus"].iter().all(|n| n.starts_with("pomodoro.")),
+            "专注只认 pomodoro.*：{:?}",
+            by_plugin["focus"]
+        );
+        // 合计 = 28（内核 5 + campus 1 + program 2 + sports 14 + focus 6）
+        assert_eq!(5 + 1 + 2 + 14 + 6, Method::ALL.len());
     }
 
     #[test]

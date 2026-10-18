@@ -153,6 +153,8 @@ async function injectProfile(rows) {
     return rows.length
   })()`)
   await cdp('Page.reload')
+  // 刷新与首次导航同理：href 不变但文档会整个换掉，不等到挂载就注入会踩同一个坑
+  await waitForApp()
   await injectStableCSS()
   await hideUpdateOverlay()
   await sleep(2200)
@@ -165,9 +167,38 @@ const BACK_ARMS = [
 ]
 const CALVES_ONLY = [{ id: 'standing-calf-raise', name: '站姿提踵', weight: 40, reps: 5, day: 2, setNo: 1 }]
 
+/**
+ * 等「同一源上的应用文档」真的就绪。
+ *
+ * 判据不能只看 `location.href`：`Page.navigate` 一发出去 href 就变成目标地址了，
+ * 而文档可能还是 about:blank —— 那时 `localStorage` 读不了（直接抛 SecurityError，
+ * 「Access is denied for this document」），注入画像就整个失败。所以要求
+ * **origin 一致 + 文档 complete + Vue 已经挂载（#app 里有真实内容）**三件事同时成立。
+ */
+async function waitForApp(timeoutMs = 15000) {
+  const want = new URL(APP).origin
+  const t0 = Date.now()
+  let last = null
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      last = await evalJS(`({
+        origin: location.origin,
+        state: document.readyState,
+        href: location.href.slice(0, 60),
+        shell: !!document.querySelector('#app .app-frame, #app .desk-frame'),
+        appKids: document.querySelector('#app')?.children.length ?? -1,
+      })`)
+      if (last.origin === want && last.state === 'complete' && last.shell) return true
+    } catch (e) {
+      last = { exc: String(e.message).slice(0, 120) }
+    }
+    await sleep(250)
+  }
+  throw new Error(`应用未就绪（origin / readyState / 挂载点）：${JSON.stringify(last)}`)
+}
+
 async function connect(pageTargetUrl) {
-  const res = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/new?about:blank`, { method: 'PUT' })
-  const target = await res.json()
+  const target = await newTarget()
   await sleep(300)
   ws = new WebSocket(target.webSocketDebuggerUrl)
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = j })
@@ -182,16 +213,36 @@ async function connect(pageTargetUrl) {
   await cdp('Page.enable')
   await cdp('Runtime.enable')
   await cdp('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 2, mobile: true })
-  await cdp('Page.navigate', { url: pageTargetUrl })
-  const t0 = Date.now()
-  while (Date.now() - t0 < 12000) {
-    try {
-      const href = await evalJS('location.href')
-      if (String(href).startsWith(APP)) break
-    } catch { /* 尚未就绪 */ }
-    await sleep(250)
+  const nav = await cdp('Page.navigate', { url: pageTargetUrl })
+  // CDP 调用失败时 `cdp()` 返回的是 error 对象（不是抛错）——导航没发出去却继续等 15 秒，
+  // 只会以「应用未就绪」的面目收场，排查要从头猜。当场说清：这台机器上踩过一次
+  // `REIN_E2E_URL` 带尾部空格（cmd 的 `set VAR=value && …` 会把空格算进值里）。
+  if (nav?.message) {
+    throw new Error(`导航失败：${nav.message}（url=${JSON.stringify(pageTargetUrl)}）`)
   }
+  await waitForApp()
   await injectStableCSS()
+}
+
+/**
+ * 开一个新页目标（与 e2e-voice 同一条路）。
+ *
+ * 浏览器刚起来那几百毫秒 `/json/new` 还连不上（`fetch failed`），而本脚本原来是**裸 fetch
+ * 一击致命** —— 机器稍忙就整场红在「与被测功能毫无关系」的地方。所以退避重试。
+ */
+async function newTarget(retries = 25) {
+  let lastErr = null
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/new?about:blank`, { method: 'PUT' })
+      if (res.ok) return await res.json()
+      lastErr = new Error(`/json/new 返回 ${res.status}`)
+    } catch (e) {
+      lastErr = e
+    }
+    await sleep(400)
+  }
+  throw lastErr ?? new Error('CDP 端点未就绪')
 }
 
 /** 读主页练卡的三件事：值行 / 事实句 / 立刻练指向谁 */

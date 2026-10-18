@@ -49,7 +49,7 @@
 | `resources/exercises.json` | 动作库种子（0025）：内置动作的唯一来源，由 `scripts/gen-exercises.mjs` 生成 —— 手写 SPEC（处方、要点、别名为手写；**肌群表必须显式给 `m`**，不再按名推导）+ `scripts/catalog/dataset.mjs`（exercises-dataset 精选子集，见 `resources/exercises.SOURCE.md`），禁止手改 | 运行时可变数据（用户自建动作落库，不回写种子） |
 | `src-tauri/src/modules/update/*` | 在线更新：多源清单（自建服务 + GitHub）+ 清单/安装包**双验签** + 断点续传 + 平台安装（Windows NSIS · Android APK）。设置在 `app_meta`（`update_settings_v1`），下载物落 `<app_data>/updates/`，进度走 `update://progress` 事件 | 把签名校验做成可选项；在前端推算下载进度；在 Rust 侧装配模型配置 |
 | `src-tauri/src/modules/maintenance/*` | 数据维护：分层清除软件数据（设置 › 数据 › 清除软件数据，`DataClearSheet` 两段确认：统计清单 + 长按 1.5s）。四档深度 cache / ai / business / factory，**档与档互不包含**；preview 与 clear 共用同一份分组定义（确认页清单 = 真删范围）；factory 动态枚举全库用户表（FTS5 走 delete-all，清空期间关外键、结束即还原），磁盘上只留数据库本件；除缓存档外清完由前端调 `data_app_restart` 重启（报告先回包再退进程，与 update_install 同纪律） | 按静态清单追迁移新表（factory 靠动态枚举自跟上）；清空事务里动连接级 pragma 不还原 |
-| `src-tauri/src/modules/gateway/*` | 对外服务网关（设置 › 外部访问，`ExternalAccessSection` + `GatewayAuthSheet`）：`tokio-tungstenite` WS 服务，六条握手闸门（绑回环/Origin/Host/首帧令牌/逐次 scope/参数收紧），四态授权（本次会话内存 `conn_id→ConnGrant`、始终允许落 `ext_clients` + `sha256` 令牌、忽略限频、拒绝），15 条 `schedule.*`/`workout.*`/`pomodoro.*` 方法由 WS 私有 router 分发（**不注册成 tauri 命令**）。设置与运行态只写 `app_meta`（`gateway.*`）；凭据/审计落 `ext_clients`/`ext_audit`（**不进同步白名单**）。变更推送复用同步已装的**唯一** `update_hook`（`sync/engine.rs`），网关**绝不**自己再装钩子 | 自己 `Connection::open`（会绕过同步钩子）；注册第二个 update_hook（顶掉同步捕获）；把 `ext_*` 放进 `sync/tables.rs` |
+| `src-tauri/src/modules/gateway/*` | 对外服务网关（设置 › 外部访问，`ExternalAccessSection` + `GatewayAuthSheet`）：`tokio-tungstenite` WS 服务，六条握手闸门（绑回环/Origin/Host/首帧令牌/逐次 scope/参数收紧），四态授权（本次会话内存 `conn_id→ConnGrant`、始终允许落 `ext_clients` + `sha256` 令牌、忽略限频、拒绝），28 条 `schedule.*`/`workout.*`/`pomodoro.*` 方法由 WS 私有 router 分发（**不注册成 tauri 命令**）。**模块门禁**：前端把「已启用模块 id」快照推给 Rust（`gateway_set_enabled_modules` → `app_meta:gateway.enabledModules`），`Method::plugin()` 逐方法给归属，关掉的模块其对外方法回 `module_disabled`（见 docs/EXTERNAL-API.md §4.7）—— 与 AI 工具组同一条纪律：关了开关，对外接口跟着关。设置与运行态只写 `app_meta`（`gateway.*`）；凭据/审计落 `ext_clients`/`ext_audit`（**不进同步白名单**）。变更推送复用同步已装的**唯一** `update_hook`（`sync/engine.rs`），网关**绝不**自己再装钩子 | 自己 `Connection::open`（会绕过同步钩子）；注册第二个 update_hook（顶掉同步捕获）；把 `ext_*` 放进 `sync/tables.rs` |
 | `server/*` | **Rein 在线服务**（部署在阿里云 ECS，systemd `rein-services`）：更新清单与安装包分发、发布/回滚/镜像管理接口、（预留）OpenAI 兼容模型网关。零依赖 Node，无构建步骤 | 持有更新签名私钥（服务端只能分发别人签过名的字节）；把业务数据放进这个进程 |
 | `scripts/release/*` | 发布工具链：`keygen`（生成 Ed25519 密钥对并同步公钥到三处）/ `publish`（签名 + 组装两套清单 + 推服务端/发 GitHub Release）/ `verify`（以客户端视角复核）/ `e2e`（本地起服务端跑完整链路）/ `deploy-server`（部署到 ECS） | 被前端或 Rust 代码 import；把私钥或管理令牌写进源码 |
 | `src-tauri/gen/android/.../RunTrackingService.kt` · `TrackingBridge.kt` | 跑步前台保活（Android 原生侧，与 MainActivity 同为手工维护；`tauri android init` 重新生成会丢） | 业务逻辑、SQL |
@@ -176,7 +176,8 @@
 | `/ai/files/space/large` | ai-files-usage-large | 大文件（三级页：**完整榜单**，最多 100 条，按体积倒序，行渲染与大文件摘要共用 `components/kb/UsageFileList.vue`（条长 = 相对最大文件、颜色 = 文本 / 本体）；点一行按路径深链进文件管理器打开阅读器。总览页只留前三名，榜单本身不挤在总览里） |
 | `/me` | me | 我 |
 | `/settings` | settings | 设置（二级内容页：功能分组入口 + 番茄钟完整配置 + 数据（清除软件数据：四档深度两段确认）+ 关于；入口在「我 › 设置」，原设置抽屉已升级为页面） |
-| `/settings/features` | settings-features | 打开或关闭功能（三级页：插件层的逐项开关，列表来自 `src/plugins` 里 `toggleable` 的声明） |
+| `/settings/features` | settings-features | 打开或关闭功能（三级页：插件层的逐项开关，列表来自 `src/plugins` 里 `toggleable` 的声明。**自身不属于任何插件**，任何组合下都可达） |
+| `/settings/sync` | settings-sync | 多设备同步（三级页：本机是谁 / 连了谁 / 怎么再加一台；入口在「设置 › 多设备同步」。**归 `sync` 插件所有**，关闭时那张卡与直链一起收） |
 | `/settings/update` | settings-update | 软件更新（三级页：版本/多源状态/下载进度/安装/更新源与通道设置 + Rein 在线服务探测；入口在「设置 › 关于 › 软件更新」，启动时也会静默检查并在有新版本时 toast 一次） |
 | `/settings/perf` | settings-perf | 画质预览（三级页：超高档的液态玻璃长什么样 —— 仅图标按钮 / 图标+文字按钮 / 底部栏（圆 + 药丸 + 圆，并列留缝；**与应用里的 Dock 共用同一份样式**，逐项一致）；可就地切档看折射与退化的差别；**动效档位也在这里就地切**（关闭 / 默认 / 丰富，台上标本跟着变 —— 丰富档下点页签能看见活动底的融合与形变，另有「试一下」按钮让底栏走一格）；台下入口拉开**液态玻璃参数调节面板**（12 项可调参数 + 自带暗场预览）；入口在「设置 › 性能 › 液态玻璃预览」） |
 | `/settings/health` | settings-health | 第三方数据管理（三级页：与 Android **Health Connect** 双向同步运动记录 —— 手机运动 App（小米运动健康等）把数据写进系统 HC，Rein 从那里读进来；可选把 Rein 自己记的运动回写出去。授权不走系统运行时弹窗，点按钮跳到 HC 自己的界面；「同步规则」卡讲清所有权：导入记录以 HC 为准（那边改了覆盖、删了跟着删），本地记录以本机为准。仅 Android 可用，桌面端是说明性禁用态；入口在「设置 › 第三方数据管理」；实现见 `src-tauri/src/modules/healthsync` 与 `HealthConnectBridge.kt`） |
@@ -199,7 +200,7 @@
 | `/campus/program` | campus-program | 培养方案（二级内容页：方案档案 + 学分进度 + 学分分布树 + 课程清单；数据源 900KB+，后端缓存） |
 | `/campus/course-select` | campus-course-select | 选课·抢课（二级内容页：教务服务器时间 + 抢课任务单 + 批次列表 → 教学班搜索/加入抢课；批次未开放时是「等待窗口开放」态）。**归 `campus-grab` 插件所有（课表的子模块，默认关闭）**：入口只在课表页/配置页且开关打开时出现，直链被守卫拦回主页 |
 | `/session/run` | session-run | 运动模式·跑步（沉浸二级页：目标设置 → GPS/计时 → 暂停/继续 → 总结保存） |
-| `/record` | record | 录音（二级内容页：录音台 + 未归档 take 管理（回放 / 删除 / 附加到待办）；录音中由录音悬浮条跨页接管） |
+| `/record` | record | 录音（二级内容页：录音台 + 未归档 take 管理（回放 / 删除 / 附加到待办）；录音中由录音悬浮条跨页接管。**归 `record` 插件所有**） |
 
 页面分级约定：一级页 `meta.tab`（页签条目由插件层贡献，见 §13）；二级内容页 `meta.title`（保留 TabBar，`PageHeader back` 提供返回键）；沉浸页 `meta.fullscreen`。**训练课沉浸层不再走路由**（2026-09-03）：`components/exercise/SessionOverlay.vue` 由 `App.vue` 常驻挂载，显隐与 container transform 形变动画由 `system/sessionImmersive.ts` 驱动——收起/恢复零重建，原 `/session` 路由已移除。每日目标的编辑入口收敛在「饮食调整」二级页，「我」页只展示摘要。训练课程的全部管理动作收敛在「全部课程」及其详情/编辑二级页，运动主页只放跑步/手动记快速入口与最近使用的三个课程。
 
@@ -248,7 +249,7 @@
 
 - 单窗口单连接（Mutex<Connection>）：桌面场景足够，出现并发瓶颈再引入连接池/rusqlite pool。
 - 目标按天覆盖（daily_targets）未启用：`get_targets/set_targets` 的 date 参数已预留。
-- 重复任务为轻量规则（每天/每周几/间隔 N 天 + 结束日期），模板行持有规则、实例按 `rec_key="模板id:日期"` 物化到滚动窗口 [今天-1, 今天+7]，`sync_recurrences` 幂等（改规则后未来未完成实例自动重建）；仅支持改单条实例，无"整个系列"编辑。子任务为单层 checklist（JSON 列，无嵌套/指派）。饮食自定义食物目前仅经 AI `create_food` / 智能添加自动补录落库（手动新建 UI 未做，表结构与命令已就绪）。
+- 重复任务为轻量规则（每天/每周几/间隔 N 天 + 结束日期），模板行持有规则、实例按 `rec_key="模板id:日期"` 物化到滚动窗口 [今天-1, 今天+7]，`sync_recurrences` 幂等（改规则后未来未完成实例自动重建）；仅支持改单条实例，无"整个系列"编辑。删除语义：**删实例 = 跳过这一次**（日期记进模板的 `rec_exdates`，物化不再补回 —— 不记就会被下一次物化按规则当场建回来），**删模板行 = 整条下线**（当天及以后未完成的实例一并收走，更早的与已完成的行保留）。子任务为单层 checklist（JSON 列，无嵌套/指派）。饮食自定义食物目前仅经 AI `create_food` / 智能添加自动补录落库（手动新建 UI 未做，表结构与命令已就绪）。
 - 记账为轻量单账本模型：支出/收入两类（无转账/多账户/多币种）、预设分类（自定义分类与层级未启用）、单一月度总预算（无分类预算/结转/提醒）、无周期账与 CSV 导出；流水搜备注 + 分类筛选。
 - 跑步 GPS 依赖系统定位服务：桌面端常不可用或漂移大，此时自动退化为纯计时模式，距离在总结页手动补填（跑步机场景同理）。
 - AI：`ai_models.api_key` 目前明文存 SQLite（单机单用户应用可接受，未上系统钥匙串）。
@@ -523,19 +524,40 @@ App 里的窗口监听只救「App 开着」的情况；**窗口在 App 没开�
 
 ## 13. 功能插件层（src/plugins · stores/features.ts）
 
-把「一个功能模块」声明成数据，而不是散落在导航栏、主页工具格、路由守卫里的三份硬编码：元数据（名称/说明/图标/主题色）+ 扩展点贡献（导航条目、主页工具卡）+ **路由所有权** + **父子关系**。四个开关（运动 / 课表 / **抢课** / 健康方案）是它的第一批消费者，内核功能（营养 / 语音 / AI / 专注 / 待办 / 记账）同样走这套声明，只是不可关。
+把「一个功能模块」声明成数据，而不是散落在导航栏、主页工具格、路由守卫里的三份硬编码：元数据（名称/说明/图标/主题色）+ 扩展点贡献（导航条目、主页工具卡）+ **路由所有权** + **父子关系**。**十个开关**是它的消费者（设置页一行一个、一个模块一个文件）：
+
+| 模块 | id | 关闭时一起收起的表面 | 默认 |
+| --- | --- | --- | --- |
+| 营养 | `nutrition` | 四条营养路由 · 导航轨条目 · 四张工具卡（吃卡随之整块不渲染）· 主页摄入总览 · 便当三块 · ⌘K「记饮食」· 「我」页每日目标栏 | 开 |
+| 记账 | `ledger` | `/ledger` · 导航轨条目 · 工具卡 · 便当记账块 · ⌘K「记一笔账」· 「我」页本月结余栏 · AI「记账」工具组 | 开 |
+| 专注 | `focus` | `/focus` · 导航轨条目 · 工具卡 · 便当番茄钟与快捷磁贴 · 设置页番茄钟配置卡 · AI「专注」工具组 · **对外 `pomodoro.*` 六条**（含 start/pause/stop 下行控制） | 开 |
+| 语音 | `voice` | 「录音纪要」工具卡 · 语音会话浮层与转写浮条（`App.vue`）· AI「语音服务」工具组与提示词段落 | 开 |
+| 录音 | `record` | `/record` · 录音浮条 · 待办编辑抽屉的录音附件钮 · ⌘K 页面项 | 开 |
+| 多设备同步 | `sync` | `/settings/sync` · 设置页那张卡 · ⌘K 与桌面信息栏的入口 | 开 |
+| 运动 | `sports` | 七条运动路由 · Dock 页签与导航轨 · 工具卡 · 便当两块 · **对外 `workout.*` 十四条** | 开 |
+| 课表 | `campus` | 三条教务路由 · 导航轨条目 · 工具卡 · 主页课程条 · AI「校园教务」工具组 · **对外 `schedule.campus`** | 开 |
+| 抢课 | `campus-grab` | 两条选课路由 · 抢课浮条 · 自动交 AI 排查 · AI「抢课」工具组 · **Rust 引擎（真门闩）** | **关** |
+| 健康方案 | `program` | 两条方案路由 · 工具卡与主页状态卡 · AI「健康方案」工具组 · **对外 `schedule.programs` / `schedule.programActive`** | 开 |
+
+内核只剩两个（不可关，但同样走这套声明）：**待办**（画布 / 时间线 / 主页信息流的宿主，AI 的 `todo` 组是常驻组）与 **AI**（右独立圆钮的落点、知识库检索面、`diet`/`nutrition` 等常驻工具组的宿主）。
 
 - **声明**：`src/plugins/builtin/<模块>.ts` 调 `definePlugin`；`builtin/index.ts` 导入即注册（新增模块 = 加一行 import）。`definition` 是纯数据——不认识 Pinia、不 import router、不持有组件状态。
 - **注册表**：`src/plugins/registry.ts`。`routeOwner(routeName)` 供路由守卫查「这条路由归谁」，`toggleablePlugins()` 供设置页取开关清单。
 - **启用态**：`stores/features.ts`，唯一事实来源。`tools`（主页工具卡，已过滤未开模块并按 order 排好）、`nav(surface)`（`tabbar` / `rail` 两种导航容器的条目）、`isEnabled(id)`（守卫与条件渲染）。持久化在 localStorage `rein.features.v1`：它与番茄钟设置同属**界面级偏好**，不进 SQLite、不进知识库索引；只存用户改过的项，未覆盖的回落声明里的 `defaultEnabled`，所以新增插件不需要迁移旧数据。
 - **子模块（`parent`）**：声明 `parent: '<父模块 id>'` 即成为它的子模块。两个效果都在 `isEnabled` 里：父模块关掉时**子模块一律视为关闭**（子模块吃的是父模块的会话与数据，父的不在它开着只会撞墙），设置页则把它缩进挂在父模块下面并写明「父模块关闭时不可用」。当前唯一一例：**抢课（`campus-grab`）是课表的子模块且 `defaultEnabled: false`** —— 它比课表激进得多（后台引擎会按节奏反复打教务），两者的风险不在一个量级，不该共用一个开关。
 - **带后台引擎的模块必须给引擎真门闩**：关闭不能只关 UI。抢课的开关变化会同步给 Rust（`campus_grab_set_enabled` → `GrabHub::set_enabled_flag` + 落 `app_meta`），引擎在 `step` 开头就返回，**关着时一个请求都不发**（连窗口探测都停），重启后也按上次的开关来。只关界面不关引擎，等于「用户以为关了，它还在每分钟问教务」。
+- **没有后台引擎的模块就不该造门闩**（这一轮的判据，两种情况都踩过）：
+  - **语音 / 录音是「按需连」**：ASR 的 WS 与 MediaRecorder 都只在用户按下开始时建立，关掉它们的开关只要收掉浮层与入口，没有进程在偷偷跑 —— 加一个 Rust 开关反而是多余的接线。
+  - **多设备同步恰恰相反，但结论一样**：`SyncHub` 线程（`engine.rs::loop_forever`）全程**零网络请求**，它只在本地写入发生时把改动捕获进 blob 仓库，联网只发生在用户按下「立即同步」那一刻；而它还是**网关变更推送的唯一来源**（`SyncHub::set_feed`，见 §12）—— 按同步开关停掉它，会把外部访问的推送一起掐死。判据是「它会不会在用户不知情时自己发请求」，不是「它有没有线程」。
 - **扩展点（当前两处）**：
   - `nav`（`NavContribution`）：`surfaces: ['tabbar' | 'rail']` 决定落点，`TabBar.vue` / `DesktopRail.vue` 只渲染「内核条目 + 插件条目」，没有第二份清单。移动端 Dock 里：`tabbar` 的条目落在**中药丸**；内核落点（主页 / 我 / AI）由 TabBar 自己声明 —— AI 是右独立圆钮，所以插件层的 AI 只投 `rail`；**左独立圆钮是用户自定义落点**（`stores/dock.ts`，候选 = `nav('rail')` 去掉 Dock 已有的项），关掉模块后候选自然消失、存量落点回落到候选第一项。
   - `tools`（`ToolContribution`）：主页页脚的成员与工具（2026-10-04 起，移动端页脚按 id 把它们领进「课程条 / 吃 / 练 / 专注·钱 / 工具」各 slot）。跳转用 `to`；就地交互用 `action`（`ToolAction` 联合类型）——动作由**承载页脚的组件**实现（`home/HomeFooter.vue` 的 ACTIONS 表，开弹层 / 唤起运行时），插件不 import router，页面也不反过来认识插件内部。
-- **关闭一个模块的连锁效果**：工具卡与导航条目消失（响应式）、其名下路由被 `router.beforeEach` 拦回主页并 toast 说明、页面按 `isEnabled` 跳过该模块的数据加载（如主页不再 `program.load()`、体重提醒卡不出现）、桌面便当总览收起对应的概览块（`.bento.no-sports` 重排网格，不留空洞）。
-- **不变量**：开关页 `/settings/features` 自身不属于任何插件，任何组合下都可达；关闭**只影响入口与路由**，不删任何数据（记住「关掉 ≠ 删掉」）。
-- **回归**：`node scripts/e2e-feature-toggles.mjs`（需 `npm run dev` 在 1420）。覆盖「我 › 设置」入口、四组设置、四个开关的显隐联动、**抢课默认关 + 子模块缩进 + 父关子失效 + 打开后直链放行**、直链拦截与提示、刷新后持久化，以及桌面端的导航轨/便当布局自检（`grid-template-areas` 少写一行会凭空多出隐式轨道——这条断言就是为那次事故留的）。
+- **关闭一个模块的连锁效果**（入口的清单是**同一个开关的多个投影**，漏一处就是「半关」）：工具卡与导航条目消失（响应式）、其名下路由被 `router.beforeEach` 拦回主页并 toast 说明、页面按 `isEnabled` 跳过该模块的数据加载（主页不再 `program.load()` / `nutrition.loadSummary()`）、桌面便当总览收起对应的块（`useBentoLayout` 的 `MODULE_ITEMS`，按 id 分组而不是再写一份 `.no-sports` 区域表）、`App.vue` 按开关渲染常驻浮条（录音 / 语音 / 抢课）、挂在其它模块里的入口也各自收手（待办抽屉的录音附件钮、设置页的番茄钟与同步卡、主页页脚由成员缺失自然空掉、`CommandPalette` 的显式动作、`DesktopInspector` 的同步行、「我」页的目标/结余栏）。
+- **AI 工具组跟着模块开关走**：`registry.ts` 的 `GROUP_POLICY` 里带 `plugin` 的组（运动 / 训练课程 / 健康方案 / 教务 / 抢课 / 记账 / 专注 / 语音）在该模块关闭后整组不装载、`load_tools` 也装不上（`groupAllowed`），提示词段落与工具同进同出（见 §10）。**`diet` / `nutrition` 两组刻意不挂营养插件**：食物卡协议的分寸、约定与输出三段是 AI 域无条件下发的核心链路，摘掉工具只会让模型读得到用法却调不到工具；营养插件管的是营养界面与入口，不是「AI 能不能记饮食」。
+- **对外接口同样跟着模块开关走**：网关的 28 条方法里，`workout.*`（运动）/ `pomodoro.*`（专注）/ `schedule.campus`（课表）/ `schedule.programs`（方案）各自挂模块，关掉即回 `module_disabled`（`Method::plugin()` + `store::module_gate`，见 `docs/EXTERNAL-API.md` §4.7）。快照由 `App.vue` 推给 Rust（`gateway_set_enabled_modules` → `app_meta:gateway.enabledModules`），与抢课的引擎门闩同一条纪律 —— **只关 UI 等于没关**：`pomodoro.start` 足以启一个前端界面已经不显示的计时器。
+- **模块关掉时会跑着的会话要收手**（`App.vue` 的 watcher）：浮层与浮条都是 `v-if` 挂的，语音会话或录音进行中去关掉模块，UI 会整个消失而 runtime 还在采（麦克风占着、界面上再没有能停它的按钮）。两条都按**不丢数据**收尾：语音走 `finishSpeaking()` 正常结算（不是 `cancelSession()`，那会丢转写），录音走 `stopRecording()` 把 take 留在内存列表里（模块再打开就看得见）。
+- **不变量**：开关页 `/settings/features` 自身不属于任何插件，任何组合下都可达；关闭**只影响入口、路由与对外接口，不删任何数据**（记住「关掉 ≠ 删掉」）—— 所以会话进行中被关掉时是「收尾」而不是「丢弃」（见上一条）。
+- **回归**：`node scripts/e2e-feature-toggles.mjs`（需 `npm run dev` 在 1420）。覆盖「我 › 设置」入口、设置页分组、**十个开关的显隐联动**（逐模块关掉后工具卡 / 底栏页签 / 导航轨 / 便当块 / 设置页配置卡一起消失，直链被拦回主页并提示）、**抢课默认关 + 子模块缩进 + 父关子失效 + 打开后直链放行**、**网关模块快照（关掉的模块一个都不在里面 —— 门禁的前端那一半）**、刷新后持久化，以及桌面端的导航轨与便当布局自检（`grid-template-areas` 少写一行会凭空多出隐式轨道——这条断言就是为那次事故留的）。Rust 侧门禁另有确定性单测：`cargo test --lib gateway`（`Method::plugin()` 的覆盖面 + `store::module_gate` 的三条契约）。
   抢课/选课类的其它剧本（`e2e-course-select` / `e2e-auto-grab` / `e2e-grab-*` / `e2e-campus-*` / `e2e-layout-guard`）**必须在导航前把开关预置为开**，否则守卫会把它们全拦回主页：用 `scripts/lib/features.mjs` 的 `presetFeatureFlags(cdp)`（走 CDP 的 `Page.addScriptToEvaluateOnNewDocument` —— pinia 的 features store 在应用启动时就读了 localStorage，进页面后再写不生效）。
 
 ## 14. 在线更新与 Rein 在线服务（modules/update · server · scripts/release）

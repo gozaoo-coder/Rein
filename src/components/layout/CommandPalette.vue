@@ -20,6 +20,7 @@ import {
   Settings2,
   SlidersHorizontal,
   Sparkles,
+  Square,
   Target,
   Timer,
   Wallet,
@@ -29,6 +30,7 @@ import { routeOwner } from '@/plugins'
 import { routes } from '@/router'
 import { useDockStore } from '@/stores/dock'
 import { useFeaturesStore } from '@/stores/features'
+import { usePomodoroStore } from '@/stores/pomodoro'
 import { MOD, rememberRoute, recentRoutes, toggleInspector } from '@/system/deskShell'
 
 /**
@@ -66,6 +68,7 @@ const emit = defineEmits<{ close: [] }>()
 const router = useRouter()
 const features = useFeaturesStore()
 const dock = useDockStore()
+const pomo = usePomodoroStore()
 
 /* ---------- 主入口快捷键（与 App.vue 的全局监听共用一份声明） ---------- */
 const PRIMARY: { name: string; keys: string }[] = [
@@ -144,19 +147,48 @@ const routeCmds = computed<Cmd[]>(() =>
     }),
 )
 
-/** 全局动作：只放「确实有一个已经存在的落点」的几条，不自创业务逻辑 */
+/** 全局动作：只放「确实有一个已经存在的落点」的几条，不自创业务逻辑。
+ *  落在某个功能模块里的一律按模块开关过滤 —— 面板与入口的可见性必须同源，
+ *  否则会出现「关了营养，⌘K 里还留一条『记饮食』」（路由守卫只管路由，管不到这里）。 */
 const actionCmds = computed<Cmd[]>(() => {
   const base: Cmd[] = [
     { id: 'act:ai', group: '动作', label: '问 AI 一句话', sub: '打开对话', icon: Sparkles, run: () => void router.push({ name: 'ai' }) },
-    { id: 'act:food', group: '动作', label: '记饮食', sub: '营养全览', icon: Apple, run: () => void router.push({ name: 'nutrition' }) },
-    { id: 'act:ledger', group: '动作', label: '记一笔账', sub: '记账', icon: Wallet, run: () => void router.push({ name: 'ledger' }) },
-    { id: 'act:todo', group: '动作', label: '添加待办', sub: '全部待办', keywords: '任务 todo', icon: ListTodo, run: () => void router.push({ name: 'todos' }) },
-    { id: 'act:focus', group: '动作', label: '开始专注', sub: '番茄钟', keywords: '番茄 pomodoro', icon: Timer, run: () => void router.push({ name: 'focus' }) },
+  ]
+  if (features.isEnabled('nutrition')) {
+    base.push({ id: 'act:food', group: '动作', label: '记饮食', sub: '营养全览', icon: Apple, run: () => void router.push({ name: 'nutrition' }) })
+  }
+  if (features.isEnabled('ledger')) {
+    base.push({ id: 'act:ledger', group: '动作', label: '记一笔账', sub: '记账', icon: Wallet, run: () => void router.push({ name: 'ledger' }) })
+  }
+  base.push({ id: 'act:todo', group: '动作', label: '添加待办', sub: '全部待办', keywords: '任务 todo', icon: ListTodo, run: () => void router.push({ name: 'todos' }) })
+  if (features.isEnabled('focus')) {
+    // 文案与行为一致：这条是「开始专注」就必须真的起跑（从前只 push 到 /focus，label 虚报）。
+    // start() 幂等 —— 已在跑时再选它等于只跳转过去看计时，不会重开一轮。
+    base.push({
+      id: 'act:focus',
+      group: '动作',
+      label: '开始专注',
+      sub: `番茄钟 · ${pomo.settings.focusMin} 分钟`,
+      keywords: '番茄 pomodoro',
+      icon: Timer,
+      run: () => {
+        pomo.start()
+        void router.push({ name: 'focus' })
+      },
+    })
+    // 只有真有一轮在进行中时才给「结束」——没有在跑的计时，这条会是一条骗人的命令
+    if (pomo.active) {
+      base.push({ id: 'act:focus-end', group: '动作', label: '结束本轮专注', sub: '保存这一轮', keywords: '番茄 pomodoro 结束', icon: Square, run: () => void pomo.endRound() })
+    }
+  }
+  base.push(
     { id: 'act:inspector', group: '动作', label: '显示 / 隐藏信息栏', sub: '右侧面板', keys: MOD + 'I', icon: SlidersHorizontal, run: () => toggleInspector() },
     { id: 'act:features', group: '动作', label: '打开或关闭功能', sub: '功能模块开关', icon: SlidersHorizontal, run: () => void router.push({ name: 'settings-features' }) },
     { id: 'act:update', group: '动作', label: '检查软件更新', sub: '版本与更新通道', icon: Download, run: () => void router.push({ name: 'settings-update' }) },
-    { id: 'act:sync', group: '动作', label: '多设备同步', sub: '同一网段直连', icon: Cloud, run: () => void router.push({ name: 'settings-sync' }) },
-  ]
+  )
+  if (features.isEnabled('sync')) {
+    base.push({ id: 'act:sync', group: '动作', label: '多设备同步', sub: '同一网段直连', icon: Cloud, run: () => void router.push({ name: 'settings-sync' }) })
+  }
   if (features.isEnabled('campus')) {
     base.push({ id: 'act:schedule', group: '动作', label: '打开我的课表', sub: '本周课程', keywords: '课程表 上课', icon: CalendarDays, run: () => void router.push({ name: 'campus-schedule' }) })
   }

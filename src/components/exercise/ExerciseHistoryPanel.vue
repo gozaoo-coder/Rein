@@ -150,11 +150,20 @@ watch(
 }
 
 .more {
+  position: relative;
   margin-top: 8px;
   padding: 8px 0;
   width: 100%;
   font-size: var(--fs-caption);
   /* 「查看更多」是次要标签文字：中性色（色彩配额，STANDARDS §4） */
   color: var(--text-2);
+}
+
+/* 实高约 32px，命中区撑到 44（竖向各 6px，落在 8px 的 margin 里，不与上方内容重叠）。
+   筛选 chip 那类不这么处理 —— 它在 flex-wrap 行里，伪元素外扩会与相邻 chip 相互抢点击。 */
+.more::after {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
 }
 </style>

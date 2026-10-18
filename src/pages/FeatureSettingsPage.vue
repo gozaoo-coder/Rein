@@ -87,9 +87,11 @@ function iconStyle(p: PluginSpec): Record<string, string> {
               <i class="tag">子模块</i>
             </span>
             <em class="t-2">{{ child.desc }}</em>
-            <!-- 「为什么按不动」从描述里剥出来单独成态：父模块关闭时子模块跟着不可用 -->
+            <!-- 「为什么按不动」从描述里剥出来单独成态：父模块关闭时子模块跟着不可用。
+                 文案与 docs/ARCHITECTURE.md §13 的写法一致（「父模块关闭时不可用」）——
+                 只说「课表已关闭」看不出子模块为什么跟着不能开 -->
             <StatusChip v-if="!features.isEnabled(row.plugin.id)" tone="warn">
-              {{ row.plugin.name }}已关闭
+              {{ row.plugin.name }}关闭时不可用
             </StatusChip>
           </span>
           <ToggleSwitch

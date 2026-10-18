@@ -138,6 +138,21 @@ const recipePrefs: RecipePref[] = []
 let todoId = 0
 const todos: Todo[] = []
 
+/**
+ * 重复待办的「除外日期」：模板 id → 用户删掉的那几次（"YYYY-MM-DD"）。
+ * 镜像 Rust `todos.rec_exdates`（内部列，不进 `Todo` 类型）：不记的话，删掉的实例会被
+ * `sync_recurrences` 按规则原样补回来 —— 表现上就是「待办删不掉」。
+ */
+const recSkips = new Map<number, Set<string>>()
+
+/** `recKey = "模板id:日期"` → `[模板id, 日期]`；不成形状返回 null（同 Rust `parse_rec_key`）。 */
+function parseRecKey(key: string): [number, string] | null {
+  const i = key.lastIndexOf(':')
+  if (i < 0) return null
+  const tid = Number(key.slice(0, i))
+  return Number.isFinite(tid) ? [tid, key.slice(i + 1)] : null
+}
+
 /** 健康方案（与 Rust programs 表同契约） */
 let programId = 0
 const programs: ProgramRecord[] = []
@@ -2279,6 +2294,28 @@ export function mockGatewaySessionCommand(cmd: GatewaySessionCommand): void {
 /** e2e / 调试入口：读回最近一次 `focus_publish` 的快照（真机由 `pomodoro.status` 读）。 */
 export function mockGatewayFocusRuntime(): FocusRuntime | null {
   return gwFocusRuntime ? { ...gwFocusRuntime } : null
+}
+
+/**
+ * 功能模块开关快照（真机落 `app_meta:gateway.enabledModules`）。
+ * `null` = 前端还没推过 —— 与真机 `store::stored_modules` 同语义，**门禁按全放行处理**。
+ * 浏览器里没有 WS 监听，所以这份快照在 mock 里只供 e2e 断言「前端确实推了、推的是谁」。
+ */
+let gwEnabledModules: string[] | null = null
+
+/** e2e / 调试入口：读回最近一次 `gateway_set_enabled_modules` 的快照（`null` = 从未推过）。 */
+export function mockGatewayEnabledModules(): string[] | null {
+  return gwEnabledModules ? [...gwEnabledModules] : null
+}
+
+/** 清洗一份模块快照：去空白、去重（保序）—— 与 Rust `normalize_modules_lossy` 同语义。 */
+function normalizeModules(ids: unknown): string[] {
+  const out: string[] = []
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    const id = String(raw).trim()
+    if (id && !out.includes(id)) out.push(id)
+  }
+  return out
 }
 
 /** 演示态：默认关（与真机一致 —— 用户开了才监听）。字段与 `GatewayStatus` 同形。 */
@@ -5892,7 +5929,29 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     case 'delete_todo': {
       const i = todos.findIndex((t) => t.id === args.id)
-      if (i !== -1) todos.splice(i, 1)
+      if (i === -1) return delay(undefined as T)
+      const [gone] = todos.splice(i, 1) as [Todo]
+
+      // 删实例 = 跳过这一次（与 Rust delete_todo_on_as_of 同语义）：记进模板的除外日期，
+      // 物化时不再补回。模板自身的 recKey 也长这样，但它随模板一起没了，不必记。
+      const parsed = gone.recKey ? parseRecKey(gone.recKey) : null
+      if (parsed && parsed[0] !== gone.id) {
+        const set = recSkips.get(parsed[0]) ?? new Set<string>()
+        set.add(parsed[1])
+        recSkips.set(parsed[0], set)
+      }
+
+      // 删模板 = 整条重复待办下线：今天与以后未完成的实例一并收走（未来实例本也会被
+      // sync_recurrences 清掉，提前到删除当场是为了当天那条不变成永久孤儿）。
+      if (gone.recRule) {
+        const todayNow = ymd(new Date())
+        for (let j = todos.length - 1; j >= 0; j--) {
+          const inst = todos[j]!
+          if (inst.status === 'done' || !inst.recKey || !inst.date || inst.date < todayNow) continue
+          if (parseRecKey(inst.recKey)?.[0] === gone.id) todos.splice(j, 1)
+        }
+        recSkips.delete(gone.id)
+      }
       return delay(undefined as T)
     }
 
@@ -5905,7 +5964,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       for (let i = todos.length - 1; i >= 0; i--) {
         const inst = todos[i]!
         if (!inst.recKey || inst.status === 'done' || !inst.date || inst.date <= todayS) continue
-        const tid = Number(inst.recKey.split(':')[0])
+        const tid = parseRecKey(inst.recKey)?.[0]
         const tpl = todos.find((x) => x.id === tid)
         const match =
           tpl?.recRule && tpl.date
@@ -5915,8 +5974,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       }
       for (const tpl of todos) {
         if (!tpl.recRule || !tpl.date) continue
+        const skips = recSkips.get(tpl.id)
         for (let d = winStart; d <= winEnd; d = addDays(d, 1)) {
-          if (d === tpl.date || !ruleMatchesDate(tpl.recRule, tpl.date, d)) continue
+          if (d === tpl.date || skips?.has(d) || !ruleMatchesDate(tpl.recRule, tpl.date, d)) continue
           const key = `${tpl.id}:${d}`
           if (todos.some((x) => x.recKey === key)) continue
           todos.push({
@@ -10051,7 +10111,7 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       } as T)
     }
 
-    /* ---- 外部访问（对外服务网关）：8 条管理命令，与 modules/gateway/commands.rs 同名 ---- */
+    /* ---- 外部访问（对外服务网关）：9 条管理命令，与 modules/gateway/commands.rs 同名 ---- */
 
     case 'gateway_status':
       return delay(gwStatus() as T)
@@ -10077,6 +10137,17 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
       gwState.port = gwState.enabled ? (want ?? 17650) : null
       gwChanged()
       return delay(gwStatus() as T)
+    }
+
+    /* 模块开关快照（真机：`store::set_enabled_modules` → `app_meta:gateway.enabledModules`）。
+       真机那边它决定 28 条对外方法里哪些回 module_disabled；mock 没有 WS 监听，
+       这里只把快照存下来供 e2e 断言「前端推了、推的是谁」，清洗规则与 Rust 逐条对齐。 */
+    case 'gateway_set_enabled_modules': {
+      const ids = normalizeModules(args.ids)
+      if (ids.length > 64) throw new Error('模块条数超限（上限 64 条）')
+      if (ids.some((id) => id.length > 64)) throw new Error('模块 id 过长（上限 64 字符）')
+      gwEnabledModules = ids
+      return delay(ids as T)
     }
 
     case 'gateway_authorization_pending':

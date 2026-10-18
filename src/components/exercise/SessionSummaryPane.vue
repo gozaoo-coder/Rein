@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Trophy } from 'lucide-vue-next'
+import { RotateCcw, Trophy } from 'lucide-vue-next'
 
 import RingProgress from '@/components/common/RingProgress.vue'
 import StatusChip from '@/components/common/StatusChip.vue'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import { sessionService } from '@/services/sessionService'
+import { useToast } from '@/composables/useToast'
 import { fmtDateCn, todayStr } from '@/utils/date'
 import { fmtKg } from '@/utils/strength'
 import {
@@ -45,6 +46,24 @@ import type { StrengthSetRecord } from '@/types'
  */
 const s = useSessionStore()
 const lib = useExerciseLibStore()
+const { toast } = useToast()
+
+/**
+ * 撤销最后一组、回到做组态。
+ *
+ * 为什么总结页需要它：进 summary 之后 `addExtraSet` 被封、全课抽屉的「跳至该组」也回不去
+ * （目标组必然落在游标之前），于是发现「少做了一组 / 最后一组记错了」时只剩两条路 ——
+ * 保存一份已知是错的记录，或放弃整节课（把已做的一起丢掉）。而 store 的 `redoLastSet`
+ * 本来就能从任何相位回退（它没有 phase 门槛），缺的只是这个入口。
+ * 回退成功即 phase 离开 summary，本组件随之卸载、沉浸页回到做组界面。
+ */
+function undoLastSet(): void {
+  if (!s.redoLastSet()) {
+    toast('没有可撤销的组')
+    return
+  }
+  toast('已撤销最后一组，继续训练')
+}
 
 /* ---------- 完成层 ---------- */
 
@@ -294,6 +313,11 @@ function prDeltaText(p: PrRow): string {
         <span v-if="completion.extra > 0" class="sumtag">加练 {{ completion.extra }} 组</span>
         <span v-if="completion.warmups > 0" class="sumtag">热身 {{ completion.warmups }} 组</span>
       </p>
+      <!-- 回头路：总结页是终态，但「少做一组 / 最后一组记错」时旧界面只剩保存错的那份
+           或放弃整节课。放在完成环紧跟处，因为它回答的正是环上那个 n/N 带来的第一疑问。 -->
+      <button v-if="completion.done > 0" type="button" class="undo" @click="undoLastSet">
+        <RotateCcw :size="14" /> 撤销最后一组，继续训练
+      </button>
     </div>
 
     <!-- 四项指标 -->
@@ -369,7 +393,11 @@ function prDeltaText(p: PrRow): string {
   flex: 1 0 auto;
   gap: 14px;
   padding: 24px 26px;
-  animation: fadeUp var(--dur-sheet) var(--ease-standard);
+  /* 与 SessionOverlay 的 .pane 共用**同一组 keyframes**，时长就必须同档：一处 420ms、
+     一处 250ms，会让同一个「内容块入场」在相邻两屏里给出两种手感。取 --dur-base 而不是
+     --dur-sheet：这是沉浸层内的内容入场，不是抽屉面板的运动（令牌语义对不上），
+     而 _GUIDE 的口径把 >300ms 的 UI 动效记作 P0。 */
+  animation: fadeUp var(--dur-base) var(--ease-standard);
 }
 
 @keyframes fadeUp {
@@ -387,7 +415,9 @@ function prDeltaText(p: PrRow): string {
 }
 
 .heropct {
-  font-size: 30px;
+  /* 沉浸层单屏读数档（与 SessionOverlay 的休息倒数 / 计时同一条刻度），
+     值与原裸值一致：30px */
+  font-size: var(--fs-readout-sm);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.5px;
@@ -406,7 +436,8 @@ function prDeltaText(p: PrRow): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 40px;
+  /* 40px = --fs-display-m；与完成环里的百分比读数同一档，占位与真值不会一大一小 */
+  font-size: var(--fs-display-m);
   color: var(--text-3);
 }
 
@@ -447,6 +478,23 @@ function prDeltaText(p: PrRow): string {
   margin-top: 2px;
 }
 
+/* 「撤销最后一组」：总结页唯一的回头路，是**次按钮** —— 描边白底 + 中性字，
+   不与底簇那颗实底「保存训练」抢焦点。高度取 44：它是这屏唯一的次要操作，也要点得中。 */
+.undo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  margin-top: 14px;
+  padding: 0 18px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  font-size: var(--fs-caption);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
 .sumtag {
   font-size: var(--fs-micro);
   /* --text-1 而不是 --text-2：--surface-2 是**分段控件底**，
@@ -476,14 +524,18 @@ function prDeltaText(p: PrRow): string {
 .stlabel {
   display: block;
   font-size: var(--fs-micro);
-  color: var(--text-3);
+  /* 四格数值的标签名（容量 / 用时 / 消耗 / 每组耗时）是**要读的**：读不出标签，
+     下面那个数就只是一个没有名字的数字。tokens.css 的契约写得很直白——
+     「凡是必须读出来的信息都不该放在 --text-3」。 */
+  color: var(--text-2);
   /* 四个字标签在 1/4 屏宽里不折行 */
   white-space: nowrap;
 }
 
 .stval {
   display: block;
-  font-size: 19px;
+  /* 19px = --fs-title3 */
+  font-size: var(--fs-title3);
   font-weight: 600;
   margin-top: 2px;
   letter-spacing: -0.3px;
@@ -628,7 +680,9 @@ function prDeltaText(p: PrRow): string {
 
 .expr {
   flex: none;
-  font-size: 10px;
+  /* 走 --fs-micro：11px 是字号阶梯的下限（tokens.css R4），写死 10px 会掉到阶梯之外 ——
+     而这一枚恰恰是「这一行有 PR」的唯一文字标记，比别的徽标更不该再小一档。 */
+  font-size: var(--fs-micro);
   /* 徽标不用绿字：--c-exercise-soft 是 alpha 0.2 的软底，绿字压它只有
      2.53:1（亮）/ 9.51:1（暗）—— 亮色完全不达标，而一个读不清的
      「PR」徽标比没有更糟（用户会以为那行没被标记）。

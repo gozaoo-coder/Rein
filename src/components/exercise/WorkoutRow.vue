@@ -76,6 +76,14 @@ const metaLine = computed(() => {
   background: var(--surface-2);
 }
 
+/* 桌面工作台的悬停反馈，与同域的 StrengthExercisePicker `.prow:hover` 同一做法：
+   只在真有指针设备的档位给出 —— 触屏上 hover 会「粘住」（点过之后那一行一直亮着）。 */
+@media (hover: hover) {
+  .item:hover {
+    background: var(--surface-2);
+  }
+}
+
 /* 分隔线用 :not(:first-child)：跨组件实例的同级 li 依然成立 */
 .item:not(:first-child) {
   border-top: 0.5px solid var(--line);

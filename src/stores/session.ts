@@ -21,12 +21,14 @@ import { useNutritionStore } from '@/stores/nutrition'
 import { usePlanStore } from '@/stores/plan'
 import { todayStr } from '@/utils/date'
 import { computeTrainingAdvice, type ExerciseAdvice, type TrainingAdvice } from '@/utils/trainingAdvice'
+import { setVolumeKg } from '@/utils/sessionSummary'
 import { warmupPrescription } from '@/utils/warmup'
 import { RUN_PLAN_ID } from '@/types'
 import type {
   DoneSet,
   GatewaySessionFinish,
   PlanExercise,
+  PlanExerciseOverride,
   SessionPhase,
   SessionRecord,
   SessionSetSlot,
@@ -45,6 +47,18 @@ export interface SessionFinishResult {
   volume: number
   done: number
 }
+
+/**
+ * 恢复一场进行中的会话的结果（`applyRecord`）：
+ *  · `'restored'` 恢复成功，本 store 已接续这一场；
+ *  · `'deleted'`  库里确实没有这门课 —— 会话已作废（`discardById`），调用方可以继续开新课；
+ *  · `'retry'`    课程列表暂时拉不到，**会话仍保留在服务端**，等下一轮（回前台 / 下次启动）再试。
+ *
+ * 为什么必须显式返回：以前「拉不到课程列表」与「课程被删」并进同一个作废分支，而调用方
+ * 没有任何信号能区分二者 —— `phase === 'idle'` 在两种情况下都成立（`'retry'` 时 phase
+ * 同样是 idle）。冲突分支的判定（是否还要弹「请先接续」、是否可以直接开新课）依赖它。
+ */
+export type ApplyRecordResult = 'restored' | 'deleted' | 'retry'
 
 export const useSessionStore = defineStore('session', () => {  const sessionId = ref<number | null>(null)
   const startedAtIso = ref('')
@@ -76,6 +90,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
    * 跳过 = 未做 = 不统计：不写 doneSets，但仍占据全课组位（进度分母不变）。
    */
   const skippedSets = ref<Record<string, number[]>>({})
+  /**
+   * 会话内临时换掉的动作（键 = 课程条目 id）。必须随快照落盘：恢复路径是按 planId
+   * 从课程库重建 plan 的，只存在内存里的换动作会被抹掉，而 `doneSets` 的键仍是课程条目
+   * id —— 那批组就会以**原动作**的身份落进 workout_sets（曲线聚合键），事后不可逆。
+   */
+  const exerciseOverrides = ref<Record<string, PlanExerciseOverride>>({})
   /** 各动作「最近一次做组重量」（开始课程时批量查询，键 = 动作库 id），预填用 */
   const lastWeights = ref<Record<string, StrengthLastWeight>>({})
   /** 今日训练建议（纯函数引擎算出的预填与依据）；null = 尚未计算 */
@@ -132,6 +152,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       extraSets: extraSets.value,
       skippedSets: skippedSets.value,
       readiness: readiness.value,
+      exerciseOverrides: exerciseOverrides.value,
     }
   }
 
@@ -240,10 +261,11 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     let v = 0
     for (const ex of plan.value?.exercises ?? []) {
       if (ex.kind !== 'strength') continue
-      const planReps = ex.reps ?? 0 // 无逐组登记时回落到课程定义
       for (const d of doneSets.value[ex.id] ?? []) {
         if (d.warmup) continue // 激活热身不计入训练容量
-        v += (d.weight ?? 0) * (d.reps ?? planReps)
+        // 口径走全端唯一的 setVolumeKg（次数按 逐组登记 → 课程处方 → 1 回落），
+        // 与总结页、运动详情抽屉是同一份 —— 这三处曾经各算一套、同一节课给出两个总容量
+        v += setVolumeKg(d.weight, d.reps ?? null, ex.reps)
       }
     }
     return Math.round(v)
@@ -454,6 +476,26 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   }
 
   /**
+   * 定向补取若干动作的「上次做组重量」并**合并**进现有表。
+   *
+   * 与 `loadLastWeights` 的区别只在写入方式：那个是整表替换（开局一次性拉全部动作，
+   * 替换是对的），而中途补一个动作时替换会把其它动作的上次重量**全部清空** ——
+   * 那一刻若建议引擎恰好不可用，后面每个动作的预填都会退化成课程重量。
+   */
+  async function mergeLastWeights(ids: string[]): Promise<void> {
+    const keys = ids.filter((k) => !!k)
+    if (!keys.length) return
+    try {
+      const rows = await sessionService.strengthLastWeights(keys)
+      const next = { ...lastWeights.value }
+      for (const r of rows) next[r.exerciseId] = r
+      lastWeights.value = next
+    } catch (e) {
+      console.warn('[session] 上次重量补取失败', e)
+    }
+  }
+
+  /**
    * 重量预填优先级：今日建议（引擎）→ 上次实际做组重量 → 课程建议值。
    * 建议已经包含「上次重量 + 双重渐进 / 今日状态降载」的判断，所以排在最前；
    * 引擎不可用（无模型无历史等异常）时逐级回落，行为与改造前一致。
@@ -536,8 +578,17 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
           foreignRoute.value = '/session/run'
           return 'conflict'
         }
-        await applyRecord(existing)
-        return 'conflict'
+        // 走到这里说明服务端那条 active 行不是跑步，而 `foreignRoute` 可能还留着上一次跑步
+        // 写进去的 `/session/run`（跑步正常结束走 run store，不会碰这个字段）—— 不清掉的话
+        // 「前往继续」会把人送到跑步页。跑步分支在上面就已经 return，不会被这里误清。
+        foreignRoute.value = null
+        const restored = await applyRecord(existing)
+        // 'deleted'：课程确已被删、`applyRecord` 已作废该会话 —— 不该再弹「请先接续」这条
+        //           对已作废会话的伪提示，继续往下正常开课。
+        // 'restored' / 'retry'：都返回冲突。'retry' 尤其**不能**继续往下走 ——
+        //           `session_start` 会把服务端那条 active 行标成 aborted，正好销毁掉
+        //           我们想保留的会话（保留它就是 'retry' 存在的意义）。
+        if (restored !== 'deleted') return 'conflict'
       }
       // 深拷贝动作列表：会话内允许临时换动作，不能直接改 planStore 里那份课程
       plan.value = { ...p, exercises: p.exercises.map(cloneExercise) }
@@ -1016,9 +1067,14 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   }
 
   /**
-   * 临时把某个未做的动作换成另一个动作：只换动作本体（名称 / 要点 / 肌群），
+   * 临时把某个未做的动作换成另一个动作：只换动作本体（名称 / 要点 / 肌群 / 库内默认重量），
    * 组数、次数、休息、热身组等编排全部沿用本课程原动作——全课组数不变，
    * 因此不会打乱已有进度与全课组清单的下标。仅允许换成同类型动作。
+   *
+   * ⚠️ **重量必须一起换**：`{...cur}` 会把**被换掉那个动作**的课程处方重量留在新动作上
+   * （卧推 60kg 换成划船，划船也是 60kg）。而新动作此刻既不在建议表里、也不在上次重量表里，
+   * `weightFor` 的三级回落会一路落到这个错的值上。所以这里显式改取**新动作**在库内的
+   * 默认重量，并异步补上它的建议与上次做组重量。
    */
   function swapExercise(exIdx: number, src: SwapCandidate): boolean {
     const p = plan.value
@@ -1026,18 +1082,48 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     const cur = p.exercises[exIdx]
     if (!cur || !canSwapExercise(exIdx)) return false
     if (src.exerciseId && src.exerciseId === cur.exerciseId) return false
+    const isCurrent = exIdx === exIndex.value
+    const nextWeightKg = useExerciseLibStore().get(src.exerciseId)?.defaultWeightKg ?? null
     p.exercises[exIdx] = {
       ...cur,
       exerciseId: src.exerciseId,
       name: src.name,
       tips: src.tips || cur.tips,
       muscles: src.muscles,
+      // 库内没有这个动作（或它没配默认重量）时置空而不是留着旧值 ——
+      // 「不知道」比「一个别的动作的重量」诚实，后续回落链自己会处理
+      weightKg: nextWeightKg,
     }
-    if (exIdx === exIndex.value) {
-      weight.value = weightForPhase(p.exercises[exIdx]!)
+    // 登记覆盖，随快照落盘：否则中断接管会把它抹回原动作（见 exerciseOverrides 的注释）
+    exerciseOverrides.value = {
+      ...exerciseOverrides.value,
+      [cur.id]: {
+        exerciseId: src.exerciseId,
+        name: src.name,
+        tips: src.tips || cur.tips,
+        muscles: src.muscles,
+        weightKg: nextWeightKg,
+      },
+    }
+    let auto = 0
+    if (isCurrent) {
+      auto = weightForPhase(p.exercises[exIdx]!)
+      weight.value = auto
       syncReps(p.exercises[exIdx]!)
     }
     touch()
+    // 建议表与上次重量表都还指着旧动作：异步补齐，落地后若用户还没动过重量就把预填升级为
+    // 个性化值（`weightFor` 以建议为先，此时它才第一次能给出新动作的「今日建议」那一行）。
+    void Promise.all([mergeLastWeights([src.exerciseId]), loadAdvice()]).then(() => {
+      const swapped = plan.value?.exercises[exIdx]
+      if (!swapped || swapped.exerciseId !== src.exerciseId) return // 期间又换了一次
+      if (!isCurrent || weight.value !== auto) return // 非当前动作，或用户已手改过重量
+      const refreshed = weightForPhase(swapped)
+      if (refreshed !== auto) {
+        weight.value = refreshed
+        touch()
+      }
+    })
     return true
   }
 
@@ -1149,6 +1235,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     reps.value = null
     extraSets.value = {}
     skippedSets.value = {}
+    exerciseOverrides.value = {}
     finishError.value = ''
   }
 
@@ -1178,6 +1265,10 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     skippedSets.value = st.skippedSets ?? {}
     readiness.value = st.readiness ?? null
     reps.value = st.reps ?? null
+    // 外部也可能换过动作（AI 工具的 swap_exercise 或外部客户端自持状态）：身份要跟着落回
+    // 本地 plan，否则下一拍 touch() 会用本地那份「没换过」的 plan 把外部状态写回去。
+    exerciseOverrides.value = st.exerciseOverrides ?? {}
+    applyExerciseOverrides(st.exerciseOverrides)
     restIsTemp.value = st.restIsTemp ?? false
     restWarmup.value = st.restWarmup ?? false
     restTargetIsNextSet.value = st.restTargetIsNextSet ?? true
@@ -1241,43 +1332,129 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       return phase.value !== 'idle' // 本地正在上训练课则保持现状
     }
     foreignRoute.value = null
+    let result: ApplyRecordResult
     try {
-      await applyRecord(rec)
+      result = await applyRecord(rec)
     } catch (e) {
       // 记录损坏：按中断脏数据作废，避免卡死状态机
       console.warn('[session] 恢复失败，已作废该会话', e)
-      await discardById(rec.id)
+      try {
+        await discardById(rec.id)
+      } catch {
+        // 作废本身也失败（多半是后端不可用）：不往上抛，免得变成未处理的 Promise 拒绝。
+        // 会话仍留在服务端，下次启动还会再走一遍这条路径。
+      }
       return false
     }
-    return true
+    // 'deleted' 会话已作废、'retry' 这一次没拉起来 —— 两者都不算「已接续」。
+    // 但 'retry' 不等于「会话不存在」：它 still active 在服务端，只是本轮拿不到。
+    return result === 'restored'
   }
 
-  async function applyRecord(rec: SessionRecord): Promise<void> {
+  /**
+   * 把快照里的「换动作覆盖」重放回本会话那份 plan（深拷贝，改它不外溢到课程库）。
+   *
+   * 刻意**不走**公开的 `swapExercise`：那条路径带「该动作一组都没做」的前置校验
+   * （`canSwapExercise`），而恢复时 `doneSets` 可能已经赋值 —— 走它会让「换过动作且已做组」
+   * 这个主场景被静默拒绝。这里直接按覆盖表写 plan，与恢复的字段顺序无关。
+   * 课程里找不到对应条目（会话期间被编辑掉了）时跳过，不凭空造动作。
+   */
+  function applyExerciseOverrides(overrides: Record<string, PlanExerciseOverride> | undefined): void {
+    const p = plan.value
+    if (!p || !overrides) return
+    for (const [id, ov] of Object.entries(overrides)) {
+      const ex = p.exercises.find((e) => e.id === id)
+      if (!ex) continue
+      ex.exerciseId = ov.exerciseId
+      ex.name = ov.name
+      ex.tips = ov.tips
+      ex.muscles = ov.muscles
+      ex.weightKg = ov.weightKg
+    }
+  }
+
+  /**
+   * 把恢复回来的进度**对齐到当前课程**：丢掉不属于当前课程的动作的登记，
+   * 并把每个动作的登记裁到它自己的组数。
+   *
+   * 为什么必须做：恢复是按 planId 重新从课程库取 plan 的，而课程可能在会话进行中被编辑过
+   * —— 删掉一个动作、或把某个动作的组数调小。此时两个口径会错位：`doneCount` 遍历
+   * `doneSets` 的**全部键**，而 `buildSetRows` / `totalVolume` 只遍历当前课程的动作。
+   * 于是界面会出现「5/4 组完成」（分子大于分母），而那些多出来的组在保存时又被静默丢掉
+   * —— 计数说它们算，记录里却没有它们。对齐之后两处遍历的是同一批动作、同一批组。
+   *
+   * 正常恢复（课程没被改过）时它是个恒等操作：每个键都在课程里、每组数都不越界。
+   */
+  function alignProgressToPlan(): void {
+    const p = plan.value
+    if (!p) return
+    const nextDone: Record<string, DoneSet[]> = {}
+    const nextExtra: Record<string, number> = {}
+    const nextSkipped: Record<string, number[]> = {}
+    for (const ex of p.exercises) {
+      const list = doneSets.value[ex.id]
+      if (list?.length) {
+        // 热身组与正式组分开裁：正式组裁到该动作**当前**的实际组数（热身不占正式组号）
+        const warm = list.filter((d) => d.warmup)
+        const work = list.filter((d) => !d.warmup).slice(0, effSets(ex))
+        nextDone[ex.id] = [...warm, ...work]
+      }
+      const extra = extraSets.value[ex.id]
+      if (extra) nextExtra[ex.id] = extra
+      const skipped = skippedSets.value[ex.id]
+      if (skipped) nextSkipped[ex.id] = skipped.filter((n) => n >= 1 && n <= effSets(ex))
+    }
+    doneSets.value = nextDone
+    extraSets.value = nextExtra
+    skippedSets.value = nextSkipped
+  }
+
+  /**
+   * 组号钳到当前动作的**实际组数**：课程在会话期间被调小组数时，旧快照里的 setIndex 会越界，
+   * 界面就会读出「第 5/1 组」。上界与下界都要有 —— 从前只钳了下界（`Math.max(1, …)`）。
+   */
+  function clampSetIndex(v: number): number {
+    const ex = currentEx.value
+    const cap = ex ? effSets(ex) : 1
+    const n = Math.trunc(v)
+    return Math.min(Math.max(1, Number.isFinite(n) ? n : 1), Math.max(1, cap))
+  }
+
+  async function applyRecord(rec: SessionRecord): Promise<ApplyRecordResult> {
     const planStore = usePlanStore()
     let p = planStore.byId(rec.planId)
     if (!p) {
       try {
         await planStore.ensureLoaded()
         p = planStore.byId(rec.planId)
-      } catch {
-        p = undefined
+      } catch (e) {
+        // 「列表没拉起来」≠「课程被删了」。以前两者并进同一个作废分支：一次后端 / 网络抖动
+        // 就会把整场会话连同已完成组的**唯一副本**（state_json）一起丢掉，而用户看不到任何
+        // 提示（浮条根本不出现）。这里保留会话，等下一轮（回前台 / 下次启动）再试。
+        console.warn('[session] 课程列表拉取失败，保留会话待重试', e)
+        return 'retry'
       }
     }
     if (!p) {
-      // 课程已被删除：视为中断脏数据，直接作废
+      // 加载成功、库里确实没有这门课 —— 这才是真的被删了，按中断脏数据作废
       await discardById(rec.id)
-      return
+      return 'deleted'
     }
     sessionId.value = rec.id
     startedAtIso.value = rec.startedAt
     plan.value = { ...p, exercises: p.exercises.map(cloneExercise) }
-    exIndex.value = Math.min(rec.exIndex, p.exercises.length - 1)
-    setIndex.value = Math.max(1, rec.setIndex)
+    // 换动作的身份必须先重放：下面 `reps.value` 的回落链要读重建后的 plan
+    applyExerciseOverrides(rec.state.exerciseOverrides)
+    exIndex.value = Math.min(Math.max(0, Math.trunc(rec.exIndex)), Math.max(0, p.exercises.length - 1))
     weight.value = rec.weightKg
-    reps.value = rec.state.reps ?? p.exercises[exIndex.value]?.reps ?? null
     doneSets.value = rec.state.doneSets ?? {}
     extraSets.value = rec.state.extraSets ?? {}
     skippedSets.value = rec.state.skippedSets ?? {}
+    // 进度先对齐到**当前课程**（裁掉已删动作的登记、把每个动作的登记裁到它的实际组数），
+    // 再据此钳组号 —— 两件事都要用「对齐后」的 extraSets 算 effSets，所以顺序是死的
+    alignProgressToPlan()
+    setIndex.value = clampSetIndex(rec.setIndex)
+    reps.value = rec.state.reps ?? p.exercises[exIndex.value]?.reps ?? null
     restIsTemp.value = false
     restWarmup.value = rec.state.restWarmup ?? false
     restTargetIsNextSet.value = rec.state.restTargetIsNextSet ?? true
@@ -1286,7 +1463,9 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     readiness.value = rec.state.readiness ?? null
     // 恢复后重算建议（自评随快照一起恢复）；建议是异步的，到了再对齐热身预填
     void loadAdvice().then(() => resyncWarmupPrefill())
-    void loadLastWeights(p.exercises.map((e) => e.exerciseId)) // 供后续动作的重量预填
+    // 取上次重量要按**重放覆盖之后**的动作 id —— 用下面那个尚未覆盖的 `p` 会让换进来的
+    // 动作查不到历史（weightFor 的回落就此少一级）
+    void loadLastWeights(plan.value.exercises.map((e) => e.exerciseId))
 
     const st = rec.state
     switch (st.phase) {
@@ -1336,6 +1515,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
         phase.value = cur && cur.kind !== 'strength' ? 'timed-ready' : 'exercise'
       }
     }
+    return 'restored'
   }
 
   /** SQLite "YYYY-MM-DD HH:MM:SS"(UTC) → 毫秒时间戳；容忍任意字符串/数字（mock 与未来格式） */

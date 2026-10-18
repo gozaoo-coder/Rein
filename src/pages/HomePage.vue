@@ -51,10 +51,15 @@ const nutrition = useNutritionStore()
 const program = useProgramStore()
 const features = useFeaturesStore()
 
+/** 摄入总览与营养数据属「营养」模块：关掉之后数据也不拉（不产生请求）、整条也不渲染 */
+const nutritionOn = computed(() => features.isEnabled('nutrition'))
+
 onMounted(() => {
-  void nutrition.loadSummary(today)
-  void nutrition.loadProfile()
-  void nutrition.loadMetrics(10)
+  if (nutritionOn.value) {
+    void nutrition.loadSummary(today)
+    void nutrition.loadProfile()
+    void nutrition.loadMetrics(10)
+  }
   // 健康方案被关掉时不必拉方案数据（插件层的收益之一：关掉的模块不产生请求）
   if (features.isEnabled('program')) void program.load()
 })
@@ -99,7 +104,7 @@ const weightAlert = computed(() =>
       <div class="rubber-layer" data-rubber-content>
         <!-- 摄入总览：挂卡片壳（.card 自带的 20px 内边距与材质），
              这样它与「今日画布」等卡片落在同一条竖线上；贴着页面底色时整块会散掉。 -->
-        <button class="card strip pressable" aria-label="摄入总览详情" @click="router.push('/nutrition')">
+        <button v-if="nutritionOn" class="card strip pressable" aria-label="摄入总览详情" @click="router.push('/nutrition')">
           <IntakeOverview />
         </button>
 

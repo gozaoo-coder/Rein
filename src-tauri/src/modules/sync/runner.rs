@@ -9,6 +9,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use rusqlite::{params, Connection};
 
 use crate::error::{ReinError, Result};
+use crate::modules::ai::models::OnlineServiceSettings;
 
 use super::{blobs::BlobStore, crypto, identity::Identity, meta_get, meta_set, protocol, transport};
 
@@ -46,15 +47,18 @@ fn now_ms() -> i64 {
 }
 
 /// 在线服务基地址：与更新、模型网关共用 app_meta 的 online_service_v1。
+///
+/// 走 `OnlineServiceSettings` 反序列化，而不是手写键名：那份结构体带
+/// `#[serde(rename_all = "camelCase")]`，落库的键是 `baseUrl`。这里曾经照着字段名写成
+/// `base_url` 去取，结果恒为空串 —— 开码、报码、同步一律报「还没配在线服务地址」。
+/// 让键名只有结构体一处定义，这类漂移就不会再发生。
 pub fn server_base(conn: &Connection) -> String {
     let raw = crate::db::meta_get(conn, "online_service_v1").unwrap_or_default();
-    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
-    v.get("base_url")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/')
-        .to_string()
+    // 解不出来 = 还没配过（或存的不成形）→ 空串，由调用方报那句指路的话
+    let Ok(settings) = serde_json::from_str::<OnlineServiceSettings>(&raw) else {
+        return String::new();
+    };
+    settings.base_url.trim().trim_end_matches('/').to_string()
 }
 
 /// 本机所在同步组的房间号（配对时交换；没有就是还没配对）。
@@ -233,3 +237,63 @@ pub fn new_room() -> String {
 // `fingerprint`（转手 identity::fingerprint）—— 三个都没有调用方：
 // 会合地址由 `transport::Endpoint` 自己解析，`last_run` 与 `sync_status` 现读的键重复，
 // `fingerprint` 只是换个名字转发。2026-09-30 一并删除，避免同一份逻辑留两条实现。
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::migrate_for_test;
+    use rusqlite::Connection;
+
+    /// 内存库 + 完整迁移：`server_base` 读的是 app_meta 表，表不存在会静默落回空串，
+    /// 那会让下面几条断言全部「通过」得毫无意义。
+    fn conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_for_test(&conn).unwrap();
+        conn
+    }
+
+    /// 契约 1a：从没配过在线服务（app_meta 里没有 online_service_v1）→ 空串。
+    /// 调用方（开码、报码、同步）据此报「还没配在线服务地址」，这句指路的话不能丢。
+    #[test]
+    fn server_base_is_empty_when_never_configured() {
+        let conn = conn();
+        assert_eq!(server_base(&conn), "");
+    }
+
+    /// 契约 1b：存的是非 JSON 文本（历史脏数据 / 手改过的库）→ 也是空串，
+    /// 不 panic、不把原文当地址用。
+    #[test]
+    fn server_base_is_empty_when_stored_value_is_not_json() {
+        let conn = conn();
+        crate::db::meta_set(&conn, "online_service_v1", "http://1.2.3.4:8787").unwrap();
+        assert_eq!(server_base(&conn), "");
+    }
+
+    /// 契约 2：真实形态的 JSON（`OnlineServiceSettings` 的 camelCase 落库形态）
+    /// → 取回 baseUrl。这条钉的就是那个缺陷：手写 `base_url` 取键时恒为空串，
+    /// 而库里的键是 `baseUrl`。
+    #[test]
+    fn server_base_reads_camel_case_base_url_from_stored_json() {
+        let conn = conn();
+        crate::db::meta_set(
+            &conn,
+            "online_service_v1",
+            r#"{"baseUrl":"http://1.2.3.4:8787","apiKey":"k","savedAt":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(server_base(&conn), "http://1.2.3.4:8787");
+    }
+
+    /// 契约 3：地址末尾带斜杠 → 返回时去掉，免得调用方拼出 `...:8787//v1/...`。
+    #[test]
+    fn server_base_strips_trailing_slash() {
+        let conn = conn();
+        crate::db::meta_set(
+            &conn,
+            "online_service_v1",
+            r#"{"baseUrl":"http://1.2.3.4:8787/","apiKey":"k","savedAt":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(server_base(&conn), "http://1.2.3.4:8787");
+    }
+}

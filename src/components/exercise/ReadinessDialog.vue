@@ -278,6 +278,7 @@ watch(
 
 .rd-x {
   flex: none;
+  position: relative;
   width: 28px;
   height: 28px;
   border-radius: 50%;
@@ -286,6 +287,14 @@ watch(
   justify-content: center;
   background: var(--surface-2);
   color: var(--text-2);
+}
+
+/* 视觉尺寸不动，命中区撑到 44×44 —— 与 SheetModal.vue 的 `.close::after{inset:-7px}`
+   同一做法。同一个应用里两枚关闭键，一处 44 一处 28，拇指只会在小那枚上失手。 */
+.rd-x::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
 }
 
 /* 内容区可滚：视口矮时（分屏 / 横屏）不至于把操作键挤出卡外 */

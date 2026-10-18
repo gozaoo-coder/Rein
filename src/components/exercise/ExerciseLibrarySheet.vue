@@ -465,8 +465,13 @@ async function removeCustom(): Promise<void> {
 .cell em {
   display: block;
   font-style: normal;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+  /* 标签轴统一：caption + --text-2。这里从前是 micro + --text-3，而动作详解抽屉
+     （`.cell .k`）与运动详情抽屉都明文写过「micro/text-3 会把『4 是组数还是次数』
+     变成猜谜」—— 三处同一种统计格，只有这一处落在另两处反对的那一档。
+     数值档（.cell b 的 subhead/700）不动：它随格子宽度变化是合理的。
+     （决策见 docs/exercise-quality-review-2026-10-17.md §8 D3） */
+  font-size: var(--fs-caption);
+  color: var(--text-2);
   white-space: nowrap;
 }
 
@@ -501,6 +506,7 @@ async function removeCustom(): Promise<void> {
 }
 
 .op {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -513,7 +519,17 @@ async function removeCustom(): Promise<void> {
   color: var(--text-2);
 }
 
+/* 实底文字约 33px 高，命中区撑到 44（仿 common/SheetModal 的 `.close::after`）——
+   这三枚是「编辑 / 隐藏 / 删除」的唯一入口，删除还是不可逆的。 */
+.op::after {
+  content: '';
+  position: absolute;
+  inset: -6px -4px;
+}
+
+/* 走文字档而不是实底档：tokens.css 的契约写明「实底档（--danger）当小字文字对比度不够」，
+   而这里正是 12px 小字压白底（#ff3b30 实测约 3.55:1，过不了 AA）。 */
 .op.danger {
-  color: var(--danger);
+  color: var(--danger-strong);
 }
 </style>

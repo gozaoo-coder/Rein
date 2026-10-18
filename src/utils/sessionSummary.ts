@@ -35,6 +35,33 @@ export function fmtKg(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1)
 }
 
+/**
+ * 一组做组记录的容量（kg）= 重量 × 次数 —— **全端唯一一份口径**。
+ *
+ * 次数按 `逐组登记 → 课程处方 → 1` 回落：
+ *  · 逐组登记值是完成瞬间写下的（课程事后被改也不失真），优先；
+ *  · 课程处方是编排值，逐组缺失时它是最接近事实的替代；
+ *  · 两级都没有时兜底 **1 次** —— 一组**已经登记了重量**的记录，至少做过 1 次。
+ *    兜底取 0 会让这一组在「总容量」这个求和里彻底消失，而屏幕上它明明存在；
+ *    取 1 是「宁可低估，也不静默抹掉一条记录」。
+ *
+ * 为什么要抽出来：这段逻辑此前在四处各写一遍、口径还不一致（训练中的实时容量与总结页
+ * 取 0、运动详情取 1、动作历史取 0），同一节课因此能给出两个不同的总容量。
+ * 口径见 docs/exercise-quality-review-2026-10-17.md §8 D1（决策：兜底取 1）。
+ *
+ * 注意它**只管容量**：e1RM 在缺少次数时应当「不可估」而不是按 1 次反推
+ * （`trainingAdvice.estimateOneRepMax(w, 0)` 返回 0，调用方据此跳过），
+ * 那是另一件事，不要顺手合并进来。
+ */
+export function setVolumeKg(
+  weightKg: number | null | undefined,
+  reps: number | null | undefined,
+  plannedReps?: number | null,
+): number {
+  if (weightKg == null) return 0
+  return weightKg * (reps ?? plannedReps ?? 1)
+}
+
 const round1 = (v: number) => Math.round(v * 10) / 10
 
 /* ---------------- 完成层 ---------------- */
@@ -212,7 +239,8 @@ export function buildExerciseRows(
     }
     if (d?.weight == null) continue
     const reps = d.reps ?? 0
-    row.volumeKg += d.weight * reps
+    // 容量走全端唯一那份口径（次数缺失时按 1 次兜底，而不是把这一组算成 0）
+    row.volumeKg += setVolumeKg(d.weight, d.reps, null)
     const e1 = estimateOneRepMax(d.weight, reps)
     if (e1 > 0 && (row.bestE1rm == null || e1 > row.bestE1rm)) row.bestE1rm = e1
     // 最高组：**同重量时取次数多的那一组** —— 60kg×8 比 60kg×5 更接近真实能力上限
@@ -232,7 +260,10 @@ export function buildExerciseRows(
       r.weightDelta = round1(r.topWeightKg - r.lastWeightKg)
     }
     if (r.bestE1rm != null && r.lastWeightKg != null && r.lastReps) {
-      r.e1rmDelta = round1(r.bestE1rm - estimateOneRepMax(r.lastWeightKg, r.lastReps))
+      // 上次那一组本身可能落在「不可估」区间（次数 > MAX_E1RM_REPS，如上次是 25 次的高次数组）：
+      // 此时基线不是 0 而是**没有基线**，拿 0 去减会把本次算成一个凭空的巨大 e1RM PR。
+      const lastE1rm = estimateOneRepMax(r.lastWeightKg, r.lastReps)
+      if (lastE1rm > 0) r.e1rmDelta = round1(r.bestE1rm - lastE1rm)
     }
   }
   return rows

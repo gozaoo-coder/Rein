@@ -325,7 +325,10 @@ async function save(): Promise<void> {
   margin-top: 16px;
   gap: 7px;
   padding: 13px 0;
-  border-radius: var(--radius-s);
+  /* 通栏主操作统一胶囊：另一个 `.primary`（MuscleCatchupSheet）本就是 --radius-full，
+     同一角色两个形状是命名同族、形状分道。iOS 的通栏主操作也是胶囊。
+     （决策见 docs/exercise-quality-review-2026-10-17.md §8 D5） */
+  border-radius: var(--radius-full);
   background: var(--accent);
   color: var(--on-accent);
   font-size: var(--fs-callout);

@@ -67,14 +67,14 @@ pub fn defs() -> Vec<RegisteredTool> {
             name: "save_pomodoro",
             group: "pomodoro",
             label: "补记番茄钟",
-            description: "补记一段专注（默认按 focusMin 倒推结束时间为现在）。通常只在用户说明离线完成了一段专注时使用。",
+            description: "补记一段专注（默认按 focusMin 倒推结束时间为现在）。breakMin = 这段专注之后计划休息的分钟数（默认 5）。通常只在用户说明离线完成了一段专注时使用。",
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "focusMin": { "type": "number", "description": "专注时长（分钟）" },
-                    "breakMin": { "type": "number", "description": "休息时长（分钟），默认 5" },
+                    "breakMin": { "type": "number", "description": "该段之后计划休息的分钟数，默认 5" },
                     "todoId": { "type": "number", "description": "关联的待办 id" },
-                    "completed": { "type": "boolean", "description": "是否完整完成，默认 true" }
+                    "completed": { "type": "boolean", "description": "是否完整完成，默认 true；false = 中途结束" }
                 },
                 "required": ["focusMin"]
             }),
@@ -83,7 +83,7 @@ pub fn defs() -> Vec<RegisteredTool> {
             name: "list_pomodoros",
             group: "pomodoro",
             label: "查看番茄钟记录",
-            description: "查看某日期区间的番茄钟记录。区间不传默认最近 7 天。",
+            description: "查看某日期区间的番茄钟记录。区间不传默认最近 7 天。totalFocusMin 是区间内实际投入分钟之和（含中途结束的段落）；每条带 completed 以区分完整走完（true）与中途结束（false）。",
             parameters: json!({
                 "type": "object",
                 "properties": {

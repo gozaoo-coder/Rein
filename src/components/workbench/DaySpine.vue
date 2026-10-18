@@ -7,6 +7,7 @@ import { CATEGORY_META, MEAL_LABELS, MEAL_META, mealKcal } from '@/config/domain
 import { categoryOf, fmtCents } from '@/config/ledger'
 import { useDietStore } from '@/stores/diet'
 import { useExerciseStore } from '@/stores/exercise'
+import { useFeaturesStore } from '@/stores/features'
 import { useLedgerStore } from '@/stores/ledger'
 import { useNutritionStore } from '@/stores/nutrition'
 import { usePomodoroStore } from '@/stores/pomodoro'
@@ -43,14 +44,21 @@ const exercise = useExerciseStore()
 const pomo = usePomodoroStore()
 const ledger = useLedgerStore()
 const todo = useTodoStore()
+const features = useFeaturesStore()
+
+/* 关掉的模块不必拉数据（插件层的收益之一：关掉的功能不产生请求）；
+   脊柱把这些域的事件并进同一条时间轴，域不在就自然没有条目，不留空洞 */
+const nutritionOn = computed(() => features.isEnabled('nutrition'))
 
 onMounted(() => {
-  void nutrition.loadSummary(today)
-  void nutrition.loadMetrics(30)
+  if (nutritionOn.value) {
+    void nutrition.loadSummary(today)
+    void nutrition.loadMetrics(30)
+  }
   void diet.load(today)
   void exercise.loadWeek(today)
-  void pomo.loadToday()
-  void ledger.loadMonth()
+  if (features.isEnabled('focus')) void pomo.loadToday()
+  if (features.isEnabled('ledger')) void ledger.loadMonth()
   void todo.loadDay(today)
   clockTimer = setInterval(() => {
     now.value = nowMin()
@@ -116,7 +124,7 @@ const events = computed<SpineEvent[]>(() => {
       label: '番茄 · 专注',
       sub: `${s.focusMin} 分钟`,
       value: null,
-      colorVar: 'var(--c-intake)',
+      colorVar: 'var(--cat-work)',
       icon: Timer,
     })
   }
@@ -129,7 +137,7 @@ const events = computed<SpineEvent[]>(() => {
       label: pomo.phase === 'focus' ? '专注进行中' : '休息中',
       sub: pomo.displayTime,
       value: null,
-      colorVar: 'var(--c-intake)',
+      colorVar: 'var(--cat-work)',
       icon: Timer,
       live: true,
     })

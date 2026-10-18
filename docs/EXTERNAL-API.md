@@ -175,7 +175,7 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 | `schedule.listAll` | 无 | `TodoDto[]` | `schedule.read` | `list_all_todos`（todo/commands.rs:140） |
 | `schedule.create` | `title:string`, `notes?:string`, `date?:string`, `startMin?:int`, `durationMin?:int`, `category?:string`, `priority?:int` | `TodoDto` | `schedule.create` | `create_todo`（todo/commands.rs:247，其余参数取默认） |
 | `schedule.update` | `todo:TodoInput`（见下） | `TodoDto` | `schedule.write` | `update_todo`（todo/commands.rs:296） |
-| `schedule.delete` | `id:int` | `{}` | **`schedule.delete`**（第二轮由 `schedule.write` 拆出） | `delete_todo_on`（todo/commands.rs:428） |
+| `schedule.delete` | `id:int` | `{}` | **`schedule.delete`**（第二轮由 `schedule.write` 拆出） | `delete_todo_on`（todo/commands.rs:504；重复待办：实例 id = 跳过这一次，带重复规则的 id = 整条删除） |
 | `schedule.campus` | `semesterId?:int`, `from?:string`, `to?:string` | `ScheduleView` | `schedule.read` | `campus_schedule`（campus/commands.rs:1392）→ §13 |
 | `schedule.programs` | 无 | `ProgramRecord[]` | `schedule.read` | `program_list`（program/commands.rs:43）→ §13 |
 | `schedule.programActive` | 无 | `ProgramRecord ｜ null` | `schedule.read` | `program_get_active`（program/commands.rs:55）→ §13 |
@@ -236,6 +236,7 @@ router 按方法名分发 → handler **短锁** `state.db.lock()` 内调各域 
 | `gateway_status` | 无 | `GatewayStatus` |
 | `gateway_set_enabled` | `enabled:bool` | `GatewayStatus` |
 | `gateway_set_bind` | `bindMode:"local"｜"lan"`, `port:int｜null` | `GatewayStatus` |
+| `gateway_set_enabled_modules` | `ids:string[]`（**整表替换**：已启用的功能模块 id） | `string[]`（清洗后的落库值，见 §4.7） |
 | `gateway_authorization_pending` | 无 | `GatewayAuthRequest[]`（冷启动补漏） |
 | `gateway_authorization_respond` | `requestId:string`, `decision:"allow-session"｜"allow-always"｜"ignore"｜"deny"`, `scopes:string[]` | `{}` |
 | `gateway_revoke_client` | `clientId:string` | `GatewayStatus` |
@@ -282,6 +283,7 @@ Tauri→前端事件 `gateway://pomodoro-command`（`{action, args}`）、`gatew
 | `bad_request` | — | 信封/参数字段缺失或类型错 |
 | `unauthorized` | 1008 | 首帧缺失/令牌不符/LAN 缺 `pairToken` |
 | `forbidden_scope` | — | 令牌有效但未授本次 `method` 所需 scope |
+| `module_disabled` | — | 该方法所属的**功能模块**被用户在界面上关掉了（§4.7）—— 不是权限问题 |
 | `pending_authorization` | — | 授权请求已发出、用户未决（调用方应等待） |
 | `denied` | 1008 | 用户选「拒绝」或该 client 为 `deny` |
 | `not_found` | — | 目标 id 不存在（如 `workout.plan`） |
@@ -289,6 +291,35 @@ Tauri→前端事件 `gateway://pomodoro-command`（`{action, args}`）、`gatew
 | `busy` | — | 鉴权并发超限或锁竞争放弃 |
 | `payload_too_large` | 1009 | 帧或消息超 256KiB |
 | `internal` | — | 其余（`ReinError::Message` 的 `code()` 即 `internal`，error.rs:31-39） |
+
+### 4.7 功能模块门禁（`module_disabled`）
+
+用户能在「设置 › 打开或关闭功能」里关掉功能模块（`src/plugins/builtin/*`）。**关掉的不只是界面**：
+对外方法里凡属于该模块的一律回 `module_disabled`，与界面入口、路由、AI 工具组一起关。
+
+| 模块（插件 id） | 对外方法 | 条数 |
+| --- | --- | --- |
+| （内核：待办，不可关） | `schedule.list` / `listAll` / `create` / `update` / `delete` | 5 |
+| `campus`（课表） | `schedule.campus` | 1 |
+| `program`（健康方案） | `schedule.programs` / `schedule.programActive` | 2 |
+| `sports`（运动） | `workout.*` 全部（课程 / 动作 / 曲线 / 会话 / 跑步 / 删除） | 14 |
+| `focus`（专注） | `pomodoro.*` 全部（含 `start` / `pause` / `stop` 下行控制） | 6 |
+
+判据落在 `protocol.rs::Method::plugin()`（**逐个方法**给归属，`schedule.*` 不是一个模块：它下面混着
+待办、课表与健康方案三处数据），执行点在 `server.rs::handle_request` —— 短锁内、**scope 校验之前**
+调 `store::module_gate`，所以客户端即便拿着全部 scope 也会被拒（记 `denied` 审计）。
+
+- **快照谁给**：前端是唯一作者。`App.vue` 把「已启用模块 id」经 `gateway_set_enabled_modules`
+  推给 Rust，落 `app_meta:gateway.enabledModules`（启动一次 + 每次拨动，与抢课的
+  `campus_grab_set_enabled` 同一条纪律）。**用户关掉一个模块，其对外接口跟着关** ——
+  否则外部程序仍能驱动一个界面上已经不显示的功能（`pomodoro.start` 足以启一个看不见的计时器）。
+- **缺快照 = 全部放行**（`store::is_module_enabled` 的 fail-open，刻意）：快照由前端启动时推，
+  而网关只可能从前端打开，真机上不存在「服务在跑但快照没推」的稳态；反过来 fail-closed 会把
+  一次漏推放大成「对外接口整体不可用」。**空表才算全关**（两者在 `app_meta` 里分得清）。
+- **不是安全边界**：安全边界仍是首帧令牌 + 逐次 scope + 用户授权；这道门禁是一致性闸门，
+  所以它排在 scope 之前、且**不断连**（开关随时会拨回来，断连只会逼客户端重连再走一次授权）。
+- **对客户端的含义**：这是唯一一个「昨天能调、今天不行、而你什么都没改」的错误码。收到它就
+  提示用户去「设置 › 打开或关闭功能」把对应模块打开（错误文案里带了方法与去处），别当权限问题排障。
 
 ---
 
@@ -553,7 +584,8 @@ CREATE INDEX idx_ext_audit_client ON ext_audit(client_id, at DESC);
 
 - **局域网模式**：只做「绑定 `0.0.0.0` + 必须带 `pairToken` + 界面明确风险提示」，**不额外做端到端加密**，作为本轮已知限制。
 - **番茄钟**：只暴露已落盘的会话数据（`pomodoro.list`/`pomodoro.save`）；**计时器运行态上报本轮不做**
-  （计时态只在前端 Pinia store：`src/stores/pomodoro.ts:31-40`；后端仅 `save`/`list`，pomodoro/commands.rs:25,49）。
+  （计时态只在前端 Pinia store：`src/stores/pomodoro.ts`；后端仅 `save`/`list`，pomodoro/commands.rs:25,49）。
+  —— 第二轮已把运行态上报补上（`pomodoro.status` 经 `app_meta:runtime.focus.v1`，见 §14.1）；此处保留第一轮的范围记录。
 - **审计**：只落库（`ext_audit`），查看界面留到后续；本轮 `SettingsPage` 不建审计页。
 - **不扩展**：不做 HTTP/REST、不做原始 SQL、不在 Android 启用、不做训练课运行态控制、不做 `delete_workout`。
 
@@ -667,6 +699,10 @@ CREATE INDEX idx_ext_audit_client ON ext_audit(client_id, at DESC);
   "reportedAt": "2026-10-13T09:12:03Z" }      // 本次上报时刻（UTC）
 ```
 
+- 字段口径：形状由本节冻结（后端只存原样 JSON，不解析）。`plannedBreakMin` = 该相位将进入的
+  **计划休息分钟**（专注相位报「这一段结束后将进入的休息」，长休周期命中即长休分钟；休息相位报当前休息长度）。
+  相位总秒数在前端**进入相位时冻结**，`remainingSec` 与外部读到的进度都从它派生（不再随改设置漂移）。
+
 - **谁写**：前端 `pomodoroStore`。`running` 时每 **1 秒**调一次 `focus_publish(snapshot)`；并在
   `start`/`pause`/`reset`/`finishPhase` 立即各上报一次（不等 1s 周期）。
 - **谁清**：`pause`/`reset`/`finishPhase` 调 `focus_unpublish()`（删键）；进程退出不显式清，靠陈旧判定。
@@ -679,8 +715,17 @@ CREATE INDEX idx_ext_audit_client ON ext_audit(client_id, at DESC);
 1. 读 `runtime.focus.v1`；无键 → 无操作。
 2. 若 `running==true` 且 `phaseStartedAt + remainingSec <= now`（倒计时归零发生在应用关闭期间）
    → 按「**计时确实走完**」用 `save_pomodoro_session_on` 补写一行：
-   `startedAt=phaseStartedAt`、`endedAt=phaseStartedAt+remainingSec`、`focusMin=plannedFocusMin`、`breakMin=0`、`completed=true`，**并删键**（同一事务，幂等）。
-3. 其余情况（未到零、或相位是 `break`）→ 仅删陈旧键，**不补写**（`break` 不落库，与前端 `finishPhase` 一致：只有 focus 写库，src/stores/pomodoro.ts:81-97）。
+   `startedAt=phaseStartedAt`、`endedAt=phaseStartedAt+remainingSec`、`focusMin=plannedFocusMin`、
+   `breakMin=plannedBreakMin`（统一为「该轮计划休息分钟」，不再是固定 0——与前端三态口径一致：
+   补写的是「关闭期间已走完」的整轮，`completed=true`），**并删键**（同一事务，幂等）。
+   若 `linkedTodoId` 指向的待办已被删（外键失败），把 `todo_id` 回退为 `NULL` **重试一次**，
+   避免整条恢复因一处关联失效而丢失。
+3. 其余情况（未到零、或相位是 `break`）→ 仅删陈旧键，**不补写**（`break` 不落库，与前端 `finishPhase` 一致：只有 focus 写库，src/stores/pomodoro.ts）。
+
+> 前端冷启动也做同一条接管（`src/stores/pomodoro.ts` 的 `init()` / `restoreLive()`）：读
+> localStorage 进行中快照，走完的专注补写一条 `completed:true` 并向用户留一条 `notice`；
+> 仍在走 / 暂停中的停在暂停态提示「继续吗」；投入 < 60s 丢弃。两条路径各管各的载体
+> （前端管 localStorage，后端管 `app_meta`），不会重复补写。
 
 ### 14.2 训练课：活跃会话投影（读）
 

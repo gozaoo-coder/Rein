@@ -11,12 +11,13 @@ export const pomodoroTools: AppTool[] = [
     name: 'save_pomodoro',
     group: 'pomodoro',
     label: '补记番茄钟',
-    description: '补记一段专注（默认按 focusMin 倒推结束时间为现在）。通常只在用户说明离线完成了一段专注时使用。',
+    description:
+      '补记一段专注（默认按 focusMin 倒推结束时间为现在）。breakMin = 这段专注之后计划休息的分钟数（默认 5）。通常只在用户说明离线完成了一段专注时使用。',
     parameters: Type.Object({
       focusMin: Type.Number({ description: '专注时长（分钟）' }),
-      breakMin: Type.Optional(Type.Number({ description: '休息时长（分钟），默认 5' })),
+      breakMin: Type.Optional(Type.Number({ description: '该段之后计划休息的分钟数，默认 5' })),
       todoId: Type.Optional(Type.Number({ description: '关联的待办 id' })),
-      completed: Type.Optional(Type.Boolean({ description: '是否完整完成，默认 true' })),
+      completed: Type.Optional(Type.Boolean({ description: '是否完整完成，默认 true；false = 中途结束' })),
     }),
     async execute(args) {
       const endedAt = new Date()
@@ -37,7 +38,8 @@ export const pomodoroTools: AppTool[] = [
     name: 'list_pomodoros',
     group: 'pomodoro',
     label: '查看番茄钟记录',
-    description: '查看某日期区间的番茄钟记录。区间不传默认最近 7 天。',
+    description:
+      '查看某日期区间的番茄钟记录。区间不传默认最近 7 天。totalFocusMin 是区间内实际投入分钟之和（含中途结束的段落）；每条带 completed 以区分完整走完（true）与中途结束（false）。',
     parameters: Type.Object({
       start: Type.Optional(Type.String({ description: '起始 YYYY-MM-DD，缺省为 6 天前' })),
       end: Type.Optional(Type.String({ description: '结束 YYYY-MM-DD，缺省为今天' })),

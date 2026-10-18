@@ -7,6 +7,7 @@ import NumberStepper from '@/components/common/NumberStepper.vue'
 import SheetModal from '@/components/common/SheetModal.vue'
 import { CATEGORY_META } from '@/config/domain'
 import { useToast } from '@/composables/useToast'
+import { useFeaturesStore } from '@/stores/features'
 import { useTodoStore } from '@/stores/todo'
 import { recorder, startRecording, stopRecording } from '@/system/recorderRuntime'
 import { minToHHmm, todayStr } from '@/utils/date'
@@ -42,6 +43,9 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; saved: [todo: Todo] }>()
 
 const store = useTodoStore()
+/** 录音附件钮属「录音」模块：模块关掉时不出现（已附加的录音作为附件原样保留） */
+const features = useFeaturesStore()
+const recordOn = computed(() => features.isEnabled('record'))
 const { toast } = useToast()
 
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
@@ -410,7 +414,7 @@ onBeforeUnmount(() => {
           <button class="abtn" @click="pickFile">
             <Paperclip :size="13" /> 文件
           </button>
-          <button class="abtn rec" :class="{ on: recMine }" @click="toggleRecord">
+          <button v-if="recordOn" class="abtn rec" :class="{ on: recMine }" @click="toggleRecord">
             <Square v-if="recMine" :size="13" />
             <Mic v-else :size="13" />
             {{ recMine ? `停止 ${fmtDur(recorder.elapsedSec)}` : '录音' }}

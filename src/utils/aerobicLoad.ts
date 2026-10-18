@@ -70,7 +70,8 @@ function aerobicTableOf(type: WorkoutType): ActivationMap | null {
 export interface AerobicGroupLoad {
   /** 等效组数（已按激活档折算、已封顶 AEROBIC_WEEK_CAP） */
   sets: number
-  /** 贡献过的日期（练够分的频率与力量日期取并集） */
+  /** 贡献过的日期（练够分的频率与力量日期取并集）——只收**辅助及以上**（激活 ≥2）的日期，
+   *  与 trainingScore 力量侧「稳定肌群不算今天专门练过它」同一口径，见下方 days.add 处 */
   days: Set<string>
   /** 贡献最多的类型显示名（如「跑步」），tooltip 说「含跑步等效 N 组」 */
   label: string
@@ -112,7 +113,12 @@ export function aerobicSetsByGroup(
       const cur = mid.get(g) ?? { sets: 0, days: new Set<string>(), byType: new Map<WorkoutType, number>() }
       const eq = unit * ACTIVATION_WEIGHT[lv]
       cur.sets += eq
-      cur.days.add(w.date)
+      // 频率日期只收辅助及以上（激活 ≥2）：与 trainingScore 力量侧
+      // `if (lv >= 2) acc.days.add(...)` 同口径 —— 否则「快走」里顺带的 abs:1
+      // 会让核心记上一次训练（频率分 55），而同样只被 level-1 顺带刺激的核心
+      // 走力量路径却记 0 次、被判「不够」并要求加练：同一块肌肉换个运动方式口径就变了。
+      // 组数照计（稳定档折算 0.25 组），只是不冒充「今天专门练过它」。
+      if (lv >= 2) cur.days.add(w.date)
       cur.byType.set(w.type, (cur.byType.get(w.type) ?? 0) + eq)
       mid.set(g, cur)
     }

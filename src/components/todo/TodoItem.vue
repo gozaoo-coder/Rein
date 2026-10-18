@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Check, Pencil, Trash2 } from 'lucide-vue-next'
 
 import { CATEGORY_META, priorityMeta } from '@/config/domain'
@@ -9,10 +9,21 @@ import type { Todo } from '@/types'
 import TodoEditorSheet from './TodoEditorSheet.vue'
 
 /** 单条待办行：点按勾选切换完成，点正文打开编辑（时间段/重要程度等完整字段），悬停显示编辑/删除。 */
-defineProps<{ todo: Todo }>()
+const props = defineProps<{ todo: Todo }>()
 
 const store = useTodoStore()
 const editorOpen = ref(false)
+
+/**
+ * 课表派生行是只读投影（见 types/todo.ts 的 courseSessionId）：标题/时间由课表同步生成，
+ * 编辑会被下一次同步覆盖、删除会被 `materialize_todos` 建回来 —— 与其给两个「点了没反应」
+ * 的入口，不如像 DayDetailPanel / CanvasTimeline 那样不提供。勾选照旧（打卡是它的用户动作）。
+ */
+const readonly = computed(() => props.todo.courseSessionId != null)
+
+function openEditor(): void {
+  if (!readonly.value) editorOpen.value = true
+}
 </script>
 
 <template>
@@ -22,7 +33,7 @@ const editorOpen = ref(false)
         <Check v-if="todo.status === 'done'" :size="13" :stroke-width="3.2" />
       </Transition>
     </button>
-    <div class="flex-1 body" @click="editorOpen = true">
+    <div class="flex-1 body" @click="openEditor">
       <p class="title">{{ todo.title }}</p>
       <p class="meta row">
         <template v-if="todo.startMin != null"><span class="num">{{ minToHHmm(todo.startMin) }}</span>·</template>
@@ -38,7 +49,7 @@ const editorOpen = ref(false)
         </span>
       </p>
     </div>
-    <div class="ops row">
+    <div v-if="!readonly" class="ops row">
       <button class="edit" aria-label="编辑待办" @click="editorOpen = true">
         <Pencil :size="16" />
       </button>

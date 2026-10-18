@@ -13,7 +13,8 @@
  * 装载策略（避免每轮把 83 个工具的 schema 全量塞给模型）：
  * - `always: true` 的组恒常驻（主流程缺了就坏：饮食卡协议、知识库检索、待办、记忆与笔记）；
  * - 其余组按需装载：本轮消息命中关键词、或模型调 `load_tools` 当场装载；
- * - `plugin` 指向功能插件 id：用户关掉「课表 / 运动 / 健康方案」后整组不再出现（含系统提示词段落）。
+ * - `plugin` 指向功能插件 id：用户关掉对应的功能模块（课表 / 运动 / 健康方案 / 记账 /
+ *   专注 / 语音）后整组不再出现（含系统提示词段落）。
  * 粒度是「组」而不是单个工具：装载就要给全（含 delete / update），半截组会让模型计划一个做不完的任务。
  */
 
@@ -100,6 +101,7 @@ export const GROUP_POLICY: Record<ToolGroup, GroupPolicy> = {
   ledger: {
     label: '记账',
     hint: '账目流水与预算',
+    plugin: 'ledger',
     keywords: /记账|账本|账单|流水|花了|花销|开销|消费|支出|收入|预算|报销|转账|工资|零花|省钱|钱包|多少钱/,
   },
   exercise: {
@@ -124,6 +126,7 @@ export const GROUP_POLICY: Record<ToolGroup, GroupPolicy> = {
   pomodoro: {
     label: '专注',
     hint: '番茄钟记录与专注时长',
+    plugin: 'focus',
     keywords: /番茄|专注|计时/,
   },
   models: {
@@ -136,6 +139,7 @@ export const GROUP_POLICY: Record<ToolGroup, GroupPolicy> = {
   voice: {
     label: '语音服务',
     hint: '语音对话的识别/朗读配置、音色与连通性测试',
+    plugin: 'voice',
     keywords: /语音|转写|朗读|音色|asr|tts|豆包|识别|录音/i,
   },
   campus: {

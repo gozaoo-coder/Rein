@@ -180,7 +180,9 @@ function onCreated(e: ExerciseRecord): void {
   padding: 0 5px;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  /* soft 底上的文字走文字档（--accent-strong），不拿实底档当小字 —— tokens.css 的
+     语义色两档约定：实底档是给填充/描边/图标用的，压在同名 soft 底上当文字读不清。 */
+  color: var(--accent-strong);
   font-size: var(--fs-micro);
   font-weight: 700;
   line-height: 15px;
@@ -224,7 +226,10 @@ function onCreated(e: ExerciseRecord): void {
 .rowitem {
   width: 100%;
   gap: 2px;
-  padding: 10px 2px;
+  /* 行节奏与「训练中临时换动作」的 StrengthExercisePicker `.prow` 统一（13px / body 600）：
+     两处都是「从列表里选一个动作」，而列表行的高度直接决定触控容错 —— 取高的那个。
+     （决策见 docs/exercise-quality-review-2026-10-17.md §8 D4） */
+  padding: 13px 2px;
   text-align: left;
   border-radius: var(--radius-s);
 }
@@ -242,8 +247,8 @@ function onCreated(e: ExerciseRecord): void {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--fs-subhead);
-  font-weight: 700;
+  font-size: var(--fs-body);
+  font-weight: 600;
 }
 
 .emeta {

@@ -472,9 +472,20 @@ function goConflict(): void {
 const focusTool = computed(() => toolById('focus.open'))
 const moneyTool = computed(() => toolById('ledger.open'))
 
-const doneSessions = computed(() => pomo.todaySessions.filter((s) => s.completed))
-const focusMin = computed(() => doneSessions.value.reduce((s, x) => s + x.focusMin, 0))
+/* 专注格的数字一律走 store 的今日口径：今日分钟 / 完整段数都是「已落库的记录」。
+   中断段另有 todayInterruptedCount，只作追加说明，**不进主计数**（「N 段番茄」保持完整段语义）。 */
 const openTodos = computed(() => todo.allTodos.filter((t) => t.date === props.date && t.status !== 'done').length)
+
+/**
+ * 格内的一步动作：开始专注。若今日有未完成的待办，顺手把它结为本次专注对象
+ * （完成时会落进那条待办的记录）—— 但**不阻塞起跑**：没有待办也照样开跑。
+ * start() 本身幂等：已在跑时再点等于什么都不做，所以这颗钮与「打开专注页」不会打架。
+ */
+function startFocus(): void {
+  const next = todo.allTodos.find((t) => t.date === props.date && t.status !== 'done')
+  if (next) pomo.setLinkedTodo(next.id)
+  pomo.start()
+}
 
 const moneyValue = computed(() => `¥${fmtCents(ledger.monthExpenseCents)}`)
 const moneyNote = computed(() => {
@@ -491,7 +502,9 @@ async function loadScore(): Promise<void> {
   if (!trainOn.value) return
   try {
     await lib.ensureLoaded()
-    await nutrition.loadProfile()
+    // 画像只在营养模块开着时拉（关掉的模块不产生请求）。练够分的 goal 退化成 null ——
+    // 那只用来选口径，与「还没设目标」是同一条路径，评分本身不受影响。
+    if (features.isEnabled('nutrition')) await nutrition.loadProfile()
     const today = todayStr()
     const { sets, workouts } = await loadScoreInput(today)
     // 逐组与运动记录任一有货就出分：纯跑步 / 纯手动补录的用户也该看到练卡上的数字
@@ -677,26 +690,56 @@ onMounted(() => {
 
     <!-- 两格状态：一个数 + 一句事实 -->
     <div v-if="focusTool || moneyTool" class="hf-grid">
-      <button
+      <!-- 专注格：事实 + 一步动作。外层是 div 而非 button —— 格内要放「开始专注」这颗动作钮，
+           而按钮不能套按钮；「打开专注页」另起一颗铺满事实区的按钮，事实照旧常驻。 -->
+      <div
         v-if="focusTool"
-        type="button"
-        class="hf-fact pressable"
+        class="hf-fact hf-focus"
         data-testid="hf-fact-focus"
         style="--tint: var(--cat-work)"
-        @click="runTool(focusTool)"
       >
-        <span class="hf-f1">
-          <i class="hf-fk"><Timer :size="13" />专注</i>
-          <b class="hf-fv">{{ focusMin }}<em>分钟</em></b>
-        </span>
-        <!-- 注：只报专注域的事实（N 段番茄）；待办条数降成脚注，不当成本卡的第二个主话题 -->
-        <span class="hf-fn">
-          <b v-if="focusMin > 0" class="fn-main num">{{ doneSessions.length }} 段番茄</b>
-          <span v-else>今天还没专注</span>
-          <i class="zn-bar" aria-hidden="true" />
-          <span class="fn-sub num">{{ openTodos }} 条待办</span>
-        </span>
-      </button>
+        <button
+          type="button"
+          class="hf-focus-open pressable"
+          aria-label="打开专注页"
+          @click="runTool(focusTool)"
+        >
+          <span class="hf-f1">
+            <i class="hf-fk"><Timer :size="13" />专注</i>
+            <b v-if="pomo.active" class="hf-fv num">{{ pomo.displayTime }}</b>
+            <b v-else class="hf-fv">{{ pomo.todayFocusMin }}<em>分钟</em></b>
+          </span>
+          <!-- 注：只报专注域的事实（N 段番茄）；待办条数降成脚注，不当成本卡的第二个主话题 -->
+          <span class="hf-fn">
+            <template v-if="pomo.active">
+              <b class="fn-main">{{ pomo.phase === 'focus' ? '专注中' : '休息中' }}</b>
+              <i class="zn-bar" aria-hidden="true" />
+              <span class="fn-sub num">回到专注页</span>
+            </template>
+            <template v-else-if="pomo.todayCompletedCount > 0">
+              <b class="fn-main num">{{ pomo.todayCompletedCount }} 段番茄</b>
+              <i class="zn-bar" aria-hidden="true" />
+              <span class="fn-sub num">{{ openTodos }} 条待办</span>
+            </template>
+            <span v-else>今天还没专注</span>
+          </span>
+        </button>
+        <!-- 未在跑：格内一步起跑；有中断段时追加一句（主计数口径不变，仍是完整段数） -->
+        <div v-if="!pomo.active" class="hf-focus-act">
+          <button
+            type="button"
+            class="hf-member is-start pressable"
+            data-testid="hf-focus-start"
+            aria-label="开始专注"
+            @click="startFocus"
+          >
+            <Play :size="13" :stroke-width="2.6" />开始专注
+          </button>
+          <span v-if="pomo.todayInterruptedCount > 0" class="hf-focus-note num">
+            另有 {{ pomo.todayInterruptedCount }} 段中途停下
+          </span>
+        </div>
+      </div>
 
       <button
         v-if="moneyTool"
@@ -1122,6 +1165,31 @@ onMounted(() => {
 
 .hf-fn .fn-sub {
   font-size: var(--fs-micro);
+}
+
+/* 专注格：事实区是一颗铺满的按钮、下方再放「开始专注」一步动作 —— 外层 div 只沿用
+   .hf-fact 的盒。两颗按钮的底色由构造器统一重置（.hf :where(button)），这里只补排布。 */
+.hf-focus-open {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-m);
+}
+
+/* 动作行：起跑钮 + 中断段说明。窄宽下允许换行，不让说明把钮挤出格 */
+.hf-focus-act {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.hf-focus-note {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
 }
 
 /* ---------- 工具行 ---------- */

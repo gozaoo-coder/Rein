@@ -90,6 +90,24 @@ export type SessionPhase =
   | 'timed-run' // 计时中
   | 'summary' // 全部完成
 
+/**
+ * 会话内临时换掉的动作用它落盘 —— 键 = 课程条目 id（`PlanExercise.id`）。
+ *
+ * 为什么必须进快照：恢复（`stores/session.ts::applyRecord`）是按 planId 从课程库
+ * **重建** plan 的，而换动作只改了内存里那份深拷贝 —— 接管后会被抹回原动作。
+ * 而 `doneSets` 的键正是那个课程条目 id，于是按新动作做完的每一组会以**原动作**的
+ * `exerciseId / exerciseName` 落进 `workout_sets`，而 `exercise_id` 是重量曲线的聚合键
+ * ——曲线里那些组会长在原来那个动作身上，且不可逆（记录已落库）。
+ */
+export interface PlanExerciseOverride {
+  exerciseId: string
+  name: string
+  tips: string
+  muscles?: ActivationMap
+  /** 换成新动作时同时改写的处方重量（见 `session.ts::swapExercise`） */
+  weightKg: number | null
+}
+
 /** 落盘用的状态快照（与 Rust state_json 对应） */
 export interface SessionSnapshotState {
   doneSets: Record<string, DoneSet[]>
@@ -116,6 +134,8 @@ export interface SessionSnapshotState {
    * 随快照落盘，训练中断恢复后不丢。
    */
   readiness?: number | null
+  /** 临时换过的动作（键 = 课程条目 id）；缺省/空 = 一次都没换过 */
+  exerciseOverrides?: Record<string, PlanExerciseOverride>
 }
 
 /** 全课扁平化后每一组的状态（抽屉与顶部进度格条的唯一数据源） */

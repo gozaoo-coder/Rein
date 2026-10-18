@@ -303,7 +303,7 @@ pub fn defs() -> Vec<RegisteredTool> {
             name: "delete_todo",
             group: "todo",
             label: "删除待办",
-            description: "删除一条待办。仅限用户明确要求删除时使用。",
+            description: "删除一条待办。仅限用户明确要求删除时使用。重复待办分两种：传实例 id = 只跳过这一次，后续仍按规则生成；传带重复规则的那一条 id = 整条删除（当天及以后未完成的实例一起删）。",
             parameters: json!({
                 "type": "object",
                 "properties": { "id": { "type": "number", "description": "待办 id" } },

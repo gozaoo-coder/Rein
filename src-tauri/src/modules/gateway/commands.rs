@@ -70,6 +70,22 @@ pub struct GatewayStatus {
     pub blocked_origins: Vec<String>,
 }
 
+/// 功能模块开关快照（**前端唯一作者**）：`stores/features.ts` 每次开/关、以及每次启动
+/// 把整份「已启用模块 id」推过来，网关据此对已关闭模块的对外方法回 `module_disabled`
+/// （contract §4.7）。返回清洗后的列表，便于前端自检实际落库的是什么。
+///
+/// 与抢课的 `campus_grab_set_enabled` 是同一条纪律（「带后台引擎的模块必须给引擎真门闩」），
+/// 只是这里的「引擎」是对外接口：只关 UI 不关接口，等于外部程序仍能驱动一个界面上
+/// 已经关掉的功能（`pomodoro.start` 就是这么一种情况）。
+#[tauri::command]
+pub fn gateway_set_enabled_modules(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<Vec<String>> {
+    let conn = state.db.lock();
+    store::set_enabled_modules(&conn, &ids)
+}
+
 /// 服务状态：开关 / 绑定模式 / 端口 / 待决数 / 已授权客户端列表。
 #[tauri::command]
 pub fn gateway_status(
