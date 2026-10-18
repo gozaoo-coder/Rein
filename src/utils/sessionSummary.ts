@@ -429,8 +429,13 @@ export function tallyMuscles(rows: ExerciseRow[]): MuscleTally[] {
 /* ---------------- 节奏层 ---------------- */
 
 export interface Rhythm {
-  /** 平均组间休息（秒，按课程编排的 restSec 加权）；null = 无可算的组间 */
-  avgRestSec: number | null
+  /**
+   * 组间休息（秒）：按**课程编排**的 restSec 加权 —— **不是实测**。
+   * 倒计时被跳过、被临时休息拉长都不改这个数。名字里带 `planned` 就是为了让
+   * 读代码的人先看到这一点：从前叫 `avgRestSec`，任何一处把它当「这人的平均
+   * 休息时长」展示，都是在报一个用户没做过的数。null = 无可算的组间。
+   */
+  plannedRestSec: number | null
   /** 每组平均耗时（秒）：用时 / 完成组数 */
   secPerSet: number | null
 }
@@ -463,7 +468,7 @@ export function buildRhythm(rows: ExerciseRow[], durationSec: number, done: numb
   }
   const perSet = done > 0 ? Math.round(durationSec / done) : null
   return {
-    avgRestSec: restGaps > 0 ? Math.round(restSum / restGaps) : null,
+    plannedRestSec: restGaps > 0 ? Math.round(restSum / restGaps) : null,
     secPerSet: perSet != null && perSet >= MIN_SEC_PER_SET ? perSet : null,
   }
 }

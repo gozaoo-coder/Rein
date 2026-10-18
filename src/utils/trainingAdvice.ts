@@ -470,28 +470,50 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
       const allSetsDone =
         last.working.length >= Math.max(1, targetSets) && last.working.every((w) => w.reps >= targetReps)
       let base = last.topWeight
+      /**
+       * 本步的意图。文案一律**按实际结果生成**，不再先写死再 clamp ——
+       * 从前的顺序是「先写 anchorNote，再夹到 [lo, cap]」，而 cap 的今日极限正是
+       * 从这批历史反推出来的（`weightForReps` 是 `estimateOneRepMax` 的精确反函数），
+       * 于是「做满递增」被自己的历史削回原值，anchorNote 却仍报 +2.5kg：
+       * 用户看到 60kg 不变，解释里写着「+2.5kg」。数字与解释必须同源。
+       */
+      let intent: 'up' | 'down' | 'hold' = 'hold'
+      let upSteps = 0
       if (allSetsDone && weightStep > 0) {
-        base += weightStep * (readiness >= 1.03 ? 2 : 1)
-        anchorNote = `上次全部做满 ${targetReps} 次 → 递增${readiness >= 1.03 ? '两档（今日状态很好）' : '一个步进'}（+${fmt(
-          weightStep * (readiness >= 1.03 ? 2 : 1),
-        )}kg）`
+        upSteps = readiness >= 1.03 ? 2 : 1
+        base += weightStep * upSteps
+        intent = 'up'
       }
       if (readiness < 0.95) {
         base = last.topWeight * readiness
-        anchorNote = `今日状态 ×${readiness.toFixed(2)} 明显偏低 → 主动降载（下限为上次的 85%）`
+        intent = 'down'
       } else if (readiness < 0.98 && !allSetsDone) {
         base = last.topWeight
-        anchorNote = '今日状态略低 → 维持上次重量，不做递增'
+        intent = 'hold'
       }
       // 今日极限封顶：目标次数下的等价重量（走 weightForReps，与 estimateOneRepMax 同一口径）；
       // 但不低于上次实际完成过的重量（已证明可行）。次数超出可估上限时 weightForReps 返回 0
       // =「不可估」，此时不做抬高，cap 落回上次已完成的重量。
-      const ceilingWeight = weightForReps(todayCeiling, targetReps)
-      const cap = Math.max(last.topWeight, ceilingWeight)
+      let cap = Math.max(last.topWeight, weightForReps(todayCeiling, targetReps))
+      // 全部做满时封顶不得低于递增后的值：用户已经用实际表现证明能做到目标次数，
+      // 双重渐进就是要往上走一档。让「从历史反推的上限」把「基于历史的递增」削掉，是自相矛盾。
+      if (intent === 'up') cap = Math.max(cap, base)
       const lo = Math.max(0, last.topWeight * 0.85)
       const clamped = clamp(base, lo, cap)
       suggestedWeight = weightStep > 0 ? roundToStep(clamped, weightStep) : Math.round(clamped * 10) / 10
-      rationale.push(`建议 ${fmt(suggestedWeight)}kg × ${targetReps} × ${targetSets} 组 · 目标 RIR ${DEFAULT_TARGET_RIR}`)
+      // 解释按**实际落定的值**写（含取整与封顶的后果），不写意图
+      const delta = Math.round((suggestedWeight - last.topWeight) * 10) / 10
+      if (intent === 'up') {
+        anchorNote =
+          delta > 0
+            ? `上次全部做满 ${targetReps} 次 → 递增${upSteps === 2 ? '两档（今日状态很好）' : '一个步进'}（${delta > 0 ? '+' : ''}${fmt(delta)}kg）`
+            : `上次全部做满 ${targetReps} 次，但今日极限封顶在 ${fmt(suggestedWeight)}kg —— 这次维持，不加档`
+      } else if (intent === 'down') {
+        anchorNote = `今日状态 ×${readiness.toFixed(2)} 明显偏低 → 主动降载到 ${fmt(suggestedWeight)}kg（下限为上次的 85%）`
+      } else if (intent === 'hold') {
+        anchorNote = '今日状态略低 → 维持上次重量，不做递增'
+      }
+      rationale.push(`建议 ${fmt(suggestedWeight)}kg × ${targetReps} × ${targetSets} 组 · 约留 1–2 次余力（按上次表现估计）`)
     }
     if (anchorNote) rationale.push(anchorNote)
 

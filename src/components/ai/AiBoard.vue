@@ -60,10 +60,14 @@ const rings = computed<RingItem[]>(() => {
   const s = nutrition.summary
   if (!s) return []
   const ratio = (a: number, b: number): number => (b > 0 ? a / b : 0)
+  // 第三环与下面那格「还可吃」必须同一个口径：环的图例就画在「还可吃」旁边，
+  // 从前的环用 `目标 − 已摄入`、数字用 `目标 − 已摄入 − 运动` —— 同一张卡上
+  // 两个「还能吃多少」互不相等（图例色 `--c-balance` 与 `stats.left` 同源）。
+  const left = Math.max(0, s.targets.kcal - s.intake.kcal - s.exerciseKcal)
   return [
     { key: 'intake', value: ratio(s.intake.kcal, s.targets.kcal), colorVar: 'var(--c-intake)' },
     { key: 'exercise', value: ratio(s.exerciseKcal, s.targets.kcal), colorVar: 'var(--c-exercise)' },
-    { key: 'balance', value: ratio(Math.max(0, s.targets.kcal - s.intake.kcal), s.targets.kcal), colorVar: 'var(--c-balance)' },
+    { key: 'balance', value: ratio(left, s.targets.kcal), colorVar: 'var(--c-balance)' },
   ]
 })
 
