@@ -147,6 +147,13 @@ export interface ExerciseRow {
   topWeightKg: number | null
   /** 力量：最高组的次数（与 topWeightKg 同一组） */
   topReps: number | null
+  /**
+   * 力量：本次**单组最多次数**（自重动作的「最高组」）。
+   * 自重动作没有重量，`topWeightKg` 恒为 null —— 只看它就会得出「做了 4 组、什么都没留下」。
+   */
+  topSetReps: number | null
+  /** 力量：本次**总次数** Σ reps（自重动作的容量，量纲是「次」而不是 kg） */
+  totalReps: number
   /** 力量：本次最佳估算 1RM；无有效组时 null */
   bestE1rm: number | null
   /** 该动作的组间休息编排值（秒；平均组间用） */
@@ -211,6 +218,8 @@ export function buildExerciseRows(
         totalSec: 0,
         topWeightKg: null,
         topReps: null,
+        topSetReps: null,
+        totalReps: 0,
         bestE1rm: null,
         restSec: m.restSec ?? 0,
         lastWeightKg: last?.weightKg ?? null,
@@ -237,7 +246,17 @@ export function buildExerciseRows(
       row.totalSec += d.sec
       continue
     }
-    if (d?.weight == null) continue
+    if (d?.weight == null) {
+      // 自重动作：重量缺席 ≠ 这一组没做。从前这里直接 continue —— 组数已计入 doneCount，
+      // 却既不进容量也不进最高组，屏幕上就成了「做了 4 组 / 总容量 0 kg」。
+      // 次数才是自重的原生量纲：存下来，展示层按「次」出容量与 PR。
+      const only = d?.reps ?? 0
+      if (only > 0) {
+        row.totalReps += only
+        if (row.topSetReps == null || only > row.topSetReps) row.topSetReps = only
+      }
+      continue
+    }
     const reps = d.reps ?? 0
     // 容量走全端唯一那份口径（次数缺失时按 1 次兜底，而不是把这一组算成 0）
     row.volumeKg += setVolumeKg(d.weight, d.reps, null)
@@ -271,7 +290,7 @@ export function buildExerciseRows(
 
 /* ---------------- 进步层 ---------------- */
 
-export type PrKind = 'weight' | 'e1rm'
+export type PrKind = 'weight' | 'e1rm' | 'reps'
 
 /** 进步判定可信度：instant = 与上次比（零请求）；verified = 与全量历史比（已校正） */
 export type PrConfidence = 'instant' | 'verified'
@@ -297,6 +316,19 @@ export interface PrRow {
 export function buildPrRows(rows: ExerciseRow[]): PrRow[] {
   const out: PrRow[] = []
   for (const r of rows) {
+    // 自重动作的即时 PR：只看次数 —— 重量缺席时 weight / e1rm 两路都无从比，
+    // 而「上次 10 个、这次 15 个」正是不折不扣的进步。
+    if (r.topWeightKg == null && r.topSetReps != null && r.lastReps != null && r.topSetReps > r.lastReps) {
+      out.push({
+        exId: r.exId,
+        name: r.name,
+        kind: 'reps',
+        value: r.topSetReps,
+        delta: r.topSetReps - r.lastReps,
+        prevBest: r.lastReps,
+        confidence: 'instant',
+      })
+    }
     if (r.topWeightKg != null && r.lastWeightKg != null && r.weightDelta != null && r.weightDelta > 0) {
       out.push({
         exId: r.exId,
@@ -346,13 +378,28 @@ export function mergeHistoryPr(rows: ExerciseRow[], history: Map<string, Strengt
     if (!recs.length) continue // 没历史 → 保留（即时判定里它本来也不会有 PR）
 
     let bestWeight = 0
+    let bestReps = 0
     let bestE1rm = 0
     for (const rec of recs) {
       if (rec.warmup) continue
       const w = rec.weightKg ?? 0
       const e = estimateOneRepMax(w, rec.reps ?? 0)
       if (w > bestWeight) bestWeight = w
+      if ((rec.reps ?? 0) > bestReps) bestReps = rec.reps ?? 0
       if (e > bestE1rm) bestE1rm = e
+    }
+
+    // 自重动作的校正级 PR：与历史全部记录里的**单组最多次数**比（口径同 strengthStats）
+    if (r.topWeightKg == null && r.topSetReps != null && bestReps > 0 && r.topSetReps > bestReps) {
+      out.push({
+        exId: r.exId,
+        name: r.name,
+        kind: 'reps',
+        value: r.topSetReps,
+        delta: r.topSetReps - bestReps,
+        prevBest: bestReps,
+        confidence: 'verified',
+      })
     }
 
     if (r.topWeightKg != null && bestWeight > 0 && r.topWeightKg > bestWeight) {

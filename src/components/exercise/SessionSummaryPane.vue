@@ -175,10 +175,27 @@ const isVerified = (p: PrRow): boolean => p.confidence === 'verified'
 
 /* ---------- 指标 ---------- */
 
+/** kg 容量（Σ 重量×次数）—— 只含真有重量的组 */
+const kgVolume = computed(() => rows.value.reduce((sum, r) => sum + r.volumeKg, 0))
+
+/**
+ * 自重动作的总次数。它**不并进 kg 容量**（跨课不可比），但也**不能不报** ——
+ * 整节课只有引体/俯卧撑时，总容量会显示「—」，等于说这一节白练了。
+ */
+const bwReps = computed(() =>
+  rows.value.reduce((sum, r) => sum + (r.topWeightKg == null ? r.totalReps : 0), 0),
+)
+
 const stats = computed(() => {
-  const vol = rows.value.reduce((sum, r) => sum + r.volumeKg, 0)
+  // 只有自重时把「次」扶正成主指标
+  const repsMain = kgVolume.value <= 0 && bwReps.value > 0
   return [
-    { key: 'vol', label: '总容量', value: vol > 0 ? fmtKg(vol) : '—', unit: vol > 0 ? 'kg' : '' },
+    {
+      key: 'vol',
+      label: repsMain ? '总次数' : '总容量',
+      value: repsMain ? String(bwReps.value) : kgVolume.value > 0 ? fmtKg(kgVolume.value) : '—',
+      unit: repsMain ? '次' : kgVolume.value > 0 ? 'kg' : '',
+    },
     { key: 'time', label: '用时', value: String(s.durationMin), unit: '分' },
     { key: 'kcal', label: '消耗', value: String(s.estimateKcalValue), unit: 'kcal' },
     {
@@ -211,20 +228,29 @@ const detailRows = computed<DetailRow[]>(() =>
     // 「3 组 · 未做」配一个「0 秒」是自相矛盾的两句话，
     // 而 0 秒在这里既不是成绩也不是缺口，只会让那一行读起来像坏了。
     const notDone = r.doneCount === 0
+    // 自重动作：kg 容量恒为 0，主指标换成「次」—— 「4 组 · 0 kg」既不是成绩也不是缺口，
+    // 它把用户真做过的事显示成没发生。次数才是自重的原生量纲。
+    const bw = r.kind === 'strength' && r.topWeightKg == null && r.totalReps > 0
     const main = notDone
       ? `${r.plannedCount} 组 · 未做`
       : r.kind === 'strength'
-        ? `${r.doneCount} 组 · ${fmtKg(r.volumeKg)} kg`
+        ? bw
+          ? `${r.doneCount} 组 · ${r.totalReps} 次`
+          : `${r.doneCount} 组 · ${fmtKg(r.volumeKg)} kg`
         : `${r.doneCount} 组 · ${fmtSecs(r.totalSec)}`
-    const hasTop = !notDone && r.kind === 'strength' && r.topWeightKg != null
+    const hasTop = !notDone && r.kind === 'strength' && (r.topWeightKg != null || bw)
     const prs = prRows.value.filter((p) => p.exId === r.exId)
     return {
       r,
       main,
-      top: hasTop ? `${fmtKg(r.topWeightKg!)} kg × ${r.topReps ?? 0}` : null,
-      topNote: notDone ? '未做' : r.kind !== 'strength' ? '非力量动作' : '无重量记录',
+      top: !hasTop
+        ? null
+        : bw
+          ? `最多 ${r.topSetReps ?? 0} 次`
+          : `${fmtKg(r.topWeightKg!)} kg × ${r.topReps ?? 0}`,
+      topNote: notDone ? '未做' : r.kind !== 'strength' ? '非力量动作' : bw ? '自重动作' : '无重量记录',
       hasPr: prs.length > 0,
-      prLabel: prs.map((p) => (p.kind === 'weight' ? '重量' : '1RM')).join(' · '),
+      prLabel: prs.map((p) => (p.kind === 'weight' ? '重量' : p.kind === 'reps' ? '次数' : '1RM')).join(' · '),
     }
   }),
 )
@@ -327,6 +353,11 @@ function prDeltaText(p: PrRow): string {
         <b class="stval num">{{ st.value }}<i v-if="st.unit" class="stunit">{{ st.unit }}</i></b>
       </div>
     </div>
+    <!-- 配重与自重混在同一节：kg 容量只统计真配重，自重的次数单独报一行（合并会得出
+         「重量 + 次数」这种不存在的量纲） -->
+    <p v-if="kgVolume > 0 && bwReps > 0" class="stnote t-3">
+      另有自重 <span class="num">{{ bwReps }}</span> 次（不计入 kg 容量）
+    </p>
 
     <!-- 进步：即时判定先出，历史回来后 mergeHistoryPr 覆盖为真纪录 -->
     <section v-if="prTitle" class="blockcard prcard">
@@ -337,7 +368,13 @@ function prDeltaText(p: PrRow): string {
       <div v-for="p in prRows" :key="`${p.exId}-${p.kind}`" class="prrow">
         <span class="prname">{{ p.name }}</span>
         <span class="prval num">
-          {{ p.kind === 'weight' ? `${fmtKg(p.value)} kg` : `估算极限（1RM）${fmtKg(p.value)} kg` }}
+          {{
+            p.kind === 'weight'
+              ? `${fmtKg(p.value)} kg`
+              : p.kind === 'reps'
+                ? `${p.value} 次（单组最多）`
+                : `估算极限（1RM）${fmtKg(p.value)} kg`
+          }}
         </span>
         <span class="prdelta num" :class="{ verified: isVerified(p) }">{{ prDeltaText(p) }}</span>
       </div>
@@ -512,6 +549,14 @@ function prDeltaText(p: PrRow): string {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+/* 自重单独报的那一行：不占指标格（否则会被读成与「总容量」同单位的第五格），
+   只在配重与自重混在同一节课时出现 */
+.stnote {
+  margin-top: 8px;
+  padding-left: 2px;
+  font-size: var(--fs-caption);
 }
 
 .stat {

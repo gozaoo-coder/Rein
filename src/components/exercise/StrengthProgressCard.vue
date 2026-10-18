@@ -248,7 +248,12 @@ function onPick(key: string): void {
       <WeightCurve :days="curveDays" />
       <p v-if="lastSummary" class="lastsets num">{{ lastSummary }}</p>
     </div>
-    <p v-else class="hint">{{ loadingCurve ? '加载中…' : '该动作还没有重量记录' }}</p>
+    <!-- 曲线是按重量画的：自重动作（引体/俯卧撑）没有重量数据，这里如实说明并指路，
+         而不是留一句「该动作还没有重量记录」—— 用户明明练了 15 个引体，被说成没记录。
+         措辞不写「自重动作」是因为记录里也可能只是没填重量，两种成因这里分不出来。 -->
+    <p v-else class="hint">
+      {{ loadingCurve ? '加载中…' : '没有重量数据 —— 进步看点次数，见动作历史里的次数纪录' }}
+    </p>
 
     <StrengthExercisePicker
       :open="pickerOpen"

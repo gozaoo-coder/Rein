@@ -6289,7 +6289,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case 'strength_exercises': {
       const agg = new Map<string, { id: string; display: string; lastDate: string; sessions: Set<number> }>()
       for (const r of strengthSets) {
-        if (r.warmup || r.weightKg == null) continue
+        // 与 Rust 侧 `strength_exercises_on` 同一口径：自重动作只有次数、没有重量，
+        // 用 weightKg == null 过滤会把引体/俯卧撑整条挡掉。次数在场即为有效记录。
+        if (r.warmup || (r.weightKg == null && r.reps == null)) continue
         const lib = exercises.find((e) => e.id === r.exerciseId)
         const key = r.exerciseId || r.exerciseName
         const date = workouts.find((x) => x.id === r.workoutId)?.date ?? r.createdAt.slice(0, 10)

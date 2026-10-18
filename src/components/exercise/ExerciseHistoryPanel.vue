@@ -27,6 +27,38 @@ const rows = computed(() => {
 
 const hasMore = computed(() => (history.value?.sessions.length ?? 0) > RECENT)
 
+/**
+ * 纯自重动作：所有场次都没有重量（引体 / 俯卧撑 / 双杠臂屈伸…）。
+ * 这类动作的 kg 容量恒为 0、weight/e1rm 两路 PR 恒空 —— 三格 PR 与逐场行都要
+ * 换成「次」口径，否则这个面板对自重动作永远显示「—」，像没练过。
+ */
+const bwOnly = computed(
+  () => (history.value?.sessions.length ?? 0) > 0 && history.value!.sessions.every((s) => s.topWeightKg <= 0),
+)
+
+/** 三格 PR：自重动作换标签与数据源 —— kg 口径（重量/1RM/容量）对它们恒空 */
+const prSlots = computed(() => {
+  const p = history.value?.prs
+  if (!p) return []
+  const num = (rec: { value: number; date: string } | null) => ({
+    value: rec ? String(rec.value) : '—',
+    date: rec ? fmtDateCn(rec.date) : '',
+  })
+  if (bwOnly.value) {
+    return [
+      { key: 'reps', label: '单组最多次数 次', ...num(p.reps) },
+      // 1RM 对自重组不可估（次数超上限即返回 0），如实留空而不是拿体重去编一个
+      { key: 'e1rm', label: '估算极限重量（1RM）', value: '—', date: '' },
+      { key: 'repsVolume', label: '最佳单次总次数 次', ...num(p.repsVolume) },
+    ]
+  }
+  return [
+    { key: 'weight', label: '最大重量 kg', ...num(p.weight) },
+    { key: 'e1rm', label: '估算极限重量（1RM）', ...num(p.e1rm) },
+    { key: 'volume', label: '最佳单次训练量 kg', ...num(p.volume) },
+  ]
+})
+
 watch(
   () => props.exerciseId,
   async (id) => {
@@ -51,29 +83,21 @@ watch(
   <div v-else-if="!history || !history.sessions.length" class="state t-3">还没有这个动作的做组记录</div>
   <template v-else>
     <div class="prs row">
-      <div class="pr">
-        <span class="pv num">{{ history.prs.weight ? fmtKg(history.prs.weight.value) : '—' }}</span>
-        <span class="pk">最大重量 kg</span>
-        <span class="pd t-3">{{ history.prs.weight ? fmtDateCn(history.prs.weight.date) : '' }}</span>
-      </div>
-      <div class="pr">
-        <span class="pv num">{{ history.prs.e1rm ? fmtKg(history.prs.e1rm.value) : '—' }}</span>
-        <span class="pk">估算极限重量（1RM）</span>
-        <span class="pd t-3">{{ history.prs.e1rm ? fmtDateCn(history.prs.e1rm.date) : '' }}</span>
-      </div>
-      <div class="pr">
-        <span class="pv num">{{ history.prs.volume ? history.prs.volume.value : '—' }}</span>
-        <span class="pk">最佳单次训练量 kg</span>
-        <span class="pd t-3">{{ history.prs.volume ? fmtDateCn(history.prs.volume.date) : '' }}</span>
+      <div v-for="slot in prSlots" :key="slot.key" class="pr">
+        <span class="pv num">{{ slot.value }}</span>
+        <span class="pk">{{ slot.label }}</span>
+        <span class="pd t-3">{{ slot.date }}</span>
       </div>
     </div>
 
     <ul class="hist">
       <li v-for="s in rows" :key="s.workoutId" class="hrow row">
         <span class="hdate t-2">{{ fmtDateCn(s.date) }}</span>
-        <span class="hmain num">{{ s.sets }} 组 · 最重 {{ fmtKg(s.topWeightKg) }}kg<span v-if="s.topReps">×{{ s.topReps }}</span></span>
+        <!-- 自重动作没有重量可报：最重永远是 0kg，而「最多 15 次」才是这次的成绩 -->
+        <span v-if="bwOnly" class="hmain num">{{ s.sets }} 组 · 最多 {{ s.topSetReps ?? '—' }} 次</span>
+        <span v-else class="hmain num">{{ s.sets }} 组 · 最重 {{ fmtKg(s.topWeightKg) }}kg<span v-if="s.topReps">×{{ s.topReps }}</span></span>
         <!-- 训练量带标签：同单位下它比「最重」大一个量级，不标出来会误读成当天最大重量 -->
-        <span class="hvol num t-3">训练量 {{ s.volumeKg }} kg</span>
+        <span class="hvol num t-3">{{ bwOnly ? `总次数 ${s.totalReps} 次` : `训练量 ${s.volumeKg} kg` }}</span>
       </li>
     </ul>
 

@@ -418,13 +418,15 @@ pub fn strength_exercises(state: State<AppState>) -> Result<Vec<StrengthExercise
 pub(crate) fn strength_exercises_on(
     conn: &rusqlite::Connection,
 ) -> Result<Vec<StrengthExerciseRef>> {
+    // 自重动作只有次数、没有重量：`weight_kg IS NOT NULL` 会把引体/俯卧撑整条挡在
+    // 「练过的动作」列表之外 —— 用户练了，App 说不认识这个动作。次数在场即为有效记录。
     let mut stmt = conn.prepare(
         "SELECT COALESCE(NULLIF(s.exercise_id, ''), ''), \
                 COALESCE(e.name, MAX(s.exercise_name)) AS display_name, \
                 MAX(w.date) AS last_date, COUNT(DISTINCT s.workout_id) AS sessions \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
          LEFT JOIN exercises e ON e.id = s.exercise_id \
-         WHERE s.warmup = 0 AND s.weight_kg IS NOT NULL \
+         WHERE s.warmup = 0 AND (s.weight_kg IS NOT NULL OR s.reps IS NOT NULL) \
          GROUP BY COALESCE(NULLIF(s.exercise_id, ''), s.exercise_name) \
          ORDER BY last_date DESC",
     )?;
@@ -452,7 +454,7 @@ pub(crate) fn strength_exercises_on_limited(
                 MAX(w.date) AS last_date, COUNT(DISTINCT s.workout_id) AS sessions \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
          LEFT JOIN exercises e ON e.id = s.exercise_id \
-         WHERE s.warmup = 0 AND s.weight_kg IS NOT NULL \
+         WHERE s.warmup = 0 AND (s.weight_kg IS NOT NULL OR s.reps IS NOT NULL) \
          GROUP BY COALESCE(NULLIF(s.exercise_id, ''), s.exercise_name) \
          ORDER BY last_date DESC LIMIT ?1",
     )?;
