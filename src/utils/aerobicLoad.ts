@@ -6,9 +6,17 @@
  * 由 trainingScore 与力量组数合并 —— 换算只回答一件事：这块肌肉本周受了多少刺激。
  *
  * 折算口径（全端唯一一份，改这里即全端生效）：
- *   U_session = min(6, durationMin / 10) × 强度系数 { low 0.8, moderate 1.0, high 1.2 }
- *   · 强度取 workouts.effort（手动补录，`effortToIntensity`）优先；
+ *   U_session = min(6, (MET − 1) × durationMin / 25)
+ *   · MET 取 `WORKOUT_META[type].met[intensity]` —— 全端本来就有这张 MET 表（消耗也用它），
+ *     强度档位取 workouts.effort（手动补录，`effortToIntensity`）优先；
  *     effort 为空（跑步 / 导入路径）用 workouts.intensity（客观档）。
+ *   · 减 1 是**净代谢**口径：MET 是相对静息的倍率，其中 1 MET 是人坐着不动也有的那部分，
+ *     它不产生训练刺激。旧版是 `时长 / 10 × 强度系数`：与强度档挂钩、却与**项目类型无关** ——
+ *     同样 40 分钟，快走（MET 3.5）与划船机（MET 7.0）折出来的组数完全相同，
+ *     而这两门课对肌肉的刺激差着一个档。
+ *   · 25 分钟/组 是**产品标定，不是文献常数**：选它是因为「40 分钟中等强度快走」
+ *     （MET 3.5）恰好折算 4.0 组 —— 与旧口径在最常用的那一档上完全一致。
+ *     所以这次改动只挪动**类型之间**的相对值，不挪动最常用的那个绝对值。
  *   · 再按该运动的**肌群激活档位**折算（trainingAdvice.ACTIVATION_WEIGHT：主攻 1 / 辅助 0.5 / 稳定 0.25），
  *     与逐组记录同一口径 —— 一次 40 分钟的跑步不会把小腿按主攻记满 4 组而顺带肌群也记满。
  *   · 同一评估组只按组内**最高**激活档折一次（与逐组记录「一组里取最高档」同规则）。
@@ -43,13 +51,19 @@ import {
   type ScoreGroupKey,
 } from '@/config/muscles'
 import { ACTIVATION_WEIGHT } from '@/utils/trainingAdvice'
-import type { Goal, Workout, WorkoutType } from '@/types'
+import type { Goal, Intensity, Workout, WorkoutType } from '@/types'
 
-/** 每肌群每周的有氧等效组上限（理由见文件头） */
+/** 有氧等效组的单次上限（理由见文件头） */
 export const AEROBIC_WEEK_CAP = 6
 
-/** 强度系数：低/中/高三档（口径见文件头） */
-const INTENSITY_FACTOR = { low: 0.8, moderate: 1.0, high: 1.2 } as const
+/** 每组等效组对应的净 MET-分钟（产品标定，见文件头） */
+const NET_MET_MIN_PER_SET = 25
+
+/** 会话 → 等效组：净 MET-分钟换算，封顶 6（口径与标定见文件头） */
+function sessionUnits(type: WorkoutType, intensity: Intensity, durationMin: number): number {
+  const met = WORKOUT_META[type].met[intensity]
+  return Math.min(6, ((met - 1) * durationMin) / NET_MET_MIN_PER_SET)
+}
 
 /**
  * 复用表：自身解析不出肌群表的两个类型，显式借用最近亲的运动表。
@@ -107,7 +121,7 @@ export function aerobicSetsByGroup(
     const act = aerobicTableOf(w.type)
     if (!act) continue
     const intensity = w.effort != null ? effortToIntensity(w.effort) : w.intensity
-    const unit = Math.min(6, w.durationMin / 10) * INTENSITY_FACTOR[intensity]
+    const unit = sessionUnits(w.type, intensity, w.durationMin)
 
     for (const [g, lv] of maxActivationOf(act)) {
       const cur = mid.get(g) ?? { sets: 0, days: new Set<string>(), byType: new Map<WorkoutType, number>() }

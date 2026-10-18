@@ -5,7 +5,10 @@
  *  1. 今天这个动作练多重、多少组多少次（`perExercise`）——由「平均状态」与「今日极限状态」共同决定；
  *  2. 这周各肌群的容量够不够（`muscleLoad`）——按每肌群周组数地标判定。
  *
- * 科学依据（写在代码里，便于复核与调整）：
+ * 科学依据分两类写：**有出处**的（下面「有出处」一节）与**产品启发式**的（无文献出处、
+ * 数值可调）。从前两类混在一起写，下一个改代码的人会把那些系数也当成文献值。
+ *
+ * 有出处：
  *  - 1RM 估算：Epley `w×(1+r/30)`；次数 > 12 时换 Brzycki `w×36/(37−r)`。
  *    Epley 1985；Brzycki 1993。两式在 r=10 处交叉（同为 1.333×）：r<10 时 Epley 略高，
  *    r>10 时 Brzycki 更高 —— 所以「>12 换 Brzycki」的效果是**抬高**高次数的估值，
@@ -19,6 +22,14 @@
  *  - 恢复窗口：同一肌群力量恢复约需 48–72 小时，故 48h 内重复训练降载、72h 后视为恢复完全（Damas 等 2016）。
  *  - 渐进超负荷：双重渐进（先做满次数再加重量），上肢 +2.5kg / 下肢 更大幅度，取整到器材步进；
  *    低状态日允许回退到上次的 85% 保底（ACSM 渐进原则 + 自体调节 autoregulation）。
+ *
+ * 产品启发式（无文献出处；数值是我们定的，可直接调，不要当成科学结论引用）：
+ *  - 今日状态四因子的**档位差与钳制范围**：恢复 ×0.90 / ×0.95 / ×1.00 / ×1.02、容量 ×0.92 / ×0.97、
+ *    趋势 ×0.97、自评 ×0.85…×1.04，总钳制 0.85–1.06。「48–72h 恢复窗口」有出处，
+ *    但「窗口外给 +2%」这类**档位差**没有 —— 有出处的是窗口，不是系数。
+ *  - 自评 1..5 → 因子 0.85..1.04 的线性映射（自评这个做法有出处，映射斜率没有）。
+ *  - 次数上限 MAX_E1RM_REPS = 20：Brzycki 在 r→37 才发散，具体卡在哪一档是我们定的。
+ *  - 默认目标 RIR 2（= 95% 1RM）：RIR↔%1RM 对照表有出处，「默认取 RIR 2」是产品取向。
  *
  * 间接刺激计半组以上的折算：动作肌群激活档位 3=主攻（1 组）/2=辅助（0.5 组）/1=稳定（0.25 组）。
  * 日期只有「天」粒度（工作簿存 YYYY-MM-DD），恢复小时数按整天 × 24 近似 —— 对小重量多次数的
@@ -157,8 +168,6 @@ export interface TrainingAdviceInput {
   today: string
   /** 今日状态自评 1..5；null/缺省 = 未自评（纯自动推断） */
   selfRating?: number | null
-  /** 每周可训练天数（健康方案）：缩放每肌群周组数目标，缺省按 4 练 */
-  trainingDaysPerWeek?: number | null
   /** 容量统计窗口（天），默认 7 */
   volumeDays?: number
 }
@@ -304,17 +313,13 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
     }
   }
 
-  /* ---- 3. 目标区间（按每周可训练天数缩放） ---- */
-  const trainingDays = input.trainingDaysPerWeek ?? 4
-  const scale = clamp(0.5 + 0.1 * trainingDays, 0.7, 1.0)
-  const targets = (muscle: MuscleKey) => {
-    const t = MUSCLE_VOLUME_TARGETS[muscle]
-    return {
-      mev: Math.round(t.mev * scale),
-      mav: Math.round(t.mav * scale),
-      mrv: Math.round(t.mrv * scale),
-    }
-  }
+  /* ---- 3. 目标区间 ----
+   * 直接用地标原值，**不按每周可训练天数缩放**。旧版乘过一个
+   * `scale = clamp(0.5 + 0.1 × 天数, 0.7, 1.0)`：练的天数越少，目标定得越低 ——
+   * 方向是反的。每个肌群的**每周**容量地标描述的是刺激总量需求，不随日程松紧变化；
+   * 一周只练 2 天的人，该做的是每次多练一点，而不是把标准降到 0.7 倍然后判自己「已达标」。
+   * 地标本身有出处（见文件头「有出处」一节），乘出来的那个 scale 没有。 */
+  const targets = (muscle: MuscleKey) => MUSCLE_VOLUME_TARGETS[muscle]
 
   const muscleLoad: MuscleLoadRow[] = (Object.keys(MUSCLE_VOLUME_TARGETS) as MuscleKey[])
     .map((muscle) => {
@@ -423,8 +428,16 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
     }
     if (worst) {
       volumeFactor = worst.sets > worst.mrv ? 0.92 : worst.sets > worst.mav ? 0.97 : 1.0
-      volumeNote = `本周${worst.label} ${worst.sets} 组（目标 ${worst.mev}-${worst.mav}）${
-        volumeFactor < 1 ? '，已接近/超出恢复上限' : ''
+      /**
+       * 这句**不报目标区间**：`MUSCLE_VOLUME_TARGETS` 是 39 条肌束的地标（按主攻 1 组 /
+       * 辅助 0.5 组 / 稳定 0.25 组加权求和），而用户在练够分卡上看到的那把尺是 10 个
+       * 评估组的 SETS_SWEET（辅助及以上才算 1 组）。同一节课在两把尺上算出的组数不同 ——
+       * 把两个「目标」并排摆给用户，他只会以为其中一个算错了。
+       * 所以这里只说**事实与后果**（练了多少组、建议重量因此降了），目标口径留在内部
+       * （`volumeFactor` 仍按地标算，只是不再把地标印出来）。
+       */
+      volumeNote = `本周${worst.label} ${worst.sets} 组${
+        volumeFactor < 1 ? '，容量偏高，今日建议重量已相应下调' : ''
       }`
     }
 
@@ -562,7 +575,7 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
   const lowCount = muscleLoad.filter((m) => m.status === 'low' && m.lastDate).length
   const overCount = muscleLoad.filter((m) => m.status === 'over').length
   const summary = overCount
-    ? `${overCount} 个肌群本周容量超出恢复上限，建议减量或增加休息`
+    ? `${overCount} 个肌群本周容量偏高，建议减量或增加休息`
     : input.planExercises?.length
       ? `今日状态 ×${globalReadiness.toFixed(2)}，按建议重量训练即可${lowCount ? `；${lowCount} 个肌群容量偏低` : ''}`
       : lowCount
