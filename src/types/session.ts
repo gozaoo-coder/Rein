@@ -110,6 +110,22 @@ export interface PlanExerciseOverride {
   weightKg: number | null
 }
 
+/**
+ * 训练后体感三档（**相对预期**）。这是练够分「体感」维度的首选输入。
+ *
+ * 刻意不问「有多累」（RPE）：把「很累」喂进体感维度会让「练得越狠、分越低」，
+ * 方向是反的 —— 那次练得好不好，与它让你多累是两件事。
+ * 问「和预期比」还顺带容纳了两种情况：状态好、练得很爽（比预期好），
+ * 以及状态差、但本来就预期低（也是差不多）。
+ */
+export type FeelingInput = 'better' | 'as_expected' | 'worse'
+
+export const FEELING_INPUT_LABEL: Record<FeelingInput, string> = {
+  better: '比预期好',
+  as_expected: '和预期差不多',
+  worse: '比预期差',
+}
+
 /** 落盘用的状态快照（与 Rust state_json 对应） */
 export interface SessionSnapshotState {
   doneSets: Record<string, DoneSet[]>
@@ -136,6 +152,11 @@ export interface SessionSnapshotState {
    * 随快照落盘，训练中断恢复后不丢。
    */
   readiness?: number | null
+  /**
+   * 训练后体感三档（总结页回答，相对预期）。也随快照落盘 ——
+   * 它比 readiness 更晚才产生（要练完才有），中断恢复的窗口正好覆盖它。
+   */
+  postFeeling?: FeelingInput | null
   /** 临时换过的动作（键 = 课程条目 id）；缺省/空 = 一次都没换过 */
   exerciseOverrides?: Record<string, PlanExerciseOverride>
 }
@@ -192,10 +213,16 @@ export interface StrengthSetRecord {
   warmup: boolean
   /**
    * 该组所属会话的「今日状态自评」1..5（`workout_sessions.state_json.readiness`，Rust 侧拍平）。
-   * 未自评 / 手动补录为 null —— 练够分引擎的「体感」输入即取自此
+   * 未自评 / 手动补录为 null —— 「体感」维度在**没有** postFeeling 时回退用它
    * （映射：5、4→良好 / 3→一般 / 1、2→差；缺失按规范默认 60 分并降置信度）。
    */
   readiness?: number | null
+  /**
+   * 该组所属会话的训练后体感（`state_json.postFeeling`，Rust 侧拍平）。
+   * **体感维度的首选输入**：readiness 问的是训练前状态，与「这次练得怎么样」不是一件事。
+   * 没有它的记录（0.6.1 之前）走兼容层 0.0.1 回退到 readiness，来源如实标注。
+   */
+  postFeeling?: FeelingInput | null
 }
 
 /** 单次训练里某动作的聚合（曲线/明细展示用，由前端按 date 聚合） */

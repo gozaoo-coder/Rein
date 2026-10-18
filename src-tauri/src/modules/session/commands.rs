@@ -352,7 +352,8 @@ pub(crate) fn strength_history_on(
     let mut stmt = conn.prepare(
         "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
                 s.set_no, s.weight_kg, s.reps, s.sec, s.warmup, \
-                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER) \
+                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER), \
+                json_extract(ss.state_json, '$.postFeeling') \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
          LEFT JOIN workout_sessions ss ON ss.id = w.session_id \
          WHERE s.exercise_id = ?1 OR (s.exercise_id IS NULL AND s.exercise_name = ?2) \
@@ -377,7 +378,8 @@ pub(crate) fn strength_history_on_limited(
     let mut stmt = conn.prepare(
         "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
                 s.set_no, s.weight_kg, s.reps, s.sec, s.warmup, \
-                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER) \
+                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER), \
+                json_extract(ss.state_json, '$.postFeeling') \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
          LEFT JOIN workout_sessions ss ON ss.id = w.session_id \
          WHERE s.exercise_id = ?1 OR (s.exercise_id IS NULL AND s.exercise_name = ?2) \
@@ -403,6 +405,7 @@ fn strength_set_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StrengthSetR
         sec: r.get(9)?,
         warmup: r.get::<_, i64>(10)? != 0,
         readiness: r.get(11)?,
+        post_feeling: r.get(12)?,
     })
 }
 
@@ -536,7 +539,8 @@ pub(crate) fn strength_recent_sets_on(
     let mut stmt = conn.prepare(
         "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
                 s.set_no, s.weight_kg, s.reps, s.sec, s.warmup, \
-                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER) \
+                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER), \
+                json_extract(ss.state_json, '$.postFeeling') \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
          LEFT JOIN workout_sessions ss ON ss.id = w.session_id \
          WHERE w.date >= date('now', 'localtime', '-' || ?1 || ' days') \
@@ -558,7 +562,8 @@ pub(crate) fn strength_recent_sets_on_limited(
     let mut stmt = conn.prepare(
         "SELECT s.workout_id, w.date, s.exercise_key, s.exercise_id, s.exercise_name, s.kind, \
                 s.set_no, s.weight_kg, s.reps, s.sec, s.warmup, \
-                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER) \
+                CAST(json_extract(ss.state_json, '$.readiness') AS INTEGER), \
+                json_extract(ss.state_json, '$.postFeeling') \
          FROM workout_sets s JOIN workouts w ON w.id = s.workout_id \
          LEFT JOIN workout_sessions ss ON ss.id = w.session_id \
          WHERE w.date >= date('now', 'localtime', '-' || ?1 || ' days') \

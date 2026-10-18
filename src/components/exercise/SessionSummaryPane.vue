@@ -21,6 +21,7 @@ import {
   type ExerciseRow,
   type PrRow,
 } from '@/utils/sessionSummary'
+import { FEELING_INPUT_LABEL, type FeelingInput } from '@/types'
 import type { ActivationMap } from '@/config/muscles'
 import type { StrengthSetRecord } from '@/types'
 
@@ -45,6 +46,17 @@ import type { StrengthSetRecord } from '@/types'
  * 的答案，其余是"细节与下一步"，滚下去看。
  */
 const s = useSessionStore()
+
+/** 体感三档：由好到差固定次序（读起来是「比预期好」往下），等权不预设高亮 */
+const FEEL_OPTIONS = (['better', 'as_expected', 'worse'] as const).map((value) => ({
+  value,
+  label: FEELING_INPUT_LABEL[value],
+}))
+
+/** 再点一次同一档 = 取消（回到「未回答」），否则用户没有退路只能选错一个 */
+function toggleFeeling(v: FeelingInput): void {
+  s.setPostFeeling(s.postFeeling === v ? null : v)
+}
 const lib = useExerciseLibStore()
 const { toast } = useToast()
 
@@ -353,6 +365,26 @@ function prDeltaText(p: PrRow): string {
         <b class="stval num">{{ st.value }}<i v-if="st.unit" class="stunit">{{ st.unit }}</i></b>
       </div>
     </div>
+
+    <!-- 训练后体感：练够分「体感」维度的输入，也是这一屏唯一需要用户动手的一格。
+         三枚**等权**且不预设高亮 —— 默认选中任何一档都是替他回答；
+         再点一次可以取消（记 null），跳过不影响保存：宁可这条没有，也不要编一个值。 -->
+    <div class="feelrow">
+      <span class="feellabel">这次练得怎么样？</span>
+      <div class="feelopts">
+        <button
+          v-for="o in FEEL_OPTIONS"
+          :key="o.value"
+          type="button"
+          class="feelopt"
+          :class="{ on: s.postFeeling === o.value }"
+          :aria-pressed="s.postFeeling === o.value"
+          @click="toggleFeeling(o.value)"
+        >
+          {{ o.label }}
+        </button>
+      </div>
+    </div>
     <!-- 配重与自重混在同一节：kg 容量只统计真配重，自重的次数单独报一行（合并会得出
          「重量 + 次数」这种不存在的量纲） -->
     <p v-if="kgVolume > 0 && bwReps > 0" class="stnote t-3">
@@ -557,6 +589,50 @@ function prDeltaText(p: PrRow): string {
   margin-top: 8px;
   padding-left: 2px;
   font-size: var(--fs-caption);
+}
+
+/* ---------- 训练后体感 ---------- */
+
+.feelrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.feellabel {
+  flex: none;
+  font-size: var(--fs-caption);
+  color: var(--text-2);
+}
+
+.feelopts {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+}
+
+/* 三枚等权（flex:1 一样宽）：视觉上就暗示「没有更正确的答案」。
+   命中区 44px 直接撑高 —— 这一屏唯一需要动手的一格，不该是 28px 的小胶囊；
+   这一行上下没有相邻控件，撑高不会造成误触。 */
+.feelopt {
+  flex: 1;
+  min-height: 44px;
+  padding: 0 6px;
+  border: 0.5px solid var(--line);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+/* 选中态：accent-soft 底 + accent-strong 字（与 AddWorkoutSheet 的 .gtag 同一对令牌，
+   明暗双态实测 4.62 / 5.34）。用「白字压 accent」暗色下只有 3.65:1。 */
+.feelopt.on {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
 }
 
 .stat {

@@ -6,7 +6,10 @@
  * 只吃 5 类已有数据（4 类与规范一致，第 5 类是按本软件实况加的）：
  *  · 频率时间戳 —— `workout_sets` 的 date / workoutId
  *  · 强度        —— 组数 + 重量（weightKg）+ 单组次数（reps）
- *  · 体感        —— 训练会话的「今日状态自评」readiness（5、4 良好 / 3 一般 / 1、2 差）
+ *  · 体感        —— **训练后**体感三档（`state_json.postFeeling`：比预期好 / 差不多 / 比预期差）。
+ *                  0.6.1 之前的旧记录没有它，由兼容层 0.0.1 回退用训练**前**自评 readiness
+ *                  （5、4 良好 / 3 一般 / 1、2 差）折算，并在界面与 note 里标明来源 ——
+ *                  两者是不同方向的量，不能互相冒充（见 `src/compat/layers.ts`）。
  *  · 目标        —— `profile.goal`（cut → 减脂；bulk / keep → 增肌）
  *  · 有氧等效组  —— `workouts`（记运动 / 跑步）按 aerobicLoad 折算成组数，**只往上补**
  *                  （`setsForScore = max(力量组, min(力量组 + 有氧等效组, 满分区下沿))`）。
@@ -29,6 +32,7 @@
  * 而规范的建议话术本来就是按这 10 组给的（「胸本周 7 组偏少」）。
  */
 
+import { compatActive } from '@/compat/layers'
 import { aerobicSetsByGroup, type AerobicGroupLoad } from '@/utils/aerobicLoad'
 import { addDays } from '@/utils/date'
 import { libraryMuscles } from '@/utils/libraryMuscles'
@@ -43,7 +47,7 @@ import {
   type MuscleKey,
   type ScoreGroupKey,
 } from '@/config/muscles'
-import type { ExerciseRecord, Goal, StrengthSetRecord, Workout } from '@/types'
+import type { ExerciseRecord, FeelingInput, Goal, StrengthSetRecord, Workout } from '@/types'
 
 /* ---------------- 常量与口径表（全部照规范抄录，便于复核） ---------------- */
 
@@ -81,6 +85,39 @@ export function feelingOfReadiness(v: number | null | undefined): Feeling | null
   if (v >= 4) return 'good'
   if (v === 3) return 'fair'
   return 'poor'
+}
+
+/**
+ * 训练**后**体感三档 → 体感三档（练够分口径）。
+ *
+ * 这才是「体感」这个维度本来想问的东西：**这次练得怎么样**。
+ * 从前它一直吃的是训练**前**的 readiness，语义对不上 —— 一次练到一半就崩的课
+ * 与一次轻松加练的课，只要开课时的自评一样，得分就一样。
+ */
+export function feelingOfPost(v: FeelingInput | null | undefined): Feeling | null {
+  if (v === 'better') return 'good'
+  if (v === 'as_expected') return 'fair'
+  if (v === 'worse') return 'poor'
+  return null
+}
+
+/** 体感样本的来源：`post` = 练后三档（首选）；`pre` = 老记录回退用训练前自评（兼容层 0.0.1） */
+export type FeelingSource = 'post' | 'pre'
+
+/**
+ * 一次会话的体感样本 → 三档 + 来源。没有 postFeeling 的记录**回退**用 readiness，
+ * 这条回退由兼容层 `0.0.1` 提供（见 `src/compat/layers.ts`）：删掉注册表里那一行，
+ * 老记录就不再被折算成体感，如实显示「未记录」。**不回填**——readiness 与 postFeeling
+ * 方向不同，替老数据编一个 postFeeling 是往口径里掺假。
+ */
+function feelingSampleOf(
+  rec: { postFeeling?: FeelingInput | null; readiness?: number | null },
+): { feeling: Feeling; source: FeelingSource } | null {
+  const post = feelingOfPost(rec.postFeeling)
+  if (post) return { feeling: post, source: 'post' }
+  if (!compatActive('0.0.1')) return null
+  const pre = feelingOfReadiness(rec.readiness)
+  return pre ? { feeling: pre, source: 'pre' } : null
 }
 
 /** 频率分（规范第 4 节）：0→-, 1..4 逐档, ≥5 取尾档 */
@@ -264,8 +301,10 @@ export interface GroupScore {
   repsScore: SubScore
   weightScore: SubScore
   feeling: Dimension
-  /** 本周有自评的会话数 */
+  /** 本周有体感的会话数（练后自评 + 兼容层折算的老记录） */
   feelingSamples: number
+  /** 体感样本的来源构成：`post` = 练后三档；`pre` = 旧记录经兼容层 0.0.1 折算 */
+  feelingSources: { post: number; pre: number }
   /** 体感缺失（规范：默认 60 分并降置信度） */
   feelingMissing: boolean
   confidence: Confidence
@@ -319,8 +358,12 @@ interface Acc {
   weightSum: number
   weightW: number
   days: Set<string>
-  /** 本周该组的会话 → 自评值（同一天多次训练也只算一个体感样本） */
-  sessionFeel: Map<number, number | null>
+  /**
+   * 本周该组的会话 → 体感样本（含来源）。
+   * 来源是必报项：练后三档与训练前自评折算出来的分**长得一样**，
+   * 但界面上必须能说清「这一条是练后评的还是练前折算的」。
+   */
+  sessionFeel: Map<number, { feeling: Feeling; source: FeelingSource } | null>
   /** 本周该组的有氧折算（无有氧来源为 null） */
   aero: AerobicGroupLoad | null
 }
@@ -395,7 +438,7 @@ export function computeTrainingScore(input: TrainingScoreInput): TrainingScoreRe
         // 频率与体感只看「真练到」的会话（辅助及以上）
         if (lv >= 2) {
           acc.days.add(s.date)
-          acc.sessionFeel.set(s.workoutId, s.readiness ?? null)
+          acc.sessionFeel.set(s.workoutId, feelingSampleOf(s))
         }
       } else if (inBase) {
         const b = base.get(g)!
@@ -502,6 +545,7 @@ function idleGroup(
     weightScore: sub('weight', '重量', '无数据'),
     feeling: dim('feeling', '体感', '无训练记录'),
     feelingSamples: 0,
+    feelingSources: { post: 0, pre: 0 },
     feelingMissing: true,
     confidence: 'low',
     weakest: 'frequency',
@@ -545,12 +589,19 @@ function scoreGroup(
 
   const intensityRaw = sScore * INTENSITY_SUB.sets + rScore * INTENSITY_SUB.reps + wScore * INTENSITY_SUB.weight
 
-  const samples = [...acc.sessionFeel.values()].filter((v): v is number => typeof v === 'number')
+  const samples = [...acc.sessionFeel.values()].filter(
+    (v): v is { feeling: Feeling; source: FeelingSource } => v !== null,
+  )
   const feelingMissing = samples.length === 0
   const feelingRaw = feelingMissing
     ? FEELING_DEFAULT
-    : samples.reduce((n, v) => n + FEELING_SCORE[feelingOfReadiness(v) ?? 'fair'], 0) / samples.length
+    : samples.reduce((n, v) => n + FEELING_SCORE[v.feeling], 0) / samples.length
   const poorFeeling = !feelingMissing && feelingRaw < 60
+  /** 体感样本的来源构成：界面据此说明这份体感是练后自评还是老记录折算的 */
+  const feelingSources = {
+    post: samples.filter((v) => v.source === 'post').length,
+    pre: samples.filter((v) => v.source === 'pre').length,
+  }
 
   const total = Math.min(
     100,
@@ -606,7 +657,9 @@ function scoreGroup(
     contribution: Math.round(feelingRaw * weights.feeling * 10) / 10,
     note: feelingMissing
       ? `${freqCount ? `${freqCount} 次训练均未自评` : '无训练记录'} · 按规范默认 60 分计`
-      : `本周 ${samples.length} 次自评的平均分`,
+      : feelingSources.pre > 0
+        ? `本周 ${samples.length} 次体感，其中 ${feelingSources.pre} 次为旧记录按训练前自评折算`
+        : `本周 ${samples.length} 次训练后自评的平均分`,
   }
 
   const setsScore: SubScore = {
@@ -658,6 +711,7 @@ function scoreGroup(
     weightScore,
     feeling,
     feelingSamples: samples.length,
+    feelingSources,
     feelingMissing,
     confidence,
     weakest: weakest.key,

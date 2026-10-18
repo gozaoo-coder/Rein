@@ -26,6 +26,7 @@ import { warmupPlan, type WarmupPrescription } from '@/utils/warmup'
 import { RUN_PLAN_ID } from '@/types'
 import type {
   DoneSet,
+  FeelingInput,
   GatewaySessionFinish,
   PlanExercise,
   PlanExerciseOverride,
@@ -102,6 +103,12 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
   const advice = ref<TrainingAdvice | null>(null)
   /** 今日状态自评 1..5；null = 未自评（建议引擎纯自动推断） */
   const readiness = ref<number | null>(null)
+  /**
+   * 训练后体感三档（总结页回答，相对预期）；null = 还没问 / 用户跳过。
+   * 与 readiness 是**两个不同的量**：readiness 在开课时问「今天状态如何」，
+   * 这一个在练完时问「这次和预期比怎么样」—— 练够分的体感维度吃的是这一个。
+   */
+  const postFeeling = ref<FeelingInput | null>(null)
   const timedTotal = ref(0)
   const timedElapsed = ref(0)
 
@@ -152,6 +159,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       extraSets: extraSets.value,
       skippedSets: skippedSets.value,
       readiness: readiness.value,
+      postFeeling: postFeeling.value,
       exerciseOverrides: exerciseOverrides.value,
     }
   }
@@ -537,6 +545,13 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     return warmupPlanFor(e)?.sets ?? []
   }
 
+  /** 训练后体感（总结页三档）：只落盘，不改建议 —— 它是**练后**的判断，
+   *  而建议引擎要的是练前的状态（readiness）。两者互不替代。 */
+  function setPostFeeling(v: FeelingInput | null): void {
+    postFeeling.value = v
+    touch()
+  }
+
   /**
    * 进入某动作时的重量预填：还在做激活热身 → 取当前热身组的处方重量，
    * 否则用正式组重量（上次实际 / 计划建议）。热身态与正式态共用同一个 weight 状态，
@@ -613,6 +628,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
       restIsTemp.value = false
       restWarmup.value = false
       readiness.value = null
+      postFeeling.value = null
       advice.value = null
       finishError.value = ''
       await Promise.all([
@@ -1272,6 +1288,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     extraSets.value = st.extraSets ?? {}
     skippedSets.value = st.skippedSets ?? {}
     readiness.value = st.readiness ?? null
+    postFeeling.value = st.postFeeling ?? null
     reps.value = st.reps ?? null
     // 外部也可能换过动作（AI 工具的 swap_exercise 或外部客户端自持状态）：身份要跟着落回
     // 本地 plan，否则下一拍 touch() 会用本地那份「没换过」的 plan 把外部状态写回去。
@@ -1469,6 +1486,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     timedTotal.value = rec.state.timedTotal ?? 0
     timedElapsed.value = 0
     readiness.value = rec.state.readiness ?? null
+    postFeeling.value = rec.state.postFeeling ?? null
     // 恢复后重算建议（自评随快照一起恢复）；建议是异步的，到了再对齐热身预填
     void loadAdvice().then(() => resyncWarmupPrefill())
     // 取上次重量要按**重放覆盖之后**的动作 id —— 用下面那个尚未覆盖的 `p` 会让换进来的
@@ -1567,6 +1585,8 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     lastWeights,
     advice,
     readiness,
+    postFeeling,
+    setPostFeeling,
     timedTotal,
     timedElapsed,
     overlay,

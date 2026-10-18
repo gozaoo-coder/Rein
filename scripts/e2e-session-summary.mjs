@@ -8,6 +8,10 @@
  * PR 的两级可信度、计时动作的秒数不进容量。任何一个算错，这屏都会安静地显示
  * 一个看起来合理的错数（这是汇总页最危险的失败模式：数字好看但口径是错的）。
  *
+ * S8 额外钉住训练后体感的**整条链路**：总结页三档 → 会话状态 → `state_json.postFeeling`
+ * → Rust 拍平成逐组记录 → 练够分的体感维度。只验界面等于没验：这条链路的终点在别处，
+ * 中间断一环（比如 state_json 没随快照落盘）界面照样好看。
+ *
  * 用课程：ppl-push（9 个力量动作，全 strength）—— 能一次覆盖逐动作明细的多行版式。
  */
 
@@ -431,6 +435,33 @@ async function main() {
        R1 给 saveNow 补了 try/catch（写库失败可原样重试）；失败分支在 mock 下
        无法注入（mock/server.ts 不在本轮允许清单），故这里只钉住成功路径不被
        这次改动碰坏：「保存训练」→ 回执含「已保存」→ 沉浸层收起（会话已关）。 */
+    /* ---------- S8. 训练后体感（练够分「体感」维度的输入） ----------
+       三件事要证明：① 总结页真的问了；② 点选会落进会话状态；③ 保存后能从**拍平后的
+       逐组记录**里读回来 —— 只验界面等于没验，这条链路的终点是练够分那张卡。 */
+    const feelOpts = await evalJS(`[...document.querySelectorAll('.feelopt')].map(b => b.textContent.trim())`)
+    ok('S8a 总结页问「这次练得怎么样」并给三档', feelOpts.length === 3, feelOpts.join(' / '))
+    ok(
+      'S8b 三档文案相对预期（不是 RPE）',
+      feelOpts.join('').includes('比预期好') && feelOpts.join('').includes('比预期差'),
+      feelOpts.join(' / '),
+    )
+
+    await evalJS(`(() => {
+      const b = [...document.querySelectorAll('.feelopt')].find(x => x.textContent.includes('比预期好'))
+      b?.click()
+      return true
+    })()`)
+    await sleep(400)
+    const feltInStore = await evalJS(`(async () => {
+      const { useSessionStore } = await import('/src/stores/session.ts')
+      return { v: useSessionStore().postFeeling, pressed: [...document.querySelectorAll('.feelopt')].map(b => b.getAttribute('aria-pressed')).join(',') }
+    })()`)
+    ok(
+      'S8c 点选后写入会话状态并标出选中（aria-pressed）',
+      feltInStore.v === 'better' && feltInStore.pressed === 'true,false,false',
+      JSON.stringify(feltInStore),
+    )
+
     await clickButton('保存训练')
     const savedToast = await (async () => {
       const t0 = Date.now()
@@ -444,6 +475,19 @@ async function main() {
     ok('S7a 保存回执含「已保存」', /已保存/.test(savedToast), savedToast)
     await waitFor(`!document.querySelector('.session-layer')?.classList.contains('is-open')`, 8000, '保存后沉浸层收起')
     ok('S7b 保存后沉浸层收起（会话已关）', true)
+
+    // 拍平链路（state_json.$.postFeeling → 逐组记录 → 练够分）：读回来才算真的通了
+    const feltRows = await evalJS(`(async () => {
+      const { sessionService } = await import('/src/services/sessionService.ts')
+      const rows = await sessionService.strengthRecentSets(1)
+      const stamped = rows.filter(r => r.postFeeling != null)
+      return { total: rows.length, stamped: stamped.length, values: [...new Set(stamped.map(r => r.postFeeling))] }
+    })()`)
+    ok(
+      'S8d 保存后逐组记录里能读到 postFeeling（Rust 端 json_extract 拍平）',
+      feltRows.stamped > 0 && feltRows.values.length === 1 && feltRows.values[0] === 'better',
+      JSON.stringify(feltRows),
+    )
 
     const failed = results.filter((r) => !r.pass)
     console.log(`\n${results.length - failed.length}/${results.length} 通过`)
