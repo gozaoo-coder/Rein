@@ -288,14 +288,20 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
     s.sessions.sort((a, b) => a.date.localeCompare(b.date) || a.workoutId - b.workoutId)
   }
 
-  /* ---- 2. 每肌群近 volumeDays 天加权组数 + 最近训练日期 ---- */
+  /* ---- 2. 每肌群近 volumeDays 天加权组数 + 上一窗口（减载侦测需要两周）+ 最近训练日期 ---- */
   const weekly = new Map<MuscleKey, number>()
+  /**
+   * **上一个同长度窗口**的加权组数（默认 [today−13, today−7]）。只服务减载侦测 ——
+   * 「连续两周超上限」需要两周的数据，而上限本身按**单周**判（见下方 overTwoWeeks）。
+   */
+  const weeklyPrev = new Map<MuscleKey, number>()
   const lastTrained = new Map<MuscleKey, string>()
   const primaryLast = new Map<MuscleKey, string>()
   // 窗口是**含今天在内的 volumeDays 个日历天**（默认 7 → [today−6, today]），
   // 与练够分的 SCORE_WEEK_DAYS 同口径。写成 `-volumeDays` 会多算一天（today−7），
   // 于是同一节课在两处显示成两个「本周组数」——差一天就足以跨过 MEV/MAV 档位边界。
   const windowStart = shiftDate(today, -(volumeDays - 1))
+  const prevWindowStart = shiftDate(today, -(volumeDays * 2 - 1))
   for (const r of sets) {
     if (r.warmup) continue
     if (r.weightKg == null && r.reps == null && r.sec == null) continue
@@ -304,6 +310,7 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
     for (const [muscle, level] of Object.entries(map) as [MuscleKey, Level][]) {
       const weight = ACTIVATION_WEIGHT[level] ?? 0.5
       if (r.date >= windowStart) weekly.set(muscle, (weekly.get(muscle) ?? 0) + weight)
+      else if (r.date >= prevWindowStart) weeklyPrev.set(muscle, (weeklyPrev.get(muscle) ?? 0) + weight)
       const prev = lastTrained.get(muscle)
       if (!prev || r.date > prev) lastTrained.set(muscle, r.date)
       if (level === 3) {
@@ -574,13 +581,39 @@ export function computeTrainingAdvice(input: TrainingAdviceInput): TrainingAdvic
     : 1
   const lowCount = muscleLoad.filter((m) => m.status === 'low' && m.lastDate).length
   const overCount = muscleLoad.filter((m) => m.status === 'over').length
-  const summary = overCount
-    ? `${overCount} 个肌群本周容量偏高，建议减量或增加休息`
-    : input.planExercises?.length
-      ? `今日状态 ×${globalReadiness.toFixed(2)}，按建议重量训练即可${lowCount ? `；${lowCount} 个肌群容量偏低` : ''}`
-      : lowCount
-        ? `${lowCount} 个肌群本周容量偏低`
-        : '本周各肌群容量都在合理区间'
+
+  /**
+   * 减载侦测：**连续两个窗口**都超过可恢复上限（MRV）。
+   *
+   * 只看连续两周：单周超上限很常见（赶上心情好、或这周刚好排了两次同一肌群），
+   * 而减载建议要的是趋势不是单次事件 —— 报得太勤等于没有建议。
+   *
+   * 刻意**不做 ACWR / 单调性**：那两个指标在 ≤4 练/周的场景下会退化成一个
+   * 「每周练几天」的别名（2 练/周时 acute/chronic 只有 0.5 / 1.0 / 1.5 三档，
+   * 「多练一次」直接跳档；1 练/周时一周里有六天 chronic 近似 0），
+   * 拿它当告警依据会一路误报。这里用两周组数与上限的对照，数据是现成的。
+   */
+  const overTwoWeeks = muscleLoad.filter((m) => {
+    const prevSets = weeklyPrev.get(m.muscle) ?? 0
+    return m.sets > m.mrv && prevSets > m.mrv
+  })
+  const deloadNote = overTwoWeeks.length
+    ? `「${overTwoWeeks
+        .map((m) => m.label)
+        .join('、')}」连续两周超过可恢复上限（本周 ${overTwoWeeks[0]!.sets} 组 / 上限 ${
+        overTwoWeeks[0]!.mrv
+      } 组），建议下周减载：组数降到约 60%，重量不动`
+    : ''
+
+  const summary = deloadNote
+    ? deloadNote
+    : overCount
+      ? `${overCount} 个肌群本周容量偏高，建议减量或增加休息`
+      : input.planExercises?.length
+        ? `今日状态 ×${globalReadiness.toFixed(2)}，按建议重量训练即可${lowCount ? `；${lowCount} 个肌群容量偏低` : ''}`
+        : lowCount
+          ? `${lowCount} 个肌群本周容量偏低`
+          : '本周各肌群容量都在合理区间'
 
   return {
     readiness: { score: globalReadiness, factors: globalFactors },
