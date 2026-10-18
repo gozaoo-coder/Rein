@@ -108,11 +108,14 @@ const exTips = computed(() => (s.currentEx ? lib.tipsOf(s.currentEx) : ''))
 const WEIGHT_STEP = 2.5
 
 /**
- * 当前动作的激活热身处方：按**今日推荐重量**实时换算（见 stores/session::warmupsFor）。
- * 课程里写死的 warmups 只在拿不到工作重量（无建议 / 无历史 / 无计划重量）时作回落，
- * 所以推荐重量一变（加档 / 降载 / 改自评），这里的重量与组数立刻跟着变。
+ * 当前动作的激活热身处方：按**当天的估算极限（e1RM）**实时换算，拿不到极限时
+ * 回落按推荐重量（见 stores/session::warmupPlanFor）。课程里写死的 warmups 是最终回落，
+ * 只在连工作重量都没有时用。推荐重量或极限一变（加档 / 降载 / 改自评），这里的重量
+ * 与组数立刻跟着变。
  */
-const curWarmups = computed(() => (s.currentEx ? s.warmupsFor(s.currentEx) : []))
+const curWarmupPlan = computed(() => (s.currentEx ? s.warmupPlanFor(s.currentEx) : null))
+
+const curWarmups = computed(() => curWarmupPlan.value?.sets ?? [])
 
 /** 当前待做的激活热身组（热身页据此预填并展示处方值） */
 const curWarmup = computed(() => {
@@ -122,19 +125,37 @@ const curWarmup = computed(() => {
   return rx[Math.min(s.warmupDone(ex), rx.length - 1)] ?? null
 })
 
-/** 热身换算依据（热身页脚注）：写清「按哪个重量、什么比例、算出来多少」 */
+/**
+ * 热身换算依据（热身页脚注）：写清「按**哪个**重量、什么比例、算出来多少」。
+ * 基准有两种（估算极限 / 推荐重量），脚注必须跟着 `usedBaseline` 走 ——
+ * 一律写「按推荐重量换算」在有极限时就是错的说法：乘的根本不是那个数。
+ */
 const warmupNote = computed(() => {
   const ex = s.currentEx
-  const rx = curWarmups.value
+  const plan = curWarmupPlan.value
+  const rx = plan?.sets ?? []
   if (!ex || !rx.length) return ''
   const w = s.workingWeightFor(ex)
   if (w <= 0) return ''
   // 实测比例会因取整偏离标称值（如 62.5kg 的 50% = 31.25 → 32.5），
   // 所以标称规则与换算结果一起给，免得用户以为算错了
-  const nominal = rx.length > 1 ? '50% / 75%' : '50%'
+  const based = plan!.usedBaseline ? (ex ? (s.adviceFor(ex)?.todayCeiling ?? 0) : 0) : w
+  const nominal = plan!.usedBaseline
+    ? rx.length > 1
+      ? '50% / 70% 极限'
+      : '50% 极限'
+    : rx.length > 1
+      ? '50% / 75%'
+      : '50%'
   const out = rx.map((d) => `${fmtKg(d.weightKg)}×${d.reps}`).join(' → ')
-  return `按推荐重量 ${fmtKg(w)} kg 换算（${nominal}，取整到 2.5kg）：${out} · 不计入组数与总容量`
+  const basisText = plan!.usedBaseline
+    ? `按当天估算极限 ${fmtKg(based)} kg 换算`
+    : `按推荐重量 ${fmtKg(w)} kg 换算`
+  return `${basisText}（${nominal}，取整到 2.5kg）：${out} · 不计入组数与总容量`
 })
+
+/** 结论行右侧那句指引：只负责指到数字的来处，具体换算收在 InfoHint 里 */
+const warmupBasisText = computed(() => (curWarmupPlan.value?.usedBaseline ? '按估算极限换算' : '按推荐重量换算'))
 
 /** 一键填入的重量候选：同一个重量的三个出处（今日建议 / 上次 / 计划），点一下即填入 */
 interface FillSource {
@@ -1189,18 +1210,18 @@ function trapFocus(e: KeyboardEvent): void {
                 </button>
               </div>
 
-              <!-- 热身换算依据：卡面只留结论胶囊 + 一行「按推荐重量换算」的指引，
+              <!-- 热身换算依据：卡面只留结论胶囊 + 一行基准指引，
                    「按哪个比例、取整到多少、逐组算出什么」收进右侧 InfoHint ——
                    11px 灰字承载不了那种换算说明，真机上几乎读不清，用户会以为重量算错。
-                   指引句刻意保留「推荐重量」这个词：e2e-session-warmup.mjs 断言
-                   .whint 写明换算依据，可见层要能指到这些数字的来处
-                   （比例 / 取整 / 逐组结果仍只在 InfoHint 里）。
+                   指引句必须写出**这一份处方实际用的基准**（估算极限 / 推荐重量），
+                   而不是固定写「按推荐重量换算」：有极限时乘的就是极限，固定文案会说谎
+                   （e2e-session-warmup.mjs 断言 .whint 指到数字的来处）。
                    本卡本来没有标题行，帮助入口就落在结论行右端（aria-label 由
                    InfoHint 自己保证，见 STANDARDS §4）。 -->
               <div v-if="warmupNote" class="whint-row">
                 <p class="whint">
                   <StatusChip tone="neutral" size="sm">热身组不计入组数与总容量</StatusChip>
-                  <span class="wbasis">按推荐重量换算</span>
+                  <span class="wbasis">{{ warmupBasisText }}</span>
                 </p>
                 <InfoHint title="热身重量怎么换算" :content="warmupNote" />
               </div>

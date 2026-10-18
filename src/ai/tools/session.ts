@@ -19,11 +19,14 @@ import { Type } from '@earendil-works/pi-ai'
 import { useExerciseLibStore } from '@/stores/exerciseLib'
 import { useSessionStore } from '@/stores/session'
 import {
+  WARMUP_LIGHT_KG,
   WARMUP_MIN_KG,
   WARMUP_RAMP_MIN_KG,
+  WARMUP_RELATIVE_MIN_RATIO,
+  WARMUP_RELATIVE_RAMP_RATIO,
   WARMUP_RULE_TEXT,
   WARMUP_STEP_KG,
-  warmupPrescription,
+  warmupPlan,
 } from '@/utils/warmup'
 import { defineTool, type AppTool } from './types'
 
@@ -72,7 +75,8 @@ function describeSession(s: SessionStore): Record<string, unknown> {
   const totalEx = s.plan?.exercises.length ?? 0
   const advice = ex ? s.adviceFor(ex) : null
   const working = ex ? s.workingWeightFor(ex) : 0
-  const rx = ex ? s.warmupsFor(ex) : []
+  const rxPlan = ex ? s.warmupPlanFor(ex) : null
+  const rx = rxPlan?.sets ?? []
   const doneWarm = ex ? s.warmupDone(ex) : 0
   const isStrength = ex?.kind === 'strength'
 
@@ -99,16 +103,26 @@ function describeSession(s: SessionStore): Record<string, unknown> {
       : null,
     /** 正式组那一档的重量（今日建议优先，回落上次实际 / 课程建议值） */
     workingWeightKg: working > 0 ? working : null,
-    /** 今日推荐重量（建议引擎给出，热身处方就是按它换算的） */
+    /**
+     * 今日推荐重量（建议引擎给出）。它**不是**热身处方的换算基准 —— 有极限时基准是
+     * `warmup.basisE1rmKg`，推荐重量只在估不出极限时兜底（见 warmup.basisUsed）。
+     */
     recommendedWeightKg: advice?.suggestedWeight ?? null,
     /** 当前输入框里的重量：热身相位时是热身重量，做组相位时是工作重量 */
     currentWeightKg: s.weight,
-    /** 激活热身：规则 + 按推荐重量换算出的处方 + 已做/剩余 */
+    /** 激活热身：规则 + 按当天估算极限（无极限时按推荐重量）换算出的处方 + 已做/剩余 */
     warmup:
       isStrength && ex
         ? {
             rule: WARMUP_RULE_TEXT,
             basisWeightKg: working > 0 ? working : null,
+            /**
+             * 换算基准有两种：乘在**当天的估算极限（e1RM）**上（那才是「40%–75% 1RM」的
+             * 区间），拿不到极限时回落按工作重量的绝对阈值。模型复述时要说清用的是哪套，
+             * 否则用户按「工作重量的 50%」去核对数字会发现对不上。
+             */
+            basisE1rmKg: advice?.todayCeiling ?? null,
+            basisUsed: rxPlan?.usedBaseline ? 'e1rm' : 'working_weight',
             prescribed: rx.map((d) => ({ weightKg: d.weightKg, reps: d.reps })),
             doneSets: doneWarm,
             remainingSets: Math.max(0, rx.length - doneWarm),
@@ -154,22 +168,34 @@ export const sessionTools: AppTool[] = [
       workingWeightKg: Type.Optional(
         Type.Number({ description: '要试算的正式组重量（kg）；不传则只返回规则' }),
       ),
+      e1rmKg: Type.Optional(
+        Type.Number({
+          description:
+            '该动作当天的估算极限（e1RM，kg）。给了就按相对强度换算（百分比乘在极限上）；不传则回落按工作重量的绝对阈值',
+        }),
+      ),
     }),
     async execute(args) {
       const kg = num(args.workingWeightKg)
+      const plan = kg != null ? warmupPlan(kg, { e1rm: num(args.e1rmKg) }) : null
       return {
         rule: WARMUP_RULE_TEXT,
         thresholds: {
           rampFromKg: WARMUP_RAMP_MIN_KG,
           oneSetFromKg: WARMUP_MIN_KG,
           plateStepKg: WARMUP_STEP_KG,
+          lightSkipKg: WARMUP_LIGHT_KG,
+          rampRatioOfE1rm: WARMUP_RELATIVE_RAMP_RATIO,
+          oneSetRatioOfE1rm: WARMUP_RELATIVE_MIN_RATIO,
         },
         basis:
-          '热身强度取工作组的 40%–75%：低于 40% 只局部升温、对表现无增益；高于 80% 开始累积疲劳、反而压低正式组输出。复合动作两段渐进，在低次数下预演接近工作组的负荷。',
-        prescribed:
-          kg != null
-            ? warmupPrescription(kg).map((d) => ({ weightKg: d.weightKg, reps: d.reps }))
-            : null,
+          '热身强度取工作组的 40%–75% 1RM：低于 40% 只局部升温、对表现无增益；高于 ~80% 开始累积疲劳、反而压低正式组输出。注意百分比乘的是**当天的估算极限（e1RM）**而不是工作重量本身 —— 工作重量只占极限一半多时，按工作重量取百分比会落进「低于 40%」那一档，等于白占一组时间。',
+        prescribed: plan ? plan.sets.map((d) => ({ weightKg: d.weightKg, reps: d.reps })) : null,
+        basisUsed: plan
+          ? plan.usedBaseline
+            ? '按当天估算极限（e1RM）换算'
+            : '没有历史估不出极限，回落按工作重量的绝对阈值'
+          : null,
         note:
           '运行时热身重量按当天推荐重量实时换算；推荐重量变化（加档 / 降载 / 改今日自评）会立刻改变热身，不必改课程。',
       }

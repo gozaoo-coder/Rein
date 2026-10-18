@@ -6,8 +6,9 @@
  * 只有跑起来才知道。static import 一次都验不到。
  *
  * 覆盖：
- *  W. 热身处方 = 推荐重量的 50%/75%（取整到 2.5、严格小于工作重量），界面与 store 一致
- *  R. 界面脚注写明「按推荐重量 X kg 换算」（用户看得到换算依据）
+ *  W. 热身处方：有当天估算极限（e1RM）时 = 极限的 50%/70%，没有极限时回落
+ *     推荐重量的 50%/75%（都取整到 2.5、严格小于工作重量），界面与 store 一致
+ *  R. 界面脚注写出**这一份实际用的基准**（按估算极限 X kg / 按推荐重量 X kg 换算）
  *  Q. AI 查询：get_active_session / get_warmup_rule 能取到推荐重量与处方
  *  M. AI 写入：update_active_session 改重量 / 跳过热身 / 加练生效，且越界与非法 action 只返回
  *     {updated:false} 不抛错（切屏断流后重放安全）
@@ -110,19 +111,21 @@ const rx = await evalStore(async () => {
   const s = useSessionStore()
   const ex = s.currentEx
   const working = s.workingWeightFor(ex)
-  const rx = s.warmupsFor(ex)
+  const plan = s.warmupPlanFor(ex)
   return {
     name: ex.name,
     working,
     planWeight: ex.weightKg,
     advised: s.adviceFor(ex)?.suggestedWeight ?? null,
-    rx,
+    e1rm: s.adviceFor(ex)?.todayCeiling ?? null,
+    usedBaseline: plan?.usedBaseline ?? false,
+    rx: plan?.sets ?? [],
     planWarmups: ex.warmups ?? null,
   }
 })
 console.log(
   `    动作=${rx.name} plan=${rx.planWeight}kg 推荐=${rx.advised}kg 工作=${rx.working}kg ` +
-    `处方=${rx.rx.map((d) => `${d.weightKg}×${d.reps}`).join(' / ')}`,
+    `e1rm=${rx.e1rm ?? '—'}kg 处方=${rx.rx.map((d) => `${d.weightKg}×${d.reps}`).join(' / ')}`,
 )
 ok(rx.working > 0, '工作重量可读（建议 / 上次 / 计划 三级回落）', `${rx.working}kg`)
 ok(rx.rx.length > 0, '处方非空')
@@ -136,12 +139,26 @@ ok(
   '重量取整到 2.5kg 步进',
   rx.rx.map((d) => d.weightKg).join(','),
 )
-const pcts = rx.rx.map((d) => Math.round((d.weightKg / rx.working) * 100))
+// 百分比口径随「估得出极限吗」变：有极限时乘在极限上（那才是「40%–75% 1RM」的区间），
+// 没有极限才回落按工作重量取百分比。断言必须跟着**实际口径**走 —— 固定按工作重量算，
+// 测的就是上一版语义（有极限时第二段会到 84% 工作重量，那不是算错，是口径变了）。
+const hasBase = rx.usedBaseline && rx.e1rm != null && rx.e1rm > rx.working
+const basisKg = hasBase ? rx.e1rm : rx.working
+const pcts = rx.rx.map((d) => Math.round((d.weightKg / basisKg) * 100))
+ok(hasBase, '本次走相对强度口径（有当天估算极限）', `e1rm=${rx.e1rm ?? '—'}kg / 工作=${rx.working}kg`)
 ok(
   pcts.every((p) => p >= 45 && p <= 80),
-  '百分比落在热身区间（40%~75% 附近，含取整误差）',
+  `百分比落在热身区间（相对${hasBase ? '估算极限' : '工作重量'} 40%~80%，含取整误差）`,
   pcts.join('% / ') + '%',
 )
+if (hasBase) {
+  const want = Math.max(2.5, Math.round((rx.e1rm * 0.5) / 2.5) * 2.5)
+  ok(
+    rx.rx[0]?.weightKg === want,
+    '有极限时首段 = 50% 估算极限（不是 50% 工作重量）',
+    `${rx.rx[0]?.weightKg}kg vs 期望 ${want}kg`,
+  )
+}
 // 核心断言：处方不是课程里写死的那份
 const sameAsPlan =
   rx.planWarmups != null &&
@@ -161,7 +178,11 @@ ok(
   '界面每格重量与处方一致',
   ui.chips.join(' | '),
 )
-ok(ui.hint.includes('推荐重量'), '脚注写明换算依据（按推荐重量 … kg）', ui.hint)
+ok(
+  hasBase ? ui.hint.includes('估算极限') : ui.hint.includes('推荐重量'),
+  '脚注写出这一份实际用的基准（估算极限 / 推荐重量）',
+  ui.hint,
+)
 
 // 预填重量必须已经对齐到处方第一组（自评/建议异步到达后 store 会 resync）
 const prefill = await evalStore(async () => {
@@ -192,6 +213,11 @@ ok(
   active?.warmup?.basisWeightKg === rx.working,
   '查询结果给出换算基准重量',
   `${active?.warmup?.basisWeightKg}kg`,
+)
+ok(
+  active?.warmup?.basisUsed === (hasBase ? 'e1rm' : 'working_weight'),
+  'AI 查询说明处方用的是哪套基准（模型复述时才不会说错）',
+  `${active?.warmup?.basisUsed}`,
 )
 const rule = await callTool('get_warmup_rule', { workingWeightKg: rx.working })
 ok(!!rule?.rule && rule?.prescribed?.length === rx.rx.length, 'get_warmup_rule 试算一致', rule?.rule)

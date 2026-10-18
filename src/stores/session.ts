@@ -22,7 +22,7 @@ import { usePlanStore } from '@/stores/plan'
 import { todayStr } from '@/utils/date'
 import { computeTrainingAdvice, type ExerciseAdvice, type TrainingAdvice } from '@/utils/trainingAdvice'
 import { setVolumeKg } from '@/utils/sessionSummary'
-import { warmupPrescription } from '@/utils/warmup'
+import { warmupPlan, type WarmupPrescription } from '@/utils/warmup'
 import { RUN_PLAN_ID } from '@/types'
 import type {
   DoneSet,
@@ -522,11 +522,19 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
    * 课程条目里的 `warmups` 只在拿不到工作重量（无建议引擎 / 无历史 / 无计划重量）时
    * 作回落，保证首次训练与离线场景仍能热身。
    */
-  function warmupsFor(e: PlanExercise): WarmupSet[] {
-    if (e.kind !== 'strength') return []
+  function warmupPlanFor(e: PlanExercise): WarmupPrescription | null {
+    if (e.kind !== 'strength') return null
     const w = weightFor(e)
-    if (w > 0) return warmupPrescription(w)
-    return e.warmups ?? []
+    if (w <= 0) return { sets: e.warmups ?? [], usedBaseline: false }
+    // 百分比乘的是**当天的估算极限（e1RM）**，不是工作重量 —— 见 utils/warmup.ts 顶部
+    // 「百分比乘错基准」那段。拿不到极限（新动作 / 换器械 / 无历史）时函数内部自己回落
+    // 绝对阈值；`usedBaseline` 随处方一起交出来，界面脚注与 AI 输出才能如实写出基准，
+    // 而不是一律写「按推荐重量换算」—— 那样有基线时文案就在说谎。
+    return warmupPlan(w, { e1rm: adviceFor(e)?.todayCeiling ?? null })
+  }
+
+  function warmupsFor(e: PlanExercise): WarmupSet[] {
+    return warmupPlanFor(e)?.sets ?? []
   }
 
   /**
@@ -1585,6 +1593,7 @@ export const useSessionStore = defineStore('session', () => {  const sessionId =
     skipWarmup,
     warmupDone,
     warmupPending,
+    warmupPlanFor,
     warmupsFor,
     workingWeightFor,
     addRest,
