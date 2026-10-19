@@ -13,7 +13,7 @@ import PageHeader from '@/components/layout/PageHeader.vue'
 import { useToast } from '@/composables/useToast'
 import { isSessionLostMessage, useCampusStore } from '@/stores/campus'
 import { useFeaturesStore } from '@/stores/features'
-import type { ScheduleEntry } from '@/types'
+import type { CourseDetail, ScheduleEntry } from '@/types'
 import { addDays, addMonths, endOfMonth, fmtDateCn, startOfMonth, todayStr, weekDates } from '@/utils/date'
 
 type ViewKey = 'day' | 'week' | 'month'
@@ -101,23 +101,28 @@ function goDay(date: string): void {
  * **远端教学班 id**（`campus_courses.remote_lesson_id`）。两者不是一套编号，
  * 不做这一步映射就会拿着本地自增 id 去教务里问课。
  *
+ * 但它**不再是开抽屉的前提**：本机同步下来的课程 / 时段本身就够撑起一页档案
+ * （`store.localCourseDetail`），远端详情只负责把容量、已选人数这类实时值补上 ——
+ * 正方那套教务根本没有详情接口，少了这份兜底，点课程只能得到一句「不支持」。
+ *
  * `weekday`/`startUnit` 一起带上：同一门课一周上多次时，用它定位到用户点的这一格。
  */
-const detail = ref<{ lessonId: number; weekday: number; startUnit: number; name: string } | null>(null)
+const detail = ref<{
+  /** 远端教学班 id；本机没有这条映射（课表只同步了一半）时为 null，那就只看本机那份 */
+  lessonId: number | null
+  weekday: number
+  startUnit: number
+  name: string
+  local: CourseDetail
+} | null>(null)
 
 function openDetail(e: ScheduleEntry): void {
-  const remote = store.courses.find((c) => c.id === e.session.courseId)?.remoteLessonId
-  if (remote == null) {
-    toast.toast('这门课还没同步到教务信息', {
-      action: { label: '同步', run: () => void onSync() },
-    })
-    return
-  }
   detail.value = {
-    lessonId: remote,
+    lessonId: store.courses.find((c) => c.id === e.session.courseId)?.remoteLessonId ?? null,
     weekday: e.session.weekday,
     startUnit: e.session.startUnit,
     name: e.session.courseName,
+    local: store.localCourseDetail(e),
   }
 }
 
@@ -261,6 +266,7 @@ watch([view, anchor], reload)
       :weekday="detail?.weekday ?? null"
       :start-unit="detail?.startUnit ?? null"
       :fallback-course-name="detail?.name ?? ''"
+      :local-detail="detail?.local ?? null"
       @close="detail = null"
     />
     </div>

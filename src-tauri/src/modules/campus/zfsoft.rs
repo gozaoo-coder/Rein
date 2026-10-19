@@ -19,9 +19,9 @@ use crate::error::{ReinError, Result};
 use super::dates::parse_ymd;
 use super::http::{guard, rsa_encrypt_password_with_key, HttpResponse, Session};
 use super::models::{
-    lenient_f64, lenient_i64, LoginOutcome, PageVars, RemoteNamed, RemoteSemester,
-    TimetableActivity, TimetableSnapshot, ZfsoftKbResponse, ZfsoftKbRow, ZfsoftSlotRow,
-    ZfsoftWeekRow,
+    lenient_f64, lenient_i64, LoginOutcome, PageVars, RemoteNamed, RemotePeriodSlot,
+    RemoteSemester, TimetableActivity, TimetableSnapshot, ZfsoftKbResponse, ZfsoftKbRow,
+    ZfsoftSlotRow, ZfsoftWeekRow,
 };
 use super::provider::{SchoolSystemSpec, ZfsoftEndpoints};
 
@@ -555,6 +555,9 @@ impl<'a> ZfsoftAdapter<'a> {
                 "教务没有返回节次时间表，无法把节次换算成上课时间".into(),
             ));
         }
+        // 同一份表既用来算每条课的封套，也随快照落库：前端的左侧时间轴要画到逐节
+        // （第1节 08:00-08:40），光有封套画不出来。所以两张形状都得从它派生，别抓第二遍。
+        let period_slots = to_period_slots(&slots);
 
         let mut activities: Vec<TimetableActivity> = parsed
             .kb_list
@@ -593,6 +596,7 @@ impl<'a> ZfsoftAdapter<'a> {
             // 已修学分同理：正方要另开页面算，这里不拿课表几门课的学分去冒充
             total_credits: None,
             activities,
+            period_slots,
         })
     }
 
@@ -677,6 +681,23 @@ impl<'a> ZfsoftAdapter<'a> {
         }
         Ok(map)
     }
+}
+
+/// 节次表（`节次 → (起, 止)`）→ 归一化形状，**按节次升序**。
+///
+/// 排序放在这里而不是落库方：这张表是前端的行轴来源，顺序错了左列的时刻就会跳来跳去；
+/// `HashMap` 的迭代顺序不定，依赖它等于让每次同步画出来的课表都不一样。
+fn to_period_slots(slots: &HashMap<i64, (String, String)>) -> Vec<RemotePeriodSlot> {
+    let mut out: Vec<RemotePeriodSlot> = slots
+        .iter()
+        .map(|(unit, (start_time, end_time))| RemotePeriodSlot {
+            unit: *unit,
+            start_time: start_time.clone(),
+            end_time: end_time.clone(),
+        })
+        .collect();
+    out.sort_by_key(|s| s.unit);
+    out
 }
 
 /// 一行课表 → 归一化的上课时段。

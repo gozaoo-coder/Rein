@@ -3,6 +3,7 @@ import { computed } from 'vue'
 
 import EmptyState from '@/components/common/EmptyState.vue'
 import type { ScheduleEntry } from '@/types'
+import { unitLabel } from '@/utils/campusTimeAxis'
 import { nowMin, todayStr } from '@/utils/date'
 import { CalendarOff } from 'lucide-vue-next'
 
@@ -97,7 +98,7 @@ function place(e: ScheduleEntry): string {
           <span class="t1">{{ e.session.startTime }}</span>
           <span class="line" />
           <span class="t2">{{ e.session.endTime }}</span>
-          <span class="unit">第{{ e.session.startUnit }}-{{ e.session.endUnit }}节</span>
+          <span class="unit">{{ unitLabel(e.session.startUnit, e.session.endUnit) }}</span>
         </div>
 
         <div class="card">

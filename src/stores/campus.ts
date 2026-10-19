@@ -5,8 +5,11 @@ import { campusService } from '@/services/campusService'
 import { useTodoStore } from '@/stores/todo'
 import type {
   CampusAccount,
+  CampusCourse,
   CampusLoginInput,
   CampusSemester,
+  CampusSession,
+  CourseDetail,
   LoginOutcome,
   ScheduleEntry,
   ScheduleView,
@@ -54,6 +57,21 @@ export const useCampusStore = defineStore('campus', () => {
 
   function entriesOn(date: string): ScheduleEntry[] {
     return byDate.value.get(date) ?? []
+  }
+
+  /**
+   * 这一格的**本机档案**（课名 / 代码 / 教师 / 学分 / 类型 / 时间 / 地点 / 周次）。
+   *
+   * 点开课程格时先把这份交给抽屉，远端详情回来再替换 —— 远端那条路不是每套教务都有：
+   * 正方没有「课程详情」接口，树维要现拉整张课表。没有它，点课程要么弹一句「不支持」，
+   * 要么对着骨架等一次慢网络，而屏幕上的数据本来就够撑起同一页。
+   */
+  function localCourseDetail(entry: ScheduleEntry): CourseDetail {
+    return offlineCourseDetail(
+      entry.session,
+      courses.value.find((c) => c.id === entry.session.courseId),
+      semester.value?.name ?? '',
+    )
   }
 
   /** 当前学期名 + 第几周，给页头副标题用 */
@@ -191,6 +209,7 @@ export const useCampusStore = defineStore('campus', () => {
     currentSemesterId,
     headerSubtitle,
     entriesOn,
+    localCourseDetail,
     init,
     loadRange,
     login,
@@ -206,6 +225,70 @@ export const useCampusStore = defineStore('campus', () => {
 /** 课表页默认的时间窗口，与 Rust 侧物化窗口一致（过去一周 + 未来五周） */
 export function defaultRange(today = todayStr()): { from: string; to: string } {
   return { from: addDays(today, -7), to: addDays(today, 35) }
+}
+
+/**
+ * 同步下来的课程 / 时段 → 与远端 `CourseDetail` **同形**的一份档案。
+ *
+ * 存在的理由：`campus_course_detail` 依赖教务的「课程详情」接口 —— 正方那套没有
+ * （适配器直接返回「不支持」），树维那套要现拉一次整张课表（慢，且会话一过期连本机
+ * 已有的数据都看不到）。而课表本身同步下来的 `campus_courses` + `campus_sessions`
+ * 已经带着课名 / 代码 / 教师 / 学分 / 类型 / 时间 / 地点 / 周次，足够撑起同一页档案。
+ *
+ * **只填本机真有的字段**：容量、已选人数、学时构成、考试方式这些只有详情接口才给得出，
+ * 一律留 null —— 抽屉的排版原则是「空值不占位」，编一个值比留空糟得多。
+ * 同理不拿学生自己的院系专业去冒充「开课归属」，那是两个概念。
+ */
+export function offlineCourseDetail(
+  session: CampusSession,
+  course: CampusCourse | undefined,
+  semesterName: string,
+): CourseDetail {
+  const weeks = [...session.weeks].sort((a, b) => a - b)
+  const teachers = (course && course.teachers.length > 0 ? course.teachers : session.teachers).filter(
+    Boolean,
+  )
+  const startUnit = session.startUnit > 0 ? session.startUnit : 0
+  return {
+    courseName: course?.courseName ?? session.courseName,
+    courseCode: course?.courseCode ?? session.courseCode,
+    lessonCode: course?.lessonCode ?? null,
+    lessonName: course?.lessonName ?? null,
+    description: null,
+    room: session.room,
+    // 楼名落在远端详情里的「教室别名」那一格 —— 抽屉里它正是教室的副行
+    roomAlias: session.building,
+    campus: session.campus,
+    weekday: session.weekday,
+    startUnit,
+    endUnit: session.endUnit,
+    startTime: session.startTime,
+    endTime: session.endTime,
+    // 与 Rust `detail.rs::big_section_of` 同口径：2 小节 = 1 大节
+    bigSection: startUnit > 0 ? Math.ceil(startUnit / 2) : 0,
+    weeksStr: session.weeksStr,
+    startWeek: weeks[0] ?? null,
+    endWeek: weeks[weeks.length - 1] ?? null,
+    teachers,
+    credits: course?.credits ?? session.credits,
+    courseTypeCode: null,
+    courseTypeName: course?.courseType ?? session.courseType,
+    examCategory: null,
+    examType: null,
+    courseProperty: null,
+    openDepartment: null,
+    major: null,
+    grade: null,
+    semesterName,
+    capacity: null,
+    enrolled: null,
+    hasExperiment: false,
+    experimentBatch: null,
+    experimentBatchNo: null,
+    experimentName: null,
+    remark: null,
+    period: null,
+  }
 }
 
 /**

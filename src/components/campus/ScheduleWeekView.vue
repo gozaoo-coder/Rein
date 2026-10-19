@@ -1,15 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 
-import type { PeriodSlot, ScheduleEntry } from '@/types'
+import type { ScheduleEntry } from '@/types'
 import { parseDate, weekDates, todayStr } from '@/utils/date'
+import {
+  buildTimeAxis,
+  cellKey,
+  rowKey,
+  rowWeights,
+  unitLabel,
+  type AxisCell,
+  type AxisRow,
+} from '@/utils/campusTimeAxis'
 
 /**
  * 周视图 · 7 列 × 节次行。
  *
- * 行 = 教务的真实节次区间（`TimeSlot`），左侧列显示**实际上课时间**而不是「第几节」——
- * 数据直接来自教务的 `startTime`/`endTime`，不需要我们维护节次表。
- * 表头在星期几下方标注具体日期（需求明确要求）。
+ * 行 = 时间轴上的**互斥片段**（`@/utils/campusTimeAxis`）：学校给了节次表就画到逐节
+ * （第1节 08:00-08:40），只有排课区间就画成若干节的合并。左侧列显示**实际上课时间**，
+ * 数据来自教务，不需要我们维护节次表。表头在星期几下方标注具体日期（需求明确要求）。
+ *
+ * 各校作息不一样（四十分钟一节 / 一上两节 / 上午下午晚上各一套），所以：
+ * 1. **课块跨行绘制**：3 节连排的课占三行，和「三节单排」在视觉上终于能分开；
+ * 2. **行高按真实时长成比例**：40 分钟的一行不该和 130 分钟的一行一样高；
+ * 3. 每个格子**显式落位**（见 `layout`），不靠自动排布 —— 跨行会把自动排布后面的格子挤到
+ *    别的列上，课程格一多列就错位。
  *
  * 滚动体验的三个关键决定：
  * 1. **单一滚动容器同时承担 x/y**：斜向滑动自然，不会出现两个滚动上下文互相打架；
@@ -20,7 +35,7 @@ import { parseDate, weekDates, todayStr } from '@/utils/date'
  */
 const props = defineProps<{
   entries: ScheduleEntry[]
-  timeSlots: PeriodSlot[]
+  timeSlots: AxisRow[]
   /** 该周内任意一天，用来定位这一周 */
   anchor: string
 }>()
@@ -30,42 +45,46 @@ const emit = defineEmits<{ select: [entry: ScheduleEntry] }>()
 
 const today = todayStr()
 
-/** 行标识：节次区间就是行身份（同一区间的时间必然一致） */
-function rowKey(slot: { startUnit: number; endUnit: number }): string {
-  return `${slot.startUnit}-${slot.endUnit}`
-}
+/** 行高的下限：一行要装下「起止时刻 + 节次」两行字和一个课块，再矮就读不出来了 */
+const ROW_MIN = 56
 
-function cellKey(date: string, slot: { startUnit: number; endUnit: number }): string {
-  return `${date}|${rowKey(slot)}`
-}
+/** 同格多课：>2 门时只画两门，其余折成「+N」提示（课程冲突不是常态，不必为它牺牲可读性） */
+const VISIBLE_LIMIT = 2
 
 const days = computed(() => weekDates(props.anchor))
 
-const rows = computed(() => [...props.timeSlots].sort((a, b) => a.startMin - b.startMin))
+const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 
-const cells = computed(() => {
-  const map = new Map<string, ScheduleEntry[]>()
-  for (const e of props.entries) {
-    const key = cellKey(e.date, e.session)
-    const list = map.get(key)
-    if (list) list.push(e)
-    else map.set(key, [e])
-  }
-  return map
+/** 行轴：后端同步出的 `timeSlots`。按节次排 —— 时刻只是它的展示，节次才是行的身份 */
+const rows = computed<AxisRow[]>(() =>
+  [...props.timeSlots].sort((a, b) => a.startUnit - b.startUnit || a.endUnit - b.endUnit),
+)
+
+const axis = computed(() => buildTimeAxis(rows.value, props.entries))
+
+/** 行轨：表头 `auto` + 每行 `minmax(下限, 权重 fr)`。节次少时 fr 把可用高度铺满，多时滚动 */
+const gridRows = computed(() => {
+  const weights = rowWeights(axis.value.rows)
+  return ['auto', ...weights.map((w) => `minmax(${ROW_MIN}px, ${w}fr)`)].join(' ')
 })
-
-/** 同格多课：>2 门时只画两门，其余折成「+N」提示（课程冲突不是常态，不必为它牺牲可读性） */
-function visible(list: ScheduleEntry[]): ScheduleEntry[] {
-  return list.length > 2 ? list.slice(0, 2) : list
-}
-
-/** 把课落到它所属的节次行上 —— 用节次区间匹配，而不是比较时间字符串 */
-function cellEntries(date: string, slot: PeriodSlot): ScheduleEntry[] {
-  return cells.value.get(cellKey(date, slot)) ?? []
-}
 
 function colorOf(e: ScheduleEntry): string {
   return e.session.color ?? 'var(--cat-class)'
+}
+
+/** 教师一行：多教师用「、」连起来（列窄，超出交给 CSS 省略号） */
+function teacherOf(e: ScheduleEntry): string {
+  return e.session.teachers.filter(Boolean).join('、')
+}
+
+/** 地点一行：教室在前 —— 它才是「去哪儿上课」的答案，楼名跟在后面作补充 */
+function placeOf(e: ScheduleEntry): string {
+  return [e.session.room, e.session.building].filter(Boolean).join(' · ')
+}
+
+/** 悬停时的整条读数：格子里放不下 / 被省略号吃掉的部分在这里补全 */
+function tipOf(e: ScheduleEntry): string {
+  return [e.session.courseName, teacherOf(e), placeOf(e)].filter(Boolean).join(' · ')
 }
 
 function dayLabel(d: string): string {
@@ -97,6 +116,49 @@ const wkShown = computed(() => {
   }
   return flags
 })
+
+/** 同格多课：只画前两门，其余折成「+N」 */
+function visible(list: ScheduleEntry[]): ScheduleEntry[] {
+  return list.length > VISIBLE_LIMIT ? list.slice(0, VISIBLE_LIMIT) : list
+}
+
+interface SlotTile {
+  date: string
+  /** 网格列号（1 是时间列，所以日期列从 2 起） */
+  col: number
+  isToday: boolean
+  /** 该行该列的格子；`null` = 这天这一行没课（只铺网格线） */
+  cell: AxisCell | null
+}
+
+interface LayoutRow {
+  key: string
+  slot: AxisRow
+  /** 网格行号（第 1 行是表头） */
+  gridRow: number
+  tiles: SlotTile[]
+}
+
+/**
+ * 渲染布局。**每个格子都显式落位**：课块要跨行绘制，而自动排布遇到跨行会把后续格子
+ * 挤到别的列上（同一行的日期就串列了）。显式落位之后，「哪一格画什么」全由这里决定。
+ *
+ * 三种行：
+ * - 组的起点行 → 课块（`grid-row: <起行> / span <跨几行>`）；
+ * - 组内其余行 → **不画**（课块已盖住那几行，再画一道边框就横穿课块了）；
+ * - 这天没课的行 → 画空格子（`--line` 的网格线靠它铺满整周）。
+ */
+const layout = computed<LayoutRow[]>(() =>
+  axis.value.rows.map((slot, r) => {
+    const tiles: SlotTile[] = []
+    days.value.forEach((date, i) => {
+      const cell = axis.value.cells.get(cellKey(date, r)) ?? null
+      if (cell && cell.row !== r) return
+      tiles.push({ date, col: i + 2, isToday: i === todayIndex.value, cell })
+    })
+    return { key: rowKey(slot), slot, gridRow: r + 2, tiles }
+  }),
+)
 
 const scroller = ref<HTMLElement | null>(null)
 
@@ -136,55 +198,62 @@ function scrollToToday(): void {
 
 onMounted(scrollToToday)
 watch(() => props.anchor, scrollToToday)
-
-const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 </script>
 
 <template>
   <div ref="scroller" class="wrap" data-rubber-self>
-    <div class="grid" :style="{ '--today-col': todayIndex + 1 }">
+    <div class="grid" :style="{ gridTemplateRows: gridRows, '--today-col': todayIndex + 1 }">
       <!-- 表头：星期 + 日期；左上角同时冻结两轴 -->
-      <div class="cell head corner">时间</div>
+      <div class="cell head corner" :style="{ gridRow: 1, gridColumn: 1 }">时间</div>
       <div
         v-for="(d, i) in days"
         :key="d"
         class="cell head day"
         :class="{ today: i === todayIndex }"
+        :style="{ gridRow: 1, gridColumn: i + 2 }"
       >
         <span class="dow">{{ dayLabel(d) }}</span>
         <span class="dnum">{{ monthDay(d) }}</span>
         <span v-if="wkShown[i]" class="wk">第{{ weekNoOf(d) }}周</span>
       </div>
 
-      <!-- 主体：每行 = 一个节次区间 -->
-      <template v-for="slot in rows" :key="rowKey(slot)">
-        <div class="cell time">
-          <span class="t1">{{ slot.startTime }}</span>
-          <span class="t2">{{ slot.endTime }}</span>
-          <span class="unit">第{{ slot.startUnit }}-{{ slot.endUnit }}节</span>
+      <!-- 主体：每行 = 时间轴上的一个片段；课块按自己占的节次跨行 -->
+      <template v-for="row in layout" :key="row.key">
+        <div class="cell time" :style="{ gridRow: row.gridRow, gridColumn: 1 }">
+          <span class="t1">{{ row.slot.startTime }}</span>
+          <span class="t2">{{ row.slot.endTime }}</span>
+          <span class="unit">{{ unitLabel(row.slot.startUnit, row.slot.endUnit) }}</span>
         </div>
         <div
-          v-for="(d, i) in days"
-          :key="d + rowKey(slot)"
+          v-for="t in row.tiles"
+          :key="t.date"
           class="cell slot"
-          :class="{ today: i === todayIndex }"
+          :class="{ today: t.isToday }"
+          :style="{
+            gridRow: t.cell ? `${row.gridRow} / span ${t.cell.span}` : row.gridRow,
+            gridColumn: t.col,
+          }"
         >
-          <div v-if="cellEntries(d, slot).length" class="blocks">
+          <div v-if="t.cell" class="blocks">
             <button
-              v-for="e in visible(cellEntries(d, slot))"
-              :key="e.session.id + d + (e.holiday ?? '')"
+              v-for="e in visible(t.cell.entries)"
+              :key="e.session.id + t.date + (e.holiday ?? '')"
               class="blk"
               :class="{ 'has-hd': e.holiday }"
               :style="{ '--blk': colorOf(e) }"
-              :title="`${e.session.courseName} · ${e.session.building ?? ''}${e.session.room ?? ''}`"
+              :title="tipOf(e)"
               @click="emit('select', e)"
             >
               <span v-if="e.holiday" class="hd" :class="e.holiday">{{ e.holiday === 'off' ? '假' : '调' }}</span>
               <span class="name">{{ e.session.courseName }}</span>
-              <span class="meta">{{ e.session.room ?? e.session.building ?? '' }}</span>
+              <!-- 这一格要回答的就三件事：哪门课、谁上、在哪上。
+                   行数按格子高度自适应（见样式里的容器查询）——矮格子给课名一行，
+                   高格子把课名放开，教师与地点两行始终留着。 -->
+              <span v-if="teacherOf(e)" class="meta tch">{{ teacherOf(e) }}</span>
+              <span v-if="placeOf(e)" class="meta room">{{ placeOf(e) }}</span>
             </button>
-            <span v-if="cellEntries(d, slot).length > 2" class="more">
-              +{{ cellEntries(d, slot).length - 2 }}
+            <span v-if="t.cell.entries.length > VISIBLE_LIMIT" class="more">
+              +{{ t.cell.entries.length - VISIBLE_LIMIT }}
             </span>
           </div>
         </div>
@@ -197,7 +266,8 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 /**
  * 单一滚动容器：横竖都归它管。
  * 用定高而不是 max-height —— 节次少时课表也该铺满可用高度（和纸质课表一样），
- * 行高由 `minmax(62px, 1fr)` 均分；节次多时超出即滚动。
+ * 行轨由脚本算出的 `grid-template-rows` 给出（每行按真实时长成比例，下限 ROW_MIN）：
+ * 节次少时 fr 把高度铺满，节次多时按下限滚动。
  */
 .wrap {
   overflow: auto;
@@ -243,7 +313,8 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 .grid {
   display: grid;
   grid-template-columns: 58px repeat(7, minmax(92px, 1fr));
-  grid-auto-rows: minmax(62px, 1fr);
+  /* 行轨由内联 `grid-template-rows` 给出（脚本里的 gridRows）；这条只兜底隐式行 */
+  grid-auto-rows: minmax(56px, 1fr);
   min-height: 100%;
 }
 
@@ -384,9 +455,13 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
 }
 
 /* ---------- 课程格 ---------- */
+/* 每个格子是一个**查询容器**：课程格要按自己拿到的高度决定课名放开几行
+   （见下面两条 `@container`）。高度由网格行轨给出（`minmax(56px, N fr)`，与内容无关），
+   所以这里的 `contain: size` 不会让行轨跟着内容长 —— 与加它之前的行为一致。 */
 .slot {
   padding: 2px;
   display: flex;
+  container-type: size;
 }
 
 .blocks {
@@ -403,8 +478,8 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
-  padding: 4px 5px;
+  gap: 1px;
+  padding: 3px 5px;
   border-radius: var(--radius-s);
   /* 课程色整面 soft tint（课表三视图同一档浓度：与日视图 .row、月视图 .chip 同画法），
      不再靠 3px 左边框（side-tab 收编） */
@@ -451,25 +526,51 @@ const todayIndex = computed(() => days.value.findIndex((d) => d === today))
   transform: scale(0.97);
 }
 
+/* 课名行数**跟着格子高度走**：矮格子只给一行（把教师与地点那两行让出来），
+   高一档放开两行、再高放开三行。阈值按「三行文字正好装得下」反推：
+   一行课名 13.8px + 教师 12.1 + 地点 12.1 + 两条 1px 缝 ≈ 40px，加内边距 10px 即 56px 起；
+   两行课名要 62px 内容高度 → 72px 起；三行 → 100px 起。 */
 .name {
   font-size: var(--fs-caption);
   font-weight: 600;
   color: var(--text-1);
-  line-height: 1.2;
+  line-height: 1.15;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-all;
 }
 
+@container (min-height: 72px) {
+  .name {
+    -webkit-line-clamp: 2;
+  }
+}
+
+@container (min-height: 100px) {
+  .name {
+    -webkit-line-clamp: 3;
+  }
+}
+
+/* 教师与地点：各占一行、各自省略号 —— 合成一行会让教室被教师名挤掉，
+   而「去哪儿上课」恰恰是看课表时最常找的那一个读数 */
 .meta {
   font-size: var(--fs-micro);
-  color: var(--text-3);
-  line-height: 1.15;
+  line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 教师比地点重一档（谁上决定要不要去），层级靠灰度差，不引入色相 */
+.meta.tch {
+  color: var(--text-2);
+}
+
+.meta.room {
+  color: var(--text-3);
 }
 
 .more {

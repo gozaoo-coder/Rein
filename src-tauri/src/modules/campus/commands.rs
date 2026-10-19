@@ -422,6 +422,54 @@ fn load_courses(conn: &Connection, account_id: i64, semester_id: i64) -> Result<
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// 该学期的节次时间表（第 N 节 → 起止时刻）。树维那套系统没有这张表 → 空 vec。
+///
+/// 读路径（打开课表）只查库、不联网：抓取发生在同步里，见 [`persist_period_slots`]。
+fn load_period_slots(
+    conn: &Connection,
+    account_id: i64,
+    semester_id: i64,
+) -> Result<Vec<RemotePeriodSlot>> {
+    let mut stmt = conn.prepare(
+        "SELECT unit, start_time, end_time FROM campus_period_slots \
+         WHERE account_id = ?1 AND semester_id = ?2 ORDER BY unit",
+    )?;
+    let rows = stmt.query_map([account_id, semester_id], |r| {
+        Ok(RemotePeriodSlot {
+            unit: r.get(0)?,
+            start_time: r.get(1)?,
+            end_time: r.get(2)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// 落库节次时间表。**整表替换**：它是学期级配置而不是逐条记录，作息时间改了以后
+/// 旧行留一半会出现「第3节有两个时刻」，两半都得清干净。
+///
+/// 空表也照删（树维每次都传空）：语义是「这个学期没有节次表」，而不是「这次没抓到」。
+fn persist_period_slots(
+    conn: &Connection,
+    account_id: i64,
+    semester_id: i64,
+    slots: &[RemotePeriodSlot],
+) -> Result<()> {
+    conn.execute(
+        "DELETE FROM campus_period_slots WHERE account_id = ?1 AND semester_id = ?2",
+        rusqlite::params![account_id, semester_id],
+    )?;
+    for s in slots {
+        conn.execute(
+            "INSERT INTO campus_period_slots (account_id, semester_id, unit, start_time, end_time) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(account_id, semester_id, unit) DO UPDATE SET \
+               start_time = excluded.start_time, end_time = excluded.end_time",
+            rusqlite::params![account_id, semester_id, s.unit, s.start_time, s.end_time],
+        )?;
+    }
+    Ok(())
+}
+
 /// `occurrence_date` 的逆运算：一个公历日期落在第几教学周（1 起）。
 /// 早于学期锚点就没有值。`week_start_on_sunday` 两种口径下都成立 —— 锚点本身就是该周第一天。
 fn week_of(anchor: NaiveDate, d: NaiveDate) -> Option<i64> {
@@ -501,34 +549,108 @@ fn expand_entries(
     out
 }
 
-/// 左侧时间轴：按**节次区间**去重后升序。
+/// 左侧时间轴：把「学校公布的节次表」与「实际排课的节次区间」归一化成一组**互斥片段**。
 ///
-/// 用节次区间（而不是时间）做去重键：区间才是行的身份，时间只是它的展示。
-/// 前端用它当周视图的行轴，所以同一区间必须只出现一行，否则课会被画到两行上。
-fn build_time_slots(sessions: &[CampusSession]) -> Vec<TimeSlot> {
-    let mut seen = HashSet::new();
-    let mut slots: Vec<TimeSlot> = Vec::new();
+/// **为什么不能直接拿 `(start_unit, end_unit)` 去重当行**（旧实现）：节次区间之间会重叠 ——
+/// 第1-2节 与 第2-3节 并存时，旧实现画出 `1-2`、`2-3` 两行，于是第2节被画两遍、
+/// 一周的视觉长度也不再等于真实时间；3 节连排的课（第8-10节）只占一行，看不出时长。
+/// 现在先取断点（每个区间的 `start` 与 `end + 1`），相邻断点之间的片段天然互斥、首尾相接，
+/// **同一节次只可能出现一次**；课块再按自己占的节次跨行绘制（前端 `campusTimeAxis.ts`），
+/// 行高按真实时长成比例。
+///
+/// 时刻口径（**只读教务给的数，不插值**）：
+/// - 片段内每一节在节次表里都有 → 用表里的逐节真读数（第1节 08:00-08:40 这种）；
+/// - 否则取覆盖它的**最紧封套**（覆盖者里最晚的开始 / 最早的结束）。片段内部的课间休息
+///   是猜不出来的 —— 猜出来的 08:42 比老实给封套更糟；
+/// - 时刻解析不出来的片段直接跳过（沿用旧的容错）。
+///
+/// 没课的片段不画（第5节没课就没有第5节那一行）：行数与「那天上了几节」对齐。
+fn build_time_axis(
+    sessions: &[CampusSession],
+    period_slots: &[RemotePeriodSlot],
+) -> Vec<TimeSlot> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    // 节次表：只收时刻可解析的行。半张表会给出一半真读数一半缺 —— 那比整段退回封套更容易
+    // 被读成「教务写错了」，所以要么这一段全用表，要么这一段全不用。
+    let table: BTreeMap<i64, (&str, &str)> = period_slots
+        .iter()
+        .filter(|p| {
+            p.unit > 0
+                && dates::hhmm_to_min(&p.start_time).is_some()
+                && dates::hhmm_to_min(&p.end_time).is_some()
+        })
+        .map(|p| (p.unit, (p.start_time.as_str(), p.end_time.as_str())))
+        .collect();
+
+    // 断点 = 每个区间的 start 与 end+1
+    let mut bounds: BTreeSet<i64> = BTreeSet::new();
+    for u in table.keys() {
+        bounds.insert(*u);
+        bounds.insert(u + 1);
+    }
     for s in sessions {
-        if !seen.insert((s.start_unit, s.end_unit)) {
+        if s.start_unit > 0 && s.end_unit >= s.start_unit {
+            bounds.insert(s.start_unit);
+            bounds.insert(s.end_unit + 1);
+        }
+    }
+    let bounds: Vec<i64> = bounds.into_iter().collect();
+
+    let mut out: Vec<TimeSlot> = Vec::new();
+    for w in bounds.windows(2) {
+        let (p, q) = (w[0], w[1] - 1);
+        // 没人上的片段不占行（`start_unit = 0` 是实践课，本来就进不了网格）
+        let covering: Vec<&CampusSession> = sessions
+            .iter()
+            .filter(|s| s.start_unit > 0 && s.start_unit <= p && s.end_unit >= q)
+            .collect();
+        if covering.is_empty() {
             continue;
         }
+
+        // 逐节真读数优先：片段内每一节都要在表里
+        let window = (p..=q).map(|u| table.get(&u)).collect::<Option<Vec<_>>>();
+        let (start_time, end_time) = match window {
+            Some(ws) => (
+                ws[0].0.to_string(),
+                ws[ws.len() - 1].1.to_string(),
+            ),
+            // 没有表（或这一段不在表里）→ 最紧封套
+            None => {
+                let start = covering
+                    .iter()
+                    .max_by_key(|s| dates::hhmm_to_min(&s.start_time).unwrap_or(-1))
+                    .map(|s| s.start_time.clone());
+                let end = covering
+                    .iter()
+                    .min_by_key(|s| dates::hhmm_to_min(&s.end_time).unwrap_or(i64::MAX))
+                    .map(|s| s.end_time.clone());
+                match (start, end) {
+                    (Some(a), Some(b)) => (a, b),
+                    _ => continue,
+                }
+            }
+        };
+
         let (Some(sm), Some(em)) = (
-            dates::hhmm_to_min(&s.start_time),
-            dates::hhmm_to_min(&s.end_time),
+            dates::hhmm_to_min(&start_time),
+            dates::hhmm_to_min(&end_time),
         ) else {
             continue;
         };
-        slots.push(TimeSlot {
-            start_unit: s.start_unit,
-            end_unit: s.end_unit,
-            start_time: s.start_time.clone(),
-            end_time: s.end_time.clone(),
+        out.push(TimeSlot {
+            start_unit: p,
+            end_unit: q,
+            start_time,
+            end_time,
             start_min: sm,
             duration_min: (em - sm).max(0),
         });
     }
-    slots.sort_by_key(|s| s.start_min);
-    slots
+    // 节次才是行的身份，时刻只是它的展示 —— 所以按节次排，不按 start_min
+    out.sort_by_key(|s| (s.start_unit, s.end_unit));
+    out
 }
 
 /* ─────────────────────────── 时间线物化 ─────────────────────────── */
@@ -1385,6 +1507,15 @@ pub async fn campus_sync(
     // 远端已消失的时段（换课/退课）
     delete_stale_sessions(&conn, account_id, semester_local_id, &kept_session_ids)?;
 
+    // 节次时间表（正方有、树维没有）：左侧时间轴的逐节真读数。**只在同步里抓、只在同步里写**，
+    // 打开课表那条路只读库 —— 否则每次进课表页都要多打一次教务（见文件头那条铁律）。
+    persist_period_slots(
+        &conn,
+        account_id,
+        semester_local_id,
+        &fetched.snapshot.period_slots,
+    )?;
+
     // 账号档案 + 会话
     conn.execute(
         "UPDATE campus_accounts SET cookies = ?1, session_at = ?2, student_id = ?3, \
@@ -1538,7 +1669,7 @@ fn schedule_view_on(
         .into_iter()
         .filter(|e| e.date >= lo_s && e.date <= hi_s)
         .collect();
-    let time_slots = build_time_slots(&sessions);
+    let time_slots = build_time_axis(&sessions, &load_period_slots(conn, account.id, sem_id)?);
     let courses = load_courses(conn, account.id, sem_id)?;
 
     Ok(ScheduleView {
@@ -3708,16 +3839,16 @@ mod tests {
         assert!(plain.iter().all(|e| e.holiday.is_none()));
     }
 
-    #[test]
-    fn time_slots_are_deduped_and_sorted() {
-        let mk = |su: i64, eu: i64, st: &str, et: &str| CampusSession {
-            id: su,
+    /// 一段课：轴只关心节次区间与时刻，其余字段随便填
+    fn sess(start_unit: i64, end_unit: i64, start_time: &str, end_time: &str) -> CampusSession {
+        CampusSession {
+            id: start_unit,
             course_id: 1,
             weekday: 1,
-            start_unit: su,
-            end_unit: eu,
-            start_time: st.into(),
-            end_time: et.into(),
+            start_unit,
+            end_unit,
+            start_time: start_time.into(),
+            end_time: end_time.into(),
             weeks: vec![1],
             weeks_str: None,
             room: None,
@@ -3729,17 +3860,135 @@ mod tests {
             credits: None,
             course_type: None,
             color: None,
-        };
-        let sessions = vec![
-            mk(3, 4, "09:55", "11:30"),
-            mk(1, 2, "08:00", "09:35"),
-            mk(3, 4, "09:55", "11:30"), // 重复
-        ];
-        let slots = build_time_slots(&sessions);
-        assert_eq!(slots.len(), 2);
-        assert_eq!(slots[0].start_time, "08:00");
-        assert_eq!(slots[0].start_min, 480);
-        assert_eq!(slots[1].duration_min, 95);
+        }
+    }
+
+    /// 节次表的一行
+    fn slot(unit: i64, start_time: &str, end_time: &str) -> RemotePeriodSlot {
+        RemotePeriodSlot {
+            unit,
+            start_time: start_time.into(),
+            end_time: end_time.into(),
+        }
+    }
+
+    /// 轴压成 `(起节, 止节, 起时刻, 止时刻)`，断言读起来才像课表
+    fn axis(sessions: &[CampusSession], table: &[RemotePeriodSlot]) -> Vec<(i64, i64, String, String)> {
+        build_time_axis(sessions, table)
+            .into_iter()
+            .map(|s| (s.start_unit, s.end_unit, s.start_time, s.end_time))
+            .collect()
+    }
+
+    /// 图里那所学校的作息：40 分钟一节、节间 5 分钟，第2/3节之间 25 分钟、午休 12:00→14:30。
+    /// 「不对称」就是从这张表来的 —— 它不该被行轴抹平。
+    fn reference_school_table() -> Vec<RemotePeriodSlot> {
+        [
+            (1, "08:00", "08:40"),
+            (2, "08:45", "09:25"),
+            (3, "09:50", "10:30"),
+            (4, "10:35", "11:15"),
+            (5, "11:20", "12:00"),
+            (6, "14:30", "15:10"),
+            (7, "15:15", "15:55"),
+            (8, "16:10", "16:50"),
+            (9, "16:55", "17:35"),
+            (10, "17:40", "18:20"),
+            (11, "19:30", "20:10"),
+            (12, "20:15", "20:55"),
+        ]
+        .into_iter()
+        .map(|(u, a, b)| slot(u, a, b))
+        .collect()
+    }
+
+    /// 无节次表（树维那条路）+ 整块排课：行轴与旧实现完全一致，零回归
+    #[test]
+    fn axis_without_a_period_table_keeps_the_block_shape() {
+        let rows = axis(
+            &[
+                sess(3, 4, "09:55", "11:30"),
+                sess(1, 2, "08:00", "09:35"),
+                sess(3, 4, "09:55", "11:30"), // 重复：同一区间只能出一行
+            ],
+            &[],
+        );
+        assert_eq!(
+            rows,
+            vec![
+                (1, 2, "08:00".into(), "09:35".into()),
+                (3, 4, "09:55".into(), "11:30".into()),
+            ]
+        );
+    }
+
+    /// 重叠的节次区间必须被切成互斥片段 —— 旧实现会画出 `1-2`、`2-3` 两行，
+    /// 那样第2节被画两遍，一周的视觉长度也不再等于真实时间。
+    #[test]
+    fn axis_splits_overlapping_ranges_into_disjoint_units() {
+        let rows = axis(
+            &[sess(1, 2, "08:00", "09:25"), sess(2, 3, "08:45", "10:15")],
+            &[],
+        );
+        assert_eq!(
+            rows,
+            vec![
+                // 第1节只被 1-2 覆盖 → 那道课的封套
+                (1, 1, "08:00".into(), "09:25".into()),
+                // 第2节被两门课同时覆盖 → 最紧封套（最晚的开始 08:45、最早的结束 09:25）
+                (2, 2, "08:45".into(), "09:25".into()),
+                (3, 3, "08:45".into(), "10:15".into()),
+            ]
+        );
+    }
+
+    /// 有节次表就画到逐节：第1节是表里的 08:00-08:40，而不是 1-2 那道课的封套 08:00-09:25。
+    /// 没课的节（第5、11、12节）不占行。
+    #[test]
+    fn axis_uses_the_period_table_for_per_unit_times() {
+        let rows = axis(
+            &[
+                sess(1, 2, "08:00", "09:25"),
+                sess(3, 4, "09:50", "11:15"),
+                sess(6, 7, "14:30", "15:55"),
+                sess(8, 10, "16:10", "18:20"),
+            ],
+            &reference_school_table(),
+        );
+        let units: Vec<(i64, i64)> = rows.iter().map(|r| (r.0, r.1)).collect();
+        assert_eq!(
+            units,
+            vec![(1, 1), (2, 2), (3, 3), (4, 4), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10)],
+            "逐节轴；第5、11、12节没课，不出行"
+        );
+        assert_eq!(rows[0].2, "08:00");
+        assert_eq!(rows[0].3, "08:40");
+        // 逐节真读数：第2节止于 09:25 而第3节 09:50 才开始（中间那 25 分钟的课间休息是表给的）
+        assert_eq!(rows[1], (2, 2, "08:45".into(), "09:25".into()));
+        assert_eq!(rows[2], (3, 3, "09:50".into(), "10:30".into()));
+        // 3 节连排的那门课，在轴上就是连续三行（前端按 span 跨行绘制）
+        assert_eq!(rows[6], (8, 8, "16:10".into(), "16:50".into()));
+        assert_eq!(rows[8], (10, 10, "17:40".into(), "18:20".into()));
+    }
+
+    /// 表里没有的节次（学校的晚课表只公布到第10节）→ 那一段退回封套，绝不按比例编时刻
+    #[test]
+    fn axis_falls_back_to_the_envelope_for_units_absent_from_the_table() {
+        let table = vec![slot(1, "08:00", "08:40"), slot(2, "08:45", "09:25")];
+        let rows = axis(&[sess(3, 5, "09:50", "11:15")], &table);
+        assert_eq!(
+            rows,
+            vec![(3, 5, "09:50".into(), "11:15".into())],
+            "第1、2节没课不出行；第3-5节没有表 → 用那道课的封套"
+        );
+    }
+
+    #[test]
+    fn axis_reports_duration_for_row_heights() {
+        let rows = build_time_axis(&[sess(8, 10, "16:10", "18:20")], &[]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].start_min, 970);
+        assert_eq!(rows[0].duration_min, 130, "3 节连排 = 130 分钟，前端的行高按它成比例");
     }
 
     #[test]

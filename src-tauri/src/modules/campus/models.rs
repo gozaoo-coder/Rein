@@ -367,6 +367,20 @@ pub struct PageVars {
     pub semesters: Vec<RemoteSemester>,
 }
 
+/// 学校公布的**节次时间表**的一行：第 `unit` 节的起止时刻（归一化后的形状）。
+///
+/// 「动态时间轴」的第一来源。正方把「第 N 节 → 几点到几点」单独开一个接口给
+/// （`ZfsoftSlotRow` 的 `jcmc/qssj/jssj`），而课表正文只给节次号 —— 有了这张表，
+/// 左侧时间轴才能画到**逐节**（第 1 节 08:00-08:40），课块再按自己占的节次跨行。
+/// 树维不提供这张表，那边留空，轴就退化为按实际排课区间切出的互斥片段
+/// （见 `commands::build_time_axis`）。
+#[derive(Debug, Clone, Default)]
+pub struct RemotePeriodSlot {
+    pub unit: i64,
+    pub start_time: String,
+    pub end_time: String,
+}
+
 /// 归一化后的课表快照（落库前的中间形态）。**两个厂商的适配器都产出这个形状** ——
 /// 落库与周次展开只认它，不认教务的原话。
 pub struct TimetableSnapshot {
@@ -379,6 +393,8 @@ pub struct TimetableSnapshot {
     pub grade: Option<String>,
     pub total_credits: Option<f64>,
     pub activities: Vec<TimetableActivity>,
+    /// 该校该学期的节次时间表；没有这张表时为空（不影响课表本身）
+    pub period_slots: Vec<RemotePeriodSlot>,
 }
 
 // ─────────────────────── 远端：正方（ZFSoft） ───────────────────────
@@ -639,7 +655,11 @@ pub struct ScheduleEntry {
     pub holiday: Option<HolidayKind>,
 }
 
-/// 左侧时间轴的一行 —— 由当天实际排课的节次去重得到。
+/// 左侧时间轴的一行 —— 一个**互斥片段**（`commands::build_time_axis`）。
+///
+/// 可能是单独一节（学校给了节次表 → 逐节轴：第 1 节 08:00-08:40），也可能是若干节的合并
+/// （没有节次表时按实际排课的节次区间切）。片段之间首尾相接、互不重叠 ——
+/// **同一节次在轴上只会出现一次**，这是它比「按 `(startUnit,endUnit)` 去重」强的地方。
 ///
 /// 这正是需求里「第几节那一列要改成实际上课时间」的数据来源：
 /// 教务的 `startTime`/`endTime` 已经是该节次的真实时刻，不需要我们维护节次表。
@@ -662,7 +682,8 @@ pub struct ScheduleView {
     pub account: Option<CampusAccount>,
     pub semester: Option<CampusSemester>,
     pub entries: Vec<ScheduleEntry>,
-    /// 按 `start_time` 升序去重后的节次时间表
+    /// 左侧时间轴的行（互斥片段，按节次升序）。口径见 [`TimeSlot`]。
+    /// 前端用它当周视图的行轴，并把每门课按占的节次跨行绘制。
     pub time_slots: Vec<TimeSlot>,
     /// 该学期的全部课程（用于「课程清单」与配置页统计）
     pub courses: Vec<CampusCourse>,

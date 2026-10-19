@@ -358,6 +358,10 @@ impl<'a> GuetAdapter<'a> {
             grade: vm.grade,
             total_credits: vm.credits,
             activities: vm.activities,
+            // 树维没有「节次时间表」这个接口：每条活动的 `startTime`/`endTime` 已经是
+            // 那次课的真实起止，逐节时刻推不出来（推就是编）。留空 —— 前端的轴会自动退化为
+            // 「按实际排课的节次区间切出的互斥片段」，行高仍按真实时长成比例。
+            period_slots: Vec::new(),
         })
     }
 

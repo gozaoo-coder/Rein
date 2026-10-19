@@ -1493,6 +1493,74 @@ const MIGRATION_0044: &str = r#"
 ALTER TABLE todos ADD COLUMN rec_exdates TEXT;
 "#;
 
+/// 0045 · 学校公布的**节次时间表**（第 N 节 → 起止时刻），按「账号 × 学期」存。
+///
+/// 为什么要落库：正方教务把这张表单独开了一个接口（`/kbcx/xskbcx_cxRjc.html`），
+/// 而课表正文只给节次号 —— 少了它，左侧时间轴只能按「每次课的封套」画
+/// （第1-2节 08:00-09:25），画不出图里那种逐节真读数（第1节 08:00-08:40）。
+/// 抓取落在同步里（联网），读课表那条路上不许再发请求，所以必须持久化。
+///
+/// 学期级配置而非逐条业务记录：同步时**整学期替换**（作息改了旧行留一半会出现
+/// 「第3节有两个时刻」）。树维那套系统没有这张表，那张表就是空的 —— 轴自动退化为
+/// 按实际排课区间切出的互斥片段，两者共用同一条渲染路径。
+const MIGRATION_0045: &str = r#"
+CREATE TABLE campus_period_slots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id  INTEGER NOT NULL REFERENCES campus_accounts(id) ON DELETE CASCADE,
+  semester_id INTEGER NOT NULL REFERENCES campus_semesters(id) ON DELETE CASCADE,
+  unit       INTEGER NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time   TEXT NOT NULL,
+  UNIQUE(account_id, semester_id, unit)
+);
+CREATE INDEX idx_campus_period_slots_semester ON campus_period_slots(account_id, semester_id);
+"#;
+
+/// 0046 · 旧重复待办清理（一次性数据修复）。
+///
+/// 背景：智能添加抽屉的「编辑细节」曾恒以新建模式打开编辑器（`:todo="null"`），
+/// 一条 AI 草稿「添加」后再点铅笔调整并保存就会按同样字段再落一条；连点「保存」/「添加」
+/// 也会重复落库。前端那两处已修（重入锁 + 落库后走更新），这里把**已经落下的**重复行清掉。
+///
+/// 判重口径 = 列表里看起来一模一样的那几列：标题 / 日期 / 开始时间 / 时长 / 分类 /
+/// 优先级 / 备注（`IS` 比较，NULL 当相等）。只动**用户自建行**，三类来源行一律不碰：
+/// - 课表派生行（`course_session_id` 非空）归 `materialize_todos` 的先删后建管；
+/// - 方案行（`program_id` 非空）归 `program_schedule_replace` 管；
+/// - 重复实例（`rec_key` 非空）本就有唯一索引（0011）。
+///
+/// 保留策略：同一组里**优先保留已完成的那条**（不丢用户打过的卡），否则保留最早一条（最小 id）。
+///
+/// 已知边界：迁移早于同步钩子安装（`sync/engine.rs::install_hook`），这里的 DELETE 不进复制日志、
+/// 不留墓碑 —— 单机场景没有影响；开了多设备同步的，需要对端也升到本版本，各自清一遍。
+const MIGRATION_0046: &str = r#"
+DELETE FROM todos
+WHERE course_session_id IS NULL
+  AND program_id IS NULL
+  AND rec_key IS NULL
+  AND id NOT IN (
+    SELECT (
+      SELECT k.id FROM todos k
+      WHERE k.course_session_id IS NULL
+        AND k.program_id IS NULL
+        AND k.rec_key IS NULL
+        AND k.title        IS g.title
+        AND k.date         IS g.date
+        AND k.start_min    IS g.start_min
+        AND k.duration_min IS g.duration_min
+        AND k.category     IS g.category
+        AND k.priority     IS g.priority
+        AND k.notes        IS g.notes
+      ORDER BY (k.status = 'done') DESC, k.id ASC
+      LIMIT 1
+    )
+    FROM todos g
+    WHERE g.course_session_id IS NULL
+      AND g.program_id IS NULL
+      AND g.rec_key IS NULL
+    GROUP BY g.title, g.date, g.start_min, g.duration_min, g.category, g.priority, g.notes
+  );
+"#;
+
 const MIGRATIONS: &[&str] = &[
     MIGRATION_0001,
     MIGRATION_0002,
@@ -1538,6 +1606,8 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_0042,
     MIGRATION_0043,
     MIGRATION_0044,
+    MIGRATION_0045,
+    MIGRATION_0046,
 ];
 
 /// 通用键值元数据（`app_meta`）读写 —— 全应用**唯一一份**这条 SQL。
@@ -1577,6 +1647,13 @@ mod tests {
     /// 只应用到 0016，模拟知识库上线之前的老库。
     fn legacy_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
+        apply_through(&conn, 16);
+        conn
+    }
+
+    /// 逐条应用迁移到第 `upto` 号（含），并如实登记 `schema_migrations` ——
+    /// 这样随后的 `migrate_for_test` 会从 `upto + 1` 接着补，模拟「老库升级」。
+    fn apply_through(conn: &Connection, upto: usize) {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations(
                version INTEGER PRIMARY KEY,
@@ -1585,8 +1662,8 @@ mod tests {
         )
         .unwrap();
         for (i, sql) in MIGRATIONS.iter().enumerate() {
-            let v = (i + 1) as i64;
-            if v > 16 {
+            let v = i + 1;
+            if v > upto {
                 break;
             }
             conn.execute_batch(&format!(
@@ -1594,7 +1671,6 @@ mod tests {
             ))
             .unwrap();
         }
-        conn
     }
 
     fn table_exists(conn: &Connection, name: &str) -> bool {
@@ -1801,6 +1877,64 @@ mod tests {
             )
             .unwrap();
         assert_eq!(mode, "keyword", "默认应为零依赖的关键词模式");
+    }
+
+    /// 0046：智能添加抽屉重复落库留下的历史重复行要被清掉；保留口径是
+    /// 「同组优先已完成，否则最早」，且课表派生 / 方案 / 重复实例三类来源行一律不碰。
+    #[test]
+    fn migration_0046_dedupes_history_and_keeps_completions() {
+        let conn = Connection::open_in_memory().unwrap();
+        // 本测试只验证去重谓词，不关心外键：派生行 / 方案行仅作为「不该被碰」的样本，
+        // 不必真去建出校园课次与方案那一整条链。
+        conn.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        apply_through(&conn, 45); // 停在 0046 之前，模拟升级前的库
+
+        // (id, title, notes, status, course_session_id, program_id, rec_key)
+        let ins = |id: i64,
+                   title: &str,
+                   notes: Option<&str>,
+                   status: &str,
+                   course: Option<i64>,
+                   program: Option<i64>,
+                   rec_key: Option<&str>| {
+            conn.execute(
+                "INSERT INTO todos (id, title, notes, date, start_min, duration_min, category, \
+                 priority, status, created_at, course_session_id, program_id, rec_key) \
+                 VALUES (?1, ?2, ?3, '2026-10-19', 450, 45, 'general', 0, ?4, \
+                 '2026-10-19T07:00:00Z', ?5, ?6, ?7)",
+                rusqlite::params![id, title, notes, status, course, program, rec_key],
+            )
+            .unwrap();
+        };
+
+        // A：Bug 造出的三条重复 —— 保留已完成的 2 号，删掉 1、3
+        ins(1, "早自习（5教206）", None, "todo", None, None, None);
+        ins(2, "早自习（5教206）", None, "done", None, None, None);
+        ins(3, "早自习（5教206）", None, "todo", None, None, None);
+        // B：不重复，原样保留
+        ins(4, "程序设计基础", None, "todo", None, None, None);
+        // C：课表派生行即便同标题同时刻也不该被动（归 materialize_todos 的先删后建）
+        ins(5, "晚自习（5教206）", None, "todo", Some(7), None, None);
+        ins(6, "晚自习（5教206）", None, "todo", Some(7), None, None);
+        // D：方案行不碰（归 program_schedule_replace）
+        ins(7, "方案热身", None, "todo", None, Some(3), None);
+        ins(8, "方案热身", None, "todo", None, Some(3), None);
+        // E：重复实例字段相同也不碰 —— 存在性由 rec_key 管
+        ins(9, "每天喝水", None, "todo", None, None, Some("11:2026-10-19"));
+        ins(10, "每天喝水", None, "todo", None, None, Some("12:2026-10-19"));
+
+        migrate_for_test(&conn).unwrap();
+
+        let remaining: Vec<i64> = {
+            let mut stmt = conn.prepare("SELECT id FROM todos ORDER BY id").unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, i64>(0)).unwrap();
+            rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        assert_eq!(
+            remaining,
+            vec![2, 4, 5, 6, 7, 8, 9, 10],
+            "只清用户自建重复（A 组保留已完成的 2 号），其余来源行原样保留"
+        );
     }
 }
 

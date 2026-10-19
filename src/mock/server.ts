@@ -75,6 +75,7 @@ import type {
   WorkoutPlanRecord,
 } from '@/types'
 import { normalizeActivation } from '@/config/muscles'
+import { buildAxisRows } from '@/utils/campusTimeAxis'
 import { addDays, startOfMonth, startOfWeek, todayStr } from '@/utils/date'
 import { ruleMatchesDate } from '@/utils/recurrence'
 import { COURSE_CATEGORY } from '@/types/todo'
@@ -3716,17 +3717,40 @@ interface CampusSessionDemo {
   color: string | null
 }
 
-const CAMPUS_SLOTS = [
-  { startUnit: 1, endUnit: 2, startTime: '08:00', endTime: '09:35', startMin: 480, durationMin: 95 },
-  { startUnit: 3, endUnit: 4, startTime: '09:55', endTime: '11:30', startMin: 595, durationMin: 95 },
-  { startUnit: 5, endUnit: 6, startTime: '14:00', endTime: '15:35', startMin: 840, durationMin: 95 },
-  { startUnit: 7, endUnit: 8, startTime: '16:30', endTime: '18:05', startMin: 990, durationMin: 95 },
+/**
+ * 节次时间表 —— 学校公布的「第 N 节 → 几点到几点」（正方教务单独给这张表，树维没有）。
+ *
+ * 这里照抄需求里那所学校的作息：40 分钟一节、节与节之间只隔 5 分钟，第2/3节之间 25 分钟，
+ * 午休 12:00→14:30，晚课是一节 95 分钟的长节。**「时间不对称」就是从这儿来的** ——
+ * 轴上的行高按这些真实时长成比例，而不是把所有节画成一样高。
+ */
+const CAMPUS_PERIOD_SLOTS = [
+  { unit: 1, startTime: '08:00', endTime: '08:40' },
+  { unit: 2, startTime: '08:45', endTime: '09:25' },
+  { unit: 3, startTime: '09:50', endTime: '10:30' },
+  { unit: 4, startTime: '10:35', endTime: '11:15' },
+  { unit: 5, startTime: '11:20', endTime: '12:00' },
+  { unit: 6, startTime: '14:30', endTime: '15:10' },
+  { unit: 7, startTime: '15:15', endTime: '15:55' },
+  { unit: 8, startTime: '16:10', endTime: '16:50' },
+  { unit: 9, startTime: '16:55', endTime: '17:35' },
+  { unit: 10, startTime: '17:40', endTime: '18:20' },
+  { unit: 11, startTime: '19:30', endTime: '21:05' },
+  { unit: 12, startTime: '21:10', endTime: '22:00' },
 ]
+
+/** 一次课的起止 = 首节起点 → 末节止点（教务给的就是这两头），表里查不到就不猜 */
+function campusSlotSpan(startUnit: number, endUnit: number): { startTime: string; endTime: string } {
+  const first = CAMPUS_PERIOD_SLOTS.find((s) => s.unit === startUnit)
+  const last = CAMPUS_PERIOD_SLOTS.find((s) => s.unit === endUnit)
+  return { startTime: first?.startTime ?? '08:00', endTime: last?.endTime ?? '09:35' }
+}
 
 function campusSession(
   id: number,
   weekday: number,
-  slot: (typeof CAMPUS_SLOTS)[number],
+  startUnit: number,
+  endUnit: number,
   courseName: string,
   code: string,
   teacher: string,
@@ -3734,14 +3758,15 @@ function campusSession(
   color: string,
   weeks: number[] = CAMPUS_WEEKS,
 ): CampusSessionDemo {
+  const { startTime, endTime } = campusSlotSpan(startUnit, endUnit)
   return {
     id,
     courseId: id,
     weekday,
-    startUnit: slot.startUnit,
-    endUnit: slot.endUnit,
-    startTime: slot.startTime,
-    endTime: slot.endTime,
+    startUnit,
+    endUnit,
+    startTime,
+    endTime,
     weeks,
     weeksStr: weeks.length ? `${weeks[0]}~${weeks[weeks.length - 1]}` : null,
     room,
@@ -3756,15 +3781,22 @@ function campusSession(
   }
 }
 
+/**
+ * 演示课表。刻意覆盖三种「不对称」：两节连排（大多数）、**三节连排**（大学物理实验，
+ * 课块跨三行）、**一节 95 分钟的晚课**（通识讲座，那一行明显更高）。
+ * 第5节（11:20-12:00）与第12节没课 —— 它们在轴上不出行。
+ */
 const CAMPUS_SESSIONS: CampusSessionDemo[] = [
-  campusSession(1, 1, CAMPUS_SLOTS[0]!, '高等数学（上）', '000001', '陈建国', '11A201', '#3B73B6'),
-  campusSession(2, 3, CAMPUS_SLOTS[0]!, '高等数学（上）', '000001', '陈建国', '11A201', '#3B73B6'),
-  campusSession(3, 2, CAMPUS_SLOTS[1]!, '大学英语（一）', '000002', 'Linda', '12B305', '#22A06B'),
-  campusSession(4, 4, CAMPUS_SLOTS[1]!, '大学英语（一）', '000002', 'Linda', '12B305', '#22A06B'),
-  campusSession(5, 1, CAMPUS_SLOTS[2]!, '数据结构与算法', '000101', '黄志远', '15C102', '#B5632E'),
-  campusSession(6, 2, CAMPUS_SLOTS[2]!, '大学物理', '000201', '刘敏', '13A408', '#8257C8'),
-  campusSession(7, 5, CAMPUS_SLOTS[1]!, '计算机组成原理', '000102', '周立', '15C210', '#C0392B'),
-  campusSession(8, 5, CAMPUS_SLOTS[3]!, '体育（一）', '000301', '吴强', '体育馆', '#2E86C1', CAMPUS_WEEKS.filter((w) => w % 2 === 1)),
+  campusSession(1, 1, 1, 2, '高等数学（上）', '000001', '陈建国', '11A201', '#3B73B6'),
+  campusSession(2, 3, 1, 2, '高等数学（上）', '000001', '陈建国', '11A201', '#3B73B6'),
+  campusSession(3, 2, 3, 4, '大学英语（一）', '000002', 'Linda', '12B305', '#22A06B'),
+  campusSession(4, 4, 3, 4, '大学英语（一）', '000002', 'Linda', '12B305', '#22A06B'),
+  campusSession(5, 1, 6, 7, '数据结构与算法', '000101', '黄志远', '15C102', '#B5632E'),
+  campusSession(6, 2, 6, 7, '大学物理', '000201', '刘敏', '13A408', '#8257C8'),
+  campusSession(7, 5, 3, 4, '计算机组成原理', '000102', '周立', '15C210', '#C0392B'),
+  campusSession(8, 5, 7, 8, '体育（一）', '000301', '吴强', '体育馆', '#2E86C1', CAMPUS_WEEKS.filter((w) => w % 2 === 1)),
+  campusSession(9, 3, 8, 10, '大学物理实验', '000202', '刘敏', '13A408', '#8257C8'),
+  campusSession(10, 4, 11, 11, '通识讲座', '000401', '校外讲师', '图书馆报告厅', '#C9A227'),
 ]
 
 function campusExpand(
@@ -9148,7 +9180,9 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
         account: { ...campusAccount },
         semester: sem,
         entries: campusExpand(sem, from, to),
-        timeSlots: CAMPUS_SLOTS,
+        // 时间轴与 Rust 的 `build_time_axis` 同口径：节次表 ∪ 实际排课区间 → 互斥片段。
+        // 有节次表就是逐节轴（第1节 08:00-08:40），课块再按占的节次跨行（见周视图）。
+        timeSlots: buildAxisRows(CAMPUS_PERIOD_SLOTS, CAMPUS_SESSIONS),
         courses: campusCourses,
       } as T)
     }
@@ -9182,6 +9216,12 @@ export async function mockInvoke<T>(cmd: string, args: Args = {}): Promise<T> {
 
     case 'campus_course_detail': {
       if (!campusAccount) throw new Error('还没有绑定教务系统账号，请先在「课表配置」里登录')
+      // 与 Rust 适配器同一条口径：正方那套教务**没有课程详情接口**
+      // （`AnyAdapter::fetch_course_detail` 直接返回「暂不支持」）。mock 照同样的样子失败 ——
+      // 否则「本机档案兜底」那条分支在浏览器里永远走不到，而它正是正方用户唯一的详情来源。
+      if (campusAccount.systemKind === 'gxust-zfsoft-zftal') {
+        throw new Error('广西科技大学的正方教务系统暂不支持查看课程详情')
+      }
       const lessonId = Number(args.lessonId)
       const weekday = args.weekday == null ? null : Number(args.weekday)
       const startUnit = args.startUnit == null ? null : Number(args.startUnit)

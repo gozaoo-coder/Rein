@@ -151,20 +151,27 @@ export interface HolidayConfigView extends HolidayConfig {
 }
 
 /**
- * 左侧时间轴的一行 —— 由该学期实际排课的节次去重得到。
+ * 左侧时间轴的一行 —— 由「学校公布的节次表」与「实际排课的节次区间」归一化得到的
+ * **互斥片段**（`@/utils/campusTimeAxis` 与 Rust `build_time_axis` 同口径）。
+ *
+ * 可能是一节（学校给了节次表 → 逐节轴：第1节 08:00-08:40），也可能是若干节的合并
+ * （没有节次表时按实际排课区间切）。片段首尾相接、互不重叠：**同一节次只会出现一次**，
+ * 课块再按自己占的节次跨行绘制（`grid-row: span N`）。
  *
  * 这是需求里「第几节课那一列要改成实际上课时间」的数据来源：
- * 教务的 `startTime`/`endTime` 已是该节次的真实时刻，不需要前端再维护节次表。
+ * 教务的 `startTime`/`endTime` 已是该片段的真实时刻，不需要前端再维护节次表。
  *
  * 命名避开 `TimeSlot`：nutrition 域已有一个同名类型（运动时段枚举），barrel 会撞。
  */
 export interface PeriodSlot {
+  /** 片段覆盖的节次区间（行身份） */
   startUnit: number
   endUnit: number
   startTime: string
   endTime: string
   /** 距 00:00 的分钟数，与 `Todo.startMin` 同口径 */
   startMin: number
+  /** 真实时长（分钟）—— 行高按它成比例，所以「不对称」看得出来 */
   durationMin: number
 }
 

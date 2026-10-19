@@ -20,9 +20,14 @@ import type { CourseDetail, CoursePeriod } from '@/types'
 /**
  * 教务课程详情抽屉。
  *
- * 与 `CourseDetailSheet`（课表派生行的本地只读）是两回事：这一份的数据**每次打开
- * 现拉**，字段直接对齐教务「课程详情」页 —— 容量/已选人数在选课期是活的，
- * 缓存一份「51/52」下一秒就可能过时，所以详情不落库、不缓存。
+ * 与 `CourseDetailSheet`（课表派生行的本地只读）是两回事：这一份在**远端可用时**的数据
+ * 每次打开现拉，字段直接对齐教务「课程详情」页 —— 容量/已选人数在选课期是活的，
+ * 缓存一份「51/52」下一秒就可能过时，所以远端详情不落库、不缓存。
+ *
+ * 但远端那条路**不是每套教务都有**（正方没有详情接口，树维要现拉整张课表），所以：
+ * 打开时先把 `localDetail`（本机同步下来的课程 / 时段，见 `stores/campus.ts`）摆上去 ——
+ * 抽屉立刻是可读的一页；远端回来再整份替换（容量那类实时值只有它有）。
+ * 远端失败或压根没有接口时，就留着本机那份，而不是把已有档案换成一张报错页。
  *
  * 生命周期（动画与请求必须对齐）：
  * - 打开 / 换课时发起请求，带自增 token；关闭时 token 立刻失效，
@@ -58,11 +63,23 @@ const props = defineProps<{
    * 所以这里兜的是 hero 里课名为空的那个角落，不再是标题。
    */
   fallbackCourseName?: string
+  /**
+   * **本机快照组装的那份档案**（`stores/campus.ts::offlineCourseDetail`）。
+   *
+   * 先摆它、再等远端：
+   * - 树维那套要现拉一次整张课表（慢），让用户对着骨架等几秒没有道理 ——
+   *   本机这份的课名 / 教师 / 地点 / 时间 / 周次与远端完全同源，先读起来更好；
+   * - 正方那套教务**没有课程详情接口**，这一份就是最终结果；
+   * - 会话过期 / 断网时，远端那个错误不该把「本来就有的一页档案」换成一张报错页。
+   */
+  localDetail?: CourseDetail | null
 }>()
 
 const emit = defineEmits<{ close: [] }>()
 
 const detail = ref<CourseDetail | null>(null)
+/** 当前摆着的是本机那份（远端还没回来 / 这条教务根本不支持详情接口） */
+const usingLocal = ref(false)
 const loading = ref(false)
 const error = ref('')
 /** 请求序号：只认最后一次发出的那个，迟到响应一律丢弃 */
@@ -70,18 +87,34 @@ let token = 0
 
 async function load(): Promise<void> {
   const { semesterId, lessonId, weekday, startUnit } = props
-  if (!props.open || semesterId == null || lessonId == null) return
+  if (!props.open) return
   const t = ++token
-  loading.value = true
+  const local = props.localDetail ?? null
+  // 本机有的先摆上：抽屉里立刻是可读的一页，远端回来再替换（容量这类实时值只有远端有）。
+  // 也顺手让「打开」这件事不再依赖网络 —— 课都摆在那儿了，看不看得见详情与网络无关。
+  detail.value = local
+  usingLocal.value = local !== null
   error.value = ''
+  if (semesterId == null || lessonId == null) {
+    // 连远端教学班 id 都没有（课表只同步了一半 / 视图是旧快照）：本机那份就是全部
+    loading.value = false
+    if (!local) error.value = '这门课还没有同步到教务信息，暂时看不了详情'
+    return
+  }
+  loading.value = local === null
   try {
     const d = await campusService.courseDetail({ semesterId, lessonId, weekday, startUnit })
     if (t !== token) return
     detail.value = d
+    usingLocal.value = false
   } catch (e) {
     if (t !== token) return
-    detail.value = null
-    error.value = e instanceof Error ? e.message : '课程详情获取失败'
+    // 有本机那份就留着：远端这条路不通（正方没有详情接口 / 会话过期 / 网络抖动）
+    // 不是用户要处理的错误，把已有档案换成报错页才是。
+    if (!local) {
+      detail.value = null
+      error.value = e instanceof Error ? e.message : '课程详情获取失败'
+    }
   } finally {
     if (t === token) loading.value = false
   }
@@ -347,12 +380,20 @@ const notes = computed(() => {
          卡面末尾那行 11px 免责声明撤掉（结论与数值已经都在卡面上） -->
     <template #action>
       <InfoHint title="数据来源">
-        <p>数据取自教务系统课表，容量与已选人数为实时值。</p>
+        <template v-if="usingLocal">
+          <p>这份档案来自本机同步下来的课表快照：课程 / 教师 / 地点 / 时间 / 周次 / 学分。</p>
+          <p>
+            容量、已选人数、学时构成这些只有教务「课程详情」页才有的字段，需要向教务现取 ——
+            取到时会自动补上，取不到就不显示（不拿别的数字充数）。
+          </p>
+        </template>
+        <p v-else>数据取自教务系统课表，容量与已选人数为实时值。</p>
       </InfoHint>
     </template>
 
-    <!-- 加载态：首帧没有可展示的旧数据时给骨架，避免抽屉里一片空 -->
-    <div v-if="loading" class="skeleton" aria-busy="true">
+    <!-- 加载态：首帧没有可展示的旧数据时给骨架，避免抽屉里一片空。
+         已经有本机那份档案时不摆骨架 —— 内容是现成的，没有理由先藏起来再显示 -->
+    <div v-if="loading && !detail" class="skeleton" aria-busy="true">
       <div class="sk sk-hero" />
       <div class="sk sk-axis" />
       <div class="sk sk-tiles" />
@@ -835,13 +876,18 @@ const notes = computed(() => {
 }
 
 /* ══════════════ 数字瓦片 ══════════════ */
+/* 瓦片按内容宽度排，**不为了填空把孤零零的一格拉成整行**：本机那份档案通常只有
+   「学分」一个读数（总学时 / 周学时只有教务详情页给得出），拉满整行看起来像渲染坏了；
+   而三格时它们仍然铺满一行。 */
 .tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .tile {
+  flex: 1 1 84px;
+  max-width: 132px;
   display: flex;
   flex-direction: column;
   align-items: center;

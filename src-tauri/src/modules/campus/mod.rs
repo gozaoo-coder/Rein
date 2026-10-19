@@ -22,6 +22,12 @@
 //! 课表与时间线的关系：`campus_sessions` 是真源，`todos` 里 `course_session_id` 非空的行
 //! 是它的**派生只读投影**；切换学期 / 刷新 / 注销时的生命周期见 `commands::materialize_todos`
 //! 的文档与 `docs/ARCHITECTURE.md`。
+//!
+//! **时间轴（动态时间段适配层）**：周视图左列的行轴由 `commands::build_time_axis` 产出 ——
+//! 把「学校公布的节次表」（正方单独开了一个接口，落在 `campus_period_slots`）与「实际排课的
+//! 节次区间」归一化成一组**互斥片段**，前端据此跨行绘制课块、并按真实时长定行高。
+//! 各校作息不一样（有的四十分钟一节、有的一上两节），轴因此是**派生**的而不是写死的节次表；
+//! 没有节次表的学校（树维）自动退化为只用排课区间，绝不插值编时刻。
 
 pub mod adapter;
 pub mod commands;
