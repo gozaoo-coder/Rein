@@ -1,0 +1,142 @@
+.s18 .ck-wrap {
+  gap: 30px;
+  width: 1400px;
+}
+
+.s18 .ck-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+  width: 1100px;
+}
+
+.s18 .ck-clock {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: var(--fs-display-2xl);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-1);
+  line-height: 1;
+}
+
+.s18 .ck-clock i {
+  font-style: normal;
+  color: var(--text-3);
+  font-size: var(--fs-display-l);
+  margin: 0 6px;
+}
+
+.s18 .ck-course {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  width: 100%;
+  padding: 28px 32px;
+  will-change: transform, opacity;
+}
+
+.s18 .ck-ico {
+  background: var(--cat-class);
+}
+
+.s18 .ck-info {
+  flex: 1 1 auto;
+}
+
+.s18 .ck-info b {
+  display: block;
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s18 .ck-info span {
+  font-size: var(--fs-title2);
+  color: var(--text-3);
+}
+
+.s18 .ck-state {
+  position: absolute;
+  right: 92px;
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  color: var(--text-2);
+}
+
+.s18 .ck-state--done {
+  color: var(--ok-strong);
+  opacity: 0;
+}
+
+.s18 .ck-check {
+  width: 40px;
+  height: 34px;
+  position: absolute;
+  right: 32px;
+  opacity: 0;
+}
+
+.s18 .ck-record {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  width: 100%;
+  padding: 26px 32px;
+  overflow: hidden;
+  will-change: transform, opacity;
+}
+
+.s18 .ck-rec-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-m);
+  background: var(--ok-soft);
+  color: var(--ok-strong);
+  font-size: var(--fs-title1);
+  font-weight: 700;
+}
+
+.s18 .ck-rec-txt {
+  flex: 1 1 auto;
+}
+
+.s18 .ck-rec-txt b {
+  display: block;
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s18 .ck-rec-txt span {
+  font-size: var(--fs-title2);
+  color: var(--text-3);
+}
+
+.s18 .ck-undo {
+  font-size: var(--fs-title2);
+  font-weight: 600;
+  color: var(--accent-strong);
+  opacity: 0;
+}
+
+/* 高光走中性白，且收窄 —— 上一版是一条绿光带扫过标题，「自动打卡成功」的「自」字
+   被糊成一团（第 1 轮审核判为渲染残留）。 */
+.s18 .ck-rec-shine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 140px;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
+  transform: translate3d(0, 0, 0);
+  pointer-events: none;
+}

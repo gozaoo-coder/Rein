@@ -1,0 +1,187 @@
+.s08 .meal-wrap {
+  gap: 34px;
+  width: 1400px;
+}
+
+.s08 .meal-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 1360px;
+  height: 780px;
+}
+
+.s08 .meal-phone {
+  width: 388px;
+}
+
+.s08 .meal-phone > .screen {
+  width: 364px;
+  height: 720px;
+}
+
+.s08 .cam {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(120% 90% at 50% 20%, #23232a 0%, var(--hero-bg) 62%, #050506 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.s08 .cam-plate {
+  position: relative;
+  width: 250px;
+  height: 250px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 42% 38%, #f4f1ea, #ddd6c8 68%, #c9c1b0 100%);
+  box-shadow: inset 0 6px 14px rgba(0, 0, 0, 0.12), 0 24px 50px -18px rgba(0, 0, 0, 0.6);
+}
+
+.s08 .cam-food {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 150px;
+  height: 128px;
+  margin: -64px 0 0 -75px;
+  border-radius: 46% 54% 52% 48%;
+  background: radial-gradient(circle at 40% 34%, #f0894a, #d1542b 62%, #a53c1c 100%);
+  box-shadow: inset 0 6px 12px rgba(255, 255, 255, 0.25), inset 0 -8px 14px rgba(0, 0, 0, 0.25);
+}
+
+.s08 .cam-frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 300px;
+  height: 300px;
+  margin: -150px 0 0 -150px;
+  overflow: hidden;
+}
+
+.s08 .cam-scan {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 0;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), #ffffff, rgba(255, 255, 255, 0));
+  opacity: 0;
+}
+
+.s08 .cam-corner {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+}
+
+.s08 .cam-corner.tl { top: 0; left: 0; border-right: 0; border-bottom: 0; border-radius: 14px 0 0 0; }
+.s08 .cam-corner.tr { top: 0; right: 0; border-left: 0; border-bottom: 0; border-radius: 0 14px 0 0; }
+.s08 .cam-corner.bl { bottom: 0; left: 0; border-right: 0; border-top: 0; border-radius: 0 0 0 14px; }
+.s08 .cam-corner.br { bottom: 0; right: 0; border-left: 0; border-top: 0; border-radius: 0 0 14px 0; }
+
+.s08 .cam-ui {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+}
+
+.s08 .cam-hint {
+  font-size: var(--fs-subhead);
+  color: rgba(255, 255, 255, 0.72);
+  letter-spacing: 0.1em;
+}
+
+.s08 .shutter {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 0 4px rgba(0, 0, 0, 0.25);
+}
+
+.s08 .flash {
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  opacity: 0;
+}
+
+.s08 .food {
+  width: 620px;
+  padding: 40px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.s08 .food-head {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.s08 .food-ico {
+  background: var(--led-food);
+}
+
+.s08 .food-name {
+  flex: 1 1 auto;
+}
+
+.s08 .food-name h3 {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s08 .food-energy {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.s08 .macros {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.s08 .macro-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.s08 .macro-val b {
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s08 .macro-val i {
+  font-style: normal;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s08 .macro-bar {
+  height: 12px;
+}
+
+.s08 .food-foot {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}

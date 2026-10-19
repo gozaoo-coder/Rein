@@ -87,6 +87,9 @@ scripts/release/e2e-*.local.*
 # 发布产物（构建期中间物，可复现）
 dist-release/
 
+# 宣传片渲染产物（可复现：promo 工程 + render/ 脚本；mp4 / wav / mid / 帧图不入库）
+promo/out/
+
 # 在线服务：数据目录、管理令牌配置、依赖
 server/data/
 server/config.json

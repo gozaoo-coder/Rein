@@ -1,0 +1,532 @@
+/* ============================================================
+   Rein 宣传片舞台 · 视觉基座
+
+   两条硬规则：
+   1. **令牌来自真源** —— 直接 @import App 的 src/styles/tokens.css，不抄近似值。
+      颜色 / 圆角 / 阴影 / 字号 / 缓动全部引用 var(--*)，换肤时这条片子跟着换。
+   2. **确定性** —— 全局关掉 transition / animation。所有动效由场景自己的
+      seek(t) 写内联样式，同一 t 必须得到同一帧（逐帧截图录制的唯一前提）。
+   ============================================================ */
+
+@import '../../src/styles/tokens.css';
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  transition: none !important;
+  animation: none !important;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+body {
+  font-family: var(--font);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* ---------- 舞台背景 ---------- */
+
+.stage-bg {
+  position: absolute;
+  inset: 0;
+  background: var(--app-ambient);
+}
+
+.stage-bg.dark {
+  background: radial-gradient(1400px 900px at 22% 6%, #1a1a20 0%, var(--hero-bg) 58%, #050506 100%);
+}
+
+.grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--hero-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hero-grid) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.grid-bg.on-light {
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
+}
+
+.vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.06) 100%);
+  pointer-events: none;
+}
+
+.glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ---------- 版面工具 ---------- */
+
+.row {
+  display: flex;
+  align-items: center;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.between {
+  justify-content: space-between;
+}
+
+.gap-xs { gap: 8px; }
+.gap-s { gap: 14px; }
+.gap-m { gap: 22px; }
+.gap-l { gap: 36px; }
+.gap-xl { gap: 56px; }
+
+.grow { flex: 1 1 auto; min-width: 0; }
+
+/* ---------- 文字 ---------- */
+
+.d1 { font-size: var(--fs-display-xl); font-weight: 700; letter-spacing: -0.03em; line-height: 1.02; }
+.d2 { font-size: var(--fs-display-2xl); font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; }
+.d3 { font-size: var(--fs-display-l); font-weight: 700; letter-spacing: -0.02em; line-height: 1.08; }
+.t1 { font-size: var(--fs-title1); font-weight: 650; letter-spacing: -0.01em; }
+.t2 { font-size: var(--fs-title2); font-weight: 650; }
+.t3 { font-size: var(--fs-title3); font-weight: 600; }
+.hl { font-size: var(--fs-headline); font-weight: 600; }
+.bd { font-size: var(--fs-body); }
+.cap { font-size: var(--fs-caption); }
+.micro { font-size: var(--fs-micro); }
+
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); }
+.num { font-variant-numeric: tabular-nums; }
+.accent { color: var(--accent-strong); }
+.strong { font-weight: 650; }
+
+.eyebrow {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* ---------- 表面 ---------- */
+
+/* 与 base.css 的 .glass-surface **同一套配方**：半透明底 + 受光边（背景画的
+   border-box 渐变）+ 内顶高光 + 光学层。此处只做视觉复现，不做折射。 */
+.glass {
+  border: 1px solid transparent;
+  border-radius: var(--radius-l);
+  background:
+    linear-gradient(var(--glass-fill), var(--glass-fill)) padding-box,
+    linear-gradient(to bottom, var(--glass-rim-hi), var(--glass-rim-lo) 70%) border-box;
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 10px 18px -12px var(--glass-sheen);
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-card);
+}
+
+.card.tight { border-radius: var(--radius-m); }
+
+.panel {
+  background: var(--glass-panel-fill, var(--surface));
+  border-radius: var(--radius-l);
+  box-shadow: var(--glass-panel-shadow, var(--shadow-card));
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  font-size: var(--fs-subhead);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.chip.soft-accent { background: var(--accent-soft); color: var(--accent-strong); }
+.chip.soft-ok { background: var(--ok-soft); color: var(--ok-strong); }
+.chip.soft-warn { background: var(--warn-soft); color: var(--warn-strong); }
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.bar {
+  position: relative;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.bar > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  display: block;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 9px;
+  font-size: var(--fs-footnote);
+  font-weight: 650;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.rule {
+  height: 1px;
+  background: var(--line);
+  width: 100%;
+}
+
+/* 图标槽：色相只允许出现在图标 / 色点 / 图表上（STANDARDS §4 色彩配额） */
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-m);
+  font-size: var(--fs-title3);
+  font-weight: 650;
+  color: var(--on-accent);
+  flex: 0 0 auto;
+}
+
+/* ---------- 设备外壳 ---------- */
+
+.phone {
+  position: relative;
+  border-radius: 56px;
+  background: #0b0b0e;
+  padding: 12px;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.28),
+    0 40px 90px -20px rgba(0, 0, 0, 0.42);
+}
+
+.phone > .screen {
+  position: relative;
+  border-radius: 44px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.phone > .screen > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.phone > .notch {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 108px;
+  height: 30px;
+  border-radius: var(--radius-full);
+  background: #0b0b0e;
+  z-index: 2;
+}
+
+.win {
+  position: relative;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.08),
+    0 60px 120px -30px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+
+.win > .chrome {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.win > .chrome i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  display: block;
+}
+
+.win > .body {
+  position: relative;
+}
+
+.win > .body > img {
+  display: block;
+  width: 100%;
+}
+
+/* 屏幕上的高光：让它读成一块玻璃，而不是一张贴图 */
+.sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 42%);
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+
+/* ---------- 进度环 ---------- */
+
+.ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.ring > svg {
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.ring > .label {
+  position: absolute;
+  text-align: center;
+}
+
+/* ---------- 场景 ---------- */
+
+.scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.scene > .stage-bg,
+.scene > .grid-bg,
+.scene > .vignette {
+  z-index: 0;
+}
+
+.scene > .content {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* ============================================================
+   宣传片版面（平面设计层）
+
+   全片统一的「编辑版式头带 + 版心栅格 + 底栏元信息」。
+   几何是**硬约束**：头带各行的 y、通栏线的 y、版心左右边距全片一致 ——
+   连续性靠这套固定框，而不是靠相邻画面内容相似。这就是片子与官网
+   `.sec-head`（左对齐、限宽）同源的地方；00 开场 / 29 收尾两枚书立不使用头带。
+
+   头带（01–28 一律如此）：
+     02 ── TIMELINE · 一条时间线      ← 序号 + 短横线 + 眉标（y = 104）
+     所有模块，长在同一条时间线上       ← 标题 56px 左对齐、限宽 1080（y ≈ 150）
+     ────────────────────────────    ← 通栏细线（y = 300）
+     [ 内容区：每拍一个主角 + 一个副栏的非对称版式 ]（y 336 → 984）
+   ============================================================ */
+
+:root {
+  --promo-pad-x: 160px; /* 左右边距 → 版心 1600px */
+  --promo-head-y: 104px; /* 眉标行上沿 */
+  --promo-rule-y: 300px; /* 通栏细线 */
+  --promo-zone-y: 336px; /* 内容区上沿 */
+  --promo-zone-b: 96px; /* 内容区下边距 → 内容区高 648px */
+  --promo-cap-b: 56px; /* 底栏元信息距底 */
+}
+
+.k-head {
+  position: absolute;
+  left: var(--promo-pad-x);
+  right: var(--promo-pad-x);
+  top: var(--promo-head-y);
+  z-index: 2;
+}
+
+.k-head-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 26px;
+}
+
+.k-idx {
+  font-size: var(--fs-title3);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.k-head-dash {
+  width: 44px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  flex: 0 0 auto;
+}
+
+.k-eyebrow {
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* 场景标题：左对齐、限宽 1080px、最多两行。
+   text-spacing-trim 治中文全角逗号后面那 26px 空洞（第 2 轮审核在 09/15/19 逐列投影量出来过）；
+   不认这条的内核当成未知属性忽略 —— 纯增益，没有退化风险。 */
+.k-title {
+  margin-top: 18px;
+  max-width: 1080px;
+  font-size: var(--fs-display-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  color: var(--text-1);
+  text-spacing-trim: trim-both;
+  text-autospace: normal;
+}
+
+.k-rule {
+  position: absolute;
+  left: var(--promo-pad-x);
+  right: var(--promo-pad-x);
+  top: var(--promo-rule-y);
+  height: 1px;
+  background: var(--line);
+  z-index: 1;
+}
+
+.k-zone {
+  position: absolute;
+  left: var(--promo-pad-x);
+  right: var(--promo-pad-x);
+  top: var(--promo-zone-y);
+  bottom: var(--promo-zone-b);
+  z-index: 1;
+}
+
+/* 底栏元信息（取代旧的 .beat-cap，两者同观感） */
+.k-caption,
+.beat-cap {
+  position: absolute;
+  left: var(--promo-pad-x, 72px);
+  bottom: var(--promo-cap-b, 56px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-footnote);
+  color: var(--text-3);
+  z-index: 3;
+}
+
+.k-caption b,
+.beat-cap b {
+  font-weight: 650;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.k-caption span,
+.beat-cap span {
+  letter-spacing: 0.04em;
+}
+
+/* 暗场：头带 / 通栏线 / 底栏 / 标题跟着翻到 --hero-* 那一组 */
+.k-dark .k-title,
+.k-dark .k-head,
+.s-dark .k-title,
+.s-dark .k-head {
+  color: var(--hero-text);
+}
+
+.k-dark .k-title {
+  color: var(--hero-text);
+}
+
+.k-dark .k-idx,
+.k-dark .k-caption {
+  color: var(--hero-text-dim);
+}
+
+.k-dark .k-caption b {
+  color: var(--hero-text);
+}
+
+.k-dark .k-head-dash {
+  background: var(--hero-chip-line);
+}
+
+.k-dark .k-rule {
+  background: var(--hero-chip-line);
+}

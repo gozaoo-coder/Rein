@@ -1,0 +1,169 @@
+/* 爆点 22 · 软件更新 —— 单卡居中（标题 + 卡作为一个整体垂直居中）。
+   验签章等宽并列、间距固定；落位只用位移 + 透明度，任何元素都不越出卡面。 */
+
+.s22 .up-card {
+  align-self: center;
+  width: 1120px;
+  padding: 46px 50px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  overflow: hidden;
+}
+
+.s22 .up-head {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+/* 图标 = 片头片尾那一枚「实心蓝底 squircle + 白色 R」（同一支片不能有两个 Rein 标记） */
+.s22 .up-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-l);
+  background: linear-gradient(168deg, #2a86ff, var(--accent) 46%, #004fae);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.s22 .up-ico svg {
+  width: 42px;
+  height: 42px;
+  fill: var(--on-accent);
+  stroke: none;
+}
+
+.s22 .up-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.s22 .up-title b {
+  display: block;
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s22 .up-title span {
+  font-size: var(--fs-title2);
+  color: var(--text-3);
+}
+
+.s22 .up-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.s22 .up-prog-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.s22 .up-pct {
+  font-size: var(--fs-display-l);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.s22 .up-bar {
+  height: 16px;
+}
+
+.s22 .up-bar > i {
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+}
+
+.s22 .up-shine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 90px;
+  display: block;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0));
+}
+
+.s22 .up-stamps {
+  display: flex;
+  gap: 24px;
+}
+
+.s22 .up-stamp {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 24px 26px;
+  border-radius: var(--radius-l);
+  background: var(--surface-2);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.s22 .up-stamp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-m);
+  background: var(--ok-soft);
+  color: var(--ok-strong);
+  font-size: var(--fs-title3);
+  font-weight: 700;
+}
+
+.s22 .up-stamp b {
+  display: block;
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s22 .up-stamp span {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s22 .up-stamp-check {
+  width: 34px;
+  height: 30px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.s22 .up-stamp-check path,
+.s22 .up-done-check path {
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 3.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.s22 .up-done {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: var(--fs-title1);
+  font-weight: 600;
+  color: var(--text-1);
+  opacity: 0;
+}
+
+.s22 .up-done-check {
+  width: 38px;
+  height: 34px;
+  flex: 0 0 auto;
+}

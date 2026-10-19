@@ -1,0 +1,76 @@
+.s28 .lo-wrap {
+  gap: 44px;
+  width: 1400px;
+}
+
+.s28 .lo-stage {
+  position: relative;
+  width: 1360px;
+  height: 560px;
+}
+
+.s28 .lo-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--c-balance);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.s28 .lo-ripple {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 420px;
+  height: 420px;
+  margin: 0;
+  border-radius: 50%;
+  border: 2px solid var(--c-balance);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.s28 .lo-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px 44px;
+  border-radius: var(--radius-xl);
+  background: var(--hero-chip-bg);
+  border: 1px solid var(--hero-chip-line);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.s28 .lo-shield {
+  width: 110px;
+  height: 110px;
+  fill: none;
+  stroke: var(--c-balance);
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 18px rgba(30, 234, 239, 0.5));
+}
+
+.s28 .lo-core b {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--hero-text);
+  letter-spacing: 0.1em;
+}
+
+.s28 .lo-say {
+  opacity: 0;
+}

@@ -1,0 +1,91 @@
+/* 爆点 15 · 练够分 —— 右主角环 + 左肌群热力图（App 真实 MuscleMap 资产，辅助层）。
+   色相只在环（图表）与热力图（图表）上；数值与档名走中性色。 */
+
+.s15 .sc-map {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 30px;
+}
+
+.s15 .sc-figure {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  line-height: 0;
+  will-change: transform;
+}
+
+.s15 .sc-figure img {
+  display: block;
+  width: 230px;
+  height: auto;
+  /* 素材是白底截图：multiply 让白底融进画布，只剩下解剖图本身（不留一块白方框） */
+  mix-blend-mode: multiply;
+}
+
+.s15 .sc-scan {
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(146, 232, 42, 0.85), transparent);
+  opacity: 0;
+}
+
+.s15 .sc-legend {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 12px;
+}
+
+.s15 .sc-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 38px;
+}
+
+.s15 .sc-ring circle {
+  fill: none;
+}
+
+.s15 .sc-track {
+  stroke: var(--ring-track);
+  stroke-width: 22;
+  opacity: 0.35;
+}
+
+.s15 .sc-arc {
+  stroke: var(--c-exercise);
+  stroke-width: 22;
+  stroke-linecap: round;
+}
+
+.s15 .sc-val {
+  font-size: var(--fs-display-xl);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--text-1);
+}
+
+.s15 .sc-tier {
+  margin-top: 12px;
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  color: var(--text-2);
+}
+
+.s15 .sc-note {
+  color: var(--text-2);
+}
+
+.s15 .sc-note b {
+  font-weight: 650;
+  color: var(--text-1);
+}

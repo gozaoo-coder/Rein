@@ -1,0 +1,167 @@
+.s07 .mem-wrap {
+  gap: 30px;
+  width: 1400px;
+}
+
+.s07 .mem-stage {
+  position: relative;
+  width: 1360px;
+  height: 400px;
+}
+
+.s07 .mem-chip {
+  position: absolute;
+  left: 0;
+  top: 128px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 320px;
+  height: 148px;
+  padding: 0 28px;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.s07 .mem-ico {
+  width: 64px;
+  height: 64px;
+  font-size: var(--fs-title1);
+  background: var(--cat-study);
+}
+
+.s07 .mem-ring {
+  position: absolute;
+  left: 60px;
+  top: 50%;
+  width: 64px;
+  height: 64px;
+  margin: 0;
+  border-radius: var(--radius-m);
+  border: 3px solid var(--cat-study);
+  pointer-events: none;
+}
+
+.s07 .mem-chip-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.s07 .mem-chip-txt b {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s07 .mem-chip-txt span {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s07 .mem-link {
+  position: absolute;
+  left: 330px;
+  top: 202px;
+  width: 150px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--line-strong), var(--accent-soft));
+}
+
+.s07 .mem-link i {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: block;
+}
+
+.s07 .mem-chat {
+  position: absolute;
+  left: 520px;
+  top: 56px;
+  width: 840px;
+  height: 288px;
+  overflow: hidden;
+}
+
+.s07 .chat-chrome {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.s07 .chat-chrome i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  display: block;
+}
+
+.s07 .chat-chrome span {
+  margin-left: 10px;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s07 .mem-body {
+  padding: 38px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.s07 .mem-tag {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  opacity: 0;
+}
+
+.s07 .mem-say {
+  font-size: var(--fs-title1);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.5;
+  opacity: 0;
+}
+
+.s07 .hlw {
+  position: relative;
+  display: inline-block;
+}
+
+.s07 .hlw em {
+  position: relative;
+  font-style: normal;
+}
+
+.s07 .hlb {
+  position: absolute;
+  inset: 2px -8px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-soft);
+  clip-path: inset(0 100% 0 0);
+}
+
+.s07 .mem-reply {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+  opacity: 0;
+}

@@ -1,0 +1,86 @@
+.s29 .br-wrap {
+  width: 1400px;
+}
+
+.s29 .br-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+  transform-origin: center center;
+}
+
+.s29 .br-mark {
+  position: relative;
+  width: 176px;
+  height: 176px;
+  border-radius: 44px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(168deg, #2a86ff, var(--accent) 46%, #004fae);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.12),
+    0 34px 70px -14px rgba(0, 98, 214, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.s29 .br-mark svg {
+  width: 90px;
+  height: 90px;
+  fill: var(--on-accent);
+  margin-top: -3px;
+}
+
+.s29 .br-halo {
+  position: absolute;
+  top: -70px;
+  left: 50%;
+  width: 340px;
+  height: 340px;
+  margin-left: -170px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 98, 214, 0.26) 0%, rgba(0, 98, 214, 0) 66%);
+  pointer-events: none;
+}
+
+.s29 .br-name {
+  font-size: var(--fs-display-xl);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  color: var(--text-1);
+}
+
+.s29 .br-tag {
+  font-size: var(--fs-title1);
+  font-weight: 550;
+  color: var(--text-2);
+  letter-spacing: 0.2em;
+  padding-left: 0.2em;
+}
+
+.s29 .br-hint {
+  margin-top: 8px;
+}
+
+.s29 .br-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  height: 60px;
+  padding: 0 28px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--fs-title2);
+  font-weight: 650;
+}
+
+.s29 .br-pill i {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: block;
+}

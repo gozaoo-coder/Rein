@@ -1,0 +1,100 @@
+/* 爆点 12 · 番茄钟 —— 左大环（主角）+ 右「今日专注」副栏。
+   色相只在倒计时环与已完成的番茄点上（图表/色点配额）。 */
+
+.s12 .po-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.s12 .po-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.s12 .po-ring circle {
+  fill: none;
+}
+
+.s12 .po-track {
+  stroke: var(--ring-track);
+  stroke-width: 24;
+  opacity: 0.4;
+}
+
+.s12 .po-prog {
+  stroke: var(--c-intake);
+  stroke-width: 24;
+  stroke-linecap: round;
+}
+
+.s12 .po-tick {
+  stroke: var(--text-3);
+  stroke-width: 6;
+  stroke-dasharray: 2 26;
+  opacity: 0.45;
+}
+
+.s12 .po-time {
+  font-size: var(--fs-display-2xl);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--text-1);
+}
+
+.s12 .po-cap {
+  margin-top: 12px;
+  font-size: var(--fs-title2);
+  letter-spacing: 0.2em;
+  color: var(--text-3);
+}
+
+/* ---------- 右：今日专注 ---------- */
+
+.s12 .po-rail {
+  align-self: center;
+  padding: 42px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.s12 .po-h3 {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s12 .po-dots {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.s12 .po-dots i {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  border: 2px solid var(--line-strong);
+  display: block;
+  will-change: transform, opacity;
+}
+
+.s12 .po-line {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}
+
+.s12 .po-line b {
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s12 .po-rule {
+  height: 1px;
+  background: var(--line);
+}

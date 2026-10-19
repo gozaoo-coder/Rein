@@ -1,0 +1,90 @@
+/* 爆点 02 · 一条时间线 —�?时间轴放进一块面板、放大到撑住版面�?   色相只在八枚模块色点上（图表/色点配额），文字与轴走中性色�?*/
+
+.s02 .tl-panel {
+  height: 100%;
+  padding: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.s02 .tl {
+  position: relative;
+  width: 1360px;
+  height: 240px;
+}
+
+.s02 .tl-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 88px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+}
+
+.s02 .tl-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 88px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(90deg, var(--accent-strong), var(--accent));
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+/* 末端光晕：跟着描线的头部走，停留段持续呼吸 */
+.s02 .tl-head {
+  position: absolute;
+  left: 0;
+  top: 94px;
+  width: 210px;
+  height: 210px;
+  margin: -105px 0 0 -105px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 98, 214, 0.34) 0%, rgba(0, 98, 214, 0) 62%);
+  opacity: 0;
+}
+
+/* 扫描线：一道细光沿时间轴往返，让停留段始终有可见的�?*/
+.s02 .tl-scan {
+  position: absolute;
+  left: 0;
+  top: 50px;
+  width: 4px;
+  height: 88px;
+  margin-left: -2px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  box-shadow: 0 0 18px 4px rgba(0, 98, 214, 0.5);
+  opacity: 0;
+}
+
+.s02 .tl-stop {
+  position: absolute;
+  top: 88px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.s02 .tl-dot {
+  display: block;
+  width: 34px;
+  height: 34px;
+  margin-top: -17px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 9px var(--surface);
+}
+
+.s02 .tl-name {
+  margin-top: 34px;
+  font-size: var(--fs-title2);
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+}

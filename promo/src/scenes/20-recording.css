@@ -1,0 +1,161 @@
+.s20 .rc-wrap {
+  gap: 30px;
+  width: 1400px;
+}
+
+.s20 .rc-stage {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+  width: 1360px;
+  height: 540px;
+}
+
+.s20 .rc-wave {
+  flex: 1 1 auto;
+  align-self: stretch;
+  padding: 32px 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.s20 .rc-rec {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.s20 .rc-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--danger);
+  display: block;
+}
+
+.s20 .rc-rec span {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}
+
+.s20 .rc-timer {
+  margin-left: auto;
+  font-size: var(--fs-display-s);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1;
+}
+
+.s20 .rc-bars {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.s20 .rc-bar {
+  flex: 1 1 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.s20 .rc-bar > i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  transform-origin: center center;
+  transform: scaleY(0.12);
+}
+
+.s20 .rc-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-footnote);
+  color: var(--text-3);
+}
+
+.s20 .rc-side {
+  width: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.s20 .rc-transcript {
+  padding: 30px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.s20 .rc-cap {
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+}
+
+.s20 .rc-text {
+  font-size: var(--fs-title1);
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.5;
+  min-height: 120px;
+}
+
+.s20 .rc-caret {
+  display: inline-block;
+  width: 3px;
+  height: 30px;
+  margin-left: 4px;
+  vertical-align: -5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0;
+}
+
+.s20 .rc-summary {
+  padding: 30px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  opacity: 0;
+}
+
+.s20 .rc-sum-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.s20 .rc-sum-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-m);
+  background: var(--cat-study);
+  color: var(--on-accent);
+  font-size: var(--fs-body);
+  font-weight: 650;
+}
+
+.s20 .rc-sum-head b {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s20 .rc-sum-head .chip {
+  margin-left: auto;
+}
+
+.s20 .rc-sum-row {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}

@@ -1,0 +1,144 @@
+/* 爆点 13 · 运动（暗场）—— 左读数栏 + 右配速图表（都在深色玻璃面板里）。
+   荧光绿只落在曲线与面积底上；刻度、网格、文字走 --hero-* 中性档。 */
+
+.s13 .run-rail {
+  padding: 44px 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 38px;
+}
+
+.s13 .run-pace {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.s13 .run-pace .k-num {
+  color: var(--hero-text);
+}
+
+.s13 .run-unit {
+  font-size: var(--fs-title1);
+  color: var(--hero-text-dim);
+}
+
+.s13 .run-stats {
+  display: flex;
+  gap: 54px;
+}
+
+.s13 .run-stats b {
+  display: block;
+  font-size: var(--fs-display-s);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--hero-text);
+}
+
+.s13 .run-stats span {
+  font-size: var(--fs-subhead);
+  color: var(--hero-text-dim);
+}
+
+.s13 .run-met {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 24px;
+  border-radius: var(--radius-l);
+  background: var(--hero-chip-bg);
+  border: 1px solid var(--hero-chip-line);
+  align-self: flex-start;
+}
+
+.s13 .run-met-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-m);
+  background: var(--hero-route-line);
+  color: var(--hero-bg);
+  font-size: var(--fs-title2);
+  font-weight: 700;
+}
+
+.s13 .run-met b {
+  display: block;
+  font-size: var(--fs-display-m);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--hero-text);
+}
+
+.s13 .run-met span {
+  font-size: var(--fs-subhead);
+  color: var(--hero-text-dim);
+}
+
+/* ---------- 图表面板 ---------- */
+
+.s13 .run-chart {
+  position: relative;
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.s13 .run-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.s13 .run-grid {
+  stroke: var(--hero-grid);
+  stroke-width: 1;
+}
+
+.s13 .run-ytick,
+.s13 .run-xtick {
+  fill: var(--hero-text-dim);
+  font-size: 20px;
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+.s13 .run-ytick {
+  text-anchor: end;
+}
+
+.s13 .run-xtick {
+  text-anchor: middle;
+}
+
+.s13 .run-area {
+  fill: url(#runArea);
+  opacity: 0;
+}
+
+.s13 .run-curve {
+  fill: none;
+  stroke: var(--hero-route-line);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* 辉光比上一版收得多：只留一层薄晕，不再铺满半屏 */
+  filter: drop-shadow(0 0 10px rgba(146, 232, 42, 0.35));
+}
+
+.s13 .run-pace-dot {
+  fill: var(--hero-text);
+}
+
+.s13 .run-axis-label {
+  position: absolute;
+  right: 28px;
+  top: 24px;
+  font-size: var(--fs-subhead);
+  color: var(--hero-text-dim);
+}

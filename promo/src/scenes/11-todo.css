@@ -1,0 +1,199 @@
+/* 爆点 11 · 待办时间线 —— 左日视图（真实事项）+ 右四象限（真实待办）。
+   连线改 --accent 细实线；色相只在色点与落位条上。 */
+
+.s11 .td-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 36px;
+  width: 100%;
+  height: 100%;
+}
+
+.s11 .td-panel {
+  padding: 30px 32px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.s11 .td-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.s11 .td-head b {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s11 .td-sub {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+/* ---------- 左：日视图 ---------- */
+
+.s11 .td-rows {
+  display: flex;
+  flex-direction: column;
+  margin-top: 14px;
+}
+
+.s11 .td-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 78px;
+  will-change: transform;
+}
+
+.s11 .td-hour {
+  width: 70px;
+  font-size: var(--fs-title3);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.s11 .td-slot {
+  position: relative;
+  flex: 1 1 auto;
+  height: 56px;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.s11 .td-task {
+  position: relative;
+  padding-left: 20px;
+  font-size: var(--fs-title3);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.s11 .td-land {
+  position: absolute;
+  inset: 0;
+  display: block;
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  border-left: 5px solid var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
+}
+
+/* ---------- 右：四象限 ---------- */
+
+.s11 .td-quads {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 22px;
+  flex: 1 1 auto;
+}
+
+.s11 .td-quad {
+  padding: 20px 20px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  will-change: transform, opacity;
+}
+
+.s11 .td-quad b {
+  font-size: var(--fs-title3);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s11 .td-quad-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-subhead);
+  color: var(--text-2);
+}
+
+.s11 .td-quad-item i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.s11 .td-quad-n {
+  margin-top: auto;
+  font-size: var(--fs-footnote);
+  color: var(--text-3);
+}
+
+/* ---------- 拖拽连线与浮签 ---------- */
+
+.s11 .td-sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 120px;
+  background: linear-gradient(180deg, rgba(0, 98, 214, 0), rgba(0, 98, 214, 0.08), rgba(0, 98, 214, 0));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.s11 .td-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.s11 .td-arc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: 0;
+}
+
+.s11 .td-chip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  width: 260px;
+  height: 56px;
+  padding: 0 22px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow:
+    0 0 0 2px var(--accent),
+    var(--shadow-float);
+  font-size: var(--fs-title2);
+  font-weight: 600;
+  color: var(--text-1);
+  opacity: 0;
+}
+
+.s11 .td-chip i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--warn);
+  display: block;
+  flex: 0 0 auto;
+}

@@ -1,0 +1,25 @@
+{
+  "name": "rein-promo",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Rein 宣传视频 · 无头浏览器逐帧渲染（motion.dev + anime.js v4）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "music": "node render/music.mjs",
+    "video": "node render/music.mjs && node render/record.mjs",
+    "video:fast": "node render/music.mjs && node render/record.mjs --fps=30 --scale=1",
+    "video:silent": "node render/record.mjs --no-music",
+    "shots": "node render/shots.mjs",
+    "review": "node render/review.mjs"
+  },
+  "dependencies": {
+    "animejs": "4.5.0",
+    "motion": "14.3.0"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1",
+    "vite": "^7.0.0"
+  }
+}

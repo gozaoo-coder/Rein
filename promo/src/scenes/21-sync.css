@@ -1,0 +1,182 @@
+/* 爆点 21 · 多设备同步（暗场）—— 三台真实界面壳同轴排列，三条链路同 y。
+   连线走中性色；色相只落在锁图标（accent）上，流动光点是白的。 */
+
+.s21 .sy-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.s21 .sy-dev {
+  will-change: transform, opacity;
+}
+
+/* 桌面窗口：亮色 app 界面，落在暗场上是明确的一块「内容」 */
+.s21 .sy-desk {
+  width: 560px;
+}
+
+.s21 .sy-desk .chrome {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.s21 .sy-desk .chrome i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  display: block;
+}
+
+.s21 .sy-desk .chrome span {
+  margin-left: 10px;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s21 .sy-desk .body {
+  position: relative;
+  line-height: 0;
+}
+
+.s21 .sy-desk .body img {
+  display: block;
+  width: 100%;
+}
+
+.s21 .sy-phone {
+  width: 232px;
+  border-radius: 42px;
+  padding: 10px;
+  background: #0b0b0e;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    0 40px 90px -20px rgba(0, 0, 0, 0.7);
+}
+
+/* 手机素材是 860×2412（近 1:2.8），全高会把内容区顶爆 —— 裁到顶部 400px，
+   仍是真实界面，只是取上面那段。 */
+.s21 .sy-phone > .screen {
+  position: relative;
+  height: 400px;
+  border-radius: 33px;
+  overflow: hidden;
+  background: #0b0b0e;
+}
+
+.s21 .sy-phone > .screen > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.s21 .sy-phone > .notch {
+  position: absolute;
+  top: 17px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 78px;
+  height: 22px;
+  border-radius: var(--radius-full);
+  background: #0b0b0e;
+  z-index: 3;
+}
+
+/* 平板：暗色边框 + 真实界面 */
+.s21 .sy-tab {
+  width: 340px;
+  padding: 13px;
+  border-radius: var(--radius-xl);
+  background: #0b0b0e;
+  border: 1px solid var(--hero-chip-line);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    0 40px 90px -20px rgba(0, 0, 0, 0.7);
+}
+
+.s21 .sy-tab-screen {
+  position: relative;
+  border-radius: var(--radius-m);
+  overflow: hidden;
+  line-height: 0;
+}
+
+.s21 .sy-tab-screen img {
+  display: block;
+  width: 100%;
+}
+
+/* ---------- 链路（中性色，同一 y） ---------- */
+
+.s21 .sy-svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.s21 .sy-link {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.26);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.s21 .sy-pulse {
+  fill: #fff;
+  opacity: 0;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));
+}
+
+.s21 .sy-lock {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-m);
+  background: var(--hero-chip-bg);
+  border: 1px solid var(--hero-chip-line);
+  opacity: 0;
+}
+
+.s21 .sy-lock svg {
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 5px rgba(0, 98, 214, 0.9));
+}
+
+.s21 .sy-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 8px 18px;
+  border-radius: var(--radius-full);
+  background: var(--hero-chip-bg);
+  border: 1px solid var(--hero-chip-line);
+  color: var(--hero-text);
+  font-size: var(--fs-title3);
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+}

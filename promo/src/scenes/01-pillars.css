@@ -1,0 +1,110 @@
+/* 爆点 01 · AI 中枢 —— 左列能力（非等权，当前行展开）+ 右侧中枢面板。
+   色相只在模块色点与中枢的 accent 上；文字与数值走中性色。 */
+
+.s01 .pl-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.s01 .pl-item {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 22px 24px;
+  border-radius: var(--radius-l);
+  will-change: transform, opacity;
+}
+
+.s01 .pl-ico {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.s01 .pl-item-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.s01 .pl-item-txt b {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s01 .pl-item-txt span {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}
+
+/* ---------- 中枢面板 ---------- */
+
+.s01 .pl-visual {
+  position: relative;
+  overflow: hidden;
+}
+
+.s01 .pl-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.s01 .pl-spoke {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  /* 视窗被拉伸成面板的非等比尺寸，靠这条让线宽仍是屏幕像素 */
+  vector-effect: non-scaling-stroke;
+}
+
+.s01 .pl-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 108px;
+  height: 108px;
+  border-radius: 32px;
+  background: linear-gradient(168deg, #2a86ff, var(--accent) 46%, #004fae);
+  color: var(--on-accent);
+  font-size: var(--fs-title1);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  box-shadow:
+    0 0 0 10px var(--accent-soft),
+    0 18px 40px -12px rgba(0, 98, 214, 0.5);
+  will-change: transform;
+}
+
+.s01 .pl-node {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 18px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  font-size: var(--fs-title3);
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+  will-change: transform, opacity;
+}
+
+.s01 .pl-node i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}

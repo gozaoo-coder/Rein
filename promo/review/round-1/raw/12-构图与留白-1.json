@@ -1,0 +1,108 @@
+{
+  "reviewer": "12-构图与留白-1",
+  "lens": "构图与留白",
+  "verdicts": [
+    {
+      "beat": "00-brand",
+      "verdict": "pass",
+      "score": 8,
+      "issues": [
+        {
+          "severity": "minor",
+          "what": "品牌徽标仅约 154x154px（居中于 960,456），下方 Rein 与 tagline 也偏小，整块内容只占画面中央约 8% 宽，四边留白过大、读起来偏空。",
+          "fix": "把徽标放大到约 260-300px，wordmark 同步放大（建议 ≥84px，用 --fs-display-xl），并让「徽标+文案」整组严格垂直居中，压掉下方大片空场。"
+        }
+      ]
+    },
+    {
+      "beat": "01-pillars",
+      "verdict": "pass",
+      "score": 7,
+      "issues": [
+        {
+          "severity": "major",
+          "what": "三张卡总宽约 1184px（x≈365-1549）尚可，但单卡仅约 302px 高且卡内文字全压在顶部（标题约 32px、正文约 21px、页脚 READ/ACT/KEEP 仅约 16px），卡片下半与整帧下三分之一（y>715）大片空白，头重脚轻、元素尺度偏小。",
+          "fix": "放大卡内正文到 26-30px、页脚 ≥24px，或压缩卡高消除卡内空底；三卡与标题整体下移到垂直居中位置，把下方留白匀到上下两边。"
+        },
+        {
+          "severity": "minor",
+          "what": "顶部小标「AI 是那个把数据串起来的人」约 17px，低于视频可读尺度。",
+          "fix": "提升到 ≥24px，或删除该行只保留三卡。"
+        }
+      ]
+    },
+    {
+      "beat": "02-timeline",
+      "verdict": "pass",
+      "score": 8,
+      "issues": [
+        {
+          "severity": "minor",
+          "what": "眉标「ONE TIMELINE · 一条时间线」约 16px，节点下标签约 26px，眉标明显偏小、与轴标签不在同一尺度层级。",
+          "fix": "眉标提升到 ≥24px 并拉开与轴的距离，避免被当作可读正文却又读不清。"
+        }
+      ]
+    },
+    {
+      "beat": "03-conversation",
+      "verdict": "pass",
+      "score": 8,
+      "issues": []
+    },
+    {
+      "beat": "04-tools",
+      "verdict": "pass",
+      "score": 8,
+      "issues": []
+    },
+    {
+      "beat": "05-artifact",
+      "verdict": "pass",
+      "score": 8,
+      "issues": []
+    },
+    {
+      "beat": "06-knowledge",
+      "verdict": "pass",
+      "score": 7,
+      "issues": [
+        {
+          "severity": "major",
+          "what": "左侧四张文件卡每张仅约 336x112px（x≈272-608），卡内标题约 24px、副行约 16px；右侧检索框内容也仅两行，整帧元素普遍偏小、缺乏 1080p 应有的主次体量。",
+          "fix": "整体放大左右两块（文件卡宽增到约 420px、卡内副行 ≥24px），并让左右两组高度接近、连线更短，避免主体缩在画面中段、四周大片空。"
+        }
+      ]
+    },
+    {
+      "beat": "07-memory",
+      "verdict": "pass",
+      "score": 8,
+      "issues": [
+        {
+          "severity": "minor",
+          "what": "右侧对话卡约 840x300px（y≈467-768）内只有一枚小 chip 和一行字，卡内大片空白；左卡片明显矮于右卡，画面正下方（y>770）整片闲置。",
+          "fix": "缩小右侧对话卡高度或补充内容填实，并让左卡与右卡上下对齐居中，把下方留白分摊到画面上下。"
+        }
+      ]
+    },
+    {
+      "beat": "08-meal",
+      "verdict": "pass",
+      "score": 8,
+      "issues": []
+    },
+    {
+      "beat": "09-nutrition",
+      "verdict": "pass",
+      "score": 7,
+      "issues": [
+        {
+          "severity": "major",
+          "what": "作为视觉焦点的三环直径仅约 288px（x≈464-752），中心数值 700 约 70px，右侧文字面板整体压在上半幅，画面下三分之一（y>750）几乎全空，焦点体量不够、重心偏上。",
+          "fix": "把三环放大到约 380-440px、中心数值提到 --fs-display-xl（84px），并让「环+面板」整组垂直居中，消掉下方空场。"
+        }
+      ]
+    }
+  ],
+  "summary": "十个爆点构图重心都稳、四边留白充足、无跑版或硬伤；通病是主体普遍偏小且集中在中上部，下半幅留白过多，个别卡内文字已降到视频尺度以下——属可打磨的质感问题，不构成打回。"
+}

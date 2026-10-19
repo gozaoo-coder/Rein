@@ -1,0 +1,277 @@
+/* ============================================================
+   爆点通用基座样式（01–28 共用）。
+
+   版面骨架（头带 / 通栏线 / 版心 / 内容区 / 底栏）在 brand.css —— 那是全片同一套固定框。
+   这里只放：① 版式模板（非对称，一屏一个焦点）② 场景内部通用件（卡片/条/点/勾）。
+   字号一律来自令牌：正文 --fs-title2（21）、节标题 --fs-title1（26）、
+   场景标题 --fs-display-2xl（56，在 brand.css）、主数值 --fs-display-xl（84）。
+   ============================================================ */
+
+/* ---------- 版式模板（一屏一个焦点：主角 + 副栏，非对称） ----------
+   这几套类是**加在 .k-zone 上**的。.k-zone 已由 top/bottom 定死高度（648px），
+   所以这里绝不能再写 height:100% —— 绝对定位元素上 height 会压过 bottom，
+   把内容区撑到 1080 高（越出版心、把下面的底栏盖掉）。让 grid 自己填满即可。 */
+
+.k-zone.k-split {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 44px;
+  align-items: stretch;
+}
+
+.k-zone.k-split-r {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 44px;
+  align-items: stretch;
+}
+
+/* 档位行 + 单块大面板：左侧一列候选（选中项放大上浮），右侧只讲一个结果 */
+.k-zone.k-ladder {
+  display: grid;
+  grid-template-columns: 1fr 1.7fr;
+  gap: 44px;
+  align-items: stretch;
+}
+
+.k-zone.k-stack {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 32px;
+}
+
+.k-zone.k-center {
+  display: grid;
+  place-items: center;
+}
+
+.k-hero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.k-rail {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.k-center-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  height: 100%;
+}
+
+/* ---------- 停留段扫光（配 sweep()；父容器需 overflow:hidden 裁切） ---------- */
+
+.k-sheen {
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 60%;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.5) 50%, transparent 70%);
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* ---------- 字号档 ---------- */
+
+.k-lead {
+  font-size: var(--fs-title1);
+  color: var(--text-2);
+  line-height: 1.4;
+  text-spacing-trim: trim-both;
+  text-autospace: normal;
+}
+
+.k-sub {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}
+
+.k-body {
+  font-size: var(--fs-title2);
+  color: var(--text-1);
+  line-height: 1.35;
+}
+
+.k-num {
+  font-size: var(--fs-display-xl);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.k-num-s {
+  font-size: var(--fs-display-l);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.k-num-m {
+  font-size: var(--fs-display-s);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.k-micro {
+  font-size: var(--fs-subhead);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.k-foot {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.k-foot b {
+  color: var(--text-1);
+  font-weight: 650;
+}
+
+/* ---------- 通用件 ---------- */
+
+.k-bar {
+  position: relative;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.k-bar > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  display: block;
+  border-radius: var(--radius-full);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+/* 卡片走真玻璃配方（半透明底 + 受光边 + 内顶高光 + 光学内层），
+   不是平涂白 —— 第 1 轮审核在 10-recipes / 16-plan 上点名「卡面没有受光边」。 */
+.k-panel {
+  position: relative;
+  border: 1px solid transparent;
+  border-radius: var(--radius-l);
+  background:
+    linear-gradient(var(--glass-fill), var(--glass-fill)) padding-box,
+    linear-gradient(to bottom, var(--glass-rim-hi), var(--glass-rim-lo) 70%) border-box;
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1px 0 var(--glass-sheen),
+    inset 0 10px 18px -12px var(--glass-sheen);
+}
+
+/* 暗场里的面板：--hero-bg 系实底 + 受光边 */
+.k-dark .k-panel {
+  background:
+    linear-gradient(var(--hero-chip-bg), var(--hero-chip-bg)) padding-box,
+    linear-gradient(to bottom, var(--hero-chip-line), rgba(255, 255, 255, 0.04) 70%) border-box;
+  box-shadow:
+    0 20px 60px -20px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.k-ico {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-m);
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  color: var(--on-accent);
+}
+
+.k-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.k-dots i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-3);
+  display: block;
+}
+
+.k-check {
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 色点图例（色相只留色点，数值/文字走中性色 —— 色彩配额） */
+.k-legend {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  font-size: var(--fs-subhead);
+  color: var(--text-2);
+}
+
+.k-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.k-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+/* ---------- 旧基座（保留：00/29 两枚书立与未迁移片段仍可能用到） ---------- */
+
+.k-fit {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.k-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 未迁移的老场景用 .k-wrap 当外壳：让它撑满内容区并垂直居中，
+   否则内容会顶在内容区上沿、下方留一大块空场。 */
+.k-zone > .k-wrap {
+  min-height: 100%;
+  justify-content: center;
+}

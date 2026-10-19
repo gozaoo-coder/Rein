@@ -1,0 +1,125 @@
+.s27 .ph-wrap {
+  gap: 28px;
+  width: 1400px;
+}
+
+.s27 .ph-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  width: 1360px;
+  height: 640px;
+}
+
+.s27 .ph-desktop {
+  width: 760px;
+  will-change: transform, opacity;
+}
+
+.s27 .ph-desktop .chrome {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.s27 .ph-desktop .chrome i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  display: block;
+}
+
+.s27 .ph-desktop .chrome span {
+  margin-left: 10px;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s27 .ph-desktop .body {
+  position: relative;
+}
+
+.s27 .ph-desktop .body img {
+  display: block;
+  width: 100%;
+}
+
+.s27 .ph-link {
+  position: relative;
+  width: 150px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--line-strong), var(--accent-soft));
+}
+
+.s27 .ph-link i {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: block;
+}
+
+.s27 .ph-phone {
+  width: 330px;
+  will-change: transform, opacity;
+}
+
+.s27 .ph-phone > .screen {
+  position: relative;
+  width: 306px;
+  height: 620px;
+  border-radius: 38px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.s27 .ph-phone > .screen > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.s27 .ph-tabs {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  box-shadow: inset 0 1px 0 var(--glass-sheen);
+}
+
+.s27 .ph-tab {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-footnote);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.s27 .ph-tab i {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--line-strong);
+  display: block;
+}

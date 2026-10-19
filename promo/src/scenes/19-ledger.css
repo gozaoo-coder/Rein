@@ -1,0 +1,152 @@
+/* 爆点 19 · 记账 —— 左主角（预算线性条）+ 右副栏（分类环形图）。
+   主色蓝只留给预算这一处「accent 时刻」；分类色相只在环与色点上，金额/占比走中性色。 */
+
+.s19 .ld-hero {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 24px;
+}
+
+.s19 .ld-used {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.s19 .ld-num {
+  font-size: var(--fs-display-xl);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.s19 .ld-of {
+  font-style: normal;
+  font-size: var(--fs-title1);
+  color: var(--text-3);
+}
+
+.s19 .ld-bar {
+  position: relative;
+  height: 20px;
+}
+
+.s19 .ld-bar > i {
+  background: var(--accent);
+}
+
+.s19 .ld-sheen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 60%;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.7) 50%, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.s19 .ld-foot {
+  display: flex;
+  gap: 64px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+
+.s19 .ld-foot-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.s19 .ld-foot-cell b {
+  font-size: var(--fs-title1);
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.s19 .ld-foot-cell i {
+  font-style: normal;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+/* ---------- 右副栏 ---------- */
+
+.s19 .ld-rail {
+  align-self: center;
+  padding: 38px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+}
+
+.s19 .ld-h3 {
+  align-self: flex-start;
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s19 .ld-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.s19 .ld-ring circle {
+  fill: none;
+  stroke-width: 22;
+}
+
+.s19 .ld-track {
+  stroke: var(--ring-track);
+  opacity: 0.35;
+}
+
+.s19 .ld-top {
+  font-size: var(--fs-display-m);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-1);
+}
+
+.s19 .ld-top-k {
+  margin-top: 8px;
+  font-size: var(--fs-title3);
+  color: var(--text-2);
+}
+
+.s19 .ld-legend {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.s19 .ld-leg-row {
+  display: grid;
+  grid-template-columns: 12px 1fr auto auto;
+  align-items: center;
+  gap: 14px;
+  font-size: var(--fs-title3);
+}
+
+.s19 .ld-leg-name {
+  color: var(--text-2);
+}
+
+.s19 .ld-leg-amt {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.s19 .ld-leg-pct {
+  min-width: 46px;
+  text-align: right;
+  color: var(--text-3);
+}

@@ -1,0 +1,158 @@
+/* 爆点 23 · 外部服务接口 —— 左权限清单（按 5 行撑开）+ 右通道面板（等高）。
+   色相只在勾选框、通道条与计数上；名称/状态走中性色。 */
+
+.s23 .ap-stage {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 28px;
+  width: 100%;
+  height: 100%;
+}
+
+.s23 .ap-list {
+  position: relative;
+  overflow: hidden;
+  padding: 32px 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.s23 .ap-list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+
+.s23 .ap-list-head b {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s23 .ap-list-head span {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s23 .ap-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.s23 .ap-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  border: 2px solid var(--line-strong);
+}
+
+.s23 .ap-box svg {
+  width: 26px;
+  height: 22px;
+}
+
+.s23 .ap-box path {
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.s23 .ap-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.s23 .ap-info b {
+  display: block;
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s23 .ap-info span {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s23 .ap-state {
+  font-size: var(--fs-title2);
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+/* ---------- 右：通道 ---------- */
+
+.s23 .ap-side {
+  padding: 36px 34px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 38px;
+}
+
+.s23 .ap-count {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.s23 .ap-num {
+  font-size: var(--fs-display-xl);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-1);
+}
+
+.s23 .ap-count span {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}
+
+.s23 .ap-chans {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.s23 .ap-chan {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.s23 .ap-chan-name {
+  font-size: var(--fs-title3);
+  color: var(--text-3);
+}
+
+.s23 .ap-chan-track {
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  overflow: hidden;
+  display: block;
+}
+
+.s23 .ap-chan-track > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: var(--radius-full);
+  transform: scaleX(0);
+  transform-origin: left center;
+}

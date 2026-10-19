@@ -1,0 +1,135 @@
+/* 爆点 09 · 营养 —— 一个主角环 + 右侧宏量副栏（非对称 k-split）。
+   色相只在环与图例色点上；所有数值（947 / 62 / 118 / 24）走中性色。 */
+
+.s09 .nu-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 34px;
+}
+
+.s09 .nu-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.s09 .nu-ring circle {
+  fill: none;
+  stroke-width: 20;
+  stroke-linecap: round;
+}
+
+.s09 .nu-track {
+  stroke: var(--ring-track);
+  opacity: 0.4;
+}
+
+.s09 .nu-eat {
+  stroke: var(--c-intake);
+}
+
+.s09 .nu-burn {
+  stroke: var(--c-exercise);
+}
+
+.s09 .nu-mark line {
+  stroke: var(--text-3);
+  stroke-width: 2;
+}
+
+.s09 .nu-center {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.s09 .nu-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.s09 .nu-energy {
+  font-size: var(--fs-display-xl);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--text-1);
+}
+
+.s09 .nu-of {
+  font-style: normal;
+  font-size: var(--fs-title2);
+  color: var(--text-3);
+}
+
+.s09 .nu-left {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}
+
+.s09 .nu-swatch-line {
+  width: 18px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text-3);
+  flex: 0 0 auto;
+}
+
+/* ---------- 右侧副栏：三条宏量 + 一行中性注脚 ---------- */
+
+.s09 .nu-rail {
+  align-self: center;
+  padding: 42px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.s09 .nu-h3 {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s09 .nu-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 152px;
+  align-items: center;
+  gap: 18px;
+}
+
+.s09 .nu-name {
+  font-size: var(--fs-title2);
+  color: var(--text-2);
+}
+
+.s09 .nu-bar {
+  height: 14px;
+}
+
+.s09 .nu-val {
+  font-size: var(--fs-title2);
+  text-align: right;
+  color: var(--text-3);
+}
+
+.s09 .nu-val b {
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s09 .nu-val i {
+  font-style: normal;
+}
+
+.s09 .nu-foot {
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}

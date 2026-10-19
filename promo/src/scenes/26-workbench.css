@@ -1,0 +1,147 @@
+/* 爆点 26 · 桌面工作台 —— 单主角：窗口本身；命令面板是实底紧凑面板，停在窗口下缘。 */
+
+.s26 .wb-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.s26 .wb-win {
+  will-change: width, opacity;
+}
+
+.s26 .wb-win .chrome {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.s26 .wb-win .chrome i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  display: block;
+}
+
+.s26 .wb-win .chrome span {
+  margin-left: 10px;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+/* 画面高度钉死，宽度变化只改变「看见多少」—— 形变期间高度不跳 */
+.s26 .wb-win .body {
+  position: relative;
+  height: 596px;
+  overflow: hidden;
+}
+
+.s26 .wb-win .body img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+/* 裁切的底缘收一个渐隐，让它读成「内容还在往下」而不是一刀切 */
+.s26 .wb-win .body::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 120px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), var(--surface));
+  pointer-events: none;
+}
+
+/* 命令面板：实底（不是半透明），强落影把层级抬到窗口之上 */
+.s26 .wb-pal {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 900px;
+  padding: 18px 22px;
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-float-lift);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 4;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.s26 .wb-pal-search {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 4px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.s26 .wb-key {
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  font-size: var(--fs-subhead);
+  font-weight: 650;
+  color: var(--text-2);
+}
+
+.s26 .wb-pal-q {
+  font-size: var(--fs-title1);
+  color: var(--text-2);
+}
+
+.s26 .wb-caret {
+  width: 3px;
+  height: 30px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0;
+}
+
+.s26 .wb-pal-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: var(--radius-m);
+  background: var(--accent-soft);
+}
+
+.s26 .wb-pal-row i {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--accent);
+  display: block;
+  flex: 0 0 auto;
+}
+
+.s26 .wb-pal-row b {
+  flex: 1 1 auto;
+  font-size: var(--fs-title2);
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
+.s26 .wb-pal-row span {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}

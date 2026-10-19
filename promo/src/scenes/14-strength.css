@@ -1,0 +1,174 @@
+.s14 .st-wrap {
+  gap: 34px;
+  width: 1400px;
+}
+
+.s14 .st-card {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  width: 1160px;
+  padding: 46px 52px;
+}
+
+.s14 .st-left {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.s14 .st-ex {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.s14 .st-ico {
+  background: var(--c-exercise-deep);
+}
+
+.s14 .st-ex b {
+  display: block;
+  font-size: var(--fs-title1);
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.s14 .st-ex-sub {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s14 .st-steps {
+  display: flex;
+  gap: 30px;
+}
+
+.s14 .st-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.s14 .st-label {
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s14 .st-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 18px;
+  height: 92px;
+  padding: 0 22px;
+  border-radius: var(--radius-l);
+  background: var(--surface-2);
+}
+
+.s14 .st-ctrl i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-m);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: var(--fs-title2);
+  font-style: normal;
+  font-weight: 650;
+}
+
+.s14 .st-ctrl b {
+  font-size: var(--fs-display-l);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1;
+}
+
+.s14 .st-ctrl em {
+  font-size: var(--fs-title2);
+  font-style: normal;
+  color: var(--text-3);
+}
+
+.s14 .st-done-chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: var(--radius-full);
+  background: var(--c-exercise-soft);
+  color: var(--c-exercise-deep);
+  font-size: var(--fs-subhead);
+  font-weight: 650;
+}
+
+.s14 .st-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+
+.s14 .st-ring circle {
+  fill: none;
+}
+
+.s14 .st-track {
+  stroke: var(--ring-track);
+  stroke-width: 18;
+  opacity: 0.4;
+}
+
+.s14 .st-rest {
+  stroke: var(--c-exercise);
+  stroke-width: 18;
+  stroke-linecap: round;
+}
+
+.s14 .st-rest-t {
+  font-size: var(--fs-display-2xl);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1;
+}
+
+.s14 .st-rest-cap {
+  margin-top: 8px;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s14 .st-sets {
+  display: flex;
+  gap: 14px;
+}
+
+.s14 .st-cell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  border-radius: var(--radius-m);
+  background: var(--surface-2);
+}
+
+.s14 .st-cell b {
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  color: var(--text-2);
+}
+
+.s14 .st-cell svg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 24px;
+  margin: -12px 0 0 -14px;
+}

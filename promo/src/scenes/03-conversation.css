@@ -1,0 +1,135 @@
+.s03 .c-wrap {
+  gap: 34px;
+  width: 1400px;
+}
+
+.s03 .chat {
+  width: 1240px;
+  overflow: hidden;
+}
+
+.s03 .chat-chrome {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.s03 .chat-chrome i {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--line-strong);
+  display: block;
+}
+
+.s03 .chat-chrome span {
+  margin-left: 10px;
+  font-size: var(--fs-subhead);
+  color: var(--text-3);
+}
+
+.s03 .chat-body {
+  padding: 40px 44px 46px;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.s03 .msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  will-change: transform, opacity;
+}
+
+.s03 .msg-ai {
+  justify-content: flex-end;
+}
+
+.s03 .avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-m);
+  font-size: var(--fs-title2);
+  font-weight: 650;
+  color: var(--on-accent);
+}
+
+.s03 .av-user {
+  background: var(--cat-general);
+}
+
+.s03 .av-ai {
+  background: var(--accent);
+}
+
+.s03 .av-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  margin: 0;
+  border-radius: var(--radius-m);
+  border: 3px solid var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.s03 .bub {
+  max-width: 900px;
+  padding: 24px 30px;
+  border-radius: var(--radius-l);
+  font-size: var(--fs-title1);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+
+.s03 .bub-user {
+  background: var(--surface-2);
+}
+
+.s03 .bub-ai {
+  position: relative;
+  background: var(--surface-3);
+  color: var(--text-1);
+  min-height: 84px;
+  min-width: 320px;
+}
+
+.s03 .typing {
+  position: absolute;
+  left: 30px;
+  top: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.s03 .typing i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-3);
+  display: block;
+}
+
+.s03 .caret {
+  display: inline-block;
+  width: 3px;
+  height: 30px;
+  margin-left: 4px;
+  vertical-align: -5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0;
+}

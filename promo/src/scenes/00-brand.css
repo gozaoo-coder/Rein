@@ -1,0 +1,51 @@
+.brand-stack {
+  position: relative;
+  gap: 26px;
+}
+
+.mark {
+  width: 148px;
+  height: 148px;
+  border-radius: 38px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(168deg, #2a86ff, var(--accent) 46%, #004fae);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.12),
+    0 28px 60px -14px rgba(0, 98, 214, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.mark svg {
+  width: 76px;
+  height: 76px;
+  fill: var(--on-accent);
+  margin-top: -2px;
+}
+
+.halo {
+  position: absolute;
+  top: -80px;
+  left: 50%;
+  width: 320px;
+  height: 320px;
+  margin-left: -160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 98, 214, 0.24) 0%, rgba(0, 98, 214, 0) 68%);
+  pointer-events: none;
+}
+
+.brand-name {
+  font-size: var(--fs-display-xl);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+
+.brand-tag {
+  font-size: var(--fs-title2);
+  font-weight: 550;
+  color: var(--text-2);
+  letter-spacing: 0.3em;
+  padding-left: 0.3em;
+}
