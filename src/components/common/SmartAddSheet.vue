@@ -100,6 +100,8 @@ async function runGenerate(): Promise<void> {
   busy.value = true
   error.value = ''
   todos.value = []
+  createdByKey.value = {}
+  editingKey.value = null
   foods.value = []
   foodPreview.value = []
   streamTool.value = ''
@@ -158,12 +160,13 @@ async function onPickImage(e: Event): Promise<void> {
 const pendingCount = computed(() => todos.value.filter((d) => d.checked && !d.added).length)
 
 async function addChecked(): Promise<void> {
+  if (adding.value) return
   const pick = todos.value.filter((d) => d.checked && !d.added)
   if (pick.length === 0) return
   adding.value = true
   try {
     for (const d of pick) {
-      await todoStore.create({
+      const created = await todoStore.create({
         title: d.title,
         notes: d.notes,
         date: d.date,
@@ -172,6 +175,7 @@ async function addChecked(): Promise<void> {
         category: d.category,
         priority: d.priority,
       })
+      createdByKey.value[d.key] = created
       d.added = true
     }
     // 跨页提议卡的「用户已处理」信号：聊天模型看不到这个抽屉，靠 @/ai/cardOutcomes 带过去
@@ -187,9 +191,18 @@ async function addChecked(): Promise<void> {
   }
 }
 
-/* 点击待办草稿 → 进编辑器调整细节；保存后该草稿已落库，同步展示 */
+/* 点击待办草稿 → 进编辑器调整细节；保存后该草稿已落库，同步展示。
+   已落库过的草稿再点铅笔必须走「改」而不是「再建一条」—— 否则同一条草稿被点几次
+   就多出几条一模一样的待办（编辑器此前恒以 `todo=null` 打开，save 永远落 create 分支）。 */
 const editingKey = ref<string | null>(null)
 const editorOpen = ref(false)
+/** draft.key → 已落库的待办；有值即编辑器以「编辑」模式打开它 */
+const createdByKey = ref<Record<string, Todo>>({})
+
+/** 当前草稿对应的已落库待办（未落库则 null → 新建） */
+const editingTodo = computed<Todo | null>(() =>
+  editingKey.value ? createdByKey.value[editingKey.value] ?? null : null,
+)
 
 function openEditor(d: TodoDraft): void {
   editingKey.value = d.key
@@ -199,6 +212,7 @@ function openEditor(d: TodoDraft): void {
 function onEditorSaved(todo: Todo): void {
   const d = todos.value.find((x) => x.key === editingKey.value)
   if (!d) return
+  createdByKey.value[d.key] = todo
   d.title = todo.title
   d.notes = todo.notes
   d.date = todo.date ?? d.date
@@ -266,6 +280,8 @@ function clearAll(): void {
   text.value = ''
   attachment.value = null
   todos.value = []
+  createdByKey.value = {}
+  editingKey.value = null
   foods.value = []
   error.value = ''
   foodCommitted.value = false
@@ -429,7 +445,7 @@ function clearAll(): void {
     <!-- 嵌套弹层：待办完整表单 / 食物库选择器 -->
     <TodoEditorSheet
       :open="editorOpen"
-      :todo="null"
+      :todo="editingTodo"
       :initial="editingKey ? (todos.find((d) => d.key === editingKey) ?? null) : { date, category }"
       :date
       @close="editorOpen = false"

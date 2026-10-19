@@ -176,6 +176,8 @@ function commitDuration(): void {
 }
 
 const canSave = computed(() => form.title.trim().length > 0)
+/** 保存中：挡住连点 —— create 是一次异步往返，晚了 100ms 的第二次点击会再落一条 */
+const saving = ref(false)
 
 function rulePayload(): RecRule | null {
   if (form.recFreq === 'none') return null
@@ -203,30 +205,35 @@ function toggleWeekday(d: number): void {
 }
 
 async function save(): Promise<void> {
-  if (!canSave.value) return
-  const rule = rulePayload()
-  const subs = form.subtasks.length ? form.subtasks : null
-  const input: TodoInput = {
-    title: form.title.trim(),
-    notes: form.notes.trim() || null,
-    date: form.date || null,
-    startMin: form.startMin,
-    durationMin: form.durationMin,
-    category: form.category,
-    priority: form.priority,
-    recRule: rule,
-    subtasks: subs,
-    attachments: form.attachments.length ? form.attachments : null,
+  if (!canSave.value || saving.value) return
+  saving.value = true
+  try {
+    const rule = rulePayload()
+    const subs = form.subtasks.length ? form.subtasks : null
+    const input: TodoInput = {
+      title: form.title.trim(),
+      notes: form.notes.trim() || null,
+      date: form.date || null,
+      startMin: form.startMin,
+      durationMin: form.durationMin,
+      category: form.category,
+      priority: form.priority,
+      recRule: rule,
+      subtasks: subs,
+      attachments: form.attachments.length ? form.attachments : null,
+    }
+    if (props.todo) {
+      const next: Todo = { ...props.todo, ...input }
+      await store.update(next)
+      emit('saved', next)
+    } else {
+      const created = await store.create(input)
+      emit('saved', created)
+    }
+    emit('close')
+  } finally {
+    saving.value = false
   }
-  if (props.todo) {
-    const next: Todo = { ...props.todo, ...input }
-    await store.update(next)
-    emit('saved', next)
-  } else {
-    const created = await store.create(input)
-    emit('saved', created)
-  }
-  emit('close')
 }
 
 async function remove(): Promise<void> {
@@ -668,7 +675,7 @@ onBeforeUnmount(() => {
         <Trash2 :size="16" />
       </button>
       <span v-else />
-      <button class="save" :disabled="!canSave" @click="save">保存</button>
+      <button class="save" :disabled="!canSave || saving" @click="save">保存</button>
     </div>
   </SheetModal>
 </template>
