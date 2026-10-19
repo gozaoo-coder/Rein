@@ -14,6 +14,13 @@
  * 今日统计口径（AI、页脚、桌面右栏、设置页共用）：
  * · todayFocusMin = 今日所有 session 的 focusMin 之和（**含中断段**）＝「今天实际投入了多少分钟」；
  * · todayCompletedCount / todayInterruptedCount = completed 为真 / 假的段数。
+ *
+ * 计时方向（settings.mode）：
+ * · `down` 番茄钟 —— 倒计时，走满进休息（上面那套相位机制）；
+ * · `up` 正计时 —— 读数往上累加，每满一个 `focusMin` 周期记一颗完整番茄并**继续**走
+ *   （不进休息），由用户主动 `endRound`/`endPhase` 收尾，零头按中断口径处理。
+ * 另外还有 `rewindPhase()`（回到本番茄钟初，重来当前相位）与 `settings.maxPauseMin`
+ * （最长暂停：累计暂停超时自动结束本段，看门狗在 pause() 起、start() 停）。
  */
 
 import { computed, ref, watch } from 'vue'
@@ -23,11 +30,13 @@ import { pomodoroService } from '@/services/pomodoroService'
 import { todoService } from '@/services/todoService'
 import { gatewayService } from '@/services/gatewayService'
 import { notifyFocusPhase } from '@/services/notifyService'
+import { compatActive } from '@/compat/layers'
 import { addDays, localDateOf, todayStr } from '@/utils/date'
 import { playPhaseChime } from '@/utils/notifyTone'
 import type {
   FocusNotice,
   FocusRuntime,
+  PomodoroMode,
   PomodoroSession,
   PomodoroSessionInput,
   PomodoroSettings,
@@ -62,6 +71,10 @@ interface LiveSnapshot {
   completedRounds: number
   /** 相位真实起点墙钟毫秒（0 = 尚未起跑）。 */
   phaseStartedAtMs: number
+  /** 计时方向；旧快照缺省 down。 */
+  mode?: PomodoroMode
+  /** 正计时已累计秒数（down 模式恒为 0）；旧快照缺省 0。 */
+  upElapsedSec?: number
 }
 
 function loadSettings(): PomodoroSettings {
@@ -71,11 +84,22 @@ function loadSettings(): PomodoroSettings {
     longBreakMin: 15,
     roundsBeforeLongBreak: 4,
     chime: true,
+    maxPauseMin: 9,
+    mode: 'down',
   }
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
-    // 旧数据没有 chime：默认值为 true，展开后由存档覆盖已有的键
-    if (raw) return { ...fallback, ...(JSON.parse(raw) as Partial<PomodoroSettings>) }
+    if (raw) {
+      const saved = JSON.parse(raw) as Partial<PomodoroSettings>
+      const merged = { ...fallback, ...saved }
+      // 旧存档缺 `mode` / `maxPauseMin`：由兼容层 0.0.2 保证回退（down / 9）。删掉那层后
+      // 缺键直接落到上面的 fallback 默认值，行为一致 —— 不让回退逻辑硬编码散落在此。
+      if (compatActive('0.0.2')) {
+        if (saved.mode == null) merged.mode = 'down'
+        if (saved.maxPauseMin == null) merged.maxPauseMin = 9
+      }
+      return merged
+    }
   } catch {
     /* 忽略损坏的本地设置 */
   }
@@ -111,11 +135,22 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
 
   const phase = ref<Phase>('focus')
   const running = ref(false)
-  /** 本阶段剩余秒数 */
+  /** 本阶段剩余秒数（down 模式的真源） */
   const remainingSec = ref(settings.value.focusMin * 60)
   /** 本阶段总秒数：**进入相位时冻结**，progress / 运行态快照都由它派生。 */
   const phaseTotalSec = ref(settings.value.focusMin * 60)
   let endAt = 0
+  /** 正计时已累计秒数（up 模式的真源）；down 模式恒为 0。 */
+  const upElapsedSec = ref(0)
+  /** 正计时当前运行段的锚点墙钟毫秒与其起点累计值（暂停即冻结，续跑从此推进）。 */
+  let upAnchorAt = 0
+  let upBaseSec = 0
+  /** 本段**累计**暂停秒数：超过 settings.maxPauseMin 自动结束本段（0 = 不限制）。 */
+  const pausedAccumSec = ref(0)
+  let pauseStartedAt = 0
+  let pauseTimer: ReturnType<typeof setInterval> | null = null
+  /** 正计时这一段里**已记账**的番茄周期数：跨过新周期的边界时才 +1，避免重复记账。 */
+  let recordedCycles = 0
   let timer: ReturnType<typeof setInterval> | null = null
   /** 本相位真实起点墙钟毫秒（0 = 尚未起跑）；暂停续跑不重置，故 startedAt 是真实开始时刻。 */
   let phaseStartedAtMs = 0
@@ -148,6 +183,16 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
   /** 本轮生效的专注时长（分钟）：外部起跑覆盖优先，否则本地设置。 */
   function focusMinValue(): number {
     return runFocusMin.value ?? settings.value.focusMin
+  }
+
+  /** 当前计时方向（番茄钟 / 正计时）。 */
+  function mode(): PomodoroMode {
+    return settings.value.mode
+  }
+
+  /** 正计时一个「番茄」周期（分钟）：每满一个周期得一颗番茄，不自动进入休息。 */
+  function upCycleSec(): number {
+    return Math.max(1, Math.round(focusMinValue() * 60))
   }
 
   /** 本轮生效的短休息时长（分钟）：外部起跑覆盖优先，否则本地设置。 */
@@ -199,14 +244,14 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
 
   /** 维护进行中快照：fresh 空闲相位不写（没有要接管的东西），其余如实落盘。 */
   function persistLive(): void {
-    if (!running.value && remainingSec.value >= phaseTotalSec.value) {
+    if (!running.value && remainingSec.value >= phaseTotalSec.value && upElapsedSec.value === 0) {
       removeLocal(LIVE_KEY)
       return
     }
     const snap: LiveSnapshot = {
       phase: phase.value,
       running: running.value,
-      endAtMs: running.value ? endAt : 0,
+      endAtMs: running.value && mode() === 'down' ? endAt : 0,
       remainingSec: remainingSec.value,
       phaseTotalSec: phaseTotalSec.value,
       linkedTodoId: linkedTodoId.value,
@@ -214,6 +259,8 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
       runBreakMin: runBreakMin.value,
       completedRounds: completedRounds.value,
       phaseStartedAtMs,
+      mode: mode(),
+      upElapsedSec: upElapsedSec.value,
     }
     writeLocal(LIVE_KEY, JSON.stringify(snap))
   }
@@ -229,6 +276,9 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
         phaseTotalSec.value = s.focusMin * 60
         remainingSec.value = phaseTotalSec.value
       }
+      // 计时方向只影响显示口径：切到 down 时把正计时读数归零，切回 up 时剩余不重要。
+      // 正在跑的一段不允许中途换向（会与已投入的时间对不上），由 setMode 守住入口。
+      if (s.mode === 'down') upElapsedSec.value = 0
     },
     { deep: true },
   )
@@ -244,6 +294,25 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
   /** 拼一份对外快照。相位锚点由 endAt 反推：`phaseStartedAt + remainingSec` = 预计结束时刻，
    *  后端的 `recover_focus` 就按这条等式判「关闭期间是否已走完」（contract §14.1）。 */
   function runtimeSnapshot(): FocusRuntime {
+    if (mode() === 'up') {
+      // 正计时：没有「剩余到 0」这一说 —— 对外报「距下一颗番茄还有多少秒」，
+      // 于是 phaseStartedAt + remainingSec 落在未来，recover_focus 不会误判为已走完。
+      const cycle = upCycleSec()
+      const toNext = cycle - (upElapsedSec.value % cycle)
+      const anchorMs = Date.now() - upElapsedSec.value * 1000
+      return {
+        phase: phase.value,
+        running: running.value,
+        remainingSec: toNext,
+        plannedFocusMin: focusMinValue(),
+        // 正计时不进入休息：如实报 0，而不是编一个将到来的休息长度
+        plannedBreakMin: 0,
+        phaseStartedAt: new Date(anchorMs).toISOString(),
+        linkedTodoId: linkedTodoId.value,
+        completedRounds: completedRounds.value,
+        reportedAt: new Date().toISOString(),
+      }
+    }
     const anchorMs =
       endAt > 0
         ? endAt - remainingSec.value * 1000
@@ -332,7 +401,18 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
 
   /* ---------- 相位推进（必须执行，不依赖写库成功） ---------- */
 
+  /** 把「本段累计暂停」归零并停掉暂停看门狗（进入新相位 / 复位 / 重来都要走） */
+  function resetPause(): void {
+    pausedAccumSec.value = 0
+    pauseStartedAt = 0
+    if (pauseTimer) {
+      clearInterval(pauseTimer)
+      pauseTimer = null
+    }
+  }
+
   function advanceFocusToBreak(): void {
+    resetPause()
     phase.value = 'break'
     phaseTotalSec.value = breakPlannedMin() * 60
     remainingSec.value = phaseTotalSec.value
@@ -343,6 +423,7 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
 
   function advanceBreakToFocus(): void {
     clearRuntime() // 休息结束：这一轮专注结束，对外回到「没有进行中的计时」
+    resetPause()
     phase.value = 'focus'
     // 外部起跑的一次性覆盖只覆盖「这一轮专注 + 它的休息」；回到新轮次即失效（回到本地设置）
     runFocusMin.value = null
@@ -356,6 +437,20 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
   /* ---------- 计时 ---------- */
 
   function tick(): void {
+    if (mode() === 'up') {
+      // 正计时：读秒往上走；每跨过一个周期边界就记一颗番茄，然后接着走（不进入休息）
+      const elapsed = upBaseSec + Math.round((Date.now() - upAnchorAt) / 1000)
+      if (elapsed !== upElapsedSec.value) {
+        upElapsedSec.value = Math.max(0, elapsed)
+        persistLive()
+      }
+      const crossed = Math.floor(upElapsedSec.value / upCycleSec())
+      if (crossed > recordedCycles) {
+        recordedCycles = crossed
+        void recordUpCycle()
+      }
+      return
+    }
     // 只在整秒变化时才写 remainingSec：250ms 的采样保证相位结束最多晚 250ms，但不引发每秒 4 次重排
     const next = Math.max(0, Math.round((endAt - Date.now()) / 1000))
     if (next !== remainingSec.value) {
@@ -378,6 +473,36 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     endAt = 0
   }
 
+  /* ---------- 最长暂停看门狗 ---------- */
+
+  /** 暂停开始：起 1s 看门狗，累计暂停一旦超过 settings.maxPauseMin 就自动结束本段。 */
+  function startPauseWatch(): void {
+    if (settings.value.maxPauseMin <= 0) return
+    if (pauseStartedAt === 0) pauseStartedAt = Date.now()
+    pauseTimer ??= setInterval(() => {
+      if (pauseStartedAt === 0) return
+      const acc = pausedAccumSec.value + Math.round((Date.now() - pauseStartedAt) / 1000)
+      pausedAccumSec.value = acc
+      if (acc >= settings.value.maxPauseMin * 60) {
+        // 超时：按「提前结束本段」处理 —— 专注记中断（≥60s 才写），休息直接跳过
+        resetPause()
+        void endPhase()
+      }
+    }, 1000)
+  }
+
+  /** 续跑：把本次暂停段计入累计并停表 */
+  function freezePause(): void {
+    if (pauseStartedAt > 0) {
+      pausedAccumSec.value += Math.round((Date.now() - pauseStartedAt) / 1000)
+      pauseStartedAt = 0
+    }
+    if (pauseTimer) {
+      clearInterval(pauseTimer)
+      pauseTimer = null
+    }
+  }
+
   /**
    * 起跑。可选参数由外部下行控制（`pomodoro.start` 载荷，contract §14.3）带入：
    * `focusMin` / `breakMin` 覆盖本轮时长，`todoId` 关联待办。全部省略时与无参调用行为一致
@@ -387,20 +512,39 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
    */
   function start(opts?: { focusMin?: number; breakMin?: number; todoId?: number | null }): void {
     if (running.value) return
+    freezePause() // 从暂停续跑：先把这次暂停段计入累计、停掉看门狗
     if (opts) {
       // 只在专注相位（含复位后的初始态）采用外部时长：休息相位里的 start 是「续走休息」，
       // 与专注/休息参数无关，别让它改到下一轮的算法上去。
       if (phase.value === 'focus') {
         if (opts.focusMin != null && opts.focusMin > 0) {
           runFocusMin.value = opts.focusMin
-          remainingSec.value = Math.round(opts.focusMin * 60)
-          // 外部覆盖也属「进入相位」：此刻一并冻结总秒数
-          phaseTotalSec.value = remainingSec.value
+          if (mode() === 'down') {
+            remainingSec.value = Math.round(opts.focusMin * 60)
+            // 外部覆盖也属「进入相位」：此刻一并冻结总秒数
+            phaseTotalSec.value = remainingSec.value
+          }
         }
         if (opts.breakMin != null && opts.breakMin > 0) runBreakMin.value = opts.breakMin
       }
       if (opts.todoId !== undefined) setLinkedTodo(opts.todoId ?? null)
     }
+
+    // 正计时：没有「剩余到 0」，读数从当前累计位置往上走；新的一段（0）重置周期计数
+    if (mode() === 'up') {
+      if (phase.value !== 'focus') phase.value = 'focus'
+      if (upElapsedSec.value === 0) recordedCycles = 0
+      upAnchorAt = Date.now()
+      upBaseSec = upElapsedSec.value
+      if (phaseStartedAtMs === 0) phaseStartedAtMs = Date.now()
+      running.value = true
+      timer ??= setInterval(tick, 250)
+      publishRuntime()
+      publishTimer ??= setInterval(publishRuntime, PUBLISH_INTERVAL_MS)
+      persistLive()
+      return
+    }
+
     if (remainingSec.value === 0) return
     if (phaseStartedAtMs === 0) phaseStartedAtMs = Date.now()
     endAt = Date.now() + remainingSec.value * 1000
@@ -414,15 +558,64 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
 
   function pause(): void {
     if (!running.value) return
-    remainingSec.value = Math.max(0, Math.round((endAt - Date.now()) / 1000))
+    if (mode() === 'up') {
+      // 正计时：把当前运行段折算进累计并冻结锚点，续跑从此处推进
+      upElapsedSec.value = upBaseSec + Math.max(0, Math.round((Date.now() - upAnchorAt) / 1000))
+      upBaseSec = upElapsedSec.value
+    } else {
+      remainingSec.value = Math.max(0, Math.round((endAt - Date.now()) / 1000))
+    }
     stopTimer()
+    startPauseWatch() // 超过「最长暂停」自动结束本段（maxPauseMin = 0 则不限）
     clearRuntime() // 暂停：对外不再有「进行中的计时」（contract §14.4）
+    persistLive()
+  }
+
+  /** 回到本番茄钟初：把**当前相位**倒回起点重来，不写任何记录（区别于「放弃」reset）。 */
+  function rewindPhase(): void {
+    resetPause()
+    if (phase.value === 'focus' && mode() === 'up') {
+      upElapsedSec.value = 0
+      upBaseSec = 0
+      upAnchorAt = Date.now()
+      recordedCycles = 0
+      phaseStartedAtMs = running.value ? Date.now() : 0
+      persistLive()
+      return
+    }
+    if (phase.value === 'focus') phaseTotalSec.value = focusMinValue() * 60
+    remainingSec.value = phaseTotalSec.value
+    if (running.value) endAt = Date.now() + remainingSec.value * 1000
+    phaseStartedAtMs = running.value ? Date.now() : 0
+    persistLive()
+  }
+
+  /** 提前结束本阶段：专注 → 记录并结束本轮（进休息）；休息 → 跳过休息回专注。 */
+  function endPhase(): Promise<void> | void {
+    if (phase.value === 'focus') return endRound()
+    reset()
+  }
+
+  /** 切换计时方向（番茄钟 / 正计时）。进行中不换向（已投入的时间会与方向对不上），由 UI 禁用入口。 */
+  function setMode(m: PomodoroMode): void {
+    if (settings.value.mode === m) return
+    if (active.value) return
+    settings.value.mode = m
+    phase.value = 'focus'
+    phaseTotalSec.value = settings.value.focusMin * 60
+    remainingSec.value = phaseTotalSec.value
+    upElapsedSec.value = 0
+    upBaseSec = 0
+    upAnchorAt = 0
+    recordedCycles = 0
+    phaseStartedAtMs = 0
     persistLive()
   }
 
   /** 放弃 / 跳过休息：不落库、回专注相位、**不动 completedRounds**（见下方注释）。 */
   function reset(): void {
     stopTimer()
+    resetPause()
     clearRuntime()
     phase.value = 'focus'
     // 外部起跑带来的一次性覆盖随「停止」作废：回到用户本地设置
@@ -430,11 +623,75 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     runBreakMin.value = null
     phaseTotalSec.value = settings.value.focusMin * 60
     remainingSec.value = phaseTotalSec.value
+    upElapsedSec.value = 0
+    upBaseSec = 0
+    upAnchorAt = 0
+    recordedCycles = 0
     phaseStartedAtMs = 0
     // reset() 刻意**不清空 completedRounds**：它是「今天这个长休周期已完成的轮数」，
     // 只有走满整轮才 +1，放弃从未计入过。有位评审建议清空，但那会让「今天已完成 3 段」
     // 的历史被一次误点抹掉——真实投入不该因误触而消失。
     persistLive() // 放弃本轮：不留接管快照
+  }
+
+  /** 正计时每跨过一个番茄周期：记一颗完整番茄（completed:true），然后**继续**走，不进休息。 */
+  async function recordUpCycle(): Promise<void> {
+    const cyc = Math.max(1, Math.round(upCycleSec() / 60))
+    const input: PomodoroSessionInput = {
+      todoId: linkedTodoId.value,
+      startedAt: new Date(Date.now() - upCycleSec() * 1000).toISOString(),
+      endedAt: new Date().toISOString(),
+      focusMin: cyc,
+      breakMin: 0,
+      completed: true,
+    }
+    completedRounds.value += 1
+    saveRounds()
+    await flushPending()
+    if (!(await tryPersistSession(input))) pendingSessions.push(input)
+    persistLive()
+    await announcePhaseEnd('focus', '又攒到一颗番茄', `已专注 ${cyc} 分钟 · 继续`)
+    await loadToday().catch(() => {})
+  }
+
+  /** 正计时收尾：把最后一个未满周期的零头（≥60s）记成中断段，然后回空闲专注相位。 */
+  async function endUpSession(): Promise<void> {
+    if (running.value) {
+      upElapsedSec.value = upBaseSec + Math.max(0, Math.round((Date.now() - upAnchorAt) / 1000))
+    }
+    const cycle = upCycleSec()
+    const leftover = Math.max(0, upElapsedSec.value - recordedCycles * cycle)
+    const totalMin = Math.round(upElapsedSec.value / 60)
+    stopTimer()
+    resetPause()
+    clearRuntime()
+    await flushPending()
+    if (leftover >= MIN_RECORD_SEC) {
+      const input: PomodoroSessionInput = {
+        todoId: linkedTodoId.value,
+        startedAt: new Date(Date.now() - leftover * 1000).toISOString(),
+        endedAt: new Date().toISOString(),
+        focusMin: Math.max(1, Math.round(leftover / 60)),
+        breakMin: 0,
+        completed: false,
+      }
+      if (!(await tryPersistSession(input))) pendingSessions.push(input)
+    }
+    phase.value = 'focus'
+    upElapsedSec.value = 0
+    upBaseSec = 0
+    upAnchorAt = 0
+    recordedCycles = 0
+    phaseTotalSec.value = settings.value.focusMin * 60
+    remainingSec.value = phaseTotalSec.value
+    phaseStartedAtMs = 0
+    persistLive()
+    await announcePhaseEnd(
+      'focus',
+      '正计时结束',
+      totalMin >= 1 ? `这次累计专注 ${totalMin} 分钟` : '这一段太短，没留下记录',
+    )
+    await loadToday().catch(() => {})
   }
 
   /**
@@ -443,9 +700,14 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
    */
   async function endRound(): Promise<void> {
     if (phase.value !== 'focus') return
+    if (mode() === 'up') {
+      await endUpSession()
+      return
+    }
     // 提前把 remaining 对齐到真实剩余（endRound 可能在整秒之间被点），保证真实投入不虚高
     if (running.value) remainingSec.value = Math.max(0, Math.round((endAt - Date.now()) / 1000))
     stopTimer()
+    resetPause()
     const elapsedSec = Math.max(0, phaseTotalSec.value - remainingSec.value)
     await flushPending()
     if (elapsedSec >= MIN_RECORD_SEC) {
@@ -605,6 +867,22 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     const investedSec = Math.max(0, snap.phaseTotalSec - snap.remainingSec)
     const finished = snap.running && snap.endAtMs > 0 && snap.endAtMs <= now
 
+    // 正计时快照：没有「是否走完」的判定 —— 恢复累计读数并停在暂停态。
+    // 关 App 期间跨过的周期边界不再补记（无法确认那一刻用户是否真的在专注），
+    // 只把已累计的读数如实放回，由用户决定继续还是重置。
+    if ((snap.mode ?? 'down') === 'up') {
+      const el = Math.max(0, snap.upElapsedSec ?? 0)
+      if (el < MIN_RECORD_SEC) return
+      phase.value = 'focus'
+      upElapsedSec.value = el
+      upBaseSec = el
+      recordedCycles = Math.floor(el / upCycleSec())
+      phaseStartedAtMs = snap.phaseStartedAtMs
+      notice.value = mkNotice('正计时还在', '点开始继续累加，或重置', 'focus', false)
+      persistLive()
+      return
+    }
+
     if (snap.phase === 'focus' && finished) {
       if (investedSec < MIN_RECORD_SEC) return // 起步就关：不值得补写
       const focusMin = snap.runFocusMin ?? settings.value.focusMin
@@ -671,14 +949,35 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
 
   /* ---------- 派生显示 ---------- */
 
-  const displayTime = computed(() => {
-    const m = Math.floor(remainingSec.value / 60)
-    const s = remainingSec.value % 60
+  /** 秒 → `mm:ss`（浮条 / 右栏这类窄面用） */
+  function fmtMs(total: number): string {
+    const m = Math.floor(total / 60)
+    const s = total % 60
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-  })
+  }
 
-  /** 进度 0..1，分母是本相位冻结的 `phaseTotalSec`（长休不再出现负进度）。 */
+  /** 秒 → `HH:MM:SS`（卡片 / 沉浸层的大读数用，与参考设计的三段式一致） */
+  function fmtHms(total: number): string {
+    const h = Math.floor(total / 3600)
+    const m = Math.floor((total % 3600) / 60)
+    const s = total % 60
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+  }
+
+  /** 本条真源读数：down = 剩余秒数；up = 已累计秒数。 */
+  const readSec = computed(() => (mode() === 'up' ? upElapsedSec.value : remainingSec.value))
+
+  const displayTime = computed(() => fmtMs(readSec.value))
+
+  /** 大读数（三段式）：沉浸层与卡片头部用。 */
+  const clockTime = computed(() => fmtHms(readSec.value))
+
+  /** 进度 0..1：down 分母是本相位冻结的 `phaseTotalSec`；up 分母是一个番茄周期（每满一圈得一颗）。 */
   const progress = computed(() => {
+    if (mode() === 'up') {
+      const cycle = upCycleSec()
+      return Math.min(1, Math.max(0, (upElapsedSec.value % cycle) / cycle))
+    }
     const total = phaseTotalSec.value
     if (total <= 0) return 0
     return Math.min(1, Math.max(0, 1 - remainingSec.value / total))
@@ -692,8 +991,11 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     return Array.from({ length: n }, (_, i) => i < filled)
   })
 
-  /** 是否有正在进行的一段（计时中，或暂停在相位中途）。浮条/卡片据此决定是否露出。 */
-  const active = computed(() => running.value || remainingSec.value < phaseTotalSec.value)
+  /** 是否在本相位中途（计时中，或暂停在半途 / 正计时已有累计）。浮条/卡片据此决定是否露出。 */
+  const active = computed(() => {
+    if (mode() === 'up') return running.value || upElapsedSec.value > 0
+    return running.value || remainingSec.value < phaseTotalSec.value
+  })
 
   return {
     settings,
@@ -701,12 +1003,15 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     running,
     remainingSec,
     phaseTotalSec,
+    upElapsedSec,
+    pausedAccumSec,
     linkedTodoId,
     todaySessions,
     recentSessions,
     completedRounds,
     notice,
     displayTime,
+    clockTime,
     progress,
     todayFocusMin,
     todayCompletedCount,
@@ -720,6 +1025,9 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
     start,
     pause,
     endRound,
+    endPhase,
+    rewindPhase,
+    setMode,
     reset,
     extend,
     setLinkedTodo,

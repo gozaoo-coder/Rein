@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronRight, HeartPulse, RefreshCw, Sparkles, ToggleLeft, Trash2 } from 'lucide-vue-next'
+import { ChevronRight, HeartPulse, RefreshCw, Sparkles, Timer, ToggleLeft, Trash2 } from 'lucide-vue-next'
 
 import DataClearSheet from '@/components/settings/DataClearSheet.vue'
 import ExternalAccessSection from '@/components/settings/ExternalAccessSection.vue'
@@ -32,7 +32,8 @@ const features = useFeaturesStore()
 const focusOn = computed(() => features.isEnabled('focus'))
 const syncOn = computed(() => features.isEnabled('sync'))
 
-/** 番茄钟时长档位快捷预设：与手调步进器并存（档位给快捷、步进给精确） */
+/** 番茄钟时长档位快捷预设：不点进专注页也能一键换档（精确手调与休息 / 最长暂停
+ *  一起收在专注页的计时设置里，这里只留这条最常用的快捷路径） */
 const FOCUS_PRESETS = [
   { min: 25, label: '利落 25' },
   { min: 45, label: '沉浸 45' },
@@ -121,14 +122,16 @@ onMounted(() => {
       </button>
     </section>
 
-    <!-- 番茄钟：完整配置（专注 / 短休 / 长休 / 轮数都在这一处调）。属「专注」模块 -->
+    <!-- 番茄钟：这里只留「时长档位 / 长休间隔 / 结束提示音」三个不进专注页也能调的旋钮。
+         专注时长 · 休息 · 最长暂停已挪进专注页的计时设置（那里改完立刻生效，见 FocusTimePicker），
+         本页给一行指路，免得用户在这张卡里翻半天找不到 —— 设置页留着第二份入口就是两处真源。属「专注」模块。 -->
     <section v-if="focusOn" class="card">
       <header class="row between ghead">
         <h2 class="gtitle">番茄钟</h2>
         <span class="num gstate t-3">今日专注 {{ pomo.todayFocusMin }} 分钟</span>
       </header>
       <div class="card sub rows">
-        <!-- 时长档位：三枚快捷预设写进 focusMin；下面的步进器仍可精确手调，两者不冲突 -->
+        <!-- 时长档位：三枚快捷预设写进 focusMin；精确手调在专注页的计时设置里，两者不冲突 -->
         <div class="preset-row">
           <span class="slabel">时长档位</span>
           <div class="row prow">
@@ -145,9 +148,18 @@ onMounted(() => {
             </PillChip>
           </div>
         </div>
-        <NumberStepper v-model="pomo.settings.focusMin" label="专注时长" unit="分钟" :step="5" :min="5" :max="120" />
-        <NumberStepper v-model="pomo.settings.breakMin" label="短休息" unit="分钟" :step="1" :min="1" :max="30" />
-        <NumberStepper v-model="pomo.settings.longBreakMin" label="长休息" unit="分钟" :step="5" :min="5" :max="60" />
+        <!-- 时长已搬去专注页：这一行只负责指路（目标就是专注页的计时设置抽屉，
+             入口在卡片底部的设置摘要上），文案如实说清去哪找，而不是留个改不动的读数 -->
+        <button class="frow drow row" type="button" @click="router.push({ name: 'focus' })">
+          <i class="fic" style="background: var(--accent-soft); color: var(--accent)">
+            <Timer :size="18" />
+          </i>
+          <span class="col ftxt">
+            <b>专注时长 / 休息 / 最长暂停</b>
+            <em class="t-3">已移到专注页的计时设置里</em>
+          </span>
+          <ChevronRight :size="16" class="t-3" />
+        </button>
         <NumberStepper v-model="pomo.settings.roundsBeforeLongBreak" label="长休间隔" unit="轮" :step="1" :min="2" :max="8" />
         <div class="row between srow">
           <span class="slabel">结束提示音</span>
@@ -366,6 +378,13 @@ onMounted(() => {
   border-radius: var(--radius-s);
   display: grid;
   place-items: center;
+}
+
+/* 番茄钟行组里的指路行：`.frow` 默认带 10px 上边距（它平时紧跟在 `.gtitle` 后，
+   那段留白由它自己补），而这里它排在行组中间、上一行的边界由 `.rows` 的发丝线画，
+   再叠 10px 就会把这条线推离上一行、与其它行的节奏对不上 —— 只中和这一段 */
+.drow {
+  margin-top: 0;
 }
 
 .ftxt {

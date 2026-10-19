@@ -8,6 +8,7 @@ import DesktopRail from '@/components/layout/DesktopRail.vue'
 import DesktopInspector from '@/components/layout/DesktopInspector.vue'
 import ActiveWorkoutBar from '@/components/exercise/ActiveWorkoutBar.vue'
 import FocusFloatBar from '@/components/pomodoro/FocusFloatBar.vue'
+import FocusImmersive from '@/components/pomodoro/FocusImmersive.vue'
 import FocusNoticeBar from '@/components/pomodoro/FocusNoticeBar.vue'
 import RecordFloatBar from '@/components/record/RecordFloatBar.vue'
 import GrabFloatBar from '@/components/campus/GrabFloatBar.vue'
@@ -321,6 +322,9 @@ onMounted(() => {
        与运动、录音一样是「我此刻正在做一件事」的计时，天然与运动互斥（练时不会开番茄），
        同族还共用 useDragDock 的停靠手感与 glass-surface 材质，用户不必为它记第二套交互。 -->
   <FocusFloatBar v-if="focusOn" v-show="shellVisible" data-immersive-shell />
+  <!-- 专注沉浸层：常驻挂载（不走路由），显隐由 system/focusImmersive 的层级驱动（level 0 隐藏）。
+       它是全屏层、盖住壳层，与专注浮条同随专注模块开关收放 —— 关掉专注就不该有这一层。 -->
+  <FocusImmersive v-if="focusOn" />
   <!-- 专注相位提示条：只在相位切换的系统通知**没送达**时顶部落一条（常驻送达条） -->
   <FocusNoticeBar v-if="focusOn" />
   <!-- 语音转写悬浮条：语音会话收起后台转写继续（与录音浮条同套停靠、独立 key）。受语音模块开关管 -->

@@ -33,6 +33,14 @@ export const COMPAT_LAYERS: readonly CompatLayer[] = [
       '替它编一个 postFeeling 就是往口径里掺假。',
     dropWhen: '出现 0.0.4 时删掉本行（此后 0.6.1 之前的记录不再享受回退，体感维度如实显示「未记录」）',
   },
+  {
+    tag: '0.0.2',
+    why:
+      '专注域设置新增 `mode`（计时方向：down 倒计时 / up 正计时）与 `maxPauseMin`（最长暂停分钟）。' +
+      '旧存档 localStorage 里没有这两个键：`mode` 回退为 down（与旧版只有倒计时完全一致）、' +
+      '`maxPauseMin` 回退为 9。这不是伪造 —— 旧数据本就没有方向概念，倒计时就是它当时的真实行为。',
+    dropWhen: '出现 0.0.5 时删掉本行（届时更早的专注存档不再回退，缺键按默认值处理即可）',
+  },
 ]
 
 /** 某层是否仍然生效 —— 删掉 `COMPAT_LAYERS` 里那一行就等于关掉它 */

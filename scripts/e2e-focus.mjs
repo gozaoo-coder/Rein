@@ -221,19 +221,19 @@ async function resetState(settings = DEFAULT_SETTINGS, extras = {}) {
 
 /* ---------------- 读取界面事实 ---------------- */
 
-/** 卡片相位文案（专注中 / 休息中 / 已暂停） */
-const cardPhase = () => evalJS(`document.querySelector('.page .card .phase')?.textContent.trim() ?? null`)
+/** 卡片相位文案（开始专注吧 / 第 N 颗番茄 / 休息一下 / 专注已暂停 …） */
+const cardPhase = () => evalJS(`document.querySelector('.page .card .cap')?.textContent.trim() ?? null`)
 /** 点亮圆点数 / 圆点总数 */
 const dotCounts = () =>
   evalJS(`(() => {
     const all = [...document.querySelectorAll('.page .card .rdot')]
     return { on: all.filter((e) => e.classList.contains('on')).length, total: all.length }
   })()`)
-/** 「N 个番茄」条数（完整段计数） */
+/** 今日番茄计数：卡片右下的「× N 颗」（完整段计数） */
 const tomatoCount = () =>
   evalJS(`(() => {
-    const chip = [...document.querySelectorAll('.page .card .chip, .page .card [class*=chip]')].find((e) => e.textContent.includes('个番茄'))
-    const m = chip?.textContent.match(/(\\d+)\\s*个番茄/)
+    const el = document.querySelector('.page .card .tcount')
+    const m = el?.textContent.match(/(\\d+)\\s*颗/)
     return m ? Number(m[1]) : null
   })()`)
 /** 卡底统计文本（完整 / 中途停下两行） */
@@ -246,14 +246,24 @@ const completedCount = () =>
     const m = t.match(/完整\\s*(\\d+)\\s*段/)
     return m ? Number(m[1]) : 0
   })()`)
-/** 进度环：R = 50 - stroke/2 - 1（stroke 11）→ 周长 C；返回原始 dashoffset 与折算进度 */
+/** 进度环：stroke 由元素自身读出（卡片 12 / 沉浸层 16 等都可能不同），不写死 */
 const ring = () =>
   evalJS(`(() => {
     const el = document.querySelector('.page .card .val')
     if (!el) return null
-    const C = 2 * Math.PI * (50 - 11 / 2 - 1)
+    const sw = Number(el.getAttribute('stroke-width')) || 12
+    const C = 2 * Math.PI * (50 - sw / 2 - 1)
     const off = Number(el.getAttribute('stroke-dashoffset'))
     return { off, C, pct: Math.min(1, Math.max(0, 1 - off / C)) }
+  })()`)
+
+/** 起跑 / 续跑：空闲态是宽胶囊 .cta，进行中（含暂停）是控制簇里的 .ibtn.main */
+const startOrResume = () =>
+  evalJS(`(() => {
+    const el = document.querySelector('.page .card .cta') ?? document.querySelector('.page .card .acts .ibtn.main')
+    if (!el) return false
+    el.click()
+    return true
   })()`)
 
 /** 浮条是否在场 + 相位文案 + 倒计时 */
@@ -298,10 +308,11 @@ const visualInvariants = () =>
     probe.remove()
     const card = document.querySelector('.page .card')
     const val = card?.querySelector('.val')
-    const chip = card?.querySelector('.chip, [class*=chip]')
+    // 设置摘要条是卡片里唯一的 --surface-2 面片；未点亮圆点（--surface-3）要与它拉开一档
+    const chip = card?.querySelector('.summary')
     const rdot = card?.querySelector('.rdot:not(.on)')
-    const phase = card?.querySelector('.phase')
-    const time = card?.querySelector('.time')
+    const phase = card?.querySelector('.cap')
+    const time = card?.querySelector('.readout')
     const hero = card?.querySelector('.stat .hero')
     const bar = document.querySelector('.fdock-root .dock-body')
     const fb = document.querySelector('.fdock-root')
@@ -321,7 +332,7 @@ const visualInvariants = () =>
       btnH: abtns.length ? abtns.map((b) => Math.round(b.getBoundingClientRect().height)) : [],
       /* 呼吸动画（减弱动效时应为 none） */
       dotAnim: fb?.querySelector('.dot.work') ? getComputedStyle(fb.querySelector('.dot.work')).animationName : null,
-      pdotAnim: card?.querySelector('.pdot.live') ? getComputedStyle(card.querySelector('.pdot.live')).animationName : null,
+      pdotAnim: card?.querySelector('.cdot.live') ? getComputedStyle(card.querySelector('.cdot.live')).animationName : null,
       overflowX: root.scrollWidth - window.innerWidth,
     }
   })()`)
@@ -425,8 +436,8 @@ async function main() {
     await resetState({ ...DEFAULT_SETTINGS, focusMin: 0.1, breakMin: 0.2, longBreakMin: 0.5, roundsBeforeLongBreak: 4 })
     await goto('#/focus')
     const cBefore = await completedCount()
-    await clickSel('.page .card .controls .main')
-    await waitText('.page .card .phase', '休息', 40000, '一轮专注自然走满、进入休息')
+    await startOrResume()
+    await waitText('.page .card .cap', '休息', 40000, '一轮专注自然走满、进入休息')
     // finishPhase 里 loadToday() 排在 announcePhaseEnd 之后，相位文案会先于统计刷新一瞬：等它跟上
     await waitFor(
       `(() => { const m = (document.querySelector('.page .card .stat')?.textContent ?? '').match(/完整\\s*(\\d+)\\s*段/); return !!m && Number(m[1]) === ${cBefore + 1} })()`,
@@ -454,9 +465,9 @@ async function main() {
     await resetState({ ...DEFAULT_SETTINGS, focusMin: 0.1, breakMin: 0.1, longBreakMin: 0.5, roundsBeforeLongBreak: 2 })
     await goto('#/focus')
     // 第 1 轮（含短休）
-    await clickSel('.page .card .controls .main')
-    await waitText('.page .card .phase', '休息', 40000, '第 1 轮结束进入短休')
-    await waitText('.page .card .phase', '已暂停', 40000, '短休结束回到专注空闲')
+    await startOrResume()
+    await waitText('.page .card .cap', '休息', 40000, '第 1 轮结束进入短休')
+    await waitText('.page .card .cap', '开始专注吧', 40000, '短休结束回到专注空闲')
     const dotsAfter1 = await dotCounts()
 
     await reload()
@@ -469,8 +480,8 @@ async function main() {
     )
 
     // 第 2 轮 → 应进**长休**（30s）
-    await clickSel('.page .card .controls .main')
-    await waitText('.page .card .phase', '休息', 40000, '第 2 轮结束进入休息')
+    await startOrResume()
+    await waitText('.page .card .cap', '休息', 40000, '第 2 轮结束进入休息')
     const dotsAfter2 = await dotCounts()
     ok('走到第 2 轮（长休间隔）后圆点点满', dotsAfter2.on === 2, JSON.stringify(dotsAfter2))
 
@@ -504,9 +515,9 @@ async function main() {
     /* ---------- E. 中断 <1 分钟：文案即代价、不落库 ---------- */
     await resetState({ ...DEFAULT_SETTINGS, focusMin: 0.2 })
     await goto('#/focus')
-    await clickSel('.page .card .controls .main')
+    await startOrResume()
     await sleep(3000) // 投入约 3 秒（< 60s）
-    await clickSel('.page .card .controls .end')
+    await clickSel('[aria-label="提前结束本阶段"]')
     await waitFor(`!!document.querySelector('[role="dialog"]') || document.body.textContent.includes('还不到 1 分钟')`, 6000, '结束确认弹出')
     const guardText = await evalJS(`document.body.textContent`)
     ok('不足 1 分钟时文案如实说「不会留下记录」（文案即代价）', guardText.includes('还不到 1 分钟'), '')
@@ -618,7 +629,7 @@ async function main() {
     await evalJS(`localStorage.setItem(${JSON.stringify(ROUND_KEY)}, JSON.stringify({ date: new Date().toISOString().slice(0, 10), rounds: 1 }))`)
     await reload()
     await goto('#/focus')
-    await clickSel('.page .card .controls .main')
+    await startOrResume()
     await sleep(800) // 让状态点进入「专注中」（呼吸态）
 
     const inv = await visualInvariants()

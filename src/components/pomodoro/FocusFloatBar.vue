@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Expand, Pause, Play } from 'lucide-vue-next'
+import { Expand, Maximize2, Pause, Play } from 'lucide-vue-next'
 
 import ActionSheet from '@/components/common/ActionSheet.vue'
 import GlassFilter from '@/components/common/GlassFilter.vue'
+import { enterFocusImmersive } from '@/system/focusImmersive'
 import { liquidGlass } from '@/system/perf'
 import { useDragDock } from '@/composables/useDragDock'
 import { usePomodoroStore } from '@/stores/pomodoro'
@@ -19,8 +20,11 @@ import { usePomodoroStore } from '@/stores/pomodoro'
  * 与 ActiveWorkoutBar / RecordFloatBar 同构（结构三层：root 只管 fixed + z、.dock-pos 只被
  * 弹簧写 transform、.dock-body 承载材质与两层内容交叉淡变），并用同一套 useDragDock 拖拽停靠，
  * 但**独立持久化 key**（rein.fbar.dock.v1）—— 与录音 / 运动各停各位，互不挤占。
- * 条形态：状态点 + 相位文案 + 倒计时 + 暂停 / 继续 / 结束 / 打开专注页；拖到左右边缘收成
- * 64px 方块泊车，轻点展开回条。
+ * 条形态：状态点 + 相位文案 + 读数 + 暂停 / 继续 / 结束 / 进沉浸 / 打开专注页；拖到左右边缘
+ * 收成 64px 方块泊车，轻点展开回条。
+ *
+ * 文案分两套口径（`settings.mode`）：倒计时才有「专注 / 休息」两个相位，正计时永不进休息 ——
+ * 所以相位文案与结束确认都按方向分支，不能让正计时套上「结束就进休息」这类假承诺。
  */
 const router = useRouter()
 const pomo = usePomodoroStore()
@@ -41,37 +45,53 @@ const glassStyle = computed<Record<string, string> | undefined>(() => {
   return { backdropFilter: filter, WebkitBackdropFilter: filter }
 })
 
-/** 状态点：专注中走 --cat-work 呼吸、休息中 --cat-general、已暂停 --warn（色相只在色点上，不落到文字） */
+/** 计时方向。正计时没有休息相位（走满一个周期只记账、继续走），文案不能套倒计时那套 */
+const upMode = computed(() => pomo.settings.mode === 'up')
+
+/** 状态点：专注中走 --cat-work 呼吸、休息中 --cat-general、已暂停 --warn（色相只在色点上，不落到文字）。
+ *  正计时只有专注一种相位，在走就是 work —— 与下面的文案分支同源 */
 const dotClass = computed(() => {
   if (!pomo.running) return 'paused'
   return pomo.phase === 'focus' ? 'work' : 'brk'
 })
 
-/** 相位文案：与卡片里 `pomo.running ? (专注中/休息中) : 已暂停` 同口径 */
+/** 相位文案：与卡片同一套口径。倒计时照旧「专注中 / 休息中 / 已暂停」；
+ *  正计时只有「在走」与「停着」两态，如实说「正计时」，别让它冒充「专注中」（那个词在
+ *  倒计时里意味着「正在倒数」），也不会有「休息中」 */
 const phaseLabel = computed(() => {
+  if (upMode.value) return pomo.running ? '正计时中' : '正计时 · 已暂停'
   if (!pomo.running) return '已暂停'
   return pomo.phase === 'focus' ? '专注中' : '休息中'
 })
 
 /* 结束确认：与卡片同一套语义，标题说后果不说规定（文案即代价）。
-   专注相位：结束会记录这一轮的投入并进入休息，放弃则不留记录；
-   休息相位：`reset()` 是「跳过休息」——休息不计入记录，跳过不影响已保存的专注。 */
+   倒计时 · 专注：结束会记录这一轮的投入并进入休息，放弃则不留记录；
+   倒计时 · 休息：`reset()` 是「跳过休息」——休息不计入记录，跳过不影响已保存的专注；
+   正计时：永远不进休息 —— 结束只把这段累计专注收尾（走满的周期早已各记一颗，
+   `endUpSession` 把剩下的零头按中断口径处理），放弃则整段不留记录。 */
 const endOpen = ref(false)
-const endTitle = computed(() =>
-  pomo.phase === 'focus'
+const endTitle = computed(() => {
+  if (upMode.value) return '结束正计时会记录这段累计专注；放弃则不留记录'
+  return pomo.phase === 'focus'
     ? '现在结束会记录这一轮的专注时长并进入休息；放弃则这一轮不留记录'
-    : '现在是休息 —— 跳过休息会直接回到下一轮专注；休息不计入记录，跳过不影响已保存的专注',
-)
-const endActions = computed(() =>
-  pomo.phase === 'focus'
+    : '现在是休息 —— 跳过休息会直接回到下一轮专注；休息不计入记录，跳过不影响已保存的专注'
+})
+const endActions = computed(() => {
+  if (upMode.value) {
+    return [
+      { label: '结束并记录', value: 'end' },
+      { label: '放弃（不留记录）', value: 'reset', danger: true },
+    ]
+  }
+  return pomo.phase === 'focus'
     ? [
         { label: '结束并保留记录', value: 'end' },
         { label: '放弃这一轮（不保存）', value: 'reset', danger: true },
       ]
-    : [{ label: '跳过休息', value: 'reset' }],
-)
-/** 结束按钮的文案随相位换：专注里是「结束」，休息里其实是「跳过」 */
-const endLabel = computed(() => (pomo.phase === 'focus' ? '结束' : '跳过'))
+    : [{ label: '跳过休息', value: 'reset' }]
+})
+/** 结束按钮的文案随相位换：专注（含正计时）里是「结束」，倒计时的休息里其实是「跳过」 */
+const endLabel = computed(() => (!upMode.value && pomo.phase === 'break' ? '跳过' : '结束'))
 
 function onEndPick(value: string): void {
   if (value === 'end') void pomo.endRound()
@@ -86,6 +106,14 @@ function toggleRun(): void {
 
 function openPage(): void {
   void router.push({ name: 'focus' })
+}
+
+/** 直接进沉浸层：浮条挂在全应用身上，「现在就专注」的入口该送到手边，
+ *  不必先跳专注页再双击读数（卡片那边的双击手势留在卡片上）。
+ *  沉浸层由 App.vue 全局挂载，不依赖当前路由；它一置位，本浮条按 base.css 的
+ *  `html[data-focus-immersive]` 规则自行收起，不会与全屏层抢视线。 */
+function enterImmersive(): void {
+  enterFocusImmersive()
 }
 </script>
 
@@ -123,6 +151,16 @@ function openPage(): void {
               <button class="abtn end" type="button" @click="endOpen = true">{{ endLabel }}</button>
               <button class="abtn ico" type="button" aria-label="打开专注页" @click="openPage">
                 <Expand :size="15" :stroke-width="2.5" />
+              </button>
+              <!-- 进沉浸层（与「打开专注页」分开两颗：一个是去另一个页面，一个是就地放大，
+                   两件事的目的地不同，合成一颗就得先猜用户想要哪个） -->
+              <button
+                class="abtn ico"
+                type="button"
+                aria-label="进入沉浸模式"
+                @click="enterImmersive"
+              >
+                <Maximize2 :size="15" :stroke-width="2.5" />
               </button>
             </div>
           </div>
@@ -352,11 +390,17 @@ function openPage(): void {
 }
 
 .t {
+  min-width: 0;
   font-size: var(--fs-footnote);
   font-weight: 700;
   letter-spacing: -0.2px;
   color: var(--text-1);
   white-space: nowrap;
+  /* 相位文案是这条里唯一长短随方向变的段（正计时的「正计时 · 已暂停」有 8 个字），
+     而读数必须始终在场上。窄窗下让它自己截断，别把后面的 .s 顶出 .info 的裁剪边界
+     （.info 只 overflow: hidden，flex 项默认 min-width: auto 不会缩） */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .s {

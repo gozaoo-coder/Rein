@@ -1,5 +1,13 @@
 /** 番茄钟域类型 · 与 Rust `modules/pomodoro` 对应 */
 
+/**
+ * 计时方向：
+ * - `down` 倒计时（番茄钟）—— 从 `focusMin` 走到 0，走满进入休息；
+ * - `up` 正计时（正计时专注）—— 从 0 往上累加，每满一个 `focusMin` 周期得一颗番茄，
+ *   不自动进入休息，由用户主动结束。
+ */
+export type PomodoroMode = 'down' | 'up'
+
 export interface PomodoroSettings {
   focusMin: number
   breakMin: number
@@ -7,6 +15,13 @@ export interface PomodoroSettings {
   roundsBeforeLongBreak: number
   /** 相位结束时是否出声（Web Audio 合成，无音频资源）；新增字段，旧数据缺省按 true。 */
   chime: boolean
+  /**
+   * 最长暂停分钟：一段专注里**累计**暂停超过它就自动结束本段（走 endPhase 的中断口径）。
+   * 0 = 不限制。缺省 9。新增字段，旧数据缺省 9。
+   */
+  maxPauseMin: number
+  /** 计时方向（番茄钟 / 正计时）。缺省 down。新增字段，旧数据缺省 down（与旧行为一致）。 */
+  mode: PomodoroMode
 }
 
 /**
