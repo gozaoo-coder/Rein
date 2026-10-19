@@ -4,9 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { House, Sparkles, User } from 'lucide-vue-next'
 
 import AppMenu from '@/components/common/AppMenu.vue'
+import DockHintBubble from '@/components/common/DockHintBubble.vue'
 import GlassDockAssembly from '@/components/common/GlassDockAssembly.vue'
 import { useDockStore } from '@/stores/dock'
 import { useFeaturesStore } from '@/stores/features'
+import { dockHintDismissed, dismissDockHint, dockHintShownToday, markDockHintShown } from '@/system/dockHint'
 import { motionRich } from '@/system/motion'
 import { usePressGlow } from '@/composables/usePressGlow'
 import type { NavContribution } from '@/plugins'
@@ -38,6 +40,9 @@ const AI_TAB: NavContribution = { route: 'ai', label: 'AI', icon: Sparkles, surf
 
 /** 长按判定：按住这么久就开选择器（松手不跳转） */
 const LONG_PRESS_MS = 480
+
+/** 左钮引导气泡最长驻留：到点自动收起 */
+const HINT_MS = 20000
 
 const features = useFeaturesStore()
 const dock = useDockStore()
@@ -79,6 +84,39 @@ const pickerAnchor = ref<HTMLElement | null>(null)
 let pressTimer: ReturnType<typeof setTimeout> | null = null
 let longPressed = false
 
+/* ---------- 左钮引导气泡：每天一次 / 最长 20s ---------- */
+const hintOpen = ref(false)
+/** 气泡锚点：底栏左钮（模板 ref）。气泡从它右上角弹出 */
+const leftBtnEl = ref<HTMLElement | null>(null)
+let hintTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearHintTimer(): void {
+  if (hintTimer) {
+    clearTimeout(hintTimer)
+    hintTimer = null
+  }
+}
+
+function closeHint(): void {
+  hintOpen.value = false
+  clearHintTimer()
+}
+
+/** 点按左钮时考虑弹出：已「不再提醒」或今天已提示过则不动 */
+function maybeShowHint(): void {
+  if (dockHintDismissed.value || dockHintShownToday()) return
+  markDockHintShown() // 弹出即计入当天：20s 自动收起也算提示过，当天不再打扰
+  hintOpen.value = true
+  clearHintTimer()
+  hintTimer = setTimeout(closeHint, HINT_MS)
+}
+
+/** 「不再提醒」：永久关闭 + 收起 */
+function dismissHint(): void {
+  dismissDockHint()
+  closeHint()
+}
+
 function cancelPress(): void {
   if (pressTimer) {
     clearTimeout(pressTimer)
@@ -95,6 +133,7 @@ function startPress(e: PointerEvent): void {
     pressTimer = null
     longPressed = true
     pickerOpen.value = true
+    closeHint() // 用户已经在长按自定义了：气泡的使命完成，先收起
   }, LONG_PRESS_MS)
 }
 
@@ -104,6 +143,7 @@ function onLeftClick(e: MouseEvent): void {
     e.preventDefault()
     return
   }
+  maybeShowHint()
   if (leftTab.value) void router.push({ name: leftTab.value.route })
 }
 
@@ -127,7 +167,10 @@ const leftItem = computed(() =>
 )
 const rightItem = { id: AI_TAB.route, label: AI_TAB.label, icon: AI_TAB.icon }
 
-onBeforeUnmount(cancelPress)
+onBeforeUnmount(() => {
+  cancelPress()
+  clearHintTimer()
+})
 </script>
 
 <template>
@@ -143,6 +186,7 @@ onBeforeUnmount(cancelPress)
     >
       <template #left="{ item, active }">
         <button
+          ref="leftBtnEl"
           type="button"
           class="dock-slot glow-layer"
           :class="{ active }"
@@ -186,6 +230,18 @@ onBeforeUnmount(cancelPress)
       :actions="pickerActions"
       @select="dock.setLeftRoute"
       @close="closePicker"
+    />
+
+    <!-- 左钮引导气泡：点按左钮时（每天首次）弹出，提醒它可以长按自定义；最长 20s 自动收起 -->
+    <DockHintBubble
+      :open="hintOpen"
+      :anchor="leftBtnEl"
+      :container="dockEl"
+      :icon="leftItem?.icon"
+      title="底栏左键可自定义"
+      body="长按左下角这个按钮，就能把它换成你常用的模块入口。"
+      @close="closeHint"
+      @dismiss="dismissHint"
     />
   </nav>
 </template>

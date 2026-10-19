@@ -18,6 +18,7 @@
  *   5. 重新打开「运动」→ 入口恢复
  *   6. 刷新后开关状态保持（localStorage 持久化）
  *   7. 底栏三块（左自定义圆钮 / 中药丸 / 右 AI 圆钮）：长按左钮换落点、关掉模块后回落
+ *   7b. 左钮引导气泡：点按弹出（每天一次）/「我知道了」只关这次 /「不再提醒」永久关闭
  *   8. 桌面工作台：导航轨与便当快捷入口同样听开关，便当不留空洞
  *   9. 内容域模块（营养 / 专注 / 记账）在桌面端的收法 + 拨动后网关快照同步
  *
@@ -281,6 +282,63 @@ async function main() {
     await sleep(600)
     await evalJS(`location.hash = '#/'`)
     await sleep(700)
+
+    /* ---- 1c. 左钮引导气泡：点按弹出 / 每天一次 / 不再提醒（rein.dockHint.v1） ---- */
+    const dockLeftBtn = '.dock [data-slot="left"] .dock-slot'
+    const clickDockLeft = () =>
+      evalJS(`(() => { const b = document.querySelector('${dockLeftBtn}'); if (!b) return false; b.click(); return true })()`)
+    await evalJS(`localStorage.removeItem('rein.dockHint.v1')`)
+    await evalJS(`location.reload()`)
+    await waitFor(`!!document.querySelector('${dockLeftBtn}')`, 12000, '刷新后的底栏')
+    await sleep(600)
+
+    await clickDockLeft()
+    await sleep(500)
+    const hint = await evalJS(`(() => {
+      const el = document.querySelector('.dock-hint')
+      if (!el) return null
+      const cs = getComputedStyle(el)
+      return {
+        title: el.querySelector('.dock-hint__title')?.textContent.trim() ?? '',
+        btns: [...el.querySelectorAll('.dock-hint__actions button')].map((b) => b.textContent.trim()),
+        arrowX: cs.getPropertyValue('--arrow-x').trim(),
+      }
+    })()`)
+    ok(
+      '点按左钮弹出引导气泡（右上方、箭头朝左下、两枚文字按钮）',
+      !!hint && hint.title.includes('底栏左键') && hint.btns.join() === '我知道了,不再提醒',
+      hint ? `${hint.title} · ${hint.btns.join('/')} · --arrow-x=${hint.arrowX}` : '无 .dock-hint',
+    )
+    await shot('1c-dock-hint')
+    ok(
+      '弹出即记账（lastShown 记今天）',
+      (await evalJS(`JSON.parse(localStorage.getItem('rein.dockHint.v1') ?? '{}').lastShown?.length`)) === 10,
+    )
+
+    await clickText('.dock-hint__actions button', '我知道了')
+    await sleep(400)
+    await clickDockLeft()
+    await sleep(400)
+    ok('同一天再点左钮不再出现（每天一次）', !(await evalJS(`!!document.querySelector('.dock-hint')`)))
+
+    // 「不再提醒」：永久关闭；刷新后也不再出现
+    await evalJS(`(() => { const s = JSON.parse(localStorage.getItem('rein.dockHint.v1')); s.lastShown = '2000-01-01'; localStorage.setItem('rein.dockHint.v1', JSON.stringify(s)) })()`)
+    await evalJS(`location.reload()`)
+    await waitFor(`!!document.querySelector('${dockLeftBtn}')`, 12000, '刷新后的底栏')
+    await sleep(600)
+    await clickDockLeft()
+    await sleep(400)
+    ok('跨天后再次弹出', await evalJS(`!!document.querySelector('.dock-hint')`))
+    await clickText('.dock-hint__actions button', '不再提醒')
+    await sleep(400)
+    await evalJS(`location.reload()`)
+    await waitFor(`!!document.querySelector('${dockLeftBtn}')`, 12000, '刷新后的底栏')
+    await sleep(600)
+    await clickDockLeft()
+    await sleep(600)
+    ok('「不再提醒」后刷新也不再出现', !(await evalJS(`!!document.querySelector('.dock-hint')`)))
+    // 收尾：清掉本用例的键，不给后续断言留状态
+    await evalJS(`localStorage.removeItem('rein.dockHint.v1')`)
 
     await evalJS(`location.hash = '#/me'`)
     await waitFor(`document.querySelector('.setrow')`, 8000, '「我」页设置行')
