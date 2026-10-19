@@ -1,0 +1,19 @@
+{
+  "name": "rein-site",
+  "private": true,
+  "version": "0.5.20",
+  "type": "module",
+  "description": "Rein 官网 · 静态单页（Vite），产物可直接挂到 GitHub Pages 子路径",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "motion": "^12.43.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0"
+  }
+}

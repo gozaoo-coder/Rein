@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Rein · 全能生活助理</title>
+    <meta
+      name="description"
+      content="Rein 是一个以 AI 为中枢的个人生活助理：饮食、营养、运动、待办、专注、记账、课表、知识库长在同一条时间线上，都能被 AI 读懂、也能被 AI 操作。单机优先，数据留在本地。"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d1d1f'/%3E%3Ctext x='16' y='23' font-size='19' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3ER%3C/text%3E%3C/svg%3E"
+    />
+    <script>
+      document.documentElement.classList.add('js')
+    </script>
+  </head>
+  <body>
+    <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+      <symbol id="i-read" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.1 12.3a1 1 0 0 1 0-.7 10.8 10.8 0 0 1 19.8 0 1 1 0 0 1 0 .7 10.8 10.8 0 0 1-19.8 0Z" />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-act" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.9 15.5a2 2 0 0 0-1.4-1.4l-6.1-1.6a.5.5 0 0 1 0-1l6.1-1.6a2 2 0 0 0 1.4-1.4l1.6-6.1a.5.5 0 0 1 1 0l1.6 6.1a2 2 0 0 0 1.4 1.4l6.1 1.6a.5.5 0 0 1 0 1l-6.1 1.6a2 2 0 0 0-1.4 1.4l-1.6 6.1a.5.5 0 0 1-1 0z" />
+      </symbol>
+      <symbol id="i-settle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12.8 2.2a2 2 0 0 0-1.7 0L2.6 6.1a1 1 0 0 0 0 1.8l8.6 3.9a2 2 0 0 0 1.7 0l8.6-3.9a1 1 0 0 0 0-1.8z" />
+        <path d="m22 17.7-9.2 4.1a2 2 0 0 1-1.7 0L2 17.7" />
+        <path d="m22 12.7-9.2 4.1a2 2 0 0 1-1.7 0L2 12.7" />
+      </symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="2.5" />
+        <rect x="9" y="9" width="6" height="6" rx="1.5" />
+        <path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2" />
+      </symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </symbol>
+      <symbol id="i-cards" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7.5" height="7.5" rx="1.8" />
+        <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.8" />
+        <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.8" />
+        <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.8" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7.5" />
+        <path d="m21 21-4.3-4.3" />
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 9-9 9.7 9.7 0 0 0-6.7 2.7L3 8" />
+        <path d="M3 3v5h5" />
+        <path d="M12 7.5V12l3.5 1.5" />
+      </symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+        <path d="M12 19v3" />
+      </symbol>
+      <symbol id="i-utensils" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" />
+        <path d="M7 2v20" />
+        <path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Z" />
+        <path d="M21 15v7" />
+      </symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 3v16a2 2 0 0 0 2 2h16" />
+        <path d="M18 17V9M13 17V5M8 17v-3" />
+      </symbol>
+      <symbol id="i-dumbbell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m6.5 6.5 11 11" />
+        <path d="m21 21-1-1M3 3l1 1M18 22l4-4M2 6l4-4M3 10l7-7M14 21l7-7" />
+      </symbol>
+      <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m3 17 2 2 4-4M3 7l2 2 4-4" />
+        <path d="M13 6h8M13 12h8M13 18h8" />
+      </symbol>
+      <symbol id="i-timer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 2h4" />
+        <path d="M12 14v-4" />
+        <circle cx="12" cy="14" r="8" />
+      </symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="18" rx="2.5" />
+        <path d="M8 2v4M16 2v4M3 10h18" />
+        <path d="M12 14v3l2 1" />
+      </symbol>
+      <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2.5" y="5.5" width="19" height="14" rx="3" />
+        <path d="M2.5 10.5h19" />
+        <circle cx="17.5" cy="15" r="1.3" />
+      </symbol>
+      <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 7v14" />
+        <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.6 3.9A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z" />
+      </symbol>
+      <symbol id="i-spine" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 4.5v15" />
+        <circle cx="12" cy="6.5" r="2.5" />
+        <circle cx="12" cy="16.5" r="2.5" />
+        <path d="M14.5 6.5h5M4.5 16.5h5" />
+      </symbol>
+      <symbol id="i-pie" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 3v9l7.8 4.5" />
+      </symbol>
+      <symbol id="i-sync" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 0 1 9-9 9.7 9.7 0 0 1 6.7 2.7L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.7 9.7 0 0 1-6.7-2.7L3 16" />
+        <path d="M8 21H3v-5" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 12.5c0 5-3.5 7.5-7.7 9a1 1 0 0 1-.6 0C7.5 20 4 17.5 4 12.5V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1.2 1.2 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-db" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5" rx="9" ry="3" />
+        <path d="M3 5v14a9 3 0 0 0 18 0V5" />
+        <path d="M3 12a9 3 0 0 0 18 0" />
+      </symbol>
+      <symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m12 14 4-4" />
+        <path d="M3.3 19a10 10 0 1 1 17.4 0" />
+      </symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.9 15.5a2 2 0 0 0-1.4-1.4l-6.1-1.6a.5.5 0 0 1 0-1l6.1-1.6a2 2 0 0 0 1.4-1.4l1.6-6.1a.5.5 0 0 1 1 0l1.6 6.1a2 2 0 0 0 1.4 1.4l6.1 1.6a.5.5 0 0 1 0 1l-6.1 1.6a2 2 0 0 0-1.4 1.4l-1.6 6.1a.5.5 0 0 1-1 0z" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M12 15V3" />
+      </symbol>
+      <symbol id="i-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.1-1.3-.3-2.5-1-3.5.3-1.2.3-2.4 0-3.5 0 0-1 0-3 1.5-2.6-.5-5.4-.5-8 0C6 2 5 2 5 2c-.3 1.1-.3 2.3 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.7.9-1 2-1 3.5v4" />
+        <path d="M9 18c-4.5 2-5-2-7-2" />
+      </symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h13" />
+        <path d="m12 5 7 7-7 7" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2.5" y="4" width="19" height="13" rx="2.5" />
+        <path d="M8.5 21h7M12 17v4" />
+      </symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="6" y="2.5" width="12" height="19" rx="3" />
+        <path d="M11 18.5h2" />
+      </symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z" />
+      </symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+        <path d="M1 14h6M9 8h6M17 16h6" />
+      </symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2 4 14h7l-1 8 9-12h-7z" />
+      </symbol>
+    </svg>
+
+    <header class="nav">
+      <div class="nav-bar glass">
+        <div class="wrap nav-inner">
+          <a class="brand" href="#top" aria-label="Rein 首页">
+            <span class="brand-mark" aria-hidden="true"></span>Rein
+          </a>
+          <nav class="nav-links" aria-label="分区导航">
+            <a href="#what">是什么</a>
+            <a href="#ai">AI 系统</a>
+            <a href="#features">功能地图</a>
+            <a href="#platform">多平台</a>
+            <a href="#perf">画质与动效</a>
+            <a href="#local">本地优先</a>
+          </nav>
+          <a class="btn btn--primary btn--sm nav-cta" href="#download">
+            <svg aria-hidden="true"><use href="#i-download" /></svg>下载
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <!-- 首屏 -->
+      <section class="hero wrap" id="top">
+        <div class="hero-grid">
+          <div>
+            <span class="pill" data-reveal>
+              <span class="dot" aria-hidden="true"></span>
+              <span data-version>v0.5.20</span>
+              <span class="faint">· Windows 与 Android</span>
+            </span>
+            <h1 data-reveal data-reveal-delay="60">全能生活助理</h1>
+            <p class="hero-lead" data-reveal data-reveal-delay="120">
+              饮食、营养、运动、待办、专注、记账、课表、知识库，长在同一条时间线上 ——
+              都能被 AI 读懂，也能被 AI 操作。
+            </p>
+            <div class="cta-row" data-reveal data-reveal-delay="180">
+              <a class="btn btn--primary" href="#download">下载</a>
+              <a class="btn btn--ghost" href="#features">
+                看功能<svg aria-hidden="true"><use href="#i-arrow" /></svg>
+              </a>
+            </div>
+            <div class="hero-stats" data-reveal data-reveal-delay="240">
+              <div class="stat"><b class="num" data-count="8">8</b><span>生活域</span></div>
+              <div class="stat"><b class="num" data-count="4">4</b><span>画质档位</span></div>
+              <div class="stat"><b class="num" data-count="3">3</b><span>动效档位</span></div>
+              <div class="stat"><b class="num" data-count="2">2</b><span>个平台</span></div>
+            </div>
+          </div>
+
+          <div class="hero-stage" data-reveal data-reveal-delay="160">
+            <div class="win hero-win">
+              <img src="/shots/desktop-home.png" alt="Rein 桌面工作台：三窗格布局的今日总览" width="2880" height="1800" />
+            </div>
+            <div class="phone hero-phone">
+              <img src="/shots/mobile-home.png" alt="Rein 手机端：单列卡片流的今日页面" width="860" height="2412" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 它是什么 -->
+      <section class="sec wrap" id="what">
+        <div class="sec-head" data-reveal>
+          <span class="eyebrow">What it is</span>
+          <h2>它不是什么，它是什么</h2>
+          <p class="lead">
+            同类应用通常是若干互不相干的模块拼在一起 —— 记饮食的不知道你今天练了什么，记账的不知道你明天几点有课。
+            Rein 的差别是它们共享同一份数据与同一条时间线，而 AI 是那个把数据串起来的人。
+          </p>
+        </div>
+        <div class="pillars">
+          <article class="pillar" data-reveal>
+            <div class="pillar-glyph h-accent"><svg aria-hidden="true"><use href="#i-read" /></svg></div>
+            <h3>它读得到</h3>
+            <p>今日饮食、本周运动与肌群练够分、今天的待办、这个月的开销、明天的课表、你的知识库笔记。</p>
+          </article>
+          <article class="pillar" data-reveal data-reveal-delay="90">
+            <div class="pillar-glyph h-work"><svg aria-hidden="true"><use href="#i-act" /></svg></div>
+            <h3>它能动手</h3>
+            <p>对话里直接调用工具去写数据：拍照或一句话记一餐、记一笔账、把某事排进明天的日程。</p>
+          </article>
+          <article class="pillar" data-reveal data-reveal-delay="180">
+            <div class="pillar-glyph h-study"><svg aria-hidden="true"><use href="#i-settle" /></svg></div>
+            <h3>它会沉淀</h3>
+            <p>回答不是一个消失的气泡，而是可留存的卡片与文件；知识库里的笔记会长期记住你。</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- AI 系统 -->
+      <section class="sec wrap" id="ai">
+        <div class="sec-head" data-reveal>
+          <span class="eyebrow">AI system</span>
+          <h2>AI 系统</h2>
+          <p class="lead">不是外挂一个聊天框，而是把模型接进你自己的数据里，再让产物留在工作台上。</p>
+        </div>
+        <div class="caps">
+          <article class="cap" data-reveal data-tilt>
+            <div class="ic h-accent"><svg aria-hidden="true"><use href="#i-cpu" /></svg></div>
+            <h3>自带模型</h3>
+            <p>接入你自己的模型服务，多套配置随时切换，密钥不进网页层。</p>
+            <span class="entry">入口：设置 › AI › 管理模型</span>
+          </article>
+          <article class="cap" data-reveal data-reveal-delay="70" data-tilt>
+            <div class="ic h-work"><svg aria-hidden="true"><use href="#i-chat" /></svg></div>
+            <h3>对话即操作</h3>
+            <p>工具调用：记饮食、记一笔账、排日程、查运动、读课表，一句话就动手。</p>
+            <span class="entry">入口：AI 页对话</span>
+          </article>
+          <article class="cap" data-reveal data-reveal-delay="140" data-tilt>
+            <div class="ic h-file"><svg aria-hidden="true"><use href="#i-cards" /></svg></div>
+            <h3>卡片式产物</h3>
+            <p>回答以卡片落到画布上，可回看、可再问，不会说完就没。</p>
+            <span class="entry">入口：AI 页画布</span>
+          </article>
+          <article class="cap" data-reveal data-tilt>
+            <div class="ic h-study"><svg aria-hidden="true"><use href="#i-search" /></svg></div>
+            <h3>知识库向量检索</h3>
+            <p>笔记、文件与文件夹，全部走本地 embedding 向量检索，不必上传。</p>
+            <span class="entry">入口：AI › 知识库</span>
+          </article>
+          <article class="cap" data-reveal data-reveal-delay="70" data-tilt>
+            <div class="ic h-balance"><svg aria-hidden="true"><use href="#i-history" /></svg></div>
+            <h3>长期记忆</h3>
+            <p>会话里自动提取要点，注入后续对话，越用越懂你的习惯。</p>
+            <span class="entry">入口：AI › 知识库 › 长期记忆</span>
+          </article>
+          <article class="cap" data-reveal data-reveal-delay="140" data-tilt>
+            <div class="ic h-voice"><svg aria-hidden="true"><use href="#i-mic" /></svg></div>
+            <h3>语音对话</h3>
+            <p>实时转写，结束时自动整理成纪要，散步时也能记下一件事。</p>
+            <span class="entry">入口：主页「语音对话」</span>
+          </article>
+        </div>
+      </section>
+
+      <!-- 功能地图 -->
+      <section class="sec wrap" id="features">
+        <div class="sec-head" data-reveal>
+          <span class="eyebrow">Feature map</span>
+          <h2>功能地图</h2>
+          <p class="lead">按生活域分组，只列你点得到的能力。</p>
+        </div>
+        <div class="map-grid">
+          <article class="group" data-reveal>
+            <div class="group-head">
+              <div class="ic ic--sm h-accent"><svg aria-hidden="true"><use href="#i-sparkles" /></svg></div>
+              <h3>AI</h3>
+            </div>
+            <div class="group-items">
+              <div class="item">
+                <div class="ic ic--sm h-accent"><svg aria-hidden="true"><use href="#i-chat" /></svg></div>
+                <div><div class="item-name">AI 对话与工具</div><div class="item-desc">问答、工具调用、卡片产物、历史与文件</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-study"><svg aria-hidden="true"><use href="#i-book" /></svg></div>
+                <div><div class="item-name">知识库</div><div class="item-desc">笔记 / 文件索引、向量检索、长期记忆</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-file"><svg aria-hidden="true"><use href="#i-folder" /></svg></div>
+                <div><div class="item-name">虚拟文件</div><div class="item-desc">AI 的附件与产物都是文件，可浏览、可引用</div></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="group" data-reveal data-reveal-delay="70">
+            <div class="group-head">
+              <div class="ic ic--sm h-intake"><svg aria-hidden="true"><use href="#i-list" /></svg></div>
+              <h3>记录</h3>
+            </div>
+            <div class="group-items">
+              <div class="item">
+                <div class="ic ic--sm h-intake"><svg aria-hidden="true"><use href="#i-utensils" /></svg></div>
+                <div><div class="item-name">记饮食</div><div class="item-desc">拍照 AI / 文字 AI / 食物库，三种植入方式</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-work"><svg aria-hidden="true"><use href="#i-list" /></svg></div>
+                <div><div class="item-name">待办与时间线</div><div class="item-desc">日时间线、周视图、月视图，紧急重要四象限</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-voice"><svg aria-hidden="true"><use href="#i-mic" /></svg></div>
+                <div><div class="item-name">录音</div><div class="item-desc">录音台、未归档 take、附加到待办</div></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="group" data-reveal data-reveal-delay="140">
+            <div class="group-head">
+              <div class="ic ic--sm h-exercise"><svg aria-hidden="true"><use href="#i-heart" /></svg></div>
+              <h3>身体</h3>
+            </div>
+            <div class="group-items">
+              <div class="item">
+                <div class="ic ic--sm h-protein"><svg aria-hidden="true"><use href="#i-chart" /></svg></div>
+                <div><div class="item-name">能量与营养</div><div class="item-desc">目标 / 摄入 / 运动消耗，三大宏量 + 钠与微量元素</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-exercise"><svg aria-hidden="true"><use href="#i-zap" /></svg></div>
+                <div><div class="item-name">运动</div><div class="item-desc">有氧与日常活动，按 MET 估算消耗并计入能量平衡</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-exercise"><svg aria-hidden="true"><use href="#i-dumbbell" /></svg></div>
+                <div><div class="item-name">力量训练</div><div class="item-desc">课程模板 → 做组 / 组间休息 → 汇总；练够分与肌群热力图</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-health"><svg aria-hidden="true"><use href="#i-heart" /></svg></div>
+                <div><div class="item-name">健康方案</div><div class="item-desc">程序算三档基线 → 日程级展开 → AI 复盘调参</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-food"><svg aria-hidden="true"><use href="#i-book" /></svg></div>
+                <div><div class="item-name">食谱库</div><div class="item-desc">模板浏览、喜欢不喜欢、按目标生成一日菜单</div></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="group" data-reveal>
+            <div class="group-head">
+              <div class="ic ic--sm h-class"><svg aria-hidden="true"><use href="#i-calendar" /></svg></div>
+              <h3>时间</h3>
+            </div>
+            <div class="group-items">
+              <div class="item">
+                <div class="ic ic--sm h-spine"><svg aria-hidden="true"><use href="#i-spine" /></svg></div>
+                <div><div class="item-name">一日脊柱</div><div class="item-desc">一天从早到晚排一条竖轴，安排与实况对齐</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-carb"><svg aria-hidden="true"><use href="#i-timer" /></svg></div>
+                <div><div class="item-name">番茄钟</div><div class="item-desc">关联待办、会话存档、今日轮次</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-class"><svg aria-hidden="true"><use href="#i-calendar" /></svg></div>
+                <div><div class="item-name">课表与教务</div><div class="item-desc">绑定教务同步课表并写进时间线；课程详情与选课</div></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="group" data-reveal data-reveal-delay="70">
+            <div class="group-head">
+              <div class="ic ic--sm h-expense"><svg aria-hidden="true"><use href="#i-wallet" /></svg></div>
+              <h3>钱</h3>
+            </div>
+            <div class="group-items">
+              <div class="item">
+                <div class="ic ic--sm h-expense"><svg aria-hidden="true"><use href="#i-wallet" /></svg></div>
+                <div><div class="item-name">记账</div><div class="item-desc">分类记账、月度预算、分类占比、近六个月趋势</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-carb"><svg aria-hidden="true"><use href="#i-pie" /></svg></div>
+                <div><div class="item-name">预算与占比</div><div class="item-desc">本月支出与预算进度，分类占比一眼看清</div></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="group" data-reveal data-reveal-delay="140">
+            <div class="group-head">
+              <div class="ic ic--sm h-misc"><svg aria-hidden="true"><use href="#i-sliders" /></svg></div>
+              <h3>系统</h3>
+            </div>
+            <div class="group-items">
+              <div class="item">
+                <div class="ic ic--sm h-travel"><svg aria-hidden="true"><use href="#i-sync" /></svg></div>
+                <div><div class="item-name">多设备同步</div><div class="item-desc">同网段直连 / 跨网段打洞 / 中转，三条路都端到端加密</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-warn"><svg aria-hidden="true"><use href="#i-download" /></svg></div>
+                <div><div class="item-name">软件更新</div><div class="item-desc">多源清单、双验签、断点续传、应用内安装</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-edu"><svg aria-hidden="true"><use href="#i-gauge" /></svg></div>
+                <div><div class="item-name">画质与动效</div><div class="item-desc">四档画质手动钉死，动效可关 / 默认 / 丰富</div></div>
+              </div>
+              <div class="item">
+                <div class="ic ic--sm h-misc"><svg aria-hidden="true"><use href="#i-db" /></svg></div>
+                <div><div class="item-name">存储与清理</div><div class="item-desc">空间总览、回收站，以及四档深度的数据清理</div></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- 多平台 -->
+      <section class="sec wrap" id="platform">
+        <div class="sec-head" data-reveal>
+          <span class="eyebrow">Platforms</span>
+          <h2>同一份代码，两副形态</h2>
+          <p class="lead">靠视口宽度切换形态，而不是维护两套工程。桌面能做的操作，手机一样不少。</p>
+        </div>
+        <div class="platform">
+          <article class="compare" data-reveal>
+            <h3>电脑端<span class="tag">视口 ≥ 900px</span></h3>
+            <ul>
+              <li><svg aria-hidden="true"><use href="#i-check" /></svg>导航轨 + 主人区，窗口更宽时展开右侧信息栏</li>
+              <li><svg aria-hidden="true"><use href="#i-check" /></svg>Ctrl+K 唤起命令面板，直达任意页面</li>
+              <li><svg aria-hidden="true"><use href="#i-check" /></svg>首页可在「便当总览 / 一日脊柱」之间切换</li>
+            </ul>
+            <div class="win platform-shot">
+              <img src="/shots/workbench-home.png" alt="电脑端三窗格工作台：左侧导航轨、中间主人区、右侧信息栏" width="1512" height="945" />
+            </div>
+          </article>
+          <article class="compare" data-reveal data-reveal-delay="90">
+            <h3>手机端<span class="tag">430 × 932</span></h3>
+            <ul>
+              <li><svg aria-hidden="true"><use href="#i-check" /></svg>底部页签 + 单列卡片流，拇指够得到</li>
+              <li><svg aria-hidden="true"><use href="#i-check" /></svg>下拉回弹、手势跟随、抽屉式半模态</li>
+              <li><svg aria-hidden="true"><use href="#i-check" /></svg>窄窗口与平板退回单列，功能不阉割</li>
+            </ul>
+            <div class="phone platform-shot platform-shot--phone">
+              <img src="/shots/mobile-ledger.png" alt="手机端记账页：单列卡片流与底部页签" width="860" height="2696" />
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- 画质与动效 -->
+      <section class="sec wrap" id="perf">
+        <div class="sec-head" data-reveal>
+          <span class="eyebrow">Quality &amp; motion</span>
+          <h2>画质与动效</h2>
+          <p class="lead">四档画质、三档动效，手动钉死不自动切 —— 弱机器不掉帧，好机器看得见材质。</p>
+        </div>
+
+        <div class="perf-block" data-reveal>
+          <div class="perf-label">
+            <h3>画质 · 四档</h3>
+            <span>设置 › 性能</span>
+          </div>
+          <div class="tiers">
+            <div class="tier">
+              <div class="tier-dots" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>
+              <b>流畅</b>
+              <p>玻璃顶成实底、关模糊与循环动画，合成成本最低</p>
+            </div>
+            <div class="tier">
+              <div class="tier-dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i></i><i></i></div>
+              <b>高画质</b>
+              <p>玻璃材质铺到卡片、抽屉、菜单与操作面板</p>
+            </div>
+            <div class="tier">
+              <div class="tier-dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i></i></div>
+              <b>超高</b>
+              <p>在高画质之上加折射与两道光学层</p>
+            </div>
+            <div class="tier">
+              <div class="tier-dots" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></div>
+              <b>极致</b>
+              <p>同一条折射管线，光学层更深、外缘层加厚</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="perf-block" data-reveal>
+          <div class="perf-label">
+            <h3>动效 · 三档</h3>
+            <span>可单独开关</span>
+          </div>
+          <div class="motion-row">
+            <div class="motion-card">
+              <div class="ic ic--sm h-misc"><svg aria-hidden="true"><use href="#i-gauge" /></svg></div>
+              <div><b>关</b><p>不做任何补间，切换即到位</p></div>
+            </div>
+            <div class="motion-card">
+              <div class="ic ic--sm h-accent"><svg aria-hidden="true"><use href="#i-sliders" /></svg></div>
+              <div><b>默认</b><p>标准曲线，同一条缓动族，进出同路径</p></div>
+            </div>
+            <div class="motion-card">
+              <div class="ic ic--sm h-balance"><svg aria-hidden="true"><use href="#i-sparkles" /></svg></div>
+              <div><b>丰富</b><p>液态融合、定向光晕与抽屉透镜式进出</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 本地优先 -->
+      <section class="sec wrap" id="local">
+        <div class="sec-head" data-reveal>
+          <span class="eyebrow">Local-first</span>
+          <h2>本地优先</h2>
+          <p class="lead">数据默认只存在你自己的机器上；仅有的两处联网能力，也做成端到端加密。</p>
+        </div>
+        <div class="trust">
+          <article class="trust-card" data-reveal>
+            <div class="ic h-accent"><svg aria-hidden="true"><use href="#i-db" /></svg></div>
+            <h3>单机 SQLite</h3>
+            <p>全部数据落在一个本地数据库里，不经过任何服务器，随时可整包导出带走。</p>
+          </article>
+          <article class="trust-card" data-reveal data-reveal-delay="90">
+            <div class="ic h-travel"><svg aria-hidden="true"><use href="#i-sync" /></svg></div>
+            <h3>多设备端到端加密同步</h3>
+            <p>同网段直连、跨网段打洞、中转三条路，内容在离开设备前就已加密。</p>
+          </article>
+          <article class="trust-card" data-reveal data-reveal-delay="180">
+            <div class="ic h-warn"><svg aria-hidden="true"><use href="#i-shield" /></svg></div>
+            <h3>更新双验签</h3>
+            <p>更新清单与安装包各验一次签，验过才装；下载中断可以续着来。</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- 下载 -->
+      <section class="sec wrap" id="download">
+        <div class="download-panel glass" data-reveal>
+          <div>
+            <h2>下载 Rein</h2>
+            <p class="lead">同一份代码，装在 Windows 与 Android 上。装好即可离线使用，数据留在本地。</p>
+            <div class="dl-actions">
+              <a class="btn btn--primary" href="https://github.com/gozaoo-coder/Rein/releases">
+                <svg aria-hidden="true"><use href="#i-monitor" /></svg>Windows 安装包
+              </a>
+              <a class="btn btn--ghost" href="https://github.com/gozaoo-coder/Rein/releases">
+                <svg aria-hidden="true"><use href="#i-phone" /></svg>Android APK
+              </a>
+            </div>
+            <p class="dl-note">平台安装包发布在 GitHub Release；安装包在下载与安装前各验一次签。</p>
+          </div>
+          <div class="dl-version">
+            <b class="num" data-version>v0.5.20</b>
+            <span>当前版本</span>
+            <span>
+              <a class="muted" href="https://github.com/gozaoo-coder/Rein/blob/main/RELEASE_NOTES.md">更新说明</a>
+            </span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap">
+        <div class="footer-grid">
+          <div>
+            <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span>Rein</a>
+            <p class="footer-note">以 AI 为中枢的个人生活助理。单机优先，数据留在本地；Windows 与 Android 同一份代码。</p>
+          </div>
+          <div>
+            <h4>文档</h4>
+            <ul>
+              <li><a href="https://github.com/gozaoo-coder/Rein/blob/main/docs/ARCHITECTURE.md">架构</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/blob/main/docs/STANDARDS.md">规范</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/blob/main/docs/ai-workspace.md">AI 工作台</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/blob/main/docs/SYNC.md">多设备同步</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/blob/main/docs/UPDATES.md">在线更新</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>项目</h4>
+            <ul>
+              <li><a href="https://github.com/gozaoo-coder/Rein">GitHub</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/releases">发布记录</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/blob/main/RELEASE_NOTES.md">更新说明</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/issues">反馈问题</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>开始</h4>
+            <ul>
+              <li><a href="#download">下载</a></li>
+              <li><a href="#features">功能地图</a></li>
+              <li><a href="https://github.com/gozaoo-coder/Rein/blob/main/README.md">快速开始</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer-base">
+          <p>
+            食物营养值为近似参考值（框架演示用）；课表数据来自学校教务系统，需自行绑定账号。
+            数据默认只存在本机，多设备同步与更新是仅有的两处联网能力。
+          </p>
+          <p>Rein · 全能生活助理</p>
+        </div>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
